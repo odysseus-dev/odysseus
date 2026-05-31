@@ -32,21 +32,32 @@ services:
       searxng:
         condition: service_healthy
       chromadb:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
+    mem_limit: 4g
+    cpus: 2
 
   chromadb:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:1.5.9
     ports:
       - "8100:8000"
     volumes:
       - chromadb-data:/chroma/chroma
     environment:
       - ANONYMIZED_TELEMETRY=FALSE
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v2/heartbeat || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     restart: unless-stopped
+    mem_limit: 2g
+    mem_reservation: 512m
+    cpus: 1
 
   searxng:
-    image: searxng/searxng:latest
+    image: searxng/searxng:2026.5.31-7159b8aed
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
@@ -61,9 +72,11 @@ services:
       retries: 20
       start_period: 10s
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
 
   ntfy:
-    image: binwiederhier/ntfy
+    image: binwiederhier/ntfy:v2.23.0
     command: serve
     ports:
       - "8091:80"
@@ -71,7 +84,14 @@ services:
       - ntfy-cache:/var/cache/ntfy
     environment:
       - NTFY_BASE_URL=http://localhost:8091
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:80/v1/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.25
 
 volumes:
   searxng-data:
