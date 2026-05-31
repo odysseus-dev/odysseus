@@ -138,7 +138,7 @@ html {
 :root.density-compact .msg { padding: 6px 10px; margin-bottom: 4px; }
 :root.density-compact .list-item { padding: 4px 8px; }
 :root.density-compact .sidebar .section { padding: 0; }
-:root.density-spacious { font-size: 16px; }
+:root.density-spacious { font-size: 19px; }
 :root.density-spacious .msg { padding: 14px 18px; margin-bottom: 12px; }
 :root.density-spacious .list-item { padding: 8px 12px; }
 :root.density-spacious .sidebar .section { padding: 0; }
@@ -458,7 +458,7 @@ body.bg-pattern-sparkles {
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 0.6rem;
+      font-size: 0.8rem;
       font-weight: 600;
       color: var(--fg);
       opacity: 0.7;
@@ -467,7 +467,7 @@ body.bg-pattern-sparkles {
     }
 
     .user-bar-name {
-      font-size: 0.6rem;
+      font-size: 0.8rem;
       font-weight: 500;
       color: var(--fg);
       opacity: 0.8;
@@ -1122,7 +1122,7 @@ body.bg-pattern-sparkles {
       flex: 1; cursor: pointer; user-select: none;
       display: flex; align-items: center; gap: 6px;
       margin: 0; padding: 0; border: none;
-      font-size: 0.6rem; font-weight: 400; font-family: inherit;
+      font-size: 0.8rem; font-weight: 400; font-family: inherit;
       line-height: 1; letter-spacing: 0; text-transform: none;
       color: var(--fg);
     }
@@ -1590,7 +1590,7 @@ body.bg-pattern-sparkles {
       margin: 0;
       height: 24px;
       padding: 0 8px;
-      font-size: 0.55rem;
+      font-size: 0.8rem;
     }
     /* Inline "+" action on a tool/section row (Library → new document,
        Email → compose). Sizing forced + min-* zeroed so the mobile
@@ -1664,7 +1664,7 @@ body.bg-pattern-sparkles {
     }
     .list-item span {
       color: var(--fg);
-      font-size: 0.6rem;
+      font-size: 0.8rem;
     }
     .grow {
       flex: 1;
