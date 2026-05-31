@@ -105,7 +105,7 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 python setup.py            # creates data dirs and prints an initial admin password
-uvicorn app:app --host 0.0.0.0 --port 7000
+python -m uvicorn app:app --host 0.0.0.0 --port 7000
 ```
 
 ### Option 3: Manual install — Windows (PowerShell)
@@ -116,8 +116,13 @@ python -m venv venv
 venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python setup.py
-uvicorn app:app --host 0.0.0.0 --port 7000
+python -m uvicorn app:app --host 0.0.0.0 --port 7000
 ```
+
+> If you see `uvicorn: command not recognized`, the virtual environment's
+> scripts are not on your `PATH`. Running it through the interpreter as
+> `python -m uvicorn ...` (as shown above) avoids that and always uses the
+> uvicorn installed in the active environment.
 
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
