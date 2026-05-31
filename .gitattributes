@@ -1,0 +1,10 @@
+# Normalize text files by default.
+* text=auto
+
+# Shell scripts must stay LF, or Linux containers may fail to execute them.
+*.sh text eol=lf
+
+# Keep Docker and compose files LF for consistent Linux tooling behavior.
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

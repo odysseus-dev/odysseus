@@ -1,6 +1,7 @@
 # Odysseus
+
 ───────────────────────────────────────────────
- ⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ  Odysseus vers. 1.0
+⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ Odysseus vers. 1.0
 ───────────────────────────────────────────────
 
 ![Odysseus](docs/odysseus.jpg)
@@ -8,31 +9,42 @@
 A self-hosted AI workspace -- meant to be the self-hosted version of the UI experience you get from ChatGPT and Claude. But with more jank and fun. Running on your own hardware, with your own data -- local-first, privacy-first, and no trojan.
 
 ## Features
-  - **Chat** -- chat with any local model or API; adding them is super simple.<br>　<sub>vLLM · llama.cpp · Ollama · OpenRouter · OpenAI</sub>
-  - **Agent** -- hand it tools and let it run the whole task itself.<br>　<sub>built on [opencode](https://github.com/anomalyco/opencode) · MCP · web · files · shell · skills · memory</sub>
-  - **Cookbook** -- Scans your hardware, recommends models, click to download and serve.. easy!<br>　<sub>built on [llmfit](https://github.com/AlexsJones/llmfit) · VRAM-aware · GGUF / FP8 / AWQ · fit scoring · vLLM / llama.cpp serving</sub>
-  - **Deep Research** -- multi-step runs that gather, read, and synthesize sources into a nice visual report.<br>　<sub>adapted from [Tongyi DeepResearch](https://github.com/Alibaba-NLP/DeepResearch)</sub>
-  - **Compare** -- a fun tool to compare models side by side. Test completely blind, no bias!<br>　<sub>multi-model · blind test · synthesis</sub>
-  - **Documents** -- YOU write the text, AI is there to assist, not the opposite.<br>　<sub>multi-tab editor · markdown · HTML · CSV · syntax highlighting · AI edits · suggestions</sub>
-  - **Memory / Skills** -- Persistent memory and skills, your agent evolves over time as it better understands you and your tasks!<br>　<sub>ChromaDB · fastembed (ONNX) · vector + keyword retrieval · import/export</sub>
-  - **Email** -- IMAP/SMTP inbox with AI triage built in: urgency reminders, auto-tag, auto-summary, auto-reply drafts, auto-spam.<br>　<sub>IMAP · SMTP · per-account routing · CalDAV-aware</sub>
-  - **Notes & Tasks** -- Quick notes with reminders, a todo list, and scheduled tasks the agent can act on.<br>　<sub>note pings · checklist · cron-style tasks · ntfy / browser / email channels</sub>
-  - **Calendar** -- Local-first calendar with CalDAV sync to Radicale / Nextcloud / Apple / Fastmail.<br>　<sub>CalDAV pull · .ics import/export · per-calendar colors · agent-aware</sub>
-  - **Works on mobile** -- looks and runs great on your phone, not just desktop.<br>　<sub>responsive · installable (PWA) · touch gestures</sub>
-  - **Extras** -- more to explore, happy if you give it a go!<br>　<sub>image editor · theme editor · file uploads (vision + PDF) · web search · presets · sessions · 2FA</sub>
+
+- **Chat** -- chat with any local model or API; adding them is super simple.<br>　<sub>vLLM · llama.cpp · Ollama · OpenRouter · OpenAI</sub>
+- **Agent** -- hand it tools and let it run the whole task itself.<br>　<sub>built on [opencode](https://github.com/anomalyco/opencode) · MCP · web · files · shell · skills · memory</sub>
+- **Cookbook** -- Scans your hardware, recommends models, click to download and serve.. easy!<br>　<sub>built on [llmfit](https://github.com/AlexsJones/llmfit) · VRAM-aware · GGUF / FP8 / AWQ · fit scoring · vLLM / llama.cpp serving</sub>
+- **Deep Research** -- multi-step runs that gather, read, and synthesize sources into a nice visual report.<br>　<sub>adapted from [Tongyi DeepResearch](https://github.com/Alibaba-NLP/DeepResearch)</sub>
+- **Compare** -- a fun tool to compare models side by side. Test completely blind, no bias!<br>　<sub>multi-model · blind test · synthesis</sub>
+- **Documents** -- YOU write the text, AI is there to assist, not the opposite.<br>　<sub>multi-tab editor · markdown · HTML · CSV · syntax highlighting · AI edits · suggestions</sub>
+- **Memory / Skills** -- Persistent memory and skills, your agent evolves over time as it better understands you and your tasks!<br>　<sub>ChromaDB · fastembed (ONNX) · vector + keyword retrieval · import/export</sub>
+- **Email** -- IMAP/SMTP inbox with AI triage built in: urgency reminders, auto-tag, auto-summary, auto-reply drafts, auto-spam.<br>　<sub>IMAP · SMTP · per-account routing · CalDAV-aware</sub>
+- **Notes & Tasks** -- Quick notes with reminders, a todo list, and scheduled tasks the agent can act on.<br>　<sub>note pings · checklist · cron-style tasks · ntfy / browser / email channels</sub>
+- **Calendar** -- Local-first calendar with CalDAV sync to Radicale / Nextcloud / Apple / Fastmail.<br>　<sub>CalDAV pull · .ics import/export · per-calendar colors · agent-aware</sub>
+- **Works on mobile** -- looks and runs great on your phone, not just desktop.<br>　<sub>responsive · installable (PWA) · touch gestures</sub>
+- **Extras** -- more to explore, happy if you give it a go!<br>　<sub>image editor · theme editor · file uploads (vision + PDF) · web search · presets · sessions · 2FA</sub>
 
 ## Demo
+
 A full, hover-to-play tour lives on the landing page (`docs/index.html`). A few looks:
 
 ### Chat & Agents
+
 ![Chat & Agents](docs/chat.gif)
+
 ### Deep Research
+
 ![Deep Research](docs/research.gif)
+
 ### Compare
+
 ![Compare](docs/compare.gif)
+
 ### Documents
+
 ![Documents](docs/document.gif)
+
 ### Notes & Tasks
+
 ![Notes & Tasks](docs/notes.gif)
 
 ## Quick Start
@@ -45,12 +57,24 @@ or pre-seed `ODYSSEUS_ADMIN_PASSWORD` (otherwise an initial password is
 generated and printed on first boot).
 
 ### Option 1: Docker (recommended)
+
 ```bash
 git clone <your-odysseus-repo-url>
 cd odysseus
 cp .env.example .env       # optional, but recommended for explicit defaults
 docker compose up -d --build
 ```
+
+If Docker on Windows fails with
+`exec /usr/local/bin/entrypoint.sh: no such file or directory`,
+the script was likely checked out with CRLF line endings. Pull the latest
+image/Dockerfile changes and rebuild:
+
+```bash
+docker compose build --no-cache odysseus
+docker compose up -d odysseus
+```
+
 Compose starts Odysseus, ChromaDB, SearXNG, and ntfy. First run does a full
 image build. Open `http://localhost:7000` after the containers are healthy.
 
@@ -58,13 +82,16 @@ Cookbook remote servers use an Odysseus-owned SSH key from `./data/ssh`
 inside Docker. In **Cookbook -> Settings -> Servers**, generate/copy the
 public key and add it to the remote server's `~/.ssh/authorized_keys`.
 After generating the key, you can also install it from the host with:
+
 ```bash
 ssh-copy-id -i data/ssh/id_ed25519.pub user@server
 ```
+
 Cookbook local downloads are stored in `./data/huggingface`, mounted as
 `~/.cache/huggingface` inside the Odysseus container.
 
 Useful checks:
+
 ```bash
 docker compose ps
 docker compose logs --tail=120 odysseus
@@ -73,6 +100,7 @@ docker compose exec odysseus python -c "from services.hwfit.models import get_mo
 ```
 
 Expected vector-memory startup lines in Docker:
+
 ```text
 ChromaDB connected: chromadb:8000
 MemoryVectorStore initialized
@@ -82,10 +110,12 @@ The Cookbook model catalog check should print a non-zero count. If it prints
 `0`, rebuild the Odysseus image with `docker compose build --no-cache odysseus`.
 
 ### Option 2: Manual install — Linux / macOS
+
 **Requirements:** Python 3.11+. On Linux/Termux, Cookbook also requires `tmux`
 for background model downloads and serves.
 
 Install system packages first:
+
 ```bash
 # Debian/Ubuntu
 sudo apt install tmux
@@ -98,6 +128,7 @@ sudo dnf install tmux
 ```
 
 Then install Odysseus:
+
 ```bash
 git clone <your-odysseus-repo-url>
 cd odysseus
@@ -109,6 +140,7 @@ uvicorn app:app --host 0.0.0.0 --port 7000
 ```
 
 ### Option 3: Manual install — Windows (PowerShell)
+
 ```powershell
 git clone <your-odysseus-repo-url>
 cd odysseus
@@ -123,6 +155,7 @@ Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
 
 ## Security Notes
+
 Odysseus is a self-hosted workspace with powerful local tools: shell access, file uploads, model downloads, web research, email/calendar integrations, and API tokens. Treat it like an admin console.
 
 - Keep `AUTH_ENABLED=true` for any network-accessible deployment.
@@ -136,6 +169,7 @@ Odysseus is a self-hosted workspace with powerful local tools: shell access, fil
 - Before publishing a fork, run `git status --short` and confirm no private files from `.env`, `data/`, `logs/`, uploads, backups, or local databases are staged.
 
 ### Putting it behind HTTPS
+
 Odysseus serves plain HTTP on its port. That's fine for `localhost` and trusted LAN/VPN use, but browsers will warn ("Password fields present on an insecure page") and the login + API tokens travel in cleartext. For anything reachable outside your machine — including a Tailscale IP shared with other devices — put a TLS-terminating reverse proxy in front.
 
 Shortest path with [Caddy](https://caddyserver.com/) (auto-renews Let's Encrypt certs):
@@ -149,39 +183,44 @@ odysseus.example.com {
 For a LAN-only Tailscale deployment, Caddy + [tailscale-cert](https://caddyserver.com/docs/caddyfile/options#auto-https) or the built-in MagicDNS HTTPS feature both work. nginx/Traefik configs are similar — proxy `localhost:7000`, terminate TLS at the proxy. Once that's in place, the browser warning goes away and your login is encrypted.
 
 ## Contributing
+
 Help is welcome. The best entry points are fresh-install testing, provider setup
 bugs, mobile/editor polish, docs, and small focused refactors. See
 [ROADMAP.md](ROADMAP.md) for the current help-wanted list.
 
 ## Configuration
+
 Most setup is done inside the app with `/setup` or **Settings**. Use `.env`
 for deployment-level defaults and secrets you want present before first boot.
 Key settings:
 
-| Variable | Default | Description |
-|---|---|---|
-| `LLM_HOST` | `localhost` | Your LLM server (e.g. `llm-host.local:8000`) |
-| `LLM_HOSTS` | -- | Comma-separated list for model discovery |
-| `OPENAI_API_KEY` | -- | Optional OpenAI key. Prefer adding providers in the app unless pre-seeding. |
-| `SEARXNG_INSTANCE` | `http://localhost:8080` | SearXNG URL. Docker overrides this to `http://searxng:8080`. |
-| `AUTH_ENABLED` | `true` | Enable/disable login |
-| `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
-| `DATABASE_URL` | `sqlite:///./data/app.db` | Database connection string |
-| `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
-| `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
-| `EMBEDDING_URL` | -- | OpenAI-compatible embeddings endpoint |
+| Variable           | Default                   | Description                                                                                    |
+| ------------------ | ------------------------- | ---------------------------------------------------------------------------------------------- |
+| `LLM_HOST`         | `localhost`               | Your LLM server (e.g. `llm-host.local:8000`)                                                   |
+| `LLM_HOSTS`        | --                        | Comma-separated list for model discovery                                                       |
+| `OPENAI_API_KEY`   | --                        | Optional OpenAI key. Prefer adding providers in the app unless pre-seeding.                    |
+| `SEARXNG_INSTANCE` | `http://localhost:8080`   | SearXNG URL. Docker overrides this to `http://searxng:8080`.                                   |
+| `AUTH_ENABLED`     | `true`                    | Enable/disable login                                                                           |
+| `LOCALHOST_BYPASS` | `false`                   | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
+| `DATABASE_URL`     | `sqlite:///./data/app.db` | Database connection string                                                                     |
+| `CHROMADB_HOST`    | `localhost`               | ChromaDB host for vector memory. Docker overrides this to `chromadb`.                          |
+| `CHROMADB_PORT`    | `8100`                    | ChromaDB port for manual host runs. Docker overrides this to `8000`.                           |
+| `EMBEDDING_URL`    | --                        | OpenAI-compatible embeddings endpoint                                                          |
 
 ### Bundled services
+
 Docker Compose includes these by default:
 
-  - **ChromaDB** → vector store for semantic memory. In Docker, Odysseus connects to `chromadb:8000`; from the host it is exposed as `localhost:8100`.
-  - **SearXNG** → meta search for web search. In Docker, Odysseus connects to `searxng:8080`; from the host it is exposed only on `127.0.0.1:8080`.
-  - **ntfy** → local notification service, exposed as `localhost:8091`.
+- **ChromaDB** → vector store for semantic memory. In Docker, Odysseus connects to `chromadb:8000`; from the host it is exposed as `localhost:8100`.
+- **SearXNG** → meta search for web search. In Docker, Odysseus connects to `searxng:8080`; from the host it is exposed only on `127.0.0.1:8080`.
+- **ntfy** → local notification service, exposed as `localhost:8091`.
 
 ### Optional external services
-  - **Ollama** → local LLM server -- [ollama.ai](https://ollama.ai)
+
+- **Ollama** → local LLM server -- [ollama.ai](https://ollama.ai)
 
 ## Architecture
+
 ```
 app.py                   # FastAPI entry point
 core/      auth, database, middleware, constants
@@ -193,10 +232,12 @@ docs/      landing page (index.html) + preview clips
 ```
 
 ## Data
+
 All user data lives in `data/` (gitignored): `app.db` (sessions, messages, documents),
 `memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/`, `settings.json`.
 
 ## License
+
 MIT -- see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
 
 ```
