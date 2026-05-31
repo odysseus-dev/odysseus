@@ -1,9 +1,6 @@
 [build-system]
-requires = ["setuptools>=68.0"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-packages = []
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "odysseus"

@@ -106,7 +106,7 @@ cd odysseus
 uv venv
 source venv/bin/activate
 uv pip install .
-python setup_odysseus.py   # creates data dirs and prints an initial admin password
+python setup.py            # creates data dirs and prints an initial admin password
 uvicorn app:app --host 0.0.0.0 --port 7000
 ```
 
@@ -121,7 +121,7 @@ cd odysseus
 uv venv
 venv\Scripts\Activate.ps1
 uv pip install .
-python setup_odysseus.py
+python setup.py
 uvicorn app:app --host 0.0.0.0 --port 7000
 ```
 

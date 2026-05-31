@@ -301,7 +301,7 @@ def test_require_admin_allows_when_auth_explicitly_disabled(monkeypatch):
 
 
 def test_auth_manager_migrates_legacy_admin_role(tmp_path):
-    """Old setup_odysseus.py wrote role='admin'; startup must turn that into is_admin."""
+    """Old setup.py wrote role='admin'; startup must turn that into is_admin."""
     sys.modules.pop("core.auth", None)
     if "core" in sys.modules and hasattr(sys.modules["core"], "auth"):
         delattr(sys.modules["core"], "auth")
