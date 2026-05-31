@@ -1755,6 +1755,33 @@ def update_session_last_accessed(session_id: str):
             return True
     return False
 
+def get_session_mode(session_id: str):
+    """Return a session's persisted `mode`, or None if unset/unknown.
+
+    Best-effort: never raises (returns None on any DB error) so callers on hot
+    request paths needn't guard it. Routed through get_db_session() so the
+    connection is always returned to the pool."""
+    try:
+        with get_db_session() as db:
+            return db.query(Session.mode).filter(Session.id == session_id).scalar()
+    except Exception:
+        logger.warning("Failed to read mode for session %s", session_id)
+        return None
+
+def set_session_mode(session_id: str, mode: str) -> bool:
+    """Persist a session's `mode`. Best-effort: never raises, returns success.
+
+    Routed through get_db_session() so a failure mid-write (e.g. a SQLite
+    'database is locked' under concurrent streams) still returns the connection
+    to the pool instead of leaking it — repeated leaks would exhaust it."""
+    try:
+        with get_db_session() as db:
+            db.query(Session).filter(Session.id == session_id).update({"mode": mode})
+        return True
+    except Exception:
+        logger.warning("Failed to persist mode %r for session %s", mode, session_id)
+        return False
+
 def get_session_by_id(session_id: str):
     """Get a session by ID"""
     with get_db_session() as db:

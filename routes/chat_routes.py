@@ -21,7 +21,7 @@ from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user
 from routes.session_routes import _verify_session_owner
-from core.database import SessionLocal
+from core.database import SessionLocal, get_session_mode, set_session_mode
 from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
 from routes.research_routes import _resolve_research_endpoint
@@ -280,26 +280,14 @@ def setup_chat_routes(
         # Check for research_pending BEFORE mode persist overwrites it
         do_research = str(use_research).lower() == "true"
         if not do_research:
-            try:
-                _mode_db = SessionLocal()
-                _db_mode = _mode_db.query(DBSession.mode).filter(DBSession.id == session).scalar()
-                _mode_db.close()
-                if _db_mode == 'research_pending':
-                    do_research = True
-                    logger.info(f"Session {session} in research_pending — auto-triggering research")
-            except Exception:
-                pass
+            if get_session_mode(session) == 'research_pending':
+                do_research = True
+                logger.info(f"Session {session} in research_pending — auto-triggering research")
 
         # Persist session mode (research > agent > chat)
         _effective_mode = 'research' if do_research else (chat_mode or 'chat')
         if _effective_mode in ('agent', 'research', 'chat'):
-            try:
-                _mdb = SessionLocal()
-                _mdb.query(DBSession).filter(DBSession.id == session).update({"mode": _effective_mode})
-                _mdb.commit()
-                _mdb.close()
-            except Exception as _me:
-                logger.warning("Failed to persist session mode: %s", _me)
+            set_session_mode(session, _effective_mode)
 
         att_ids = []
         if body and isinstance(body.get("attachments"), list):
@@ -501,13 +489,7 @@ def setup_chat_routes(
                     logger.info(f"First research message — asking clarifying questions for: {message[:60]}")
                     yield f'data: {json.dumps({"type": "model_info", "model": sess.model, "suffix": "Research"})}\n\n'
                     # Set DB mode to research_pending so the NEXT message auto-triggers research
-                    try:
-                        _pdb = SessionLocal()
-                        _pdb.query(DBSession).filter(DBSession.id == session).update({"mode": "research_pending"})
-                        _pdb.commit()
-                        _pdb.close()
-                    except Exception as _pe:
-                        logger.warning(f"Failed to set research_pending: {_pe}")
+                    set_session_mode(session, "research_pending")
                     ctx.messages.insert(0, {"role": "system", "content":
                         "The user wants to start deep web research. Before searching, ask 2-3 brief "
                         "clarifying questions to understand exactly what they want to know. For example: "
