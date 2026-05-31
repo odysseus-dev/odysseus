@@ -54,6 +54,8 @@ docker compose up -d --build
 Compose starts Odysseus, ChromaDB, SearXNG, and ntfy. First run does a full
 image build. Open `http://localhost:7000` after the containers are healthy.
 
+> **macOS users**: Port 7000 is often used by AirPlay Receiver by default. If the app doesn't load at `http://localhost:7000`, change the port mapping in `docker-compose.yml` from `"7000:7000"` to `"8088:7000"` (or another free port) and open `http://localhost:8088` instead.
+
 Cookbook remote servers use an Odysseus-owned SSH key from `./data/ssh`
 inside Docker. In **Cookbook -> Settings -> Servers**, generate/copy the
 public key and add it to the remote server's `~/.ssh/authorized_keys`.
