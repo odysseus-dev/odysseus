@@ -103,24 +103,24 @@ Then install Odysseus:
 ```bash
 git clone <your-odysseus-repo-url>
 cd odysseus
-python3 -m venv venv
+uv venv
 source venv/bin/activate
-pip install .
+uv pip install .
 python setup.py            # creates data dirs and prints an initial admin password
 uvicorn app:app --host 0.0.0.0 --port 7000
 ```
 
-For faster installs, use [uv](https://docs.astral.sh/uv/): `uv pip install .`  
 For optional deps (DuckDuckGo search, PDF form-filling): `uv pip install ".[optional]"`
-```
+
+If you don't have [uv](https://docs.astral.sh/uv/) installed, use `python3 -m venv venv` and `pip install .` instead.
 
 ### Option 3: Manual install — Windows (PowerShell)
 ```powershell
 git clone <your-odysseus-repo-url>
 cd odysseus
-python -m venv venv
+uv venv
 venv\Scripts\Activate.ps1
-pip install .
+uv pip install .
 python setup.py
 uvicorn app:app --host 0.0.0.0 --port 7000
 ```
