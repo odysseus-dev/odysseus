@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from core.middleware import require_admin
 from routes.shell_routes import TMUX_LOG_DIR
+from core.constants import BASE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +347,7 @@ def setup_cookbook_routes() -> APIRouter:
         if req.hf_token:
             lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
         # Ensure pip-user scripts (e.g. hf CLI installed via --user) are on PATH
+        lines.append(f'export PATH="{shlex.quote(str(Path(BASE_DIR) / "venv" / "bin"))}:$PATH"')
         lines.append('export PATH="$HOME/.local/bin:$PATH"')
         # Best-effort install hf CLI (always). hf_transfer (Rust parallel downloader)
         # is fast but flaky on large files — it tends to crash near the end at high
@@ -854,6 +856,8 @@ def setup_cookbook_routes() -> APIRouter:
                 # Jinja2 rejects (do_tojson ensure_ascii). Build it once from
                 # source if missing; keep llama-cpp-python only as a fallback.
                 runner_lines.append('# Ensure a llama.cpp server (prefer native llama-server)')
+                if not remote:
+                    runner_lines.append(f'export PATH="{shlex.quote(str(Path(BASE_DIR) / "venv" / "bin"))}:$PATH"')
                 runner_lines.append('export PATH="$HOME/.local/bin:$HOME/bin:$HOME/llama.cpp/build/bin:$PATH"')
                 runner_lines.append('if [ -d /data/data/com.termux ]; then')
                 runner_lines.append('  # Termux: no native build — use the Python bindings (CPU).')
@@ -868,7 +872,7 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  cd ~ && [ -d llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp')
                 # GPU build if CUDA is present; fall back to a plain (CPU) build.
                 runner_lines.append('  cd ~/llama.cpp && { cmake -B build -DGGML_CUDA=ON 2>/dev/null || cmake -B build; } \\')
-                runner_lines.append('    && cmake --build build -j"$(nproc)" --target llama-server \\')
+                runner_lines.append('    && cmake --build build -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)" --target llama-server \\')
                 runner_lines.append('    && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
                 runner_lines.append('  # If the native build failed, fall back to the Python bindings.')
                 runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
@@ -880,12 +884,16 @@ def setup_cookbook_routes() -> APIRouter:
                 # Put ~/.local/bin on PATH first — without a venv, vllm installs
                 # there via --user and the non-login serve shell otherwise can't
                 # find the `vllm` CLI ("command not found"). Mirrors llama.cpp above.
+                if not remote:
+                    runner_lines.append(f'export PATH="{shlex.quote(str(Path(BASE_DIR) / "venv" / "bin"))}:$PATH"')
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! command -v vllm &>/dev/null; then')
                 runner_lines.append('  echo "ERROR: vLLM is not installed. Open Cookbook -> Dependencies and install vllm on this server, then launch again."')
                 runner_lines.append('  exit 127')
                 runner_lines.append('fi')
             elif "sglang.launch_server" in req.cmd:
+                if not remote:
+                    runner_lines.append(f'export PATH="{shlex.quote(str(Path(BASE_DIR) / "venv" / "bin"))}:$PATH"')
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! python3 -c "import sglang" 2>/dev/null; then')
                 runner_lines.append('  echo "ERROR: SGLang is not installed. Open Cookbook -> Dependencies and install sglang on this server, then launch again."')
