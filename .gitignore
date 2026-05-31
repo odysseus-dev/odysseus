@@ -67,6 +67,10 @@ output.txt.txt
 !docs/*.gif
 !docs/*.webp
 
+# PWA icons shipped with the app
+!static/icon-192.png
+!static/icon-512.png
+
 # Reports and temp files
 reports/
 tasks/
