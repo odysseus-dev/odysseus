@@ -278,7 +278,9 @@ async def action_run_script(owner: str, script: str = "", host: str = "", **kwar
         return "No script specified", False
     target_host = (host or os.getenv("ODYSSEUS_SCRIPT_HOST", "localhost")).strip()
     if target_host in ("", "localhost", "127.0.0.1", "local"):
-        return await _run_subprocess(script, shell=True, timeout=300, label="Script")
+        import shlex
+        safe_args = shlex.split(script)
+        return await _run_subprocess(safe_args, shell=False, timeout=300, label="Script")
     return await _run_subprocess(["ssh", target_host, script], timeout=300, label="Script")
 
 
@@ -286,7 +288,9 @@ async def action_run_local(owner: str, script: str = "", **kwargs) -> Tuple[str,
     """Run a script locally (no SSH)."""
     if not script:
         return "No script specified", False
-    return await _run_subprocess(script, shell=True, timeout=300, label="Script")
+    import shlex
+    safe_args = shlex.split(script)
+    return await _run_subprocess(safe_args, shell=False, timeout=300, label="Script")
 
 
 async def action_tidy_research(owner: str, **kwargs) -> Tuple[str, bool]:
