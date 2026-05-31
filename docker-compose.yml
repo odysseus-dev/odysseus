@@ -34,6 +34,8 @@ services:
       chromadb:
         condition: service_started
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   chromadb:
     image: chromadb/chroma:latest
