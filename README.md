@@ -97,7 +97,7 @@ Both are handled by `Dockerfile.windows` and `docker-compose.windows.yml`. Use `
 ```powershell
 git clone <your-odysseus-repo-url>
 cd odysseus
-.\launch-docker.ps1
+.\launch-windows-docker.ps1
 ```
 
 The script creates `.env` on first run, pulls images, builds with `Dockerfile.windows`, and opens the browser when the app is ready.
