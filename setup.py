@@ -142,8 +142,15 @@ def main():
         print(f"  [warn] Admin creation failed: {e}")
 
     print("\n=== Setup complete ===")
-    print(f"\nStart the server with:")
-    print(f"  uvicorn app:app --host 0.0.0.0 --port 7000")
+    if os.name == "nt":
+        print("\nWindows Post-Setup:")
+        print("  1. Activate virtual environment: .\\venv\\Scripts\\Activate.ps1")
+        print("  2. Start the server: uvicorn app:app --host 0.0.0.0 --port 7000")
+        print("  3. To install as a background service, run: .\\install-service.ps1")
+        print("\nNote: Local Cookbook downloads/serves will use PowerShell background jobs.")
+    else:
+        print(f"\nStart the server with:")
+        print(f"  uvicorn app:app --host 0.0.0.0 --port 7000")
     print(f"\nThen open http://localhost:7000")
     print(f"Login with the admin username and temporary password printed above.\n")
 

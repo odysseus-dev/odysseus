@@ -284,7 +284,12 @@ def _get_cpu_count():
 
 
 def _detect_windows():
-    """Detect Windows hardware in a single SSH call using PowerShell."""
+    """Detect Windows hardware using PowerShell.
+
+    Works both locally (when Odysseus runs on Windows) and remotely
+    (over SSH). When _remote_host is set, the command is piped through
+    SSH by the existing _run() helper.
+    """
     # Single PowerShell command that gathers all hardware info at once
     ps_cmd = (
         "$r = @{}; "
@@ -321,6 +326,8 @@ def _detect_windows():
         "}; "
         "$r | ConvertTo-Json -Compress"
     )
+    # _run routes through SSH when _remote_host is set; locally it runs
+    # the command directly — so this works in both contexts.
     out = _run(f'powershell -Command "{ps_cmd}"')
     if not out:
         return None
@@ -383,20 +390,27 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
     _remote_port = ssh_port or None
     _remote_platform = platform or None
 
-    # Windows: single PowerShell command for all hardware info
-    if _remote_platform == "windows" and _remote_host:
+    # Windows detection — works for remote Windows hosts (via SSH) AND
+    # for local detection when Odysseus itself runs on Windows.
+    _use_windows = (
+        (_remote_platform == "windows" and _remote_host)
+        or (not _remote_host and os.name == "nt")
+    )
+    if _use_windows:
         result = _detect_windows()
         if result:
             _remote_host = None
             _remote_platform = None
             _cache_by_host[cache_key] = (now, result)
             return result
-        # If Windows detection failed, return error
-        result = {"error": f"Cannot connect to {host}", "host": host}
-        _remote_host = None
-        _remote_platform = None
-        _cache_by_host[cache_key] = (now, result)
-        return result
+        if _remote_host:
+            # Remote Windows detection failed — connection error
+            result = {"error": f"Cannot connect to {host}", "host": host}
+            _remote_host = None
+            _remote_platform = None
+            _cache_by_host[cache_key] = (now, result)
+            return result
+        # Local Windows detection failed — fall through to generic path
 
     # Linux/Termux: existing multi-command detection
     total_ram = round(_get_ram_gb(), 1)

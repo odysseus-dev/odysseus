@@ -361,7 +361,7 @@ def setup_cookbook_routes() -> APIRouter:
             lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
 
         remote = req.remote_host  # None for local
-        is_windows = req.platform == "windows"
+        is_windows = req.platform == "windows" or (not remote and _IS_WIN)
         logger.info(f"Download request: repo={req.repo_id}, remote={remote}, ssh_port={req.ssh_port}, platform={req.platform}")
 
         if not is_windows and not await _binary_available("tmux", remote, req.ssh_port):
@@ -486,8 +486,48 @@ def setup_cookbook_routes() -> APIRouter:
                 f"scp -O {_pf}-q '{runner_path}' {remote}:{remote_runner} && "
                 f"ssh {_spf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
             )
+        elif not remote and _IS_WIN:
+            # ── Local Windows: PowerShell background job ──
+            ps_lines = []
+            ps_lines.append('$sessionDir = "$env:TEMP\\odysseus-sessions"')
+            ps_lines.append('New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null')
+            if req.hf_token:
+                ps_lines.append(f"$env:HF_TOKEN = '{_ps_squote(req.hf_token)}'")
+            if req.env_prefix:
+                ps_lines.append(_safe_env_prefix(req.env_prefix))
+            ps_lines.append('try {{')
+            ps_lines.append('  $hfPath = Get-Command hf -ErrorAction SilentlyContinue')
+            ps_lines.append('  if ($hfPath) {{')
+            ps_lines.append(f'    $null | {hf_cmd}')
+            ps_lines.append('  }} else {{')
+            ps_lines.append('    python -c "import huggingface_hub" 2>$null')
+            ps_lines.append('    if ($LASTEXITCODE -eq 0) {{')
+            ps_lines.append('      Write-Host "hf CLI not found, using Python huggingface_hub..."')
+            ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
+            ps_lines.append('    }} else {{')
+            ps_lines.append('      Write-Host "Installing huggingface-hub..."')
+            ps_lines.append('      python -m pip install -q huggingface-hub hf_transfer')
+            ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
+            ps_lines.append('    }}')
+            ps_lines.append('  }}')
+            ps_lines.append('  if ($LASTEXITCODE -eq 0) {{ Write-Host ""; Write-Host "DOWNLOAD_OK" }}')
+            ps_lines.append('  else {{ Write-Host ""; Write-Host "DOWNLOAD_FAILED (exit $LASTEXITCODE)" }}')
+            ps_lines.append('}} catch {{')
+            ps_lines.append('  Write-Host ""; Write-Host "DOWNLOAD_FAILED ($_)"')
+            ps_lines.append('}}')
+            runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
+            runner_path.write_text("\r\n".join(ps_lines) + "\r\n")
+            # Launch detached with log + pid files
+            sd = str(TMUX_LOG_DIR).replace('/', '\\')
+            launch_ps = (
+                f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','{runner_path}' "
+                f"-RedirectStandardOutput '{sd}\\{session_id}.log' "
+                f"-RedirectStandardError '{sd}\\{session_id}.err.log' "
+                f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File '{sd}\\{session_id}.pid' }}"
+            )
+            setup_cmd = f'powershell -Command "{launch_ps}"'
         else:
-            # Local: run hf download in a local tmux session
+            # Local Linux/Termux: run hf download in a local tmux session
             if req.env_prefix:
                 lines.append(_safe_env_prefix(req.env_prefix))
             else:
@@ -501,7 +541,10 @@ def setup_cookbook_routes() -> APIRouter:
             lines.append(f"rm -f '{wrapper_script}'")
             lines.append('exec "${SHELL:-/bin/bash}"')
             wrapper_script.write_text("\n".join(lines) + "\n")
-            wrapper_script.chmod(0o755)
+            try:
+                wrapper_script.chmod(0o755)
+            except OSError:
+                pass  # chmod not meaningful on Windows
             setup_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
 
         logger.info(f"Model download: {req.repo_id} (include={req.include}, session={session_id}, remote={remote})")
@@ -767,7 +810,7 @@ def setup_cookbook_routes() -> APIRouter:
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
         session_id = f"serve-{uuid.uuid4().hex[:8]}"
         remote = req.remote_host
-        is_windows = req.platform == "windows"
+        is_windows = req.platform == "windows" or (not remote and _IS_WIN)
 
         if not is_windows and not await _binary_available("tmux", remote, req.ssh_port):
             return {
@@ -898,7 +941,10 @@ def setup_cookbook_routes() -> APIRouter:
 
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
             runner_path.write_text("\n".join(runner_lines) + "\n")
-            runner_path.chmod(0o755)
+            try:
+                runner_path.chmod(0o755)
+            except OSError:
+                pass  # chmod not meaningful on Windows
 
             if remote:
                 remote_runner = f".{session_id}_run.sh"
@@ -922,6 +968,33 @@ def setup_cookbook_routes() -> APIRouter:
                     f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
                     f"ssh {_pf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
                 )
+            elif _IS_WIN:
+                # ── Local Windows: PowerShell background job ──
+                ps_lines = []
+                ps_lines.append('$sessionDir = "$env:TEMP\\odysseus-sessions"')
+                ps_lines.append('New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null')
+                if req.hf_token:
+                    ps_lines.append(f"$env:HF_TOKEN = '{_ps_squote(req.hf_token)}'")
+                if req.gpus:
+                    ps_lines.append(f"$env:CUDA_VISIBLE_DEVICES = '{req.gpus}'")
+                if req.env_prefix:
+                    ps_lines.append(_safe_env_prefix(req.env_prefix))
+                if "vllm" in req.cmd:
+                    ps_lines.append('Write-Host "ERROR: vLLM is not supported on Windows. Use Ollama or llama.cpp instead."')
+                    ps_lines.append('exit 1')
+                ps_lines.append(req.cmd)
+                ps_lines.append('Write-Host ""')
+                ps_lines.append('Write-Host "=== Process exited with code $LASTEXITCODE ==="')
+                local_runner = TMUX_LOG_DIR / f"{session_id}_run.ps1"
+                local_runner.write_text("\r\n".join(ps_lines) + "\r\n")
+                sd = str(TMUX_LOG_DIR).replace('/', '\\\\')
+                launch_ps = (
+                    f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','{local_runner}' "
+                    f"-RedirectStandardOutput '{sd}\\{session_id}.log' "
+                    f"-RedirectStandardError '{sd}\\{session_id}.err.log' "
+                    f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File '{sd}\\{session_id}.pid' }}"
+                )
+                setup_cmd = f'powershell -Command "{launch_ps}"'
             else:
                 setup_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))}"
 
@@ -1618,7 +1691,7 @@ def setup_cookbook_routes() -> APIRouter:
                 logger.warning(f"Skipping task with unsafe sshPort: {_tport!r}")
                 continue
             if task_platform == "windows" and remote:
-                # Windows: check PID file + Get-Process, read log tail
+                # Remote Windows: check PID file + Get-Process, read log tail
                 sd = "$env:TEMP\\odysseus-sessions"
                 ssh_base = ["ssh"]
                 if _tport and _tport != "22":
@@ -1635,6 +1708,22 @@ def setup_cookbook_routes() -> APIRouter:
                     "powershell",
                     "-Command",
                     f"Get-Content \"{sd}\\{session_id}.log\" -Tail 10 -ErrorAction SilentlyContinue",
+                ]
+            elif not remote and _IS_WIN:
+                # Local Windows: check PID file + Get-Process, read log tail
+                import tempfile as _tf
+                from pathlib import Path
+                sd = str(Path(_tf.gettempdir()) / "odysseus-sessions").replace("/", "\\")
+                check_cmd = [
+                    "powershell", "-Command",
+                    f"$pid = Get-Content '{sd}\\{session_id}.pid' -ErrorAction SilentlyContinue; "
+                    "if ($pid) { Get-Process -Id $pid -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }"
+                ]
+                # Read last 50 lines from the log file
+                log_path = Path(sd) / f"{session_id}.log"
+                capture_cmd = [
+                    "powershell", "-Command",
+                    f"Get-Content '{log_path}' -Tail 50 -ErrorAction SilentlyContinue",
                 ]
             elif remote:
                 ssh_base = ["ssh"]

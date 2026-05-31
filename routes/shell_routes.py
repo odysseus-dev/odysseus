@@ -4,14 +4,18 @@ import asyncio
 import json
 import logging
 import os
-import pty
-import fcntl
 import shlex
 import shutil
 import uuid
 import tempfile
 from pathlib import Path
 from typing import Dict, Any
+
+# Unix-only modules — not available on Windows
+_IS_WINDOWS = os.name == "nt"
+if not _IS_WINDOWS:
+    import pty
+    import fcntl
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
@@ -96,7 +100,13 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
 
 
 async def _generate_pty(cmd: str, timeout: int, request: Request):
-    """Run command in a pseudo-TTY so tqdm/progress bars work natively."""
+    """Run command in a pseudo-TTY so tqdm/progress bars work natively.
+    Not available on Windows — returns an error event."""
+    if _IS_WINDOWS:
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': 'PTY mode is not available on Windows. Use standard shell exec instead.'})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
+        return
+
     loop = asyncio.get_event_loop()
     master_fd, slave_fd = pty.openpty()
 
@@ -110,7 +120,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
         stdout=slave_fd,
         stderr=slave_fd,
         cwd=str(Path.home()),
-        preexec_fn=os.setsid,
+        preexec_fn=os.setsid if not _IS_WINDOWS else None,
     )
     os.close(slave_fd)  # parent doesn't need the slave side
 
@@ -215,7 +225,8 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
 
 def _pty_read(fd: int) -> bytes | None:
     """Blocking read from PTY fd. Called via run_in_executor.
-    Returns bytes on data, None on timeout (no data yet)."""
+    Returns bytes on data, None on timeout (no data yet).
+    Unix-only — guarded by _IS_WINDOWS check in _generate_pty."""
     import select
     r, _, _ = select.select([fd], [], [], 1.0)
     if r:
@@ -230,7 +241,13 @@ def _pty_read(fd: int) -> bytes | None:
 async def _generate_tmux(cmd: str, request: Request):
     """Run command in a tmux session. Streams output via a log file.
     The tmux session survives browser disconnect — user can reconnect or
-    `tmux attach -t <name>` to see it live."""
+    `tmux attach -t <name>` to see it live.
+    Not available on Windows — returns an error event."""
+    if _IS_WINDOWS:
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': 'tmux mode is not available on Windows. Cookbook uses PowerShell background jobs instead.'})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
+        return
+
     TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
     session_id = f"cookbook-{uuid.uuid4().hex[:8]}"
     log_path = TMUX_LOG_DIR / f"{session_id}.log"

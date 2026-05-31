@@ -2796,17 +2796,20 @@ def _cookbook_apply_retry_suggestion(cmd: str, suggestion: Dict[str, Any]) -> st
 
 
 def _scan_running_model_processes() -> List[Dict[str, Any]]:
-    """Scan /proc for running model server processes. Linux-only; returns
-    [] on other platforms or if /proc isn't accessible. Each match returns
-    a dict shaped like a cookbook task so the caller can merge cleanly.
+    """Scan for running model server processes. Works on Linux (/proc) and
+    Windows (wmic). Returns [] on other platforms or if scanning isn't
+    possible. Each match returns a dict shaped like a cookbook task so the
+    caller can merge cleanly.
     """
-    import os
-    if not os.path.isdir("/proc"):
+    import os as _os
+    if _os.name == "nt":
+        return _scan_running_model_processes_windows()
+    if not _os.path.isdir("/proc"):
         return []
     out: List[Dict[str, Any]] = []
     seen_keys = set()
     try:
-        for pid_dir in os.listdir("/proc"):
+        for pid_dir in _os.listdir("/proc"):
             if not pid_dir.isdigit():
                 continue
             try:
@@ -2851,6 +2854,66 @@ def _scan_running_model_processes() -> List[Dict[str, Any]]:
                     break
     except Exception as e:
         logger.debug(f"_scan_running_model_processes failed: {e}")
+    return out
+
+
+def _scan_running_model_processes_windows() -> List[Dict[str, Any]]:
+    """Windows variant: use 'wmic process get' to scan for model servers."""
+    import subprocess
+    out: List[Dict[str, Any]] = []
+    seen_keys: set = set()
+    try:
+        # wmic is available on all Windows versions; returns CSV-like output
+        result = subprocess.run(
+            ["wmic", "process", "get", "ProcessId,CommandLine", "/FORMAT:CSV"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line or line.startswith("Node,"):
+                continue
+            # CSV format: Node,CommandLine,ProcessId
+            parts = line.split(",", 2)
+            if len(parts) < 3:
+                continue
+            cmdline = parts[1].strip()
+            try:
+                pid = int(parts[2].strip())
+            except (ValueError, IndexError):
+                continue
+            if not cmdline:
+                continue
+            lower = cmdline.lower()
+            for label, needles in _MODEL_PROCESS_PATTERNS:
+                if any(n.lower() in lower for n in needles):
+                    key = (label, cmdline.split()[0] if cmdline.split() else "")
+                    if key in seen_keys:
+                        break
+                    seen_keys.add(key)
+                    model = ""
+                    for tok in cmdline.split():
+                        sep = "\\" if "\\" in tok else "/"
+                        if sep in tok and any(s in tok.lower() for s in (
+                            "model", "checkpoint", ".safetensors", ".gguf", ".bin", "huggingface"
+                        )):
+                            model = tok
+                            break
+                    out.append({
+                        "session_id": f"pid-{pid}",
+                        "model": model or label,
+                        "phase": "running (external)",
+                        "type": "serve",
+                        "remote": "local",
+                        "pid": pid,
+                        "label": label,
+                        "cmdline_preview": cmdline[:140] + ("…" if len(cmdline) > 140 else ""),
+                        "external": True,
+                    })
+                    break
+    except Exception as e:
+        logger.debug(f"_scan_running_model_processes_windows failed: {e}")
     return out
 
 
@@ -3074,13 +3137,40 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
                 sport = t.get("sshPort") or ""
             break
 
+    # Determine if the task targets a Windows host
+    task_platform = (matched.get("platform") or "") if matched else ""
+    is_local_windows = (not remote and os.name == "nt")
+
     if remote:
         _pf = f"-p {shlex.quote(str(sport))} " if sport and str(sport) != "22" else ""
-        cmd = (
-            f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
-            f"{_pf}{shlex.quote(remote)} 'tmux kill-session -t {shlex.quote(session_id)}'"
-        )
+        if task_platform == "windows":
+            # Remote Windows: kill via PID file + Stop-Process
+            sd = "$env:TEMP\\\\odysseus-sessions"
+            cmd = (
+                f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
+                f"{_pf}{shlex.quote(remote)} "
+                f"\"powershell -Command \\\"$pid = Get-Content '{sd}\\{session_id}.pid' -ErrorAction SilentlyContinue; "
+                f"if ($pid) {{ Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue }}; "
+                f"Remove-Item '{sd}\\{session_id}.pid' -ErrorAction SilentlyContinue\\\"\""
+            )
+        else:
+            cmd = (
+                f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
+                f"{_pf}{shlex.quote(remote)} 'tmux kill-session -t {shlex.quote(session_id)}'"
+            )
         target_label = f"{session_id} on {remote}"
+    elif is_local_windows:
+        # Local Windows: kill via PID file + taskkill
+        import tempfile as _tf
+        sd = Path(_tf.gettempdir()) / "odysseus-sessions"
+        pid_file = sd / f"{session_id}.pid"
+        cmd = (
+            f"powershell -Command \""
+            f"$pid = Get-Content '{pid_file}' -ErrorAction SilentlyContinue; "
+            f"if ($pid) {{ Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue }}; "
+            f"Remove-Item '{pid_file}' -ErrorAction SilentlyContinue\""
+        )
+        target_label = session_id
     else:
         cmd = f"tmux kill-session -t {shlex.quote(session_id)}"
         target_label = session_id
