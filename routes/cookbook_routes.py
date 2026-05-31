@@ -489,44 +489,24 @@ def setup_cookbook_routes() -> APIRouter:
             )
         elif not remote and _IS_WIN:
             # ── Local Windows: PowerShell background job ──
-            ps_lines = []
-            ps_lines.append('$sessionDir = "$env:TEMP\\odysseus-sessions"')
-            ps_lines.append('New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null')
-            if req.hf_token:
-                ps_lines.append(f"$env:HF_TOKEN = '{_ps_squote(req.hf_token)}'")
-            if req.env_prefix:
-                ps_lines.append(_safe_env_prefix(req.env_prefix))
-            ps_lines.append('try {{')
-            ps_lines.append('  $hfPath = Get-Command hf -ErrorAction SilentlyContinue')
-            ps_lines.append('  if ($hfPath) {{')
-            ps_lines.append(f'    $null | {hf_cmd}')
-            ps_lines.append('  }} else {{')
-            ps_lines.append('    python -c "import huggingface_hub" 2>$null')
-            ps_lines.append('    if ($LASTEXITCODE -eq 0) {{')
-            ps_lines.append('      Write-Host "hf CLI not found, using Python huggingface_hub..."')
-            ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
-            ps_lines.append('    }} else {{')
-            ps_lines.append('      Write-Host "Installing huggingface-hub..."')
-            ps_lines.append('      python -m pip install -q huggingface-hub hf_transfer')
-            ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
-            ps_lines.append('    }}')
-            ps_lines.append('  }}')
-            ps_lines.append('  if ($LASTEXITCODE -eq 0) {{ Write-Host ""; Write-Host "DOWNLOAD_OK" }}')
-            ps_lines.append('  else {{ Write-Host ""; Write-Host "DOWNLOAD_FAILED (exit $LASTEXITCODE)" }}')
-            ps_lines.append('}} catch {{')
-            ps_lines.append('  Write-Host ""; Write-Host "DOWNLOAD_FAILED ($_)"')
-            ps_lines.append('}}')
-            runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
-            runner_path.write_text("\r\n".join(ps_lines) + "\r\n")
-            # Launch detached with log + pid files
             sd = str(TMUX_LOG_DIR).replace('/', '\\')
-            launch_ps = (
-                f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','{runner_path}' "
-                f"-RedirectStandardOutput '{sd}\\{session_id}.log' "
-                f"-RedirectStandardError '{sd}\\{session_id}.err.log' "
-                f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File '{sd}\\{session_id}.pid' }}"
+            launcher = Path("scripts/windows/launch_background.ps1").resolve()
+            downloader = Path("scripts/windows/cookbook_download.ps1").resolve()
+            ps_args = (
+                f"& \\\"{downloader}\\\" "
+                f"-HfToken \\\"{req.hf_token or ''}\\\" "
+                f"-EnvPrefix \\\"{_safe_env_prefix(req.env_prefix) if req.env_prefix else ''}\\\" "
+                f"-HfCmd \\\"{hf_cmd}\\\" "
+                f"-RepoId \\\"{req.repo_id}\\\" "
+                f"-DlPyArg \\\"{_dl_pyarg}\\\""
             )
-            setup_cmd = f'powershell -Command "{launch_ps}"'
+            setup_cmd = (
+                f"powershell -ExecutionPolicy Bypass -File \"{launcher}\" "
+                f"-RunnerPath \"{ps_args}\" "
+                f"-LogDir \"{sd}\" "
+                f"-SessionId \"{session_id}\""
+            )
+            
         else:
             # Local Linux/Termux: run hf download in a local tmux session
             if req.env_prefix:
