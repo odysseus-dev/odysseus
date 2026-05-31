@@ -2577,6 +2577,8 @@ _APP_API_BLOCKLIST_PREFIXES = (
     "/api/tokens/",        # api token mgmt
     "/api/admin/",         # admin one-shots (wipe etc.)
     "/api/backup/restore", # destructive restore
+    "/api/shell/",         # blocks RCE endpoints
+    "/api/tasks/",         # blocks shell-executing custom tasks
 )
 
 # (method, prefix) pairs to refuse specifically. Used for endpoints
