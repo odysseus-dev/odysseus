@@ -233,6 +233,43 @@ def test_q_empty_input():
     assert _q(None) == '""'
 
 
+# ── provider auth error normalization ──────────────────────────
+
+def _import_friendly_email_auth_error():
+    sys.modules.pop("routes.email_helpers", None)
+    from routes.email_helpers import _friendly_email_auth_error  # noqa: WPS433
+    return _friendly_email_auth_error
+
+
+def test_outlook_smtp_basic_auth_error_is_actionable():
+    normalize = _import_friendly_email_auth_error()
+    msg = normalize(
+        "SMTP",
+        "smtp.office365.com",
+        "(535, b'5.7.139 Authentication unsuccessful, basic authentication is disabled.')",
+    )
+
+    assert "Microsoft no longer accepts normal mailbox passwords" in msg
+    assert "OAuth/Graph" in msg
+    assert "535" not in msg
+
+
+def test_outlook_imap_authenticate_failed_is_actionable():
+    normalize = _import_friendly_email_auth_error()
+    msg = normalize("IMAP", "outlook.office365.com", "b'AUTHENTICATE failed.'")
+
+    assert "Microsoft no longer accepts normal mailbox passwords" in msg
+    assert "Outlook/Office 365" in msg
+
+
+def test_generic_auth_error_still_passes_through_truncated():
+    normalize = _import_friendly_email_auth_error()
+    msg = normalize("IMAP", "imap.example.com", "bad credentials " + ("x" * 300))
+
+    assert msg.startswith("bad credentials")
+    assert len(msg) == 200
+
+
 # ── compose-upload path traversal block ─────────────────────────
 
 @pytest.mark.parametrize(
