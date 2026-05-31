@@ -108,6 +108,8 @@ auth_manager = AuthManager()
 app.state.auth_manager = auth_manager
 AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
 LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
+if LOCALHOST_BYPASS:
+    logger.warning("LOCALHOST_BYPASS is enabled, loopback requests bypass authentication. Do not expose this instance to a network.")
 
 if AUTH_ENABLED:
     AUTH_EXEMPT_EXACT = {
