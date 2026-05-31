@@ -943,10 +943,11 @@ def setup_cookbook_routes() -> APIRouter:
 
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
             runner_path.write_text("\n".join(runner_lines) + "\n")
-            try:
-                runner_path.chmod(0o755)
-            except OSError:
-                pass  # chmod not meaningful on Windows
+            match sys.platform:
+                case "win32":
+                    pass
+                case _:
+                    runner_path.chmod(0o755)
 
             if remote:
                 remote_runner = f".{session_id}_run.sh"
