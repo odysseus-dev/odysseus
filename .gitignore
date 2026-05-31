@@ -66,6 +66,7 @@ output.txt.txt
 !docs/*.png
 !docs/*.gif
 !docs/*.webp
+!mac/logo.png
 
 # Reports and temp files
 reports/
