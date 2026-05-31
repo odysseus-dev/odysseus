@@ -99,6 +99,7 @@ private struct StoppedView: View {
                 .buttonStyle(.borderedProminent)
 
                 HStack(spacing: 16) {
+                    Button("Preferences") { state.showingPreferences = true }
                     Button("View Logs") { ComposeManager.openLogs() }
                     Button("Show Support Folder") { ComposeManager.openSupportDir() }
                 }

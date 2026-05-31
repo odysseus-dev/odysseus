@@ -5,7 +5,6 @@ struct MenuBarContent: View {
     @EnvironmentObject var state: AppState
     @ObservedObject var controller: LifecycleController
     @ObservedObject var settings: SettingsStore
-    let showPreferences: () -> Void
 
     var body: some View {
         Text("Odysseus — \(state.phaseSummary)")
@@ -29,7 +28,7 @@ struct MenuBarContent: View {
         Button("Stop")    { Task { await controller.stop(state: state) } }
             .disabled(!isRunning)
         Divider()
-        Button("Preferences…")          { showPreferences() }
+        Button("Preferences…")          { state.showingPreferences = true }
         Button("View Logs…")           { ComposeManager.openLogs() }
         Button("Show Support Folder")  { ComposeManager.openSupportDir() }
         if settings.settings.sourceMode == .latest {

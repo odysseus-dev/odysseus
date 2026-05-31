@@ -6,7 +6,6 @@ struct OdysseusApp: App {
     @StateObject private var state = AppState()
     @StateObject private var controller = LifecycleController()
     @StateObject private var settings = SettingsStore()
-    @State private var showingPreferences = false
 
     var body: some Scene {
         WindowGroup("Odysseus") {
@@ -23,7 +22,8 @@ struct OdysseusApp: App {
             .environmentObject(state)
             .environmentObject(controller)
             .environmentObject(settings)
-            .sheet(isPresented: $showingPreferences) {
+            .sheet(isPresented: Binding(get: { state.showingPreferences },
+                                        set: { state.showingPreferences = $0 })) {
                 PreferencesView()
                     .environmentObject(state)
                     .environmentObject(controller)
@@ -33,7 +33,7 @@ struct OdysseusApp: App {
         .windowStyle(.titleBar)
         .commands {
             CommandGroup(after: .appInfo) {
-                Button("Preferences…") { showingPreferences = true }
+                Button("Preferences…") { state.showingPreferences = true }
                     .keyboardShortcut(",")
                 Button("Reload Web View") { state.set(.running, "Reloading…") }
                     .keyboardShortcut("r")
@@ -41,7 +41,7 @@ struct OdysseusApp: App {
         }
 
         MenuBarExtra {
-            MenuBarContent(controller: controller, settings: settings, showPreferences: { showingPreferences = true })
+            MenuBarContent(controller: controller, settings: settings)
                 .environmentObject(state)
         } label: {
             let icon: Image = {

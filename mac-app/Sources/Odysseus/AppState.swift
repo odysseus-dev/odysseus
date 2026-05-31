@@ -24,6 +24,12 @@ final class AppState: ObservableObject {
     /// Drives a small badge on the menu-bar icon + an "Apply update" action.
     @Published var updateAvailable: Bool = false
 
+    /// Toggle this from any view (StoppedView, menu bar, …) to surface
+    /// the Preferences sheet. OdysseusApp binds it to the WindowGroup's
+    /// `.sheet`. Lives on AppState (rather than each view's own @State)
+    /// so all triggers share one source of truth.
+    @Published var showingPreferences: Bool = false
+
     /// Non-empty when the UI should show the port-conflict sheet.
     @Published private(set) var pendingConflicts: [PortManager.Conflict] = []
     private var conflictContinuation: CheckedContinuation<[String: Int], Never>?
