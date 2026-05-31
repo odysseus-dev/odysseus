@@ -694,6 +694,58 @@ function initEndpointForm() {
     btn.disabled = false; btn.textContent = 'Add';
   });
 
+  // GitHub Copilot OAuth device flow
+  provider.addEventListener('change', () => {
+    const isCopilot = provider.value === 'https://api.githubcopilot.com';
+    const apiKeyRow = el('adm-epApiKey') ? el('adm-epApiKey').closest('.admin-model-form-row') : null;
+    const copilotRow = el('adm-copilot-oauth-row');
+    if (apiKeyRow) apiKeyRow.style.display = isCopilot ? 'none' : '';
+    if (copilotRow) copilotRow.style.display = isCopilot ? '' : 'none';
+  });
+
+  const copilotConnectBtn = el('adm-copilot-connect');
+  if (copilotConnectBtn) {
+    copilotConnectBtn.addEventListener('click', async () => {
+      const msg = el('adm-epMsg');
+      msg.textContent = ''; msg.className = '';
+      copilotConnectBtn.disabled = true; copilotConnectBtn.textContent = 'Starting…';
+      try {
+        const res = await fetch('/api/copilot/auth/start', { method: 'POST', credentials: 'same-origin' });
+        if (!res.ok) { msg.textContent = 'Failed to start GitHub auth'; msg.className = 'admin-error'; copilotConnectBtn.disabled = false; copilotConnectBtn.textContent = 'Connect GitHub Account'; return; }
+        const d = await res.json();
+        const { device_code, user_code, verification_uri, interval = 5 } = d;
+
+        // Show the code and open the verification page
+        msg.innerHTML = `Enter code <strong style="font-size:1.2em;letter-spacing:2px;">${user_code}</strong> at <a href="${verification_uri}" target="_blank" style="text-decoration:underline">${verification_uri}</a> — waiting for authorization…`;
+        msg.className = 'admin-success';
+        window.open(verification_uri, '_blank');
+        copilotConnectBtn.textContent = 'Waiting…';
+
+        // Poll until authorized or error
+        const poll = async () => {
+          const fd = new FormData(); fd.append('device_code', device_code);
+          const pr = await fetch('/api/copilot/auth/poll', { method: 'POST', body: fd, credentials: 'same-origin' });
+          const pd = await pr.json();
+          if (pd.status === 'complete') {
+            msg.textContent = 'GitHub Copilot connected!';
+            msg.className = 'admin-success';
+            copilotConnectBtn.disabled = false; copilotConnectBtn.textContent = 'Connect GitHub Account';
+            loadEndpoints();
+          } else if (pd.status === 'pending') {
+            setTimeout(poll, (pd.slow_down ? interval + 5 : interval) * 1000);
+          } else {
+            msg.textContent = pd.message || 'Authorization failed'; msg.className = 'admin-error';
+            copilotConnectBtn.disabled = false; copilotConnectBtn.textContent = 'Connect GitHub Account';
+          }
+        };
+        setTimeout(poll, interval * 1000);
+      } catch (e) {
+        msg.textContent = 'Request failed'; msg.className = 'admin-error';
+        copilotConnectBtn.disabled = false; copilotConnectBtn.textContent = 'Connect GitHub Account';
+      }
+    });
+  }
+
   // Local "Add" button — sibling form for self-hosted base URLs.
   const localAddBtn = el('adm-epLocalAddBtn');
   if (localAddBtn) {

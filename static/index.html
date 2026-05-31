@@ -2021,6 +2021,7 @@
                   <option value="https://generativelanguage.googleapis.com/v1beta/openai" data-logo="gemini">Google Gemini</option>
                   <option value="https://api.x.ai/v1" data-logo="grok">xAI Grok</option>
                   <option value="https://api.z.ai/api/paas/v4" data-logo="zhipu">Z.AI (Zhipu)</option>
+                  <option value="https://api.githubcopilot.com" data-logo="githubcopilot">GitHub Copilot</option>
                 </select>
                 <div class="admin-model-form-row">
                   <input id="adm-epUrl" type="text" placeholder="Base URL (e.g. https://api.example.com/v1)" style="flex:1">
@@ -2032,6 +2033,9 @@
                     <option value="image">Image</option>
                   </select>
                   <button class="admin-btn-add" id="adm-epAddBtn" style="width:55px;text-align:center;">Add</button>
+                </div>
+                <div class="admin-model-form-row" id="adm-copilot-oauth-row" style="display:none;">
+                  <button type="button" class="admin-btn-add" id="adm-copilot-connect" style="width:100%;text-align:center;">Connect GitHub Account</button>
                 </div>
               </div>
             </div>

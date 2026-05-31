@@ -247,9 +247,40 @@ def _classify_endpoint(base_url: str) -> str:
 
 def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
-    For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
+    For Anthropic, queries their /v1/models API, falling back to hardcoded list.
+    For GitHub Copilot, returns a static model list (no /models endpoint)."""
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
+
+    # GitHub Copilot — fetch live model list using stored OAuth token
+    if "githubcopilot.com" in base.lower():
+        try:
+            from src.endpoint_resolver import _get_copilot_token
+            copilot_token = _get_copilot_token(api_key) if api_key else None
+            if copilot_token:
+                r = httpx.get(
+                    base + "/models",
+                    headers={
+                        "Authorization": f"Bearer {copilot_token}",
+                        "Editor-Version": "vscode/1.85.0",
+                        "Editor-Plugin-Version": "copilot-chat/0.12.0",
+                    },
+                    timeout=timeout,
+                )
+                r.raise_for_status()
+                data = r.json()
+                models = [
+                    m.get("id") for m in (data.get("data") or [])
+                    if m.get("id") and m.get("capabilities", {}).get("type") == "chat"
+                ]
+                if not models:
+                    models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+                if models:
+                    return models
+        except Exception as exc:
+            logger.warning("Could not fetch Copilot models: %s", exc)
+        return []
+
     if _detect_provider(base) == "anthropic":
         # Try Anthropic's /v1/models endpoint first
         url = _anthropic_api_root(base) + "/v1/models"
@@ -1222,5 +1253,134 @@ def setup_model_routes(model_discovery):
         settings["disabled_tools"] = body.disabled
         _save_settings(settings)
         return {"ok": True, "disabled": body.disabled}
+
+    # ── GitHub Copilot OAuth device flow ──────────────────────────────────────
+    # GitHub's Copilot API does not accept PATs; it requires an OAuth token
+    # obtained via the device flow (same as VS Code / opencode).
+    # Client ID: the public GitHub Copilot VS Code extension OAuth app.
+    _GH_COPILOT_CLIENT_ID = "Iv1.b507a08c87ecfe98"
+
+    @router.post("/copilot/auth/start")
+    def copilot_auth_start(request: Request):
+        """Initiate GitHub OAuth device flow for Copilot access.
+
+        Returns {device_code, user_code, verification_uri, interval, expires_in}.
+        The caller should open verification_uri in the browser, enter user_code,
+        then poll /copilot/auth/poll with the device_code.
+        """
+        require_admin(request)
+        resp = httpx.post(
+            "https://github.com/login/device/code",
+            headers={"Accept": "application/json"},
+            json={
+                "client_id": _GH_COPILOT_CLIENT_ID,
+                "scope": "read:user",
+            },
+            timeout=15,
+        )
+        if not resp.is_success:
+            raise HTTPException(502, f"GitHub returned HTTP {resp.status_code}")
+        return resp.json()
+
+    @router.post("/copilot/auth/poll")
+    def copilot_auth_poll(request: Request, device_code: str = Form(...)):
+        """Poll GitHub for the OAuth access token after the user has authorized.
+
+        Returns {status: "pending"|"complete"|"error", token?, endpoint_id?}
+        On "complete", also creates/updates the GitHub Copilot model endpoint.
+        """
+        require_admin(request)
+        resp = httpx.post(
+            "https://github.com/login/oauth/access_token",
+            headers={"Accept": "application/json"},
+            json={
+                "client_id": _GH_COPILOT_CLIENT_ID,
+                "device_code": device_code,
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            },
+            timeout=15,
+        )
+        if not resp.is_success:
+            raise HTTPException(502, f"GitHub returned HTTP {resp.status_code}")
+        data = resp.json()
+        error = data.get("error", "")
+        if error == "authorization_pending":
+            return {"status": "pending"}
+        if error == "slow_down":
+            return {"status": "pending", "slow_down": True}
+        if error:
+            return {"status": "error", "message": data.get("error_description", error)}
+
+        oauth_token = data.get("access_token")
+        if not oauth_token:
+            return {"status": "error", "message": "No access token in response"}
+
+        # Exchange OAuth token for a short-lived Copilot API token
+        try:
+            from src.endpoint_resolver import _get_copilot_token
+            copilot_token = _get_copilot_token(oauth_token)
+        except Exception as exc:
+            return {"status": "error", "message": str(exc)}
+
+        # Fetch the real model list from the Copilot API
+        copilot_base = "https://api.githubcopilot.com"
+        try:
+            models_resp = httpx.get(
+                f"{copilot_base}/models",
+                headers={
+                    "Authorization": f"Bearer {copilot_token}",
+                    "Editor-Version": "vscode/1.85.0",
+                    "Editor-Plugin-Version": "copilot-chat/0.12.0",
+                },
+                timeout=10,
+            )
+            models_data = models_resp.json()
+            copilot_models = [
+                m.get("id") for m in (models_data.get("data") or [])
+                if m.get("id") and m.get("capabilities", {}).get("type") == "chat"
+            ]
+            if not copilot_models:
+                # Fallback: take any model with an id
+                copilot_models = [m.get("id") for m in (models_data.get("data") or []) if m.get("id")]
+        except Exception as exc:
+            logger.warning("Could not fetch Copilot model list: %s", exc)
+            copilot_models = []
+
+        # Create or update the Copilot endpoint in the DB
+        db = SessionLocal()
+        try:
+            existing = db.query(ModelEndpoint).filter(
+                ModelEndpoint.base_url == copilot_base
+            ).first()
+            if existing:
+                existing.api_key = oauth_token
+                existing.is_enabled = True
+                existing.cached_models = json.dumps(copilot_models)
+                db.commit()
+                ep_id = existing.id
+            else:
+                ep_id = str(uuid.uuid4())[:8]
+                ep = ModelEndpoint(
+                    id=ep_id,
+                    name="GitHub Copilot",
+                    base_url=copilot_base,
+                    api_key=oauth_token,
+                    is_enabled=True,
+                    model_type="llm",
+                    cached_models=json.dumps(copilot_models),
+                )
+                db.add(ep)
+                db.commit()
+                # Set as default if none configured
+                settings = _load_settings()
+                if not settings.get("default_endpoint_id"):
+                    settings["default_endpoint_id"] = ep_id
+                    settings["default_model"] = copilot_models[0] if copilot_models else ""
+                    _save_settings(settings)
+            _invalidate_models_cache()
+        finally:
+            db.close()
+
+        return {"status": "complete", "endpoint_id": ep_id}
 
     return router

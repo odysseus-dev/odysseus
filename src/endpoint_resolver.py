@@ -4,10 +4,12 @@
 Consolidates the 4+ copies of normalize_base / resolve_endpoint logic into one place.
 """
 
+import hashlib
 import json
 import logging
 import socket
 import subprocess
+import time
 from typing import Optional, Tuple, Dict
 from urllib.parse import urlparse, urlunparse
 
@@ -15,6 +17,54 @@ from src.database import SessionLocal, ModelEndpoint
 from src.llm_core import _detect_provider
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# GitHub Copilot token exchange
+# ---------------------------------------------------------------------------
+# GitHub Copilot uses short-lived API tokens (~30 min) obtained by exchanging
+# a GitHub PAT / OAuth token.  We cache the result so the exchange only
+# happens when the cached token is about to expire.
+
+_copilot_token_cache: Dict[str, Dict] = {}  # key_hash -> {token, expires_at}
+
+
+def _get_copilot_token(github_token: str) -> str:
+    """Exchange a GitHub PAT for a short-lived Copilot API token (cached).
+
+    The returned token should be used as a Bearer token against
+    https://api.githubcopilot.com.  Tokens last ~30 minutes; we refresh
+    when fewer than 90 seconds remain.
+    """
+    import httpx as _httpx
+
+    key_hash = hashlib.sha256(github_token.encode()).hexdigest()[:24]
+    cached = _copilot_token_cache.get(key_hash)
+    if cached and cached["expires_at"] > time.time() + 90:
+        return cached["token"]
+
+    try:
+        resp = _httpx.get(
+            "https://api.github.com/copilot_internal/v2/token",
+            headers={
+                "Authorization": f"token {github_token}",
+                "Accept": "application/json",
+                "User-Agent": "Odysseus/1.0",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        token = data["token"]
+        # expires_at is an epoch integer from GitHub
+        expires_at = float(data.get("expires_at", time.time() + 1500))
+        _copilot_token_cache[key_hash] = {"token": token, "expires_at": expires_at}
+        return token
+    except Exception as exc:
+        logger.warning("GitHub Copilot token exchange failed: %s", exc)
+        raise RuntimeError(
+            f"Could not obtain GitHub Copilot API token: {exc}. "
+            "Make sure your GitHub PAT has the 'copilot' scope."
+        ) from exc
 
 # Model-name substrings that are NOT chat/generation models. When an endpoint
 # has no explicit model configured we pick the first CHAT model from its list —
@@ -132,6 +182,20 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
         return {
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
+        }
+    if "githubcopilot.com" in (base or "").lower():
+        # api_key is the GitHub PAT; exchange it for a short-lived Copilot token
+        try:
+            copilot_token = _get_copilot_token(api_key)
+        except Exception:
+            # Fall back to using the PAT directly so the error surfaces at
+            # call time rather than silently here
+            copilot_token = api_key
+        return {
+            "Authorization": f"Bearer {copilot_token}",
+            "Editor-Version": "vscode/1.85.0",
+            "Editor-Plugin-Version": "copilot-chat/0.12.0",
+            "Openai-Intent": "conversation-panel",
         }
     return {"Authorization": f"Bearer {api_key}"}
 

@@ -303,11 +303,18 @@ def fire_message_event(request, webhook_manager, session_id: str, sess, message:
 
 
 def resolve_session_auth(sess, session_id: str):
-    """Ensure session has auth headers — resolve from endpoint DB if missing."""
+    """Ensure session has auth headers — resolve from endpoint DB if missing.
+
+    Also refreshes GitHub Copilot short-lived tokens when the cached token is
+    about to expire (the token cache in endpoint_resolver handles the actual
+    exchange; we just call build_headers again to pick up a fresh one).
+    """
+    is_copilot = "githubcopilot.com" in (sess.endpoint_url or "").lower()
+
     has_auth = sess.headers and isinstance(sess.headers, dict) and any(
         k.lower() in ('authorization', 'x-api-key') for k in sess.headers
     )
-    if has_auth:
+    if has_auth and not is_copilot:
         return
 
     try:

@@ -153,6 +153,7 @@ def _provider_label(url: str) -> str:
     if "anthropic.com" in u: return "Anthropic"
     if "api.x.ai" in u or "x.ai/" in u: return "xAI"
     if "openai.com" in u: return "OpenAI"
+    if "githubcopilot.com" in u: return "GitHub Copilot"
     if "openrouter.ai" in u: return "OpenRouter"
     if "groq.com" in u: return "Groq"
     if "mistral.ai" in u: return "Mistral"
