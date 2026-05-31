@@ -156,6 +156,7 @@ For a LAN-only Tailscale deployment, Caddy + [tailscale-cert](https://caddyserve
 ## Contributing
 Help is welcome. The best entry points are fresh-install testing, provider setup
 bugs, mobile/editor polish, docs, and small focused refactors. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests, and PR conventions, and
 [ROADMAP.md](ROADMAP.md) for the current help-wanted list.
 
 ## Configuration
