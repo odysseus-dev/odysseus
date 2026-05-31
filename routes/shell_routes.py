@@ -4,8 +4,6 @@ import asyncio
 import json
 import logging
 import os
-import pty
-import fcntl
 import shlex
 import shutil
 import uuid
@@ -37,6 +35,18 @@ def _require_admin(request: Request):
         raise HTTPException(403, "Admin only")
 
 logger = logging.getLogger(__name__)
+
+try:
+    import fcntl
+    import pty
+except ImportError as exc:
+    fcntl = None
+    pty = None
+    _PTY_IMPORT_ERROR = exc
+else:
+    _PTY_IMPORT_ERROR = None
+
+PTY_SUPPORTED = pty is not None and fcntl is not None and hasattr(os, "setsid")
 
 
 def _find_line_break(buf):
@@ -97,6 +107,14 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
 
 async def _generate_pty(cmd: str, timeout: int, request: Request):
     """Run command in a pseudo-TTY so tqdm/progress bars work natively."""
+    if not PTY_SUPPORTED:
+        msg = "PTY streaming is not supported on this platform"
+        if _PTY_IMPORT_ERROR:
+            msg += f": {_PTY_IMPORT_ERROR}"
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': msg})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
+        return
+
     loop = asyncio.get_event_loop()
     master_fd, slave_fd = pty.openpty()
 
