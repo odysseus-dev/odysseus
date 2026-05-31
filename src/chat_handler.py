@@ -223,19 +223,22 @@ class ChatHandler:
                         if os.path.exists(_vcache):
                             try:
                                 with open(_vcache) as _vf:
-                                    vl_desc = _vf.read()
+                                    cached_desc = _vf.read().strip()
+                                if cached_desc and not cached_desc.startswith("["):
+                                    vl_desc = cached_desc
                             except Exception:
                                 vl_desc = None
                         if not vl_desc:
                             vl_result = analyze_image_with_vl_result(file_info["path"])
                             vl_desc = vl_result.get("text", "")
                             vl_model = vl_result.get("model", "")
-                            try:
-                                os.makedirs(os.path.join(UPLOAD_DIR, ".vision"), exist_ok=True)
-                                with open(_vcache, "w") as _vf:
-                                    _vf.write(vl_desc or "")
-                            except Exception:
-                                pass
+                            if vl_desc and not vl_desc.startswith("["):
+                                try:
+                                    os.makedirs(os.path.join(UPLOAD_DIR, ".vision"), exist_ok=True)
+                                    with open(_vcache, "w") as _vf:
+                                        _vf.write(vl_desc)
+                                except Exception:
+                                    pass
                         enhanced_message = f"{enhanced_message}\n\n[Image: {file_info['name']}]\n{vl_desc}"
                         # Surface the description to the client live so it renders as a
                         # collapsible "image description" on the user bubble (not just
