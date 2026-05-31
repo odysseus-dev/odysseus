@@ -347,17 +347,16 @@ def setup_cookbook_routes() -> APIRouter:
             lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
         # Ensure pip-user scripts (e.g. hf CLI installed via --user) are on PATH
         lines.append('export PATH="$HOME/.local/bin:$PATH"')
-        # Best-effort install hf CLI (always). hf_transfer (Rust parallel downloader)
-        # is fast but flaky on large files — it tends to crash near the end at high
-        # throughput. Retries set disable_hf_transfer to fall back to the plain,
-        # slower-but-reliable downloader (resumes cleanly from the .incomplete files).
+        # The high-perf downloader is fast but can crash near the end on very
+        # large files. Retries set disable_hf_transfer to fall back to plain
+        # HTTP, which resumes cleanly from the .incomplete files.
         lines.append("command -v hf >/dev/null 2>&1 || pip install --user --break-system-packages -q -U huggingface_hub 2>/dev/null || pip install -q -U huggingface_hub 2>/dev/null")
         if req.disable_hf_transfer:
-            lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
+            lines.append("export HF_XET_HIGH_PERFORMANCE=0 HF_HUB_ENABLE_HF_TRANSFER=0")
             lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
         else:
-            lines.append("python3 -c 'import hf_transfer' 2>/dev/null || pip install --user --break-system-packages -q hf_transfer 2>/dev/null || pip install -q hf_transfer 2>/dev/null")
-            lines.append("python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
+            lines.append("python3 -c 'import hf_xet' 2>/dev/null || pip install --user --break-system-packages -q hf_xet 2>/dev/null || pip install -q hf_xet 2>/dev/null")
+            lines.append("if python3 -c 'import hf_xet' 2>/dev/null; then export HF_XET_HIGH_PERFORMANCE=1; elif python3 -c 'import hf_transfer' 2>/dev/null; then export HF_HUB_ENABLE_HF_TRANSFER=1; fi")
             lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
 
         remote = req.remote_host  # None for local
@@ -391,13 +390,13 @@ def setup_cookbook_routes() -> APIRouter:
             ps_lines.append('    python -c "import huggingface_hub" 2>$null')
             ps_lines.append('    if ($LASTEXITCODE -eq 0) {{')
             ps_lines.append('      Write-Host "hf CLI not found, using Python huggingface_hub..."')
-            ps_lines.append('      python -m pip install -q hf_transfer 2>$null')
-            ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
+            ps_lines.append('      python -m pip install -q hf_xet 2>$null')
+            ps_lines.append('      $env:HF_XET_HIGH_PERFORMANCE = "1"')
             ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
             ps_lines.append('    }} else {{')
             ps_lines.append('      Write-Host "Installing huggingface-hub..."')
-            ps_lines.append('      python -m pip install -q huggingface-hub hf_transfer')
-            ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
+            ps_lines.append('      python -m pip install -q huggingface-hub hf_xet')
+            ps_lines.append('      $env:HF_XET_HIGH_PERFORMANCE = "1"')
             ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
             ps_lines.append('    }}')
             ps_lines.append('  }}')
@@ -447,11 +446,11 @@ def setup_cookbook_routes() -> APIRouter:
                 )
             # Ensure pip-user scripts (e.g. hf CLI installed via --user) are on PATH
             runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
-            # Install hf CLI + hf_transfer best-effort so future runs get the fast path.
+            # Install hf CLI + hf_xet best-effort so future runs get the fast path.
             # Use --break-system-packages on PEP-668 systems (Arch, newer Debian) so it doesn't bail.
             runner_lines.append("command -v hf >/dev/null 2>&1 || pip install --user --break-system-packages -q -U huggingface_hub 2>/dev/null || pip install -q -U huggingface_hub 2>/dev/null")
-            runner_lines.append("python3 -c 'import hf_transfer' 2>/dev/null || pip install --user --break-system-packages -q hf_transfer 2>/dev/null || pip install -q hf_transfer 2>/dev/null")
-            runner_lines.append("python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
+            runner_lines.append("python3 -c 'import hf_xet' 2>/dev/null || pip install --user --break-system-packages -q hf_xet 2>/dev/null || pip install -q hf_xet 2>/dev/null")
+            runner_lines.append("if python3 -c 'import hf_xet' 2>/dev/null; then export HF_XET_HIGH_PERFORMANCE=1; elif python3 -c 'import hf_transfer' 2>/dev/null; then export HF_HUB_ENABLE_HF_TRANSFER=1; fi")
             runner_lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
             # Surface whether the HF token actually reached THIS server, so a gated
             # download's "not authorized" failure can be told apart from a missing
@@ -467,8 +466,8 @@ def setup_cookbook_routes() -> APIRouter:
             runner_lines.append('else')
             runner_lines.append('  echo "Installing huggingface-hub and dependencies..."')
             runner_lines.append('  pip install --no-deps -q huggingface-hub 2>/dev/null')
-            runner_lines.append('  pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests hf_transfer 2>/dev/null')
-            runner_lines.append("  python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
+            runner_lines.append('  pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests hf_xet 2>/dev/null')
+            runner_lines.append("  if python3 -c 'import hf_xet' 2>/dev/null; then export HF_XET_HIGH_PERFORMANCE=1; elif python3 -c 'import hf_transfer' 2>/dev/null; then export HF_HUB_ENABLE_HF_TRANSFER=1; fi")
             runner_lines.append(f'  python3 -c "import os; from huggingface_hub import snapshot_download; snapshot_download(\'{req.repo_id}\'{_dl_pyarg}, max_workers=8)"')
             runner_lines.append('fi')
             runner_lines.append('if [ $? -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $?)"; fi')
@@ -1021,7 +1020,7 @@ def setup_cookbook_routes() -> APIRouter:
             cmd = f"ssh {pf}{host} '{setup_script}'"
         else:
             # Linux: auto-install tmux (via whichever package manager is available)
-            # and huggingface_hub + hf_transfer (falling back to --user/--break-system-packages
+            # and huggingface_hub + hf_xet (falling back to --user/--break-system-packages
             # on PEP-668 locked distros like Arch / newer Debian).
             setup_script = (
                 # Install tmux if missing — try common package managers; skip if no sudo
@@ -1035,9 +1034,9 @@ def setup_cookbook_routes() -> APIRouter:
                 "fi; "
                 "command -v tmux >/dev/null 2>&1 || echo 'WARNING: tmux missing and auto-install failed (need passwordless sudo). Install manually.'; "
                 # Install Python bits. Try system install first; fall back to --user --break-system-packages on PEP 668 systems.
-                "pip install -q huggingface_hub hf_transfer 2>/dev/null || "
-                "pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null || "
-                "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null; "
+                "pip install -q huggingface_hub hf_xet 2>/dev/null || "
+                "pip install --user --break-system-packages -q huggingface_hub hf_xet 2>/dev/null || "
+                "pip3 install --user --break-system-packages -q huggingface_hub hf_xet 2>/dev/null; "
                 "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
             )
             cmd = f"ssh {pf}{host} '{setup_script}'"

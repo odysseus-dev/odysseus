@@ -201,7 +201,7 @@ class ModelDownloadRequest(BaseModel):
     ssh_port: str | None = None    # e.g. "8022" for Termux
     platform: str | None = None    # "linux", "termux", or "windows"
     local_dir: str | None = None   # base dir to download into (a per-model subfolder is created under it); None = default HF cache
-    disable_hf_transfer: bool = False  # skip the Rust hf_transfer downloader — slower but far more reliable on large files (used by retries)
+    disable_hf_transfer: bool = False  # skip the high-perf Xet downloader (and the legacy hf_transfer fallback) — slower but far more reliable on large files (used by retries)
 
 
 class ServeRequest(BaseModel):
@@ -230,7 +230,7 @@ def _parse_serve_phase(snapshot: str, task_type: str = "serve") -> dict:
 
     load_matches = re.findall(r'Loading safetensors.*?(\d+)%', flat)
     # Prefer "Downloading (incomplete total...)" (real aggregate bytes) over
-    # "Fetching N files" (whole-file count, lags with hf_transfer's chunked pulls).
+    # "Fetching N files" (whole-file count, lags with the chunked Xet/hf_transfer pulls).
     downloading_matches = re.findall(r'Downloading.*?(\d+)%', flat)
     fetching_matches = re.findall(r'Fetching.*?(\d+)%', flat)
     dl_matches = downloading_matches if downloading_matches else fetching_matches
