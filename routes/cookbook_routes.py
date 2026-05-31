@@ -13,6 +13,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Depends
 from src.config import IS_WINDOWS
+from core.constants import BASE_DIR
 from src.auth_helpers import require_user
 from pydantic import BaseModel
 
@@ -937,7 +938,6 @@ def setup_cookbook_routes() -> APIRouter:
                 _Pf = f"-P {_port} " if _port and _port != "22" else ""
                 _pf = f"-p {_port} " if _port and _port != "22" else ""
                 if "scripts/diffusion_server.py" in req.cmd:
-                    from core.constants import BASE_DIR
                     diff_script = Path(BASE_DIR) / "scripts" / "diffusion_server.py"
                     if diff_script.exists():
                         scp_extras = f"scp -O {_Pf}-q '{diff_script}' {remote}:.diffusion_server.py && "
@@ -951,33 +951,30 @@ def setup_cookbook_routes() -> APIRouter:
                     f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
                     f"ssh {_pf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
                 )
-            elif _IS_WIN:
+            elif IS_WINDOWS:
                 # ── Local Windows: PowerShell background job ──
-                ps_lines = []
-                ps_lines.append('$sessionDir = "$env:TEMP\\odysseus-sessions"')
-                ps_lines.append('New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null')
-                if req.hf_token:
-                    ps_lines.append(f"$env:HF_TOKEN = '{_ps_squote(req.hf_token)}'")
-                if req.gpus:
-                    ps_lines.append(f"$env:CUDA_VISIBLE_DEVICES = '{req.gpus}'")
-                if req.env_prefix:
-                    ps_lines.append(_safe_env_prefix(req.env_prefix))
-                if "vllm" in req.cmd:
-                    ps_lines.append('Write-Host "ERROR: vLLM is not supported on Windows. Use Ollama or llama.cpp instead."')
-                    ps_lines.append('exit 1')
-                ps_lines.append(req.cmd)
-                ps_lines.append('Write-Host ""')
-                ps_lines.append('Write-Host "=== Process exited with code $LASTEXITCODE ==="')
-                local_runner = TMUX_LOG_DIR / f"{session_id}_run.ps1"
-                local_runner.write_text("\r\n".join(ps_lines) + "\r\n")
-                sd = str(TMUX_LOG_DIR).replace('/', '\\\\')
-                launch_ps = (
-                    f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','{local_runner}' "
-                    f"-RedirectStandardOutput '{sd}\\{session_id}.log' "
-                    f"-RedirectStandardError '{sd}\\{session_id}.err.log' "
-                    f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File '{sd}\\{session_id}.pid' }}"
+                # Write the bare command to a temporary script to avoid complex quote escaping
+                local_cmd_script = TMUX_LOG_DIR / f"{session_id}_cmd.ps1"
+                local_cmd_script.write_text(req.cmd + "\r\n")
+                
+                sd = str(TMUX_LOG_DIR).replace('/', '\\')
+                launcher = Path("scripts/windows/launch_background.ps1").resolve()
+                server = Path("scripts/windows/cookbook_serve.ps1").resolve()
+                
+                ps_args = (
+                    f"& \\\"{server}\\\" "
+                    f"-CmdScriptPath \\\"{local_cmd_script}\\\" "
+                    f"-HfToken \\\"{req.hf_token or ''}\\\" "
+                    f"-EnvPrefix \\\"{_safe_env_prefix(req.env_prefix) if req.env_prefix else ''}\\\" "
+                    f"-Gpus \\\"{req.gpus or ''}\\\""
                 )
-                setup_cmd = f'powershell -Command "{launch_ps}"'
+                
+                setup_cmd = (
+                    f"powershell -ExecutionPolicy Bypass -File \"{launcher}\" "
+                    f"-RunnerPath \"{ps_args}\" "
+                    f"-LogDir \"{sd}\" "
+                    f"-SessionId \"{session_id}\""
+                )
             else:
                 setup_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))}"
 
