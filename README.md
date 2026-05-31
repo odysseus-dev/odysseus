@@ -108,12 +108,18 @@ python setup.py            # creates data dirs and prints an initial admin passw
 uvicorn app:app --host 0.0.0.0 --port 7000
 ```
 
-### Option 3: Automated install — Windows (PowerShell)
-Odysseus includes an automated installation script for Windows that sets up the Python virtual environment, installs dependencies, downloads NSSM, and registers Odysseus as a background Windows Service.
+### Option 3: Automated install — Windows
+Odysseus includes a seamless installation script for Windows that automatically sets up the Python environment, installs dependencies, downloads NSSM, and registers Odysseus as a background Windows Service.
 
-Open an **Administrator** PowerShell window and run:
+**Quick Install:**
+1. Clone the repository: `git clone <your-odysseus-repo-url>`
+2. Open the `odysseus` folder in File Explorer.
+3. Double-click the **`install-windows.bat`** file.
+
+*(You will receive a User Account Control prompt for Administrator privileges, which are required to register the background service).*
+
+Alternatively, you can run it from a PowerShell window:
 ```powershell
-git clone <your-odysseus-repo-url>
 cd odysseus
 powershell -ExecutionPolicy Bypass -File .\install-service.ps1
 ```
