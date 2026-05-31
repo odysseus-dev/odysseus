@@ -32,6 +32,12 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_PATH/Odysseus" "$APP/Contents/MacOS/Odysseus"
 cp "$HERE/Info.plist"   "$APP/Contents/Info.plist"
 
+# Bundle resources into Contents/Resources/ so Bundle.main.url(forResource:)
+# finds them at runtime. No nested .bundle needed.
+if [[ -f "$HERE/Sources/Odysseus/Resources/docker-compose.mac.yml" ]]; then
+    cp "$HERE/Sources/Odysseus/Resources/docker-compose.mac.yml" "$APP/Contents/Resources/docker-compose.mac.yml"
+fi
+
 # Build the icon if it's not on disk yet (e.g. fresh clone). Skip silently
 # when librsvg isn't installed — the .app still launches, just without a
 # custom dock icon.

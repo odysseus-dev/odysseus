@@ -13,7 +13,7 @@ enum ComposeManager {
     /// isn't there yet (or if the bundled copy is newer). Idempotent and
     /// cheap — safe to call every launch.
     static func syncOverrideFromBundle() {
-        guard let bundled = Bundle.module.url(forResource: "docker-compose.mac", withExtension: "yml") else { return }
+        guard let bundled = Bundle.main.url(forResource: "docker-compose.mac", withExtension: "yml") else { return }
         let fm = FileManager.default
         try? fm.createDirectory(at: Config.supportDir, withIntermediateDirectories: true)
 

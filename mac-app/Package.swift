@@ -8,9 +8,7 @@ let package = Package(
         .executableTarget(
             name: "Odysseus",
             path: "Sources/Odysseus",
-            resources: [
-                .copy("Resources/docker-compose.mac.yml"),
-            ]
+            exclude: ["Resources"]
         )
     ]
 )
