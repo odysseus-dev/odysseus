@@ -85,3 +85,4 @@ dev-docs/
 compound.config.json
 *.error.log
 _scratch/
+fork.md
