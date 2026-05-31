@@ -1,16 +1,20 @@
-# Windows-specific Docker Compose overrides.
-# Fixes two Windows/Hyper-V incompatibilities in docker-compose.yml:
+# Standalone Windows Docker Compose file — use instead of docker-compose.yml, not alongside it.
 #
-#   1. Host port conflicts — Hyper-V reserves port ranges that often include
-#      8080, 8091, 8100, etc. All host-side ports are remapped to 7400-7699.
-#      Internal container networking is unchanged (containers still talk to
-#      each other on their original ports).
+# Why standalone and not an override?
+#   Docker Compose merges `ports` lists by appending, not replacing. Using
+#   `-f docker-compose.yml -f docker-compose.windows.yml` would result in
+#   BOTH the original ports (e.g. 127.0.0.1:8080) AND the windows ports
+#   being bound, which still triggers the Hyper-V permission error.
+#   A standalone file is the only reliable way to fully control port bindings.
 #
-#   2. SearXNG host binding — removes the 127.0.0.1 bind restriction that
-#      causes "access permissions" errors on Windows TCP stack.
+# Usage (handled automatically by launch-windows-docker.ps1):
+#   docker compose -f docker-compose.windows.yml up -d --build
 #
-# Usage (handled automatically by launch-docker.ps1):
-#   docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d --build
+# Windows fixes applied:
+#   1. All host ports remapped to 7400-7699 to avoid Hyper-V reserved ranges.
+#   2. No 127.0.0.1 bind prefixes — these trigger Windows socket permission errors.
+#   3. Odysseus built from Dockerfile.windows which runs dos2unix on entrypoint.sh,
+#      fixing the CRLF line-ending issue caused by git core.autocrlf=true.
 
 services:
   odysseus:
@@ -19,17 +23,63 @@ services:
       dockerfile: Dockerfile.windows
     ports:
       - "7400:7000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./data/ssh:/app/.ssh
+      - ./data/huggingface:/app/.cache/huggingface
+    env_file:
+      - .env
+    environment:
+      - SEARXNG_INSTANCE=http://searxng:8080
+      - CHROMADB_HOST=chromadb
+      - CHROMADB_PORT=8000
+    depends_on:
+      searxng:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+    restart: unless-stopped
 
   chromadb:
+    image: chromadb/chroma:latest
     ports:
       - "7401:8000"
+    volumes:
+      - chromadb-data:/chroma/chroma
+    environment:
+      - ANONYMIZED_TELEMETRY=FALSE
+    restart: unless-stopped
 
   searxng:
+    image: searxng/searxng:latest
     ports:
-      - "7402:8080"   # no 127.0.0.1 prefix — avoids Windows socket permission error
+      - "7402:8080"
+    volumes:
+      - searxng-data:/etc/searxng
+      - ./config/searxng/settings.yml:/etc/searxng/settings.yml
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:7402/
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5).read(1)\""]
+      interval: 5s
+      timeout: 6s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
 
   ntfy:
+    image: binwiederhier/ntfy
+    command: serve
     ports:
       - "7403:80"
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
     environment:
       - NTFY_BASE_URL=http://localhost:7403
+    restart: unless-stopped
+
+volumes:
+  searxng-data:
+  chromadb-data:
+  ntfy-cache:

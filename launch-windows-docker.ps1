@@ -76,7 +76,7 @@ if (-not (Test-Path ".env")) {
 # ── Pull latest images ─────────────────────────────────────────────────────────
 
 Write-Host "Pulling latest images..." -ForegroundColor Cyan
-docker compose -f docker-compose.yml -f docker-compose.windows.yml pull
+docker compose -f docker-compose.windows.yml pull
 if ($LASTEXITCODE -ne 0) {
     Write-Host "WARNING: Could not pull latest images (offline?). Using cached versions." -ForegroundColor Yellow
 }
@@ -90,7 +90,7 @@ Write-Host "  chromadb  -> http://localhost:7401" -ForegroundColor DarkGray
 Write-Host "  searxng   -> http://localhost:7402" -ForegroundColor DarkGray
 Write-Host "  ntfy      -> http://localhost:7403" -ForegroundColor DarkGray
 Write-Host ""
-docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d --build
+docker compose -f docker-compose.windows.yml up -d --build
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
     Write-Host "ERROR: docker compose up failed. See output above." -ForegroundColor Red
@@ -124,13 +124,13 @@ if ($ready) {
 } else {
     Write-Host "App did not respond within ${timeout}s. Last 40 log lines:" -ForegroundColor Yellow
     Write-Host ""
-    docker compose logs --tail 40 odysseus
+    docker compose -f docker-compose.windows.yml logs --tail 40 odysseus
 }
 
 # ── Handy commands ────────────────────────────────────────────────────────────
 
 Write-Host ""
-$f = "-f docker-compose.yml -f docker-compose.windows.yml"
+$f = "-f docker-compose.windows.yml"
 Write-Host "Useful commands:" -ForegroundColor DarkGray
 Write-Host "  docker compose $f logs -f odysseus   # live logs" -ForegroundColor DarkGray
 Write-Host "  docker compose $f stop               # stop without removing" -ForegroundColor DarkGray

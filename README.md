@@ -115,13 +115,13 @@ Open `http://localhost:7400` after startup.
 
 If you prefer to run the commands manually:
 ```powershell
-docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d --build
+docker compose -f docker-compose.windows.yml up -d --build
 ```
 
 Useful checks:
 ```powershell
-docker compose -f docker-compose.yml -f docker-compose.windows.yml ps
-docker compose -f docker-compose.yml -f docker-compose.windows.yml logs --tail=120 odysseus
+docker compose -f docker-compose.windows.yml ps
+docker compose -f docker-compose.windows.yml logs --tail=120 odysseus
 ```
 
 > **LLM on localhost?** If your LLM server is running on the Windows host (e.g. `http://127.0.0.1:8090/v1`), set `LLM_HOST=host.docker.internal` in `.env` — `127.0.0.1` inside a Docker container refers to the container itself, not your machine. `launch-docker.ps1` sets this automatically on first run.
