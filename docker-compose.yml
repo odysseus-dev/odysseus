@@ -34,13 +34,9 @@ services:
       chromadb:
         condition: service_started
     restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # GPU support is opt-in via the COMPOSE_FILE variable in .env.
+    # See .env.example -> "GPU support" and docker-compose.nvidia.yml
+    # / docker-compose.amd.yml for the available overlays.
 
   chromadb:
     image: chromadb/chroma:latest
