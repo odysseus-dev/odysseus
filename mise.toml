@@ -7,10 +7,13 @@ python = "3.12.13"
 node = "22.21.1"
 
 # Linter / formatter — pinned to a recent stable; bump with `mise upgrade ruff`.
-ruff = "0.11.13"
+ruff = "latest"
 
 # Container / filesystem vulnerability scanner.
-trivy = "0.69.1"
+trivy = "latest"
+
+# JS/CSS linter, formatter, and checker for the static frontend.
+biome = "latest"
 
 [env]
 # Keep virtual-env inside the project so editors and tools find it automatically.
@@ -46,6 +49,22 @@ run = [
   "ruff check --fix .",
   "ruff format .",
 ]
+
+[tasks.biome-check]
+description = "Check JS files with Biome (lint + format, no writes)"
+run = "biome check static/app.js static/sw.js static/js/"
+
+[tasks.biome-lint]
+description = "Lint JS files with Biome only"
+run = "biome lint static/app.js static/sw.js static/js/"
+
+[tasks.biome-fmt]
+description = "Format JS files with Biome (writes in place)"
+run = "biome format --write static/app.js static/sw.js static/js/"
+
+[tasks.biome-fix]
+description = "Lint and format JS files with Biome, applying safe fixes"
+run = "biome check --write static/app.js static/sw.js static/js/"
 
 [tasks.test]
 description = "Run the test suite (skips Unix-only tests on Windows)"

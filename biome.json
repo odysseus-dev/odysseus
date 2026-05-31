@@ -1,0 +1,60 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
+  "files": {
+    "includes": [
+      "static/app.js",
+      "static/sw.js",
+      "static/js/**/*.js"
+    ],
+    "ignoreUnknown": true
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "lineEnding": "lf"
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "correctness": {
+        "noUnusedVariables": "warn",
+        "noUnusedImports": "warn"
+      },
+      "suspicious": {
+        "noConsole": "off",
+        "noDebugger": "error",
+        "noVar": "warn"
+      },
+      "style": {
+        "useConst": "warn"
+      },
+      "complexity": {
+        "noForEach": "off"
+      }
+    }
+  },
+  "javascript": {
+    "globals": [
+      "window", "document", "navigator", "location", "history",
+      "fetch", "console", "setTimeout", "setInterval", "clearTimeout",
+      "clearInterval", "requestAnimationFrame", "cancelAnimationFrame",
+      "localStorage", "sessionStorage", "indexedDB",
+      "URL", "URLSearchParams", "FormData", "Blob", "File", "FileReader",
+      "Event", "CustomEvent", "EventSource", "WebSocket",
+      "MutationObserver", "IntersectionObserver", "ResizeObserver",
+      "AbortController", "AbortSignal",
+      "crypto", "performance",
+      "alert", "confirm", "prompt",
+      "marked", "hljs", "Docx", "XLSX"
+    ],
+    "formatter": {
+      "quoteStyle": "double",
+      "trailingCommas": "es5",
+      "semicolons": "always",
+      "arrowParentheses": "always"
+    }
+  }
+}
