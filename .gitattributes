@@ -1,0 +1,42 @@
+# Normalize to LF on checkout (prevents CRLF shebang errors in Docker)
+* text=auto eol=lf
+
+# Shell scripts MUST have LF line endings (shebang breaks with CRLF)
+*.sh text eol=lf
+
+# Python files
+*.py text eol=lf
+
+# Config files
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.cfg text eol=lf
+*.ini text eol=lf
+*.toml text eol=lf
+
+# Web
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.jsx text eol=lf
+*.tsx text eol=lf
+
+# Markdown / docs
+*.md text eol=lf
+
+# Docker
+Dockerfile text eol=lf
+docker-compose.yml text eol=lf
+.dockerignore text eol=lf
+
+# Binary / generated — keep as-is
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff2 binary
+*.otf binary
+*.ttf binary
