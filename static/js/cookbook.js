@@ -523,43 +523,42 @@ async function _fetchDependencies() {
     const pkgs = data.packages || [];
     if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
     const _winUnsupported = new Set(['diffusers', 'hf_transfer', 'vllm', 'rembg', 'gfpgan']);
+
+    const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
+      if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
+      if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
+      if (pkg.installed) return `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn" title="Installed — click for actions"><span class="cookbook-dep-installed-label">Installed</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
+      if (isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-na" title="${esc(pkg.install_hint || 'Install this OS package on the selected server.')}">Missing</span>`;
+      return `<button class="cookbook-dep-tag cookbook-dep-install" data-dep-pip="${esc(pkg.pip)}" data-dep-target="${isLocal ? 'local' : 'remote'}">Install</button>`;
+    };
+
     const _depRow = (pkg) => {
       const isLocal = pkg.target === 'local';
-      const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
       const isSystemDep = pkg.kind === 'system';
-      let row = `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`;
-      row += `<div class="cookbook-dep-info">`;
-      row += `<div class="memory-item-title">${esc(pkg.name)}</div>`;
-      row += `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`;
-      row += `</div>`;
-      row += `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`;
-      if (winBlocked) {
-        row += `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
-      } else if (pkg.installed) {
-        if (isSystemDep) {
-          row += `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
-        } else {
-          row += `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn" title="Installed — click for actions"><span class="cookbook-dep-installed-label">Installed</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
-        }
-      } else if (isSystemDep) {
-        row += `<span class="cookbook-dep-tag cookbook-dep-na" title="${esc(pkg.install_hint || 'Install this OS package on the selected server.')}">Missing</span>`;
-      } else {
-        row += `<button class="cookbook-dep-tag cookbook-dep-install" data-dep-pip="${esc(pkg.pip)}" data-dep-target="${isLocal ? 'local' : 'remote'}">Install</button>`;
-      }
-      row += `</div>`;
-      return row;
+      const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
+      return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
+        + `<div class="cookbook-dep-info">`
+        + `<div class="memory-item-title">${esc(pkg.name)}</div>`
+        + `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`
+        + `</div>`
+        + `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`
+        + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
+        + `</div>`;
     };
+
     const _section = (title, note, items) =>
       items.length
-        ? `<div style="display:flex;align-items:baseline;gap:8px;margin:12px 2px 4px;"><span style="font-size:11px;font-weight:600;letter-spacing:0.03em;">${title}</span><span style="font-size:10px;opacity:0.5;">${note}</span></div>` + items.map(_depRow).join('')
+        ? `<div class="cookbook-dep-section"><span class="cookbook-dep-section-title">${title}</span><span class="cookbook-dep-section-note">${note}</span></div>` + items.map(_depRow).join('')
         : '';
+
     const _viewingRemote = !!(_dsel && _dsel.value && _dsel.value !== 'local');
-    let html = '';
-    if (!_viewingRemote) {
-      html += _section('Odysseus app', 'Run inside the Odysseus app itself.', pkgs.filter(p => p.target === 'local'));
-    }
-    html += _section('Server', 'Run on the server chosen above (Local, or a remote box over SSH).', pkgs.filter(p => p.target !== 'local'));
-    list.innerHTML = html;
+    const _appDeps = pkgs.filter(p => p.target === 'local');
+    const _serverDeps = pkgs.filter(p => p.target !== 'local');
+
+    list.innerHTML = [
+      _viewingRemote ? '' : _section('Odysseus app', 'Run inside the Odysseus app itself.', _appDeps),
+      _section('Server', 'Run on the server chosen above (Local, or a remote box over SSH).', _serverDeps),
+    ].join('');
 
     // Shared install/update routine — used by the Install button and the
     // "Update" item in an installed package's ⋮ menu. `upgrade` adds pip -U;

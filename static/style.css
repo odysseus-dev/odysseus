@@ -17880,6 +17880,21 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-settings-stack.hidden { display: none; }
 .cookbook-dep-row.cookbook-dep-blocked { opacity: 0.4; }
 .cookbook-dep-info { flex: 1; min-width: 0; }
+.cookbook-dep-section {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 12px 2px 4px;
+}
+.cookbook-dep-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+.cookbook-dep-section-note {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+}
 .cookbook-dep-tag {
   font-size: 9px;
   padding: 0 8px;
