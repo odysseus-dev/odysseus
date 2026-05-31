@@ -52,7 +52,9 @@ git clone <your-odysseus-repo-url>
 cd odysseus
 cp .env.example .env       # optional, but recommended for explicit defaults
 docker compose up -d --build
+echo "SEARXNG_SECRET=$(openssl rand -hex 32)" >> .env
 ```
+
 Compose starts Odysseus, ChromaDB, SearXNG, and ntfy. First run does a full
 image build. Open `http://localhost:7000` after the containers are healthy.
 
@@ -136,6 +138,7 @@ Odysseus is a self-hosted workspace with powerful local tools: shell access, fil
 - If you enable API tokens or webhooks, create separate tokens per integration and delete unused ones.
 - Prefer binding manual development runs to `127.0.0.1`; bind to `0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
 - Before publishing a fork, run `git status --short` and confirm no private files from `.env`, `data/`, `logs/`, uploads, backups, or local databases are staged.
+- Ensure `SEARXNG_SECRET` is set to a strong random value. It is used by SearXNG to sign cookies and CSRF tokens. Never commit it to version control.
 
 ### Putting it behind HTTPS
 Odysseus serves plain HTTP on its port. That's fine for `localhost` and trusted LAN/VPN use, but browsers will warn ("Password fields present on an insecure page") and the login + API tokens travel in cleartext. For anything reachable outside your machine — including a Tailscale IP shared with other devices — put a TLS-terminating reverse proxy in front.
@@ -172,6 +175,7 @@ Key settings:
 | `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
 | `EMBEDDING_URL` | -- | OpenAI-compatible embeddings endpoint |
+| `SEARXNG_SECRET` | auto-generated | Secret used by SearXNG for signing sessions and CSRF tokens. Must be set for exposed deployments. Generate with: `openssl rand -hex 32` |
 
 ### Bundled services
 Docker Compose includes these by default:
