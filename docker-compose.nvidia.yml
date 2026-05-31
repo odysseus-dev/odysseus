@@ -1,0 +1,16 @@
+# NVIDIA GPU overlay. Enable by setting COMPOSE_FILE in .env, e.g.:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.nvidia.yml
+# Requires the NVIDIA Container Toolkit on the host (provides the `nvidia`
+# device driver to Docker). Verify with: docker info | grep -i nvidia
+services:
+  odysseus:
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
