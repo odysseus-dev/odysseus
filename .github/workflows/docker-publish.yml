@@ -1,0 +1,54 @@
+# Build the Odysseus server image and push it to GHCR.
+#
+# Triggered on pushes to main (publishes `:latest` + `:sha-<short>`) and on
+# version tags (publishes `:vX.Y.Z` + `:latest`). The Mac .app pulls
+# `ghcr.io/pewdiepie-archdaemon/odysseus:latest` on every launch via
+# `docker compose pull`, so this is the only thing that needs to fire for
+# users to receive server updates.
+name: Publish container image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/odysseus
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=tag
+            type=sha,prefix=sha-,format=short
+
+      # Multi-arch so Apple Silicon users get a native image (otherwise
+      # Colima's amd64 emulation costs ~3x at runtime for ML workloads).
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,38 @@
+# Mac override layered on top of docker-compose.yml.
+#
+# Odysseus.app runs:
+#   docker compose -f docker-compose.yml -f docker-compose.mac.yml -p odysseus up -d
+#
+# Differences from the base file:
+#  - odysseus image is pulled from GHCR instead of being built locally
+#  - odysseus host port is configurable via .env (ODYSSEUS_HOST_PORT) so
+#    Mac users can remap when 7000 is already taken (AirPlay Receiver
+#    binds 7000 by default on Sonoma+).
+#  - chromadb / searxng / ntfy host ports are removed — Odysseus reaches
+#    these services via the internal Docker network (`chromadb:8000`,
+#    `searxng:8080`, `ntfy:80`), so exposing them on the host just creates
+#    port conflicts on desktop installs.
+#  - PUID/PGID default to the host user's IDs (Mac defaults: 501/20)
+#
+# `!reset` is Compose 2.20+ — it explicitly clears a list inherited from
+# the base file so we can rewrite `ports:` here instead of patching the
+# base. Without it the override would *append* to the base list and we'd
+# still bind 7000 on the host.
+services:
+  odysseus:
+    image: ghcr.io/pewdiepie-archdaemon/odysseus:latest
+    pull_policy: missing
+    ports: !override
+      - "${ODYSSEUS_HOST_PORT:-7000}:7000"
+    environment:
+      - PUID=${PUID:-501}
+      - PGID=${PGID:-20}
+
+  chromadb:
+    ports: !reset []
+
+  searxng:
+    ports: !reset []
+
+  ntfy:
+    ports: !reset []

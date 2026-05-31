@@ -1,0 +1,5 @@
+# Local SwiftPM + .app build artifacts. Rebuild with scripts/build-app.sh.
+.build/
+build/
+*.xcodeproj/
+.swiftpm/

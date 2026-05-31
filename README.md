@@ -44,6 +44,67 @@ to override deployment-level things like `AUTH_ENABLED`, `DATABASE_URL`,
 or pre-seed `ODYSSEUS_ADMIN_PASSWORD` (otherwise an initial password is
 generated and printed on first boot).
 
+### Option 0: macOS .app (easiest on Mac)
+
+Download **`Odysseus.dmg`** from the latest [Release](https://github.com/pewdiepie-archdaemon/odysseus/releases) (or try the pre-built bundle committed at `mac-app/dist/Odysseus.app.zip`), drag `Odysseus.app` into Applications, and open it.
+
+**Prerequisites**
+
+  - macOS 13 Ventura or later (any Mac shipped since ~2017).
+  - Xcode Command Line Tools (`xcode-select --install`) — for `git`, which the .app shells out to.
+  - Either Docker Desktop **or** Homebrew. If neither Docker nor Colima is on `PATH`, the .app will offer to install Colima + the Docker CLI via Homebrew on first launch.
+
+**First-launch flow**
+
+  1. **Welcome screen** asks how you want Odysseus to track upstream:
+       - **Latest release** — track the `main` branch; the menu bar shows a blue dot when origin has new commits and an *Apply Update* action.
+       - **Pinned version** — stay on a specific tag forever. No auto-updates, no nags. Pick a different tag from Preferences whenever you want.
+       - **Developer mode** — the .app stops touching the cloned repo entirely. Edit the code at `~/Library/Application Support/Odysseus/repo/`, hit Restart, your changes run.
+  2. **Docker check** — confirms a runtime is available, or installs Colima via Homebrew.
+  3. **Repo prep** — clones (or fast-forwards / checks out) the chosen ref.
+  4. **Port check** — if `7000` (or whichever port Odysseus is configured for) is taken, an interactive dialog identifies the conflicting process and lets you pick another port. The choice is saved to `.env`.
+  5. **Stack up** — `docker compose up -d` starts the Odysseus container plus chromadb / searxng / ntfy on the internal Docker network.
+  6. **WebView opens** to `http://localhost:<port>`.
+
+A menu-bar icon offers Start / Restart / Stop / Preferences / View Logs / Show Support Folder / Apply Update (when relevant) / Quit. Containers keep running in the background between .app launches (`restart: unless-stopped`); on Quit you're asked whether to stop them or keep them serving.
+
+**Data preservation across versions**
+
+User data (`data/`, `logs/`, `.env`, the SQLite DB) is gitignored and lives under `~/Library/Application Support/Odysseus/repo/`. Version switches via the picker or *Apply Update* use `git checkout` / `git reset`, which never touch ignored files — your accounts, uploads, embeddings, and settings carry across versions automatically.
+
+**Building locally**
+
+```bash
+cd mac-app
+./scripts/build-icon.sh   # rasterizes Resources/AppIcon.svg → AppIcon.icns
+./scripts/build-app.sh    # produces build/Odysseus.app
+./scripts/build-dmg.sh    # produces build/Odysseus.dmg
+```
+
+The icon builder needs `librsvg` (`brew install librsvg`); the app builder needs Xcode Command Line Tools. Full Xcode is only required for a universal (arm64 + x86_64) binary suitable for distribution — without it, `build-app.sh` produces a native-arch-only binary, which is fine for personal use.
+
+**Architecture (mac-app/)**
+
+| File | Role |
+|------|------|
+| `OdysseusApp.swift` | App entry. Mounts `WindowGroup`, `MenuBarExtra`, and the `AppDelegate`. |
+| `AppDelegate.swift` | Intercepts Quit to prompt about stopping containers. |
+| `Settings.swift` / `SettingsStore.swift` | Persisted user prefs (source mode, pinned ref). |
+| `WelcomeView.swift` / `PreferencesView.swift` | First-run flow + later re-edit sheet. |
+| `MainWindow.swift` | Hosts the running/stopped/progress states. |
+| `WebView.swift` | `WKWebView` wrapping `localhost:<port>`. Reports load failures into AppState. |
+| `MenuBarContent.swift` | Status item menu. |
+| `LifecycleController.swift` | Boot orchestrator; routes start/stop/restart/update. |
+| `RuntimeManager.swift` | Docker / Colima detection + Homebrew install. |
+| `GitManager.swift` | `clone --depth 1` + `applyUpdate`. |
+| `VersionManager.swift` | `ls-remote` for tags, targeted fetch + checkout for switches. |
+| `UpdateChecker.swift` | Cheap `ls-remote` HEAD comparison for the blue-dot badge. |
+| `ComposeManager.swift` | `docker compose` driver. Uses `--project-directory <repo>` so base relative paths still resolve correctly while the Mac override is loaded by absolute path from the support dir. |
+| `PortManager.swift` | `lsof` based conflict detection + free-port suggestion. |
+| `EnvManager.swift` | Tiny KEY=value reader/writer for `.env`. |
+| `Resources/docker-compose.mac.yml` | Mac-specific compose override. Bundled in the .app, copied to support dir on launch — lives outside the repo so it survives `git checkout` to older tags. |
+| `Resources/AppIcon.svg` | Boat glyph on the default theme background, rendered to `.icns` by `build-icon.sh`. |
+
 ### Option 1: Docker (recommended)
 ```bash
 git clone <your-odysseus-repo-url>

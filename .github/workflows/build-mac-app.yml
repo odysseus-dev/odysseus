@@ -1,0 +1,42 @@
+# Build Odysseus.app as a universal binary and ship a DMG.
+#
+# Runs on every tag push (attaches the DMG to the GitHub Release) and on
+# manual dispatch (uploads as a workflow artifact for testing).
+name: Build Mac app
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14   # Apple Silicon runner; produces a true universal binary via xcbuild.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install librsvg (icon rasterizer)
+        run: brew install librsvg
+
+      - name: Build .app bundle
+        working-directory: mac-app
+        run: ./scripts/build-app.sh
+
+      - name: Build DMG
+        working-directory: mac-app
+        run: ./scripts/build-dmg.sh
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Odysseus-dmg
+          path: mac-app/build/Odysseus.dmg
+
+      - name: Attach DMG to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mac-app/build/Odysseus.dmg

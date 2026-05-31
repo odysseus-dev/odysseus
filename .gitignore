@@ -6,6 +6,10 @@ __pycache__/
 dist/
 build/
 !static/js/editor/build/
+# Keep the pre-built Mac .app distribution checked in so contributors can
+# try it without a full Swift toolchain. The build script regenerates it.
+!mac-app/dist/
+!mac-app/dist/**
 venv/
 .venv/
 *.egg

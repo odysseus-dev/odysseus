@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Odysseus app icon — boat glyph lifted from static/login.html, set on the
+  default-theme background (#282c34) with the accent red (#e06c75). The
+  outer rect uses a squircle-approximating corner radius (~17.6% of edge)
+  so the icon reads as native at typical macOS dock sizes; on big surfaces
+  the OS doesn't apply its own mask, so the rounding has to live here.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <rect width="1024" height="1024" rx="180" ry="180" fill="#282c34"/>
+  <!-- Subtle vignette so the boat sits visually without a hard edge against the bg. -->
+  <radialGradient id="vignette" cx="50%" cy="55%" r="60%">
+    <stop offset="0%" stop-color="#3a3f4b" stop-opacity="0.6"/>
+    <stop offset="100%" stop-color="#282c34" stop-opacity="0"/>
+  </radialGradient>
+  <rect width="1024" height="1024" rx="180" ry="180" fill="url(#vignette)"/>
+
+  <!-- Boat — scale 32× turns the 32-unit viewBox into 1024 px. -->
+  <g transform="scale(32)" fill="#e06c75" stroke="#e06c75" stroke-linejoin="round">
+    <path d="M16 4L16 22L6 22Z"/>
+    <path d="M16 8L16 22L24 22Z" opacity="0.6"/>
+    <path d="M4 24Q10 20 16 24Q22 28 28 24" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  </g>
+</svg>
