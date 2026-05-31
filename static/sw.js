@@ -27,7 +27,6 @@ const PRECACHE = [
   '/static/js/fileHandler.js',
   '/static/js/voiceRecorder.js',
   '/static/js/models.js',
-  '/static/js/rag.js',
   '/static/js/presets.js',
   '/static/js/search.js',
   '/static/js/spinner.js',

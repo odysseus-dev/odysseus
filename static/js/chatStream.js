@@ -19,25 +19,21 @@ export function handleUIControl(uiData) {
   try {
     if (uiEvent === 'toggle' || uiData.ui_event === 'toggle') {
       var toggleMap = {
-        web: 'web-toggle', bash: 'bash-toggle', rag: 'rag-toggle',
+        web: 'web-toggle', bash: 'bash-toggle',
         research: 'research-toggle', incognito: 'incognito-toggle',
       };
       var btnMap = {
-        web: 'web-toggle-btn', bash: 'bash-toggle-btn', rag: 'rag-indicator-btn',
+        web: 'web-toggle-btn', bash: 'bash-toggle-btn',
       };
       var chkId = toggleMap[uiData.toggle_name];
       var btnId = btnMap[uiData.toggle_name];
-      if (uiData.toggle_name === 'rag' && window._syncRagIndicator) {
-        window._syncRagIndicator(!!uiData.state);
-      } else {
-        if (chkId) {
-          var chk = document.getElementById(chkId);
-          if (chk) chk.checked = !!uiData.state;
-        }
-        if (btnId) {
-          var btn = document.getElementById(btnId);
-          if (btn) btn.classList.toggle('active', !!uiData.state);
-        }
+      if (chkId) {
+        var chk = document.getElementById(chkId);
+        if (chk) chk.checked = !!uiData.state;
+      }
+      if (btnId) {
+        var btn = document.getElementById(btnId);
+        if (btn) btn.classList.toggle('active', !!uiData.state);
       }
       var ts = Storage.getJSON(Storage.KEYS.TOGGLES, {});
       ts[uiData.toggle_name] = !!uiData.state;

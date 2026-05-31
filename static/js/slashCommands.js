@@ -734,9 +734,7 @@ async function handleSetupWizard(mode, input) {
 
 function _syncToggleUI(name, state) {
   const btnMap = { web: 'web-toggle-btn', bash: 'bash-toggle-btn', incognito: 'incognito-btn' };
-  if (name === 'rag' && window._syncRagIndicator) {
-    window._syncRagIndicator(state);
-  } else if (name === 'research' && window._syncResearchIndicator) {
+  if (name === 'research' && window._syncResearchIndicator) {
     window._syncResearchIndicator(state);
   } else {
     const btn = document.getElementById(btnMap[name]);
@@ -1043,7 +1041,6 @@ async function _cmdSessionExport(args, ctx) {
 
 async function _cmdToggleWeb(args, ctx) { const v = (args[0]||'').toLowerCase(); if (v === 'on' || v === 'off') _applyToggle('web', v); else _quickToggle('web'); return true; }
 async function _cmdToggleBash(args, ctx) { const v = (args[0]||'').toLowerCase(); if (v === 'on' || v === 'off') _applyToggle('bash', v); else _quickToggle('bash'); return true; }
-async function _cmdToggleRag(args, ctx) { const v = (args[0]||'').toLowerCase(); if (v === 'on' || v === 'off') _applyToggle('rag', v); else _quickToggle('rag'); return true; }
 async function _cmdToggleResearch(args, ctx) { const v = (args[0]||'').toLowerCase(); if (v === 'on' || v === 'off') _applyToggle('research', v); else _quickToggle('research'); return true; }
 async function _cmdToggleIncognito(args, ctx) {
   const sessions = sessionModule.getSessions();
@@ -1559,75 +1556,6 @@ async function _cmdShell(args, ctx) {
   } catch (e) {
     slashReply(`<pre>$ ${ctx.esc(cmd)}\nError: ${ctx.esc(e.message)}</pre>`);
   }
-  return true;
-}
-
-// ── RAG ──
-
-async function _cmdRagList(args, ctx) {
-  const res = await fetch(`${API_BASE}/api/personal`, { credentials: 'same-origin' });
-  const data = await res.json();
-  let lines = [];
-  if (data.directories && data.directories.length) {
-    lines.push('<b>Directories:</b>');
-    data.directories.forEach(d => lines.push(`  ${ctx.esc(typeof d === 'string' ? d : d.path || JSON.stringify(d))}`));
-  }
-  if (data.files && data.files.length) {
-    lines.push(`<b>Files (${data.files.length}):</b>`);
-    data.files.slice(0, 30).forEach(f => lines.push(`  ${ctx.esc(f.name || f.path || String(f))}`));
-    if (data.files.length > 30) lines.push(`  ... and ${data.files.length - 30} more`);
-  }
-  slashReply(lines.length ? `<pre>${lines.join('\n')}</pre>` : 'No files or directories indexed');
-  return true;
-}
-
-async function _cmdRagAdd(args, ctx) {
-  const dir = args.join(' ');
-  if (!dir) { slashReply('Usage: /rag add /path/to/directory'); return true; }
-  const res = await fetch(`${API_BASE}/api/personal/add_directory`, {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ directory: dir })
-  });
-  if (res.ok) {
-    const data = await res.json();
-    await typewriterReply(`Indexed "${ctx.esc(dir)}" (${data.indexed_count || 0} files)`);
-  } else { slashReply('Failed to add directory'); }
-  return true;
-}
-
-async function _cmdRagRemove(args, ctx) {
-  const raw = args.join(' ').trim();
-  const force = /-(rf|fr)\b/.test(raw);
-  const cleanArg = raw.replace(/\s*-(rf|fr)\b\s*/, '').trim();
-
-  if (cleanArg === 'all' || (force && !cleanArg)) {
-    const listRes = await fetch(`${API_BASE}/api/personal`, { credentials: 'same-origin' });
-    const listData = await listRes.json();
-    const dirs = listData.directories || [];
-    if (!dirs.length) { slashReply('No RAG directories to remove'); return true; }
-    if (!force) {
-      slashReply(`This will remove all ${dirs.length} directories from RAG. Use <code>/rag rm -rf</code> to confirm.`);
-      return true;
-    }
-    let removed = 0;
-    for (const d of dirs) {
-      const path = typeof d === 'string' ? d : d.path || '';
-      if (!path) continue;
-      const res = await fetch(`${API_BASE}/api/personal/remove_directory?directory=${encodeURIComponent(path)}`, { method: 'DELETE', credentials: 'same-origin' });
-      if (res.ok) removed++;
-    }
-    await typewriterReply(`Removed ${removed}/${dirs.length} directories from RAG`);
-    return true;
-  }
-
-  const dir = cleanArg;
-  if (!dir) { slashReply('Usage: /rag remove /path or /rag rm -rf to remove all'); return true; }
-  const res = await fetch(`${API_BASE}/api/personal/remove_directory?directory=${encodeURIComponent(dir)}`, {
-    method: 'DELETE', credentials: 'same-origin'
-  });
-  if (res.ok) await typewriterReply(`Removed "${ctx.esc(dir)}" from RAG`);
-  else slashReply('Failed to remove directory');
   return true;
 }
 
@@ -5336,18 +5264,6 @@ const COMMANDS = {
       'add':    { handler: _cmdMemoryAdd,    alias: ['echo'],        help: 'Save a memory',       usage: '/memory add text' },
       'delete': { handler: _cmdMemoryDelete, alias: ['del', 'rm'],   help: 'Delete by ID',        usage: '/memory delete id' },
       'search': { handler: _cmdMemorySearch, alias: ['grep'],        help: 'Search memories',     usage: '/memory search q' }
-    }
-  },
-  rag: {
-    alias: [],
-    category: 'RAG',
-    hidden: true,
-    help: 'Manage document indexing',
-    default: 'list',
-    subs: {
-      'list':   { handler: _cmdRagList,   alias: ['ls'],       help: 'List indexed files',    usage: '/rag list' },
-      'add':    { handler: _cmdRagAdd,    alias: [],           help: 'Add directory',         usage: '/rag add /path' },
-      'remove': { handler: _cmdRagRemove, alias: ['rm'],       help: 'Remove directory',      usage: '/rag remove /path' }
     }
   },
   todo: {

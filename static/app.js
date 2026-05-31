@@ -6,7 +6,6 @@ import Storage from './js/storage.js';
 import uiModule from './js/ui.js';
 import fileHandlerModule from './js/fileHandler.js';
 import modelsModule from './js/models.js';
-import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js';
 import searchModule from './js/search.js';
 import chatModule from './js/chat.js';
@@ -1442,7 +1441,7 @@ function initializeEventListeners() {
           if (meta) {
             meta.name = newName;
             const ver = window._appVersion ? ` v${window._appVersion}` : '';
-            el('current-meta').textContent = `Session: ${meta.name}${meta.model ? ' ' + meta.model.split('/').pop() : ''}${meta.rag ? ' [RAG]' : ''}${ver}`;
+            el('current-meta').textContent = `Session: ${meta.name}${meta.model ? ' ' + meta.model.split('/').pop() : ''}${ver}`;
           }
           // Refresh the sessions list
         await sessionModule.loadSessions();
@@ -1674,33 +1673,12 @@ function initializeEventListeners() {
     });
   }
 
-  // ── RAG toggle (overflow + indicator) ──
-  function _syncRagIndicator(active) {
-    const indicator = el('rag-indicator-btn');
-    const overflow = el('overflow-rag-btn');
-    const chk = el('rag-toggle');
-    if (chk) chk.checked = active;
-    if (indicator) {
-      indicator.style.display = active ? '' : 'none';
-      indicator.classList.toggle('active', active);
-    }
-    if (overflow) overflow.classList.toggle('active', active);
-    const s = loadToggleState(); s.rag = active; saveToggleState(s);
-    updatePlusDot();
-  }
-  window._syncRagIndicator = _syncRagIndicator;
   window._syncResearchIndicator = _syncResearchIndicator;
   // Must be assigned at module level (not inside the function body) so the very
   // first external caller — group.js / sessions.js fire it before it has ever
   // run locally — finds it instead of silently no-op'ing (the "group indicator
   // sometimes doesn't appear" bug).
   window._syncGroupIndicator = _syncGroupIndicator;
-  // Init RAG state on load
-  {
-    const st = loadToggleState();
-    const ragState = st.rag || false;
-    _syncRagIndicator(ragState);
-  }
 
   // ── Overflow "..." menu (Research) ──
   function updatePlusDot() {
@@ -2108,22 +2086,6 @@ function initializeEventListeners() {
     });
   }
 
-  // ── Overflow RAG toggle ──
-  const overflowRagBtn = el('overflow-rag-btn');
-  const ragIndicatorBtn = el('rag-indicator-btn');
-  if (overflowRagBtn) {
-    overflowRagBtn.addEventListener('click', () => {
-      const chk = el('rag-toggle');
-      const isActive = chk ? !chk.checked : true;
-      _syncRagIndicator(isActive);
-    });
-  }
-  if (ragIndicatorBtn) {
-    ragIndicatorBtn.addEventListener('click', () => {
-      _syncRagIndicator(false);
-    });
-  }
-
   // ── Overflow Research toggle ──
   const overflowResearchBtn = el('overflow-research-btn');
   if (overflowResearchBtn) {
@@ -2354,7 +2316,6 @@ function initializeEventListeners() {
     'incognito-btn':       '.incognito-btn',
     'web-toggle-btn':      '#web-toggle-btn',
     'doc-toggle-btn':      '#overflow-doc-btn',
-    'rag-toggle-btn':      '#overflow-rag-btn',
     'bash-toggle-btn':     '#bash-toggle-btn',
     'overflow-plus-btn':   '.overflow-wrapper',
     'mode-toggle':         '.mode-toggle',
@@ -2365,7 +2326,7 @@ function initializeEventListeners() {
   };
 
   // Keys hidden by default on first run (no localStorage yet)
-  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn']);
+  const UI_VIS_DEFAULT_OFF = new Set(['models-section']);
 
   // Keys that need admin to toggle off (reserved for future use)
   const UI_VIS_ADMIN_ONLY = new Set([]);
@@ -2881,24 +2842,6 @@ function initializeEventListeners() {
         presetsModule.openCustomPresetModal();
       }
     });
-  }
-
-  // RAG directory
-  const addDirBtn = el('add-directory-btn');
-  if (addDirBtn) {
-    addDirBtn.addEventListener('click', () => {
-      ragModule.addRagDirectory(uiModule.showToast, uiModule.showError);
-    });
-  }
-  
-  const directoryInput = el('rag-directory');
-  if (directoryInput) {
-    directoryInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') {
-        ragModule.addRagDirectory(uiModule.showToast, uiModule.showError);
-      }
-    });
-
   }
 
   // Sidebar layout (extracted to js/sidebar-layout.js)
@@ -3886,7 +3829,6 @@ function startOdysseusApp() {
     }
   }).catch(() => {});
   modelsModule.refreshProviders();
-  ragModule.loadPersonalDocs();
   memoryModule.loadMemories(); // Ensure memories are loaded on page load
   
   // Ensure the memory list is rendered after loading

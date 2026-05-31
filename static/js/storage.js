@@ -19,7 +19,6 @@ export const KEYS = {
   SORT_ORDER: 'odysseus-sessions-sort',
   CHAT_SEARCH_SCOPE: 'odysseus-search-scope',
   INCOGNITO: 'odysseus-incognito',
-  RAG_ACTIVE: 'odysseus-rag-active',
   MCP_ACTIVE: 'odysseus-mcp-active',
   SECTION_ORDER: 'sidebar-section-order',
   ADMIN_LAST_TAB: 'admin-last-tab',

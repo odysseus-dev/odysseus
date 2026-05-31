@@ -33,9 +33,9 @@ function _syncToolbarIndicator(active) {
   document.dispatchEvent(new CustomEvent('overflow-state-change'));
 }
 
-/** Disable tool toggles (web, bash, RAG, research) for clean comparison. */
+/** Disable tool toggles (web, bash, research) for clean comparison. */
 function disableToolToggles() {
-  const ids = ['web-toggle', 'bash-toggle', 'rag-toggle', 'research-toggle'];
+  const ids = ['web-toggle', 'bash-toggle', 'research-toggle'];
   state._savedToggles = {};
   ids.forEach(id => {
     const chk = document.getElementById(id);
