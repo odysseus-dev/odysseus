@@ -6,8 +6,9 @@ import shutil
 import logging
 import asyncio
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Form
+from fastapi import APIRouter, HTTPException, Form, Depends
 from core.constants import BASE_DIR
+from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +100,15 @@ def _save_custom_endpoint(data: dict):
 def setup_embedding_routes():
     router = APIRouter(prefix="/api/embeddings")
 
+    # Admin only. These endpoints manage server-wide embedding state: they
+    # download/delete cached models and repoint the global EMBEDDING_URL that
+    # every user's RAG/semantic-memory traffic flows through. A non-admin must
+    # not reach them — POST /endpoint in particular fetches an arbitrary URL
+    # (SSRF) and then routes all future embeddings to it. The frontend already
+    # treats embeddings as admin-only (static/js/admin.js); enforce it here too.
+
     @router.get("/models")
-    def list_models():
+    def list_models(_admin: None = Depends(require_admin)):
         """List all available fastembed models with download status."""
         try:
             from fastembed import TextEmbedding
@@ -137,7 +145,7 @@ def setup_embedding_routes():
         return result
 
     @router.post("/models/{model_name:path}/download")
-    async def download_model(model_name: str):
+    async def download_model(model_name: str, _admin: None = Depends(require_admin)):
         """Download a fastembed model. Returns when complete."""
         try:
             from fastembed import TextEmbedding
@@ -173,7 +181,7 @@ def setup_embedding_routes():
             _downloading.pop(model_name, None)
 
     @router.get("/models/{model_name:path}/status")
-    def download_status(model_name: str):
+    def download_status(model_name: str, _admin: None = Depends(require_admin)):
         """Check download status of a model."""
         try:
             from fastembed import TextEmbedding
@@ -194,7 +202,7 @@ def setup_embedding_routes():
         }
 
     @router.delete("/models/{model_name:path}")
-    def delete_model(model_name: str):
+    def delete_model(model_name: str, _admin: None = Depends(require_admin)):
         """Delete a cached model."""
         if model_name == _active_model():
             raise HTTPException(400, "Cannot delete the active embedding model")
@@ -224,7 +232,7 @@ def setup_embedding_routes():
         return {"deleted": True, "model": model_name}
 
     @router.get("/endpoint")
-    def get_endpoint():
+    def get_endpoint(_admin: None = Depends(require_admin)):
         """Get the current custom embedding endpoint config."""
         saved = _load_custom_endpoint()
         current_url = os.environ.get("EMBEDDING_URL", "")
@@ -235,7 +243,7 @@ def setup_embedding_routes():
         }
 
     @router.post("/endpoint")
-    def set_endpoint(url: str = Form(...), model: str = Form("")):
+    def set_endpoint(url: str = Form(...), model: str = Form(""), _admin: None = Depends(require_admin)):
         """Save a custom embedding endpoint URL."""
         url = url.strip()
         if not url:
@@ -286,7 +294,7 @@ def setup_embedding_routes():
         return {"success": True, "url": url, "model": model}
 
     @router.delete("/endpoint")
-    def clear_endpoint():
+    def clear_endpoint(_admin: None = Depends(require_admin)):
         """Clear the custom endpoint and revert to local fastembed."""
         if os.path.exists(_ENDPOINT_FILE):
             os.remove(_ENDPOINT_FILE)
