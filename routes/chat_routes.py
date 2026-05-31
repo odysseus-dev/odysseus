@@ -688,6 +688,7 @@ def setup_chat_routes(
                 return
             elif chat_mode == "chat":
                 _chat_start = time.time()
+                _in_think_block = False
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
                     _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
@@ -708,7 +709,17 @@ def setup_chat_routes(
                             try:
                                 data = json.loads(chunk[6:])
                                 if "delta" in data:
-                                    full_response += data["delta"]
+                                    delta_text = data["delta"]
+                                    if data.get("thinking"):
+                                        if not _in_think_block:
+                                            full_response += ""
+                                            _in_think_block = True
+                                        full_response += delta_text
+                                    else:
+                                        if _in_think_block:
+                                            full_response += "\n\n"
+                                            _in_think_block = False
+                                        full_response += delta_text
                                     _stream_set(session, partial=full_response)
                                     yield chunk
                                 elif data.get("type") == "usage":
@@ -745,6 +756,9 @@ def setup_chat_routes(
                                     "usage_source": "estimated",
                                 }
                                 yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
+                            # Close any unclosed think block (stream ends mid-thinking)
+                            if _in_think_block:
+                                full_response += ""
                             if full_response:
                                 _saved_id = save_assistant_response(
                                     sess, session_manager, session, full_response, last_metrics,
@@ -781,6 +795,7 @@ def setup_chat_routes(
                 # ── Agent mode: full agent loop with tools ──
                 _agent_rounds = 0
                 _agent_tool_calls = 0
+                _in_think_block = False
                 try:
                     from src.settings import get_setting
                     _tool_budget = int(get_setting("agent_max_tool_calls", 0))
@@ -805,7 +820,17 @@ def setup_chat_routes(
                             try:
                                 data = json.loads(chunk[6:])
                                 if "delta" in data:
-                                    full_response += data["delta"]
+                                    delta_text = data["delta"]
+                                    if data.get("thinking"):
+                                        if not _in_think_block:
+                                            full_response += ""
+                                            _in_think_block = True
+                                        full_response += delta_text
+                                    else:
+                                        if _in_think_block:
+                                            full_response += "\n\n"
+                                            _in_think_block = False
+                                        full_response += delta_text
                                     _stream_set(session, partial=full_response)
                                     yield chunk
                                 elif data.get("type") == "web_sources":
@@ -830,6 +855,9 @@ def setup_chat_routes(
                         elif chunk.startswith("event: "):
                             yield chunk
                         elif chunk == "data: [DONE]\n\n":
+                            # Close any unclosed think block
+                            if _in_think_block:
+                                full_response += ""
                             if full_response:
                                 _saved_id = save_assistant_response(
                                     sess, session_manager, session, full_response, last_metrics,
