@@ -149,6 +149,10 @@ function handleKeydown(e) {
       const sid = items[selectedIndex].dataset.session;
       navigateToSession(sid);
     }
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    closeSearch();
   }
 }
 
@@ -189,6 +193,17 @@ export function init(apiBase) {
       if (e.target === overlay) closeSearch();
     });
   }
+
+  // Close on Escape — document-level so it works even if the input loses focus.
+  // Uses capture phase + stopImmediatePropagation so the global modal arbiter
+  // in ui.js does not also fire (search-overlay is not a .modal element).
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && isOpen()) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      closeSearch();
+    }
+  }, true);
 }
 
 const searchChatModule = {

@@ -651,7 +651,21 @@ function initEndpointForm() {
         if (d.id) _recentlyAddedEpId = String(d.id);
         loadEndpoints();
         if (!d.online) {
-          msg.textContent = 'Added (endpoint offline — will retry on next load)';
+          const addedUrl = d.base_url || url || '';
+          let offlineHint = 'Endpoint saved but appears offline — make sure the server is running and the URL is correct.';
+          if (/localhost:\d+(?:\/v1)?$/.test(addedUrl)) {
+            offlineHint += ' For Ollama, confirm it is running with: ollama list';
+          }
+          msg.textContent = offlineHint;
+          msg.className = 'admin-error';
+        } else if (count === 0) {
+          let zeroHint = 'Connected but no models found.';
+          if (/localhost:\d+\/v1$/.test(url)) {
+            zeroHint += ' For Ollama, pull a model first: ollama pull qwen3:8b';
+          } else {
+            zeroHint += ' Check your API key has model access, or pull a model first.';
+          }
+          msg.textContent = zeroHint;
           msg.className = 'admin-error';
         } else {
           msg.innerHTML = `Added — found ${count} model${count !== 1 ? 's' : ''}. `
@@ -690,7 +704,23 @@ function initEndpointForm() {
           }
         }
       } else { msg.textContent = d.detail || 'Failed'; msg.className = 'admin-error'; }
-    } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
+    } catch (e) {
+      // Distinguish network errors (server not running) from unexpected JS errors.
+      let errMsg = 'Request failed';
+      if (e instanceof TypeError && e.message.toLowerCase().includes('fetch')) {
+        errMsg = 'Could not reach the server — is it running?';
+      } else if (e instanceof TypeError) {
+        // Covers "Failed to fetch", "NetworkError", "Load failed" (Safari)
+        errMsg = 'Connection failed — check the URL and make sure the server is running';
+      }
+      // Hint for bare Ollama URLs that weren't normalized (e.g. pasted into local form)
+      const enteredUrl = (provider.value || urlInput.value || '').trim();
+      if (enteredUrl && /localhost:\d+$/.test(enteredUrl) && !enteredUrl.endsWith('/v1')) {
+        errMsg += '. Tip: for Ollama use http://localhost:11434/v1 (the /v1 is required)';
+      }
+      msg.textContent = errMsg;
+      msg.className = 'admin-error';
+    }
     btn.disabled = false; btn.textContent = 'Add';
   });
 
