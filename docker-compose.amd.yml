@@ -1,0 +1,12 @@
+# AMD ROCm GPU overlay. Enable by setting COMPOSE_FILE in .env, e.g.:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.amd.yml
+# Requires ROCm drivers on the host. The base image must include ROCm
+# userspace (PyTorch ROCm wheels, etc.) for GPU code to actually run.
+services:
+  odysseus:
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+      - render
