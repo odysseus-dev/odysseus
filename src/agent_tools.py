@@ -26,7 +26,7 @@ MAX_OUTPUT_CHARS = 10_000
 MAX_READ_CHARS = 20_000
 
 # Tool types that trigger execution
-TOOL_TAGS = {"bash", "python", "web_search", "read_file", "write_file",
+TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file",
              "create_document", "update_document", "edit_document",
              "search_chats",
              "chat_with_model", "create_session", "list_sessions",
