@@ -3563,6 +3563,118 @@ body.bg-pattern-sparkles {
       height: 24px;
       padding: 0 8px;
     }
+
+    /* Desktop readability pass.
+       The default shell is intentionally dense, but it was reading too small
+       on common 1080p displays. Scope this to non-mobile viewports so the
+       dedicated touch layout below remains unchanged. */
+    @media (min-width: 769px) and (max-width: 1920px) {
+      :root {
+        font-size: 15px;
+      }
+      .sidebar {
+        width: 288px;
+      }
+      .sidebar-header {
+        min-height: 48px;
+        padding-top: 17px;
+      }
+      .sidebar-brand-title {
+        font-size: 1.1rem;
+      }
+      .sidebar-inner {
+        padding: 12px 10px 10px;
+      }
+      #sidebar-search-btn,
+      #sidebar-new-chat-btn,
+      #tools-section .list-item,
+      .list-item,
+      .models-row,
+      .section-header-flex {
+        min-height: 34px;
+        padding: 7px 9px;
+        gap: 8px;
+      }
+      .section-header-flex {
+        height: 34px;
+      }
+      .section-header-flex h4,
+      .section-header-flex .section-title,
+      .list-item span,
+      .grow,
+      .models-row .grow,
+      .user-bar-name {
+        font-size: 12px;
+      }
+      .section-icon,
+      .sidebar-action-icon,
+      .list-item svg {
+        width: 15px;
+        height: 15px;
+      }
+      .user-bar-avatar {
+        width: 28px;
+        height: 28px;
+        font-size: 11px;
+      }
+      .chat-meta-overlay {
+        font-size: 0.85rem;
+      }
+      #welcome-screen .welcome-name {
+        font-size: 2.45rem;
+      }
+      #welcome-screen .welcome-sub {
+        font-size: 0.95rem;
+        max-width: 360px;
+      }
+      #welcome-screen .welcome-tip {
+        font-size: 0.85rem;
+        max-width: 380px;
+      }
+      .chat-container.welcome-active .chat-input-bar,
+      .chat-input-bar,
+      .attach-strip {
+        max-width: 880px;
+      }
+      .chat-input-bar {
+        padding: 13px 15px;
+        gap: 10px;
+        border-radius: 18px;
+      }
+      .ghost-text-overlay,
+      .chat-input-bar textarea#message {
+        font-size: 16px;
+      }
+      .chat-input-bar textarea#message {
+        min-height: 30px;
+      }
+      .chat-input-bottom {
+        margin-top: 6px;
+      }
+      .input-icon-btn {
+        min-width: 34px;
+        min-height: 34px;
+        padding: 8px;
+      }
+      .send-btn {
+        min-width: 38px;
+        width: 38px;
+        height: 38px !important;
+        border-radius: 10px;
+      }
+      .mode-toggle {
+        height: 32px;
+        border-radius: 11px;
+      }
+      .mode-toggle::before {
+        border-radius: 10px;
+      }
+      .mode-toggle-btn {
+        font-size: 12px;
+        padding: 0 12px;
+      }
+    }
+
     @media (max-width:768px){
       .box { max-height:none; }
       .chat-container { padding:10px; flex:1; margin-top:0; padding-top:42px; min-height:0; }
