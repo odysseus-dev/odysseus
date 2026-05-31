@@ -1,5 +1,6 @@
 # src/constants.py
 """Application-wide constants and configuration values."""
+
 import os
 
 APP_VERSION = "0.9.1"
@@ -28,7 +29,7 @@ OPENAI_COMPAT_PATH = "/v1/chat/completions"
 DEFAULT_HOST = os.getenv("LLM_HOST", "localhost")
 LLM_HOSTS = [h.strip() for h in os.getenv("LLM_HOSTS", "").split(",") if h.strip()]
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-SEARXNG_INSTANCE = os.getenv('SEARXNG_INSTANCE', 'http://localhost:8080')
+SEARXNG_INSTANCE = os.getenv("SEARXNG_INSTANCE", "http://localhost:8080")
 
 
 # Cleanup configuration

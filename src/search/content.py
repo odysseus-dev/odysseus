@@ -38,7 +38,11 @@ _PRIVATE_NETWORKS = (
 
 
 def _is_private_address(addr: ipaddress._BaseAddress) -> bool:
-    return any(addr in net for net in _PRIVATE_NETWORKS) or addr.is_private or addr.is_loopback
+    return (
+        any(addr in net for net in _PRIVATE_NETWORKS)
+        or addr.is_private
+        or addr.is_loopback
+    )
 
 
 def _resolve_hostname_ips(hostname: str) -> List[ipaddress._BaseAddress]:
@@ -71,7 +75,9 @@ def _get_public_url(url: str, *, headers: dict, timeout: int) -> httpx.Response:
         raise httpx.RequestError(f"Blocked non-public URL: {url}")
 
     current = url
-    with httpx.Client(headers=headers, timeout=timeout, follow_redirects=False) as client:
+    with httpx.Client(
+        headers=headers, timeout=timeout, follow_redirects=False
+    ) as client:
         for _ in range(8):
             response = client.get(current)
             if response.status_code not in (301, 302, 303, 307, 308):
@@ -81,8 +87,11 @@ def _get_public_url(url: str, *, headers: dict, timeout: int) -> httpx.Response:
                 return response
             current = urljoin(current, location)
             if not _public_http_url(current):
-                raise httpx.RequestError(f"Blocked redirect to non-public URL: {current}")
+                raise httpx.RequestError(
+                    f"Blocked redirect to non-public URL: {current}"
+                )
     raise httpx.RequestError("Too many redirects")
+
 
 # PDF extraction (optional dependency)
 try:
@@ -149,7 +158,10 @@ def _extract_tables(soup: BeautifulSoup) -> List[List[List[str]]]:
     for table in soup.find_all("table"):
         rows = []
         for tr in table.find_all("tr"):
-            cells = [td.get_text(separator=" ", strip=True) for td in tr.find_all(["td", "th"])]
+            cells = [
+                td.get_text(separator=" ", strip=True)
+                for td in tr.find_all(["td", "th"])
+            ]
             if cells:
                 rows.append(cells)
         if rows:
@@ -170,8 +182,17 @@ def _extract_code_blocks(soup: BeautifulSoup) -> List[str]:
 def _detect_js_frameworks(soup: BeautifulSoup) -> bool:
     """Very naive detection of common JS frameworks."""
     js_indicators = [
-        "react", "angular", "vue", "svelte", "next", "nuxt",
-        "ember", "backbone", "jquery", "polymer", "mithril",
+        "react",
+        "angular",
+        "vue",
+        "svelte",
+        "next",
+        "nuxt",
+        "ember",
+        "backbone",
+        "jquery",
+        "polymer",
+        "mithril",
     ]
     for script in soup.find_all("script"):
         src = script.get("src", "").lower()
@@ -245,7 +266,9 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
 
         response.raise_for_status()
     except httpx.RequestError as e:
-        error_logger.error(f"NetworkError fetching {url} (attempt {retry_attempt}): {e}")
+        error_logger.error(
+            f"NetworkError fetching {url} (attempt {retry_attempt}): {e}"
+        )
         return _empty_result(url, f"NetworkError: {e}")
     except RateLimitError as e:
         error_logger.error(str(e))
@@ -285,7 +308,9 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
     try:
         soup = BeautifulSoup(response.text, "html.parser")
     except Exception as e:
-        error_logger.error(f"ParseError parsing HTML from {url} (attempt {retry_attempt}): {e}")
+        error_logger.error(
+            f"ParseError parsing HTML from {url} (attempt {retry_attempt}): {e}"
+        )
         result = _empty_result(url, f"ParseError: {e}")
         _cache_result(cache_file, cache_key, result, url)
         return result
@@ -295,7 +320,11 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
     meta_info = _extract_meta(soup)
     og_image = _extract_og_image(soup)
     js_rendered = _detect_js_frameworks(soup)
-    js_message = "Page appears to be rendered by a JavaScript framework; content may be incomplete." if js_rendered else ""
+    js_message = (
+        "Page appears to be rendered by a JavaScript framework; content may be incomplete."
+        if js_rendered
+        else ""
+    )
 
     # Main textual content (heuristic)
     main_content = ""

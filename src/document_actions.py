@@ -11,11 +11,35 @@ logger = logging.getLogger(__name__)
 
 
 _JUNK_TITLES = {
-    "untitled", "untitled document", "new document", "document",
-    "new email", "new mail", "new message", "reply", "fwd", "re:",
-    "test", "testing", "asdf", "asd", "foo", "bar", "baz",
-    "tmp", "temp", "scratch", "scratchpad", "draft", "delete",
-    "remove", "junk", "trash", "xxx", "abc", "qwerty",
+    "untitled",
+    "untitled document",
+    "new document",
+    "document",
+    "new email",
+    "new mail",
+    "new message",
+    "reply",
+    "fwd",
+    "re:",
+    "test",
+    "testing",
+    "asdf",
+    "asd",
+    "foo",
+    "bar",
+    "baz",
+    "tmp",
+    "temp",
+    "scratch",
+    "scratchpad",
+    "draft",
+    "delete",
+    "remove",
+    "junk",
+    "trash",
+    "xxx",
+    "abc",
+    "qwerty",
 }
 
 
@@ -33,8 +57,8 @@ def _content_fingerprint(content: str) -> str:
     collapsed and the result lowercased.
     """
     c = content or ""
-    c = re.sub(r'upload_id="[^"]*"', "upload_id", c)          # pdf_source re-imports
-    c = re.sub(r"\bid=ann-[A-Za-z0-9_-]+", "id=ann", c)        # annotation ids
+    c = re.sub(r'upload_id="[^"]*"', "upload_id", c)  # pdf_source re-imports
+    c = re.sub(r"\bid=ann-[A-Za-z0-9_-]+", "id=ann", c)  # annotation ids
     c = re.sub(r"\s+", " ", c).strip().lower()
     return c
 
@@ -88,9 +112,12 @@ async def run_document_tidy(owner: str) -> str:
             # Detect emails-saved-as-documents (quote chains with no original content)
             lines = [ln for ln in content.split("\n") if ln.strip()]
             quoted_lines = [ln for ln in lines if ln.lstrip().startswith(">")]
-            header_lines = [ln for ln in lines if re.match(r"^On .+ wrote:?\s*$", ln.strip())]
+            header_lines = [
+                ln for ln in lines if re.match(r"^On .+ wrote:?\s*$", ln.strip())
+            ]
             non_quote_content = "\n".join(
-                ln for ln in lines
+                ln
+                for ln in lines
                 if not ln.lstrip().startswith(">")
                 and not re.match(r"^On .+ wrote:?\s*$", ln.strip())
             ).strip()
@@ -110,7 +137,11 @@ async def run_document_tidy(owner: str) -> str:
                 should_delete = True
                 reason = "throwaway content"
             # No length-based deletion: short notes are legitimate content.
-            elif (quoted_lines or header_lines) and len(non_quote_content) < 50 and quote_ratio > 0.4:
+            elif (
+                (quoted_lines or header_lines)
+                and len(non_quote_content) < 50
+                and quote_ratio > 0.4
+            ):
                 # Email reply chain with no original content
                 should_delete = True
                 reason = "email quote-chain only"
@@ -135,10 +166,14 @@ async def run_document_tidy(owner: str) -> str:
             if len(members) < 2:
                 kept += 1
                 continue
+
             # Keep the most complete (longest real content), then most recent.
             def _updated(d):
                 return d.updated_at or d.created_at
-            members.sort(key=lambda d: (_real_len(d.current_content), _updated(d)), reverse=True)
+
+            members.sort(
+                key=lambda d: (_real_len(d.current_content), _updated(d)), reverse=True
+            )
             keeper = members[0]
             kept += 1
             dupes = members[1:]
@@ -155,9 +190,14 @@ async def run_document_tidy(owner: str) -> str:
         if deleted == 0:
             # Use sentinel so the scheduler can drop the run row entirely.
             from src.builtin_actions import TaskNoop
+
             raise TaskNoop(f"scanned {len(docs)} document(s), no junk")
         preview = "; ".join(deleted_examples)
-        extra = f" (+{deleted - len(deleted_examples)} more)" if deleted > len(deleted_examples) else ""
+        extra = (
+            f" (+{deleted - len(deleted_examples)} more)"
+            if deleted > len(deleted_examples)
+            else ""
+        )
         return f"Removed {deleted} of {len(docs)}: {preview}{extra} · {kept} kept"
     finally:
         db.close()

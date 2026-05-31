@@ -95,7 +95,8 @@ def test_default_chat_does_not_auto_pick_shared_endpoint_for_fresh_user(monkeypa
 
     def scoped_owner_filter(query, model_cls, user, *, include_shared=True):
         query.rows = [
-            row for row in query.rows
+            row
+            for row in query.rows
             if row.owner == user or (include_shared and row.owner is None)
         ]
         return query
@@ -105,14 +106,18 @@ def test_default_chat_does_not_auto_pick_shared_endpoint_for_fresh_user(monkeypa
     monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
     monkeypatch.setattr(model_routes, "owner_filter", scoped_owner_filter)
     monkeypatch.setattr(model_routes, "_normalize_base", lambda base: base.rstrip("/"))
-    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+    monkeypatch.setattr(
+        model_routes, "build_chat_url", lambda base: f"{base}/chat/completions"
+    )
     monkeypatch.setattr(prefs_routes, "_load_for_user", lambda user: {})
 
     request = SimpleNamespace(
         state=SimpleNamespace(current_user="fresh"),
-        app=SimpleNamespace(state=SimpleNamespace(
-            auth_manager=SimpleNamespace(is_admin=lambda user: False)
-        )),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                auth_manager=SimpleNamespace(is_admin=lambda user: False)
+            )
+        ),
     )
 
     assert _default_chat_endpoint()(request) == {
@@ -137,7 +142,8 @@ def test_default_chat_uses_owned_endpoint_as_regular_user_last_resort(monkeypatc
 
     def scoped_owner_filter(query, model_cls, user, *, include_shared=True):
         query.rows = [
-            row for row in query.rows
+            row
+            for row in query.rows
             if row.owner == user or (include_shared and row.owner is None)
         ]
         return query
@@ -147,14 +153,18 @@ def test_default_chat_uses_owned_endpoint_as_regular_user_last_resort(monkeypatc
     monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
     monkeypatch.setattr(model_routes, "owner_filter", scoped_owner_filter)
     monkeypatch.setattr(model_routes, "_normalize_base", lambda base: base.rstrip("/"))
-    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+    monkeypatch.setattr(
+        model_routes, "build_chat_url", lambda base: f"{base}/chat/completions"
+    )
     monkeypatch.setattr(prefs_routes, "_load_for_user", lambda user: {})
 
     request = SimpleNamespace(
         state=SimpleNamespace(current_user="fresh"),
-        app=SimpleNamespace(state=SimpleNamespace(
-            auth_manager=SimpleNamespace(is_admin=lambda user: False)
-        )),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                auth_manager=SimpleNamespace(is_admin=lambda user: False)
+            )
+        ),
     )
 
     assert _default_chat_endpoint()(request) == {
@@ -200,14 +210,16 @@ def test_preset_manager_default_custom_preset_starts_disabled(tmp_path):
 def test_preset_manager_migrates_legacy_default_custom_preset_disabled(tmp_path):
     presets_file = tmp_path / "presets.json"
     presets_file.write_text(
-        json.dumps({
-            "custom": {
-                "name": "Custom",
-                "temperature": 0.7,
-                "max_tokens": 4096,
-                "system_prompt": "You are a helpful, balanced assistant. Match your response style to the user's needs.",
+        json.dumps(
+            {
+                "custom": {
+                    "name": "Custom",
+                    "temperature": 0.7,
+                    "max_tokens": 4096,
+                    "system_prompt": "You are a helpful, balanced assistant. Match your response style to the user's needs.",
+                }
             }
-        }),
+        ),
         encoding="utf-8",
     )
 
@@ -253,7 +265,9 @@ def test_normalize_thinking_handles_lowercase_thinking_process(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_build_chat_context_incognito_does_not_duplicate_current_user_message(monkeypatch):
+async def test_build_chat_context_incognito_does_not_duplicate_current_user_message(
+    monkeypatch,
+):
     for mod_name in [
         "starlette.middleware",
         "starlette.middleware.base",
@@ -302,9 +316,13 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
     monkeypatch.setattr(chat_helpers, "add_user_message", fake_add_user_message)
     monkeypatch.setattr(chat_helpers, "load_prefs_for_user", lambda user: {})
     monkeypatch.setattr(chat_helpers, "get_current_user", lambda request: "tester")
-    monkeypatch.setattr(chat_helpers, "normalize_model_id", lambda endpoint_url, model: None)
+    monkeypatch.setattr(
+        chat_helpers, "normalize_model_id", lambda endpoint_url, model: None
+    )
     monkeypatch.setattr(chat_helpers, "maybe_compact", fake_maybe_compact)
-    monkeypatch.setattr(chat_helpers, "trim_for_context", lambda messages, context_length: messages)
+    monkeypatch.setattr(
+        chat_helpers, "trim_for_context", lambda messages, context_length: messages
+    )
 
     sess = SimpleNamespace(
         endpoint_url="http://localhost:8000/v1",
@@ -329,7 +347,11 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
         incognito=True,
     )
 
-    user_messages = [m for m in ctx.messages if m.get("role") == "user" and m.get("content") == "hello"]
+    user_messages = [
+        m
+        for m in ctx.messages
+        if m.get("role") == "user" and m.get("content") == "hello"
+    ]
     assert len(user_messages) == 1
 
 
@@ -347,7 +369,9 @@ async def test_admin_agent_tools_require_admin(monkeypatch):
     monkeypatch.setattr(core.auth, "AuthManager", lambda: FakeAuth())
 
     desc, result = await execute_tool_block(
-        SimpleNamespace(tool_type="manage_tokens", content='{"action":"create","name":"bad"}'),
+        SimpleNamespace(
+            tool_type="manage_tokens", content='{"action":"create","name":"bad"}'
+        ),
         owner="regular-user",
     )
 

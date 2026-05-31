@@ -30,6 +30,7 @@ class MemoryVectorStore:
 
             if self._model is None:
                 from src.embeddings import get_embedding_client
+
                 self._model = get_embedding_client()
                 if self._model is None:
                     raise RuntimeError("No embedding backend available")
@@ -107,10 +108,12 @@ class MemoryVectorStore:
         out = []
         for idx, mid in enumerate(results["ids"][0]):
             distance = results["distances"][0][idx]
-            out.append({
-                "memory_id": mid,
-                "score": round(1.0 - distance, 4),
-            })
+            out.append(
+                {
+                    "memory_id": mid,
+                    "score": round(1.0 - distance, 4),
+                }
+            )
         return out
 
     def find_similar(self, text: str, threshold: float = 0.92) -> Optional[str]:
@@ -162,8 +165,8 @@ class MemoryVectorStore:
         if texts:
             # Batch in chunks of 100 to avoid oversized requests
             for i in range(0, len(texts), 100):
-                batch_texts = texts[i:i + 100]
-                batch_ids = ids[i:i + 100]
+                batch_texts = texts[i : i + 100]
+                batch_ids = ids[i : i + 100]
                 embeddings = self._embed(batch_texts)
                 self._collection.add(
                     ids=batch_ids,

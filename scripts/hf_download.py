@@ -8,6 +8,7 @@ Prints lines like:
     FILE model.safetensors [########------------] 42% 1.23/2.91GB 156.3MB/s
     DONE /path/to/cached/model
 """
+
 import argparse
 import sys
 import time
@@ -70,11 +71,11 @@ class PipeTqdm:
         desc = (self.desc or "").strip()
 
         # Format sizes
-        if total >= 1024 ** 3:
+        if total >= 1024**3:
             done_s = f"{self.n / (1024**3):.2f}"
             total_s = f"{total / (1024**3):.2f}GB"
             speed_s = f"{speed / (1024**2):.1f}MB/s"
-        elif total >= 1024 ** 2:
+        elif total >= 1024**2:
             done_s = f"{self.n / (1024**2):.1f}"
             total_s = f"{total / (1024**2):.1f}MB"
             speed_s = f"{speed / (1024**2):.1f}MB/s"
@@ -133,6 +134,7 @@ def _patch_tqdm():
     # huggingface_hub uses tqdm.auto or its own utils.tqdm
     try:
         import huggingface_hub.utils
+
         huggingface_hub.utils.tqdm = PipeTqdm
         # Also patch the _tqdm module if it exists
         if hasattr(huggingface_hub.utils, "_tqdm"):
@@ -154,6 +156,7 @@ def main():
     # Must be set before importing huggingface_hub.
     try:
         import hf_transfer  # noqa: F401
+
         os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
     except ImportError:
         print("HINT pip install hf_transfer for faster downloads", flush=True)

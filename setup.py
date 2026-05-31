@@ -36,9 +36,12 @@ def create_dirs():
 def init_database():
     """Create all SQLAlchemy tables."""
     sys.path.insert(0, BASE_DIR)
-    os.environ.setdefault("DATABASE_URL", f"sqlite:///{os.path.join(DATA_DIR, 'app.db')}")
+    os.environ.setdefault(
+        "DATABASE_URL", f"sqlite:///{os.path.join(DATA_DIR, 'app.db')}"
+    )
 
     from core.database import Base, engine
+
     Base.metadata.create_all(bind=engine)
     print("  [ok] Database initialized")
 
@@ -55,7 +58,9 @@ def create_default_admin():
         import json
 
         username = os.getenv("ODYSSEUS_ADMIN_USER", "admin").strip() or "admin"
-        password = os.getenv("ODYSSEUS_ADMIN_PASSWORD") or __import__("secrets").token_urlsafe(18)
+        password = os.getenv("ODYSSEUS_ADMIN_PASSWORD") or __import__(
+            "secrets"
+        ).token_urlsafe(18)
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         auth_data = {
             "users": {
@@ -69,7 +74,9 @@ def create_default_admin():
             json.dump(auth_data, f, indent=2)
         print(f"  [ok] Initial admin user created ({username})")
         print(f"        Temporary password: {password}")
-        print(f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
+        print(
+            f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **"
+        )
     except ImportError:
         print("  [warn] bcrypt not installed — skipping admin user creation")
         print("         Run: pip install bcrypt")
@@ -84,6 +91,7 @@ def create_env():
         return
     if os.path.exists(example_path):
         import shutil
+
         shutil.copy2(example_path, env_path)
         print("  [ok] .env created from .env.example")
         print("        ** Edit .env with your LLM host and API keys **")

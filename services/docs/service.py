@@ -10,6 +10,7 @@ from src.rag_manager import RAGManager
 @dataclass
 class DocChunk:
     """A retrieved document chunk."""
+
     text: str
     source: str
     score: float
@@ -19,6 +20,7 @@ class DocChunk:
 @dataclass
 class IndexResult:
     """Result of indexing documents."""
+
     indexed: int
     failed: int
     errors: List[str]

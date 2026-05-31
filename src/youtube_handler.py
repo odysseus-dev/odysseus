@@ -50,6 +50,7 @@ def init_youtube():
     global YouTubeTranscriptApi, YOUTUBE_AVAILABLE
     try:
         from youtube_transcript_api import YouTubeTranscriptApi as _Api
+
         YouTubeTranscriptApi = _Api
         YOUTUBE_AVAILABLE = True
         logger.info("YouTube transcript API available")
@@ -92,7 +93,11 @@ async def extract_transcript_async(
         Dict with success/error/transcript keys
     """
     if not YOUTUBE_AVAILABLE or YouTubeTranscriptApi is None:
-        return {"success": False, "error": "YouTube transcript API not available", "transcript": None}
+        return {
+            "success": False,
+            "error": "YouTube transcript API not available",
+            "transcript": None,
+        }
 
     for attempt in range(max_retries):
         try:
@@ -106,12 +111,14 @@ async def extract_transcript_async(
                 if not text:
                     continue
                 start = snippet.start
-                formatted.append({
-                    "text": text,
-                    "start": start,
-                    "duration": snippet.duration,
-                    "timestamp": f"{int(start // 60):02d}:{int(start % 60):02d}",
-                })
+                formatted.append(
+                    {
+                        "text": text,
+                        "start": start,
+                        "duration": snippet.duration,
+                        "timestamp": f"{int(start // 60):02d}:{int(start % 60):02d}",
+                    }
+                )
 
             full_text = " ".join(e["text"] for e in formatted)
             max_len = 8000
@@ -131,18 +138,21 @@ async def extract_transcript_async(
             if attempt < max_retries - 1:
                 await asyncio.sleep(1 * (attempt + 1))
 
-    return {"success": False, "error": f"Failed after {max_retries} attempts", "transcript": None}
+    return {
+        "success": False,
+        "error": f"Failed after {max_retries} attempts",
+        "transcript": None,
+    }
 
 
 def format_transcript_for_context(
-    transcript_data: Dict[str, Any], url: str,
-    title: str = "", channel: str = ""
+    transcript_data: Dict[str, Any], url: str, title: str = "", channel: str = ""
 ) -> str:
     """Format transcript data for inclusion in LLM context."""
     if not transcript_data.get("success"):
         header = ""
         if title:
-            header = f" \"{title}\""
+            header = f' "{title}"'
             if channel:
                 header += f" by {channel}"
         return f"\n[YouTube Video{header}: Transcript unavailable ({transcript_data.get('error', 'Unknown error')}). Use the comments below if available, do NOT web search for this video.]"
@@ -169,7 +179,7 @@ def format_transcript_for_context(
             ctx += f"[{seg['timestamp']}] {seg['text']}\n"
         # Check length — fall back to plain text if too long
         if len(ctx) > 12000:
-            ctx = ctx[:ctx.index("Timestamped Transcript:\n")]
+            ctx = ctx[: ctx.index("Timestamped Transcript:\n")]
             ctx += "Transcript:\n"
             ctx += transcript
     else:
@@ -191,10 +201,13 @@ async def fetch_youtube_comments(
             _find_ytdlp(),
             "--skip-download",
             "--write-comments",
-            "--extractor-args", f"youtube:max_comments={max_comments},all,100,0",
+            "--extractor-args",
+            f"youtube:max_comments={max_comments},all,100,0",
             "--dump-json",
-            "--js-runtimes", "node",
-            "--remote-components", "ejs:github",
+            "--js-runtimes",
+            "node",
+            "--remote-components",
+            "ejs:github",
             f"https://www.youtube.com/watch?v={video_id}",
         ]
 
@@ -209,7 +222,11 @@ async def fetch_youtube_comments(
         stdout, stderr = await proc.communicate()
 
         if proc.returncode != 0:
-            return {"success": False, "error": f"yt-dlp failed: {stderr.decode()[:200]}", "comments": []}
+            return {
+                "success": False,
+                "error": f"yt-dlp failed: {stderr.decode()[:200]}",
+                "comments": [],
+            }
 
         data = json.loads(stdout.decode())
         title = data.get("title", "")
@@ -221,17 +238,24 @@ async def fetch_youtube_comments(
             text = (c.get("text") or "").strip()
             if not text:
                 continue
-            comments.append({
-                "author": c.get("author", "Unknown"),
-                "text": text,
-                "likes": c.get("like_count", 0),
-            })
+            comments.append(
+                {
+                    "author": c.get("author", "Unknown"),
+                    "text": text,
+                    "likes": c.get("like_count", 0),
+                }
+            )
 
         # Sort by likes descending — most popular comments first
         comments.sort(key=lambda x: x.get("likes", 0), reverse=True)
 
-        return {"success": True, "comments": comments, "count": len(comments),
-                "title": title, "channel": channel}
+        return {
+            "success": True,
+            "comments": comments,
+            "count": len(comments),
+            "title": title,
+            "channel": channel,
+        }
 
     except asyncio.TimeoutError:
         logger.warning(f"Comment fetch timed out for {video_id}")

@@ -33,11 +33,12 @@ DEFAULT_PRIVILEGES = {
 }
 
 # Admins get everything
-ADMIN_PRIVILEGES = {k: (True if isinstance(v, bool) else (0 if isinstance(v, int) else [])) for k, v in DEFAULT_PRIVILEGES.items()}
+ADMIN_PRIVILEGES = {
+    k: (True if isinstance(v, bool) else (0 if isinstance(v, int) else []))
+    for k, v in DEFAULT_PRIVILEGES.items()
+}
 
-DEFAULT_AUTH_PATH = os.path.join(
-    Path(__file__).parent.parent, "data", "auth.json"
-)
+DEFAULT_AUTH_PATH = os.path.join(Path(__file__).parent.parent, "data", "auth.json")
 TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 
 
@@ -85,7 +86,9 @@ class AuthManager:
                 with open(self._sessions_path, "r") as f:
                     data = json.load(f)
                 now = time.time()
-                self._sessions = {k: v for k, v in data.items() if v.get("expiry", 0) > now}
+                self._sessions = {
+                    k: v for k, v in data.items() if v.get("expiry", 0) > now
+                }
                 pruned = len(data) - len(self._sessions)
                 if pruned > 0:
                     self._save_sessions()
@@ -200,14 +203,19 @@ class AuthManager:
         # cookie keeps authenticating.
         revoked = 0
         with self._sessions_lock:
-            to_drop = [tok for tok, sess in self._sessions.items()
-                       if (sess or {}).get("username") == username]
+            to_drop = [
+                tok
+                for tok, sess in self._sessions.items()
+                if (sess or {}).get("username") == username
+            ]
             for tok in to_drop:
                 self._sessions.pop(tok, None)
                 revoked += 1
         if revoked:
             self._save_sessions()
-        logger.info(f"Deleted user '{username}' (by {requesting_user}); revoked {revoked} active session(s)")
+        logger.info(
+            f"Deleted user '{username}' (by {requesting_user}); revoked {revoked} active session(s)"
+        )
         return True
 
     def is_admin(self, username: str) -> bool:
@@ -215,7 +223,11 @@ class AuthManager:
 
     def list_users(self) -> List[Dict[str, Any]]:
         return [
-            {"username": u, "is_admin": d.get("is_admin", False), "privileges": self.get_privileges(u)}
+            {
+                "username": u,
+                "is_admin": d.get("is_admin", False),
+                "privileges": self.get_privileges(u),
+            }
             for u, d in self.users.items()
         ]
 
@@ -245,11 +257,15 @@ class AuthManager:
         logger.info(f"Updated privileges for '{username}': {current}")
         return True
 
-    def change_password(self, username: str, current_password: str, new_password: str) -> bool:
+    def change_password(
+        self, username: str, current_password: str, new_password: str
+    ) -> bool:
         username = username.strip().lower()
         if username not in self.users:
             return False
-        if not _verify_password(current_password, self.users[username]["password_hash"]):
+        if not _verify_password(
+            current_password, self.users[username]["password_hash"]
+        ):
             return False
         self._config["users"][username]["password_hash"] = _hash_password(new_password)
         self._save()

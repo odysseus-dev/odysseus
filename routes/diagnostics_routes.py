@@ -5,7 +5,10 @@ from typing import Dict, Any
 
 from fastapi import APIRouter, HTTPException, Form
 
-from services.youtube.youtube_handler import extract_youtube_id, extract_transcript_async
+from services.youtube.youtube_handler import (
+    extract_youtube_id,
+    extract_transcript_async,
+)
 from core.constants import DEFAULT_HOST
 
 logger = logging.getLogger(__name__)
@@ -22,6 +25,7 @@ def setup_diagnostics_routes(
     async def get_database_stats() -> Dict[str, Any]:
         try:
             from core.database import get_detailed_stats
+
             return get_detailed_stats()
         except Exception as e:
             logger.error(f"DB stats error: {e}")
@@ -44,21 +48,27 @@ def setup_diagnostics_routes(
             return {
                 "video_id": video_id,
                 "transcript_success": data.get("success", False),
-                "transcript_length": len(data.get("transcript", "")) if data.get("success") else 0,
+                "transcript_length": len(data.get("transcript", ""))
+                if data.get("success")
+                else 0,
                 "transcript_preview": (data.get("transcript", "")[:500] + "...")
-                    if data.get("success") and len(data.get("transcript", "")) > 500
-                    else data.get("transcript", ""),
+                if data.get("success") and len(data.get("transcript", "")) > 500
+                else data.get("transcript", ""),
                 "error": data.get("error") if not data.get("success") else None,
             }
         except Exception as e:
             return {"error": str(e)}
 
     @router.post("/api/test-research")
-    async def test_research(query: str = Form("What is machine learning?")) -> Dict[str, Any]:
+    async def test_research(
+        query: str = Form("What is machine learning?"),
+    ) -> Dict[str, Any]:
         try:
             endpoint = f"http://{DEFAULT_HOST}:8000/v1/chat/completions"
             model = "gpt-oss-120b"
-            result = await research_handler.call_research_service(query, endpoint, model)
+            result = await research_handler.call_research_service(
+                query, endpoint, model
+            )
             return {
                 "status": "success",
                 "query": query,

@@ -20,11 +20,11 @@ from src.task_scheduler import compute_next_run
 
 
 class CheckInUpdate(BaseModel):
-    id: str                               # ScheduledTask.id
+    id: str  # ScheduledTask.id
     name: Optional[str] = None
     scheduled_time: Optional[str] = None  # "HH:MM"
     prompt: Optional[str] = None
-    enabled: Optional[bool] = None        # maps to status "active"/"paused"
+    enabled: Optional[bool] = None  # maps to status "active"/"paused"
 
 
 class AssistantSettingsUpdate(BaseModel):
@@ -94,13 +94,19 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
     async def _get_or_create(owner: str) -> CrewMember:
         """Return the per-owner assistant CrewMember, creating it on demand."""
         if not owner or owner in _SYNTHETIC_OWNERS:
-            raise HTTPException(status_code=400, detail=f"Cannot seed assistant for {owner!r}")
+            raise HTTPException(
+                status_code=400, detail=f"Cannot seed assistant for {owner!r}"
+            )
         db = SessionLocal()
         try:
-            crew = db.query(CrewMember).filter(
-                CrewMember.owner == owner,
-                CrewMember.is_default_assistant == True,  # noqa: E712
-            ).first()
+            crew = (
+                db.query(CrewMember)
+                .filter(
+                    CrewMember.owner == owner,
+                    CrewMember.is_default_assistant == True,  # noqa: E712
+                )
+                .first()
+            )
             if crew:
                 return crew
         finally:
@@ -110,10 +116,14 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
         await task_scheduler.ensure_assistant_defaults(owner)
         db = SessionLocal()
         try:
-            crew = db.query(CrewMember).filter(
-                CrewMember.owner == owner,
-                CrewMember.is_default_assistant == True,  # noqa: E712
-            ).first()
+            crew = (
+                db.query(CrewMember)
+                .filter(
+                    CrewMember.owner == owner,
+                    CrewMember.is_default_assistant == True,  # noqa: E712
+                )
+                .first()
+            )
             return crew
         finally:
             db.close()
@@ -124,7 +134,9 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
         owner = _owner(request)
         crew = await _get_or_create(owner)
         if not crew or not crew.session_id:
-            raise HTTPException(status_code=500, detail="Assistant session could not be resolved")
+            raise HTTPException(
+                status_code=500, detail="Assistant session could not be resolved"
+            )
         return {
             "session_id": crew.session_id,
             "crew_member_id": crew.id,
@@ -140,10 +152,15 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
             raise HTTPException(status_code=500, detail="Assistant not available")
         db = SessionLocal()
         try:
-            tasks = db.query(ScheduledTask).filter(
-                ScheduledTask.owner == owner,
-                ScheduledTask.crew_member_id == crew.id,
-            ).order_by(ScheduledTask.scheduled_time.asc()).all()
+            tasks = (
+                db.query(ScheduledTask)
+                .filter(
+                    ScheduledTask.owner == owner,
+                    ScheduledTask.crew_member_id == crew.id,
+                )
+                .order_by(ScheduledTask.scheduled_time.asc())
+                .all()
+            )
             return {
                 "crew": _crew_to_dict(crew),
                 "check_ins": [_task_to_checkin_dict(t) for t in tasks],
@@ -153,7 +170,9 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
             db.close()
 
     @router.patch("/settings")
-    async def update_assistant_settings(payload: AssistantSettingsUpdate, request: Request):
+    async def update_assistant_settings(
+        payload: AssistantSettingsUpdate, request: Request
+    ):
         """Update CrewMember fields and/or check-in tasks in one call."""
         owner = _owner(request)
         crew = await _get_or_create(owner)
@@ -185,7 +204,11 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
                 crew_db.enabled_tools = json.dumps(payload.enabled_tools)
             if payload.allow_autonomous_email is not None:
                 try:
-                    existing = json.loads(crew_db.enabled_tools) if crew_db.enabled_tools else []
+                    existing = (
+                        json.loads(crew_db.enabled_tools)
+                        if crew_db.enabled_tools
+                        else []
+                    )
                 except Exception:
                     existing = []
                 if payload.allow_autonomous_email:
@@ -203,17 +226,24 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
                 now_utc = datetime.utcnow()
                 tz_name = crew_db.timezone or None
                 for ci in payload.check_ins:
-                    task = db.query(ScheduledTask).filter(
-                        ScheduledTask.id == ci.id,
-                        ScheduledTask.owner == owner,
-                        ScheduledTask.crew_member_id == crew_db.id,
-                    ).first()
+                    task = (
+                        db.query(ScheduledTask)
+                        .filter(
+                            ScheduledTask.id == ci.id,
+                            ScheduledTask.owner == owner,
+                            ScheduledTask.crew_member_id == crew_db.id,
+                        )
+                        .first()
+                    )
                     if not task:
                         continue
                     if ci.name is not None:
                         task.name = ci.name.strip() or task.name
                     time_changed = False
-                    if ci.scheduled_time is not None and ci.scheduled_time != task.scheduled_time:
+                    if (
+                        ci.scheduled_time is not None
+                        and ci.scheduled_time != task.scheduled_time
+                    ):
                         task.scheduled_time = ci.scheduled_time
                         time_changed = True
                     if ci.prompt is not None:
@@ -237,25 +267,39 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
             if payload.timezone is not None:
                 now_utc = datetime.utcnow()
                 tz_name = crew_db.timezone or None
-                tasks = db.query(ScheduledTask).filter(
-                    ScheduledTask.owner == owner,
-                    ScheduledTask.crew_member_id == crew_db.id,
-                ).all()
+                tasks = (
+                    db.query(ScheduledTask)
+                    .filter(
+                        ScheduledTask.owner == owner,
+                        ScheduledTask.crew_member_id == crew_db.id,
+                    )
+                    .all()
+                )
                 for t in tasks:
                     if t.schedule and t.scheduled_time:
                         t.next_run = compute_next_run(
-                            t.schedule, t.scheduled_time, t.scheduled_day, t.scheduled_date,
-                            after=now_utc, cron_expression=t.cron_expression, tz_name=tz_name,
+                            t.schedule,
+                            t.scheduled_time,
+                            t.scheduled_day,
+                            t.scheduled_date,
+                            after=now_utc,
+                            cron_expression=t.cron_expression,
+                            tz_name=tz_name,
                         )
 
             db.commit()
 
             # Re-read crew_db + tasks to return the fresh state.
             crew_out = db.query(CrewMember).filter(CrewMember.id == crew.id).first()
-            tasks_out = db.query(ScheduledTask).filter(
-                ScheduledTask.owner == owner,
-                ScheduledTask.crew_member_id == crew.id,
-            ).order_by(ScheduledTask.scheduled_time.asc()).all()
+            tasks_out = (
+                db.query(ScheduledTask)
+                .filter(
+                    ScheduledTask.owner == owner,
+                    ScheduledTask.crew_member_id == crew.id,
+                )
+                .order_by(ScheduledTask.scheduled_time.asc())
+                .all()
+            )
             return {
                 "crew": _crew_to_dict(crew_out),
                 "check_ins": [_task_to_checkin_dict(t) for t in tasks_out],
@@ -270,16 +314,24 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
         owner = _owner(request)
         db = SessionLocal()
         try:
-            task = db.query(ScheduledTask).filter(
-                ScheduledTask.id == task_id,
-                ScheduledTask.owner == owner,
-            ).first()
+            task = (
+                db.query(ScheduledTask)
+                .filter(
+                    ScheduledTask.id == task_id,
+                    ScheduledTask.owner == owner,
+                )
+                .first()
+            )
             if not task:
                 raise HTTPException(status_code=404, detail="Task not found")
-            crew = db.query(CrewMember).filter(
-                CrewMember.id == task.crew_member_id,
-                CrewMember.is_default_assistant == True,  # noqa: E712
-            ).first()
+            crew = (
+                db.query(CrewMember)
+                .filter(
+                    CrewMember.id == task.crew_member_id,
+                    CrewMember.is_default_assistant == True,  # noqa: E712
+                )
+                .first()
+            )
             if not crew:
                 raise HTTPException(status_code=400, detail="Not an assistant task")
         finally:
@@ -291,6 +343,7 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
     async def run_status(task_id: str, request: Request):
         """Check whether the most recent run of a task has finished."""
         from core.database import TaskRun, ScheduledTask
+
         user = _owner(request)
         db = SessionLocal()
         try:
@@ -301,9 +354,14 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
                 raise HTTPException(404, "Task not found")
             if user and task.owner != user:
                 raise HTTPException(404, "Task not found")
-            run = db.query(TaskRun).filter(
-                TaskRun.task_id == task_id,
-            ).order_by(TaskRun.started_at.desc()).first()
+            run = (
+                db.query(TaskRun)
+                .filter(
+                    TaskRun.task_id == task_id,
+                )
+                .order_by(TaskRun.started_at.desc())
+                .first()
+            )
             if not run:
                 return {"status": "unknown"}
             if run.status == "running":
@@ -317,6 +375,7 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
         """Return the IANA tz name list used to populate the settings dropdown."""
         try:
             from zoneinfo import available_timezones
+
             zones = sorted(available_timezones())
         except Exception:
             zones = ["UTC"]

@@ -69,8 +69,12 @@ def _pid_alive(pid: Optional[int]) -> bool:
         return False
 
 
-def launch(command: str, session_id: str, cwd: Optional[str] = None,
-           max_runtime_s: int = DEFAULT_MAX_RUNTIME_S) -> Dict[str, Any]:
+def launch(
+    command: str,
+    session_id: str,
+    cwd: Optional[str] = None,
+    max_runtime_s: int = DEFAULT_MAX_RUNTIME_S,
+) -> Dict[str, Any]:
     """Launch `command` detached. Returns the job record (status='running').
 
     Output + the final exit code are written to files so status survives a
@@ -90,10 +94,7 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
     # exit status.
     cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
     cmd_path.write_text(command + "\n")
-    wrapper = (
-        f"bash {cmd_path} > {log_path} 2>&1\n"
-        f"echo $? > {exit_path}\n"
-    )
+    wrapper = f"bash {cmd_path} > {log_path} 2>&1\necho $? > {exit_path}\n"
     script_path = _JOBS_DIR / f"{job_id}.sh"
     script_path.write_text(wrapper)
 
@@ -110,13 +111,13 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
         "id": job_id,
         "session_id": session_id,
         "command": command,
-        "status": "running",       # running | done | failed
+        "status": "running",  # running | done | failed
         "pid": proc.pid,
         "started_at": time.time(),
         "ended_at": None,
         "exit_code": None,
         "max_runtime_s": max_runtime_s,
-        "followed_up": False,       # has the agent been re-invoked with the result?
+        "followed_up": False,  # has the agent been re-invoked with the result?
         "log_path": str(log_path),
         "exit_path": str(exit_path),
     }
@@ -134,7 +135,7 @@ def _read_output(rec: Dict[str, Any]) -> str:
     if len(txt) > _MAX_OUTPUT_CHARS:
         # Keep head + tail — the interesting bits are usually at both ends.
         head = txt[: _MAX_OUTPUT_CHARS // 2]
-        tail = txt[-_MAX_OUTPUT_CHARS // 2:]
+        tail = txt[-_MAX_OUTPUT_CHARS // 2 :]
         txt = head + "\n…[truncated]…\n" + tail
     return txt
 
@@ -142,12 +143,16 @@ def _read_output(rec: Dict[str, Any]) -> str:
 def _prune(jobs: Dict[str, Dict[str, Any]], now: float) -> bool:
     """Drop records (and their on-disk files) for jobs that finished, were
     followed up, and are older than the retention window. Mutates `jobs`."""
-    stale = [jid for jid, rec in jobs.items()
-             if rec.get("followed_up") and rec.get("ended_at")
-             and (now - rec["ended_at"]) > _RETENTION_S]
+    stale = [
+        jid
+        for jid, rec in jobs.items()
+        if rec.get("followed_up")
+        and rec.get("ended_at")
+        and (now - rec["ended_at"]) > _RETENTION_S
+    ]
     for jid in stale:
         jobs.pop(jid, None)
-        for p in _JOBS_DIR.glob(f"{jid}.*"):   # .sh .cmd.sh .log .exit
+        for p in _JOBS_DIR.glob(f"{jid}.*"):  # .sh .cmd.sh .log .exit
             try:
                 p.unlink()
             except Exception:
@@ -174,7 +179,9 @@ def refresh() -> Dict[str, Dict[str, Any]]:
             rec["status"] = "done" if code == 0 else "failed"
             rec["ended_at"] = now
             changed = True
-        elif (now - rec.get("started_at", now)) > rec.get("max_runtime_s", DEFAULT_MAX_RUNTIME_S):
+        elif (now - rec.get("started_at", now)) > rec.get(
+            "max_runtime_s", DEFAULT_MAX_RUNTIME_S
+        ):
             # Runaway / stuck — reap it but STILL surface a follow-up.
             _kill(rec.get("pid"))
             rec["status"] = "failed"
@@ -213,8 +220,11 @@ def pending_followups() -> List[Dict[str, Any]]:
     """Finished jobs the agent hasn't been re-invoked for yet. The monitor
     drains these; mark_followed_up() flips the flag only on success."""
     jobs = refresh()
-    return [r for r in jobs.values()
-            if r.get("status") in ("done", "failed") and not r.get("followed_up")]
+    return [
+        r
+        for r in jobs.values()
+        if r.get("status") in ("done", "failed") and not r.get("followed_up")
+    ]
 
 
 def mark_followed_up(job_id: str) -> None:

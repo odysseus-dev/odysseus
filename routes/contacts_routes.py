@@ -35,16 +35,22 @@ def _load_settings():
 
 def _save_settings(settings):
     from core.atomic_io import atomic_write_json
+
     atomic_write_json(str(SETTINGS_FILE), settings, indent=2)
 
 
 def _get_carddav_config():
     import os
+
     settings = _load_settings()
     return {
         "url": settings.get("carddav_url", os.environ.get("CARDDAV_URL", "")),
-        "username": settings.get("carddav_username", os.environ.get("CARDDAV_USERNAME", "")),
-        "password": settings.get("carddav_password", os.environ.get("CARDDAV_PASSWORD", "")),
+        "username": settings.get(
+            "carddav_username", os.environ.get("CARDDAV_USERNAME", "")
+        ),
+        "password": settings.get(
+            "carddav_password", os.environ.get("CARDDAV_PASSWORD", "")
+        ),
     }
 
 
@@ -55,12 +61,16 @@ def _carddav_configured(cfg: Optional[Dict] = None) -> bool:
 
 def _normalize_contact(contact: Dict) -> Dict:
     emails = []
-    for e in contact.get("emails") or ([] if not contact.get("email") else [contact.get("email")]):
+    for e in contact.get("emails") or (
+        [] if not contact.get("email") else [contact.get("email")]
+    ):
         e = str(e or "").strip()
         if e and e not in emails:
             emails.append(e)
     phones = []
-    for p in contact.get("phones") or ([] if not contact.get("phone") else [contact.get("phone")]):
+    for p in contact.get("phones") or (
+        [] if not contact.get("phone") else [contact.get("phone")]
+    ):
         p = str(p or "").strip()
         if p and p not in phones:
             phones.append(p)
@@ -89,13 +99,19 @@ def _load_local_contacts() -> List[Dict]:
 
 def _save_local_contacts(contacts: List[Dict]) -> None:
     from core.atomic_io import atomic_write_json
+
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(str(LOCAL_CONTACTS_FILE), {"contacts": [_normalize_contact(c) for c in contacts]}, indent=2)
+    atomic_write_json(
+        str(LOCAL_CONTACTS_FILE),
+        {"contacts": [_normalize_contact(c) for c in contacts]},
+        indent=2,
+    )
     _contact_cache["contacts"] = [_normalize_contact(c) for c in contacts]
     _contact_cache["fetched_at"] = datetime.utcnow()
 
 
 # ── vCard parsing ──
+
 
 def _vunesc(value: str) -> str:
     """Reverse _vesc() — turn escaped vCard text back into the raw value.
@@ -165,9 +181,13 @@ def _vesc(value: str) -> str:
     )
 
 
-def _build_vcard(name: str, email: str, uid: Optional[str] = None,
-                 emails: Optional[List[str]] = None,
-                 phones: Optional[List[str]] = None) -> str:
+def _build_vcard(
+    name: str,
+    email: str,
+    uid: Optional[str] = None,
+    emails: Optional[List[str]] = None,
+    phones: Optional[List[str]] = None,
+) -> str:
     """Build a vCard. Accepts either a single `email` (legacy callers) or
     full `emails`/`phones` lists (edit path). The first email is marked
     PREF=1. All values are RFC-6350-escaped."""
@@ -175,7 +195,11 @@ def _build_vcard(name: str, email: str, uid: Optional[str] = None,
         uid = str(uuid.uuid4())
     # Normalize email lists — `email` arg is a convenience for single-email
     # creation; `emails` (if given) is authoritative.
-    email_list = [e.strip() for e in (emails if emails is not None else ([email] if email else [])) if e and e.strip()]
+    email_list = [
+        e.strip()
+        for e in (emails if emails is not None else ([email] if email else []))
+        if e and e.strip()
+    ]
     phone_list = [p.strip() for p in (phones or []) if p and p.strip()]
     # Try to split name into first/last
     parts = name.strip().split()
@@ -215,6 +239,7 @@ def _abs_url(href: str) -> str:
     get a fully-qualified URL to PUT/DELETE. If href is already absolute
     (http...), return it as-is."""
     from urllib.parse import urlparse, urlunparse
+
     if href.startswith("http://") or href.startswith("https://"):
         return href
     cfg = _get_carddav_config()
@@ -229,9 +254,9 @@ def _abs_url(href: str) -> str:
 _ADDRESSBOOK_QUERY = (
     '<?xml version="1.0" encoding="utf-8"?>'
     '<C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">'
-    '<D:prop><D:getetag/><C:address-data/></D:prop>'
-    '<C:filter/>'
-    '</C:addressbook-query>'
+    "<D:prop><D:getetag/><C:address-data/></D:prop>"
+    "<C:filter/>"
+    "</C:addressbook-query>"
 )
 
 
@@ -239,12 +264,15 @@ def _fetch_via_report(cfg, auth):
     """Try a CardDAV REPORT addressbook-query — returns contacts WITH an
     `href` field, or None if the server doesn't support it / errors."""
     from defusedxml import ElementTree as ET
+
     try:
         r = httpx.request(
-            "REPORT", cfg["url"],
+            "REPORT",
+            cfg["url"],
             content=_ADDRESSBOOK_QUERY.encode("utf-8"),
             headers={"Content-Type": "application/xml; charset=utf-8", "Depth": "1"},
-            auth=auth, timeout=10,
+            auth=auth,
+            timeout=10,
         )
         if r.status_code not in (207, 200):
             return None
@@ -315,11 +343,13 @@ def _resolve_resource_url(uid: str) -> str:
     captured during fetch when available (handles contacts whose filename
     != UID); falls back to the <uid>.vcf guess for app-created contacts or
     when no href is known."""
+
     def _lookup():
         for c in _contact_cache.get("contacts", []):
             if c.get("uid") == uid and c.get("href"):
                 return _abs_url(c["href"])
         return None
+
     found = _lookup()
     if found:
         return found
@@ -374,6 +404,7 @@ def _vcard_url(uid: str) -> str:
     encoded so a value containing '/', '..' or other path chars can't
     escape the collection and target an arbitrary CardDAV resource."""
     from urllib.parse import quote
+
     cfg = _get_carddav_config()
     return cfg["url"].rstrip("/") + "/" + quote(uid, safe="") + ".vcf"
 
@@ -384,16 +415,12 @@ def _import_vcards(text: str) -> Dict:
     etc.) — we don't rebuild it, just ensure it has VERSION + UID and
     normalize line endings. Returns {imported, failed, total}."""
     from urllib.parse import quote
+
     cfg = _get_carddav_config()
     if not cfg.get("url"):
         parsed = _parse_vcards(text)
         contacts = _load_local_contacts()
-        existing = {
-            e.lower()
-            for c in contacts
-            for e in (c.get("emails") or [])
-            if e
-        }
+        existing = {e.lower() for c in contacts for e in (c.get("emails") or []) if e}
         imported = 0
         for c in parsed:
             emails = [e for e in (c.get("emails") or []) if e]
@@ -428,24 +455,36 @@ def _import_vcards(text: str) -> Dict:
         if not m:
             # Inject a UID right after the VERSION line (or after BEGIN).
             if re.search(r"^VERSION:", block, re.MULTILINE):
-                block = re.sub(r"(^VERSION:.*$)", r"\1\nUID:" + uid, block, count=1, flags=re.MULTILINE)
+                block = re.sub(
+                    r"(^VERSION:.*$)",
+                    r"\1\nUID:" + uid,
+                    block,
+                    count=1,
+                    flags=re.MULTILINE,
+                )
             else:
-                block = block.replace("BEGIN:VCARD", f"BEGIN:VCARD\nVERSION:4.0\nUID:{uid}", 1)
+                block = block.replace(
+                    "BEGIN:VCARD", f"BEGIN:VCARD\nVERSION:4.0\nUID:{uid}", 1
+                )
         elif not re.search(r"^VERSION:", block, re.MULTILINE):
             block = block.replace("BEGIN:VCARD", "BEGIN:VCARD\nVERSION:4.0", 1)
         vcard = block.replace("\n", "\r\n") + "\r\n"
         url = cfg["url"].rstrip("/") + "/" + quote(uid, safe="") + ".vcf"
         try:
             r = httpx.put(
-                url, data=vcard.encode("utf-8"),
+                url,
+                data=vcard.encode("utf-8"),
                 headers={"Content-Type": "text/vcard; charset=utf-8"},
-                auth=auth, timeout=15,
+                auth=auth,
+                timeout=15,
             )
             if r.status_code in (200, 201, 204):
                 imported += 1
             else:
                 failed += 1
-                logger.warning(f"Import PUT {uid} returned {r.status_code}: {r.text[:120]}")
+                logger.warning(
+                    f"Import PUT {uid} returned {r.status_code}: {r.text[:120]}"
+                )
         except Exception as e:
             failed += 1
             logger.error(f"Import PUT {uid} failed: {e}")
@@ -478,18 +517,32 @@ def _import_csv_contacts(text: str) -> Dict:
     if has_header:
         reader = csv.DictReader(stream, dialect=dialect)
         for row in reader:
-            lowered = {str(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
+            lowered = {
+                str(k or "").strip().lower(): (v or "").strip() for k, v in row.items()
+            }
             name = (
-                lowered.get("name") or lowered.get("full name") or lowered.get("full_name")
-                or lowered.get("display name") or lowered.get("display_name")
-                or lowered.get("fn") or ""
+                lowered.get("name")
+                or lowered.get("full name")
+                or lowered.get("full_name")
+                or lowered.get("display name")
+                or lowered.get("display_name")
+                or lowered.get("fn")
+                or ""
             )
             email = (
-                lowered.get("email") or lowered.get("email address")
-                or lowered.get("email_address") or lowered.get("e-mail")
-                or lowered.get("mail") or ""
+                lowered.get("email")
+                or lowered.get("email address")
+                or lowered.get("email_address")
+                or lowered.get("e-mail")
+                or lowered.get("mail")
+                or ""
             )
-            phone = lowered.get("phone") or lowered.get("telephone") or lowered.get("tel") or ""
+            phone = (
+                lowered.get("phone")
+                or lowered.get("telephone")
+                or lowered.get("tel")
+                or ""
+            )
             rows.append((name, email, phone))
     else:
         stream.seek(0)
@@ -498,20 +551,19 @@ def _import_csv_contacts(text: str) -> Dict:
             cols = [(c or "").strip() for c in row]
             if not any(cols):
                 continue
-            rows.append((
-                cols[0] if len(cols) > 0 else "",
-                cols[1] if len(cols) > 1 else "",
-                cols[2] if len(cols) > 2 else "",
-            ))
+            rows.append(
+                (
+                    cols[0] if len(cols) > 0 else "",
+                    cols[1] if len(cols) > 1 else "",
+                    cols[2] if len(cols) > 2 else "",
+                )
+            )
 
     imported = 0
     failed = 0
     total = 0
     existing_emails = {
-        e.lower()
-        for c in _fetch_contacts()
-        for e in (c.get("emails") or [])
-        if e
+        e.lower() for c in _fetch_contacts() for e in (c.get("emails") or []) if e
     }
     for name, email, phone in rows:
         email = (email or "").strip()
@@ -530,7 +582,14 @@ def _import_csv_contacts(text: str) -> Dict:
             if phone:
                 try:
                     contacts = _fetch_contacts(force=True)
-                    created = next((c for c in contacts if email.lower() in [e.lower() for e in c.get("emails", [])]), None)
+                    created = next(
+                        (
+                            c
+                            for c in contacts
+                            if email.lower() in [e.lower() for e in c.get("emails", [])]
+                        ),
+                        None,
+                    )
                     if created and created.get("uid"):
                         _update_contact(created["uid"], name, [email], [phone])
                 except Exception:
@@ -546,7 +605,12 @@ def _import_csv_contacts(text: str) -> Dict:
 def _contacts_to_vcf(contacts: List[Dict]) -> str:
     return "".join(
         _build_vcard(
-            c.get("name") or ((c.get("emails") or [""])[0].split("@")[0] if c.get("emails") else "Contact"),
+            c.get("name")
+            or (
+                (c.get("emails") or [""])[0].split("@")[0]
+                if c.get("emails")
+                else "Contact"
+            ),
             "",
             uid=c.get("uid") or str(uuid.uuid4()),
             emails=c.get("emails") or [],
@@ -565,11 +629,13 @@ def _contacts_to_csv(contacts: List[Dict]) -> str:
         phones = c.get("phones") or [""]
         max_len = max(len(emails), len(phones), 1)
         for i in range(max_len):
-            writer.writerow([
-                c.get("name") or "",
-                emails[i] if i < len(emails) else "",
-                phones[i] if i < len(phones) else "",
-            ])
+            writer.writerow(
+                [
+                    c.get("name") or "",
+                    emails[i] if i < len(emails) else "",
+                    phones[i] if i < len(phones) else "",
+                ]
+            )
     return out.getvalue()
 
 
@@ -582,12 +648,20 @@ def _update_contact(uid: str, name: str, emails: List[str], phones: List[str]) -
         out = []
         for c in contacts:
             if c.get("uid") == uid:
-                out.append(_normalize_contact({"uid": uid, "name": name, "emails": emails, "phones": phones}))
+                out.append(
+                    _normalize_contact(
+                        {"uid": uid, "name": name, "emails": emails, "phones": phones}
+                    )
+                )
                 found = True
             else:
                 out.append(c)
         if not found:
-            out.append(_normalize_contact({"uid": uid, "name": name, "emails": emails, "phones": phones}))
+            out.append(
+                _normalize_contact(
+                    {"uid": uid, "name": name, "emails": emails, "phones": phones}
+                )
+            )
         _save_local_contacts(out)
         return True
 
@@ -645,6 +719,7 @@ def _delete_contact(uid: str) -> bool:
 
 
 # ── Routes ──
+
 
 def setup_contacts_routes():
     router = APIRouter(prefix="/api/contacts", tags=["contacts"])

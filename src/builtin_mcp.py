@@ -36,6 +36,7 @@ def _find_npx() -> str:
             return npx_candidate
     return "npx"  # fallback, will fail with a clear error
 
+
 # Server definitions: id -> (script path relative to project root, display name)
 #
 # bash / python / filesystem / web_search were folded into native in-process
@@ -46,10 +47,10 @@ def _find_npx() -> str:
 # carries hundreds of LOC of unique IMAP / HTTP / manager logic not worth
 # duplicating into the native path right now.
 _BUILTIN_SERVERS = {
-    "image_gen":  ("mcp_servers/image_gen_server.py",  "Built-in: Image Generation"),
-    "memory":     ("mcp_servers/memory_server.py",     "Built-in: Memory"),
-    "rag":        ("mcp_servers/rag_server.py",        "Built-in: RAG"),
-    "email":      ("mcp_servers/email_server.py",      "Built-in: Email"),
+    "image_gen": ("mcp_servers/image_gen_server.py", "Built-in: Image Generation"),
+    "memory": ("mcp_servers/memory_server.py", "Built-in: Memory"),
+    "rag": ("mcp_servers/rag_server.py", "Built-in: RAG"),
+    "email": ("mcp_servers/email_server.py", "Built-in: Email"),
 }
 
 # NPX-based built-in servers (run via npx, not Python)
@@ -62,7 +63,11 @@ _BUILTIN_NPX_SERVERS = {
 }
 
 # Global flag to disable MCP if there are compatibility issues
-MCP_DISABLED = os.environ.get("ODYSSEUS_DISABLE_MCP", "").lower() in ("1", "true", "yes")
+MCP_DISABLED = os.environ.get("ODYSSEUS_DISABLE_MCP", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 
 async def register_builtin_servers(mcp_manager):
@@ -109,7 +114,9 @@ async def register_builtin_servers(mcp_manager):
         await asyncio.sleep(3)  # let Python servers finish first
         for server_id, cfg in _BUILTIN_NPX_SERVERS.items():
             try:
-                logger.info(f"Starting NPX server: {cfg['name']} ({npx_path} {' '.join(cfg['args'])})")
+                logger.info(
+                    f"Starting NPX server: {cfg['name']} ({npx_path} {' '.join(cfg['args'])})"
+                )
                 ok = await asyncio.wait_for(
                     mcp_manager.connect_server(
                         server_id=server_id,
@@ -123,12 +130,16 @@ async def register_builtin_servers(mcp_manager):
                 if ok:
                     logger.info(f"Built-in NPX server registered: {cfg['name']}")
                 else:
-                    logger.warning(f"Built-in NPX server failed to connect: {cfg['name']}")
+                    logger.warning(
+                        f"Built-in NPX server failed to connect: {cfg['name']}"
+                    )
             except asyncio.TimeoutError:
                 logger.warning(f"Built-in NPX server timed out: {cfg['name']}")
             except asyncio.CancelledError:
                 raise
             except BaseException as e:
-                logger.warning(f"Built-in NPX server {cfg['name']} error: {type(e).__name__}: {e}")
+                logger.warning(
+                    f"Built-in NPX server {cfg['name']} error: {type(e).__name__}: {e}"
+                )
 
     asyncio.create_task(_start_npx_servers())

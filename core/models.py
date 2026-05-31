@@ -24,6 +24,7 @@ def set_session_manager(manager: "SessionManager"):
 @dataclass
 class ChatMessage:
     """A single chat message."""
+
     role: str
     content: str
     metadata: Optional[Dict[str, Any]] = None
@@ -43,6 +44,7 @@ class ChatMessage:
 @dataclass
 class Session:
     """A chat session — pure data container."""
+
     id: str
     name: str
     endpoint_url: str

@@ -13,7 +13,9 @@ class TestIsLocalEndpoint:
         assert _is_local_endpoint("http://127.0.0.1:8080/v1/chat/completions") is True
 
     def test_private_192_168(self):
-        assert _is_local_endpoint("http://192.168.1.1:11434/v1/chat/completions") is True
+        assert (
+            _is_local_endpoint("http://192.168.1.1:11434/v1/chat/completions") is True
+        )
 
     def test_private_10(self):
         assert _is_local_endpoint("http://10.0.0.5:8000/v1/chat/completions") is True

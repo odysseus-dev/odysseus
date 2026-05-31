@@ -10,20 +10,50 @@ logger = logging.getLogger(__name__)
 
 _NEWS_HINTS = {"news", "nyheter", "headlines", "breaking", "latest", "today", "idag"}
 _SPORTS_HINTS = {
-    "sport", "sports", "soccer", "football", "hockey", "nba", "nfl", "mlb",
-    "fifa", "world cup", "championship", "quarterfinal", "eliminates",
+    "sport",
+    "sports",
+    "soccer",
+    "football",
+    "hockey",
+    "nba",
+    "nfl",
+    "mlb",
+    "fifa",
+    "world cup",
+    "championship",
+    "quarterfinal",
+    "eliminates",
 }
 _LOW_VALUE_NEWS_DOMAINS = {
-    "facebook.com", "www.facebook.com", "sports.yahoo.com", "yahoo.com",
-    "www.yahoo.com", "msn.com", "www.msn.com",
+    "facebook.com",
+    "www.facebook.com",
+    "sports.yahoo.com",
+    "yahoo.com",
+    "www.yahoo.com",
+    "msn.com",
+    "www.msn.com",
 }
 _TRUSTED_NEWS_DOMAINS = {
-    "apnews.com", "www.apnews.com", "reuters.com", "www.reuters.com",
-    "bbc.com", "www.bbc.com", "cbc.ca", "www.cbc.ca",
-    "ctvnews.ca", "www.ctvnews.ca", "globalnews.ca", "www.globalnews.ca",
+    "apnews.com",
+    "www.apnews.com",
+    "reuters.com",
+    "www.reuters.com",
+    "bbc.com",
+    "www.bbc.com",
+    "cbc.ca",
+    "www.cbc.ca",
+    "ctvnews.ca",
+    "www.ctvnews.ca",
+    "globalnews.ca",
+    "www.globalnews.ca",
     "theguardian.com",
-    "www.theguardian.com", "euronews.com", "www.euronews.com",
-    "dw.com", "www.dw.com", "government.se", "www.government.se",
+    "www.theguardian.com",
+    "euronews.com",
+    "www.euronews.com",
+    "dw.com",
+    "www.dw.com",
+    "government.se",
+    "www.government.se",
 }
 
 
@@ -45,7 +75,9 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
         if not title:
             return 0.0
         title_lc = title.lower()
-        matches = sum(1 for term in query_terms if re.search(rf"\b{re.escape(term)}\b", title_lc))
+        matches = sum(
+            1 for term in query_terms if re.search(rf"\b{re.escape(term)}\b", title_lc)
+        )
         return matches / len(query_terms) if query_terms else 0.0
 
     def snippet_score(snippet: str) -> float:
@@ -94,11 +126,16 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
         adjustment = 0.0
         if netloc in _TRUSTED_NEWS_DOMAINS:
             adjustment += 1.2
-        if any(term in text for term in ("latest news", "breaking news", "daily coverage", "news from")):
+        if any(
+            term in text
+            for term in ("latest news", "breaking news", "daily coverage", "news from")
+        ):
             adjustment += 0.4
         if netloc in _LOW_VALUE_NEWS_DOMAINS:
             adjustment -= 0.8
-        if not is_sports_query and any(hint in text or hint in netloc for hint in _SPORTS_HINTS):
+        if not is_sports_query and any(
+            hint in text or hint in netloc for hint in _SPORTS_HINTS
+        ):
             adjustment -= 1.5
         # A country/news query should not rank a page whose title/snippet barely
         # mentions the country above actual news pages for that country.

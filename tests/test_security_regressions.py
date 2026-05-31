@@ -21,6 +21,7 @@ import pytest
 
 # ── prompt-injection context wrapper ────────────────────────────
 
+
 def test_untrusted_context_message_is_not_system_role():
     from src.prompt_security import untrusted_context_message
 
@@ -41,11 +42,13 @@ def test_untrusted_context_policy_marks_sources_as_data():
 
 # ── secret_storage ─────────────────────────────────────────────
 
+
 def _import_secret_storage(tmp_path, monkeypatch):
     """Import src.secret_storage with the key file redirected to tmp."""
     # Make sure a previous test's cached module doesn't reuse its key.
     sys.modules.pop("src.secret_storage", None)
     from src import secret_storage  # noqa: WPS433
+
     monkeypatch.setattr(secret_storage, "_KEY_PATH", tmp_path / ".app_key")
     monkeypatch.setattr(secret_storage, "_fernet", None)
     return secret_storage
@@ -108,9 +111,11 @@ def test_secret_storage_key_created_with_safe_mode(tmp_path, monkeypatch):
 
 # ── _q IMAP mailbox quoter ─────────────────────────────────────
 
+
 def _import_q():
     sys.modules.pop("routes.email_helpers", None)
     from routes.email_helpers import _q  # noqa: WPS433
+
     return _q
 
 
@@ -146,6 +151,7 @@ def test_q_empty_input():
 
 # ── compose-upload path traversal block ─────────────────────────
 
+
 @pytest.mark.parametrize(
     "token,expected",
     [
@@ -165,6 +171,7 @@ def test_path_name_strips_traversal(token, expected):
 
 # ── require_user dependency rejects anon callers ────────────────
 
+
 def test_require_user_rejects_unauthenticated(monkeypatch):
     """The shared auth dependency must raise 401 when the middleware
     didn't attach a user AND auth is configured. Mirrors the
@@ -181,6 +188,7 @@ def test_require_user_rejects_unauthenticated(monkeypatch):
     class _AppState:
         class _Mgr:
             is_configured = True
+
         auth_manager = _Mgr()
 
     class _App:
@@ -205,6 +213,7 @@ def test_inprocess_pollers_gate(monkeypatch):
     `odysseus-mail poll-*` CLI subcommands instead. Two pollers racing
     on the same SQLite would mark scheduled rows as 'sent' twice."""
     import sys as _sys
+
     _sys.modules.pop("routes.email_pollers", None)
     from routes.email_pollers import _inprocess_pollers_enabled  # noqa: WPS433
 
@@ -236,6 +245,7 @@ def test_require_user_accepts_loopback_when_unconfigured(monkeypatch):
     class _AppState:
         class _Mgr:
             is_configured = False
+
         auth_manager = _Mgr()
 
     class _App:
@@ -265,6 +275,7 @@ def test_require_admin_rejects_unconfigured_public_api(monkeypatch):
     class _AppState:
         class _Mgr:
             is_configured = False
+
         auth_manager = _Mgr()
 
     class _App:
@@ -308,14 +319,18 @@ def test_auth_manager_migrates_legacy_admin_role(tmp_path):
     from core.auth import AuthManager
 
     auth_path = tmp_path / "auth.json"
-    auth_path.write_text(json.dumps({
-        "users": {
-            "admin": {
-                "password_hash": "unused",
-                "role": "admin",
+    auth_path.write_text(
+        json.dumps(
+            {
+                "users": {
+                    "admin": {
+                        "password_hash": "unused",
+                        "role": "admin",
+                    }
+                }
             }
-        }
-    }))
+        )
+    )
 
     mgr = AuthManager(str(auth_path))
 
@@ -324,7 +339,9 @@ def test_auth_manager_migrates_legacy_admin_role(tmp_path):
     assert data["users"]["admin"]["is_admin"] is True
 
 
-def _load_search_content_for_test(monkeypatch, name="services.search.content_under_test"):
+def _load_search_content_for_test(
+    monkeypatch, name="services.search.content_under_test"
+):
     import importlib.util
     import types as _types
 
@@ -368,9 +385,15 @@ def test_web_content_fetcher_blocks_private_url(monkeypatch):
 def test_web_content_fetcher_blocks_dns_to_private(monkeypatch):
     import ipaddress
 
-    content = _load_search_content_for_test(monkeypatch, "services.search.content_under_test_dns")
+    content = _load_search_content_for_test(
+        monkeypatch, "services.search.content_under_test_dns"
+    )
 
-    monkeypatch.setattr(content, "_resolve_hostname_ips", lambda host: [ipaddress.ip_address("10.0.0.5")])
+    monkeypatch.setattr(
+        content,
+        "_resolve_hostname_ips",
+        lambda host: [ipaddress.ip_address("10.0.0.5")],
+    )
 
     assert content._public_http_url("https://example.test/path") is False
 

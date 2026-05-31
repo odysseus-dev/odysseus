@@ -48,6 +48,7 @@ def _run_node(script: str) -> dict:
 
 # ── state.js ───────────────────────────────────────────────────────
 
+
 def test_state_reset_preserves_config(node_available):
     """`state.reset()` clears transient flags but leaves config
     sticky (API_BASE, _parallel, _blindMode, etc.). A reset must abort
@@ -113,6 +114,7 @@ def test_state_reset_resets_probed_set(node_available):
 
 
 # ── icons.js ───────────────────────────────────────────────────────
+
 
 def test_svg_icon_exports_are_valid_svg(node_available):
     """Every name matching the icon-export naming pattern (`*_ICON`,

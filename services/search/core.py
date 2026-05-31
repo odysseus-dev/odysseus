@@ -58,6 +58,7 @@ def get_search_config() -> Dict[str, Any]:
     config["result_count"] = _get_result_count()
     if provider == "searxng":
         from .providers import _get_search_instance
+
         config["search_url"] = _get_search_instance()
     return config
 
@@ -68,7 +69,9 @@ def update_search_config(api_key: str = None, **kwargs):
         SEARCH_CONFIG["brave_api_key"] = api_key
 
 
-def _call_provider(provider_name: str, query: str, count: int, time_filter: str = None) -> List[dict]:
+def _call_provider(
+    provider_name: str, query: str, count: int, time_filter: str = None
+) -> List[dict]:
     """Call a search provider by name. Returns list of results or empty list."""
     if provider_name == "searxng":
         return searxng_search_api(query, count, time_filter=time_filter)
@@ -108,7 +111,9 @@ def _build_provider_chain(primary: str) -> List[str]:
 # ----------------------------------------------------------------------
 # Unified search with caching and retry
 # ----------------------------------------------------------------------
-def searxng_search_results(query: str, count: int = 10, time_filter: str = None) -> list[dict]:
+def searxng_search_results(
+    query: str, count: int = 10, time_filter: str = None
+) -> list[dict]:
     """Perform a web search using configured provider with caching and retry."""
     settings = _get_search_settings()
     search_provider = settings.get("search_provider", "searxng")
@@ -152,15 +157,23 @@ def searxng_search_results(query: str, count: int = 10, time_filter: str = None)
     for provider_name in provider_chain:
         for attempt in range(2):
             try:
-                logger.info(f"Attempting {provider_name} search (attempt {attempt + 1})")
+                logger.info(
+                    f"Attempting {provider_name} search (attempt {attempt + 1})"
+                )
                 results = _call_provider(provider_name, query, count, time_filter)
                 if results:
-                    logger.info(f"{provider_name} search succeeded with {len(results)} results")
+                    logger.info(
+                        f"{provider_name} search succeeded with {len(results)} results"
+                    )
                     break
             except (NetworkError, ParseError, RateLimitError) as e:
-                error_logger.error(f"{provider_name} search error (attempt {attempt + 1}): {e}")
+                error_logger.error(
+                    f"{provider_name} search error (attempt {attempt + 1}): {e}"
+                )
             except Exception as e:
-                error_logger.error(f"Unexpected error during {provider_name} search (attempt {attempt + 1}): {e}")
+                error_logger.error(
+                    f"Unexpected error during {provider_name} search (attempt {attempt + 1}): {e}"
+                )
         if results:
             break
 
@@ -211,7 +224,9 @@ def invalidate_search_cache(query: Optional[str] = None) -> None:
                 search_cache_index.pop(cache_key, None)
                 logger.info(f"Cache entry for query '{query}' has been invalidated.")
             except Exception as e:
-                error_logger.warning(f"Failed to delete cache file for query '{query}': {e}")
+                error_logger.warning(
+                    f"Failed to delete cache file for query '{query}': {e}"
+                )
         else:
             logger.info(f"No cache entry found for query '{query}'.")
 
@@ -257,15 +272,21 @@ def comprehensive_web_search(
         empty = False
         for attempt in range(2):
             try:
-                search_results = _call_provider(provider_name, query, fetch_count, time_filter)
+                search_results = _call_provider(
+                    provider_name, query, fetch_count, time_filter
+                )
                 if search_results:
                     provider_attempts[provider_name] = f"ok ({len(search_results)})"
-                    logger.info(f"Comprehensive search: {provider_name} returned {len(search_results)} results")
+                    logger.info(
+                        f"Comprehensive search: {provider_name} returned {len(search_results)} results"
+                    )
                     break
                 empty = True
             except Exception as e:
                 last_err = e
-                logger.warning(f"Comprehensive search: {provider_name} attempt {attempt + 1} failed: {e}")
+                logger.warning(
+                    f"Comprehensive search: {provider_name} attempt {attempt + 1} failed: {e}"
+                )
         if search_results:
             break
         if last_err is not None:
@@ -274,7 +295,10 @@ def comprehensive_web_search(
             provider_attempts[provider_name] = "empty"
 
     if not search_results:
-        tally = ", ".join(f"{p}:{r}" for p, r in provider_attempts.items()) or "no providers configured"
+        tally = (
+            ", ".join(f"{p}:{r}" for p, r in provider_attempts.items())
+            or "no providers configured"
+        )
         any_errors = any(r.startswith("error") for r in provider_attempts.values())
         if any_errors:
             msg = f"Web search failed — all providers errored or returned empty. Tried: {tally}"
@@ -302,21 +326,34 @@ def comprehensive_web_search(
         if content_type:
             ct = content_type.lower()
             if ct == "article":
-                if not any(k in url.lower() for k in ("article", "blog", "news", "post")):
+                if not any(
+                    k in url.lower() for k in ("article", "blog", "news", "post")
+                ):
                     return False
             elif ct == "forum":
-                if not any(k in url.lower() for k in ("forum", "discussion", "thread", "topic")):
+                if not any(
+                    k in url.lower() for k in ("forum", "discussion", "thread", "topic")
+                ):
                     return False
             elif ct == "academic":
-                if not any(k in url.lower() for k in ("pdf", "doi", "scholar", "arxiv", "journal", "research")):
+                if not any(
+                    k in url.lower()
+                    for k in ("pdf", "doi", "scholar", "arxiv", "journal", "research")
+                ):
                     return False
         if language:
             lang_pat = language.lower()
-            if not (f"/{lang_pat}/" in url.lower() or f"?lang={lang_pat}" in url.lower() or f"&lang={lang_pat}" in url.lower()):
+            if not (
+                f"/{lang_pat}/" in url.lower()
+                or f"?lang={lang_pat}" in url.lower()
+                or f"&lang={lang_pat}" in url.lower()
+            ):
                 return False
         return True
 
-    filtered_urls = [r["url"] for r in search_results[:max_pages] if url_passes_filters(r["url"])]
+    filtered_urls = [
+        r["url"] for r in search_results[:max_pages] if url_passes_filters(r["url"])
+    ]
     if not filtered_urls:
         logger.warning("All URLs filtered out by advanced criteria")
         msg = "No suitable results after applying filters."
@@ -325,7 +362,8 @@ def comprehensive_web_search(
     # Build sources list for the frontend (before content fetching)
     _source_list = [
         {"url": r.get("url", ""), "title": r.get("title", "")}
-        for r in search_results if r.get("url")
+        for r in search_results
+        if r.get("url")
     ]
 
     # Fetch content in parallel
@@ -339,7 +377,11 @@ def comprehensive_web_search(
             url = future_to_url[future]
             try:
                 result = future.result()
-                if result["success"] and result["content"] and len(result["content"]) >= min_content_length:
+                if (
+                    result["success"]
+                    and result["content"]
+                    and len(result["content"]) >= min_content_length
+                ):
                     fetched_content.append(result)
             except Exception as e:
                 logger.error(f"Exception while fetching {url}: {str(e)}")
@@ -362,7 +404,9 @@ def comprehensive_web_search(
     output_parts.append("=" * 70)
     output_parts.append("WEB SEARCH RESULTS AND FETCHED CONTENT")
     output_parts.append(f"Query: {query}")
-    output_parts.append(f"Searched {len(search_results)} results, fetched {len(fetched_content)} pages")
+    output_parts.append(
+        f"Searched {len(search_results)} results, fetched {len(fetched_content)} pages"
+    )
     output_parts.append("=" * 70)
     output_parts.append("")
 

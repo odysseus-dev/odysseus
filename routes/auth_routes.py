@@ -97,7 +97,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if not auth_manager.is_configured:
             raise HTTPException(400, "Run setup first")
         if not auth_manager.signup_enabled:
-            raise HTTPException(403, "Registration is disabled. Ask an admin for an account.")
+            raise HTTPException(
+                403, "Registration is disabled. Ask an admin for an account."
+            )
         if len(body.password) < 8:
             raise HTTPException(400, "Password must be at least 8 characters")
         if len(body.username.strip()) < 1:
@@ -171,7 +173,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(401, "Not authenticated")
         if len(body.new_password) < 8:
             raise HTTPException(400, "Password must be at least 8 characters")
-        ok = auth_manager.change_password(user, body.current_password, body.new_password)
+        ok = auth_manager.change_password(
+            user, body.current_password, body.new_password
+        )
         if not ok:
             raise HTTPException(400, "Current password is incorrect")
         return {"ok": True}
@@ -194,11 +198,16 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         uri = auth_manager.totp_get_provisioning_uri(user, secret)
         # Generate QR code as base64 PNG
         import qrcode, io, base64
+
         qr = qrcode.make(uri, box_size=6, border=2)
         buf = io.BytesIO()
         qr.save(buf, format="PNG")
         qr_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-        return {"secret": secret, "uri": uri, "qr_code": f"data:image/png;base64,{qr_b64}"}
+        return {
+            "secret": secret,
+            "uri": uri,
+            "qr_code": f"data:image/png;base64,{qr_b64}",
+        }
 
     class TotpVerifyRequest(BaseModel):
         code: str
@@ -380,7 +389,12 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.get("/integrations/presets")
     async def list_presets():
         """List available integration presets."""
-        return {"presets": {k: {kk: vv for kk, vv in v.items() if kk != "api_key"} for k, v in INTEGRATION_PRESETS.items()}}
+        return {
+            "presets": {
+                k: {kk: vv for kk, vv in v.items() if kk != "api_key"}
+                for k, v in INTEGRATION_PRESETS.items()
+            }
+        }
 
     @router.post("/integrations")
     async def create_integration(request: Request):
@@ -436,6 +450,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if preset == "ntfy":
             import httpx
             from urllib.parse import urlparse
+
             # Strip any path/query the user accidentally pasted in the
             # base URL (e.g. `http://host:8091/odysseus`) — otherwise
             # the topic gets appended after the path and we publish to
@@ -443,9 +458,15 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             # only ever serves from the root.
             raw_base = (integ.get("base_url") or "").strip()
             parsed = urlparse(raw_base)
-            base = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else raw_base.rstrip("/")
+            base = (
+                f"{parsed.scheme}://{parsed.netloc}"
+                if parsed.scheme and parsed.netloc
+                else raw_base.rstrip("/")
+            )
             settings = _load_settings()
-            topic = (settings.get("reminder_ntfy_topic") or "reminders").strip() or "reminders"
+            topic = (
+                settings.get("reminder_ntfy_topic") or "reminders"
+            ).strip() or "reminders"
             full_url = f"{base}/{topic}"
             api_key = integ.get("api_key", "")
             auth_type = (integ.get("auth_type") or "none").lower()
@@ -476,13 +497,19 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                         "ok": True,
                         "message": (
                             f"Sent to {full_url} — on your ntfy app, "
-                            f"subscribe to topic \"{topic}\" with server "
-                            f"\"{base}\" (or paste the full URL: {full_url})."
+                            f'subscribe to topic "{topic}" with server '
+                            f'"{base}" (or paste the full URL: {full_url}).'
                         ),
                     }
-                return {"ok": False, "message": f"ntfy returned HTTP {r.status_code} from {full_url}: {r.text[:200]}"}
+                return {
+                    "ok": False,
+                    "message": f"ntfy returned HTTP {r.status_code} from {full_url}: {r.text[:200]}",
+                }
             except Exception as e:
-                return {"ok": False, "message": f"ntfy publish to {full_url} failed: {e}"[:300]}
+                return {
+                    "ok": False,
+                    "message": f"ntfy publish to {full_url} failed: {e}"[:300],
+                }
 
         # All other presets: GET against a known health endpoint.
         # Fall back to detecting from name if preset is missing.
@@ -497,6 +524,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         result = await execute_api_call(integration_id, "GET", path)
         if result.get("exit_code", 1) == 0:
             return {"ok": True, "message": "Connection successful"}
-        return {"ok": False, "message": (result.get("error") or "Connection failed")[:300]}
+        return {
+            "ok": False,
+            "message": (result.get("error") or "Connection failed")[:300],
+        }
 
     return router

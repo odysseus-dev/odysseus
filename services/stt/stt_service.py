@@ -29,6 +29,7 @@ class STTService:
 
     def _load_settings(self) -> dict:
         from src.settings import load_settings
+
         saved = load_settings()
         return {
             "stt_enabled": saved.get("stt_enabled", False),
@@ -57,23 +58,31 @@ class STTService:
         if self._whisper_model is None:
             try:
                 from faster_whisper import WhisperModel
+
                 settings = self._load_settings()
                 model_size = settings.get("stt_model", "base")
                 # Use CPU by default; will use CUDA if available
                 import torch
+
                 device = "cuda" if torch.cuda.is_available() else "cpu"
                 compute_type = "float16" if device == "cuda" else "int8"
-                self._whisper_model = WhisperModel(model_size, device=device, compute_type=compute_type)
+                self._whisper_model = WhisperModel(
+                    model_size, device=device, compute_type=compute_type
+                )
                 logger.info(f"faster-whisper model '{model_size}' loaded on {device}")
             except ImportError:
-                logger.warning("faster-whisper not installed. Install with: pip install faster-whisper")
+                logger.warning(
+                    "faster-whisper not installed. Install with: pip install faster-whisper"
+                )
                 return None
             except Exception as e:
                 logger.error(f"Failed to load whisper model: {e}")
                 return None
         return self._whisper_model
 
-    def _transcribe_local(self, audio_bytes: bytes, language: str = "") -> Optional[str]:
+    def _transcribe_local(
+        self, audio_bytes: bytes, language: str = ""
+    ) -> Optional[str]:
         model = self._get_whisper()
         if not model:
             return None
@@ -93,7 +102,9 @@ class STTService:
             # Cleanup
             Path(tmp_path).unlink(missing_ok=True)
 
-            logger.info(f"Local STT: {len(text)} chars, lang={info.language}, prob={info.language_probability:.2f}")
+            logger.info(
+                f"Local STT: {len(text)} chars, lang={info.language}, prob={info.language_probability:.2f}"
+            )
             return text
         except Exception as e:
             logger.error(f"Local STT transcription failed: {e}", exc_info=True)
@@ -101,7 +112,9 @@ class STTService:
 
     # ── API endpoint ──
 
-    def _transcribe_api(self, audio_bytes: bytes, endpoint_id: str, model: str, language: str = "") -> Optional[str]:
+    def _transcribe_api(
+        self, audio_bytes: bytes, endpoint_id: str, model: str, language: str = ""
+    ) -> Optional[str]:
         from src.database import SessionLocal, ModelEndpoint
 
         db = SessionLocal()
@@ -183,6 +196,7 @@ class STTService:
 
 # Module-level singleton
 _stt_service = None
+
 
 def get_stt_service() -> STTService:
     global _stt_service

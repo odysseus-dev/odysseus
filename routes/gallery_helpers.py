@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 # ---- Request schemas ----
 
+
 class GalleryPatch(BaseModel):
     tags: Optional[str] = None
     favorite: Optional[bool] = None
@@ -25,17 +26,19 @@ class GalleryPatch(BaseModel):
 
 # ---- EXIF extraction ----
 
+
 def _extract_exif(content: bytes) -> dict:
     """Extract EXIF metadata from image bytes. Returns dict of fields."""
     result = {"width": None, "height": None}
     try:
         from PIL import Image
         from io import BytesIO
+
         img = Image.open(BytesIO(content))
         result["width"] = img.width
         result["height"] = img.height
 
-        exif = img._getexif() if hasattr(img, '_getexif') else None
+        exif = img._getexif() if hasattr(img, "_getexif") else None
         if not exif:
             return result
 
@@ -46,11 +49,17 @@ def _extract_exif(content: bytes) -> dict:
         result["camera_model"] = str(exif.get(272, "")).strip() or None
 
         # Date taken
-        for tag_id in (36867, 36868, 306):  # DateTimeOriginal, DateTimeDigitized, DateTime
+        for tag_id in (
+            36867,
+            36868,
+            306,
+        ):  # DateTimeOriginal, DateTimeDigitized, DateTime
             raw = exif.get(tag_id)
             if raw:
                 try:
-                    result["taken_at"] = datetime.strptime(str(raw).strip(), "%Y:%m:%d %H:%M:%S")
+                    result["taken_at"] = datetime.strptime(
+                        str(raw).strip(), "%Y:%m:%d %H:%M:%S"
+                    )
                     break
                 except (ValueError, TypeError):
                     pass
@@ -59,14 +68,18 @@ def _extract_exif(content: bytes) -> dict:
         gps_info = exif.get(34853)
         if gps_info and isinstance(gps_info, dict):
             try:
+
                 def _to_deg(vals):
                     d, m, s = [float(v) for v in vals]
                     return d + m / 60 + s / 3600
+
                 if 2 in gps_info and 4 in gps_info:
                     lat = _to_deg(gps_info[2])
                     lng = _to_deg(gps_info[4])
-                    if gps_info.get(1) == 'S': lat = -lat
-                    if gps_info.get(3) == 'W': lng = -lng
+                    if gps_info.get(1) == "S":
+                        lat = -lat
+                    if gps_info.get(3) == "W":
+                        lng = -lng
                     result["gps_lat"] = f"{lat:.6f}"
                     result["gps_lng"] = f"{lng:.6f}"
             except Exception:
@@ -80,6 +93,7 @@ def _extract_exif(content: bytes) -> dict:
 
 
 # ---- Helpers ----
+
 
 def _image_to_dict(img: GalleryImage, session_name: str = None) -> Dict[str, Any]:
     return {
@@ -116,9 +130,8 @@ def _owner_filter(q, user):
     return q.filter(GalleryImage.owner == user)
 
 
-
 def _human_size(nbytes):
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
         if abs(nbytes) < 1024:
             return f"{nbytes:.1f} {unit}"
         nbytes /= 1024

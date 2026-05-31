@@ -56,6 +56,7 @@ from fastapi import HTTPException
 # calendar._get_or_404_calendar / _get_or_404_event
 # ---------------------------------------------------------------------------
 
+
 def _import_calendar_helpers():
     """Import the two private gate helpers without booting the full
     calendar router. We patch sys.modules so the module-load side
@@ -123,8 +124,10 @@ def test_calendar_event_gate_rejects_cross_owner():
 # document._owner_session_filter
 # ---------------------------------------------------------------------------
 
+
 def test_document_owner_filter_rejects_anonymous():
     from routes.document_routes import _owner_session_filter
+
     fake_q = MagicMock()
     out = _owner_session_filter(fake_q, user=None)
     # The fix should call .filter(False) — fake_q.filter was invoked once
@@ -135,6 +138,7 @@ def test_document_owner_filter_rejects_anonymous():
 
 def test_document_owner_filter_applies_owner_clause():
     from routes.document_routes import _owner_session_filter
+
     fake_q = MagicMock()
     out = _owner_session_filter(fake_q, user="alice")
     fake_q.filter.assert_called_once()  # one strict filter call
@@ -145,8 +149,10 @@ def test_document_owner_filter_applies_owner_clause():
 # gallery._owner_filter
 # ---------------------------------------------------------------------------
 
+
 def test_gallery_owner_filter_blocks_anonymous():
     from routes.gallery_routes import _owner_filter
+
     fake_q = MagicMock()
     out = _owner_filter(fake_q, user=None)
     # Anonymous → q.filter(False) → contradiction, empty result set.
@@ -156,6 +162,7 @@ def test_gallery_owner_filter_blocks_anonymous():
 
 def test_gallery_owner_filter_passes_user():
     from routes.gallery_routes import _owner_filter
+
     fake_q = MagicMock()
     out = _owner_filter(fake_q, user="alice")
     # Under the SQLAlchemy MagicMock stubs we can't introspect the

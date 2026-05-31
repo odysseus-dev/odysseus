@@ -44,5 +44,7 @@ def log_to_assistant(
     session. Activity now lives in Tasks/notifications, so keep this shim for
     callers while preventing sidebar-log sessions from being created or filled.
     """
-    logger.debug("log_to_assistant ignored legacy activity category=%r owner=%r", category, owner)
+    logger.debug(
+        "log_to_assistant ignored legacy activity category=%r owner=%r", category, owner
+    )
     return

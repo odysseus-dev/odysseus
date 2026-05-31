@@ -29,11 +29,14 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string", "description": "The shell command to execute"}
+                    "command": {
+                        "type": "string",
+                        "description": "The shell command to execute",
+                    }
                 },
-                "required": ["command"]
-            }
-        }
+                "required": ["command"],
+            },
+        },
     },
     {
         "type": "function",
@@ -45,9 +48,9 @@ FUNCTION_TOOL_SCHEMAS = [
                 "properties": {
                     "code": {"type": "string", "description": "Python code to execute"}
                 },
-                "required": ["code"]
-            }
-        }
+                "required": ["code"],
+            },
+        },
     },
     {
         "type": "function",
@@ -58,11 +61,15 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
-                    "time_filter": {"type": "string", "enum": ["day", "week", "month", "year"], "description": "Optional freshness filter for news/latest/today queries"}
+                    "time_filter": {
+                        "type": "string",
+                        "enum": ["day", "week", "month", "year"],
+                        "description": "Optional freshness filter for news/latest/today queries",
+                    },
                 },
-                "required": ["query"]
-            }
-        }
+                "required": ["query"],
+            },
+        },
     },
     {
         "type": "function",
@@ -74,9 +81,9 @@ FUNCTION_TOOL_SCHEMAS = [
                 "properties": {
                     "path": {"type": "string", "description": "File path to read"}
                 },
-                "required": ["path"]
-            }
-        }
+                "required": ["path"],
+            },
+        },
     },
     {
         "type": "function",
@@ -87,11 +94,14 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "File path to write to"},
-                    "content": {"type": "string", "description": "File content to write"}
+                    "content": {
+                        "type": "string",
+                        "description": "File content to write",
+                    },
                 },
-                "required": ["path", "content"]
-            }
-        }
+                "required": ["path", "content"],
+            },
+        },
     },
     {
         "type": "function",
@@ -102,12 +112,18 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Document title"},
-                    "language": {"type": "string", "description": "Programming language or format (e.g. python, javascript, markdown, text)"},
-                    "content": {"type": "string", "description": "The document content"}
+                    "language": {
+                        "type": "string",
+                        "description": "Programming language or format (e.g. python, javascript, markdown, text)",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The document content",
+                    },
                 },
-                "required": ["title", "content"]
-            }
-        }
+                "required": ["title", "content"],
+            },
+        },
     },
     {
         "type": "function",
@@ -123,16 +139,22 @@ FUNCTION_TOOL_SCHEMAS = [
                         "items": {
                             "type": "object",
                             "properties": {
-                                "find": {"type": "string", "description": "Exact text to find in the document"},
-                                "replace": {"type": "string", "description": "Text to replace it with"}
+                                "find": {
+                                    "type": "string",
+                                    "description": "Exact text to find in the document",
+                                },
+                                "replace": {
+                                    "type": "string",
+                                    "description": "Text to replace it with",
+                                },
                             },
-                            "required": ["find", "replace"]
-                        }
+                            "required": ["find", "replace"],
+                        },
                     }
                 },
-                "required": ["edits"]
-            }
-        }
+                "required": ["edits"],
+            },
+        },
     },
     {
         "type": "function",
@@ -148,17 +170,26 @@ FUNCTION_TOOL_SCHEMAS = [
                         "items": {
                             "type": "object",
                             "properties": {
-                                "find": {"type": "string", "description": "Exact text in the document to suggest changing"},
-                                "replace": {"type": "string", "description": "Suggested replacement text"},
-                                "reason": {"type": "string", "description": "Brief explanation of why this change helps"}
+                                "find": {
+                                    "type": "string",
+                                    "description": "Exact text in the document to suggest changing",
+                                },
+                                "replace": {
+                                    "type": "string",
+                                    "description": "Suggested replacement text",
+                                },
+                                "reason": {
+                                    "type": "string",
+                                    "description": "Brief explanation of why this change helps",
+                                },
                             },
-                            "required": ["find", "replace", "reason"]
-                        }
+                            "required": ["find", "replace", "reason"],
+                        },
                     }
                 },
-                "required": ["suggestions"]
-            }
-        }
+                "required": ["suggestions"],
+            },
+        },
     },
     {
         "type": "function",
@@ -168,11 +199,14 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "content": {"type": "string", "description": "Complete new document content"}
+                    "content": {
+                        "type": "string",
+                        "description": "Complete new document content",
+                    }
                 },
-                "required": ["content"]
-            }
-        }
+                "required": ["content"],
+            },
+        },
     },
     {
         "type": "function",
@@ -182,11 +216,14 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Search keyword(s) to find in past conversations"}
+                    "query": {
+                        "type": "string",
+                        "description": "Search keyword(s) to find in past conversations",
+                    }
                 },
-                "required": ["query"]
-            }
-        }
+                "required": ["query"],
+            },
+        },
     },
     {
         "type": "function",
@@ -196,12 +233,18 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "model": {"type": "string", "description": "Model name (e.g. 'qwen3-32b') or model@endpoint_name"},
-                    "message": {"type": "string", "description": "The message to send to the model"}
+                    "model": {
+                        "type": "string",
+                        "description": "Model name (e.g. 'qwen3-32b') or model@endpoint_name",
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "The message to send to the model",
+                    },
                 },
-                "required": ["model", "message"]
-            }
-        }
+                "required": ["model", "message"],
+            },
+        },
     },
     {
         "type": "function",
@@ -212,11 +255,14 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Name for the new chat"},
-                    "model": {"type": "string", "description": "Model name or model@endpoint_name"}
+                    "model": {
+                        "type": "string",
+                        "description": "Model name or model@endpoint_name",
+                    },
                 },
-                "required": ["name", "model"]
-            }
-        }
+                "required": ["name", "model"],
+            },
+        },
     },
     {
         "type": "function",
@@ -226,11 +272,14 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "filter": {"type": "string", "description": "Optional keyword to filter chats by name"}
+                    "filter": {
+                        "type": "string",
+                        "description": "Optional keyword to filter chats by name",
+                    }
                 },
-                "required": []
-            }
-        }
+                "required": [],
+            },
+        },
     },
     {
         "type": "function",
@@ -240,12 +289,15 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "string", "description": "The id of the chat to send the message to"},
-                    "message": {"type": "string", "description": "The message to send"}
+                    "session_id": {
+                        "type": "string",
+                        "description": "The id of the chat to send the message to",
+                    },
+                    "message": {"type": "string", "description": "The message to send"},
                 },
-                "required": ["session_id", "message"]
-            }
-        }
+                "required": ["session_id", "message"],
+            },
+        },
     },
     {
         "type": "function",
@@ -261,16 +313,22 @@ FUNCTION_TOOL_SCHEMAS = [
                         "items": {
                             "type": "object",
                             "properties": {
-                                "model": {"type": "string", "description": "Model name for this step"},
-                                "instruction": {"type": "string", "description": "What this step should do"}
+                                "model": {
+                                    "type": "string",
+                                    "description": "Model name for this step",
+                                },
+                                "instruction": {
+                                    "type": "string",
+                                    "description": "What this step should do",
+                                },
                             },
-                            "required": ["model", "instruction"]
-                        }
+                            "required": ["model", "instruction"],
+                        },
                     }
                 },
-                "required": ["steps"]
-            }
-        }
+                "required": ["steps"],
+            },
+        },
     },
     {
         "type": "function",
@@ -280,14 +338,32 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["rename", "archive", "unarchive", "delete", "important", "unimportant", "truncate", "fork"],
-                               "description": "The action to perform"},
-                    "session_id": {"type": "string", "description": "Exact target chat id from list_sessions, or 'current' for the active chat where supported"},
-                    "value": {"type": "string", "description": "Action parameter: new name (rename), keep_count (truncate/fork)"}
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "rename",
+                            "archive",
+                            "unarchive",
+                            "delete",
+                            "important",
+                            "unimportant",
+                            "truncate",
+                            "fork",
+                        ],
+                        "description": "The action to perform",
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Exact target chat id from list_sessions, or 'current' for the active chat where supported",
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "Action parameter: new name (rename), keep_count (truncate/fork)",
+                    },
                 },
-                "required": ["action", "session_id"]
-            }
-        }
+                "required": ["action", "session_id"],
+            },
+        },
     },
     {
         "type": "function",
@@ -297,16 +373,28 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "add", "edit", "delete", "search"],
-                               "description": "The action to perform"},
-                    "text": {"type": "string", "description": "Memory text (for add/edit) or search query (for search)"},
-                    "memory_id": {"type": "string", "description": "Memory ID (for edit/delete)"},
-                    "category": {"type": "string", "enum": ["fact", "event", "contact", "preference"],
-                                 "description": "Memory category (for add/list filter)"}
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "add", "edit", "delete", "search"],
+                        "description": "The action to perform",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Memory text (for add/edit) or search query (for search)",
+                    },
+                    "memory_id": {
+                        "type": "string",
+                        "description": "Memory ID (for edit/delete)",
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": ["fact", "event", "contact", "preference"],
+                        "description": "Memory category (for add/list filter)",
+                    },
                 },
-                "required": ["action"]
-            }
-        }
+                "required": ["action"],
+            },
+        },
     },
     {
         "type": "function",
@@ -316,11 +404,14 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "filter": {"type": "string", "description": "Optional keyword to filter models"}
+                    "filter": {
+                        "type": "string",
+                        "description": "Optional keyword to filter models",
+                    }
                 },
-                "required": []
-            }
-        }
+                "required": [],
+            },
+        },
     },
     {
         "type": "function",
@@ -330,42 +421,135 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["toggle", "open_panel", "open_email_reply", "set_mode", "switch_model", "set_theme", "create_theme", "get_toggles"],
-                               "description": "The UI action. Use set_theme for presets, create_theme to build a custom theme with any hex colors"},
-                    "name": {"type": "string", "description": "For toggle: web, bash, research, incognito, document_editor (aliases: shell, search, deepresearch, documents). For open_panel: documents, gallery, email, sessions, notes, brain/memories, skills, settings, cookbook. For open_email_reply: email UID. For set_theme: a preset theme name. For create_theme: the custom theme name."},
-                    "value": {"type": "string", "description": "Value: on/off for toggle, agent/chat for set_mode, model name for switch_model, theme name for set_theme, or folder for open_email_reply"},
-                    "uid": {"type": "string", "description": "Email UID for open_email_reply"},
-                    "folder": {"type": "string", "description": "Email folder for open_email_reply (default INBOX)"},
-                    "mode": {"type": "string", "description": "Reply draft mode for open_email_reply: reply, reply-all, or ai-reply"},
-                    "colors": {"type": "object", "description": "For create_theme: the theme colors",
-                               "properties": {
-                                   "bg": {"type": "string", "description": "Background color (hex, e.g. #1a1a2e)"},
-                                   "fg": {"type": "string", "description": "Foreground/text color (hex)"},
-                                   "panel": {"type": "string", "description": "Panel/sidebar background color (hex)"},
-                                   "border": {"type": "string", "description": "Border/divider color (hex)"},
-                                   "accent": {"type": "string", "description": "Accent color for buttons, brand, highlights (hex)"},
-                                   "userBubbleBg": {"type": "string", "description": "User chat bubble background (hex, optional)"},
-                                   "aiBubbleBg": {"type": "string", "description": "AI chat bubble background (hex, optional)"},
-                                   "bubbleBorder": {"type": "string", "description": "Chat bubble border color (hex, optional)"},
-                                   "sidebarBg": {"type": "string", "description": "Sidebar background override (hex, optional)"},
-                                   "sectionAccent": {"type": "string", "description": "Section header accent color (hex, optional)"},
-                                   "brandColor": {"type": "string", "description": "Brand/logo color (hex, optional)"},
-                                   "inputBg": {"type": "string", "description": "Chat input background (hex, optional)"},
-                                   "inputBorder": {"type": "string", "description": "Chat input border (hex, optional)"},
-                                   "sendBtnBg": {"type": "string", "description": "Send button background (hex, optional)"},
-                                   "sendBtnHover": {"type": "string", "description": "Send button hover color (hex, optional)"},
-                                   "codeBg": {"type": "string", "description": "Code block background (hex, optional)"},
-                                   "codeFg": {"type": "string", "description": "Code block text color (hex, optional)"},
-                                   "toggleBg": {"type": "string", "description": "Toggle switch off background (hex, optional)"},
-                                   "toggleActive": {"type": "string", "description": "Toggle switch on color (hex, optional)"},
-                                   "accentPrimary": {"type": "string", "description": "Primary accent override (hex, optional)"},
-                                   "accentError": {"type": "string", "description": "Error/danger color (hex, optional)"}
-                               },
-                               "required": ["bg", "fg", "panel", "border", "accent"]}
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "toggle",
+                            "open_panel",
+                            "open_email_reply",
+                            "set_mode",
+                            "switch_model",
+                            "set_theme",
+                            "create_theme",
+                            "get_toggles",
+                        ],
+                        "description": "The UI action. Use set_theme for presets, create_theme to build a custom theme with any hex colors",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "For toggle: web, bash, research, incognito, document_editor (aliases: shell, search, deepresearch, documents). For open_panel: documents, gallery, email, sessions, notes, brain/memories, skills, settings, cookbook. For open_email_reply: email UID. For set_theme: a preset theme name. For create_theme: the custom theme name.",
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "Value: on/off for toggle, agent/chat for set_mode, model name for switch_model, theme name for set_theme, or folder for open_email_reply",
+                    },
+                    "uid": {
+                        "type": "string",
+                        "description": "Email UID for open_email_reply",
+                    },
+                    "folder": {
+                        "type": "string",
+                        "description": "Email folder for open_email_reply (default INBOX)",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": "Reply draft mode for open_email_reply: reply, reply-all, or ai-reply",
+                    },
+                    "colors": {
+                        "type": "object",
+                        "description": "For create_theme: the theme colors",
+                        "properties": {
+                            "bg": {
+                                "type": "string",
+                                "description": "Background color (hex, e.g. #1a1a2e)",
+                            },
+                            "fg": {
+                                "type": "string",
+                                "description": "Foreground/text color (hex)",
+                            },
+                            "panel": {
+                                "type": "string",
+                                "description": "Panel/sidebar background color (hex)",
+                            },
+                            "border": {
+                                "type": "string",
+                                "description": "Border/divider color (hex)",
+                            },
+                            "accent": {
+                                "type": "string",
+                                "description": "Accent color for buttons, brand, highlights (hex)",
+                            },
+                            "userBubbleBg": {
+                                "type": "string",
+                                "description": "User chat bubble background (hex, optional)",
+                            },
+                            "aiBubbleBg": {
+                                "type": "string",
+                                "description": "AI chat bubble background (hex, optional)",
+                            },
+                            "bubbleBorder": {
+                                "type": "string",
+                                "description": "Chat bubble border color (hex, optional)",
+                            },
+                            "sidebarBg": {
+                                "type": "string",
+                                "description": "Sidebar background override (hex, optional)",
+                            },
+                            "sectionAccent": {
+                                "type": "string",
+                                "description": "Section header accent color (hex, optional)",
+                            },
+                            "brandColor": {
+                                "type": "string",
+                                "description": "Brand/logo color (hex, optional)",
+                            },
+                            "inputBg": {
+                                "type": "string",
+                                "description": "Chat input background (hex, optional)",
+                            },
+                            "inputBorder": {
+                                "type": "string",
+                                "description": "Chat input border (hex, optional)",
+                            },
+                            "sendBtnBg": {
+                                "type": "string",
+                                "description": "Send button background (hex, optional)",
+                            },
+                            "sendBtnHover": {
+                                "type": "string",
+                                "description": "Send button hover color (hex, optional)",
+                            },
+                            "codeBg": {
+                                "type": "string",
+                                "description": "Code block background (hex, optional)",
+                            },
+                            "codeFg": {
+                                "type": "string",
+                                "description": "Code block text color (hex, optional)",
+                            },
+                            "toggleBg": {
+                                "type": "string",
+                                "description": "Toggle switch off background (hex, optional)",
+                            },
+                            "toggleActive": {
+                                "type": "string",
+                                "description": "Toggle switch on color (hex, optional)",
+                            },
+                            "accentPrimary": {
+                                "type": "string",
+                                "description": "Primary accent override (hex, optional)",
+                            },
+                            "accentError": {
+                                "type": "string",
+                                "description": "Error/danger color (hex, optional)",
+                            },
+                        },
+                        "required": ["bg", "fg", "panel", "border", "accent"],
+                    },
                 },
-                "required": ["action"]
-            }
-        }
+                "required": ["action"],
+            },
+        },
     },
     {
         "type": "function",
@@ -375,34 +559,95 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "create", "edit", "delete", "pause", "resume", "run"],
-                               "description": "The action to perform"},
-                    "task_id": {"type": "string", "description": "Task ID (for edit/delete/pause/resume/run)"},
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "list",
+                            "create",
+                            "edit",
+                            "delete",
+                            "pause",
+                            "resume",
+                            "run",
+                        ],
+                        "description": "The action to perform",
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "Task ID (for edit/delete/pause/resume/run)",
+                    },
                     "name": {"type": "string", "description": "Task name"},
-                    "prompt": {"type": "string", "description": "The instruction (for task_type=llm) or the research question (for task_type=research). Required for both."},
-                    "task_type": {"type": "string", "enum": ["llm", "research", "action"],
-                                  "description": "llm = AI runs your prompt; research = runs the deep-research pipeline on the prompt as a question; action = direct built-in function"},
-                    "action_name": {"type": "string", "enum": [
-                        "tidy_sessions", "tidy_documents", "consolidate_memory", "tidy_research",
-                        "summarize_emails", "draft_email_replies", "extract_email_events",
-                        "classify_events", "mark_email_boundaries", "learn_sender_signatures",
-                        "test_skills", "audit_skills", "check_email_urgency"
-                    ],
-                                    "description": "Built-in action (for task_type=action)"},
-                    "trigger_type": {"type": "string", "enum": ["schedule", "event"],
-                                     "description": "schedule = time-based, event = count-based"},
-                    "schedule": {"type": "string", "enum": ["once", "daily", "weekly", "monthly"],
-                                 "description": "Schedule frequency (for trigger_type=schedule)"},
-                    "scheduled_time": {"type": "string", "description": "HH:MM in UTC (for schedule triggers). Convert the user's stated local time using the UTC offset given in the 'Current date and time' context."},
-                    "scheduled_day": {"type": "integer", "description": "Day of week 0=Mon (weekly) or day of month (monthly)"},
-                    "trigger_event": {"type": "string", "enum": ["session_created", "message_sent", "document_created", "memory_added", "research_completed", "email_received", "skill_added"],
-                                      "description": "Event name (for trigger_type=event)"},
-                    "trigger_count": {"type": "integer", "description": "Fire every N events (for trigger_type=event)"},
-                    "output_target": {"type": "string", "description": "Where results go. Defaults to 'session' (results land in a dedicated chat session the user reads) — this is the right choice for 'summarize for me' / 'send to me'. Do NOT go hunting for the user's email address; only use an email MCP tool name here if the user explicitly asked to be emailed AND an address is already known."}
+                    "prompt": {
+                        "type": "string",
+                        "description": "The instruction (for task_type=llm) or the research question (for task_type=research). Required for both.",
+                    },
+                    "task_type": {
+                        "type": "string",
+                        "enum": ["llm", "research", "action"],
+                        "description": "llm = AI runs your prompt; research = runs the deep-research pipeline on the prompt as a question; action = direct built-in function",
+                    },
+                    "action_name": {
+                        "type": "string",
+                        "enum": [
+                            "tidy_sessions",
+                            "tidy_documents",
+                            "consolidate_memory",
+                            "tidy_research",
+                            "summarize_emails",
+                            "draft_email_replies",
+                            "extract_email_events",
+                            "classify_events",
+                            "mark_email_boundaries",
+                            "learn_sender_signatures",
+                            "test_skills",
+                            "audit_skills",
+                            "check_email_urgency",
+                        ],
+                        "description": "Built-in action (for task_type=action)",
+                    },
+                    "trigger_type": {
+                        "type": "string",
+                        "enum": ["schedule", "event"],
+                        "description": "schedule = time-based, event = count-based",
+                    },
+                    "schedule": {
+                        "type": "string",
+                        "enum": ["once", "daily", "weekly", "monthly"],
+                        "description": "Schedule frequency (for trigger_type=schedule)",
+                    },
+                    "scheduled_time": {
+                        "type": "string",
+                        "description": "HH:MM in UTC (for schedule triggers). Convert the user's stated local time using the UTC offset given in the 'Current date and time' context.",
+                    },
+                    "scheduled_day": {
+                        "type": "integer",
+                        "description": "Day of week 0=Mon (weekly) or day of month (monthly)",
+                    },
+                    "trigger_event": {
+                        "type": "string",
+                        "enum": [
+                            "session_created",
+                            "message_sent",
+                            "document_created",
+                            "memory_added",
+                            "research_completed",
+                            "email_received",
+                            "skill_added",
+                        ],
+                        "description": "Event name (for trigger_type=event)",
+                    },
+                    "trigger_count": {
+                        "type": "integer",
+                        "description": "Fire every N events (for trigger_type=event)",
+                    },
+                    "output_target": {
+                        "type": "string",
+                        "description": "Where results go. Defaults to 'session' (results land in a dedicated chat session the user reads) — this is the right choice for 'summarize for me' / 'send to me'. Do NOT go hunting for the user's email address; only use an email MCP tool name here if the user explicitly asked to be emailed AND an address is already known.",
+                    },
                 },
-                "required": ["action"]
-            }
-        }
+                "required": ["action"],
+            },
+        },
     },
     {
         "type": "function",
@@ -412,27 +657,75 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string",
-                               "enum": ["list_events", "create_event", "update_event", "delete_event", "list_calendars"],
-                               "description": "Action to perform"},
-                    "summary": {"type": "string", "description": "Event title (for create/update)"},
-                    "dtstart": {"type": "string", "description": "Start ISO datetime, or YYYY-MM-DD if all_day"},
-                    "dtend": {"type": "string", "description": "End ISO datetime; defaults to +1h (or +1 day for all_day)"},
-                    "all_day": {"type": "boolean", "description": "Whether this is an all-day event"},
-                    "description": {"type": "string", "description": "Event description / notes"},
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "list_events",
+                            "create_event",
+                            "update_event",
+                            "delete_event",
+                            "list_calendars",
+                        ],
+                        "description": "Action to perform",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "Event title (for create/update)",
+                    },
+                    "dtstart": {
+                        "type": "string",
+                        "description": "Start ISO datetime, or YYYY-MM-DD if all_day",
+                    },
+                    "dtend": {
+                        "type": "string",
+                        "description": "End ISO datetime; defaults to +1h (or +1 day for all_day)",
+                    },
+                    "all_day": {
+                        "type": "boolean",
+                        "description": "Whether this is an all-day event",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Event description / notes",
+                    },
                     "location": {"type": "string", "description": "Event location"},
-                    "uid": {"type": "string", "description": "Event UID (for update/delete)"},
-                    "calendar_href": {"type": "string", "description": "Specific calendar URL (optional; defaults to first calendar)"},
-                    "calendar": {"type": "string", "description": "Filter list_events by calendar name or href"},
-                    "start": {"type": "string", "description": "list_events range start (ISO datetime); defaults to today"},
-                    "end": {"type": "string", "description": "list_events range end (ISO datetime); defaults to +14 days"},
-                    "event_type": {"type": "string", "description": "Tag / category for the event. Common values: work, personal, health, travel, meal, social, admin, other. Aliases accepted: tag, category, type."},
-                    "importance": {"type": "string", "enum": ["low", "normal", "high", "critical"], "description": "Priority level (defaults to 'normal')"},
-                    "reminder_minutes": {"type": "integer", "description": "For create_event: create an Odysseus reminder this many minutes before the event, e.g. 5 for 'reminder 5 min before'."}
+                    "uid": {
+                        "type": "string",
+                        "description": "Event UID (for update/delete)",
+                    },
+                    "calendar_href": {
+                        "type": "string",
+                        "description": "Specific calendar URL (optional; defaults to first calendar)",
+                    },
+                    "calendar": {
+                        "type": "string",
+                        "description": "Filter list_events by calendar name or href",
+                    },
+                    "start": {
+                        "type": "string",
+                        "description": "list_events range start (ISO datetime); defaults to today",
+                    },
+                    "end": {
+                        "type": "string",
+                        "description": "list_events range end (ISO datetime); defaults to +14 days",
+                    },
+                    "event_type": {
+                        "type": "string",
+                        "description": "Tag / category for the event. Common values: work, personal, health, travel, meal, social, admin, other. Aliases accepted: tag, category, type.",
+                    },
+                    "importance": {
+                        "type": "string",
+                        "enum": ["low", "normal", "high", "critical"],
+                        "description": "Priority level (defaults to 'normal')",
+                    },
+                    "reminder_minutes": {
+                        "type": "integer",
+                        "description": "For create_event: create an Odysseus reminder this many minutes before the event, e.g. 5 for 'reminder 5 min before'.",
+                    },
                 },
-                "required": ["action"]
-            }
-        }
+                "required": ["action"],
+            },
+        },
     },
     {
         "type": "function",
@@ -442,14 +735,27 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "integration": {"type": "string", "description": "Integration name or ID (e.g. 'Miniflux', 'Gitea')"},
-                    "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"], "description": "HTTP method"},
-                    "path": {"type": "string", "description": "API endpoint path (e.g. '/v1/entries?status=unread&limit=20')"},
-                    "body": {"type": "object", "description": "JSON request body (for POST/PUT/PATCH)"}
+                    "integration": {
+                        "type": "string",
+                        "description": "Integration name or ID (e.g. 'Miniflux', 'Gitea')",
+                    },
+                    "method": {
+                        "type": "string",
+                        "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+                        "description": "HTTP method",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "API endpoint path (e.g. '/v1/entries?status=unread&limit=20')",
+                    },
+                    "body": {
+                        "type": "object",
+                        "description": "JSON request body (for POST/PUT/PATCH)",
+                    },
                 },
-                "required": ["integration", "method", "path"]
-            }
-        }
+                "required": ["integration", "method", "path"],
+            },
+        },
     },
     {
         "type": "function",
@@ -459,12 +765,18 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "model": {"type": "string", "description": "Teacher model name (e.g. 'claude-sonnet-4') or 'auto' for configured default"},
-                    "problem": {"type": "string", "description": "Describe the problem or question you need help with"}
+                    "model": {
+                        "type": "string",
+                        "description": "Teacher model name (e.g. 'claude-sonnet-4') or 'auto' for configured default",
+                    },
+                    "problem": {
+                        "type": "string",
+                        "description": "Describe the problem or question you need help with",
+                    },
                 },
-                "required": ["problem"]
-            }
-        }
+                "required": ["problem"],
+            },
+        },
     },
     {
         "type": "function",
@@ -484,30 +796,109 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "view", "view_ref", "add", "edit", "patch", "publish", "delete", "search"], "description": "list = name+description summary; view = full SKILL.md; view_ref = sub-file under the skill dir; add = create; edit = full rewrite (content); patch = old_string→new_string; publish = flip status; delete; search = relevance match on published skills."},
-                    "name": {"type": "string", "description": "Slug/name of the skill. Required for add/view/view_ref/edit/patch/publish/delete. For add, choose the exact kebab-case name the user should see and report only the returned name."},
-                    "path": {"type": "string", "description": "Sub-path under the skill directory for view_ref (e.g. 'references/example.md')."},
-                    "description": {"type": "string", "description": "One-line summary surfaced in the skills index (for add)."},
-                    "category": {"type": "string", "description": "Organizational grouping like 'dev', 'email', 'system' (for add)."},
-                    "when_to_use": {"type": "string", "description": "Trigger conditions in plain English (for add)."},
-                    "procedure": {"type": "array", "items": {"type": "string"}, "description": "Numbered steps (for add)."},
-                    "pitfalls": {"type": "array", "items": {"type": "string"}, "description": "Known failure modes + recovery (for add)."},
-                    "verification": {"type": "array", "items": {"type": "string"}, "description": "How to confirm the procedure succeeded (for add)."},
-                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Keyword tags (for add)."},
-                    "platforms": {"type": "array", "items": {"type": "string"}, "description": "Restrict to OSes (for add)."},
-                    "requires_toolsets": {"type": "array", "items": {"type": "string"}, "description": "Hide unless these toolsets are active (for add)."},
-                    "fallback_for_toolsets": {"type": "array", "items": {"type": "string"}, "description": "Hide when these toolsets are active (for add)."},
-                    "status": {"type": "string", "enum": ["draft", "published"], "description": "Defaults to 'draft' on add."},
-                    "version": {"type": "string", "description": "Semver-ish, e.g. '1.0.0' (for add)."},
-                    "confidence": {"type": "number", "description": "0-1 (for add/publish)."},
-                    "content": {"type": "string", "description": "Full SKILL.md text (for edit)."},
-                    "old_string": {"type": "string", "description": "Exact substring to replace (for patch). Must appear exactly once."},
-                    "new_string": {"type": "string", "description": "Replacement text (for patch)."},
-                    "query": {"type": "string", "description": "Search query (for search)."}
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "list",
+                            "view",
+                            "view_ref",
+                            "add",
+                            "edit",
+                            "patch",
+                            "publish",
+                            "delete",
+                            "search",
+                        ],
+                        "description": "list = name+description summary; view = full SKILL.md; view_ref = sub-file under the skill dir; add = create; edit = full rewrite (content); patch = old_string→new_string; publish = flip status; delete; search = relevance match on published skills.",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Slug/name of the skill. Required for add/view/view_ref/edit/patch/publish/delete. For add, choose the exact kebab-case name the user should see and report only the returned name.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Sub-path under the skill directory for view_ref (e.g. 'references/example.md').",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "One-line summary surfaced in the skills index (for add).",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Organizational grouping like 'dev', 'email', 'system' (for add).",
+                    },
+                    "when_to_use": {
+                        "type": "string",
+                        "description": "Trigger conditions in plain English (for add).",
+                    },
+                    "procedure": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Numbered steps (for add).",
+                    },
+                    "pitfalls": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Known failure modes + recovery (for add).",
+                    },
+                    "verification": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "How to confirm the procedure succeeded (for add).",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Keyword tags (for add).",
+                    },
+                    "platforms": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Restrict to OSes (for add).",
+                    },
+                    "requires_toolsets": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Hide unless these toolsets are active (for add).",
+                    },
+                    "fallback_for_toolsets": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Hide when these toolsets are active (for add).",
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["draft", "published"],
+                        "description": "Defaults to 'draft' on add.",
+                    },
+                    "version": {
+                        "type": "string",
+                        "description": "Semver-ish, e.g. '1.0.0' (for add).",
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "description": "0-1 (for add/publish).",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full SKILL.md text (for edit).",
+                    },
+                    "old_string": {
+                        "type": "string",
+                        "description": "Exact substring to replace (for patch). Must appear exactly once.",
+                    },
+                    "new_string": {
+                        "type": "string",
+                        "description": "Replacement text (for patch).",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Search query (for search).",
+                    },
                 },
-                "required": ["action"]
-            }
-        }
+                "required": ["action"],
+            },
+        },
     },
     {
         "type": "function",
@@ -517,15 +908,24 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "add", "delete", "enable", "disable"]},
-                    "endpoint_id": {"type": "string", "description": "Endpoint ID (for delete/enable/disable)"},
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "add", "delete", "enable", "disable"],
+                    },
+                    "endpoint_id": {
+                        "type": "string",
+                        "description": "Endpoint ID (for delete/enable/disable)",
+                    },
                     "name": {"type": "string", "description": "Display name (for add)"},
-                    "base_url": {"type": "string", "description": "API base URL e.g. https://api.openai.com/v1 (for add)"},
-                    "api_key": {"type": "string", "description": "API key (for add)"}
+                    "base_url": {
+                        "type": "string",
+                        "description": "API base URL e.g. https://api.openai.com/v1 (for add)",
+                    },
+                    "api_key": {"type": "string", "description": "API key (for add)"},
                 },
-                "required": ["action"]
-            }
-        }
+                "required": ["action"],
+            },
+        },
     },
     {
         "type": "function",
@@ -535,16 +935,40 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "add", "delete", "enable", "disable", "reconnect", "list_tools"]},
-                    "server_id": {"type": "string", "description": "Server ID (for delete/enable/disable/reconnect)"},
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "list",
+                            "add",
+                            "delete",
+                            "enable",
+                            "disable",
+                            "reconnect",
+                            "list_tools",
+                        ],
+                    },
+                    "server_id": {
+                        "type": "string",
+                        "description": "Server ID (for delete/enable/disable/reconnect)",
+                    },
                     "name": {"type": "string", "description": "Server name (for add)"},
-                    "command": {"type": "string", "description": "Command to run e.g. npx (for add)"},
-                    "args": {"type": "array", "items": {"type": "string"}, "description": "Command arguments (for add)"},
-                    "env": {"type": "object", "description": "Environment variables (for add)"}
+                    "command": {
+                        "type": "string",
+                        "description": "Command to run e.g. npx (for add)",
+                    },
+                    "args": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Command arguments (for add)",
+                    },
+                    "env": {
+                        "type": "object",
+                        "description": "Environment variables (for add)",
+                    },
                 },
-                "required": ["action"]
-            }
-        }
+                "required": ["action"],
+            },
+        },
     },
     {
         "type": "function",
@@ -554,15 +978,24 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "add", "delete", "enable", "disable"]},
-                    "webhook_id": {"type": "string", "description": "Webhook ID (for delete/enable/disable)"},
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "add", "delete", "enable", "disable"],
+                    },
+                    "webhook_id": {
+                        "type": "string",
+                        "description": "Webhook ID (for delete/enable/disable)",
+                    },
                     "name": {"type": "string", "description": "Webhook name (for add)"},
                     "url": {"type": "string", "description": "Webhook URL (for add)"},
-                    "events": {"type": "string", "description": "Comma-separated event names (for add)"}
+                    "events": {
+                        "type": "string",
+                        "description": "Comma-separated event names (for add)",
+                    },
                 },
-                "required": ["action"]
-            }
-        }
+                "required": ["action"],
+            },
+        },
     },
     {
         "type": "function",
@@ -573,12 +1006,18 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["list", "create", "delete"]},
-                    "token_id": {"type": "string", "description": "Token ID (for delete)"},
-                    "name": {"type": "string", "description": "Token name (for create)"}
+                    "token_id": {
+                        "type": "string",
+                        "description": "Token ID (for delete)",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Token name (for create)",
+                    },
                 },
-                "required": ["action"]
-            }
-        }
+                "required": ["action"],
+            },
+        },
     },
     {
         "type": "function",
@@ -589,14 +1028,26 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["list", "delete", "tidy"]},
-                    "document_id": {"type": "string", "description": "Document ID (for delete)"},
-                    "search": {"type": "string", "description": "Search query (for list)"},
-                    "language": {"type": "string", "description": "Filter by language (for list)"},
-                    "limit": {"type": "integer", "description": "Max results (for list, default 50)"}
+                    "document_id": {
+                        "type": "string",
+                        "description": "Document ID (for delete)",
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "Search query (for list)",
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Filter by language (for list)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (for list, default 50)",
+                    },
                 },
-                "required": ["action"]
-            }
-        }
+                "required": ["action"],
+            },
+        },
     },
     {
         "type": "function",
@@ -606,14 +1057,33 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "get", "set", "delete", "disable_tool", "enable_tool", "list_tools"]},
-                    "key": {"type": "string", "description": "Setting key (for get/set/delete)"},
-                    "value": {"description": "Setting value (for set) — can be string, number, boolean, or object"},
-                    "tool": {"type": "string", "description": "Tool name to disable/enable (for disable_tool/enable_tool). Accepts aliases: shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email — or a raw tool name like 'bash' or 'web_search'."}
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "list",
+                            "get",
+                            "set",
+                            "delete",
+                            "disable_tool",
+                            "enable_tool",
+                            "list_tools",
+                        ],
+                    },
+                    "key": {
+                        "type": "string",
+                        "description": "Setting key (for get/set/delete)",
+                    },
+                    "value": {
+                        "description": "Setting value (for set) — can be string, number, boolean, or object"
+                    },
+                    "tool": {
+                        "type": "string",
+                        "description": "Tool name to disable/enable (for disable_tool/enable_tool). Accepts aliases: shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email — or a raw tool name like 'bash' or 'web_search'.",
+                    },
                 },
-                "required": ["action"]
-            }
-        }
+                "required": ["action"],
+            },
+        },
     },
     {
         "type": "function",
@@ -623,14 +1093,26 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "repo_id": {"type": "string", "description": "HuggingFace repo (e.g. 'Qwen/Qwen3-8B')"},
-                    "host": {"type": "string", "description": "Target server — use the friendly NAME from list_cookbook_servers (e.g. 'gpu-box', 'workstation') or a raw user@host. Omit to use the cookbook's selected default server."},
-                    "local": {"type": "boolean", "description": "Force download to THIS machine (localhost) instead of the default remote server."},
-                    "include": {"type": "string", "description": "Glob filter for specific files (e.g. '*Q4_K_M*')"},
+                    "repo_id": {
+                        "type": "string",
+                        "description": "HuggingFace repo (e.g. 'Qwen/Qwen3-8B')",
+                    },
+                    "host": {
+                        "type": "string",
+                        "description": "Target server — use the friendly NAME from list_cookbook_servers (e.g. 'gpu-box', 'workstation') or a raw user@host. Omit to use the cookbook's selected default server.",
+                    },
+                    "local": {
+                        "type": "boolean",
+                        "description": "Force download to THIS machine (localhost) instead of the default remote server.",
+                    },
+                    "include": {
+                        "type": "string",
+                        "description": "Glob filter for specific files (e.g. '*Q4_K_M*')",
+                    },
                 },
-                "required": ["repo_id"]
-            }
-        }
+                "required": ["repo_id"],
+            },
+        },
     },
     {
         "type": "function",
@@ -640,22 +1122,34 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "repo_id": {"type": "string", "description": "Model repo (e.g. 'Qwen/Qwen3-8B')"},
-                    "cmd": {"type": "string", "description": "Full serve command (e.g. 'vllm serve Qwen/Qwen3-8B --port 8000 --tp 2', 'python3 -m sglang.launch_server --model-path Qwen/Qwen3-8B --port 30000', or for inpainting/image models: 'python3 scripts/diffusion_server.py --model diffusers/stable-diffusion-xl-1.0-inpainting-0.1 --port 8100')"},
-                    "host": {"type": "string", "description": "Target server — friendly NAME from list_cookbook_servers (e.g. 'gpu-box', 'workstation') or raw user@host. Omit to use the cookbook's selected default."},
-                    "local": {"type": "boolean", "description": "Force serve on THIS machine instead of the default remote server."},
+                    "repo_id": {
+                        "type": "string",
+                        "description": "Model repo (e.g. 'Qwen/Qwen3-8B')",
+                    },
+                    "cmd": {
+                        "type": "string",
+                        "description": "Full serve command (e.g. 'vllm serve Qwen/Qwen3-8B --port 8000 --tp 2', 'python3 -m sglang.launch_server --model-path Qwen/Qwen3-8B --port 30000', or for inpainting/image models: 'python3 scripts/diffusion_server.py --model diffusers/stable-diffusion-xl-1.0-inpainting-0.1 --port 8100')",
+                    },
+                    "host": {
+                        "type": "string",
+                        "description": "Target server — friendly NAME from list_cookbook_servers (e.g. 'gpu-box', 'workstation') or raw user@host. Omit to use the cookbook's selected default.",
+                    },
+                    "local": {
+                        "type": "boolean",
+                        "description": "Force serve on THIS machine instead of the default remote server.",
+                    },
                 },
-                "required": ["repo_id", "cmd"]
-            }
-        }
+                "required": ["repo_id", "cmd"],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "list_served_models",
             "description": "List currently running model servers with status, model name, port, throughput, and structured Cookbook diagnoses. If a serve failed, this includes recent logs plus retry suggestions/adjusted commands the agent can use with serve_model.",
-            "parameters": {"type": "object", "properties": {}}
-        }
+            "parameters": {"type": "object", "properties": {}},
+        },
     },
     {
         "type": "function",
@@ -665,19 +1159,22 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "string", "description": "Tmux session ID of the server to stop"},
+                    "session_id": {
+                        "type": "string",
+                        "description": "Tmux session ID of the server to stop",
+                    },
                 },
-                "required": ["session_id"]
-            }
-        }
+                "required": ["session_id"],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "list_downloads",
             "description": "List in-progress model downloads in the Cookbook. Shows each download's model name, phase, percent (if available), session ID, and remote host.",
-            "parameters": {"type": "object", "properties": {}}
-        }
+            "parameters": {"type": "object", "properties": {}},
+        },
     },
     {
         "type": "function",
@@ -687,11 +1184,14 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "session_id": {"type": "string", "description": "Tmux session ID from list_downloads (e.g. 'cookbook-a1b2c3d4')"},
+                    "session_id": {
+                        "type": "string",
+                        "description": "Tmux session ID from list_downloads (e.g. 'cookbook-a1b2c3d4')",
+                    },
                 },
-                "required": ["session_id"]
-            }
-        }
+                "required": ["session_id"],
+            },
+        },
     },
     {
         "type": "function",
@@ -701,28 +1201,34 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Search terms (e.g. 'Qwen 8B', 'flux', 'llama-3 instruct')"},
-                    "limit": {"type": "integer", "description": "Max results (default 10)"},
+                    "query": {
+                        "type": "string",
+                        "description": "Search terms (e.g. 'Qwen 8B', 'flux', 'llama-3 instruct')",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (default 10)",
+                    },
                 },
-                "required": []
-            }
-        }
+                "required": [],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "list_cookbook_servers",
             "description": "List the cookbook's configured servers (remote GPU boxes + local) and the current default host. Call this before download_model/serve_model when the user didn't specify a host, so models go to the right machine (where the GPUs and model cache are) instead of localhost. If multiple servers and intent is ambiguous, show them and ask the user which.",
-            "parameters": {"type": "object", "properties": {}}
-        }
+            "parameters": {"type": "object", "properties": {}},
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "list_serve_presets",
             "description": "List saved Cookbook serve presets. Each preset is a launch template (name, model, host, port, tmux cmd) the user previously saved from the UI. Call this BEFORE serve_model when the user asks to launch a model by name — there's almost always a working preset for it.",
-            "parameters": {"type": "object", "properties": {}}
-        }
+            "parameters": {"type": "object", "properties": {}},
+        },
     },
     {
         "type": "function",
@@ -732,16 +1238,34 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "host": {"type": "string", "description": "Remote host in user@host form (e.g. 'user@192.0.2.10'). Omit for localhost."},
-                    "tmux_session": {"type": "string", "description": "Existing tmux session name (e.g. 'minimax-m27')"},
-                    "model": {"type": "string", "description": "Model repo_id or display name (e.g. 'cyankiwi/MiniMax-M2.7-AWQ-4bit')"},
-                    "port": {"type": "integer", "description": "Port the server is listening on (default 8000)"},
-                    "name": {"type": "string", "description": "Optional display name (defaults to model basename)"},
-                    "add_endpoint": {"type": "boolean", "description": "Also register as a chat endpoint (default true)"}
+                    "host": {
+                        "type": "string",
+                        "description": "Remote host in user@host form (e.g. 'user@192.0.2.10'). Omit for localhost.",
+                    },
+                    "tmux_session": {
+                        "type": "string",
+                        "description": "Existing tmux session name (e.g. 'minimax-m27')",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Model repo_id or display name (e.g. 'cyankiwi/MiniMax-M2.7-AWQ-4bit')",
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "Port the server is listening on (default 8000)",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Optional display name (defaults to model basename)",
+                    },
+                    "add_endpoint": {
+                        "type": "boolean",
+                        "description": "Also register as a chat endpoint (default true)",
+                    },
                 },
-                "required": ["tmux_session", "model"]
-            }
-        }
+                "required": ["tmux_session", "model"],
+            },
+        },
     },
     {
         "type": "function",
@@ -751,11 +1275,14 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "Preset name (exact or case-insensitive substring of one returned by list_serve_presets)"},
+                    "name": {
+                        "type": "string",
+                        "description": "Preset name (exact or case-insensitive substring of one returned by list_serve_presets)",
+                    },
                 },
-                "required": ["name"]
-            }
-        }
+                "required": ["name"],
+            },
+        },
     },
     {
         "type": "function",
@@ -765,14 +1292,27 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "host": {"type": "string", "description": "Friendly Cookbook server name (e.g. 'ajax', 'gpu-box') or raw remote host (e.g. 'user@gpu-box'). Omit for local."},
-                    "model_dir": {"type": "string", "description": "Comma-separated additional model directories to scan beyond ~/.cache/huggingface/hub"},
-                    "ssh_port": {"type": "string", "description": "SSH port for remote host (default 22)"},
-                    "platform": {"type": "string", "enum": ["linux", "windows"], "description": "Remote platform"}
+                    "host": {
+                        "type": "string",
+                        "description": "Friendly Cookbook server name (e.g. 'ajax', 'gpu-box') or raw remote host (e.g. 'user@gpu-box'). Omit for local.",
+                    },
+                    "model_dir": {
+                        "type": "string",
+                        "description": "Comma-separated additional model directories to scan beyond ~/.cache/huggingface/hub",
+                    },
+                    "ssh_port": {
+                        "type": "string",
+                        "description": "SSH port for remote host (default 22)",
+                    },
+                    "platform": {
+                        "type": "string",
+                        "enum": ["linux", "windows"],
+                        "description": "Remote platform",
+                    },
                 },
-                "required": []
-            }
-        }
+                "required": [],
+            },
+        },
     },
     {
         "type": "function",
@@ -782,16 +1322,36 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["call", "endpoints"], "description": "'call' to hit an endpoint, 'endpoints' to list what's available"},
-                    "path": {"type": "string", "description": "Endpoint path starting with /api/ (e.g. '/api/cookbook/gpus', '/api/gallery/list', '/api/calendar/events')"},
-                    "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"], "description": "HTTP method (default GET)"},
-                    "body": {"type": "object", "description": "JSON request body for POST/PUT/PATCH"},
-                    "query": {"type": "object", "description": "Querystring params as a key-value object"},
-                    "filter": {"type": "string", "description": "For action=endpoints: substring to filter paths/summaries (e.g. 'cookbook', 'gallery')"}
+                    "action": {
+                        "type": "string",
+                        "enum": ["call", "endpoints"],
+                        "description": "'call' to hit an endpoint, 'endpoints' to list what's available",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Endpoint path starting with /api/ (e.g. '/api/cookbook/gpus', '/api/gallery/list', '/api/calendar/events')",
+                    },
+                    "method": {
+                        "type": "string",
+                        "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+                        "description": "HTTP method (default GET)",
+                    },
+                    "body": {
+                        "type": "object",
+                        "description": "JSON request body for POST/PUT/PATCH",
+                    },
+                    "query": {
+                        "type": "object",
+                        "description": "Querystring params as a key-value object",
+                    },
+                    "filter": {
+                        "type": "string",
+                        "description": "For action=endpoints: substring to filter paths/summaries (e.g. 'cookbook', 'gallery')",
+                    },
                 },
-                "required": ["action"]
-            }
-        }
+                "required": ["action"],
+            },
+        },
     },
     {
         "type": "function",
@@ -802,13 +1362,23 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "image_id": {"type": "string", "description": "Gallery image ID"},
-                    "action": {"type": "string", "enum": ["upscale", "rembg", "inpaint", "harmonize"], "description": "Edit action"},
-                    "prompt": {"type": "string", "description": "For inpaint: what to fill the masked area with"},
-                    "scale": {"type": "number", "description": "For upscale: scale factor (default 2)"},
+                    "action": {
+                        "type": "string",
+                        "enum": ["upscale", "rembg", "inpaint", "harmonize"],
+                        "description": "Edit action",
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "For inpaint: what to fill the masked area with",
+                    },
+                    "scale": {
+                        "type": "number",
+                        "description": "For upscale: scale factor (default 2)",
+                    },
                 },
-                "required": ["image_id", "action"]
-            }
-        }
+                "required": ["image_id", "action"],
+            },
+        },
     },
     {
         "type": "function",
@@ -818,11 +1388,14 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "topic": {"type": "string", "description": "Research question or topic"},
+                    "topic": {
+                        "type": "string",
+                        "description": "Research question or topic",
+                    },
                 },
-                "required": ["topic"]
-            }
-        }
+                "required": ["topic"],
+            },
+        },
     },
     {
         "type": "function",
@@ -832,11 +1405,14 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "Person's name to search for"},
+                    "name": {
+                        "type": "string",
+                        "description": "Person's name to search for",
+                    },
                 },
-                "required": ["name"]
-            }
-        }
+                "required": ["name"],
+            },
+        },
     },
     {
         "type": "function",
@@ -846,17 +1422,37 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "add", "update", "delete"],
-                               "description": "list = show all contacts (with uids); add = create; update = edit by uid; delete = remove by uid."},
-                    "uid": {"type": "string", "description": "Contact UID (required for update/delete; get it from action=list)."},
-                    "name": {"type": "string", "description": "Contact's display name (for add/update)."},
-                    "email": {"type": "string", "description": "Single email address (convenience for add, or the primary email for update)."},
-                    "emails": {"type": "array", "items": {"type": "string"}, "description": "Full list of email addresses (for update; first is primary)."},
-                    "phones": {"type": "array", "items": {"type": "string"}, "description": "Full list of phone numbers (for update)."},
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "add", "update", "delete"],
+                        "description": "list = show all contacts (with uids); add = create; update = edit by uid; delete = remove by uid.",
+                    },
+                    "uid": {
+                        "type": "string",
+                        "description": "Contact UID (required for update/delete; get it from action=list).",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Contact's display name (for add/update).",
+                    },
+                    "email": {
+                        "type": "string",
+                        "description": "Single email address (convenience for add, or the primary email for update).",
+                    },
+                    "emails": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Full list of email addresses (for update; first is primary).",
+                    },
+                    "phones": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Full list of phone numbers (for update).",
+                    },
                 },
-                "required": ["action"]
-            }
-        }
+                "required": ["action"],
+            },
+        },
     },
     {
         "type": "function",
@@ -866,8 +1462,8 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {},
-            }
-        }
+            },
+        },
     },
     {
         "type": "function",
@@ -880,11 +1476,14 @@ FUNCTION_TOOL_SCHEMAS = [
                     "to": {"type": "string", "description": "Recipient email address"},
                     "subject": {"type": "string", "description": "Email subject line"},
                     "body": {"type": "string", "description": "Email body text"},
-                    "account": {"type": "string", "description": "Optional account name/email/id from list_email_accounts, e.g. Gmail or user@example.com"},
+                    "account": {
+                        "type": "string",
+                        "description": "Optional account name/email/id from list_email_accounts, e.g. Gmail or user@example.com",
+                    },
                 },
-                "required": ["to", "subject", "body"]
-            }
-        }
+                "required": ["to", "subject", "body"],
+            },
+        },
     },
     {
         "type": "function",
@@ -894,15 +1493,33 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "folder": {"type": "string", "description": "IMAP folder (default: INBOX)"},
-                    "max_results": {"type": "integer", "description": "Max emails to return (default: 20)"},
-                    "limit": {"type": "integer", "description": "Backward-compatible alias for max_results"},
-                    "unread_only": {"type": "boolean", "description": "Only show unread emails. Default false; set true only when the user asks for unread emails."},
-                    "unresponded_only": {"type": "boolean", "description": "Only show unanswered emails. Default false."},
-                    "account": {"type": "string", "description": "Optional account name/email/id from list_email_accounts, e.g. Gmail or user@example.com"},
+                    "folder": {
+                        "type": "string",
+                        "description": "IMAP folder (default: INBOX)",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Max emails to return (default: 20)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Backward-compatible alias for max_results",
+                    },
+                    "unread_only": {
+                        "type": "boolean",
+                        "description": "Only show unread emails. Default false; set true only when the user asks for unread emails.",
+                    },
+                    "unresponded_only": {
+                        "type": "boolean",
+                        "description": "Only show unanswered emails. Default false.",
+                    },
+                    "account": {
+                        "type": "string",
+                        "description": "Optional account name/email/id from list_email_accounts, e.g. Gmail or user@example.com",
+                    },
                 },
-            }
-        }
+            },
+        },
     },
     {
         "type": "function",
@@ -913,12 +1530,18 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "uid": {"type": "string", "description": "Email UID to read"},
-                    "folder": {"type": "string", "description": "IMAP folder (default: INBOX)"},
-                    "account": {"type": "string", "description": "Optional account name/email/id from list_email_accounts, especially when the UID came from a non-default mailbox"},
+                    "folder": {
+                        "type": "string",
+                        "description": "IMAP folder (default: INBOX)",
+                    },
+                    "account": {
+                        "type": "string",
+                        "description": "Optional account name/email/id from list_email_accounts, especially when the UID came from a non-default mailbox",
+                    },
                 },
-                "required": ["uid"]
-            }
-        }
+                "required": ["uid"],
+            },
+        },
     },
     {
         "type": "function",
@@ -928,14 +1551,23 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "uid": {"type": "string", "description": "Exact UID of the email to reply to from list_emails/read_email; never invent UID 1"},
+                    "uid": {
+                        "type": "string",
+                        "description": "Exact UID of the email to reply to from list_emails/read_email; never invent UID 1",
+                    },
                     "body": {"type": "string", "description": "Reply body text"},
-                    "folder": {"type": "string", "description": "IMAP folder (default: INBOX)"},
-                    "account": {"type": "string", "description": "Optional account name/email/id from list_email_accounts, especially when the UID came from a non-default mailbox"},
+                    "folder": {
+                        "type": "string",
+                        "description": "IMAP folder (default: INBOX)",
+                    },
+                    "account": {
+                        "type": "string",
+                        "description": "Optional account name/email/id from list_email_accounts, especially when the UID came from a non-default mailbox",
+                    },
                 },
-                "required": ["uid", "body"]
-            }
-        }
+                "required": ["uid", "body"],
+            },
+        },
     },
     {
         "type": "function",
@@ -945,16 +1577,42 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["mark_read", "mark_unread", "archive", "delete", "junk"], "description": "Bulk action to perform"},
-                    "uids": {"type": "array", "items": {"type": "string"}, "description": "UIDs from the latest list_emails result"},
-                    "all_unread": {"type": "boolean", "description": "Operate on all unread messages in folder instead of explicit UIDs"},
-                    "folder": {"type": "string", "description": "IMAP folder (default: INBOX)"},
-                    "permanent": {"type": "boolean", "description": "For delete: hard-delete instead of moving to Trash"},
-                    "account": {"type": "string", "description": "Account name/email/id from list_email_accounts, e.g. Gmail or user@example.com"},
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "mark_read",
+                            "mark_unread",
+                            "archive",
+                            "delete",
+                            "junk",
+                        ],
+                        "description": "Bulk action to perform",
+                    },
+                    "uids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "UIDs from the latest list_emails result",
+                    },
+                    "all_unread": {
+                        "type": "boolean",
+                        "description": "Operate on all unread messages in folder instead of explicit UIDs",
+                    },
+                    "folder": {
+                        "type": "string",
+                        "description": "IMAP folder (default: INBOX)",
+                    },
+                    "permanent": {
+                        "type": "boolean",
+                        "description": "For delete: hard-delete instead of moving to Trash",
+                    },
+                    "account": {
+                        "type": "string",
+                        "description": "Account name/email/id from list_email_accounts, e.g. Gmail or user@example.com",
+                    },
                 },
-                "required": ["action"]
-            }
-        }
+                "required": ["action"],
+            },
+        },
     },
     {
         "type": "function",
@@ -964,14 +1622,26 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "uid": {"type": "string", "description": "Email UID from list_emails/read_email"},
-                    "folder": {"type": "string", "description": "IMAP folder (default: INBOX)"},
-                    "permanent": {"type": "boolean", "description": "Hard-delete instead of moving to Trash"},
-                    "account": {"type": "string", "description": "Account name/email/id from list_email_accounts"},
+                    "uid": {
+                        "type": "string",
+                        "description": "Email UID from list_emails/read_email",
+                    },
+                    "folder": {
+                        "type": "string",
+                        "description": "IMAP folder (default: INBOX)",
+                    },
+                    "permanent": {
+                        "type": "boolean",
+                        "description": "Hard-delete instead of moving to Trash",
+                    },
+                    "account": {
+                        "type": "string",
+                        "description": "Account name/email/id from list_email_accounts",
+                    },
                 },
-                "required": ["uid"]
-            }
-        }
+                "required": ["uid"],
+            },
+        },
     },
     {
         "type": "function",
@@ -981,13 +1651,22 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "uid": {"type": "string", "description": "Email UID from list_emails/read_email"},
-                    "folder": {"type": "string", "description": "IMAP folder (default: INBOX)"},
-                    "account": {"type": "string", "description": "Account name/email/id from list_email_accounts"},
+                    "uid": {
+                        "type": "string",
+                        "description": "Email UID from list_emails/read_email",
+                    },
+                    "folder": {
+                        "type": "string",
+                        "description": "IMAP folder (default: INBOX)",
+                    },
+                    "account": {
+                        "type": "string",
+                        "description": "Account name/email/id from list_email_accounts",
+                    },
                 },
-                "required": ["uid"]
-            }
-        }
+                "required": ["uid"],
+            },
+        },
     },
     {
         "type": "function",
@@ -997,14 +1676,26 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "uid": {"type": "string", "description": "Email UID from list_emails/read_email"},
-                    "folder": {"type": "string", "description": "IMAP folder (default: INBOX)"},
-                    "read": {"type": "boolean", "description": "True marks read; false marks unread"},
-                    "account": {"type": "string", "description": "Account name/email/id from list_email_accounts"},
+                    "uid": {
+                        "type": "string",
+                        "description": "Email UID from list_emails/read_email",
+                    },
+                    "folder": {
+                        "type": "string",
+                        "description": "IMAP folder (default: INBOX)",
+                    },
+                    "read": {
+                        "type": "boolean",
+                        "description": "True marks read; false marks unread",
+                    },
+                    "account": {
+                        "type": "string",
+                        "description": "Account name/email/id from list_email_accounts",
+                    },
                 },
-                "required": ["uid"]
-            }
-        }
+                "required": ["uid"],
+            },
+        },
     },
 ]
 
@@ -1012,6 +1703,7 @@ FUNCTION_TOOL_SCHEMAS = [
 # ---------------------------------------------------------------------------
 # Converter: native function call -> ToolBlock
 # ---------------------------------------------------------------------------
+
 
 def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock]:
     """Convert a native function call into a ToolBlock for the existing execution pipeline."""
@@ -1030,8 +1722,18 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         content = json.dumps(args) if args else "{}"
         return ToolBlock(tool_type, content)
     # Email tools are implemented as MCP — route them to email
-    _BUILTIN_EMAIL_TOOLS = {"list_email_accounts", "send_email", "list_emails", "read_email", "reply_to_email",
-                            "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment"}
+    _BUILTIN_EMAIL_TOOLS = {
+        "list_email_accounts",
+        "send_email",
+        "list_emails",
+        "read_email",
+        "reply_to_email",
+        "archive_email",
+        "delete_email",
+        "mark_email_read",
+        "bulk_email",
+        "download_attachment",
+    }
     if name in _BUILTIN_EMAIL_TOOLS:
         return ToolBlock(f"mcp__email__{name}", json.dumps(args) if args else "{}")
     if tool_type not in TOOL_TAGS:
@@ -1059,14 +1761,14 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         blocks = []
         for edit in args.get("edits", []):
             blocks.append(
-                f'<<<FIND>>>\n{edit.get("find", "")}\n<<<REPLACE>>>\n{edit.get("replace", "")}\n<<<END>>>'
+                f"<<<FIND>>>\n{edit.get('find', '')}\n<<<REPLACE>>>\n{edit.get('replace', '')}\n<<<END>>>"
             )
         content = "\n".join(blocks)
     elif tool_type == "suggest_document":
         blocks = []
         for s in args.get("suggestions", []):
             blocks.append(
-                f'<<<FIND>>>\n{s.get("find", "")}\n<<<SUGGEST>>>\n{s.get("replace", "")}\n<<<REASON>>>\n{s.get("reason", "")}\n<<<END>>>'
+                f"<<<FIND>>>\n{s.get('find', '')}\n<<<SUGGEST>>>\n{s.get('replace', '')}\n<<<REASON>>>\n{s.get('reason', '')}\n<<<END>>>"
             )
         content = "\n".join(blocks)
     elif tool_type == "update_document":
@@ -1093,7 +1795,9 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         # matching 'current'" when the agent omitted session_id).
         if action == "list":
             keyword = args.get("session_id", "") or args.get("keyword", "") or value
-            content = "list" + (("\n" + keyword) if keyword and keyword.lower() != "current" else "")
+            content = "list" + (
+                ("\n" + keyword) if keyword and keyword.lower() != "current" else ""
+            )
         else:
             sid = args.get("session_id", "current")
             content = action + "\n" + sid
@@ -1149,19 +1853,39 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             content = f"create_theme {theme_name} {bg} {fg} {panel} {border} {accent}"
             # Append advanced overrides as key=value
             adv_keys = [
-                "userBubbleBg", "aiBubbleBg", "bubbleBorder", "sidebarBg",
-                "sectionAccent", "brandColor", "inputBg", "inputBorder",
-                "sendBtnBg", "sendBtnHover", "codeBg", "codeFg",
-                "toggleBg", "toggleActive", "accentPrimary", "accentError",
+                "userBubbleBg",
+                "aiBubbleBg",
+                "bubbleBorder",
+                "sidebarBg",
+                "sectionAccent",
+                "brandColor",
+                "inputBg",
+                "inputBorder",
+                "sendBtnBg",
+                "sendBtnHover",
+                "codeBg",
+                "codeFg",
+                "toggleBg",
+                "toggleActive",
+                "accentPrimary",
+                "accentError",
             ]
             for ak in adv_keys:
                 if colors.get(ak):
                     content += f" {ak}={colors[ak]}"
         else:
             content = action
-    elif tool_type in ("manage_tasks", "manage_skills", "api_call",
-                        "manage_endpoints", "manage_mcp", "manage_webhooks",
-                        "manage_tokens", "manage_documents", "manage_settings"):
+    elif tool_type in (
+        "manage_tasks",
+        "manage_skills",
+        "api_call",
+        "manage_endpoints",
+        "manage_mcp",
+        "manage_webhooks",
+        "manage_tokens",
+        "manage_documents",
+        "manage_settings",
+    ):
         content = json.dumps(args)
     elif tool_type == "ask_teacher":
         content = args.get("model", "auto") + "\n" + args.get("problem", "")

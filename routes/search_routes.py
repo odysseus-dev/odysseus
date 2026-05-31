@@ -58,7 +58,9 @@ def setup_search_routes(config) -> APIRouter:
             time_filter = str(time_filter).strip() or None
         try:
             context, sources = comprehensive_web_search(
-                query, return_sources=True, time_filter=time_filter,
+                query,
+                return_sources=True,
+                time_filter=time_filter,
             )
             return {"context": context, "sources": sources}
         except Exception as e:
@@ -77,11 +79,13 @@ def setup_search_routes(config) -> APIRouter:
                 available = False
             if needs_url and pid == "searxng" and not _get_search_instance():
                 available = False
-            providers.append({
-                "id": pid,
-                "label": label,
-                "available": available,
-            })
+            providers.append(
+                {
+                    "id": pid,
+                    "label": label,
+                    "available": available,
+                }
+            )
         return providers
 
     @router.post("/api/search/query")
@@ -106,6 +110,11 @@ def setup_search_routes(config) -> APIRouter:
         except Exception as e:
             elapsed = round(time.time() - t0, 2)
             logger.error(f"Search provider {provider} failed: {e}")
-            return {"results": [], "provider": provider, "time": elapsed, "error": str(e)}
+            return {
+                "results": [],
+                "provider": provider,
+                "time": elapsed,
+                "error": str(e),
+            }
 
     return router

@@ -1,4 +1,5 @@
 """Tests for model route helper functions — pure logic, no server needed."""
+
 import sys
 import types
 from unittest.mock import MagicMock
@@ -9,9 +10,19 @@ import pytest
 if "core.database" not in sys.modules:
     _core_db = types.ModuleType("core.database")
     for _name in [
-        "SessionLocal", "ModelEndpoint", "Session", "ChatMessage", "Document",
-        "DocumentVersion", "GalleryImage", "GalleryAlbum", "Note",
-        "CalendarCal", "CalendarEvent", "ScheduledTask", "TaskRun",
+        "SessionLocal",
+        "ModelEndpoint",
+        "Session",
+        "ChatMessage",
+        "Document",
+        "DocumentVersion",
+        "GalleryImage",
+        "GalleryAlbum",
+        "Note",
+        "CalendarCal",
+        "CalendarEvent",
+        "ScheduledTask",
+        "TaskRun",
         "McpServer",
     ]:
         setattr(_core_db, _name, MagicMock())
@@ -33,27 +44,47 @@ from src.llm_core import ANTHROPIC_MODELS
 
 # ── _match_provider_curated ──
 
+
 class TestMatchProviderCurated:
     def test_url_match_overrides_provider(self):
         assert _match_provider_curated("https://z.ai/v1", "openai") == "zai"
 
     def test_deepseek_url(self):
-        assert _match_provider_curated("https://api.deepseek.com/v1", "openai") == "deepseek"
+        assert (
+            _match_provider_curated("https://api.deepseek.com/v1", "openai")
+            == "deepseek"
+        )
 
     def test_groq_url(self):
-        assert _match_provider_curated("https://api.groq.com/openai/v1", "openai") == "groq"
+        assert (
+            _match_provider_curated("https://api.groq.com/openai/v1", "openai")
+            == "groq"
+        )
 
     def test_mistral_url(self):
-        assert _match_provider_curated("https://api.mistral.ai/v1", "openai") == "mistral"
+        assert (
+            _match_provider_curated("https://api.mistral.ai/v1", "openai") == "mistral"
+        )
 
     def test_together_url(self):
-        assert _match_provider_curated("https://api.together.xyz/v1", "openai") == "together"
+        assert (
+            _match_provider_curated("https://api.together.xyz/v1", "openai")
+            == "together"
+        )
 
     def test_fireworks_url(self):
-        assert _match_provider_curated("https://api.fireworks.ai/inference/v1", "openai") == "fireworks"
+        assert (
+            _match_provider_curated("https://api.fireworks.ai/inference/v1", "openai")
+            == "fireworks"
+        )
 
     def test_google_url(self):
-        assert _match_provider_curated("https://generativelanguage.googleapis.com/v1beta", "openai") == "google"
+        assert (
+            _match_provider_curated(
+                "https://generativelanguage.googleapis.com/v1beta", "openai"
+            )
+            == "google"
+        )
 
     def test_xai_url(self):
         assert _match_provider_curated("https://api.x.ai/v1", "openai") == "xai"
@@ -69,6 +100,7 @@ class TestMatchProviderCurated:
 
 
 # ── _curate_models ──
+
 
 class TestCurateModels:
     def test_known_provider_partitions(self):
@@ -128,26 +160,44 @@ class TestCurateModels:
         assert extra == []
 
     def test_google_current_gemini_curated(self):
-        curated, extra = _curate_models(["gemini-3.5-flash", "gemini-3.1-pro"], "google")
+        curated, extra = _curate_models(
+            ["gemini-3.5-flash", "gemini-3.1-pro"], "google"
+        )
         assert curated == ["gemini-3.5-flash", "gemini-3.1-pro"]
         assert extra == []
 
 
 # ── _is_chat_model ──
 
+
 class TestIsChatModel:
-    @pytest.mark.parametrize("model_id", [
-        "gpt-4o", "gpt-4o-mini", "claude-sonnet-4", "llama-3.3-70b",
-        "deepseek-chat", "gemini-2.0-flash", "o3",
-        "llama-4-scout-17b-16e-instruct",
-    ])
+    @pytest.mark.parametrize(
+        "model_id",
+        [
+            "gpt-4o",
+            "gpt-4o-mini",
+            "claude-sonnet-4",
+            "llama-3.3-70b",
+            "deepseek-chat",
+            "gemini-2.0-flash",
+            "o3",
+            "llama-4-scout-17b-16e-instruct",
+        ],
+    )
     def test_chat_models(self, model_id):
         assert _is_chat_model(model_id) is True
 
-    @pytest.mark.parametrize("model_id", [
-        "dall-e-3", "tts-1", "whisper-1", "text-embedding-3-small",
-        "gpt-image-1", "sora-1",
-    ])
+    @pytest.mark.parametrize(
+        "model_id",
+        [
+            "dall-e-3",
+            "tts-1",
+            "whisper-1",
+            "text-embedding-3-small",
+            "gpt-image-1",
+            "sora-1",
+        ],
+    )
     def test_non_chat_models(self, model_id):
         assert _is_chat_model(model_id) is False
 
@@ -166,6 +216,7 @@ class TestIsChatModel:
 
 
 # ── _classify_endpoint ──
+
 
 class TestClassifyEndpoint:
     def test_localhost(self):
@@ -192,6 +243,7 @@ class TestClassifyEndpoint:
 
 # ── setup probing ──
 
+
 class TestSetupProbeSafety:
     @pytest.mark.parametrize("value", ["true", "1", "yes", "on", " TRUE "])
     def test_truthy_true_values(self, value):
@@ -201,33 +253,52 @@ class TestSetupProbeSafety:
     def test_truthy_false_values(self, value):
         assert _truthy(value) is False
 
-    def test_keyed_probe_does_not_fallback_to_curated_on_auth_failure(self, monkeypatch):
-        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
-        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+    def test_keyed_probe_does_not_fallback_to_curated_on_auth_failure(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(
+            endpoint_resolver, "resolve_url", lambda url: url, raising=False
+        )
+        monkeypatch.setattr(
+            model_routes, "_normalize_base", lambda url: url.rstrip("/")
+        )
 
         def fake_get(url, headers=None, timeout=None):
             request = httpx.Request("GET", url)
             response = httpx.Response(401, request=request)
-            raise httpx.HTTPStatusError("unauthorized", request=request, response=response)
+            raise httpx.HTTPStatusError(
+                "unauthorized", request=request, response=response
+            )
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
 
         assert _probe_endpoint("https://api.groq.com/openai/v1", "bad-key") == []
 
     def test_unkeyed_probe_can_still_use_curated_fallback(self, monkeypatch):
-        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
-        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+        monkeypatch.setattr(
+            endpoint_resolver, "resolve_url", lambda url: url, raising=False
+        )
+        monkeypatch.setattr(
+            model_routes, "_normalize_base", lambda url: url.rstrip("/")
+        )
 
         def fake_get(url, headers=None, timeout=None):
             raise httpx.ConnectError("offline")
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
 
-        assert _probe_endpoint("https://api.groq.com/openai/v1") == _PROVIDER_CURATED["groq"]
+        assert (
+            _probe_endpoint("https://api.groq.com/openai/v1")
+            == _PROVIDER_CURATED["groq"]
+        )
 
     def test_keyed_anthropic_probe_does_not_fallback_on_failure(self, monkeypatch):
-        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
-        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+        monkeypatch.setattr(
+            endpoint_resolver, "resolve_url", lambda url: url, raising=False
+        )
+        monkeypatch.setattr(
+            model_routes, "_normalize_base", lambda url: url.rstrip("/")
+        )
 
         def fake_get(url, headers=None, timeout=None):
             raise httpx.ConnectError("offline")
@@ -237,8 +308,12 @@ class TestSetupProbeSafety:
         assert _probe_endpoint("https://api.anthropic.com/v1", "bad-key") == []
 
     def test_anthropic_probe_does_not_double_v1(self, monkeypatch):
-        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
-        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+        monkeypatch.setattr(
+            endpoint_resolver, "resolve_url", lambda url: url, raising=False
+        )
+        monkeypatch.setattr(
+            model_routes, "_normalize_base", lambda url: url.rstrip("/")
+        )
         seen = []
 
         def fake_get(url, headers=None, timeout=None):
@@ -253,12 +328,18 @@ class TestSetupProbeSafety:
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
 
-        assert _probe_endpoint("https://api.anthropic.com/v1", "good-key") == ["claude-sonnet-4-5"]
+        assert _probe_endpoint("https://api.anthropic.com/v1", "good-key") == [
+            "claude-sonnet-4-5"
+        ]
         assert seen == ["https://api.anthropic.com/v1/models"]
 
     def test_unkeyed_anthropic_probe_can_use_curated_fallback(self, monkeypatch):
-        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
-        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+        monkeypatch.setattr(
+            endpoint_resolver, "resolve_url", lambda url: url, raising=False
+        )
+        monkeypatch.setattr(
+            model_routes, "_normalize_base", lambda url: url.rstrip("/")
+        )
 
         def fake_get(url, headers=None, timeout=None):
             raise httpx.ConnectError("offline")

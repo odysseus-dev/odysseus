@@ -88,9 +88,11 @@ def setup_editor_draft_routes() -> APIRouter:
         user = get_current_user(request)
         db = SessionLocal()
         try:
-            d = db.query(EditorDraft).filter(
-                EditorDraft.id == draft_id, EditorDraft.is_active == True
-            ).first()
+            d = (
+                db.query(EditorDraft)
+                .filter(EditorDraft.id == draft_id, EditorDraft.is_active == True)
+                .first()
+            )
             if not d or not _owns(d, user):
                 raise HTTPException(404, "Draft not found")
             try:
@@ -131,13 +133,17 @@ def setup_editor_draft_routes() -> APIRouter:
             db.close()
 
     @router.put("/api/editor-drafts/{draft_id}")
-    async def update_draft(request: Request, draft_id: str, body: DraftUpdate) -> Dict[str, Any]:
+    async def update_draft(
+        request: Request, draft_id: str, body: DraftUpdate
+    ) -> Dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
-            d = db.query(EditorDraft).filter(
-                EditorDraft.id == draft_id, EditorDraft.is_active == True
-            ).first()
+            d = (
+                db.query(EditorDraft)
+                .filter(EditorDraft.id == draft_id, EditorDraft.is_active == True)
+                .first()
+            )
             if not d or not _owns(d, user):
                 raise HTTPException(404, "Draft not found")
             if body.name is not None:

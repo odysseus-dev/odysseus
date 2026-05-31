@@ -10,6 +10,7 @@ via the app's own secret_storage, exactly like real accounts.
 
 Run from the repo root so the app's modules import cleanly.
 """
+
 from __future__ import annotations
 
 import sys
@@ -35,14 +36,16 @@ def setup() -> int:
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        acct = db.query(EmailAccount).filter(
-            EmailAccount.name == NAME, EmailAccount.imap_user == IMAP_USER
-        ).first()
+        acct = (
+            db.query(EmailAccount)
+            .filter(EmailAccount.name == NAME, EmailAccount.imap_user == IMAP_USER)
+            .first()
+        )
         if acct is None:
             acct = EmailAccount(id=uuid.uuid4().hex, name=NAME)
             db.add(acct)
         acct.owner = OWNER
-        acct.is_default = False          # never default — user switches to it
+        acct.is_default = False  # never default — user switches to it
         acct.enabled = True
         acct.imap_host = "localhost"
         acct.imap_port = 31143
@@ -66,9 +69,11 @@ def setup() -> int:
 def teardown() -> int:
     db = SessionLocal()
     try:
-        rows = db.query(EmailAccount).filter(
-            EmailAccount.name == NAME, EmailAccount.imap_user == IMAP_USER
-        ).all()
+        rows = (
+            db.query(EmailAccount)
+            .filter(EmailAccount.name == NAME, EmailAccount.imap_user == IMAP_USER)
+            .all()
+        )
         for r in rows:
             db.delete(r)
         db.commit()

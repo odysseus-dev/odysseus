@@ -28,13 +28,16 @@ def _verify_session_owner(request: Request, session_id: str):
     finally:
         db.close()
 
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["sessions"])
 
+
 def _pick_endpoint_for_sort():
     """Pick model endpoint for auto-sort LLM call — uses utility endpoint setting, falls back to default."""
     from src.endpoint_resolver import resolve_endpoint
+
     # Try utility endpoint first (what the user configured for background tasks)
     url, model, headers = resolve_endpoint("utility")
     if url and model:
@@ -42,6 +45,7 @@ def _pick_endpoint_for_sort():
     # Fall back to task endpoint
     try:
         from src.task_endpoint import resolve_task_endpoint
+
         url, model, headers = resolve_task_endpoint()
         if url and model:
             return url, model, headers
@@ -53,13 +57,16 @@ def _pick_endpoint_for_sort():
         return url, model, headers
     return None, None, None
 
-def setup_session_routes(session_manager: SessionManager, config: dict, webhook_manager=None):
+
+def setup_session_routes(
+    session_manager: SessionManager, config: dict, webhook_manager=None
+):
     """Setup session routes with the provided manager and config"""
 
     REQUEST_TIMEOUT = config.get("REQUEST_TIMEOUT", 20)
     OPENAI_API_KEY = config.get("OPENAI_API_KEY")
     SESSIONS_FILE = config.get("SESSIONS_FILE")
-    
+
     @router.get("/sessions")
     def list_sessions(request: Request):
         user = get_current_user(request)
@@ -74,14 +81,20 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         # crash). Only clean up rows old enough to be definitely orphaned.
         try:
             from datetime import datetime as _dt, timedelta as _td
+
             _cutoff = _dt.utcnow() - _td(minutes=10)
             _purge_db = SessionLocal()
             try:
                 from core.database import ChatMessage as _DbMsg
-                _ghosts = _purge_db.query(DbSession).filter(
-                    DbSession.name.in_(("Nobody", "Incognito")),
-                    DbSession.created_at < _cutoff,
-                ).all()
+
+                _ghosts = (
+                    _purge_db.query(DbSession)
+                    .filter(
+                        DbSession.name.in_(("Nobody", "Incognito")),
+                        DbSession.created_at < _cutoff,
+                    )
+                    .all()
+                )
                 for _g in _ghosts:
                     _purge_db.query(_DbMsg).filter(_DbMsg.session_id == _g.id).delete()
                     _purge_db.delete(_g)
@@ -108,57 +121,96 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             last_msg_map = {}
             mode_map = {}
             msg_count_map = {}
-            rows = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False).all()
+            rows = (
+                db.query(
+                    DbSession.id,
+                    DbSession.folder,
+                    DbSession.total_input_tokens,
+                    DbSession.total_output_tokens,
+                    DbSession.is_important,
+                    DbSession.created_at,
+                    DbSession.updated_at,
+                    DbSession.last_message_at,
+                    DbSession.mode,
+                    DbSession.message_count,
+                )
+                .filter(DbSession.archived == False)
+                .all()
+            )
             for row in rows:
                 folder_map[row.id] = row.folder
-                token_map[row.id] = (row.total_input_tokens or 0) + (row.total_output_tokens or 0)
+                token_map[row.id] = (row.total_input_tokens or 0) + (
+                    row.total_output_tokens or 0
+                )
                 important_map[row.id] = row.is_important or False
-                created_map[row.id] = row.created_at.isoformat() if row.created_at else None
-                updated_map[row.id] = row.updated_at.isoformat() if row.updated_at else None
+                created_map[row.id] = (
+                    row.created_at.isoformat() if row.created_at else None
+                )
+                updated_map[row.id] = (
+                    row.updated_at.isoformat() if row.updated_at else None
+                )
                 # Fall back to updated_at then created_at so sessions that
                 # predate the column (or have no messages) still sort sanely.
                 last_msg_map[row.id] = (
-                    row.last_message_at.isoformat() if row.last_message_at
-                    else (row.updated_at.isoformat() if row.updated_at
-                          else (row.created_at.isoformat() if row.created_at else None))
+                    row.last_message_at.isoformat()
+                    if row.last_message_at
+                    else (
+                        row.updated_at.isoformat()
+                        if row.updated_at
+                        else (row.created_at.isoformat() if row.created_at else None)
+                    )
                 )
                 mode_map[row.id] = row.mode
                 msg_count_map[row.id] = row.message_count or 0
             # Sessions with active documents that have content
             from sqlalchemy import func
+
             doc_session_ids = set(
-                r[0] for r in db.query(Document.session_id)
-                .filter(Document.is_active == True,
-                        Document.current_content != None,
-                        func.trim(Document.current_content) != "")
-                .distinct().all()
+                r[0]
+                for r in db.query(Document.session_id)
+                .filter(
+                    Document.is_active == True,
+                    Document.current_content != None,
+                    func.trim(Document.current_content) != "",
+                )
+                .distinct()
+                .all()
             )
             img_session_ids = set(
-                r[0] for r in db.query(GalleryImage.session_id)
+                r[0]
+                for r in db.query(GalleryImage.session_id)
                 .filter(GalleryImage.session_id != None)
-                .distinct().all()
+                .distinct()
+                .all()
             )
         finally:
             db.close()
 
-        sessions = [{"id": s.id, "name": s.name, "model": s.model,
-                     "endpoint_url": s.endpoint_url, "rag": s.rag,
-                     "archived": s.archived, "folder": folder_map.get(s.id),
-                     "total_tokens": token_map.get(s.id, 0),
-                     "is_important": important_map.get(s.id, False),
-                     "created_at": created_map.get(s.id),
-                     "updated_at": updated_map.get(s.id),
-                     "last_message_at": last_msg_map.get(s.id),
-                     "has_documents": s.id in doc_session_ids,
-                     "has_images": s.id in img_session_ids,
-                     "mode": mode_map.get(s.id),
-                     "message_count": msg_count_map.get(s.id, 0)}
-                    for s in user_sessions.values()
-                    if not s.archived
-                    and (s.name or "").strip() not in ("Nobody", "Incognito")]
+        sessions = [
+            {
+                "id": s.id,
+                "name": s.name,
+                "model": s.model,
+                "endpoint_url": s.endpoint_url,
+                "rag": s.rag,
+                "archived": s.archived,
+                "folder": folder_map.get(s.id),
+                "total_tokens": token_map.get(s.id, 0),
+                "is_important": important_map.get(s.id, False),
+                "created_at": created_map.get(s.id),
+                "updated_at": updated_map.get(s.id),
+                "last_message_at": last_msg_map.get(s.id),
+                "has_documents": s.id in doc_session_ids,
+                "has_images": s.id in img_session_ids,
+                "mode": mode_map.get(s.id),
+                "message_count": msg_count_map.get(s.id, 0),
+            }
+            for s in user_sessions.values()
+            if not s.archived and (s.name or "").strip() not in ("Nobody", "Incognito")
+        ]
 
         return sessions
-    
+
     @router.post("/session", response_model=SessionResponse)
     def create_session(
         request: Request,
@@ -173,7 +225,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         skip_val = str(skip_validation).lower() == "true"
 
         if not endpoint_url and not skip_val:
-            raise HTTPException(400, "endpoint_url is required (choose from /api/models)")
+            raise HTTPException(
+                400, "endpoint_url is required (choose from /api/models)"
+            )
 
         model_to_use = model
 
@@ -185,23 +239,43 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             pass
         elif not model_to_use:
             from src.llm_core import list_model_ids
-            ids = list_model_ids(endpoint_url, timeout=REQUEST_TIMEOUT,
-                                 headers={"Authorization": f"Bearer {api_key}"} if api_key.strip() else None)
+
+            ids = list_model_ids(
+                endpoint_url,
+                timeout=REQUEST_TIMEOUT,
+                headers={"Authorization": f"Bearer {api_key}"}
+                if api_key.strip()
+                else None,
+            )
             if not ids:
                 raise HTTPException(400, "Cannot reach /v1/models")
             # Default to the first CHAT model — endpoints often list embedding/
             # tts/whisper models first (e.g. text-embedding-ada-002), which
             # can't hold a conversation.
-            _NON_CHAT = ("text-embedding", "embedding", "tts-", "whisper",
-                         "text-moderation", "moderation-", "dall-e", "rerank")
+            _NON_CHAT = (
+                "text-embedding",
+                "embedding",
+                "tts-",
+                "whisper",
+                "text-moderation",
+                "moderation-",
+                "dall-e",
+                "rerank",
+            )
             chat_ids = [m for m in ids if not any(p in m.lower() for p in _NON_CHAT)]
             model_to_use = (chat_ids or ids)[0]
         else:
             from src.llm_core import list_model_ids
             import os as _os
+
             req_base = _os.path.basename(model_to_use.rstrip("/"))
-            avail = list_model_ids(endpoint_url, timeout=REQUEST_TIMEOUT,
-                                   headers={"Authorization": f"Bearer {api_key}"} if api_key.strip() else None)
+            avail = list_model_ids(
+                endpoint_url,
+                timeout=REQUEST_TIMEOUT,
+                headers={"Authorization": f"Bearer {api_key}"}
+                if api_key.strip()
+                else None,
+            )
             if not avail:
                 raise HTTPException(400, "Cannot reach /v1/models")
             if model_to_use not in avail:
@@ -211,10 +285,11 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                         found = a
                         break
                 if not found:
-                    raise HTTPException(400,
-                                        f"Model not found at server. Available: {', '.join(avail)}")
+                    raise HTTPException(
+                        400, f"Model not found at server. Available: {', '.join(avail)}"
+                    )
                 model_to_use = found
-        
+
         sid = str(uuid.uuid4())
         user = get_current_user(request)
         session = session_manager.create_session(
@@ -229,9 +304,14 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         resolved_key = api_key.strip() if api_key else ""
         if not resolved_key and endpoint_id and endpoint_id.strip():
             from core.database import ModelEndpoint
+
             _db = SessionLocal()
             try:
-                ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id.strip()).first()
+                ep = (
+                    _db.query(ModelEndpoint)
+                    .filter(ModelEndpoint.id == endpoint_id.strip())
+                    .first()
+                )
                 if ep and ep.api_key:
                     resolved_key = ep.api_key
             finally:
@@ -241,24 +321,34 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             session_manager.save_sessions()
         # Fire webhook (sync-safe)
         if webhook_manager:
-            webhook_manager.fire_and_forget("session.created", {
-                "session_id": sid, "name": session.name, "model": model_to_use,
-            })
+            webhook_manager.fire_and_forget(
+                "session.created",
+                {
+                    "session_id": sid,
+                    "name": session.name,
+                    "model": model_to_use,
+                },
+            )
         # Fire event for automation tasks
         from src.event_bus import fire_event
+
         fire_event("session_created", user)
         return SessionResponse(
             id=sid,
             name=session.name,
             model=model_to_use,
             rag=str(rag).lower() == "true" if rag else False,
-            archived=False
-        )    
+            archived=False,
+        )
+
     @router.patch("/session/{sid}")
     def rename_session(
-        request: Request, sid: str,
-        name: str = Form(None), folder: str = Form(None),
-        model: str = Form(None), endpoint_url: str = Form(None),
+        request: Request,
+        sid: str,
+        name: str = Form(None),
+        folder: str = Form(None),
+        model: str = Form(None),
+        endpoint_url: str = Form(None),
         endpoint_id: str = Form(None),
     ):
         _verify_session_owner(request, sid)
@@ -289,11 +379,17 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             # Update auth headers from the endpoint's stored API key
             if endpoint_id:
                 from core.database import ModelEndpoint
+
                 _db = SessionLocal()
                 try:
-                    ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
+                    ep = (
+                        _db.query(ModelEndpoint)
+                        .filter(ModelEndpoint.id == endpoint_id)
+                        .first()
+                    )
                     if ep and ep.api_key:
                         from src.endpoint_resolver import build_headers
+
                         session.headers = build_headers(ep.api_key, ep.base_url)
                 finally:
                     _db.close()
@@ -311,7 +407,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             result["model"] = model
             result["endpoint_url"] = endpoint_url
         return result
-    
+
     @router.post("/session/{sid}/inject_messages")
     async def inject_messages(request: Request, sid: str):
         """Bulk-inject messages into a session's history (for group chat sync)."""
@@ -323,8 +419,11 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         body = await request.json()
         messages = body.get("messages", [])
         from core.models import ChatMessage
+
         for m in messages:
-            sess.add_message(ChatMessage(m["role"], m["content"], metadata=m.get("metadata")))
+            sess.add_message(
+                ChatMessage(m["role"], m["content"], metadata=m.get("metadata"))
+            )
         session_manager.save_sessions()
         return {"ok": True, "count": len(messages)}
 
@@ -337,6 +436,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     async def bulk_delete_sessions(request: Request):
         """Delete multiple sessions (for compare cleanup via sendBeacon)."""
         from core.database import ChatMessage as _CM
+
         try:
             body = await request.json()
             ids = body.get("ids", [])
@@ -371,7 +471,10 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 if db_sess and db_sess.is_important:
                     raise HTTPException(
                         status_code=403,
-                        detail={"error": "SESSION_STARRED", "message": "Unstar the session before deleting it"}
+                        detail={
+                            "error": "SESSION_STARRED",
+                            "message": "Unstar the session before deleting it",
+                        },
                     )
             finally:
                 db.close()
@@ -389,19 +492,21 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 status_code=500,
                 detail={
                     "error": "SESSION_DELETE_ERROR",
-                    "message": "Failed to delete session"
-                }
+                    "message": "Failed to delete session",
+                },
             )
-    
+
     @router.delete("/sessions/all")
     def delete_all_sessions(request: Request):
         """Admin only: permanently delete ALL sessions and their messages."""
         from core.middleware import require_admin
+
         require_admin(request)
 
         db = SessionLocal()
         try:
             from core.database import ChatMessage as DbChatMessage
+
             count = db.query(DbSession).count()
             db.query(DbChatMessage).delete()
             db.query(DbSession).delete()
@@ -423,7 +528,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         try:
             # First check if session exists
             session_manager.get_session(sid)
-            
+
             # Archive the session
             db = SessionLocal()
             try:
@@ -432,16 +537,16 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     db_session.archived = True
                     db_session.updated_at = datetime.utcnow()
                     db.commit()
-                    
+
                     # Update in memory if it exists
                     if sid in session_manager.sessions:
                         session_manager.sessions[sid].archived = True
-                        
+
                     logger.info(f"Archived session {sid}")
                     return {"status": "archived"}
                 else:
                     raise HTTPException(404, f"Session {sid} not found")
-                    
+
             except HTTPException:
                 raise
             except Exception as e:
@@ -453,7 +558,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
 
         except KeyError:
             raise HTTPException(404, f"Session '{sid}' not found")
-    
+
     @router.post("/session/{sid}/unarchive")
     def unarchive_session(request: Request, sid: str):
         """Restore an archived session back to the active session list."""
@@ -485,7 +590,14 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             db.close()
 
     @router.get("/sessions/archived")
-    def list_archived_sessions(request: Request, search: str = "", offset: int = 0, limit: int = 20, sort: str = "recent", model: str = ""):
+    def list_archived_sessions(
+        request: Request,
+        search: str = "",
+        offset: int = 0,
+        limit: int = 20,
+        sort: str = "recent",
+        model: str = "",
+    ):
         """List archived sessions for the archive browser."""
         user = get_current_user(request)
         db = SessionLocal()
@@ -495,8 +607,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 raise HTTPException(403, "Authentication required")
             q = q.filter(DbSession.owner == user)
             if search:
-                safe_search = search.replace('%', r'\%').replace('_', r'\_')
-                q = q.filter(DbSession.name.ilike(f"%{safe_search}%", escape='\\'))
+                safe_search = search.replace("%", r"\%").replace("_", r"\_")
+                q = q.filter(DbSession.name.ilike(f"%{safe_search}%", escape="\\"))
             if model:
                 q = q.filter(DbSession.model.ilike(f"%{model}"))
             total = q.count()
@@ -510,15 +622,21 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             rows = q.order_by(order).offset(offset).limit(limit).all()
             sessions = []
             for s in rows:
-                sessions.append({
-                    "id": s.id,
-                    "name": s.name,
-                    "model": s.model,
-                    "message_count": s.message_count or 0,
-                    "created_at": s.created_at.isoformat() if s.created_at else None,
-                    "updated_at": s.updated_at.isoformat() if s.updated_at else None,
-                    "is_important": s.is_important,
-                })
+                sessions.append(
+                    {
+                        "id": s.id,
+                        "name": s.name,
+                        "model": s.model,
+                        "message_count": s.message_count or 0,
+                        "created_at": s.created_at.isoformat()
+                        if s.created_at
+                        else None,
+                        "updated_at": s.updated_at.isoformat()
+                        if s.updated_at
+                        else None,
+                        "is_important": s.is_important,
+                    }
+                )
             return {"sessions": sessions, "total": total}
         finally:
             db.close()
@@ -531,7 +649,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         except KeyError:
             raise HTTPException(404, f"Session {sid} not found")
         return {"history": [msg.to_dict() for msg in session.history]}
-    
+
     @router.get("/session/{sid}/export")
     def export_session(request: Request, sid: str, fmt: str = "md", filename: str = ""):
         """Export conversation history as a downloadable file.
@@ -544,16 +662,19 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         except KeyError:
             raise HTTPException(404, f"Session {sid} not found")
 
-        safe_name = re.sub(r'[^\w\-_]', '_', session.name)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        safe_name = re.sub(r"[^\w\-_]", "_", session.name)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         if fmt == "json":
             import json as _json
+
             data = {
                 "name": session.name,
                 "model": session.model,
                 "exported": datetime.now().isoformat(),
-                "messages": [{"role": m.role, "content": m.content} for m in session.history],
+                "messages": [
+                    {"role": m.role, "content": m.content} for m in session.history
+                ],
             }
             out_name = filename or f"conversation_{safe_name}_{timestamp}.json"
             return Response(
@@ -588,9 +709,15 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             ]
             for m in session.history:
                 cls = "user" if m.role == "user" else "ai"
-                content = m.content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                content = (
+                    m.content.replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                )
                 content = content.replace("\n", "<br>")
-                html_parts.append(f'<div class="msg {cls}"><div class="role">{m.role}</div>{content}</div>')
+                html_parts.append(
+                    f'<div class="msg {cls}"><div class="role">{m.role}</div>{content}</div>'
+                )
             html_parts.append("</body></html>")
             out_name = filename or f"conversation_{safe_name}_{timestamp}.html"
             return Response(
@@ -602,7 +729,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         # Default: markdown
         markdown_lines = []
         markdown_lines.append(f"# Conversation: {session.name}")
-        markdown_lines.append(f"*Exported on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+        markdown_lines.append(
+            f"*Exported on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*"
+        )
         markdown_lines.append(f"*Model: {session.model}*")
         markdown_lines.append("\n---\n")
         for message in session.history:
@@ -619,7 +748,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             media_type="text/markdown",
             headers={"Content-Disposition": f"attachment; filename={out_name}"},
         )
-    
+
     @router.post("/sessions/save")
     def sessions_save_now(request: Request):
         user = get_current_user(request)
@@ -627,13 +756,13 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             raise HTTPException(401, "Not authenticated")
         session_manager.save_sessions()
         return {"ok": True, "path": SESSIONS_FILE}
-    
+
     @router.post("/session/openai")
     def create_session_openai(
         request: Request,
         name: str = Form("New Chat (OpenAI)"),
         model: str = Form("gpt-4o"),
-        rag: str = Form(None)
+        rag: str = Form(None),
     ):
         if not OPENAI_API_KEY:
             raise HTTPException(400, "Server missing OPENAI_API_KEY")
@@ -650,11 +779,14 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         session.headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
         session_manager.save_sessions()
         from src.event_bus import fire_event
+
         fire_event("session_created", user)
         return {"id": sid, "name": "", "model": model}
-    
+
     @router.post("/session/{session_id}/important")
-    async def mark_session_important(request: Request, session_id: str, important: bool = Form(True)):
+    async def mark_session_important(
+        request: Request, session_id: str, important: bool = Form(True)
+    ):
         """Mark a session as important to protect it from automatic cleanup."""
         _verify_session_owner(request, session_id)
         try:
@@ -664,7 +796,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             # Update in database
             db = SessionLocal()
             try:
-                db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+                db_session = (
+                    db.query(DbSession).filter(DbSession.id == session_id).first()
+                )
                 if db_session:
                     db_session.is_important = important
                     db_session.updated_at = datetime.utcnow()
@@ -722,23 +856,25 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             raise HTTPException(400, "No model configured for compaction")
 
         prior_compactions = sum(
-            1 for m in history
-            if (m.metadata or {}).get("compacted") or "[Conversation summary" in (m.content or "")
+            1
+            for m in history
+            if (m.metadata or {}).get("compacted")
+            or "[Conversation summary" in (m.content or "")
         )
-        prompt = SELF_SUMMARY_SYSTEM_PROMPT.replace(
-            "{count}", str(len(older))
-        ).replace(
+        prompt = SELF_SUMMARY_SYSTEM_PROMPT.replace("{count}", str(len(older))).replace(
             "{n}", str(prior_compactions + 1)
         )
         convo_text = "\n".join(
-            f"{m.role.upper()}: {(m.content or '')[:2000]}"
-            for m in older
+            f"{m.role.upper()}: {(m.content or '')[:2000]}" for m in older
         )
         try:
             summary = await llm_call_async(
                 url,
                 model,
-                [{"role": "system", "content": prompt}, {"role": "user", "content": convo_text}],
+                [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": convo_text},
+                ],
                 temperature=0.2,
                 max_tokens=1024,
                 headers=headers,
@@ -778,22 +914,56 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         users can clean junk without spending tokens.
         """
         from src.llm_core import llm_call
+
         user = get_current_user(request)
         user_sessions = session_manager.get_sessions_for_user(user)
 
         # Delete empty and throwaway sessions before sorting
         from core.database import ChatMessage as DbMsg
+
         db = SessionLocal()
         deleted_empty = 0
         deleted_throwaway = 0
         # Names that indicate a throwaway/test session (case-insensitive exact or prefix match)
         _THROWAWAY_NAMES = {
-            "test", "testing", "asdf", "asd", "hello", "hi", "hey",
-            "yo", "sup", "hola", "hii", "hiii", "heyo",
-            "foo", "bar", "baz", "tmp", "temp", "scratch", "untitled",
-            "new chat", "delete", "remove", "junk", "trash", "xxx",
-            "abc", "qwerty", "blah", "stuff", "whatever", "idk",
-            "ok", "lol", "bruh", "hmm", "hm", "meh",
+            "test",
+            "testing",
+            "asdf",
+            "asd",
+            "hello",
+            "hi",
+            "hey",
+            "yo",
+            "sup",
+            "hola",
+            "hii",
+            "hiii",
+            "heyo",
+            "foo",
+            "bar",
+            "baz",
+            "tmp",
+            "temp",
+            "scratch",
+            "untitled",
+            "new chat",
+            "delete",
+            "remove",
+            "junk",
+            "trash",
+            "xxx",
+            "abc",
+            "qwerty",
+            "blah",
+            "stuff",
+            "whatever",
+            "idk",
+            "ok",
+            "lol",
+            "bruh",
+            "hmm",
+            "hm",
+            "meh",
         }
         _THROWAWAY_MAX_MESSAGES = 4  # only delete if <= this many messages
         try:
@@ -803,21 +973,28 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             # instead of 1–3 queries PER session — with many chats the per-row
             # loop was doing thousands of round-trips and blowing the timeout.
             from sqlalchemy import func as _sa_func
-            _counts = dict(db.query(DbMsg.session_id, _sa_func.count(DbMsg.id)).group_by(DbMsg.session_id).all())
+
+            _counts = dict(
+                db.query(DbMsg.session_id, _sa_func.count(DbMsg.id))
+                .group_by(DbMsg.session_id)
+                .all()
+            )
             _asst_counts = dict(
                 db.query(DbMsg.session_id, _sa_func.count(DbMsg.id))
-                .filter(DbMsg.role == "assistant").group_by(DbMsg.session_id).all()
+                .filter(DbMsg.role == "assistant")
+                .group_by(DbMsg.session_id)
+                .all()
             )
             for row in rows:
                 # Never delete important sessions
-                if getattr(row, 'is_important', False):
+                if getattr(row, "is_important", False):
                     continue
                 # Always delete incognito sessions during cleanup
                 if (row.name or "").strip() == "Incognito":
                     should_delete = True
                     deleted_throwaway += 1
                     db.delete(row)
-                    if hasattr(session_manager, 'delete_session'):
+                    if hasattr(session_manager, "delete_session"):
                         session_manager.delete_session(row.id)
                     continue
                 msg_count = _counts.get(row.id, 0)
@@ -829,13 +1006,22 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     name = (row.name or "").strip().lower()
                     # Check first user message content (AI renames sessions, so
                     # "hi" becomes "Casual Greeting Exchange" — name alone won't match)
-                    first_msg = db.query(DbMsg.content).filter(
-                        DbMsg.session_id == row.id, DbMsg.role == "user"
-                    ).order_by(DbMsg.timestamp).first()
-                    first_text = (first_msg[0] or "").strip().lower() if first_msg else ""
+                    first_msg = (
+                        db.query(DbMsg.content)
+                        .filter(DbMsg.session_id == row.id, DbMsg.role == "user")
+                        .order_by(DbMsg.timestamp)
+                        .first()
+                    )
+                    first_text = (
+                        (first_msg[0] or "").strip().lower() if first_msg else ""
+                    )
                     # Count assistant messages — if user sent something but AI never replied, it's dead
                     assistant_count = _asst_counts.get(row.id, 0)
-                    if name in _THROWAWAY_NAMES or name.startswith("chat:") or first_text in _THROWAWAY_NAMES:
+                    if (
+                        name in _THROWAWAY_NAMES
+                        or name.startswith("chat:")
+                        or first_text in _THROWAWAY_NAMES
+                    ):
                         should_delete = True
                         deleted_throwaway += 1
                     # Single user message with no AI response = dead session
@@ -843,16 +1029,23 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                         should_delete = True
                         deleted_throwaway += 1
                     # Short phrase (1-3 words) with no real AI conversation (<=2 msgs)
-                    elif msg_count <= 2 and first_text and len(first_text.split()) <= 3 and len(first_text) <= 40:
+                    elif (
+                        msg_count <= 2
+                        and first_text
+                        and len(first_text.split()) <= 3
+                        and len(first_text) <= 40
+                    ):
                         should_delete = True
                         deleted_throwaway += 1
                 if should_delete:
                     db.delete(row)
-                    if hasattr(session_manager, 'delete_session'):
+                    if hasattr(session_manager, "delete_session"):
                         session_manager.delete_session(row.id)
             if deleted_empty or deleted_throwaway:
                 db.commit()
-                logger.info(f"Auto-sort: deleted {deleted_empty} empty + {deleted_throwaway} throwaway sessions")
+                logger.info(
+                    f"Auto-sort: deleted {deleted_empty} empty + {deleted_throwaway} throwaway sessions"
+                )
         finally:
             db.close()
 
@@ -889,12 +1082,16 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 # Already in a folder — skip on this pass.
                 continue
             name = s.name or "(unnamed)"
-            all_candidates.append({
-                "id": s.id,
-                "name": name,
-                "updated_at": getattr(s, "updated_at", None) or getattr(s, "created_at", None) or "",
-                "current_folder": None,
-            })
+            all_candidates.append(
+                {
+                    "id": s.id,
+                    "name": name,
+                    "updated_at": getattr(s, "updated_at", None)
+                    or getattr(s, "created_at", None)
+                    or "",
+                    "current_folder": None,
+                }
+            )
 
         # Most-recent first, then take the top N for this batch.
         all_candidates.sort(key=lambda x: x.get("updated_at") or "", reverse=True)
@@ -915,6 +1112,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
 
         # Pick an endpoint — prefer admin-configured task endpoint
         from src.task_endpoint import resolve_task_endpoint
+
         url, model, headers = resolve_task_endpoint()
         if not url:
             url, model, headers = _pick_endpoint_for_sort()
@@ -922,7 +1120,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             raise HTTPException(503, "No available model endpoint for auto-sort")
 
         # Build prompt
-        names_text = "\n".join(f'  "{s["id"][:8]}": "{s["name"]}"' for s in session_list)
+        names_text = "\n".join(
+            f'  "{s["id"][:8]}": "{s["name"]}"' for s in session_list
+        )
         prompt = (
             "You are a session organizer. Group these chat sessions into folders by topic.\n\n"
             "Rules:\n"
@@ -940,21 +1140,30 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             # 16384 (was 4096): with many chats the folder JSON is large, and a
             # reasoning model spends tokens thinking first — 4096 truncated the
             # JSON mid-output, so it never parsed ("invalid JSON for auto-sort").
-            raw = llm_call(url, model, [{"role": "user", "content": prompt}],
-                           temperature=0.3, max_tokens=16384, headers=headers, timeout=120)
+            raw = llm_call(
+                url,
+                model,
+                [{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=16384,
+                headers=headers,
+                timeout=120,
+            )
             logger.info(f"Auto-sort raw response ({len(raw)} chars): {raw[:300]}")
             # Extract JSON from response — handle markdown fences, leading text,
             # reasoning-model <think> blocks, and trailing commas.
             text = raw.strip()
             # Reasoning models emit <think>…</think> (often containing { } that
             # would derail the brace scan) before the answer — drop it first.
-            text = re.sub(r'<think(?:ing)?>[\s\S]*?</think(?:ing)?>', '', text, flags=re.I).strip()
+            text = re.sub(
+                r"<think(?:ing)?>[\s\S]*?</think(?:ing)?>", "", text, flags=re.I
+            ).strip()
 
             def _loads_lenient(s):
                 """Parse JSON, retrying once with trailing commas stripped."""
                 if not s:
                     return None
-                for cand in (s, re.sub(r',(\s*[}\]])', r'\1', s)):
+                for cand in (s, re.sub(r",(\s*[}\]])", r"\1", s)):
                     try:
                         return json.loads(cand)
                     except json.JSONDecodeError:
@@ -964,18 +1173,21 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             result = _loads_lenient(text)
             # Markdown code fence
             if result is None:
-                fence_match = re.search(r'```(?:json)?\s*\n?([\s\S]*?)```', text)
+                fence_match = re.search(r"```(?:json)?\s*\n?([\s\S]*?)```", text)
                 if fence_match:
                     result = _loads_lenient(fence_match.group(1).strip())
             # First { … last } block
             if result is None:
-                brace_start = text.find('{')
-                brace_end = text.rfind('}')
+                brace_start = text.find("{")
+                brace_end = text.rfind("}")
                 if brace_start >= 0 and brace_end > brace_start:
-                    result = _loads_lenient(text[brace_start:brace_end + 1])
+                    result = _loads_lenient(text[brace_start : brace_end + 1])
             if result is None:
                 logger.error(f"Auto-sort: could not parse JSON from: {text[:500]}")
-                raise HTTPException(502, "AI returned invalid JSON for auto-sort — the model may not follow JSON instructions; try a different utility model in Settings.")
+                raise HTTPException(
+                    502,
+                    "AI returned invalid JSON for auto-sort — the model may not follow JSON instructions; try a different utility model in Settings.",
+                )
         except HTTPException:
             raise
         except Exception as e:
@@ -1051,6 +1263,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             return {"context_length": None}
         try:
             from src.model_context import get_context_length
+
             ctx = get_context_length(session.endpoint_url, session.model)
             return {"context_length": ctx, "model": session.model}
         except Exception:

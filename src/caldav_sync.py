@@ -105,10 +105,14 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                 cal_id = _stable_cal_id(remote_url)
                 display_name = (remote_cal.name or "").strip() or "CalDAV"
 
-                local_cal = db.query(CalendarCal).filter(
-                    CalendarCal.id == cal_id,
-                    CalendarCal.owner == owner,
-                ).first()
+                local_cal = (
+                    db.query(CalendarCal)
+                    .filter(
+                        CalendarCal.id == cal_id,
+                        CalendarCal.owner == owner,
+                    )
+                    .first()
+                )
                 if not local_cal:
                     local_cal = CalendarCal(
                         id=cal_id,
@@ -182,9 +186,13 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                             else ""
                         )
 
-                        existing = db.query(CalendarEvent).filter(
-                            CalendarEvent.uid == uid_val,
-                        ).first()
+                        existing = (
+                            db.query(CalendarEvent)
+                            .filter(
+                                CalendarEvent.uid == uid_val,
+                            )
+                            .first()
+                        )
                         if existing:
                             existing.calendar_id = local_cal.id
                             existing.summary = summary
@@ -196,30 +204,38 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                             existing.is_utc = row_is_utc
                             existing.rrule = rrule
                         else:
-                            db.add(CalendarEvent(
-                                uid=uid_val,
-                                calendar_id=local_cal.id,
-                                summary=summary,
-                                description=description,
-                                location=location,
-                                dtstart=start_dt,
-                                dtend=end_dt,
-                                all_day=all_day,
-                                is_utc=row_is_utc,
-                                rrule=rrule,
-                            ))
+                            db.add(
+                                CalendarEvent(
+                                    uid=uid_val,
+                                    calendar_id=local_cal.id,
+                                    summary=summary,
+                                    description=description,
+                                    location=location,
+                                    dtstart=start_dt,
+                                    dtend=end_dt,
+                                    all_day=all_day,
+                                    is_utc=row_is_utc,
+                                    rrule=rrule,
+                                )
+                            )
                         result["events"] += 1
                 db.commit()
 
                 # Prune locally-cached CalDAV events that vanished
                 # upstream (only within our sync window — events outside
                 # the window aren't in `objs`, so we'd false-delete them).
-                stale = db.query(CalendarEvent).filter(
-                    CalendarEvent.calendar_id == local_cal.id,
-                    CalendarEvent.dtstart >= start,
-                    CalendarEvent.dtstart <= end,
-                    ~CalendarEvent.uid.in_(seen_uids) if seen_uids else CalendarEvent.uid.isnot(None),
-                ).all()
+                stale = (
+                    db.query(CalendarEvent)
+                    .filter(
+                        CalendarEvent.calendar_id == local_cal.id,
+                        CalendarEvent.dtstart >= start,
+                        CalendarEvent.dtstart <= end,
+                        ~CalendarEvent.uid.in_(seen_uids)
+                        if seen_uids
+                        else CalendarEvent.uid.isnot(None),
+                    )
+                    .all()
+                )
                 for ev in stale:
                     db.delete(ev)
                 result["deleted"] += len(stale)
@@ -246,7 +262,9 @@ async def sync_caldav(owner: str) -> dict:
     pw = cfg.get("password") or ""
     if not (url and user and pw):
         return {
-            "calendars": 0, "events": 0, "deleted": 0,
+            "calendars": 0,
+            "events": 0,
+            "deleted": 0,
             "errors": ["CalDAV is not configured"],
         }
     try:

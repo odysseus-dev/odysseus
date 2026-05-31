@@ -17,12 +17,16 @@ import re
 
 # Closed reasoning blocks. Multi-pass loop in `strip_think` handles nested
 # `<think><think>...</think></think>` patterns some models emit.
-_THINK_CLOSED_RE = re.compile(r"<think(?:ing)?>[\s\S]*?</think(?:ing)?>\s*", re.IGNORECASE)
+_THINK_CLOSED_RE = re.compile(
+    r"<think(?:ing)?>[\s\S]*?</think(?:ing)?>\s*", re.IGNORECASE
+)
 # Orphan opening or closing tags that survive after the closed-pass.
 _THINK_TAG_RE = re.compile(r"</?think(?:ing)?[^>]*>\s*", re.IGNORECASE)
 # Dangling opener at the top of the response with no closer — strip everything
 # from `<think>` up to either `</think>` (if it ever shows) or end of string.
-_THINK_OPEN_RE = re.compile(r"^\s*<think(?:ing)?>.*?(?:</think(?:ing)?>|$)", re.DOTALL | re.IGNORECASE)
+_THINK_OPEN_RE = re.compile(
+    r"^\s*<think(?:ing)?>.*?(?:</think(?:ing)?>|$)", re.DOTALL | re.IGNORECASE
+)
 # Streaming models occasionally emit `<thinking time="0.42">`-style attributes.
 # Normalize to a plain `<think>` so the regexes above catch them.
 _THINK_ATTR_RE = re.compile(r"<think(?:ing)?\s+[^>]*>", re.IGNORECASE)
@@ -68,7 +72,7 @@ def _strip_reasoning_prose(text: str) -> str:
             last_reasoning_idx = i
     if last_reasoning_idx < 0:
         return text
-    keep = paragraphs[last_reasoning_idx + 1:]
+    keep = paragraphs[last_reasoning_idx + 1 :]
     if not keep:
         return paragraphs[-1].strip()
     return "\n\n".join(keep).strip()

@@ -45,11 +45,12 @@ def _widget_type_names() -> dict:
         fitz.PDF_WIDGET_TYPE_SIGNATURE: "signature",
     }
 
+
 # Text widgets that are really signature placeholders. Covers DocuSign-style
 # "_es_:signature" and the bare "signed N" / "Signature" patterns common in
 # UK conveyancing forms (TA6, TA10). Uses substring match deliberately —
 # false positives like "assigned" are rare in form-field names.
-_SIGNATURE_NAME_RE = re.compile(r'sign(?:ed|ature)', re.IGNORECASE)
+_SIGNATURE_NAME_RE = re.compile(r"sign(?:ed|ature)", re.IGNORECASE)
 
 
 def has_form_fields(path: str) -> bool:
@@ -105,7 +106,10 @@ def _infer_label(page: "fitz.Page", rect: "fitz.Rect", page_words: list) -> str:
         if not text.strip():
             continue
         # Same line, to the left
-        if abs((wy0 + wy1) / 2 - (rect.y0 + rect.y1) / 2) < line_tol and wx1 <= rect.x0 + 1:
+        if (
+            abs((wy0 + wy1) / 2 - (rect.y0 + rect.y1) / 2) < line_tol
+            and wx1 <= rect.x0 + 1
+        ):
             candidates_left.append((rect.x0 - wx1, wx0, text))
         # Above, horizontally overlapping
         elif wy1 <= rect.y0 + 1 and not (wx1 < rect.x0 or wx0 > rect.x1):
@@ -183,9 +187,9 @@ def extract_fields(path: str) -> list[dict[str, Any]]:
                         "type": wtype,
                         "label": label,
                         "value": value,
-                        "options": list(w.choice_values) if w.choice_values else (
-                            [on_state] if on_state else []
-                        ),
+                        "options": list(w.choice_values)
+                        if w.choice_values
+                        else ([on_state] if on_state else []),
                         "page": page_index + 1,
                         "rect": [w.rect.x0, w.rect.y0, w.rect.x1, w.rect.y1],
                         "required": bool((w.field_flags or 0) & 2),
@@ -246,7 +250,9 @@ def stamp_signatures(
                 if not png:
                     continue
                 try:
-                    page.insert_image(w.rect, stream=png, keep_proportion=True, overlay=True)
+                    page.insert_image(
+                        w.rect, stream=png, keep_proportion=True, overlay=True
+                    )
                     written += 1
                 except Exception as e:
                     logger.warning(f"Failed to stamp signature into {name}: {e}")
@@ -347,12 +353,14 @@ def stamp_annotations(
                 elif kind == "signature":
                     if not isinstance(value, str) or not value.startswith("signature:"):
                         continue
-                    sid = value[len("signature:"):].strip()
+                    sid = value[len("signature:") :].strip()
                     png = signature_pngs.get(sid)
                     if not png:
                         continue
                     try:
-                        page.insert_image(rect, stream=png, keep_proportion=True, overlay=True)
+                        page.insert_image(
+                            rect, stream=png, keep_proportion=True, overlay=True
+                        )
                         written += 1
                     except Exception as e:
                         logger.warning(f"signature stamp failed: {e}")
@@ -390,7 +398,9 @@ def fill_fields(source_path: str, output_path: str, values: dict[str, Any]) -> i
                         # Choice/radio group: only the widget whose on_state matches
                         # gets that on_state; the rest go Off.
                         chosen = "" if new_value is None else str(new_value).strip()
-                        w.field_value = on_state if on_state and on_state == chosen else "Off"
+                        w.field_value = (
+                            on_state if on_state and on_state == chosen else "Off"
+                        )
                 else:
                     w.field_value = "" if new_value is None else str(new_value)
                 w.update()

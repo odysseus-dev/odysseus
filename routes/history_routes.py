@@ -8,7 +8,11 @@ from typing import Dict, Any
 from fastapi import APIRouter, Request, HTTPException
 
 from core.models import ChatMessage
-from core.database import SessionLocal, ChatMessage as DbChatMessage, Session as DbSession
+from core.database import (
+    SessionLocal,
+    ChatMessage as DbChatMessage,
+    Session as DbSession,
+)
 from src.topic_analyzer import analyze_topics
 from routes.session_routes import _verify_session_owner
 
@@ -58,6 +62,7 @@ def setup_history_routes(session_manager) -> APIRouter:
                     .all()
                 )
                 import json as _json
+
                 history_dict = []
                 for m in db_messages:
                     entry = {"role": m.role, "content": m.content}
@@ -74,7 +79,11 @@ def setup_history_routes(session_manager) -> APIRouter:
                     history_dict.append(entry)
                 if history_dict:
                     session.history = [
-                        ChatMessage(role=m["role"], content=m["content"], metadata=m.get("metadata"))
+                        ChatMessage(
+                            role=m["role"],
+                            content=m["content"],
+                            metadata=m.get("metadata"),
+                        )
                         for m in history_dict
                     ]
             except Exception as e:
@@ -135,25 +144,39 @@ def setup_history_routes(session_manager) -> APIRouter:
                     # New ID-based delete
                     deleted = 0
                     for mid in msg_ids:
-                        db_msg = db.query(DbChatMessage).filter(
-                            DbChatMessage.id == mid,
-                            DbChatMessage.session_id == session_id,
-                        ).first()
+                        db_msg = (
+                            db.query(DbChatMessage)
+                            .filter(
+                                DbChatMessage.id == mid,
+                                DbChatMessage.session_id == session_id,
+                            )
+                            .first()
+                        )
                         if db_msg:
                             db.delete(db_msg)
                             deleted += 1
 
                     # Remove from in-memory history by matching _db_id
                     def _get_db_id(m):
-                        meta = m.metadata if isinstance(m, ChatMessage) else (m.get('metadata') if isinstance(m, dict) else None)
-                        return meta.get('_db_id') if isinstance(meta, dict) else None
-                    session.history = [m for m in session.history if _get_db_id(m) not in msg_ids]
+                        meta = (
+                            m.metadata
+                            if isinstance(m, ChatMessage)
+                            else (m.get("metadata") if isinstance(m, dict) else None)
+                        )
+                        return meta.get("_db_id") if isinstance(meta, dict) else None
+
+                    session.history = [
+                        m for m in session.history if _get_db_id(m) not in msg_ids
+                    ]
                 elif indices:
                     # Legacy index-based delete
                     indices = sorted(indices, reverse=True)
-                    db_messages = db.query(DbChatMessage).filter(
-                        DbChatMessage.session_id == session_id
-                    ).order_by(DbChatMessage.timestamp).all()
+                    db_messages = (
+                        db.query(DbChatMessage)
+                        .filter(DbChatMessage.session_id == session_id)
+                        .order_by(DbChatMessage.timestamp)
+                        .all()
+                    )
 
                     deleted = 0
                     for idx in indices:
@@ -166,10 +189,13 @@ def setup_history_routes(session_manager) -> APIRouter:
                     return {"status": "ok", "deleted": 0}
 
                 session.message_count = len(session.history)
-                db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+                db_session = (
+                    db.query(DbSession).filter(DbSession.id == session_id).first()
+                )
                 if db_session:
                     db_session.message_count = len(session.history)
                     from datetime import datetime, timezone
+
                     db_session.updated_at = datetime.now(timezone.utc)
 
                 db.commit()
@@ -196,31 +222,41 @@ def setup_history_routes(session_manager) -> APIRouter:
             session = session_manager.get_session(session_id)
             db = SessionLocal()
             try:
-                db_msg = db.query(DbChatMessage).filter(
-                    DbChatMessage.id == msg_id,
-                    DbChatMessage.session_id == session_id,
-                ).first()
+                db_msg = (
+                    db.query(DbChatMessage)
+                    .filter(
+                        DbChatMessage.id == msg_id,
+                        DbChatMessage.session_id == session_id,
+                    )
+                    .first()
+                )
                 if not db_msg:
                     raise HTTPException(404, "Message not found")
 
                 db_msg.content = content
                 meta = {}
                 if db_msg.meta_data:
-                    try: meta = json.loads(db_msg.meta_data)
-                    except (json.JSONDecodeError, ValueError): pass
-                meta['edited'] = True
+                    try:
+                        meta = json.loads(db_msg.meta_data)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                meta["edited"] = True
                 db_msg.meta_data = json.dumps(meta)
 
                 # Update in-memory history by matching _db_id
                 for hmsg in session.history:
-                    hmeta = hmsg.metadata if isinstance(hmsg, ChatMessage) else hmsg.get('metadata')
-                    if isinstance(hmeta, dict) and hmeta.get('_db_id') == msg_id:
+                    hmeta = (
+                        hmsg.metadata
+                        if isinstance(hmsg, ChatMessage)
+                        else hmsg.get("metadata")
+                    )
+                    if isinstance(hmeta, dict) and hmeta.get("_db_id") == msg_id:
                         if isinstance(hmsg, ChatMessage):
                             hmsg.content = content
-                            hmsg.metadata['edited'] = True
+                            hmsg.metadata["edited"] = True
                         elif isinstance(hmsg, dict):
-                            hmsg['content'] = content
-                            hmsg['metadata']['edited'] = True
+                            hmsg["content"] = content
+                            hmsg["metadata"]["edited"] = True
                         break
 
                 db.commit()
@@ -243,28 +279,33 @@ def setup_history_routes(session_manager) -> APIRouter:
             session = session_manager.get_session(session_id)
             # Find last assistant message and add stopped metadata
             for msg in reversed(session.history):
-                if (isinstance(msg, ChatMessage) and msg.role == 'assistant') or \
-                   (isinstance(msg, dict) and msg.get('role') == 'assistant'):
+                if (isinstance(msg, ChatMessage) and msg.role == "assistant") or (
+                    isinstance(msg, dict) and msg.get("role") == "assistant"
+                ):
                     if isinstance(msg, ChatMessage):
                         if not msg.metadata:
                             msg.metadata = {}
-                        msg.metadata['stopped'] = True
-                        if not msg.metadata.get('model'):
-                            msg.metadata['model'] = session.model
+                        msg.metadata["stopped"] = True
+                        if not msg.metadata.get("model"):
+                            msg.metadata["model"] = session.model
                     else:
-                        if 'metadata' not in msg:
-                            msg['metadata'] = {}
-                        msg['metadata']['stopped'] = True
-                        if not msg['metadata'].get('model'):
-                            msg['metadata']['model'] = session.model
+                        if "metadata" not in msg:
+                            msg["metadata"] = {}
+                        msg["metadata"]["stopped"] = True
+                        if not msg["metadata"].get("model"):
+                            msg["metadata"]["model"] = session.model
                     break
             # Also update in DB
             db = SessionLocal()
             try:
                 import json as _json
+
                 db_messages = (
                     db.query(DbChatMessage)
-                    .filter(DbChatMessage.session_id == session_id, DbChatMessage.role == 'assistant')
+                    .filter(
+                        DbChatMessage.session_id == session_id,
+                        DbChatMessage.role == "assistant",
+                    )
                     .order_by(DbChatMessage.created_at.desc())
                     .first()
                 )
@@ -275,9 +316,9 @@ def setup_history_routes(session_manager) -> APIRouter:
                             meta = _json.loads(db_messages.meta_data)
                         except (json.JSONDecodeError, ValueError):
                             pass
-                    meta['stopped'] = True
-                    if not meta.get('model'):
-                        meta['model'] = session.model
+                    meta["stopped"] = True
+                    if not meta.get("model"):
+                        meta["model"] = session.model
                     db_messages.meta_data = _json.dumps(meta)
                     db.commit()
             finally:
@@ -301,33 +342,40 @@ def setup_history_routes(session_manager) -> APIRouter:
 
             # Update in-memory
             for msg in reversed(session.history):
-                if (isinstance(msg, ChatMessage) and msg.role == 'assistant') or \
-                   (isinstance(msg, dict) and msg.get('role') == 'assistant'):
+                if (isinstance(msg, ChatMessage) and msg.role == "assistant") or (
+                    isinstance(msg, dict) and msg.get("role") == "assistant"
+                ):
                     if isinstance(msg, ChatMessage):
                         if not msg.metadata:
                             msg.metadata = {}
                         msg.metadata.update(meta_update)
                     else:
-                        if 'metadata' not in msg:
-                            msg['metadata'] = {}
-                        msg['metadata'].update(meta_update)
+                        if "metadata" not in msg:
+                            msg["metadata"] = {}
+                        msg["metadata"].update(meta_update)
                     break
 
             # Update in DB
             db = SessionLocal()
             try:
                 import json as _json
+
                 db_msg = (
                     db.query(DbChatMessage)
-                    .filter(DbChatMessage.session_id == session_id, DbChatMessage.role == 'assistant')
+                    .filter(
+                        DbChatMessage.session_id == session_id,
+                        DbChatMessage.role == "assistant",
+                    )
                     .order_by(DbChatMessage.created_at.desc())
                     .first()
                 )
                 if db_msg:
                     meta = {}
                     if db_msg.meta_data:
-                        try: meta = _json.loads(db_msg.meta_data)
-                        except (json.JSONDecodeError, ValueError): pass
+                        try:
+                            meta = _json.loads(db_msg.meta_data)
+                        except (json.JSONDecodeError, ValueError):
+                            pass
                     meta.update(meta_update)
                     db_msg.meta_data = _json.dumps(meta)
                     db.commit()
@@ -353,8 +401,8 @@ def setup_history_routes(session_manager) -> APIRouter:
             # Find last two assistant messages in-memory
             ai_indices = []
             for i, msg in enumerate(session.history):
-                role = msg.role if isinstance(msg, ChatMessage) else msg.get('role', '')
-                if role == 'assistant':
+                role = msg.role if isinstance(msg, ChatMessage) else msg.get("role", "")
+                if role == "assistant":
                     ai_indices.append(i)
 
             if len(ai_indices) < 2:
@@ -363,32 +411,55 @@ def setup_history_routes(session_manager) -> APIRouter:
             idx1, idx2 = ai_indices[-2], ai_indices[-1]
             msg1, msg2 = session.history[idx1], session.history[idx2]
 
-            content1 = msg1.content if isinstance(msg1, ChatMessage) else msg1.get('content', '')
-            content2 = msg2.content if isinstance(msg2, ChatMessage) else msg2.get('content', '')
+            content1 = (
+                msg1.content
+                if isinstance(msg1, ChatMessage)
+                else msg1.get("content", "")
+            )
+            content2 = (
+                msg2.content
+                if isinstance(msg2, ChatMessage)
+                else msg2.get("content", "")
+            )
             merged_content = content1 + separator + content2
 
             # Merge metadata
-            meta1 = (msg1.metadata if isinstance(msg1, ChatMessage) else msg1.get('metadata')) or {}
-            meta2 = (msg2.metadata if isinstance(msg2, ChatMessage) else msg2.get('metadata')) or {}
+            meta1 = (
+                msg1.metadata if isinstance(msg1, ChatMessage) else msg1.get("metadata")
+            ) or {}
+            meta2 = (
+                msg2.metadata if isinstance(msg2, ChatMessage) else msg2.get("metadata")
+            ) or {}
             merged_meta = {**meta1, **meta2}
-            merged_meta.pop('stopped', None)  # no longer stopped after continue
+            merged_meta.pop("stopped", None)  # no longer stopped after continue
 
             # Update first message, remove second
             if isinstance(msg1, ChatMessage):
                 msg1.content = merged_content
                 msg1.metadata = merged_meta
             else:
-                msg1['content'] = merged_content
-                msg1['metadata'] = merged_meta
+                msg1["content"] = merged_content
+                msg1["metadata"] = merged_meta
 
             # Also remove the hidden "continue" user message between them if present
             # It's the message at idx2-1 if it's a user message with continue text
             remove_indices = [idx2]
             if idx2 - 1 > idx1:
                 between = session.history[idx2 - 1]
-                between_role = between.role if isinstance(between, ChatMessage) else between.get('role', '')
-                between_content = between.content if isinstance(between, ChatMessage) else between.get('content', '')
-                if between_role == 'user' and 'previous response was interrupted' in between_content:
+                between_role = (
+                    between.role
+                    if isinstance(between, ChatMessage)
+                    else between.get("role", "")
+                )
+                between_content = (
+                    between.content
+                    if isinstance(between, ChatMessage)
+                    else between.get("content", "")
+                )
+                if (
+                    between_role == "user"
+                    and "previous response was interrupted" in between_content
+                ):
                     remove_indices.insert(0, idx2 - 1)
 
             for ri in sorted(remove_indices, reverse=True):
@@ -398,6 +469,7 @@ def setup_history_routes(session_manager) -> APIRouter:
             db = SessionLocal()
             try:
                 import json as _json
+
                 db_messages = (
                     db.query(DbChatMessage)
                     .filter(DbChatMessage.session_id == session_id)
@@ -405,7 +477,9 @@ def setup_history_routes(session_manager) -> APIRouter:
                     .all()
                 )
                 # Find last two assistant messages in DB
-                ai_db = [(i, m) for i, m in enumerate(db_messages) if m.role == 'assistant']
+                ai_db = [
+                    (i, m) for i, m in enumerate(db_messages) if m.role == "assistant"
+                ]
                 if len(ai_db) >= 2:
                     (_, db1), (_, db2) = ai_db[-2], ai_db[-1]
                     db1.content = merged_content
@@ -443,23 +517,26 @@ def setup_history_routes(session_manager) -> APIRouter:
 
             # Create new session
             new_id = str(uuid.uuid4())
-            fork_name = f"\u2ADD {source.name}"
+            fork_name = f"\u2add {source.name}"
             new_session = session_manager.create_session(
                 session_id=new_id,
                 name=fork_name,
                 endpoint_url=source.endpoint_url,
                 model=source.model,
                 rag=False,
-                owner=getattr(source, 'owner', None),
+                owner=getattr(source, "owner", None),
             )
 
             # Copy messages up to keep_count
             msgs_to_copy = source.history[:keep_count]
             for msg in msgs_to_copy:
-                new_session.add_message(ChatMessage(msg.role, msg.content, msg.metadata))
+                new_session.add_message(
+                    ChatMessage(msg.role, msg.content, msg.metadata)
+                )
             try:
                 from src.event_bus import fire_event
-                fire_event("session_created", getattr(source, 'owner', None))
+
+                fire_event("session_created", getattr(source, "owner", None))
             except Exception:
                 logger.debug("session_created event dispatch failed", exc_info=True)
 
@@ -478,6 +555,7 @@ def setup_history_routes(session_manager) -> APIRouter:
     @router.get("/api/conversations/topics")
     async def get_conversation_topics(request: Request) -> Dict[str, Any]:
         from src.auth_helpers import get_current_user
+
         user = get_current_user(request)
         try:
             return analyze_topics(session_manager, owner=user)
@@ -526,16 +604,27 @@ def setup_history_routes(session_manager) -> APIRouter:
             compact_headers = util_headers if util_url else session.headers
 
             from src.context_compactor import SELF_SUMMARY_SYSTEM_PROMPT
-            compaction_count = sum(1 for m in session.history if isinstance(m, ChatMessage) and "[Conversation summary" in (m.content or ""))
-            sys_prompt = SELF_SUMMARY_SYSTEM_PROMPT.replace("{count}", str(len(older))).replace("{n}", str(compaction_count + 1))
+
+            compaction_count = sum(
+                1
+                for m in session.history
+                if isinstance(m, ChatMessage)
+                and "[Conversation summary" in (m.content or "")
+            )
+            sys_prompt = SELF_SUMMARY_SYSTEM_PROMPT.replace(
+                "{count}", str(len(older))
+            ).replace("{n}", str(compaction_count + 1))
             summary = await llm_call_async(
-                compact_url, compact_model,
+                compact_url,
+                compact_model,
                 [
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": convo_text},
                 ],
-                temperature=0.2, max_tokens=1024,
-                headers=compact_headers, timeout=30,
+                temperature=0.2,
+                max_tokens=1024,
+                headers=compact_headers,
+                timeout=30,
             )
 
             # Replace session history: summary as system message + recent messages
@@ -554,14 +643,19 @@ def setup_history_routes(session_manager) -> APIRouter:
             new_history = [system_summary, summary_msg] + list(recent)
             session.history = new_history
             session.message_count = len(session.history)
-            logger.info(f"Compact: session {session_id} history now has {len(session.history)} messages (was {msg_count_before})")
+            logger.info(
+                f"Compact: session {session_id} history now has {len(session.history)} messages (was {msg_count_before})"
+            )
 
             # Update DB: delete old messages, insert summary
             db = SessionLocal()
             try:
-                db_msgs = db.query(DbChatMessage).filter(
-                    DbChatMessage.session_id == session_id
-                ).order_by(DbChatMessage.timestamp).all()
+                db_msgs = (
+                    db.query(DbChatMessage)
+                    .filter(DbChatMessage.session_id == session_id)
+                    .order_by(DbChatMessage.timestamp)
+                    .all()
+                )
 
                 # Delete all but the last keep_count
                 for m in db_msgs[:-keep_count]:
@@ -571,6 +665,7 @@ def setup_history_routes(session_manager) -> APIRouter:
                 import json as _json
                 import uuid
                 from datetime import datetime, timezone
+
                 now = datetime.now(timezone.utc)
                 db_sys_summary = DbChatMessage(
                     id=str(uuid.uuid4()),
@@ -592,7 +687,9 @@ def setup_history_routes(session_manager) -> APIRouter:
                 db.add(db_summary)
 
                 # Update session record
-                db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+                db_session = (
+                    db.query(DbSession).filter(DbSession.id == session_id).first()
+                )
                 if db_session:
                     db_session.message_count = len(session.history)
                     db_session.updated_at = datetime.now(timezone.utc)

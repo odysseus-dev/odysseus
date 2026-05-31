@@ -25,8 +25,7 @@ def discover_tailscale_hosts() -> List[str]:
     hosts = []
     try:
         result = subprocess.run(
-            ["tailscale", "status", "--json"],
-            capture_output=True, text=True, timeout=5
+            ["tailscale", "status", "--json"], capture_output=True, text=True, timeout=5
         )
         if result.returncode != 0:
             return hosts
@@ -112,7 +111,7 @@ class ModelDiscovery:
                     "port": port,
                     "url": f"http://{host}:{port}{self.openai_compat_path}",
                     "models": ids,
-                    "models_display": [i.lstrip("/") for i in ids]
+                    "models_display": [i.lstrip("/") for i in ids],
                 }
         except Exception:
             pass
@@ -128,7 +127,9 @@ class ModelDiscovery:
         # Build list of (host, port) to check
         targets = [(h, p) for h in hosts for p in range(8000, 8021)]
 
-        seen_models = set()  # dedupe by (port, model_ids) to avoid same machine via different IPs
+        seen_models = (
+            set()
+        )  # dedupe by (port, model_ids) to avoid same machine via different IPs
 
         with ThreadPoolExecutor(max_workers=50) as pool:
             futures = {pool.submit(self._check_port, h, p): (h, p) for h, p in targets}
@@ -143,7 +144,9 @@ class ModelDiscovery:
         # Sort by host then port for consistent ordering
         items.sort(key=lambda x: (x["host"], x["port"]))
 
-        logger.info(f"Discovered {len(items)} model endpoints across {len(hosts)} hosts")
+        logger.info(
+            f"Discovered {len(items)} model endpoints across {len(hosts)} hosts"
+        )
         return {"hosts": hosts, "items": items}
 
     def get_providers(self) -> Dict[str, Any]:
@@ -154,15 +157,23 @@ class ModelDiscovery:
 
         if self.openai_api_key:
             openai_models = [
-                "gpt-5.2-codex", "gpt-4o-mini", "gpt-image-1.5",
-                "gpt-4o", "gpt-5.2", "gpt-5.2-pro",
+                "gpt-5.2-codex",
+                "gpt-4o-mini",
+                "gpt-image-1.5",
+                "gpt-4o",
+                "gpt-5.2",
+                "gpt-5.2-pro",
             ]
-            providers.append({
-                "provider": "openai",
-                "items": [{
-                    "url": "https://api.openai.com/v1/chat/completions",
-                    "models": openai_models
-                }]
-            })
+            providers.append(
+                {
+                    "provider": "openai",
+                    "items": [
+                        {
+                            "url": "https://api.openai.com/v1/chat/completions",
+                            "models": openai_models,
+                        }
+                    ],
+                }
+            )
 
         return {"providers": providers}

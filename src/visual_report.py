@@ -12,6 +12,7 @@ and wraps them in an editorial-quality HTML document with:
 - Collapsible compact sources list
 - Print/Share toolbar
 """
+
 import html
 import json
 import logging
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _autolink_urls(md_text: str) -> str:
     """Convert bare URLs to markdown links before processing.
 
@@ -37,8 +39,8 @@ def _autolink_urls(md_text: str) -> str:
     """
     # Match bare URLs not already inside ](...)
     return re.sub(
-        r'(?<!\]\()(?<!\()(https?://[^\s\)<>]+)',
-        r'[\1](\1)',
+        r"(?<!\]\()(?<!\()(https?://[^\s\)<>]+)",
+        r"[\1](\1)",
         md_text,
     )
 
@@ -69,7 +71,7 @@ def _extract_headings(md_text: str) -> List[Dict[str, str]]:
     seen_slugs: Dict[str, int] = {}
 
     def _make_slug(text: str) -> str:
-        slug = re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')
+        slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
         if slug in seen_slugs:
             seen_slugs[slug] += 1
             slug = f"{slug}-{seen_slugs[slug]}"
@@ -77,13 +79,13 @@ def _extract_headings(md_text: str) -> List[Dict[str, str]]:
             seen_slugs[slug] = 0
         return slug
 
-    for m in re.finditer(r'^(#{2,3})\s+(.+)$', md_text, re.MULTILINE):
+    for m in re.finditer(r"^(#{2,3})\s+(.+)$", md_text, re.MULTILINE):
         level = len(m.group(1))
         text = m.group(2).strip()
         headings.append({"level": level, "text": text, "slug": _make_slug(text)})
     if not headings:
-        for m in re.finditer(r'^\*\*([^*]+)\*\*\s*$', md_text, re.MULTILINE):
-            text = m.group(1).strip().rstrip(':')
+        for m in re.finditer(r"^\*\*([^*]+)\*\*\s*$", md_text, re.MULTILINE):
+            text = m.group(1).strip().rstrip(":")
             if 3 < len(text) < 80:
                 headings.append({"level": 2, "text": text, "slug": _make_slug(text)})
     return headings
@@ -95,10 +97,10 @@ def _extract_headings(md_text: str) -> List[Dict[str, str]]:
 _IMG_OVERLAY_BTNS = (
     '<button class="img-reroll-btn" type="button" title="Swap for another image">'
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>'
-    '</button>'
+    "</button>"
     '<button class="img-hide-btn" type="button" title="Hide image">'
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
-    '</button>'
+    "</button>"
 )
 
 
@@ -112,7 +114,7 @@ def _inject_images(report_html: str, images: List[str]) -> Tuple[str, int]:
         return report_html, 0
 
     # Find positions after closing </h2> + following paragraph
-    h2_positions = [m.end() for m in re.finditer(r'</h2>', report_html)]
+    h2_positions = [m.end() for m in re.finditer(r"</h2>", report_html)]
     if not h2_positions:
         return report_html, 0
 
@@ -129,9 +131,9 @@ def _inject_images(report_html: str, images: List[str]) -> Tuple[str, int]:
         figure = (
             f'\n<figure class="section-image" data-img-url="{url_esc}">'
             f'<img src="{url_esc}" alt="" loading="lazy" '
-            f'onerror="this.parentElement.style.display=\'none\'">'
-            f'{_IMG_OVERLAY_BTNS}'
-            f'</figure>\n'
+            f"onerror=\"this.parentElement.style.display='none'\">"
+            f"{_IMG_OVERLAY_BTNS}"
+            f"</figure>\n"
         )
         report_html = report_html[:pos] + figure + report_html[pos:]
 
@@ -1061,6 +1063,7 @@ if (document.body.classList.contains('category-comparison')) {{
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def _category_css(category: Optional[str]) -> str:
     if not category:
         return ""
@@ -1580,11 +1583,21 @@ body.category-product .content h3 + table {
 
 
 _GENERIC_HEADINGS = {
-    "report", "deep research report", "research",
-    "executive summary", "summary", "tl;dr",
-    "introduction", "overview", "abstract",
-    "findings", "key findings", "results",
-    "conclusion", "conclusions", "table of contents",
+    "report",
+    "deep research report",
+    "research",
+    "executive summary",
+    "summary",
+    "tl;dr",
+    "introduction",
+    "overview",
+    "abstract",
+    "findings",
+    "key findings",
+    "results",
+    "conclusion",
+    "conclusions",
+    "table of contents",
 }
 
 
@@ -1603,9 +1616,9 @@ def _extract_report_title(markdown_text: str, fallback: str):
     # Walk through headings (h1 first, then h2 anywhere) and use the first
     # non-generic one. Track the chosen match so we can strip it from the body.
     candidates = []
-    for level, pattern in ((1, r'^# +(.+?)\s*$'), (2, r'^## +(.+?)\s*$')):
+    for level, pattern in ((1, r"^# +(.+?)\s*$"), (2, r"^## +(.+?)\s*$")):
         for m in re.finditer(pattern, markdown_text, re.MULTILINE):
-            cand = m.group(1).strip().rstrip('#').strip()
+            cand = m.group(1).strip().rstrip("#").strip()
             if cand and cand.lower() not in _GENERIC_HEADINGS:
                 candidates.append((level, m, cand))
 
@@ -1613,7 +1626,7 @@ def _extract_report_title(markdown_text: str, fallback: str):
     candidates.sort(key=lambda t: (t[0], t[1].start()))
     if candidates:
         _level, match, title = candidates[0]
-        stripped = markdown_text[:match.start()] + markdown_text[match.end():]
+        stripped = markdown_text[: match.start()] + markdown_text[match.end() :]
         return title, stripped.lstrip()
     return fallback, markdown_text
 
@@ -1640,10 +1653,10 @@ def generate_visual_report(
     title_text = synthesized[:120] + ("..." if len(synthesized) > 120 else "")
 
     # Promote bold-only lines to ## headings if no markdown headings exist
-    if not re.search(r'^#{2,3}\s+', report_markdown, re.MULTILINE):
+    if not re.search(r"^#{2,3}\s+", report_markdown, re.MULTILINE):
         report_markdown = re.sub(
-            r'^\*\*([^*]+)\*\*\s*$',
-            lambda m: f'## {m.group(1).strip()}',
+            r"^\*\*([^*]+)\*\*\s*$",
+            lambda m: f"## {m.group(1).strip()}",
             report_markdown,
             flags=re.MULTILINE,
         )
@@ -1654,7 +1667,7 @@ def generate_visual_report(
     headings = _extract_headings(report_markdown)
     for h in headings:
         tag = f"h{h['level']}"
-        pattern = rf'(<{tag}>)(.*?{re.escape(html.escape(h["text"]))}.*?</{tag}>)'
+        pattern = rf"(<{tag}>)(.*?{re.escape(html.escape(h['text']))}.*?</{tag}>)"
         replacement = rf'<{tag} id="{h["slug"]}">\2'
         report_html = re.sub(pattern, replacement, report_html, count=1)
 
@@ -1666,14 +1679,17 @@ def generate_visual_report(
     all_images = []
     for s in sources:
         img = s.get("image", "")
-        if (img and img.startswith("https://")
+        if (
+            img
+            and img.startswith("https://")
             and img not in _seen_images
             and img not in hidden_images_set
             and not img.endswith((".svg", ".ico", ".gif"))
             and not any(b in img for b in _IMAGE_BLOCKLIST)
             and "/icon" not in img.lower()
             and "/logo" not in img.lower()
-            and "/favicon" not in img.lower()):
+            and "/favicon" not in img.lower()
+        ):
             _seen_images.add(img)
             all_images.append(img)
 
@@ -1685,9 +1701,9 @@ def generate_visual_report(
         hero_image_html = (
             f'<div class="hero-image" data-img-url="{hero_url}">'
             f'<img src="{hero_url}" alt="" loading="lazy" '
-            f'onerror="this.parentElement.style.display=\'none\'">'
-            f'{_IMG_OVERLAY_BTNS}'
-            f'</div>'
+            f"onerror=\"this.parentElement.style.display='none'\">"
+            f"{_IMG_OVERLAY_BTNS}"
+            f"</div>"
         )
 
     # Product quick-links bar
@@ -1718,7 +1734,14 @@ def generate_visual_report(
 
     # Build stats bar
     stat_items = []
-    for key, label in [("Duration", "Duration"), ("Rounds", "Rounds"), ("Queries", "Queries"), ("URLs", "URLs Analyzed"), ("Model", "Model"), ("Search", "Search")]:
+    for key, label in [
+        ("Duration", "Duration"),
+        ("Rounds", "Rounds"),
+        ("Queries", "Queries"),
+        ("URLs", "URLs Analyzed"),
+        ("Model", "Model"),
+        ("Search", "Search"),
+    ]:
         val = stats.get(key)
         if val is not None:
             stat_items.append(
@@ -1743,14 +1766,14 @@ def generate_visual_report(
             items.append(
                 f'<a href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
                 f'<span class="snum">{i}.</span>'
-                f'<span>{title}</span>'
+                f"<span>{title}</span>"
                 f'<span class="sdomain">{html.escape(domain)}</span>'
-                f'</a>'
+                f"</a>"
             )
         sources_html = (
             '<div class="sources-panel">\n'
-            '<details>\n'
-            f'<summary>Sources ({len(sources)})</summary>\n'
+            "<details>\n"
+            f"<summary>Sources ({len(sources)})</summary>\n"
             '<div class="sources-list">\n'
             + "\n".join(items)
             + "\n</div>\n</details>\n</div>"
@@ -1759,10 +1782,12 @@ def generate_visual_report(
     timestamp = datetime.now().strftime("%B %d, %Y at %H:%M")
 
     # Build description for OG/meta tags (first 160 chars of plain text)
-    desc_text = re.sub(r'[#*_\[\]()]', '', report_markdown)[:160].strip()
+    desc_text = re.sub(r"[#*_\[\]()]", "", report_markdown)[:160].strip()
     og_image_meta = ""
     if all_images:
-        og_image_meta = f'<meta property="og:image" content="{html.escape(all_images[0])}">'
+        og_image_meta = (
+            f'<meta property="og:image" content="{html.escape(all_images[0])}">'
+        )
 
     chat_cta_html = ""
     if session_id:
@@ -1774,11 +1799,11 @@ def generate_visual_report(
             'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
             'width="18" height="18">'
             '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'
-            '</svg>'
-            '<span>Discuss</span>'
-            '</button>'
+            "</svg>"
+            "<span>Discuss</span>"
+            "</button>"
             '<div class="chat-cta-hint">Opens a new chat with this report as context.</div>'
-            '</div>'
+            "</div>"
         )
 
     # "Restore hidden images" toolbar button — only render if there are any
@@ -1793,9 +1818,9 @@ def generate_visual_report(
             '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
             'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
             '<path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>'
-            '</svg>'
-            f'Show hidden ({len(hidden_images_set)})'
-            '</button>'
+            "</svg>"
+            f"Show hidden ({len(hidden_images_set)})"
+            "</button>"
         )
 
     return _TEMPLATE.format(

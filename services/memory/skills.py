@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 # Token / similarity helpers (kept for the relevance fallback)
 # ---------------------------------------------------------------------------
 
+
 def _tokenize(text: str) -> set:
     return {w.strip('.,!?";:()[]') for w in (text or "").lower().split() if len(w) > 1}
 
@@ -98,6 +99,7 @@ class SkillsManager:
     def _save_usage(self, usage: Dict[str, Dict]) -> None:
         try:
             from core.atomic_io import atomic_write_json
+
             atomic_write_json(self.usage_file, usage, indent=2)
         except Exception:
             tmp = self.usage_file + ".tmp"
@@ -105,12 +107,19 @@ class SkillsManager:
                 json.dump(usage, f, indent=2)
             os.replace(tmp, self.usage_file)
 
-    def set_audit(self, name: str, verdict: str, by_teacher: bool = False,
-                  worker_model: str = "", teacher_model: str = "") -> None:
+    def set_audit(
+        self,
+        name: str,
+        verdict: str,
+        by_teacher: bool = False,
+        worker_model: str = "",
+        teacher_model: str = "",
+    ) -> None:
         """Record the last test/audit result for a skill in the usage sidecar
         (so it surfaces in load() without touching SKILL.md). Drives the
         'verified' check + teacher mark on the card."""
         import time as _t
+
         usage = self._load_usage()
         e = usage.setdefault(name, {"uses": 0, "last_used": None})
         e["audit_verdict"] = verdict
@@ -122,8 +131,9 @@ class SkillsManager:
         e["audited_at"] = _t.time()
         self._save_usage(usage)
 
-    def set_necessity(self, name: str, necessary: bool,
-                      redundant_with=None, reason: str = "") -> None:
+    def set_necessity(
+        self, name: str, necessary: bool, redundant_with=None, reason: str = ""
+    ) -> None:
         """Record the advisory 'is this skill necessary?' judgment in the usage
         sidecar. Surfaced on the card as a flag; never acts on the skill."""
         usage = self._load_usage()
@@ -159,11 +169,14 @@ class SkillsManager:
         path = self._skill_file(sk.category or "general", sk.name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         from core.atomic_io import atomic_write_text
+
         atomic_write_text(path, sk.to_markdown())
         sk.path = path
         return path
 
-    def backfill_owner(self, primary_owner: str, valid_owners: Optional[set[str]] = None) -> int:
+    def backfill_owner(
+        self, primary_owner: str, valid_owners: Optional[set[str]] = None
+    ) -> int:
         """Assign legacy/unclaimed skill files to the primary owner.
 
         Skills are disk-backed, so the DB legacy-owner migration cannot fix
@@ -230,30 +243,32 @@ class SkillsManager:
                         name = slugify(row.get("title") or row.get("id") or "skill")
                         if name in seen_names:
                             continue
-                        out.append({
-                            "id": row.get("id") or name,
-                            "name": name,
-                            "description": row.get("title", ""),
-                            "version": "0.0.1",
-                            "category": "legacy",
-                            "tags": row.get("tags") or [],
-                            "status": row.get("status") or "draft",
-                            "confidence": row.get("confidence", 0.5),
-                            "source": row.get("source", "imported"),
-                            "owner": row.get("owner"),
-                            "when_to_use": row.get("problem", ""),
-                            "procedure": row.get("steps") or [],
-                            "pitfalls": [],
-                            "verification": [],
-                            "body_extra": row.get("solution", ""),
-                            "title": row.get("title", ""),
-                            "problem": row.get("problem", ""),
-                            "solution": row.get("solution", ""),
-                            "steps": row.get("steps") or [],
-                            "uses": row.get("uses", 0),
-                            "last_used": row.get("last_used"),
-                            "_legacy": True,
-                        })
+                        out.append(
+                            {
+                                "id": row.get("id") or name,
+                                "name": name,
+                                "description": row.get("title", ""),
+                                "version": "0.0.1",
+                                "category": "legacy",
+                                "tags": row.get("tags") or [],
+                                "status": row.get("status") or "draft",
+                                "confidence": row.get("confidence", 0.5),
+                                "source": row.get("source", "imported"),
+                                "owner": row.get("owner"),
+                                "when_to_use": row.get("problem", ""),
+                                "procedure": row.get("steps") or [],
+                                "pitfalls": [],
+                                "verification": [],
+                                "body_extra": row.get("solution", ""),
+                                "title": row.get("title", ""),
+                                "problem": row.get("problem", ""),
+                                "solution": row.get("solution", ""),
+                                "steps": row.get("steps") or [],
+                                "uses": row.get("uses", 0),
+                                "last_used": row.get("last_used"),
+                                "_legacy": True,
+                            }
+                        )
             except Exception:
                 pass
         return out
@@ -309,18 +324,28 @@ class SkillsManager:
         # handles the fuzzier near-duplicates this cheap check won't catch.
         _all = self.load_all()
         if source != "user":
-            cand = _tokenize(" ".join([
-                nm, (description or title or ""),
-                (when_to_use if when_to_use is not None else (problem or "")),
-                " ".join(procedure if procedure is not None else (steps or [])),
-            ]))
+            cand = _tokenize(
+                " ".join(
+                    [
+                        nm,
+                        (description or title or ""),
+                        (when_to_use if when_to_use is not None else (problem or "")),
+                        " ".join(procedure if procedure is not None else (steps or [])),
+                    ]
+                )
+            )
             if cand:
                 for s in _all:
-                    ex = _tokenize(" ".join([
-                        s.get("name", ""), s.get("description", ""),
-                        s.get("when_to_use", ""),
-                        " ".join(s.get("procedure", []) or []),
-                    ]))
+                    ex = _tokenize(
+                        " ".join(
+                            [
+                                s.get("name", ""),
+                                s.get("description", ""),
+                                s.get("when_to_use", ""),
+                                " ".join(s.get("procedure", []) or []),
+                            ]
+                        )
+                    )
                     if _jaccard(cand, ex) >= 0.82:
                         # Near-identical — don't grow the library; bump the
                         # existing skill's usage and return it so the caller
@@ -374,15 +399,29 @@ class SkillsManager:
 
             # Apply updates in a Skill-shape friendly way
             scalar_keys = (
-                "description", "version", "category", "status", "confidence",
-                "source", "teacher_model", "owner", "when_to_use",
+                "description",
+                "version",
+                "category",
+                "status",
+                "confidence",
+                "source",
+                "teacher_model",
+                "owner",
+                "when_to_use",
                 "body_extra",
             )
             for k in scalar_keys:
                 if k in updates:
                     setattr(sk, k, updates[k])
-            list_keys = ("tags", "procedure", "pitfalls", "verification",
-                         "platforms", "requires_toolsets", "fallback_for_toolsets")
+            list_keys = (
+                "tags",
+                "procedure",
+                "pitfalls",
+                "verification",
+                "platforms",
+                "requires_toolsets",
+                "fallback_for_toolsets",
+            )
             for k in list_keys:
                 if k in updates:
                     setattr(sk, k, list(updates[k] or []))
@@ -392,7 +431,11 @@ class SkillsManager:
                 sk.description = updates["title"]
             if "problem" in updates and "when_to_use" not in updates:
                 sk.when_to_use = updates["problem"]
-            if "solution" in updates and "body_extra" not in updates and not sk.procedure:
+            if (
+                "solution" in updates
+                and "body_extra" not in updates
+                and not sk.procedure
+            ):
                 sk.body_extra = updates["solution"]
             if "steps" in updates and "procedure" not in updates:
                 sk.procedure = list(updates["steps"] or [])
@@ -476,7 +519,9 @@ class SkillsManager:
                 continue
             base = os.path.realpath(os.path.dirname(path))
             target = os.path.realpath(os.path.join(base, ref_path))
-            if os.path.commonpath([base, target]) != base or target == os.path.dirname(path):
+            if os.path.commonpath([base, target]) != base or target == os.path.dirname(
+                path
+            ):
                 return None
             if not os.path.isfile(target):
                 return None
@@ -535,12 +580,14 @@ class SkillsManager:
             fb = s.get("fallback_for_toolsets") or []
             if fb and any(t in active_toolsets for t in fb):
                 continue
-            out.append({
-                "name": s["name"],
-                "description": s.get("description") or s.get("title", ""),
-                "category": s.get("category", "general"),
-                "status": status or "published",
-            })
+            out.append(
+                {
+                    "name": s["name"],
+                    "description": s.get("description") or s.get("title", ""),
+                    "category": s.get("category", "general"),
+                    "status": status or "published",
+                }
+            )
         out.sort(key=lambda x: (x["category"], x["name"]))
         return out
 
@@ -574,6 +621,7 @@ class SkillsManager:
         # vetted, so they always qualify. Missing confidence = treat as 1.0
         # (legacy skills shouldn't silently vanish). 0 disables the gate.
         if min_confidence > 0:
+
             def _passes(s):
                 if s.get("status") == "published":
                     return True
@@ -581,6 +629,7 @@ class SkillsManager:
                 if c is None:
                     return True  # unset → don't filter (legacy)
                 return _to_float(c, 1.0) >= min_confidence  # unparseable → pass
+
             skills = [s for s in skills if _passes(s)]
         if not skills:
             return []
@@ -588,13 +637,15 @@ class SkillsManager:
         query_tokens = _tokenize(query)
         scored = []
         for sk in skills:
-            text = " ".join([
-                sk.get("name", ""),
-                sk.get("description", ""),
-                sk.get("when_to_use", ""),
-                " ".join(sk.get("tags", []) or []),
-                " ".join(sk.get("procedure", []) or []),
-            ])
+            text = " ".join(
+                [
+                    sk.get("name", ""),
+                    sk.get("description", ""),
+                    sk.get("when_to_use", ""),
+                    " ".join(sk.get("tags", []) or []),
+                    " ".join(sk.get("procedure", []) or []),
+                ]
+            )
             score = _jaccard(query_tokens, _tokenize(text))
             for tag in sk.get("tags", []) or []:
                 if tag and tag in query.lower():

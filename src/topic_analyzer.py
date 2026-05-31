@@ -7,14 +7,86 @@ import re
 from typing import Dict, Any, List
 
 TOPIC_KEYWORDS: Dict[str, List[str]] = {
-    "Technology": ["ai", "machine learning", "python", "code", "programming", "computer", "software", "hardware", "algorithm"],
-    "Science": ["science", "physics", "chemistry", "biology", "math", "mathematics", "research", "experiment"],
-    "Work": ["work", "job", "career", "project", "task", "deadline", "meeting", "colleague", "manager"],
-    "Personal": ["personal", "family", "friend", "relationship", "health", "wellness", "exercise", "diet"],
-    "Learning": ["learn", "study", "education", "course", "tutorial", "guide", "how to", "explain"],
-    "Creativity": ["write", "story", "create", "design", "art", "music", "draw", "paint"],
-    "Planning": ["plan", "schedule", "organize", "arrange", "coordinate", "timeline", "calendar"],
-    "Troubleshooting": ["error", "bug", "fix", "problem", "issue", "debug", "troubleshoot"],
+    "Technology": [
+        "ai",
+        "machine learning",
+        "python",
+        "code",
+        "programming",
+        "computer",
+        "software",
+        "hardware",
+        "algorithm",
+    ],
+    "Science": [
+        "science",
+        "physics",
+        "chemistry",
+        "biology",
+        "math",
+        "mathematics",
+        "research",
+        "experiment",
+    ],
+    "Work": [
+        "work",
+        "job",
+        "career",
+        "project",
+        "task",
+        "deadline",
+        "meeting",
+        "colleague",
+        "manager",
+    ],
+    "Personal": [
+        "personal",
+        "family",
+        "friend",
+        "relationship",
+        "health",
+        "wellness",
+        "exercise",
+        "diet",
+    ],
+    "Learning": [
+        "learn",
+        "study",
+        "education",
+        "course",
+        "tutorial",
+        "guide",
+        "how to",
+        "explain",
+    ],
+    "Creativity": [
+        "write",
+        "story",
+        "create",
+        "design",
+        "art",
+        "music",
+        "draw",
+        "paint",
+    ],
+    "Planning": [
+        "plan",
+        "schedule",
+        "organize",
+        "arrange",
+        "coordinate",
+        "timeline",
+        "calendar",
+    ],
+    "Troubleshooting": [
+        "error",
+        "bug",
+        "fix",
+        "problem",
+        "issue",
+        "debug",
+        "troubleshoot",
+    ],
 }
 
 
@@ -34,33 +106,43 @@ def analyze_topics(session_manager, owner: str = None) -> Dict[str, Any]:
         # SECURITY: strict ownership — the previous predicate let any
         # null-owner session feed into another user's topic analysis.
         if owner:
-            sess_owner = session_data.get("owner") or getattr(session_data, "owner", None)
+            sess_owner = session_data.get("owner") or getattr(
+                session_data, "owner", None
+            )
             if sess_owner != owner:
                 continue
 
         for msg in session_data.get("history", []):
-            content_raw = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+            content_raw = (
+                msg.get("content")
+                if isinstance(msg, dict)
+                else getattr(msg, "content", None)
+            )
             if not content_raw:
                 continue
 
             content = str(content_raw).lower()
-            role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", "")
+            role = (
+                msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", "")
+            )
             session_name = session_data.get("name", f"Session {session_id[:6]}")
 
             for topic, keywords in TOPIC_KEYWORDS.items():
                 for kw in keywords:
                     if kw in content:
                         topic_counts[topic] += 1
-                        sentences = re.split(r'[.!?]', str(content_raw))
+                        sentences = re.split(r"[.!?]", str(content_raw))
                         for sentence in sentences:
                             if kw in sentence.lower():
-                                topic_matches[topic].append({
-                                    "session_id": session_id,
-                                    "session_name": session_name,
-                                    "role": role,
-                                    "snippet": sentence.strip(),
-                                    "keyword": kw,
-                                })
+                                topic_matches[topic].append(
+                                    {
+                                        "session_id": session_id,
+                                        "session_name": session_name,
+                                        "role": role,
+                                        "snippet": sentence.strip(),
+                                        "keyword": kw,
+                                    }
+                                )
                                 break
 
     results = []
@@ -74,12 +156,14 @@ def analyze_topics(session_manager, owner: str = None) -> Dict[str, Any]:
             if key not in seen:
                 seen.add(key)
                 unique.append(m)
-        results.append({
-            "topic": topic,
-            "frequency": count,
-            "examples": unique[:5],
-            "session_count": len({m["session_id"] for m in unique}),
-        })
+        results.append(
+            {
+                "topic": topic,
+                "frequency": count,
+                "examples": unique[:5],
+                "session_count": len({m["session_id"] for m in unique}),
+            }
+        )
 
     results.sort(key=lambda x: x["frequency"], reverse=True)
     return {"topics": results, "total_topics": len(results)}

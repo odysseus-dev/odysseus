@@ -58,7 +58,7 @@ def _resolve_event_owner(owner: Optional[str]) -> Optional[str]:
 
         auth_path = os.path.join(DATA_DIR, "auth.json")
         with open(auth_path, "r", encoding="utf-8") as f:
-            users = (json.load(f).get("users") or {})
+            users = json.load(f).get("users") or {}
         for username, data in users.items():
             if data.get("is_admin") is True:
                 return username
@@ -111,13 +111,19 @@ async def _handle_event(event_name: str, owner: Optional[str] = None):
                             f"but it is already deferred until {task.next_run}"
                         )
                         continue
-                    logger.info(f"Event '{event_name}' triggered task '{task.name}' (every {threshold})")
+                    logger.info(
+                        f"Event '{event_name}' triggered task '{task.name}' (every {threshold})"
+                    )
                     await _task_scheduler.run_task_now(task.id)
                 else:
-                    logger.warning(f"Event triggered task '{task.name}' but no scheduler available")
+                    logger.warning(
+                        f"Event triggered task '{task.name}' but no scheduler available"
+                    )
             else:
                 db.commit()
-                logger.debug(f"Event '{event_name}': task '{task.name}' counter {task.trigger_counter}/{threshold}")
+                logger.debug(
+                    f"Event '{event_name}': task '{task.name}' counter {task.trigger_counter}/{threshold}"
+                )
 
     except Exception:
         logger.exception(f"Error handling event '{event_name}'")

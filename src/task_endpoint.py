@@ -3,7 +3,9 @@
 from src.endpoint_resolver import resolve_endpoint
 
 
-def resolve_task_endpoint(fallback_url=None, fallback_model=None, fallback_headers=None):
+def resolve_task_endpoint(
+    fallback_url=None, fallback_model=None, fallback_headers=None
+):
     """Return (endpoint_url, model, headers) for background tasks.
 
     Reads task_endpoint_id / task_model from admin settings.

@@ -10,6 +10,7 @@ from pathlib import Path
 @dataclass
 class ShellResult:
     """Result of a shell command."""
+
     stdout: str
     stderr: str
     exit_code: int
@@ -62,8 +63,8 @@ class ShellService:
             stdout_b, stderr_b = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout
             )
-            stdout = stdout_b.decode(errors="replace")[:self.max_output]
-            stderr = stderr_b.decode(errors="replace")[:self.max_output]
+            stdout = stdout_b.decode(errors="replace")[: self.max_output]
+            stderr = stderr_b.decode(errors="replace")[: self.max_output]
             return ShellResult(
                 stdout=stdout,
                 stderr=stderr,
@@ -133,7 +134,9 @@ class ShellService:
                     raise asyncio.TimeoutError()
 
                 try:
-                    name, text = await asyncio.wait_for(q.get(), timeout=min(remaining, 2.0))
+                    name, text = await asyncio.wait_for(
+                        q.get(), timeout=min(remaining, 2.0)
+                    )
                 except asyncio.TimeoutError:
                     continue
 

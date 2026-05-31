@@ -68,19 +68,51 @@ _TOOL_CODE_RE = re.compile(
 # never show the garbage to the user). The pipe run is tolerant of
 # fullwidth (U+FF5C) and ascii '|' in any count.
 _DSML_PIPES = r"[｜|]+"
+
+
 def _normalize_dsml(text: str) -> str:
     if "DSML" not in text:
         return text
     t = text
-    t = re.sub(rf"<\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*tool_calls\s*>", "<tool_call>", t, flags=re.IGNORECASE)
-    t = re.sub(rf"<\s*/\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*tool_calls\s*>", "</tool_call>", t, flags=re.IGNORECASE)
-    t = re.sub(rf"<\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*invoke\s+name=", "<invoke name=", t, flags=re.IGNORECASE)
-    t = re.sub(rf"<\s*/\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*invoke\s*>", "</invoke>", t, flags=re.IGNORECASE)
+    t = re.sub(
+        rf"<\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*tool_calls\s*>",
+        "<tool_call>",
+        t,
+        flags=re.IGNORECASE,
+    )
+    t = re.sub(
+        rf"<\s*/\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*tool_calls\s*>",
+        "</tool_call>",
+        t,
+        flags=re.IGNORECASE,
+    )
+    t = re.sub(
+        rf"<\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*invoke\s+name=",
+        "<invoke name=",
+        t,
+        flags=re.IGNORECASE,
+    )
+    t = re.sub(
+        rf"<\s*/\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*invoke\s*>",
+        "</invoke>",
+        t,
+        flags=re.IGNORECASE,
+    )
     # parameter open tag — drop any extra attrs (e.g. string="true").
-    t = re.sub(rf'<\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*parameter\s+name=(["\'][^"\']+["\'])[^>]*>',
-               r"<parameter name=\1>", t, flags=re.IGNORECASE)
-    t = re.sub(rf"<\s*/\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*parameter\s*>", "</parameter>", t, flags=re.IGNORECASE)
+    t = re.sub(
+        rf'<\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*parameter\s+name=(["\'][^"\']+["\'])[^>]*>',
+        r"<parameter name=\1>",
+        t,
+        flags=re.IGNORECASE,
+    )
+    t = re.sub(
+        rf"<\s*/\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*parameter\s*>",
+        "</parameter>",
+        t,
+        flags=re.IGNORECASE,
+    )
     return t
+
 
 # Map model tool names to our tool types
 _TOOL_NAME_MAP = {
@@ -172,6 +204,7 @@ _TOOL_NAME_MAP = {
 # Parsing functions
 # ---------------------------------------------------------------------------
 
+
 def _parse_tool_call_block(raw: str) -> Optional[ToolBlock]:
     """Parse a [TOOL_CALL] block into a ToolBlock.
 
@@ -187,7 +220,9 @@ def _parse_tool_call_block(raw: str) -> Optional[ToolBlock]:
     tool_name = tool_match.group(1).lower()
     # Fall back to the raw name when it's a real tool but not in the alias
     # map, so known tools (e.g. manage_calendar) aren't silently dropped.
-    mapped = _TOOL_NAME_MAP.get(tool_name) or (tool_name if tool_name in TOOL_TAGS else None)
+    mapped = _TOOL_NAME_MAP.get(tool_name) or (
+        tool_name if tool_name in TOOL_TAGS else None
+    )
     if not mapped:
         return None
 
@@ -207,12 +242,12 @@ def _parse_tool_call_block(raw: str) -> Optional[ToolBlock]:
 
     # Pattern: args => {content} — extract everything inside the nested braces
     if not content:
-        args_match = re.search(r'args\s*(?:=>|:|=)\s*\{([\s\S]*)\}', raw, re.DOTALL)
+        args_match = re.search(r"args\s*(?:=>|:|=)\s*\{([\s\S]*)\}", raw, re.DOTALL)
         if args_match:
             inner = args_match.group(1).strip()
             # Strip quotes and key prefixes
-            inner = re.sub(r'^--?\w+\s+', '', inner)
-            inner = inner.strip('\'"')
+            inner = re.sub(r"^--?\w+\s+", "", inner)
+            inner = inner.strip("'\"")
             if inner:
                 content = inner
 
@@ -226,9 +261,9 @@ def _parse_tool_call_block(raw: str) -> Optional[ToolBlock]:
 
     # Last resort: take everything after the tool declaration
     if not content:
-        rest = raw[tool_match.end():].strip()
-        rest = re.sub(r'^[,;]\s*', '', rest)
-        rest = rest.strip('{} \t\n\'"')
+        rest = raw[tool_match.end() :].strip()
+        rest = re.sub(r"^[,;]\s*", "", rest)
+        rest = rest.strip("{} \t\n'\"")
         if rest:
             content = rest
 
@@ -260,6 +295,7 @@ def _parse_xml_invoke(inv_match) -> Optional[ToolBlock]:
         params[pm.group(1)] = pm.group(2).strip()
     # Local import to avoid a circular import at module load.
     from src.tool_schemas import function_call_to_tool_block
+
     return function_call_to_tool_block(tool_name, json.dumps(params))
 
 
@@ -269,17 +305,24 @@ def _parse_tool_code_block(raw: str) -> Optional[ToolBlock]:
     tool_match = re.search(r"tool\s*=>\s*['\"](\S+?)['\"]", raw)
     if not tool_match:
         return None
-    tool_name = tool_match.group(1).lower().replace('-', '_')
+    tool_name = tool_match.group(1).lower().replace("-", "_")
     # Strip MCP prefixes like "mcp__server__" or "cli-mcp-server-"
-    for prefix in ("mcp__", "cli_mcp_server_", "desktop_commander_", "mcp_code_executor_"):
+    for prefix in (
+        "mcp__",
+        "cli_mcp_server_",
+        "desktop_commander_",
+        "mcp_code_executor_",
+    ):
         if tool_name.startswith(prefix):
-            tool_name = tool_name[len(prefix):]
+            tool_name = tool_name[len(prefix) :]
             break
 
     mapped = _TOOL_NAME_MAP.get(tool_name)
 
     # Extract args content
-    args_match = re.search(r"args\s*=>\s*['\"]?\s*([\s\S]*?)\s*['\"]?\s*$", raw, re.DOTALL)
+    args_match = re.search(
+        r"args\s*=>\s*['\"]?\s*([\s\S]*?)\s*['\"]?\s*$", raw, re.DOTALL
+    )
     args_body = args_match.group(1).strip().strip("'\"") if args_match else ""
 
     # Parse XML params inside args (e.g. <command>ls</command>)
@@ -292,6 +335,7 @@ def _parse_tool_code_block(raw: str) -> Optional[ToolBlock]:
     # correct per-tool content format apply — not a partial map + k:v blob.
     if xml_params:
         from src.tool_schemas import function_call_to_tool_block
+
         block = function_call_to_tool_block(mapped or tool_name, json.dumps(xml_params))
         if block:
             return block
@@ -308,12 +352,20 @@ def _parse_tool_code_block(raw: str) -> Optional[ToolBlock]:
         elif mapped in ("read_file", "write_file"):
             content = xml_params.get("path", xml_params.get("file_path", args_body))
         else:
-            content = "\n".join(f"{k}: {v}" for k, v in xml_params.items()) if xml_params else args_body
+            content = (
+                "\n".join(f"{k}: {v}" for k, v in xml_params.items())
+                if xml_params
+                else args_body
+            )
         if content:
             return ToolBlock(mapped, content.strip())
     elif tool_name and args_body:
         # Unknown tool — try as MCP tool call
-        content = "\n".join(f"{k}: {v}" for k, v in xml_params.items()) if xml_params else args_body
+        content = (
+            "\n".join(f"{k}: {v}" for k, v in xml_params.items())
+            if xml_params
+            else args_body
+        )
         return ToolBlock(tool_name, content.strip())
     return None
 
@@ -342,7 +394,7 @@ def parse_tool_blocks(text: str) -> List[ToolBlock]:
             continue
         # If a code block's content is an <invoke> XML call (some models wrap
         # tool calls in ```python or ```xml fences), parse the invoke instead.
-        if '<invoke' in content:
+        if "<invoke" in content:
             invoked = False
             for inv in _XML_INVOKE_RE.finditer(content):
                 block = _parse_xml_invoke(inv)
@@ -390,11 +442,16 @@ def strip_tool_blocks(text: str) -> str:
     # Normalize DSML first so its markup gets stripped by the <invoke>
     # / <tool_call> removers below instead of leaking to the user.
     text = _normalize_dsml(text)
-    cleaned = _TOOL_BLOCK_RE.sub('', text)
-    cleaned = _TOOL_CALL_RE.sub('', cleaned)
-    cleaned = _XML_TOOL_CALL_RE.sub('', cleaned)
-    cleaned = _TOOL_CODE_RE.sub('', cleaned)
+    cleaned = _TOOL_BLOCK_RE.sub("", text)
+    cleaned = _TOOL_CALL_RE.sub("", cleaned)
+    cleaned = _XML_TOOL_CALL_RE.sub("", cleaned)
+    cleaned = _TOOL_CODE_RE.sub("", cleaned)
     # Strip bare <invoke> blocks not wrapped in <tool_call>
-    cleaned = re.sub(r'<invoke\s+name=["\'].*?</invoke>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    cleaned = re.sub(
+        r'<invoke\s+name=["\'].*?</invoke>',
+        "",
+        cleaned,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()

@@ -1,6 +1,7 @@
 """
 RAG singleton instance for the application.
 """
+
 import os
 import logging
 import time
@@ -11,6 +12,7 @@ logger = logging.getLogger(__name__)
 rag_instance = None
 _last_attempt = 0.0
 _RETRY_INTERVAL = 30  # seconds between re-init attempts
+
 
 def get_rag_manager():
     """Disabled: vector document RAG (VectorRAG/ChromaDB) is unused and its

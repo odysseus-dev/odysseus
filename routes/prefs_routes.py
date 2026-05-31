@@ -1,4 +1,5 @@
 """User preferences API — per-user key/value store backed by a JSON file."""
+
 import json
 import os
 from typing import Optional

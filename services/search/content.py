@@ -38,7 +38,12 @@ _PRIVATE_NETWORKS = (
 
 
 def _is_private_address(addr: ipaddress._BaseAddress) -> bool:
-    return addr.is_private or addr.is_loopback or addr.is_link_local or any(addr in net for net in _PRIVATE_NETWORKS)
+    return (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or any(addr in net for net in _PRIVATE_NETWORKS)
+    )
 
 
 def _resolve_hostname_ips(hostname: str) -> list[ipaddress._BaseAddress]:
@@ -78,19 +83,28 @@ def _public_http_url(url: str) -> bool:
         return False
 
 
-def _get_public_url(url: str, headers: dict, timeout: int, max_redirects: int = 5) -> httpx.Response:
+def _get_public_url(
+    url: str, headers: dict, timeout: int, max_redirects: int = 5
+) -> httpx.Response:
     current = url
     for _ in range(max_redirects + 1):
         if not _public_http_url(current):
-            raise httpx.RequestError("Blocked private/internal URL", request=httpx.Request("GET", current))
-        response = httpx.get(current, headers=headers, timeout=timeout, follow_redirects=False)
+            raise httpx.RequestError(
+                "Blocked private/internal URL", request=httpx.Request("GET", current)
+            )
+        response = httpx.get(
+            current, headers=headers, timeout=timeout, follow_redirects=False
+        )
         if response.status_code not in (301, 302, 303, 307, 308):
             return response
         location = response.headers.get("location")
         if not location:
             return response
         current = urljoin(str(response.url), location)
-    raise httpx.RequestError("Too many redirects", request=httpx.Request("GET", current))
+    raise httpx.RequestError(
+        "Too many redirects", request=httpx.Request("GET", current)
+    )
+
 
 # PDF extraction (optional dependency)
 try:
@@ -131,7 +145,10 @@ def _extract_tables(soup: BeautifulSoup) -> List[List[List[str]]]:
     for table in soup.find_all("table"):
         rows = []
         for tr in table.find_all("tr"):
-            cells = [td.get_text(separator=" ", strip=True) for td in tr.find_all(["td", "th"])]
+            cells = [
+                td.get_text(separator=" ", strip=True)
+                for td in tr.find_all(["td", "th"])
+            ]
             if cells:
                 rows.append(cells)
         if rows:
@@ -152,8 +169,17 @@ def _extract_code_blocks(soup: BeautifulSoup) -> List[str]:
 def _detect_js_frameworks(soup: BeautifulSoup) -> bool:
     """Very naive detection of common JS frameworks."""
     js_indicators = [
-        "react", "angular", "vue", "svelte", "next", "nuxt",
-        "ember", "backbone", "jquery", "polymer", "mithril",
+        "react",
+        "angular",
+        "vue",
+        "svelte",
+        "next",
+        "nuxt",
+        "ember",
+        "backbone",
+        "jquery",
+        "polymer",
+        "mithril",
     ]
     for script in soup.find_all("script"):
         src = script.get("src", "").lower()
@@ -227,7 +253,9 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
 
         response.raise_for_status()
     except httpx.RequestError as e:
-        error_logger.error(f"NetworkError fetching {url} (attempt {retry_attempt}): {e}")
+        error_logger.error(
+            f"NetworkError fetching {url} (attempt {retry_attempt}): {e}"
+        )
         return _empty_result(url, f"NetworkError: {e}")
     except RateLimitError as e:
         error_logger.error(str(e))
@@ -267,7 +295,9 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
     try:
         soup = BeautifulSoup(response.text, "html.parser")
     except Exception as e:
-        error_logger.error(f"ParseError parsing HTML from {url} (attempt {retry_attempt}): {e}")
+        error_logger.error(
+            f"ParseError parsing HTML from {url} (attempt {retry_attempt}): {e}"
+        )
         result = _empty_result(url, f"ParseError: {e}")
         _cache_result(cache_file, cache_key, result, url)
         return result
@@ -276,7 +306,11 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
     title_text = title_tag.get_text(strip=True) if title_tag else ""
     meta_info = _extract_meta(soup)
     js_rendered = _detect_js_frameworks(soup)
-    js_message = "Page appears to be rendered by a JavaScript framework; content may be incomplete." if js_rendered else ""
+    js_message = (
+        "Page appears to be rendered by a JavaScript framework; content may be incomplete."
+        if js_rendered
+        else ""
+    )
 
     # Main textual content (heuristic)
     main_content = ""

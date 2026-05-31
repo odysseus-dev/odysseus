@@ -1,24 +1,90 @@
 import re
 
 from services.hwfit.models import (
-    params_b, estimate_memory_gb, infer_use_case,
-    get_models, is_prequantized, _active_params_b, QUANT_BYTES_PER_PARAM,
-    QUANT_SPEED_MULT, QUANT_QUALITY_PENALTY,
+    params_b,
+    estimate_memory_gb,
+    infer_use_case,
+    get_models,
+    is_prequantized,
+    _active_params_b,
+    QUANT_BYTES_PER_PARAM,
+    QUANT_SPEED_MULT,
+    QUANT_QUALITY_PENALTY,
 )
 
 GPU_BANDWIDTH = {
-    "5090": 1792, "5080": 960, "5070 ti": 896, "5070": 672, "5060 ti": 448, "5060": 256,
-    "4090": 1008, "4080 super": 736, "4080": 717, "4070 ti super": 672, "4070 ti": 504, "4070 super": 504, "4070": 504, "4060 ti": 288, "4060": 272,
-    "3090 ti": 1008, "3090": 936, "3080 ti": 912, "3080": 760, "3070 ti": 608, "3070": 448, "3060 ti": 448, "3060": 360,
-    "2080 ti": 616, "2080 super": 496, "2080": 448, "2070 super": 448, "2070": 448, "2060 super": 448, "2060": 336,
-    "1660 ti": 288, "1660 super": 336, "1660": 192, "1650 super": 192, "1650": 128,
-    "h100 sxm": 3350, "h100": 2039, "h200": 4800, "a100 sxm": 2039, "a100": 1555,
-    "l40s": 864, "l40": 864, "l4": 300, "a10g": 600, "a10": 600, "t4": 320,
-    "v100 sxm": 900, "v100": 897, "a6000": 768, "a5000": 768, "a4000": 448,
-    "7900 xtx": 960, "7900 xt": 800, "7900 gre": 576, "7800 xt": 624, "7700 xt": 432, "7600": 288,
-    "6950 xt": 576, "6900 xt": 512, "6800 xt": 512, "6800": 512, "6700 xt": 384, "6600 xt": 256, "6600": 224,
-    "mi300x": 5300, "mi300": 5300, "mi250x": 3277, "mi250": 3277, "mi210": 1638, "mi100": 1229,
-    "9070 xt": 624, "9070": 488,
+    "5090": 1792,
+    "5080": 960,
+    "5070 ti": 896,
+    "5070": 672,
+    "5060 ti": 448,
+    "5060": 256,
+    "4090": 1008,
+    "4080 super": 736,
+    "4080": 717,
+    "4070 ti super": 672,
+    "4070 ti": 504,
+    "4070 super": 504,
+    "4070": 504,
+    "4060 ti": 288,
+    "4060": 272,
+    "3090 ti": 1008,
+    "3090": 936,
+    "3080 ti": 912,
+    "3080": 760,
+    "3070 ti": 608,
+    "3070": 448,
+    "3060 ti": 448,
+    "3060": 360,
+    "2080 ti": 616,
+    "2080 super": 496,
+    "2080": 448,
+    "2070 super": 448,
+    "2070": 448,
+    "2060 super": 448,
+    "2060": 336,
+    "1660 ti": 288,
+    "1660 super": 336,
+    "1660": 192,
+    "1650 super": 192,
+    "1650": 128,
+    "h100 sxm": 3350,
+    "h100": 2039,
+    "h200": 4800,
+    "a100 sxm": 2039,
+    "a100": 1555,
+    "l40s": 864,
+    "l40": 864,
+    "l4": 300,
+    "a10g": 600,
+    "a10": 600,
+    "t4": 320,
+    "v100 sxm": 900,
+    "v100": 897,
+    "a6000": 768,
+    "a5000": 768,
+    "a4000": 448,
+    "7900 xtx": 960,
+    "7900 xt": 800,
+    "7900 gre": 576,
+    "7800 xt": 624,
+    "7700 xt": 432,
+    "7600": 288,
+    "6950 xt": 576,
+    "6900 xt": 512,
+    "6800 xt": 512,
+    "6800": 512,
+    "6700 xt": 384,
+    "6600 xt": 256,
+    "6600": 224,
+    "mi300x": 5300,
+    "mi300": 5300,
+    "mi250x": 3277,
+    "mi250": 3277,
+    "mi210": 1638,
+    "mi100": 1229,
+    "9070 xt": 624,
+    "9070": 488,
 }
 
 # Pre-sort keys by length descending for correct substring matching
@@ -27,25 +93,36 @@ _BW_KEYS_SORTED = sorted(GPU_BANDWIDTH.keys(), key=len, reverse=True)
 FALLBACK_K = {"cuda": 220, "rocm": 180, "cpu_x86": 70, "cpu_arm": 90}
 
 USE_CASE_WEIGHTS = {
-    "general":    (0.45, 0.30, 0.15, 0.10),
-    "coding":     (0.50, 0.20, 0.15, 0.15),
-    "reasoning":  (0.55, 0.15, 0.15, 0.15),
-    "chat":       (0.40, 0.35, 0.15, 0.10),
+    "general": (0.45, 0.30, 0.15, 0.10),
+    "coding": (0.50, 0.20, 0.15, 0.15),
+    "reasoning": (0.55, 0.15, 0.15, 0.15),
+    "chat": (0.40, 0.35, 0.15, 0.10),
     "multimodal": (0.50, 0.20, 0.15, 0.15),
-    "embedding":  (0.30, 0.40, 0.20, 0.10),
-    "tts":        (0.40, 0.35, 0.15, 0.10),
-    "stt":        (0.40, 0.35, 0.15, 0.10),
+    "embedding": (0.30, 0.40, 0.20, 0.10),
+    "tts": (0.40, 0.35, 0.15, 0.10),
+    "stt": (0.40, 0.35, 0.15, 0.10),
 }
 
 SPEED_TARGET = {
-    "general": 40, "coding": 40, "multimodal": 40, "chat": 40,
-    "reasoning": 25, "embedding": 200, "tts": 40, "stt": 40,
+    "general": 40,
+    "coding": 40,
+    "multimodal": 40,
+    "chat": 40,
+    "reasoning": 25,
+    "embedding": 200,
+    "tts": 40,
+    "stt": 40,
 }
 
 CONTEXT_TARGET = {
-    "general": 4096, "chat": 4096, "coding": 8192,
-    "reasoning": 8192, "multimodal": 4096, "embedding": 512,
-    "tts": 2048, "stt": 2048,
+    "general": 4096,
+    "chat": 4096,
+    "coding": 8192,
+    "reasoning": 8192,
+    "multimodal": 4096,
+    "embedding": 512,
+    "tts": 2048,
+    "stt": 2048,
 }
 
 
@@ -201,7 +278,9 @@ def _quant_bits(q):
     if qu.startswith("F16") or qu.startswith("BF16") or qu.startswith("F32"):
         return 16
     # Prequantized formats: pull the bit-width digit (AWQ4 / AWQ4BIT / GPTQ8 / 4BIT / INT8 …)
-    m = re.search(r"(?:AWQ|GPTQ|MLX|EXL2|BNB|INT|W)(\d{1,2})", qu) or re.search(r"(\d{1,2})BIT", qu)
+    m = re.search(r"(?:AWQ|GPTQ|MLX|EXL2|BNB|INT|W)(\d{1,2})", qu) or re.search(
+        r"(\d{1,2})BIT", qu
+    )
     if m:
         b = int(m.group(1))
         if 2 <= b <= 16:
@@ -236,7 +315,10 @@ def analyze_model(model, system, target_quant=None):
     # GGUF models can't be sharded across GPUs — use single GPU VRAM
     is_gguf = bool(model.get("gguf_sources"))
     quant_upper = (native_quant or "").upper()
-    is_gguf_quant = any(quant_upper.startswith(p) for p in ("Q2", "Q3", "Q4", "Q5", "Q6", "Q8", "IQ", "F16", "F32"))
+    is_gguf_quant = any(
+        quant_upper.startswith(p)
+        for p in ("Q2", "Q3", "Q4", "Q5", "Q6", "Q8", "IQ", "F16", "F32")
+    )
     # Single-GPU VRAM only applies to GGUF/dense builds (llama.cpp can't shard
     # across GPUs). Prequantized formats (AWQ/GPTQ/FP8) are served sharded by
     # vLLM across all GPUs, so they get the FULL multi-GPU VRAM — even when the
@@ -269,8 +351,13 @@ def analyze_model(model, system, target_quant=None):
     # If target quant doesn't fit and it's not pre-quantized, try lower quants
     if result is None and not preq and target_quant:
         from services.hwfit.models import QUANT_HIERARCHY
-        idx = QUANT_HIERARCHY.index(target_quant) if target_quant in QUANT_HIERARCHY else -1
-        for q in QUANT_HIERARCHY[idx + 1:]:
+
+        idx = (
+            QUANT_HIERARCHY.index(target_quant)
+            if target_quant in QUANT_HIERARCHY
+            else -1
+        )
+        for q in QUANT_HIERARCHY[idx + 1 :]:
             result = _try_quant_at(model, q, ctx, effective_vram, eff_ram)
             if result:
                 break
@@ -381,28 +468,41 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         else:
             img_results = []
         for im in img_results:
-            fit_map = {"perfect": "perfect", "good": "good", "tight": "marginal", "no_fit": "too_tight", "no_gpu": "too_tight"}
-            results.append({
-                "name": im["id"],
-                "provider": im["provider"],
-                "parameter_count": f"{im['params_b']}B",
-                "params_b": im["params_b"],
-                "is_moe": False,
-                "use_case": "image_gen",
-                "fit_level": fit_map.get(im["fit"], "too_tight"),
-                "run_mode": "gpu" if im["fits"] else "no_fit",
-                "quant": im.get("quant", "BF16"),
-                "context": 0,
-                "context_length": 0,
-                "required_gb": round(im.get("vram_needed") or 0, 1),
-                "speed_tps": 0,
-                "score": float(im["score"]),
-                "scores": {"quality": float(im["quality"]), "speed": float(im["speed"]), "fit": 0, "context": 0},
-                "gguf_sources": [],
-                "is_image_gen": True,
-                "capabilities": im.get("capabilities", []),
-                "description": im.get("description", ""),
-            })
+            fit_map = {
+                "perfect": "perfect",
+                "good": "good",
+                "tight": "marginal",
+                "no_fit": "too_tight",
+                "no_gpu": "too_tight",
+            }
+            results.append(
+                {
+                    "name": im["id"],
+                    "provider": im["provider"],
+                    "parameter_count": f"{im['params_b']}B",
+                    "params_b": im["params_b"],
+                    "is_moe": False,
+                    "use_case": "image_gen",
+                    "fit_level": fit_map.get(im["fit"], "too_tight"),
+                    "run_mode": "gpu" if im["fits"] else "no_fit",
+                    "quant": im.get("quant", "BF16"),
+                    "context": 0,
+                    "context_length": 0,
+                    "required_gb": round(im.get("vram_needed") or 0, 1),
+                    "speed_tps": 0,
+                    "score": float(im["score"]),
+                    "scores": {
+                        "quality": float(im["quality"]),
+                        "speed": float(im["speed"]),
+                        "fit": 0,
+                        "context": 0,
+                    },
+                    "gguf_sources": [],
+                    "is_image_gen": True,
+                    "capabilities": im.get("capabilities", []),
+                    "description": im.get("description", ""),
+                }
+            )
         if use_case == "image_gen":
             sort_fn = SORT_KEYS.get(sort, SORT_KEYS["score"])
             results.sort(key=sort_fn, reverse=(sort != "vram"))

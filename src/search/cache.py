@@ -31,7 +31,9 @@ def generate_cache_key(data: str) -> str:
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
-def cleanup_cache(cache_dir: Path, cache_index: Dict[str, datetime], max_age: timedelta):
+def cleanup_cache(
+    cache_dir: Path, cache_index: Dict[str, datetime], max_age: timedelta
+):
     """Remove expired cache entries and enforce LRU policy."""
     current_time = datetime.now()
     files_in_dir = {f.name.split(".")[0]: f for f in cache_dir.glob("*.cache")}

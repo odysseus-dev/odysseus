@@ -13,6 +13,7 @@ import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python scripts/claim_ownerless.py <username>")
@@ -43,6 +44,7 @@ def main():
 
     # 2. Database tables (sessions, gallery, comparisons, documents)
     from core.database import SessionLocal, Session, Document
+
     try:
         from core.database import GalleryImage
     except ImportError:
@@ -59,18 +61,32 @@ def main():
         print(f"  sessions: claimed {count}")
 
         # Documents
-        count = db.query(Document).filter(Document.session_id.in_(
-            db.query(Session.id).filter(Session.owner == owner)
-        )).update({"session_id": Document.session_id}, synchronize_session=False)
+        count = (
+            db.query(Document)
+            .filter(
+                Document.session_id.in_(
+                    db.query(Session.id).filter(Session.owner == owner)
+                )
+            )
+            .update({"session_id": Document.session_id}, synchronize_session=False)
+        )
 
         # Gallery
         if GalleryImage:
-            count = db.query(GalleryImage).filter(GalleryImage.owner == None).update({"owner": owner})
+            count = (
+                db.query(GalleryImage)
+                .filter(GalleryImage.owner == None)
+                .update({"owner": owner})
+            )
             print(f"  gallery: claimed {count}")
 
         # Comparisons
         if Comparison:
-            count = db.query(Comparison).filter(Comparison.owner == None).update({"owner": owner})
+            count = (
+                db.query(Comparison)
+                .filter(Comparison.owner == None)
+                .update({"owner": owner})
+            )
             print(f"  comparisons: claimed {count}")
 
         db.commit()

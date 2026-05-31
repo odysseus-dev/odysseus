@@ -9,7 +9,9 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "integrations.json")
+DATA_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "data", "integrations.json"
+)
 
 # ---------------------------------------------------------------------------
 # Presets
@@ -24,15 +26,15 @@ INTEGRATION_PRESETS: Dict[str, Dict[str, Any]] = {
             "Miniflux RSS reader (v1 API). Key endpoints:\n"
             "  GET /v1/feeds — list all feeds\n"
             "  GET /v1/feeds/{id} — get feed details\n"
-            "  POST /v1/feeds — create feed {\"feed_url\": \"...\", \"category_id\": N}\n"
+            '  POST /v1/feeds — create feed {"feed_url": "...", "category_id": N}\n'
             "  PUT /v1/feeds/{id} — update feed\n"
             "  DELETE /v1/feeds/{id} — delete feed\n"
             "  GET /v1/feeds/{id}/entries — list entries for feed\n"
             "  GET /v1/entries — list all entries (params: status, limit, order, direction, category_id)\n"
             "  GET /v1/entries/{id} — get single entry\n"
-            "  PUT /v1/entries — update entries {\"entry_ids\": [...], \"status\": \"read|unread\"}\n"
+            '  PUT /v1/entries — update entries {"entry_ids": [...], "status": "read|unread"}\n'
             "  GET /v1/categories — list categories\n"
-            "  POST /v1/categories — create category {\"title\": \"...\"}\n"
+            '  POST /v1/categories — create category {"title": "..."}\n'
             "  GET /v1/feeds/{id}/icon — get feed icon\n"
             "  PUT /v1/entries/{id}/bookmark — toggle bookmark"
         ),
@@ -46,7 +48,7 @@ INTEGRATION_PRESETS: Dict[str, Dict[str, Any]] = {
             "  GET /api/v1/repos/search — search repositories\n"
             "  GET /api/v1/repos/{owner}/{repo} — get repo details\n"
             "  GET /api/v1/repos/{owner}/{repo}/issues — list issues\n"
-            "  POST /api/v1/repos/{owner}/{repo}/issues — create issue {\"title\": \"...\"}\n"
+            '  POST /api/v1/repos/{owner}/{repo}/issues — create issue {"title": "..."}\n'
             "  GET /api/v1/repos/{owner}/{repo}/pulls — list pull requests\n"
             "  GET /api/v1/repos/{owner}/{repo}/commits — list commits\n"
             "  GET /api/v1/user/repos — list your repos\n"
@@ -62,7 +64,7 @@ INTEGRATION_PRESETS: Dict[str, Dict[str, Any]] = {
             "Linkding bookmark manager API. Auth header value format: 'Token YOUR_TOKEN'. Key endpoints:\n"
             "  GET /api/bookmarks/ — list bookmarks (params: q, limit, offset)\n"
             "  GET /api/bookmarks/{id}/ — get bookmark\n"
-            "  POST /api/bookmarks/ — create bookmark {\"url\": \"...\", \"title\": \"...\", \"tag_names\": [...]}\n"
+            '  POST /api/bookmarks/ — create bookmark {"url": "...", "title": "...", "tag_names": [...]}\n'
             "  PUT /api/bookmarks/{id}/ — update bookmark\n"
             "  DELETE /api/bookmarks/{id}/ — delete bookmark\n"
             "  GET /api/bookmarks/archived/ — list archived bookmarks\n"
@@ -92,7 +94,7 @@ INTEGRATION_PRESETS: Dict[str, Dict[str, Any]] = {
             "ntfy push notification service. Key endpoints:\n"
             "  POST /{topic} — send notification. Body is the message text.\n"
             "    Headers: Title (notification title), Priority (1-5), Tags (comma-separated emoji tags)\n"
-            "  POST / — send JSON notification {\"topic\": \"...\", \"message\": \"...\", \"title\": \"...\", \"priority\": N}\n"
+            '  POST / — send JSON notification {"topic": "...", "message": "...", "title": "...", "priority": N}\n'
             "  GET /{topic}/json?poll=1 — poll for messages"
         ),
     },
@@ -106,11 +108,11 @@ INTEGRATION_PRESETS: Dict[str, Dict[str, Any]] = {
             "Key endpoints:\n"
             "  GET /api/ciphers — list all vault items (logins, notes, cards, identities)\n"
             "  GET /api/ciphers/{id} — get a single vault item\n"
-            "  POST /api/ciphers — create vault item {\"type\": 1, \"name\": \"...\", \"login\": {\"uri\": \"...\", \"username\": \"...\", \"password\": \"...\"}}\n"
+            '  POST /api/ciphers — create vault item {"type": 1, "name": "...", "login": {"uri": "...", "username": "...", "password": "..."}}\n'
             "  PUT /api/ciphers/{id} — update vault item\n"
             "  DELETE /api/ciphers/{id} — delete vault item\n"
             "  GET /api/folders — list folders\n"
-            "  POST /api/folders — create folder {\"name\": \"...\"}\n"
+            '  POST /api/folders — create folder {"name": "..."}\n'
             "  GET /api/collections — list collections (org vaults)\n"
             "  POST /api/ciphers/{id}/password-history — get password history\n"
             "  GET /api/sends — list Bitwarden Send items\n"
@@ -196,7 +198,9 @@ def add_integration(data: Dict[str, Any]) -> Dict[str, Any]:
     return integration
 
 
-def update_integration(integration_id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def update_integration(
+    integration_id: str, data: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
     """Update fields on an existing integration. Returns updated integration or None."""
     integrations = load_integrations()
     for item in integrations:
@@ -222,6 +226,7 @@ def delete_integration(integration_id: str) -> bool:
 # ---------------------------------------------------------------------------
 # API execution
 # ---------------------------------------------------------------------------
+
 
 def _strip_html_tags(html: str) -> str:
     """Rough HTML tag stripping."""
@@ -260,7 +265,10 @@ async def execute_api_call(
         return {"error": f"Integration not found: {integration_id}", "exit_code": 1}
 
     if not integration.get("enabled", True):
-        return {"error": f"Integration '{integration.get('name')}' is disabled", "exit_code": 1}
+        return {
+            "error": f"Integration '{integration.get('name')}' is disabled",
+            "exit_code": 1,
+        }
 
     base_url = integration.get("base_url", "").rstrip("/")
     if not base_url:
@@ -363,7 +371,10 @@ async def execute_api_call(
         return {"output": output, "exit_code": 0}
 
     except httpx.TimeoutException:
-        return {"error": f"Request to {integration.get('name')} timed out", "exit_code": 1}
+        return {
+            "error": f"Request to {integration.get('name')} timed out",
+            "exit_code": 1,
+        }
     except httpx.RequestError as exc:
         return {"error": f"Request failed: {exc}", "exit_code": 1}
     except Exception as exc:
@@ -375,6 +386,7 @@ async def execute_api_call(
 # System prompt helper
 # ---------------------------------------------------------------------------
 
+
 def get_integrations_prompt() -> str:
     """Return a string describing all enabled integrations for system prompt injection.
 
@@ -385,7 +397,9 @@ def get_integrations_prompt() -> str:
     if not enabled:
         return ""
 
-    lines = ["You have access to the following API integrations via the api_call tool:\n"]
+    lines = [
+        "You have access to the following API integrations via the api_call tool:\n"
+    ]
     for integ in enabled:
         name = integ.get("name", integ.get("id", "unknown"))
         lines.append(f"## {name} (id: {integ['id']})")
@@ -401,10 +415,13 @@ def get_integrations_prompt() -> str:
 # Migration
 # ---------------------------------------------------------------------------
 
+
 def migrate_from_settings() -> None:
     """If data/settings.json has miniflux_url and miniflux_api_key, create a
     Miniflux integration and clear those keys from settings."""
-    settings_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "settings.json")
+    settings_path = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "data", "settings.json"
+    )
     if not os.path.exists(settings_path):
         return
 
@@ -427,11 +444,13 @@ def migrate_from_settings() -> None:
             log.info("Miniflux integration already exists, skipping migration")
             return
 
-    add_integration({
-        "preset": "miniflux",
-        "base_url": miniflux_url.rstrip("/"),
-        "api_key": miniflux_key,
-    })
+    add_integration(
+        {
+            "preset": "miniflux",
+            "base_url": miniflux_url.rstrip("/"),
+            "api_key": miniflux_key,
+        }
+    )
 
     # Clear migrated keys
     settings.pop("miniflux_url", None)
