@@ -8,6 +8,7 @@ import re
 import shlex
 import shutil
 import uuid
+import sys
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Depends
@@ -541,10 +542,11 @@ def setup_cookbook_routes() -> APIRouter:
             lines.append(f"rm -f '{wrapper_script}'")
             lines.append('exec "${SHELL:-/bin/bash}"')
             wrapper_script.write_text("\n".join(lines) + "\n")
-            try:
-                wrapper_script.chmod(0o755)
-            except OSError:
-                pass  # chmod not meaningful on Windows
+            match sys.platform:
+                case "win32":
+                    pass
+                case _:
+                    wrapper_script.chmod(0o755)
             setup_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
 
         logger.info(f"Model download: {req.repo_id} (include={req.include}, session={session_id}, remote={remote})")
