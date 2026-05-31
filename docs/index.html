@@ -359,6 +359,20 @@
     padding: 12px 16px; font-family: ui-monospace, monospace; font-size: 14px; color: var(--fg);
   }
   .codeblock .prompt { color: var(--accent); }
+  .copy-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px; flex-shrink: 0; margin-left: 4px; padding: 0;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--panel); color: var(--muted); cursor: pointer;
+    transition: color .12s ease, border-color .12s ease, transform .12s ease;
+  }
+  .copy-btn:hover { color: var(--fg); border-color: var(--accent); transform: translateY(-1px); }
+  .copy-btn:active { transform: translateY(0); }
+  .copy-btn svg { width: 15px; height: 15px; display: block; }
+  .copy-btn .ic-check { display: none; }
+  .copy-btn.copied { color: var(--green); border-color: var(--green); cursor: default; }
+  .copy-btn.copied .ic-copy { display: none; }
+  .copy-btn.copied .ic-check { display: block; }
   .pill-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 44px; }
   .pill { font-size: 12.5px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; background: var(--panel); }
 
@@ -660,7 +674,7 @@
         <div class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5"/><path d="M12 19h8"/></svg>Get started</div>
         <h2 class="h" style="margin-bottom:6px;">Odysseus is yours.</h2>
         <p class="sub center" style="margin:0 auto;">It's open source and free. No sales team, no demo request, no Trojan horse.</p>
-        <div class="codeblock"><span class="prompt">$</span> git clone https://github.com/pewdiepie-archdaemon/odysseus.git &amp;&amp; cd odysseus</div>
+        <div class="codeblock"><span class="prompt">$</span> <span class="cmd">git clone https://github.com/pewdiepie-archdaemon/odysseus.git &amp;&amp; cd odysseus</span><button type="button" class="copy-btn" aria-label="Copy command" title="Copy"><svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><svg class="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></button></div>
         <div>
           <a class="btn primary" href="https://github.com/pewdiepie-archdaemon/odysseus" target="_blank" style="margin-top:14px;">View on GitHub</a>
         </div>
@@ -871,6 +885,52 @@
       if (reopen) reopen.addEventListener('click', function () {
         term.classList.remove('term-closed', 'term-min');
         reopen.classList.remove('show');
+      });
+    })();
+
+    // Copy button for the "git clone" codeblock. copies the command and flashes
+    // a checkmark. uses the async Clipboard API, with an execCommand fallback for
+    // insecure contexts / older browsers.
+    (function () {
+      var btn = document.querySelector('.copy-btn');
+      var cmd = document.querySelector('.codeblock .cmd');
+      if (!btn || !cmd) return;
+      var resetT = null;
+
+      function flash() {
+        btn.classList.add('copied');
+        btn.setAttribute('aria-label', 'Copied');
+        btn.setAttribute('title', 'Copied');
+        clearTimeout(resetT);
+        resetT = setTimeout(function () {
+          btn.classList.remove('copied');
+          btn.setAttribute('aria-label', 'Copy command');
+          btn.setAttribute('title', 'Copy');
+        }, 1600);
+      }
+
+      function fallbackCopy(text) {
+        try {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'absolute';
+          ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          flash();
+        } catch (e) { /* clipboard unavailable */ }
+      }
+
+      btn.addEventListener('click', function () {
+        var text = cmd.textContent.trim();
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(flash).catch(function () { fallbackCopy(text); });
+        } else {
+          fallbackCopy(text);
+        }
       });
     })();
 
