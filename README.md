@@ -125,6 +125,8 @@ python setup.py
 uvicorn app:app --host 0.0.0.0 --port 7000
 ```
 
+If you don't have [uv](https://docs.astral.sh/uv/) installed, use `python -m venv venv` and `pip install .` instead.
+
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
 
