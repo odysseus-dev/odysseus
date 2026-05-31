@@ -46,7 +46,7 @@ to override deployment-level things like `AUTH_ENABLED`, `DATABASE_URL`,
 or pre-seed `ODYSSEUS_ADMIN_PASSWORD` (otherwise an initial password is
 generated and printed on first boot).
 
-### Option 1: Docker — Linux / macOS (recommended)
+### Option 1: Docker (recommended)
 ```bash
 git clone <your-odysseus-repo-url>
 cd odysseus
@@ -87,7 +87,7 @@ The Cookbook model catalog check should print a non-zero count. If it prints
 
 ### Option 2: Docker — Windows (Docker Desktop)
 
-Windows has two known incompatibilities with the standard setup:
+Windows has two known incompatibilities with the standard Docker setup:
 
 - **CRLF line endings** — git on Windows (core.autocrlf=true) converts `entrypoint.sh` to CRLF on checkout, breaking the `#!/bin/sh` shebang inside the Linux container ("no such file or directory").
 - **Reserved ports** — Hyper-V (used by Docker Desktop) reserves port ranges that commonly include 8080, 8091, and 8100. Binding those ports fails with "access permissions" even if nothing is visibly using them.
@@ -124,7 +124,7 @@ docker compose -f docker-compose.windows.yml ps
 docker compose -f docker-compose.windows.yml logs --tail=120 odysseus
 ```
 
-> **LLM on localhost?** If your LLM server is running on the Windows host (e.g. `http://127.0.0.1:8090/v1`), set `LLM_HOST=host.docker.internal` in `.env` — `127.0.0.1` inside a Docker container refers to the container itself, not your machine. `launch-docker.ps1` sets this automatically on first run.
+> **LLM on localhost?** If your LLM server is running on the Windows host (e.g. `http://127.0.0.1:8090/v1`), set `LLM_HOST=host.docker.internal` within `.env` — `127.0.0.1` inside a Docker container this refers to the container itself, not your local machine. `launch-docker.ps1` sets this automatically on first run.
 
 ---
 
