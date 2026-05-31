@@ -523,38 +523,42 @@ async function _fetchDependencies() {
     const pkgs = data.packages || [];
     if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
     const _winUnsupported = new Set(['diffusers', 'hf_transfer', 'vllm', 'rembg', 'gfpgan']);
-    // When a non-local server is selected, the Local-only packages aren't
-    // relevant to it — hide them so the list shows just that server's packages.
-    const _viewingRemote = !!(_dsel && _dsel.value && _dsel.value !== 'local');
-    let html = '';
-    for (const pkg of pkgs) {
+    const _depRow = (pkg) => {
       const isLocal = pkg.target === 'local';
-      if (_viewingRemote && isLocal) continue;
       const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
-      const targetLabel = isLocal ? 'Local' : 'GPU server';
       const isSystemDep = pkg.kind === 'system';
-      html += `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`;
-      html += `<div class="cookbook-dep-info">`;
-      html += `<div class="memory-item-title">${esc(pkg.name)}</div>`;
-      html += `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`;
-      html += `</div>`;
-      html += `<span class="cookbook-dep-tag cookbook-dep-target">${targetLabel}</span>`;
-      html += `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`;
+      let row = `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`;
+      row += `<div class="cookbook-dep-info">`;
+      row += `<div class="memory-item-title">${esc(pkg.name)}</div>`;
+      row += `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`;
+      row += `</div>`;
+      row += `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`;
       if (winBlocked) {
-        html += `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
+        row += `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
       } else if (pkg.installed) {
         if (isSystemDep) {
-          html += `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
+          row += `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
         } else {
-          html += `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn" title="Installed — click for actions"><span class="cookbook-dep-installed-label">Installed</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
+          row += `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn" title="Installed — click for actions"><span class="cookbook-dep-installed-label">Installed</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
         }
       } else if (isSystemDep) {
-        html += `<span class="cookbook-dep-tag cookbook-dep-na" title="${esc(pkg.install_hint || 'Install this OS package on the selected server.')}">Missing</span>`;
+        row += `<span class="cookbook-dep-tag cookbook-dep-na" title="${esc(pkg.install_hint || 'Install this OS package on the selected server.')}">Missing</span>`;
       } else {
-        html += `<button class="cookbook-dep-tag cookbook-dep-install" data-dep-pip="${esc(pkg.pip)}" data-dep-target="${isLocal ? 'local' : 'remote'}">Install</button>`;
+        row += `<button class="cookbook-dep-tag cookbook-dep-install" data-dep-pip="${esc(pkg.pip)}" data-dep-target="${isLocal ? 'local' : 'remote'}">Install</button>`;
       }
-      html += `</div>`;
+      row += `</div>`;
+      return row;
+    };
+    const _section = (title, note, items) =>
+      items.length
+        ? `<div style="display:flex;align-items:baseline;gap:8px;margin:12px 2px 4px;"><span style="font-size:11px;font-weight:600;letter-spacing:0.03em;">${title}</span><span style="font-size:10px;opacity:0.5;">${note}</span></div>` + items.map(_depRow).join('')
+        : '';
+    const _viewingRemote = !!(_dsel && _dsel.value && _dsel.value !== 'local');
+    let html = '';
+    if (!_viewingRemote) {
+      html += _section('Odysseus app', 'Run inside the Odysseus app itself.', pkgs.filter(p => p.target === 'local'));
     }
+    html += _section('Server', 'Run on the server chosen above (Local, or a remote box over SSH).', pkgs.filter(p => p.target !== 'local'));
     list.innerHTML = html;
 
     // Shared install/update routine — used by the Install button and the
@@ -1475,7 +1479,7 @@ function _renderRecipes() {
   html += _buildServerOpts(false);
   html += '</select>';
   html += '</div>';
-  html += '<p class="memory-desc doclib-desc">Optional packages that extend Odysseus capabilities. Install on local or remote servers.</p>';
+  html += '<p class="memory-desc doclib-desc">Optional packages that extend Odysseus capabilities.</p>';
   html += '<div class="doclib-grid" id="cookbook-deps-list"></div>';
   html += '</div></div>';
 
