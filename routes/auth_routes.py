@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Request, Response, HTTPException
 from pydantic import BaseModel
 from typing import Optional
+import asyncio
 import logging
 import os
 
@@ -84,7 +85,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, "Already configured")
         if len(body.password) < 8:
             raise HTTPException(400, "Password must be at least 8 characters")
-        ok = auth_manager.setup(body.username, body.password)
+        ok = await asyncio.to_thread(auth_manager.setup, body.username, body.password)
         if not ok:
             raise HTTPException(500, "Setup failed")
         return {"ok": True, "message": "Admin account created"}
@@ -102,7 +103,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, "Password must be at least 8 characters")
         if len(body.username.strip()) < 1:
             raise HTTPException(400, "Username is required")
-        ok = auth_manager.create_user(body.username, body.password, is_admin=False)
+        ok = await asyncio.to_thread(auth_manager.create_user, body.username, body.password, is_admin=False)
         if not ok:
             raise HTTPException(409, "Username already taken")
         return {"ok": True, "message": "Account created"}
@@ -113,7 +114,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(429, "Too many requests — try again later")
         # Verify password first
         username = body.username.strip().lower()
-        if not auth_manager.verify_password(username, body.password):
+        if not await asyncio.to_thread(auth_manager.verify_password, username, body.password):
             raise HTTPException(401, "Invalid credentials")
         # Check 2FA if enabled
         if auth_manager.totp_enabled(username):
@@ -123,7 +124,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             if not auth_manager.totp_verify(username, body.totp_code):
                 raise HTTPException(401, "Invalid 2FA code")
         # All checks passed — create session
-        token = auth_manager.create_session(username, body.password)
+        token = await asyncio.to_thread(auth_manager.create_session, username, body.password)
         if not token:
             raise HTTPException(401, "Invalid credentials")
         cookie_kwargs = dict(
@@ -171,7 +172,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(401, "Not authenticated")
         if len(body.new_password) < 8:
             raise HTTPException(400, "Password must be at least 8 characters")
-        ok = auth_manager.change_password(user, body.current_password, body.new_password)
+        ok = await asyncio.to_thread(auth_manager.change_password, user, body.current_password, body.new_password)
         if not ok:
             raise HTTPException(400, "Current password is incorrect")
         return {"ok": True}
