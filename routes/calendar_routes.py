@@ -7,6 +7,8 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
+from sqlalchemy import or_, and_
+from dateutil.rrule import rrulestr
 
 from core.database import SessionLocal, CalendarCal, CalendarEvent
 from src.auth_helpers import get_current_user
@@ -387,6 +389,54 @@ def _event_to_dict(ev: CalendarEvent) -> dict:
     }
 
 
+def _expand_rrule_occurrences(event, start_dt, end_dt):
+    """Expand a recurring CalendarEvent into occurrence dicts within [start_dt, end_dt).
+
+    Returns a list of event dicts, one per RRULE occurrence that falls within
+    the window. Falls back to the original event dict if expansion fails.
+    """
+    base = _event_to_dict(event)
+    rrule_str = event.rrule or ""
+    if not rrule_str:
+        return [base]
+
+    try:
+        # Normalize: dateutil.rrulestr expects RRULE: prefix for iCal format
+        if not rrule_str.startswith("RRULE:"):
+            rrule_str = "RRULE:" + rrule_str
+        rule = rrulestr(rrule_str, dtstart=event.dtstart)
+
+        # Generate occurrences within the requested window
+        occurrences = rule.between(start_dt, end_dt, inc=True)
+        if not occurrences:
+            return []
+
+        duration = event.dtend - event.dtstart
+        results = []
+        for occ in occurrences:
+            d = dict(base)
+            # Ensure occurrence is naive (DB stores naive datetimes)
+            if hasattr(occ, 'tzinfo') and occ.tzinfo is not None:
+                from datetime import timezone as _tz
+                occ = occ.astimezone(_tz.utc).replace(tzinfo=None)
+            occ_end = occ + duration
+            if event.all_day:
+                d["dtstart"] = occ.strftime("%Y-%m-%d")
+                d["dtend"] = occ_end.strftime("%Y-%m-%d")
+            else:
+                suffix = "Z" if getattr(event, "is_utc", False) else ""
+                d["dtstart"] = occ.isoformat() + suffix
+                d["dtend"] = occ_end.isoformat() + suffix
+            results.append(d)
+        return results
+    except Exception:
+        logger.warning("Failed to expand RRULE %r for event %s", event.rrule, event.uid)
+        # Fallback: return the original event only if it overlaps the window
+        if event.dtstart < end_dt and event.dtend > start_dt:
+            return [base]
+        return []
+
+
 # ── Routes ──
 
 def setup_calendar_routes() -> APIRouter:
@@ -535,11 +585,28 @@ def setup_calendar_routes() -> APIRouter:
         db = SessionLocal()
         try:
             # Scope events to calendars owned by the caller.
+            # Non-recurring events must overlap the query window; recurring
+            # events (with RRULE) are fetched by dtstart alone — their actual
+            # occurrences are expanded server-side so they appear in every
+            # year they repeat, not just the DTSTART year.
             q = db.query(CalendarEvent).join(CalendarCal).filter(
-                CalendarEvent.dtstart < end_dt,
-                CalendarEvent.dtend > start_dt,
                 CalendarEvent.status != "cancelled",
                 CalendarCal.owner == owner,
+                or_(
+                    # Non-recurring: event times must overlap the query window
+                    and_(
+                        or_(CalendarEvent.rrule == "", CalendarEvent.rrule.is_(None)),
+                        CalendarEvent.dtstart < end_dt,
+                        CalendarEvent.dtend > start_dt,
+                    ),
+                    # Recurring: dtstart before window end — RRULE expansion
+                    # generates the actual occurrences within the window
+                    and_(
+                        CalendarEvent.rrule.isnot(None),
+                        CalendarEvent.rrule != "",
+                        CalendarEvent.dtstart < end_dt,
+                    ),
+                ),
             )
             if calendar:
                 q = q.filter(
@@ -547,7 +614,16 @@ def setup_calendar_routes() -> APIRouter:
                     (CalendarCal.name == calendar)
                 )
             events = q.order_by(CalendarEvent.dtstart).all()
-            return {"events": [_event_to_dict(e) for e in events]}
+
+            # Expand recurring events into individual occurrences
+            result_events = []
+            for ev in events:
+                if ev.rrule:
+                    result_events.extend(_expand_rrule_occurrences(ev, start_dt, end_dt))
+                else:
+                    result_events.append(_event_to_dict(ev))
+
+            return {"events": result_events}
         except HTTPException:
             raise
         except Exception as e:
