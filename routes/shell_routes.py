@@ -4,8 +4,6 @@ import asyncio
 import json
 import logging
 import os
-import pty
-import fcntl
 import shlex
 import shutil
 import uuid
@@ -16,6 +14,15 @@ from typing import Dict, Any
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+if os.name != "nt":
+    import pty
+    import fcntl
+else:
+    pty = None
+    fcntl = None
+
+HAS_PTY_SUPPORT = pty is not None and fcntl is not None
 
 
 def _require_admin(request: Request):
@@ -97,6 +104,11 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
 
 async def _generate_pty(cmd: str, timeout: int, request: Request):
     """Run command in a pseudo-TTY so tqdm/progress bars work natively."""
+    if not HAS_PTY_SUPPORT:
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': 'PTY mode is not supported on Windows. Retry with use_pty=false.'})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
+        return
+
     loop = asyncio.get_event_loop()
     master_fd, slave_fd = pty.openpty()
 
