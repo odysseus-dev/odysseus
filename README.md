@@ -122,6 +122,21 @@ uvicorn app:app --host 0.0.0.0 --port 7000
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
 
+### Option 4: macOS app-style launcher
+For a local Mac install with less Terminal babysitting:
+
+```bash
+./macos/install-macos.command
+```
+
+That creates the Python virtual environment, installs requirements, runs
+`setup.py`, builds `dist/Odysseus.app`, starts Odysseus on
+`http://127.0.0.1:7000`, and opens it in your browser. After the first run,
+open `dist/Odysseus.app` like a normal local Mac app.
+
+This wrapper is not a notarized public distribution. It is a local launcher for
+this checkout. See `macos/README.md` for stop/rebuild notes.
+
 ## Security Notes
 Odysseus is a self-hosted workspace with powerful local tools: shell access, file uploads, model downloads, web research, email/calendar integrations, and API tokens. Treat it like an admin console.
 
