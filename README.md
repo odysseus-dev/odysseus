@@ -153,6 +153,13 @@ Help is welcome. The best entry points are fresh-install testing, provider setup
 bugs, mobile/editor polish, docs, and small focused refactors. See
 [ROADMAP.md](ROADMAP.md) for the current help-wanted list.
 
+### Dev tooling
+The project uses a few tools to keep things consistent:
+
+- **[mise](https://mise.jdx.dev/)** — runtime version manager (`mise.toml` pins Python and Node). Run `mise install` after cloning to get the right versions automatically.
+- **[ruff](https://docs.astral.sh/ruff/)** — fast Python linter and formatter. Run `ruff check .` and `ruff format .` before submitting a PR.
+- **[trivy](https://trivy.dev/)** — vulnerability and misconfiguration scanner. Run `trivy fs .` or `trivy image <tag>` to check for issues before pushing a new image.
+
 ## Configuration
 Most setup is done inside the app with `/setup` or **Settings**. Use `.env`
 for deployment-level defaults and secrets you want present before first boot.

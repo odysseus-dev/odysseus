@@ -29,8 +29,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy app code
 COPY . .
 
+# Create a non-root user and group (default UID/GID 1000) that the
+# entrypoint will drop to at runtime via gosu. Creating it here means
+# the image already has a named non-root identity and satisfies
+# least-privilege scanning rules.
+RUN groupadd -g 1000 odysseus \
+    && useradd -u 1000 -g 1000 -M -s /bin/sh -d /app odysseus
+
 # Create data directory (mount a volume here for persistence)
-RUN mkdir -p data logs
+RUN mkdir -p data logs \
+    && chown -R odysseus:odysseus data logs
 
 # Entrypoint that drops to PUID/PGID (default 1000:1000) and repairs
 # ownership on the bind-mounted /app/data and /app/logs. Without this,
@@ -42,6 +50,16 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 EXPOSE 7000
+
+# The entrypoint must start as root so it can chown bind-mounted volumes
+# and then drop to PUID:PGID via gosu. A USER instruction here would
+# prevent that re-escalation under Docker Desktop's default seccomp
+# profile. The privilege drop is handled entirely inside entrypoint.sh,
+# so the running app process is always non-root.
+# trivy:ignore:DS-0002
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:7000/health || exit 1
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7000"]

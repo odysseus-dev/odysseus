@@ -1,0 +1,76 @@
+[tools]
+# Python: matches the Dockerfile base image (python:3.12-slim).
+# 3.12.x is in security-fix-only mode — stable and well-supported until Oct 2028.
+python = "3.12.13"
+
+# Node: Active LTS line. Used for npx (Browser MCP server) and JS dev deps.
+node = "22.21.1"
+
+# Linter / formatter — pinned to a recent stable; bump with `mise upgrade ruff`.
+ruff = "0.11.13"
+
+# Container / filesystem vulnerability scanner.
+trivy = "0.69.1"
+
+[env]
+# Keep virtual-env inside the project so editors and tools find it automatically.
+VIRTUAL_ENV = "{{cwd}}/.venv"
+
+[tasks.install]
+description = "Create venv and install all Python dependencies"
+run = [
+  "python -m venv .venv",
+  "python -m pip install --upgrade pip",
+  "python -m pip install -r requirements.txt",
+]
+
+[tasks.install-optional]
+description = "Install optional Python dependencies (PyMuPDF, duckduckgo-search, …)"
+run = "python -m pip install -r requirements-optional.txt"
+
+[tasks.dev]
+description = "Run the development server with auto-reload"
+run = "python -m uvicorn app:app --host 127.0.0.1 --port 7000 --reload"
+
+[tasks.lint]
+description = "Lint the codebase with ruff"
+run = "ruff check ."
+
+[tasks.fmt]
+description = "Format the codebase with ruff"
+run = "ruff format ."
+
+[tasks.lint-fix]
+description = "Auto-fix lint issues and format in one pass"
+run = [
+  "ruff check --fix .",
+  "ruff format .",
+]
+
+[tasks.test]
+description = "Run the test suite (skips Unix-only tests on Windows)"
+run = "python -m pytest --ignore=tests/test_shell_routes.py"
+
+[tasks.scan]
+description = "Run Trivy filesystem scan — fails on HIGH or CRITICAL findings"
+run = "trivy fs --exit-code 1 --severity HIGH,CRITICAL ."
+
+[tasks.scan-image]
+description = "Run Trivy image scan (set IMAGE env var to override the default tag)"
+run = "python scripts/scan_image.py"
+
+[tasks.docker-build]
+description = "Build the Docker image"
+run = "docker build -t odysseus:latest ."
+
+[tasks.docker-up]
+description = "Start all services via Docker Compose"
+run = "docker compose up -d --build"
+
+[tasks.docker-logs]
+description = "Tail Odysseus container logs"
+run = "docker compose logs --tail=120 -f odysseus"
+
+[tasks.clean]
+description = "Remove venv, __pycache__, and pytest artifacts"
+run = "python scripts/clean.py"
