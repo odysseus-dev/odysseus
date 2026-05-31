@@ -1,0 +1,15 @@
+# Normalize line endings. Shell scripts MUST be LF or they break inside Linux
+# containers (a CRLF shebang yields "no such file or directory" on exec).
+* text=auto eol=lf
+
+*.sh text eol=lf
+docker/entrypoint.sh text eol=lf
+
+# Treat common binaries as binary so they are never line-ending converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
