@@ -59,7 +59,7 @@ export function buildToolbar({ currentTool, onSelectTool, onClearSelection }) {
           '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>' +
         '</span>'
       : '';
-    btn.innerHTML = `${aiStar}<span class="ge-tool-icon"${t.small ? ' style="font-size:14px"' : ''}>${t.icon}</span><span class="ge-tool-label">${t.label}</span>${clearBadge}`;
+    btn.innerHTML = `${aiStar}<span class="ge-tool-icon"${t.small ? ' style="font-size:0.9rem"' : ''}>${t.icon}</span><span class="ge-tool-label">${t.label}</span>${clearBadge}`;
     // Clear-badge click stops propagation so the tool itself doesn't
     // toggle; the actual clear is handled by the caller.
     btn.querySelector('.ge-tool-clear')?.addEventListener('click', (ev) => {

@@ -1900,12 +1900,12 @@ function initAccount() {
           // 2FA is ON — show disable option
           tfaContent.innerHTML = `
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-              <span style="color:var(--color-save-green, #4caf50);font-size:12px;font-weight:600;">&#x2713; Enabled</span>
-              <span style="font-size:11px;opacity:0.5;">Authenticator app required on login</span>
+              <span style="color:var(--color-save-green, #4caf50);font-size:0.75rem;font-weight:600;">&#x2713; Enabled</span>
+              <span style="font-size:0.7rem;opacity:0.5;">Authenticator app required on login</span>
             </div>
-            <input id="tfa-disable-pw" type="password" placeholder="Enter password to disable" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;width:100%;box-sizing:border-box;margin-bottom:6px;">
+            <input id="tfa-disable-pw" type="password" placeholder="Enter password to disable" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:0.75rem;width:100%;box-sizing:border-box;margin-bottom:6px;">
             <div class="settings-row" style="justify-content:flex-end;">
-              <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
+              <span id="tfa-msg" style="font-size:0.7rem;margin-right:auto;"></span>
               <button class="admin-btn-add" id="tfa-disable-btn" style="opacity:0.7;">Disable 2FA</button>
             </div>`;
           el('tfa-disable-btn').addEventListener('click', async () => {
@@ -1925,9 +1925,9 @@ function initAccount() {
         } else {
           // 2FA is OFF — show setup button
           tfaContent.innerHTML = `
-            <div style="font-size:12px;opacity:0.6;margin-bottom:8px;">Add an extra layer of security with an authenticator app (Aegis, Google Authenticator, etc.)</div>
+            <div style="font-size:0.75rem;opacity:0.6;margin-bottom:8px;">Add an extra layer of security with an authenticator app (Aegis, Google Authenticator, etc.)</div>
             <div class="settings-row" style="justify-content:flex-end;">
-              <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
+              <span id="tfa-msg" style="font-size:0.7rem;margin-right:auto;"></span>
               <button class="admin-btn-add" id="tfa-setup-btn">Set Up 2FA</button>
             </div>`;
           el('tfa-setup-btn').addEventListener('click', async () => {
@@ -1941,13 +1941,13 @@ function initAccount() {
                 <div style="text-align:center;margin-bottom:12px;">
                   <img src="${setup.qr_code}" alt="QR Code" style="border-radius:8px;max-width:200px;">
                 </div>
-                <div style="font-size:11px;opacity:0.5;text-align:center;margin-bottom:8px;">
+                <div style="font-size:0.7rem;opacity:0.5;text-align:center;margin-bottom:8px;">
                   Scan with your authenticator app, or enter manually:
                 </div>
-                <div style="font-family:monospace;font-size:12px;text-align:center;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;margin-bottom:12px;word-break:break-all;user-select:all;cursor:text;">${setup.secret}</div>
-                <input id="tfa-verify-code" type="text" placeholder="Enter 6-digit code to verify" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:13px;box-sizing:border-box;text-align:center;letter-spacing:3px;margin-bottom:6px;">
+                <div style="font-family:monospace;font-size:0.75rem;text-align:center;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;margin-bottom:12px;word-break:break-all;user-select:all;cursor:text;">${setup.secret}</div>
+                <input id="tfa-verify-code" type="text" placeholder="Enter 6-digit code to verify" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:0.8rem;box-sizing:border-box;text-align:center;letter-spacing:3px;margin-bottom:6px;">
                 <div class="settings-row" style="justify-content:flex-end;">
-                  <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
+                  <span id="tfa-msg" style="font-size:0.7rem;margin-right:auto;"></span>
                   <button class="admin-btn-add" id="tfa-cancel-btn" style="opacity:0.5;">Cancel</button>
                   <button class="admin-btn-add" id="tfa-verify-btn">Verify & Enable</button>
                 </div>`;
@@ -1968,9 +1968,9 @@ function initAccount() {
                   // Show backup codes
                   const codes = result.backup_codes || [];
                   tfaContent.innerHTML = `
-                    <div style="color:var(--color-save-green, #4caf50);font-size:13px;font-weight:600;margin-bottom:8px;">&#x2713; 2FA Enabled!</div>
-                    <div style="font-size:12px;opacity:0.7;margin-bottom:8px;">Save these backup codes somewhere safe. Each can be used once if you lose your authenticator:</div>
-                    <div style="font-family:monospace;font-size:12px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;columns:2;column-gap:16px;margin-bottom:8px;">${codes.map(c => '<div style="margin-bottom:2px;">' + c + '</div>').join('')}</div>
+                    <div style="color:var(--color-save-green, #4caf50);font-size:0.8rem;font-weight:600;margin-bottom:8px;">&#x2713; 2FA Enabled!</div>
+                    <div style="font-size:0.75rem;opacity:0.7;margin-bottom:8px;">Save these backup codes somewhere safe. Each can be used once if you lose your authenticator:</div>
+                    <div style="font-family:monospace;font-size:0.75rem;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;columns:2;column-gap:16px;margin-bottom:8px;">${codes.map(c => '<div style="margin-bottom:2px;">' + c + '</div>').join('')}</div>
                     <button class="admin-btn-add" id="tfa-done-btn">Done</button>`;
                   el('tfa-done-btn').addEventListener('click', () => render2FA());
                 } catch (e) { vmsg.textContent = e.message; vmsg.style.color = 'var(--red)'; }
@@ -1979,7 +1979,7 @@ function initAccount() {
           });
         }
       } catch (_) {
-        tfaContent.innerHTML = '<div style="font-size:11px;opacity:0.4;">Could not load 2FA status</div>';
+        tfaContent.innerHTML = '<div style="font-size:0.7rem;opacity:0.4;">Could not load 2FA status</div>';
       }
     }
     render2FA();
@@ -2393,23 +2393,23 @@ async function initEmailAccountsSettings() {
   function renderRow(a) {
     const imap = a.imap_host ? `${a.imap_host}:${a.imap_port}` : '<no IMAP>';
     const badge = a.is_default
-      ? '<span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 6px;border-radius:3px;background:color-mix(in srgb, var(--accent,#50fa7b) 15%, transparent);color:var(--accent,#50fa7b)">Default</span>'
-      : (a.enabled ? '' : '<span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 6px;border-radius:3px;opacity:0.4">Disabled</span>');
+      ? '<span style="font-size:0.55rem;text-transform:uppercase;letter-spacing:0.5px;padding:1px 6px;border-radius:3px;background:color-mix(in srgb, var(--accent,#50fa7b) 15%, transparent);color:var(--accent,#50fa7b)">Default</span>'
+      : (a.enabled ? '' : '<span style="font-size:0.55rem;text-transform:uppercase;letter-spacing:0.5px;padding:1px 6px;border-radius:3px;opacity:0.4">Disabled</span>');
     return `<div class="email-account-row" data-acc-id="${esc(a.id)}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:6px">
       <div style="flex:1;min-width:0">
-        <div style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">${esc(a.name)} ${badge}</div>
-        <div style="font-size:11px;opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.imap_user || a.from_address || '')} — ${esc(imap)}</div>
+        <div style="font-size:0.75rem;font-weight:600;display:flex;align-items:center;gap:6px">${esc(a.name)} ${badge}</div>
+        <div style="font-size:0.7rem;opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.imap_user || a.from_address || '')} — ${esc(imap)}</div>
       </div>
-      ${a.is_default ? '' : `<button class="admin-btn-sm email-acc-default-btn" style="font-size:10px">Make Default</button>`}
-      <button class="admin-btn-sm email-acc-edit-btn" style="font-size:10px">Edit</button>
-      <button class="admin-btn-sm email-acc-del-btn" style="font-size:10px;opacity:0.6">Delete</button>
+      ${a.is_default ? '' : `<button class="admin-btn-sm email-acc-default-btn" style="font-size:0.6rem">Make Default</button>`}
+      <button class="admin-btn-sm email-acc-edit-btn" style="font-size:0.6rem">Edit</button>
+      <button class="admin-btn-sm email-acc-del-btn" style="font-size:0.6rem;opacity:0.6">Delete</button>
     </div>`;
   }
 
   async function renderList() {
     const accs = await fetchAccounts();
     if (!accs.length) {
-      listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">No email accounts configured</div>';
+      listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:0.75rem;text-align:center">No email accounts configured</div>';
       return;
     }
     listEl.innerHTML = accs.map(renderRow).join('');
@@ -2443,7 +2443,7 @@ async function initEmailAccountsSettings() {
     const _hint = (tip) =>
       `<span class="eaf-hint" title="${esc(tip)}" aria-label="${esc(tip)}" tabindex="0" `
       + `style="display:inline-block;width:13px;height:13px;border-radius:50%;`
-      + `border:1px solid currentColor;font-size:9px;line-height:11px;text-align:center;`
+      + `border:1px solid currentColor;font-size:0.55rem;line-height:11px;text-align:center;`
       + `opacity:0.45;margin-left:5px;cursor:help;vertical-align:1px;font-weight:600;">?</span>`;
     // Provider presets — picking one fills host/port/STARTTLS for both
     // IMAP and SMTP. Dovecot is IMAP-only here; the host is intentionally
@@ -2461,18 +2461,18 @@ async function initEmailAccountsSettings() {
       .map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`)
       .join('');
     formEl.innerHTML = `
-      <h3 style="font-size:12px;margin:0 0 8px">${isEdit ? 'Edit Account' : 'New Account'}</h3>
+      <h3 style="font-size:0.75rem;margin:0 0 8px">${isEdit ? 'Edit Account' : 'New Account'}</h3>
       <div class="settings-col">
         <div class="settings-row"><label class="settings-label">Provider${_hint('Pick a known provider to auto-fill the IMAP and SMTP host/port. Choose Custom to type your own.')}</label><select id="eaf-provider" class="settings-select"><option value="">Custom…</option>${_providerOptions}</select></div>
         <div class="settings-row"><label class="settings-label">Name${_hint('Optional label for this account (e.g. “Work” or “Personal”). Leave blank to use the email address.')}</label><input id="eaf-name" class="settings-input" placeholder="(optional — leave blank to use email)" value="${esc(a.name || '')}"></div>
         <div class="settings-row"><label class="settings-label">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="eaf-from" class="settings-input" placeholder="you@example.com" value="${esc(a.from_address || '')}"></div>
-        <div style="font-size:11px;font-weight:600;opacity:0.6;margin:6px 0 2px">IMAP (Receiving)</div>
+        <div style="font-size:0.7rem;font-weight:600;opacity:0.6;margin:6px 0 2px">IMAP (Receiving)</div>
         <div class="settings-row"><label class="settings-label">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="eaf-imap-host" class="settings-input" value="${esc(a.imap_host || '')}"></div>
         <div class="settings-row"><label class="settings-label">Port${_hint('993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143.')}</label><input id="eaf-imap-port" class="settings-input" type="number" value="${esc(a.imap_port || 993)}" style="max-width:100px"></div>
         <div class="settings-row"><label class="settings-label">Username${_hint('Usually your full email address.')}</label><input id="eaf-imap-user" class="settings-input" value="${esc(a.imap_user || '')}"></div>
         <div class="settings-row"><label class="settings-label">Password${_hint('Your IMAP login password. Use an app-specific password if your provider requires 2FA (Gmail, iCloud, etc.).')}</label><input id="eaf-imap-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_imap_password ? '(unchanged)' : ''}"></div>
         <div class="settings-row"><label class="settings-label">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch"><input type="checkbox" id="eaf-imap-starttls" ${a.imap_starttls !== false ? 'checked' : ''}><span class="admin-slider"></span></label></div>
-        <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
+        <div style="font-size:0.7rem;font-weight:600;opacity:0.6;margin:8px 0 2px">SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
         <div class="settings-row"><label class="settings-label">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com, smtp.migadu.com. Leave blank to make this account read-only.')}</label><input id="eaf-smtp-host" class="settings-input" value="${esc(a.smtp_host || '')}"></div>
         <div class="settings-row"><label class="settings-label">Port${_hint('465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs.')}</label><input id="eaf-smtp-port" class="settings-input" type="number" value="${esc(a.smtp_port || 465)}" style="max-width:100px"></div>
         <div class="settings-row"><label class="settings-label">Same as IMAP${_hint('Use the IMAP username and password for SMTP too (this is right for almost every provider). Turn off to enter separate SMTP credentials.')}</label><label class="admin-switch"><input type="checkbox" id="eaf-smtp-same" ${(!isEdit || (a.smtp_user && a.imap_user && a.smtp_user === a.imap_user)) ? 'checked' : ''}><span class="admin-slider"></span></label></div>
@@ -2483,7 +2483,7 @@ async function initEmailAccountsSettings() {
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
             ${isEdit ? 'Save' : 'Create'}
           </button>
-          <span id="eaf-msg" style="font-size:11px;flex:1;margin-left:8px;"></span>
+          <span id="eaf-msg" style="font-size:0.7rem;flex:1;margin-left:8px;"></span>
           <button class="admin-btn-add" id="eaf-cancel" style="opacity:0.7;display:inline-flex;align-items:center;gap:5px;position:relative;top:1px;margin-left:auto;">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             Cancel
@@ -2680,7 +2680,7 @@ async function initEmailSettings() {
         wrap.appendChild(wp.element);
         const txt = document.createElement('span');
         txt.textContent = 'Analyzing your sent emails…';
-        txt.style.cssText = 'font-size:12px;opacity:0.7;';
+        txt.style.cssText = 'font-size:0.75rem;opacity:0.7;';
         wrap.appendChild(txt);
         msg.appendChild(wrap);
       } catch (_) {
@@ -2790,28 +2790,28 @@ async function initIntegrations() {
   async function renderList() {
     try {
       const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
-      if (!res.ok) { listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;">Admin access required</div>'; return; }
+      if (!res.ok) { listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:0.75rem;">Admin access required</div>'; return; }
       const data = await res.json();
       const items = data.integrations || [];
       if (!items.length) {
-        listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center;">No integrations configured</div>';
+        listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:0.75rem;text-align:center;">No integrations configured</div>';
         return;
       }
       listEl.innerHTML = items.map(i => `
         <div class="admin-card" style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
           <div style="flex:1;min-width:0;">
-            <div style="font-size:13px;font-weight:600;">${_esc(i.name || i.id)}</div>
-            <div style="font-size:11px;opacity:0.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(i.base_url || '')}</div>
+            <div style="font-size:0.8rem;font-weight:600;">${_esc(i.name || i.id)}</div>
+            <div style="font-size:0.7rem;opacity:0.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(i.base_url || '')}</div>
           </div>
           <div style="display:flex;gap:4px;flex-shrink:0;">
-            <button class="admin-btn-sm intg-edit-btn" data-id="${i.id}" style="font-size:11px;">Edit</button>
-            <button class="admin-btn-sm intg-del-btn" data-id="${i.id}" style="font-size:11px;opacity:0.6;">Del</button>
+            <button class="admin-btn-sm intg-edit-btn" data-id="${i.id}" style="font-size:0.7rem;">Edit</button>
+            <button class="admin-btn-sm intg-del-btn" data-id="${i.id}" style="font-size:0.7rem;opacity:0.6;">Del</button>
           </div>
         </div>
       `).join('');
       listEl.querySelectorAll('.intg-edit-btn').forEach(b => b.addEventListener('click', () => startEdit(b.dataset.id)));
       listEl.querySelectorAll('.intg-del-btn').forEach(b => b.addEventListener('click', () => doDelete(b.dataset.id)));
-    } catch (e) { listEl.innerHTML = '<div style="padding:12px;color:var(--red);font-size:12px;">Failed to load</div>'; }
+    } catch (e) { listEl.innerHTML = '<div style="padding:12px;color:var(--red);font-size:0.75rem;">Failed to load</div>'; }
   }
 
   function _esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -3012,8 +3012,8 @@ async function initUnifiedIntegrations() {
     return `<div class="intg-card" data-intg-id="${item.id}" data-intg-type="${item.type}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;cursor:pointer" title="Click to edit">
       <span style="opacity:0.6;flex-shrink:0">${t.icon}</span>
       <div style="flex:1;min-width:0">
-        <div style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">${item.name} <span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 5px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 50%, transparent);border-radius:3px;color:var(--accent, var(--red));background:color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);">${t.label}</span></div>
-        <div style="font-size:11px;opacity:0.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.detail || ''}</div>
+        <div style="font-size:0.75rem;font-weight:600;display:flex;align-items:center;gap:6px">${item.name} <span style="font-size:0.55rem;text-transform:uppercase;letter-spacing:0.5px;padding:1px 5px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 50%, transparent);border-radius:3px;color:var(--accent, var(--red));background:color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);">${t.label}</span></div>
+        <div style="font-size:0.7rem;opacity:0.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.detail || ''}</div>
       </div>
       ${statusDot}
       <button class="admin-btn-sm intg-del-btn" data-intg-id="${item.id}" data-intg-type="${item.type}" title="Remove" style="background:none;border:none;padding:4px;cursor:pointer;color:var(--red);opacity:0.55;display:inline-flex;align-items:center;justify-content:center;">
@@ -3025,12 +3025,12 @@ async function initUnifiedIntegrations() {
   async function renderList() {
     const items = await fetchAll();
     const noticeHtml = integrationNotice ? `
-      <div class="intg-followup-note" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:8px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);border-left:3px solid var(--accent, var(--red));border-radius:5px;background:color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);font-size:11px;">
+      <div class="intg-followup-note" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:8px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);border-left:3px solid var(--accent, var(--red));border-radius:5px;background:color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);font-size:0.7rem;">
         <span style="flex:1;line-height:1.35">${integrationNotice}</span>
         <button type="button" class="admin-btn-sm intg-open-email-settings" style="white-space:nowrap;">Email settings</button>
       </div>` : '';
     if (items.length === 0) {
-      listEl.innerHTML = noticeHtml + '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">No integrations configured</div>';
+      listEl.innerHTML = noticeHtml + '<div style="padding:12px;opacity:0.5;font-size:0.75rem;text-align:center">No integrations configured</div>';
     } else {
       listEl.innerHTML = noticeHtml + items.map(renderCard).join('');
     }
@@ -3099,7 +3099,7 @@ async function initUnifiedIntegrations() {
     const _apiHint = (tip) =>
       `<span class="uf-hint" title="${esc(tip.replace(/<[^>]+>/g, ''))}" aria-label="${esc(tip.replace(/<[^>]+>/g, ''))}" tabindex="0" `
       + `style="display:inline-block;width:13px;height:13px;border-radius:50%;`
-      + `border:1px solid currentColor;font-size:9px;line-height:11px;text-align:center;`
+      + `border:1px solid currentColor;font-size:0.55rem;line-height:11px;text-align:center;`
       + `opacity:0.45;margin-left:5px;cursor:help;vertical-align:1px;font-weight:600;">?</span>`;
     // Real <select> instead of <datalist>: datalists are silently
     // suppressed in Firefox when autocomplete="off" is on the input,
@@ -3112,7 +3112,7 @@ async function initUnifiedIntegrations() {
       .join('');
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px">${editId ? 'Edit' : 'Add'} API Integration</h2>
+        <h2 style="font-size:0.8rem">${editId ? 'Edit' : 'Add'} API Integration</h2>
         <div class="settings-col">
           <div class="settings-row"><label class="settings-label">Preset</label><select id="uf-api-preset" class="settings-select"><option value="">Custom (no preset)</option>${selectOpts}</select></div>
           <div class="settings-row"><label class="settings-label">Name</label><input id="uf-api-name" class="settings-input" placeholder="My Service"></div>
@@ -3120,7 +3120,7 @@ async function initUnifiedIntegrations() {
           <div class="settings-row"><label class="settings-label">Auth${_apiHint('How this service expects the credential to be sent. <b>Bearer</b> = sends "Authorization: Bearer YOUR_KEY" (most modern APIs, ntfy, OpenAI-style). <b>Header</b> = sends YOUR_KEY verbatim under a header name you choose (Miniflux uses X-Auth-Token). <b>Basic</b> = HTTP basic auth (user:pass). <b>None</b> = the API is open / no auth.')}</label><select id="uf-api-auth" class="settings-input"><option value="bearer">Bearer (most common)</option><option value="header">Header</option><option value="basic">Basic</option><option value="none">None</option></select></div>
           <div class="settings-row" id="uf-api-header-row"><label class="settings-label">Header${_apiHint('The HTTP header name the key goes under (Miniflux: X-Auth-Token; most others: Authorization). Only used when Auth = Header.')}</label><input id="uf-api-header" class="settings-input" placeholder="X-Auth-Token"></div>
           <div class="settings-row"><label class="settings-label">API Key${_apiHint('The secret token the service issued you (generated in its admin panel / settings). Used to prove your identity on each request. Required for any Auth mode except None.')}</label><input id="uf-api-key" class="settings-input" type="password" placeholder="Token/key"></div>
-          <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-api-save">Save</button><button class="admin-btn-sm" id="uf-api-test" style="opacity:0.7">Test</button><button class="admin-btn-sm" id="uf-api-cancel" style="opacity:0.7">Cancel</button><span id="uf-api-msg" style="font-size:11px"></span></div>
+          <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-api-save">Save</button><button class="admin-btn-sm" id="uf-api-test" style="opacity:0.7">Test</button><button class="admin-btn-sm" id="uf-api-cancel" style="opacity:0.7">Cancel</button><span id="uf-api-msg" style="font-size:0.7rem"></span></div>
         </div>
       </div>`;
     const preset = el('uf-api-preset'), name = el('uf-api-name'), url = el('uf-api-url'), auth = el('uf-api-auth'), header = el('uf-api-header'), key = el('uf-api-key');
@@ -3187,12 +3187,12 @@ async function initUnifiedIntegrations() {
   async function showCalDavForm() {
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px">Calendar (CalDAV)</h2>
+        <h2 style="font-size:0.8rem">Calendar (CalDAV)</h2>
         <div class="settings-col">
           <div class="settings-row"><label class="settings-label">Server URL</label><input id="uf-caldav-url" class="settings-input" placeholder="http://localhost:5232/user"></div>
           <div class="settings-row"><label class="settings-label">Username</label><input id="uf-caldav-user" class="settings-input"></div>
           <div class="settings-row"><label class="settings-label">Password</label><input id="uf-caldav-pass" class="settings-input" type="password"></div>
-          <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-caldav-save">Save</button><button class="admin-btn-sm" id="uf-caldav-test" style="opacity:0.7">Test</button><button class="admin-btn-sm" id="uf-caldav-cancel" style="opacity:0.7">Cancel</button><span id="uf-caldav-msg" style="font-size:11px"></span></div>
+          <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-caldav-save">Save</button><button class="admin-btn-sm" id="uf-caldav-test" style="opacity:0.7">Test</button><button class="admin-btn-sm" id="uf-caldav-cancel" style="opacity:0.7">Cancel</button><span id="uf-caldav-msg" style="font-size:0.7rem"></span></div>
         </div>
       </div>`;
     try {
@@ -3269,17 +3269,17 @@ async function initUnifiedIntegrations() {
   async function showCardDavForm() {
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px">Contacts (CardDAV)</h2>
+        <h2 style="font-size:0.8rem">Contacts (CardDAV)</h2>
         <div class="settings-col">
           <div class="settings-row"><label class="settings-label">URL</label><input id="uf-carddav-url" class="settings-input" placeholder="http://localhost:5232/user/contacts/"></div>
           <div class="settings-row"><label class="settings-label">Username</label><input id="uf-carddav-user" class="settings-input"></div>
           <div class="settings-row"><label class="settings-label">Password</label><input id="uf-carddav-pass" class="settings-input" type="password"></div>
-          <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-carddav-save">Save</button><button class="admin-btn-sm" id="uf-carddav-cancel" style="opacity:0.7">Cancel</button><span id="uf-carddav-msg" style="font-size:11px"></span></div>
+          <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-carddav-save">Save</button><button class="admin-btn-sm" id="uf-carddav-cancel" style="opacity:0.7">Cancel</button><span id="uf-carddav-msg" style="font-size:0.7rem"></span></div>
         </div>
       </div>
       <div class="admin-card contacts-manager" style="margin-top:8px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <h2 style="font-size:13px;margin:0;">Contacts <span id="cm-count" style="opacity:0.5;font-weight:normal;font-size:11px;"></span></h2>
+          <h2 style="font-size:0.8rem;margin:0;">Contacts <span id="cm-count" style="opacity:0.5;font-weight:normal;font-size:0.7rem;"></span></h2>
           <button class="admin-btn-sm" id="cm-import-btn" style="margin-left:auto;">Import</button>
           <button class="admin-btn-sm" id="cm-export-vcf-btn">Export .vcf</button>
           <button class="admin-btn-sm" id="cm-export-csv-btn">Export .csv</button>
@@ -3291,7 +3291,7 @@ async function initUnifiedIntegrations() {
           <input id="cm-add-email" class="settings-input" placeholder="email@example.com" style="flex:1;min-width:0;">
           <button class="admin-btn-sm" id="cm-add-save">Save</button>
         </div>
-        <div id="cm-list" class="contacts-list"><div style="opacity:0.4;font-size:11px;padding:8px 2px;">Loading…</div></div>
+        <div id="cm-list" class="contacts-list"><div style="opacity:0.4;font-size:0.7rem;padding:8px 2px;">Loading…</div></div>
       </div>`;
     try {
       const r = await fetch('/api/contacts/config', { credentials: 'same-origin' }); const d = await r.json();
@@ -3418,13 +3418,13 @@ async function initUnifiedIntegrations() {
       const d = await r.json();
       contacts = d.contacts || [];
     } catch (_) {
-      list.innerHTML = '<div style="opacity:0.5;font-size:11px;padding:8px 2px;">Failed to load contacts (check CardDAV config above).</div>';
+      list.innerHTML = '<div style="opacity:0.5;font-size:0.7rem;padding:8px 2px;">Failed to load contacts (check CardDAV config above).</div>';
       return;
     }
     const cnt = el('cm-count');
     if (cnt) cnt.textContent = contacts.length ? `(${contacts.length})` : '';
     if (!contacts.length) {
-      list.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 2px;">No contacts yet.</div>';
+      list.innerHTML = '<div style="opacity:0.4;font-size:0.7rem;padding:8px 2px;">No contacts yet.</div>';
       return;
     }
     // Sort by name for a stable list.
@@ -3436,8 +3436,8 @@ async function initUnifiedIntegrations() {
       return `<div class="contact-row" data-uid="${esc(c.uid)}">
         <div class="contact-row-view" style="display:flex;align-items:center;gap:8px;">
           <div style="flex:1;min-width:0;">
-            <div class="contact-name" style="font-size:12px;font-weight:600;">${esc(c.name || '(no name)')}</div>
-            <div class="contact-sub" style="font-size:10px;opacity:0.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(sub)}</div>
+            <div class="contact-name" style="font-size:0.75rem;font-weight:600;">${esc(c.name || '(no name)')}</div>
+            <div class="contact-sub" style="font-size:0.6rem;opacity:0.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(sub)}</div>
           </div>
           <button class="admin-btn-sm contact-edit" title="Edit">Edit</button>
           <button class="admin-btn-sm contact-del" title="Delete" style="opacity:0.75;">Delete</button>
@@ -3506,7 +3506,7 @@ async function initUnifiedIntegrations() {
     const _hint = (tip) =>
       `<span class="uf-hint" title="${esc(tip)}" aria-label="${esc(tip)}" tabindex="0" `
       + `style="display:inline-block;width:13px;height:13px;border-radius:50%;`
-      + `border:1px solid currentColor;font-size:9px;line-height:11px;text-align:center;`
+      + `border:1px solid currentColor;font-size:0.55rem;line-height:11px;text-align:center;`
       + `opacity:0.45;margin-left:5px;cursor:help;vertical-align:1px;font-weight:600;">?</span>`;
     // Provider presets — picking one auto-fills IMAP + SMTP host/port.
     // Dovecot is IMAP-only here; the host is intentionally blank because
@@ -3524,25 +3524,25 @@ async function initUnifiedIntegrations() {
       .map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px">${isEdit ? 'Edit' : 'Add'} Email Account</h2>
+        <h2 style="font-size:0.8rem">${isEdit ? 'Edit' : 'Add'} Email Account</h2>
         <div class="settings-col">
           <div class="settings-row"><label class="settings-label">Provider${_hint('Pick a known provider to auto-fill the IMAP and SMTP host/port. Choose Custom to type your own.')}</label><select id="uf-email-provider" class="settings-select"><option value="">Custom…</option>${_providerOptions}</select></div>
-          <div id="uf-email-provider-note" style="display:none;font-size:11px;line-height:1.5;padding:8px 10px;margin:2px 0 4px;border:1px solid color-mix(in srgb, var(--fg) 15%, transparent);border-left:3px solid var(--accent, var(--red));border-radius:4px;background:color-mix(in srgb, var(--fg) 4%, transparent);"></div>
+          <div id="uf-email-provider-note" style="display:none;font-size:0.7rem;line-height:1.5;padding:8px 10px;margin:2px 0 4px;border:1px solid color-mix(in srgb, var(--fg) 15%, transparent);border-left:3px solid var(--accent, var(--red));border-radius:4px;background:color-mix(in srgb, var(--fg) 4%, transparent);"></div>
           <div class="settings-row"><label class="settings-label">Name${_hint('Optional label for this account (e.g. “Work” or “Personal”). Leave blank to use the email address.')}</label><input id="uf-email-name" class="settings-input" placeholder="(optional — leave blank to use email)"></div>
           <div class="settings-row"><label class="settings-label">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="uf-email-from" class="settings-input" placeholder="you@example.com"></div>
-          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:4px 0 2px">IMAP (Receiving)</div>
+          <div style="font-size:0.7rem;font-weight:600;opacity:0.6;margin:4px 0 2px">IMAP (Receiving)</div>
           <div class="settings-row"><label class="settings-label">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="uf-imap-host" class="settings-input" placeholder="imap.example.com"></div>
           <div class="settings-row"><label class="settings-label">Port${_hint('993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143.')}</label><input id="uf-imap-port" class="settings-input" type="number" placeholder="993" style="max-width:100px"></div>
           <div class="settings-row"><label class="settings-label">Username${_hint('Yes — your full email address goes here too (e.g. you@gmail.com). Same as the Email field above for almost every provider.')}</label><input id="uf-imap-user" class="settings-input" placeholder="you@example.com"></div>
           <div class="settings-row"><label class="settings-label">Password${_hint('For Gmail, iCloud, and Yahoo: paste your App Password (NOT your normal account password — those are blocked for IMAP). For Migadu, Fastmail, Outlook, etc.: your regular mailbox password works.')}</label><input id="uf-imap-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
           <div class="settings-row"><label class="settings-label">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-imap-starttls" checked><span class="admin-slider"></span></label></div>
-          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
+          <div style="font-size:0.7rem;font-weight:600;opacity:0.6;margin:8px 0 2px">SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
           <div class="settings-row"><label class="settings-label">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com. Leave blank to make this account read-only.')}</label><input id="uf-smtp-host" class="settings-input" placeholder="smtp.example.com"></div>
           <div class="settings-row"><label class="settings-label">Port${_hint('465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs.')}</label><input id="uf-smtp-port" class="settings-input" type="number" placeholder="465" style="max-width:100px"></div>
           <div class="settings-row"><label class="settings-label">Same as IMAP${_hint('Use the IMAP username and password for SMTP too (right for almost every provider). Turn off to enter separate SMTP credentials.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-smtp-same" checked><span class="admin-slider"></span></label></div>
           <div class="settings-row uf-smtp-creds"><label class="settings-label">Username${_hint('Usually the same as your IMAP username (your email address).')}</label><input id="uf-smtp-user" class="settings-input"></div>
           <div class="settings-row uf-smtp-creds"><label class="settings-label">Password${_hint('Your SMTP password — often the same as your IMAP password.')}</label><input id="uf-smtp-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
-          <div class="settings-row" style="margin-top:4px"><label class="settings-label">Default${_hint('Use this account whenever no specific account is chosen.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-email-default"><span class="admin-slider"></span></label><span style="font-size:10px;opacity:0.5;margin-left:6px">Used when nothing else is selected</span></div>
+          <div class="settings-row" style="margin-top:4px"><label class="settings-label">Default${_hint('Use this account whenever no specific account is chosen.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-email-default"><span class="admin-slider"></span></label><span style="font-size:0.6rem;opacity:0.5;margin-left:6px">Used when nothing else is selected</span></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;">
             <button class="admin-btn-add" id="uf-email-save" style="background:var(--red);border-color:var(--red);color:#fff;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
               <span class="uf-email-save-ico" style="display:inline-flex;width:11px;height:11px;align-items:center;justify-content:center;">
@@ -3556,7 +3556,7 @@ async function initUnifiedIntegrations() {
               </span>
               Test
             </button>
-            <span id="uf-email-msg" style="font-size:11px;flex:1;margin-left:8px"></span>
+            <span id="uf-email-msg" style="font-size:0.7rem;flex:1;margin-left:8px"></span>
             <button class="admin-btn-add" id="uf-email-cancel" style="opacity:0.7;display:inline-flex;align-items:center;gap:5px;position:relative;top:1px;margin-left:auto;">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               Cancel
@@ -3867,8 +3867,8 @@ async function initUnifiedIntegrations() {
   async function showVaultForm() {
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px">Vaultwarden (Password Vault)</h2>
-        <div id="uf-vault-status" style="font-size:11px;opacity:0.7;margin-bottom:8px">Loading...</div>
+        <h2 style="font-size:0.8rem">Vaultwarden (Password Vault)</h2>
+        <div id="uf-vault-status" style="font-size:0.7rem;opacity:0.7;margin-bottom:8px">Loading...</div>
         <div class="settings-col">
           <div class="settings-row"><label class="settings-label">Server URL</label><input id="uf-vault-url" class="settings-input" placeholder="https://vault.example.com"></div>
           <div class="settings-row"><label class="settings-label">Email</label><input id="uf-vault-email" class="settings-input" placeholder="you@example.com"></div>
@@ -3880,9 +3880,9 @@ async function initUnifiedIntegrations() {
             <button class="admin-btn-sm" id="uf-vault-lock" style="opacity:0.7">Lock</button>
             <button class="admin-btn-sm" id="uf-vault-logout" style="opacity:0.7">Logout</button>
             <button class="admin-btn-sm" id="uf-vault-cancel" style="opacity:0.7">Cancel</button>
-            <span id="uf-vault-msg" style="font-size:11px;margin-left:4px"></span>
+            <span id="uf-vault-msg" style="font-size:0.7rem;margin-left:4px"></span>
           </div>
-          <div style="font-size:10px;opacity:0.5;margin-top:6px;line-height:1.4">
+          <div style="font-size:0.6rem;opacity:0.5;margin-top:6px;line-height:1.4">
             <strong>Login</strong> registers this device with your Vaultwarden account (once per account).<br>
             <strong>Unlock</strong> decrypts the vault — required after restart or Lock. Session is saved so the assistant can read passwords.
           </div>
@@ -3994,7 +3994,7 @@ async function initUnifiedIntegrations() {
   async function showMcpForm(editId) {
     if (editId && editId !== 'new') {
       // Show management view for existing server
-      formEl.innerHTML = '<div class="admin-card" style="margin-top:8px"><span style="opacity:0.5;font-size:11px">Loading...</span></div>';
+      formEl.innerHTML = '<div class="admin-card" style="margin-top:8px"><span style="opacity:0.5;font-size:0.7rem">Loading...</span></div>';
       try {
         const res = await fetch('/api/mcp/servers', { credentials: 'same-origin' });
         const servers = await res.json();
@@ -4006,17 +4006,17 @@ async function initUnifiedIntegrations() {
         const statusText = srv.needs_oauth ? 'Needs authorization' : srv.status === 'connected' ? `Connected (${toolInfo})` : srv.status === 'error' ? `Error: ${esc(srv.error || 'unknown')}` : 'Disconnected';
         formEl.innerHTML = `
           <div class="admin-card" style="margin-top:8px">
-            <h2 style="font-size:13px">${esc(srv.name)}</h2>
+            <h2 style="font-size:0.8rem">${esc(srv.name)}</h2>
             <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
               <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${statusColor}"></span>
-              <span style="font-size:11px;opacity:0.7">${statusText}</span>
+              <span style="font-size:0.7rem;opacity:0.7">${statusText}</span>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
               ${srv.needs_oauth ? `<a href="/api/mcp/oauth/authorize/${srv.id}" target="_blank" class="admin-btn-sm" style="background:var(--red);color:#fff;text-decoration:none">Authorize</a>` : ''}
               <button class="admin-btn-sm" id="uf-mcp-reconnect">Reconnect</button>
               <button class="admin-btn-sm" id="uf-mcp-toggle">${srv.is_enabled ? 'Disable' : 'Enable'}</button>
               <button class="admin-btn-sm" id="uf-mcp-cancel" style="opacity:0.7">Close</button>
-              <span id="uf-mcp-msg" style="font-size:11px"></span>
+              <span id="uf-mcp-msg" style="font-size:0.7rem"></span>
             </div>
             <div id="uf-mcp-tools-panel"></div>
           </div>`;
@@ -4059,14 +4059,14 @@ async function initUnifiedIntegrations() {
               el('uf-mcp-all')?.addEventListener('click', (e) => { e.preventDefault(); panel.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true); saveFn(); });
               el('uf-mcp-none')?.addEventListener('click', (e) => { e.preventDefault(); panel.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false); saveFn(); });
             }
-          } catch (_) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px">Failed to load tools</span>'; }
+          } catch (_) { panel.innerHTML = '<span style="opacity:0.5;font-size:0.7rem">Failed to load tools</span>'; }
         }
       } catch (_) { formEl.innerHTML = '<div class="admin-card" style="margin-top:8px">Failed to load server</div>'; }
     } else {
       // Add new MCP server form
       formEl.innerHTML = `
         <div class="admin-card" style="margin-top:8px">
-          <h2 style="font-size:13px">Add MCP Server</h2>
+          <h2 style="font-size:0.8rem">Add MCP Server</h2>
           <div class="settings-col">
             <div class="settings-row"><label class="settings-label">Name</label><input id="uf-mcp-name" class="settings-input" placeholder="Server name"></div>
             <div class="settings-row"><label class="settings-label">Transport</label><select id="uf-mcp-transport" class="settings-input"><option value="stdio">stdio</option><option value="sse">SSE</option></select></div>
@@ -4078,7 +4078,7 @@ async function initUnifiedIntegrations() {
             <div id="uf-mcp-sse-fields" style="display:none;flex-direction:column;gap:6px;">
               <div class="settings-row"><label class="settings-label">URL</label><input id="uf-mcp-url" class="settings-input" placeholder="http://localhost:3001/sse"></div>
             </div>
-            <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-mcp-save">Save</button><button class="admin-btn-sm" id="uf-mcp-cancel" style="opacity:0.7">Cancel</button><span id="uf-mcp-msg" style="font-size:11px"></span></div>
+            <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-mcp-save">Save</button><button class="admin-btn-sm" id="uf-mcp-cancel" style="opacity:0.7">Cancel</button><span id="uf-mcp-msg" style="font-size:0.7rem"></span></div>
           </div>
         </div>`;
       el('uf-mcp-transport').addEventListener('change', () => {
@@ -4111,7 +4111,7 @@ async function initUnifiedIntegrations() {
       formEl.style.display = '';
       formEl.innerHTML = `
         <div class="admin-card" style="margin-top:8px">
-          <h2 style="font-size:13px">Add Integration</h2>
+          <h2 style="font-size:0.8rem">Add Integration</h2>
           <div class="settings-col">
             <div class="settings-row"><label class="settings-label">Type</label>
               <select id="uf-type-picker" class="settings-input">

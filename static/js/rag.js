@@ -42,7 +42,7 @@ export async function loadPersonalDocs() {
     if (files.length === 0) {
       const placeholder = document.createElement('div');
       placeholder.textContent = 'Drop files above to add to RAG';
-      placeholder.style.cssText = 'color:var(--color-muted);font-size:12px;padding:4px 0;';
+      placeholder.style.cssText = 'color:var(--color-muted);font-size:0.75rem;padding:4px 0;';
       box.appendChild(placeholder);
       return;
     }
@@ -60,7 +60,7 @@ export async function loadPersonalDocs() {
       row.appendChild(name);
 
       const size = document.createElement('span');
-      size.style.cssText = 'color:var(--color-muted);font-size:11px;flex-shrink:0;';
+      size.style.cssText = 'color:var(--color-muted);font-size:0.7rem;flex-shrink:0;';
       size.textContent = _humanSize(f.size);
       row.appendChild(size);
 
@@ -68,7 +68,7 @@ export async function loadPersonalDocs() {
       del.className = 'rag-file-delete';
       del.textContent = 'x';
       del.title = 'Remove from RAG';
-      del.style.cssText = 'background:none;border:none;color:var(--color-error);cursor:pointer;padding:2px 4px;font-size:12px;flex-shrink:0;';
+      del.style.cssText = 'background:none;border:none;color:var(--color-error);cursor:pointer;padding:2px 4px;font-size:0.75rem;flex-shrink:0;';
       del.addEventListener('click', (e) => {
         e.stopPropagation();
         _deleteFile(f.path || f.name, f.name.split('/').pop());

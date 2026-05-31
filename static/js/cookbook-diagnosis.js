@@ -413,7 +413,7 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
 
   const dismiss = document.createElement('button');
   dismiss.className = 'close-btn';
-  dismiss.style.cssText = 'width:16px;height:16px;font-size:9px;flex-shrink:0;';
+  dismiss.style.cssText = 'width:16px;height:16px;font-size:0.55rem;flex-shrink:0;';
   dismiss.textContent = '\u2715';
   dismiss.addEventListener('click', () => { panel._diagDismissed = diagnosis.message; _clearDiagnosis(panel); });
   header.appendChild(dismiss);

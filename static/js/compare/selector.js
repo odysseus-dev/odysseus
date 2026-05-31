@@ -953,7 +953,7 @@ async function showModelSelector() {
       const skipBtn = document.createElement('button');
       skipBtn.textContent = 'Skip';
       skipBtn.className = 'cmp-btn-secondary';
-      skipBtn.style.cssText = 'padding:4px 14px;font-size:11px;opacity:0.5;transition:opacity 0.15s;margin-top:8px;';
+      skipBtn.style.cssText = 'padding:4px 14px;font-size:0.7rem;opacity:0.5;transition:opacity 0.15s;margin-top:8px;';
       skipBtn.addEventListener('mouseenter', () => { skipBtn.style.opacity = '1'; });
       skipBtn.addEventListener('mouseleave', () => { skipBtn.style.opacity = '0.5'; });
       skipBtn.addEventListener('click', () => {
@@ -1051,7 +1051,7 @@ async function showModelSelector() {
           // Error + actions below the row
           const detail = document.createElement('div');
           detail.className = 'compare-probe-detail';
-          detail.style.cssText = 'grid-column:1/-1;display:flex;align-items:flex-start;gap:6px;padding:4px 10px 6px;font-size:10px;opacity:0.6;background:color-mix(in srgb, var(--color-error, #f44) 5%, transparent);border-radius:4px;margin-top:-2px;';
+          detail.style.cssText = 'grid-column:1/-1;display:flex;align-items:flex-start;gap:6px;padding:4px 10px 6px;font-size:0.6rem;opacity:0.6;background:color-mix(in srgb, var(--color-error, #f44) 5%, transparent);border-radius:4px;margin-top:-2px;';
           const errSpan = document.createElement('span');
           // Truncate long error messages
           const errText = (result.error || 'Failed');
@@ -1273,12 +1273,12 @@ async function showModelSelector() {
           const goBackBtn = document.createElement('button');
           goBackBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="15 18 9 12 15 6"/></svg>Go Back';
           goBackBtn.className = 'cmp-btn-secondary';
-          goBackBtn.style.cssText = 'padding:5px 12px;font-size:12px;display:inline-flex;align-items:center;';
+          goBackBtn.style.cssText = 'padding:5px 12px;font-size:0.75rem;display:inline-flex;align-items:center;';
           goBackBtn.addEventListener('click', () => { _clearProbeWaves(); probeOverlay.remove(); startBtn.disabled = false; startBtn.innerHTML = _CMP_START_LABEL; startBtn.style.opacity = '1'; });
           const startAnywayBtn = document.createElement('button');
           startAnywayBtn.textContent = 'Start Anyway';
           startAnywayBtn.className = 'cmp-btn-primary';
-          startAnywayBtn.style.cssText = 'padding:5px 12px;font-size:12px;';
+          startAnywayBtn.style.cssText = 'padding:5px 12px;font-size:0.75rem;';
           startAnywayBtn.addEventListener('click', () => { _clearProbeWaves(); probeOverlay.remove(); cleanup(true); });
           btnRow.appendChild(goBackBtn);
           btnRow.appendChild(startAnywayBtn);

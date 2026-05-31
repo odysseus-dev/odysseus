@@ -51,7 +51,7 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
           To Mask
         </button>
       </div>
-      <p style="font-size:9px;opacity:0.4;margin:4px 0 0;">Draw a freehand selection. Esc to cancel.</p>
+      <p style="font-size:0.55rem;opacity:0.4;margin:4px 0 0;">Draw a freehand selection. Esc to cancel.</p>
     </div>
     <div class="ge-wand-section" id="ge-wand-section" style="display:none;">
       <div class="ge-control-row" style="display:flex;gap:4px;margin-bottom:4px;" title="How the next click combines with the current selection. Shift / Alt held during a click override this for one click.">
@@ -100,7 +100,7 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
           To Mask
         </button>
       </div>
-      <p style="font-size:9px;opacity:0.4;margin:4px 0 0;">Click a region to select similar pixels. Shift+click to add, Alt+click to subtract. Esc to clear.</p>
+      <p style="font-size:0.55rem;opacity:0.4;margin:4px 0 0;">Click a region to select similar pixels. Shift+click to add, Alt+click to subtract. Esc to clear.</p>
     </div>
     <div class="ge-inpaint-section" id="ge-inpaint-section" style="display:none;">
       <div class="ge-inpaint-popover-head" data-inpaint-drag>
@@ -287,7 +287,7 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
       </div>
     </div>
     <div class="ge-import-section" id="ge-import-section" style="display:none;">
-      <p style="font-size:10px;opacity:0.5;margin:0 0 6px;">Import an image as a new layer. Drag to position it.</p>
+      <p style="font-size:0.6rem;opacity:0.5;margin:0 0 6px;">Import an image as a new layer. Drag to position it.</p>
       <div class="ge-control-row ge-actions">
         <button class="ge-btn" id="ge-import-file">File</button>
         <button class="ge-btn" id="ge-import-paste">Clipboard</button>
@@ -303,7 +303,7 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
         </select>
       </div>
       <div class="ge-control-row">
-        <label style="font-size:11px;opacity:0.6;">Prompt (only used if Seam fix &gt; 0)</label>
+        <label style="font-size:0.7rem;opacity:0.6;">Prompt (only used if Seam fix &gt; 0)</label>
       </div>
       <input type="text" class="ge-inpaint-prompt" id="ge-harmonize-prompt" placeholder="photorealistic, natural lighting, seamless blend..." />
       <div class="ge-control-row ge-eraser-row">
@@ -321,7 +321,7 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
       </div>
     </div>
     <div class="ge-style-section" id="ge-style-section" style="display:none;">
-      <p style="font-size:10px;opacity:0.5;margin:0 0 6px;">Apply an art style to the image using img2img. Requires a running diffusion model.</p>
+      <p style="font-size:0.6rem;opacity:0.5;margin:0 0 6px;">Apply an art style to the image using img2img. Requires a running diffusion model.</p>
       <div class="ge-control-row ge-tool-model-row">
         <label>Model</label>
         <select class="ge-tool-model" data-ge-tool-model="style" title="Model for Style transfer">
@@ -329,11 +329,11 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
         </select>
       </div>
       <div class="ge-control-row">
-        <label style="font-size:11px;opacity:0.6;">Style prompt</label>
+        <label style="font-size:0.7rem;opacity:0.6;">Style prompt</label>
       </div>
       <input type="text" class="ge-inpaint-prompt" id="ge-style-prompt" placeholder="oil painting, impressionist, Van Gogh..." />
       <div class="ge-control-row">
-        <label style="font-size:11px;opacity:0.6;">Strength <span id="ge-style-strength-label">0.55</span></label>
+        <label style="font-size:0.7rem;opacity:0.6;">Strength <span id="ge-style-strength-label">0.55</span></label>
         <input type="range" id="ge-style-strength" min="10" max="90" value="55" style="flex:1;" />
       </div>
       <div class="ge-control-row ge-actions" style="margin-top:4px;">

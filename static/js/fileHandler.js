@@ -213,7 +213,7 @@ function _showToast(msg) {
   if (!t) {
     t = document.createElement('div');
     t.id = '_attach-toast';
-    t.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--red);color:var(--red);padding:6px 14px;border-radius:6px;font-size:13px;z-index:9999;opacity:0;transition:opacity .3s';
+    t.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--red);color:var(--red);padding:6px 14px;border-radius:6px;font-size:0.8rem;z-index:9999;opacity:0;transition:opacity .3s';
     document.body.appendChild(t);
   }
   t.textContent = msg;

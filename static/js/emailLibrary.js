@@ -372,7 +372,7 @@ function _openSettingsTab(tab) {
 }
 
 function _emailSetupHintHtml() {
-  return '<div style="margin-top:6px;opacity:0.72;font-size:11px;">' +
+  return '<div style="margin-top:6px;opacity:0.72;font-size:0.7rem;">' +
     'Setup: <a href="#" data-open-settings="integrations" style="color:var(--accent,var(--red));text-decoration:underline;">Settings &rsaquo; Integrations</a>' +
     '</div>';
 }
@@ -563,7 +563,7 @@ export function openEmailLibrary(opts = {}) {
           <div id="email-lib-bulk" class="memory-bulk-bar hidden" style="margin-bottom:5px;">
             <label class="memory-bulk-check-all" style="position:relative;top:2px;"><input type="checkbox" id="email-lib-select-all"> All</label>
             <span id="email-lib-selected-count" style="position:relative;top:1px;">0 Selected</span>
-            <button class="memory-toolbar-btn" id="email-lib-bulk-actions" style="position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Actions <span style="opacity:0.55;font-size:9px;">▼</span></button>
+            <button class="memory-toolbar-btn" id="email-lib-bulk-actions" style="position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Actions <span style="opacity:0.55;font-size:0.55rem;">▼</span></button>
             <button class="memory-toolbar-btn" id="email-lib-bulk-delete" style="position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>
             <button class="memory-toolbar-btn" id="email-lib-bulk-cancel" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
@@ -1412,12 +1412,12 @@ async function _loadScheduled(grid, sp) {
     content.innerHTML = `
       <div style="display:flex;align-items:center;gap:6px;">
         <span class="memory-item-title">${_esc(subject)}</span>
-        ${it.status === 'failed' ? '<span style="font-size:9px;color:var(--red);border:1px solid var(--red);padding:1px 4px;border-radius:4px;">FAILED</span>' : '<span style="font-size:9px;opacity:0.6;border:1px solid var(--border);padding:1px 4px;border-radius:4px;">PENDING</span>'}
+        ${it.status === 'failed' ? '<span style="font-size:0.55rem;color:var(--red);border:1px solid var(--red);padding:1px 4px;border-radius:4px;">FAILED</span>' : '<span style="font-size:0.55rem;opacity:0.6;border:1px solid var(--border);padding:1px 4px;border-radius:4px;">PENDING</span>'}
       </div>
-      <div style="font-size:10px;opacity:0.7;margin-top:2px;">
+      <div style="font-size:0.6rem;opacity:0.7;margin-top:2px;">
         To: ${_esc(toDisplay)} · Sends ${_esc(dateStr)}
       </div>
-      ${it.error ? `<div style="font-size:10px;color:var(--red);margin-top:2px;">${_esc(it.error)}</div>` : ''}
+      ${it.error ? `<div style="font-size:0.6rem;color:var(--red);margin-top:2px;">${_esc(it.error)}</div>` : ''}
     `;
     card.appendChild(content);
 
@@ -1477,7 +1477,7 @@ function _renderGrid() {
       grid.innerHTML =
         '<div class="email-loading" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;text-align:center;">' +
           '<span>No emails' + _smileyIco + '</span>' +
-          '<span style="opacity:0.7;font-size:11px;">' +
+          '<span style="opacity:0.7;font-size:0.7rem;">' +
             'Set up at: <a href="#" data-open-settings="integrations" style="color:var(--accent,var(--red));text-decoration:underline;">Settings &rsaquo; Integrations</a>' +
           '</span>' +
         '</div>';
@@ -1705,7 +1705,7 @@ function _createCard(em) {
 
   const meta = document.createElement('div');
   meta.className = 'memory-item-meta';
-  meta.style.cssText = 'font-size:10px;opacity:0.7;margin-top:2px;';
+  meta.style.cssText = 'font-size:0.6rem;opacity:0.7;margin-top:2px;';
   const senderPrefix = isSentFolderEarly ? 'to ' : '';
   meta.innerHTML = `<span class="email-meta-sender"><span style="opacity:0.55">${senderPrefix}</span><span style="color:${color};font-weight:600">${_esc(senderName)}</span></span><span class="email-meta-sep"> · </span><span class="email-meta-date">${_esc(dateStr)}</span>`;
   content.appendChild(meta);
@@ -3903,7 +3903,7 @@ async function _summarizeEmail(reader, data, btn) {
         <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>
         <span>Summary</span>
       </div>
-      <div class="email-summary-content" style="white-space:normal;display:flex;align-items:center;flex-wrap:wrap;gap:6px;"><span style="opacity:0.65">No AI summary generated.</span><button class="memory-toolbar-btn" data-act="summary-generate" style="font-size:10px;margin-left:auto;">Generate now</button></div>`;
+      <div class="email-summary-content" style="white-space:normal;display:flex;align-items:center;flex-wrap:wrap;gap:6px;"><span style="opacity:0.65">No AI summary generated.</span><button class="memory-toolbar-btn" data-act="summary-generate" style="font-size:0.6rem;margin-left:auto;">Generate now</button></div>`;
     body.insertBefore(prompt, body.firstChild);
     if (btn) {
       btn.classList.add('active');
@@ -4050,7 +4050,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
   dropdown._anchor = anchor;
   anchor.classList.add('reader-more-active');
   const rect = anchor.getBoundingClientRect();
-  dropdown.style.cssText = `position:fixed;z-index:10001;min-width:180px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;right:${window.innerWidth - rect.right}px;`;
+  dropdown.style.cssText = `position:fixed;z-index:10001;min-width:180px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:0.75rem;top:${rect.bottom + 4}px;right:${window.innerWidth - rect.right}px;`;
 
   const _icon = (svg) => `<span class="dropdown-icon">${svg}</span>`;
   const _unreadIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
@@ -4244,7 +4244,7 @@ function _showCardMenu(em, anchor) {
   const dropdown = document.createElement('div');
   dropdown.className = 'email-card-dropdown';
   const rect = anchor.getBoundingClientRect();
-  dropdown.style.cssText = `position:fixed;z-index:10001;min-width:140px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;right:${window.innerWidth - rect.right}px;`;
+  dropdown.style.cssText = `position:fixed;z-index:10001;min-width:140px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:0.75rem;top:${rect.bottom + 4}px;right:${window.innerWidth - rect.right}px;`;
 
   const _icon = (svg) => `<span class="dropdown-icon">${svg}</span>`;
   const _replyIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>';
@@ -4336,7 +4336,7 @@ function _showCardMenu(em, anchor) {
   // Match the chat-sidebar Select icon — a thick bullet character reads
   // much heavier than a small SVG circle. Nudged up 2px so its visual
   // center lines up with the SVG icons above (which sit a bit higher).
-  const _selectIcon = '<span style="font-size:16px;line-height:1;position:relative;top:-2px;">●</span>';
+  const _selectIcon = '<span style="font-size:1rem;line-height:1;position:relative;top:-2px;">●</span>';
   actions.push({
     label: 'Select',
     icon: _selectIcon,
@@ -4409,7 +4409,7 @@ function _showBulkActionsMenu(anchor) {
   const dropdown = document.createElement('div');
   dropdown.className = 'email-card-dropdown email-bulk-menu';
   const rect = anchor.getBoundingClientRect();
-  dropdown.style.cssText = `position:fixed;z-index:10001;min-width:160px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;left:${rect.left}px;`;
+  dropdown.style.cssText = `position:fixed;z-index:10001;min-width:160px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:0.75rem;top:${rect.bottom + 4}px;left:${rect.left}px;`;
   const _readIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4 20-7z"/></svg>';
   const _unreadIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
   const items = [
@@ -4543,7 +4543,7 @@ function _showLibRemindSubmenu(em, parentDropdown) {
   parentDropdown.innerHTML = '';
   const header = document.createElement('div');
   header.className = 'dropdown-item-compact';
-  header.style.cssText = 'opacity:0.5;font-size:10px;pointer-events:none;text-transform:uppercase;letter-spacing:0.5px;padding-top:6px;';
+  header.style.cssText = 'opacity:0.5;font-size:0.6rem;pointer-events:none;text-transform:uppercase;letter-spacing:0.5px;padding-top:6px;';
   header.innerHTML = '<span>Remind me</span>';
   parentDropdown.appendChild(header);
 
@@ -4564,7 +4564,7 @@ function _showLibRemindSubmenu(em, parentDropdown) {
   for (const p of presets) {
     const item = document.createElement('div');
     item.className = 'dropdown-item-compact';
-    item.innerHTML = `<span>${p.label}</span><span style="margin-left:auto;opacity:0.5;font-size:10px;">${p.sub}</span>`;
+    item.innerHTML = `<span>${p.label}</span><span style="margin-left:auto;opacity:0.5;font-size:0.6rem;">${p.sub}</span>`;
     item.addEventListener('click', async (e) => {
       e.stopPropagation();
       parentDropdown.remove();
@@ -4583,7 +4583,7 @@ function _showLibRemindSubmenu(em, parentDropdown) {
     const def = new Date(tomorrow);
     const pad = n => String(n).padStart(2,'0');
     tmp.value = `${def.getFullYear()}-${pad(def.getMonth()+1)}-${pad(def.getDate())}T${pad(def.getHours())}:${pad(def.getMinutes())}`;
-    tmp.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:99999;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:13px;';
+    tmp.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:99999;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;';
     document.body.appendChild(tmp);
     tmp.focus();
     if (typeof tmp.showPicker === 'function') { try { tmp.showPicker(); } catch {} }

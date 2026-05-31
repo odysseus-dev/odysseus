@@ -707,7 +707,7 @@ export function openCustomPresetModal() {
     if (!lockNotice) {
       const notice = document.createElement('div');
       notice.id = 'char-lock-notice';
-      notice.style.cssText = 'font-size:11px;color:var(--color-muted);text-align:center;padding:6px;margin-bottom:8px;border:1px dashed var(--border);border-radius:6px;';
+      notice.style.cssText = 'font-size:0.7rem;color:var(--color-muted);text-align:center;padding:6px;margin-bottom:8px;border:1px dashed var(--border);border-radius:6px;';
       notice.textContent = 'Persistent chat — character is locked. Style, temperature, and memory can still be changed.';
       modal.querySelector('.modal-body').prepend(notice);
     }

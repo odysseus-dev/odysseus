@@ -224,7 +224,7 @@
 <body>
   <!-- Loading overlay — hides all flashing until app is ready -->
   <div id="app-loader" style="position:fixed;inset:0;z-index:99999;background:var(--bg,#282c34);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;transition:opacity .3s">
-    <div id="loader-wave" style="color:var(--brand-color,var(--red,#e06c75));font-family:monospace;font-size:11px;opacity:.5">▁▂▃</div>
+    <div id="loader-wave" style="color:var(--brand-color,var(--red,#e06c75));font-family:monospace;font-size:0.7rem;opacity:.5">▁▂▃</div>
   </div>
   <script nonce="{{CSP_NONCE}}">
   (function(){
@@ -295,8 +295,8 @@
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
               <h2 style="margin:0;padding:0;line-height:1;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg>Add Memory</h2>
               <span style="flex:1"></span>
-              <button id="memory-import-btn" class="theme-io-btn" title="Import memories from a file" style="height:26px;font-size:12px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Import</button>
-              <button id="memory-export-btn" class="theme-io-btn" title="Export all memories as JSON" style="height:26px;font-size:12px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Export</button>
+              <button id="memory-import-btn" class="theme-io-btn" title="Import memories from a file" style="height:26px;font-size:0.75rem;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Import</button>
+              <button id="memory-export-btn" class="theme-io-btn" title="Export all memories as JSON" style="height:26px;font-size:0.75rem;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Export</button>
               <input type="file" id="memory-import-file" accept=".txt,.md,.pdf,.csv,.log,.json,.py,.js,.html" hidden />
             </div>
             <p class="memory-desc doclib-desc" style="margin:4px 0 6px;">
@@ -407,7 +407,7 @@
             <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.6">Controls how many relevant published or approved skills are added to each agent request.</span>
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px">
               <span class="admin-toggle-sub" style="margin:0">Max skills per request</span>
-              <input type="number" id="skill-max-input" min="0" max="12" step="1" value="3" style="flex-shrink:0;width:72px;background:var(--input-bg,var(--panel));color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px;text-align:right;font-variant-numeric:tabular-nums" />
+              <input type="number" id="skill-max-input" min="0" max="12" step="1" value="3" style="flex-shrink:0;width:72px;background:var(--input-bg,var(--panel));color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:0.75rem;text-align:right;font-variant-numeric:tabular-nums" />
             </div>
             <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.5">Set to 0 to disable skill injection.</span>
           </div>
@@ -527,7 +527,7 @@
             <label class="theme-fd-label">Accent Color</label>
             <div class="color-row" style="justify-content:flex-start;gap:8px;">
               <input type="color" id="harmony-accent" value="#e06c75">
-              <span id="harmony-accent-hex" style="font-size:11px;opacity:0.65;font-family:ui-monospace,monospace;letter-spacing:0.02em;">#e06c75</span>
+              <span id="harmony-accent-hex" style="font-size:0.7rem;opacity:0.65;font-family:ui-monospace,monospace;letter-spacing:0.02em;">#e06c75</span>
             </div>
           </div>
           <div class="theme-fd-group">
@@ -714,10 +714,10 @@
                   <span class="auto-sort-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy</span>
                   <span class="auto-sort-spinner" style="display:none;">Sorting...</span>
                 </span>
-                <button type="button" id="auto-sort-sessions-more" title="Tidy options" aria-label="Tidy options" style="background:none;border:none;border-left:1px solid var(--border);color:inherit;cursor:pointer;padding:5px 8px;font-size:9px;opacity:0.7;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+                <button type="button" id="auto-sort-sessions-more" title="Tidy options" aria-label="Tidy options" style="background:none;border:none;border-left:1px solid var(--border);color:inherit;cursor:pointer;padding:5px 8px;font-size:0.55rem;opacity:0.7;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
               </div>
               <div class="dropdown-item sort-dropdown-item" id="auto-sort-sessions-noai-btn" style="display:none;padding-left:24px;">
-                Tidy <span class="auto-sort-noai-spinner" style="display:none;font-size:9px;opacity:0.6;margin-left:4px;">Cleaning...</span>
+                Tidy <span class="auto-sort-noai-spinner" style="display:none;font-size:0.55rem;opacity:0.6;margin-left:4px;">Cleaning...</span>
               </div>
               <div class="dropdown-item rearrange-toggle sort-dropdown-item sort-dropdown-sep" id="session-rearrange-toggle">
                 &#8593;&#8595; Rearrange <span class="rearrange-check" style="float:right; opacity:0;">&#x2022;</span>
@@ -729,7 +729,7 @@
           </div>
         </div>
         <div id="session-bulk-bar" class="session-bulk-bar hidden">
-          <span id="session-select-all-dot" style="cursor:pointer;font-size:14px;opacity:0.4;user-select:none;">○</span><input type="checkbox" id="session-select-all" style="display:none;"><span style="font-size:10px;cursor:pointer;opacity:0.5;" id="session-select-all-label">All</span>
+          <span id="session-select-all-dot" style="cursor:pointer;font-size:0.9rem;opacity:0.4;user-select:none;">○</span><input type="checkbox" id="session-select-all" style="display:none;"><span style="font-size:0.6rem;cursor:pointer;opacity:0.5;" id="session-select-all-label">All</span>
           <div style="margin-left:auto;display:flex;gap:2px;align-items:center;">
             <button class="session-bulk-btn" id="session-bulk-archive" title="Archive selected"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg></button>
             <button class="session-bulk-btn session-bulk-btn-danger" id="session-bulk-delete" title="Delete selected"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button>
@@ -836,7 +836,7 @@
             <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>
           </svg>
           <span class="grow">Cookbook</span>
-          <span id="cookbook-bg-status" style="display:none;font-size:9px;opacity:0.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-left:6px;flex-shrink:1;min-width:0;position:relative;top:-1px;"></span>
+          <span id="cookbook-bg-status" style="display:none;font-size:0.55rem;opacity:0.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-left:6px;flex-shrink:1;min-width:0;position:relative;top:-1px;"></span>
           <span class="cookbook-notif-dot" id="cookbook-notif-dot" style="display:none;margin-left:6px;margin-right:4px;position:relative;top:-1px;left:0px;"></span>
         </div>
         <div class="list-item" id="tool-research-btn">
@@ -1050,32 +1050,32 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
             </svg>
-            <span style="font-size:11px;margin-left:2px;">RAG</span>
+            <span style="font-size:0.7rem;margin-left:2px;">RAG</span>
             <svg class="tool-indicator-x" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
           </button>
           <!-- 6. Deep Research (hidden until active) -->
           <button type="button" class="input-icon-btn tool-indicator" title="Deep Research active — click to deactivate" id="research-toggle-btn" style="display:none;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-            <span style="font-size:11px;margin-left:2px;">Research</span>
+            <span style="font-size:0.7rem;margin-left:2px;">Research</span>
             <svg class="tool-indicator-x" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
           </button>
           <!-- 7. Group Chat (hidden until active) -->
           <button type="button" class="input-icon-btn tool-indicator" title="Group Chat active — click to deactivate" id="group-toggle-btn" style="display:none;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            <span style="font-size:11px;margin-left:2px;">Group</span>
+            <span style="font-size:0.7rem;margin-left:2px;">Group</span>
             <svg class="tool-indicator-x" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
           </button>
           <input type="checkbox" id="group-toggle" style="display:none;">
           <!-- Character indicator (hidden until active) -->
           <button type="button" class="input-icon-btn tool-indicator" title="Character active — click to deactivate" id="character-indicator-btn" style="display:none;">
             <svg id="char-indicator-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <span id="character-indicator-name" style="font-size:11px;margin-left:2px;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+            <span id="character-indicator-name" style="font-size:0.7rem;margin-left:2px;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
             <svg class="tool-indicator-x" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
           </button>
           <!-- Compare toolbar indicator (hidden until active) -->
           <button type="button" class="input-icon-btn tool-indicator" title="Compare active — click to deactivate" id="compare-indicator-btn" style="display:none;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>
-            <span style="font-size:11px;margin-left:2px;">Compare</span>
+            <span style="font-size:0.7rem;margin-left:2px;">Compare</span>
             <svg class="tool-indicator-x" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
           </button>
         </div>
@@ -1167,7 +1167,7 @@
                 </button>
               </div>
               <div id="group-participants" style="display:flex;flex-direction:column;gap:4px;margin-bottom:0;max-height:220px;overflow-y:auto;"></div>
-              <button type="button" id="group-add-btn" class="preset-save-btn" style="width:100%;background:none;border:1px dashed var(--border);color:var(--fg);opacity:0.6;font-size:11px;padding:4px;margin-top:0;">+ Add participant</button>
+              <button type="button" id="group-add-btn" class="preset-save-btn" style="width:100%;background:none;border:1px dashed var(--border);color:var(--fg);opacity:0.6;font-size:0.7rem;padding:4px;margin-top:0;">+ Add participant</button>
             </div>
           </div>
         </div>
@@ -1284,14 +1284,14 @@
   <div id="settings-modal" class="modal hidden">
     <div class="modal-content settings-modal-content">
       <div class="modal-header">
-        <h4><span style="vertical-align:-1px;margin-right:6px;font-size:15px">&#x2699;</span>Settings</h4>
+        <h4><span style="vertical-align:-1px;margin-right:6px;font-size:0.95rem">&#x2699;</span>Settings</h4>
         <button type="button" class="theme-opacity-wrap theme-opacity-toggle hidden" id="settings-opacity-wrap" title="Fade this window to preview the page behind it" aria-pressed="false">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
           <span class="theme-opacity-label">Peek</span>
         </button>
         <button class="close-btn">✖</button>
       </div>
-      <div class="admin-toggle-sub" style="padding:0 12px 8px;opacity:0.6;font-size:11px;">Toggle on/off visibility of tools and modules across the interface.</div>
+      <div class="admin-toggle-sub" style="padding:0 12px 8px;opacity:0.6;font-size:0.7rem;">Toggle on/off visibility of tools and modules across the interface.</div>
       <div class="settings-layout">
         <div class="settings-sidebar">
           <!-- Section 1: AI plumbing (Add Models → AI Defaults → Search) -->
@@ -1373,7 +1373,7 @@
               </div>
               <div id="set-defaultFallbacks" class="settings-fallbacks"></div>
               <button type="button" class="settings-fallback-add" id="set-defaultAddFallback" title="Add a model to try if the one above fails">+ Add fallback</button>
-              <div id="set-defaultChatMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+              <div id="set-defaultChatMsg" style="font-size:0.7rem;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
           <div class="admin-card">
@@ -1390,7 +1390,7 @@
               </div>
               <div id="set-utilityFallbacks" class="settings-fallbacks"></div>
               <button type="button" class="settings-fallback-add" id="set-utilityAddFallback" title="Add a model to try if the utility model fails">+ Add fallback</button>
-              <div id="set-utilityChatMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+              <div id="set-utilityChatMsg" style="font-size:0.7rem;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
           <div class="admin-card">
@@ -1403,7 +1403,7 @@
               </div>
               <div id="set-visionFallbacks" class="settings-fallbacks"></div>
               <button type="button" class="settings-fallback-add" id="set-visionAddFallback" title="Add a vision model to try if the one above fails">+ Add fallback</button>
-              <div id="set-visionSettingsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+              <div id="set-visionSettingsMsg" style="font-size:0.7rem;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
           <div class="admin-card">
@@ -1438,7 +1438,7 @@
                 <label class="settings-label">Max Tokens</label>
                 <input id="set-researchMaxTokens" type="text" inputmode="numeric" placeholder="8192 (default)" class="settings-select" style="width:120px;">
               </div>
-              <div id="set-researchMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+              <div id="set-researchMsg" style="font-size:0.7rem;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
           <div class="admin-card">
@@ -1449,7 +1449,7 @@
                 <label class="settings-label">Tool call limit</label>
                 <input id="set-agentMaxTools" type="text" inputmode="numeric" placeholder="0 = unlimited" class="settings-select" style="width:120px;">
               </div>
-              <div id="set-agentMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+              <div id="set-agentMsg" style="font-size:0.7rem;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
           <!-- Image Generation removed — only inpaint remains in this build,
@@ -1472,7 +1472,7 @@
                   <option value="high">High (best quality)</option>
                 </select>
               </div>
-              <div id="set-imgSettingsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+              <div id="set-imgSettingsMsg" style="font-size:0.7rem;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
           <!-- TTS panel hidden — user opted out of read-aloud entirely. Kept
@@ -1525,8 +1525,8 @@
                   <option value="2">2x</option>
                 </select>
               </div>
-              <button type="button" id="set-ttsPreviewBtn" class="admin-btn-sm" style="margin-top:4px;padding:5px 16px;font-size:12px;">Preview</button>
-              <div id="set-ttsSettingsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+              <button type="button" id="set-ttsPreviewBtn" class="admin-btn-sm" style="margin-top:4px;padding:5px 16px;font-size:0.75rem;">Preview</button>
+              <div id="set-ttsSettingsMsg" style="font-size:0.7rem;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
           <div class="admin-card">
@@ -1541,7 +1541,7 @@
                 <label class="settings-label">Model</label>
                 <select id="set-teacherModelSelect" class="settings-select"><option value="">—</option></select>
               </div>
-              <div id="set-teacherChatMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+              <div id="set-teacherChatMsg" style="font-size:0.7rem;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
         </div>
@@ -1601,7 +1601,7 @@
                 <div class="search-fallback-chain" id="set-searchFallbackChain"></div>
               </div>
               <div id="set-searchHint" class="admin-toggle-sub"></div>
-              <div id="set-searchMsg" style="font-size:11px;"></div>
+              <div id="set-searchMsg" style="font-size:0.7rem;"></div>
             </div>
           </div>
         </div>
@@ -1727,7 +1727,7 @@
                 <input type="checkbox" checked data-ui-key="incognito-btn"><span class="vis-switch"></span>
               </label>
               <label class="vis-row">
-                <span class="vis-icon" style="font-size:13px;line-height:14px;">Aa</span>
+                <span class="vis-icon" style="font-size:0.8rem;line-height:14px;">Aa</span>
                 <span class="vis-label">Text-only Emojis <span class="vis-hint">Strip emojis from AI replies</span></span>
                 <input type="checkbox" data-ui-key="text-emojis"><span class="vis-switch"></span>
               </label>
@@ -1800,10 +1800,10 @@
         <div data-settings-panel="shortcuts" class="hidden">
           <div class="admin-card" style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;">
             <div>
-              <h2 style="margin:0;font-size:13px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>Keyboard Shortcuts</h2>
-              <p style="font-size:10px;opacity:0.4;margin:2px 0 0;">Click a shortcut to rebind. Press Escape to cancel.</p>
+              <h2 style="margin:0;font-size:0.8rem;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>Keyboard Shortcuts</h2>
+              <p style="font-size:0.6rem;opacity:0.4;margin:2px 0 0;">Click a shortcut to rebind. Press Escape to cancel.</p>
             </div>
-            <button type="button" class="shortcut-action-btn is-reset" id="shortcuts-reset-btn" title="Reset Shortcuts" style="width:28px;height:28px;font-size:15px;">&#x21A9;</button>
+            <button type="button" class="shortcut-action-btn is-reset" id="shortcuts-reset-btn" title="Reset Shortcuts" style="width:28px;height:28px;font-size:0.95rem;">&#x21A9;</button>
           </div>
           <div class="admin-card">
             <div id="shortcuts-list"></div>
@@ -1816,12 +1816,12 @@
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Account</h2>
             <div style="display:flex;align-items:center;gap:10px;margin:4px 0 12px;">
-              <div class="user-bar-avatar" id="settings-account-avatar" style="width:32px;height:32px;font-size:14px;"></div>
+              <div class="user-bar-avatar" id="settings-account-avatar" style="width:32px;height:32px;font-size:0.9rem;"></div>
               <div style="flex:1;">
-                <div id="settings-account-username" style="font-size:13px;font-weight:600;"></div>
-                <div id="settings-account-role" style="font-size:11px;opacity:0.5;"></div>
+                <div id="settings-account-username" style="font-size:0.8rem;font-weight:600;"></div>
+                <div id="settings-account-role" style="font-size:0.7rem;opacity:0.5;"></div>
               </div>
-              <button id="settings-logout-btn" style="background:color-mix(in srgb, var(--color-error) 10%, transparent);border:1px solid var(--color-error);border-radius:6px;padding:6px 12px;color:var(--color-error);font-family:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:opacity 0.15s,background 0.15s;display:inline-flex;align-items:center;gap:6px;">
+              <button id="settings-logout-btn" style="background:color-mix(in srgb, var(--color-error) 10%, transparent);border:1px solid var(--color-error);border-radius:6px;padding:6px 12px;color:var(--color-error);font-family:inherit;font-size:0.75rem;font-weight:500;cursor:pointer;transition:opacity 0.15s,background 0.15s;display:inline-flex;align-items:center;gap:6px;">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
                 Logout
               </button>
@@ -1830,11 +1830,11 @@
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Change Password</h2>
             <div class="settings-col">
-              <input id="settings-pw-current" type="password" placeholder="Current password" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;">
-              <input id="settings-pw-new" type="password" placeholder="New password (min 8)" autocomplete="new-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;">
-              <input id="settings-pw-confirm" type="password" placeholder="Confirm new password" autocomplete="new-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;">
+              <input id="settings-pw-current" type="password" placeholder="Current password" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:0.75rem;">
+              <input id="settings-pw-new" type="password" placeholder="New password (min 8)" autocomplete="new-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:0.75rem;">
+              <input id="settings-pw-confirm" type="password" placeholder="Confirm new password" autocomplete="new-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:0.75rem;">
               <div class="settings-row" style="margin-top:2px;justify-content:flex-end;">
-                <span id="settings-pw-msg" style="font-size:11px;margin-right:auto;"></span>
+                <span id="settings-pw-msg" style="font-size:0.7rem;margin-right:auto;"></span>
                 <button class="admin-btn-add" id="settings-pw-save">Update Password</button>
               </div>
             </div>
@@ -1854,7 +1854,7 @@
             <div class="admin-toggle-sub" style="margin-bottom:8px">Configure one or more IMAP/SMTP accounts. The default account is used when nothing else is selected.</div>
             <div id="set-email-accounts-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
             <div class="settings-row">
-              <span id="set-email-accounts-msg" style="font-size:11px;"></span>
+              <span id="set-email-accounts-msg" style="font-size:0.7rem;"></span>
               <button class="admin-btn-add" id="set-email-accounts-add-btn" style="margin-left:auto;">+ Add Account</button>
             </div>
             <div id="set-email-accounts-form" style="display:none;margin-top:8px;padding:10px;border:1px solid var(--border);border-radius:6px"></div>
@@ -1866,7 +1866,7 @@
             <div class="settings-col">
               <textarea id="set-email-style" rows="4" class="settings-select" style="font-family:inherit;resize:vertical" placeholder="e.g. I write emails in this style. I don't use exclamation marks. I sign emails with: ..."></textarea>
               <div class="settings-row" style="margin-top:4px">
-                <span id="set-email-style-msg" style="font-size:11px;"></span>
+                <span id="set-email-style-msg" style="font-size:0.7rem;"></span>
                 <button class="admin-btn-add" id="set-email-style-extract" style="margin-left:auto;">Extract from Sent (15 emails)</button>
                 <button class="admin-btn-add" id="set-email-style-save">Save</button>
               </div>
@@ -1900,8 +1900,8 @@
                 <label class="settings-label">ntfy topic</label>
                 <input id="set-reminder-ntfy-topic" class="settings-select" type="text" placeholder="reminders" />
               </div>
-              <div id="set-reminder-channel-hint" style="font-size:11px;opacity:0.6;"></div>
-              <div style="font-size:11px;opacity:0.6;margin-top:4px;">Configure email account, ntfy server, etc. in <a href="#" id="set-reminders-open-integrations" style="color:var(--accent, var(--red));text-decoration:none;font-weight:600;">Integrations</a>.</div>
+              <div id="set-reminder-channel-hint" style="font-size:0.7rem;opacity:0.6;"></div>
+              <div style="font-size:0.7rem;opacity:0.6;margin-top:4px;">Configure email account, ntfy server, etc. in <a href="#" id="set-reminders-open-integrations" style="color:var(--accent, var(--red));text-decoration:none;font-weight:600;">Integrations</a>.</div>
             </div>
           </div>
           <div class="admin-card">
@@ -1916,14 +1916,14 @@
                 <label class="settings-label">URL</label>
                 <input id="set-app-public-url" class="settings-select" type="url" placeholder="https://chat.example.com" style="flex:1;" />
               </div>
-              <div id="set-app-public-url-msg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 55%, transparent);"></div>
+              <div id="set-app-public-url-msg" style="font-size:0.7rem;color:color-mix(in srgb, var(--fg) 55%, transparent);"></div>
             </div>
           </div>
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Test</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Fire a test reminder using your current settings to verify everything works.</div>
             <div class="settings-row">
-              <span id="set-reminder-test-msg" style="font-size:11px;"></span>
+              <span id="set-reminder-test-msg" style="font-size:0.7rem;"></span>
               <button class="admin-btn-add" id="set-reminder-test-btn" style="margin-left:auto;">Send Test Reminder</button>
             </div>
           </div>
@@ -1954,7 +1954,7 @@
             </div>
             <div class="settings-row" style="margin-top:6px;">
               <button class="admin-btn-add" id="adm-addBtn">Add User</button>
-              <span id="adm-addMsg" style="font-size:11px"></span>
+              <span id="adm-addMsg" style="font-size:0.7rem"></span>
             </div>
           </div>
         </div>

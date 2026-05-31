@@ -46,14 +46,14 @@ async function loadUsers() {
       const initial = u.username.charAt(0).toUpperCase();
       header.innerHTML = `
         <div class="admin-user-info">
-          <div style="width:28px;height:28px;border-radius:50%;background:color-mix(in srgb, var(--accent) 20%, var(--panel));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;color:var(--accent);">${esc(initial)}</div>
+          <div style="width:28px;height:28px;border-radius:50%;background:color-mix(in srgb, var(--accent) 20%, var(--panel));display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:600;flex-shrink:0;color:var(--accent);">${esc(initial)}</div>
           <div>
             <span class="admin-user-name">${esc(u.username)}</span>
-            ${u.is_admin ? '<span class="admin-badge" style="margin-left:6px;">ADMIN</span>' : '<span style="font-size:10px;opacity:0.4;display:block;">Click to manage privileges</span>'}
+            ${u.is_admin ? '<span class="admin-badge" style="margin-left:6px;">ADMIN</span>' : '<span style="font-size:0.6rem;opacity:0.4;display:block;">Click to manage privileges</span>'}
           </div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;">
-          ${u.is_admin ? '' : `<button class="admin-btn-delete" data-adm-del-user="${esc(u.username)}" style="font-size:11px;">Remove</button>`}
+          ${u.is_admin ? '' : `<button class="admin-btn-delete" data-adm-del-user="${esc(u.username)}" style="font-size:0.7rem;">Remove</button>`}
           ${u.is_admin ? '' : '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>'}
         </div>
       `;
@@ -66,38 +66,38 @@ async function loadUsers() {
         privPanel.style.cssText = 'padding:8px 0 4px;border-top:1px solid var(--border);margin-top:8px;';
 
         // Boolean toggles
-        let html = '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.35;font-weight:600;margin-bottom:4px;">Features</div>';
+        let html = '<div style="font-size:0.6rem;text-transform:uppercase;letter-spacing:0.5px;opacity:0.35;font-weight:600;margin-bottom:4px;">Features</div>';
         for (const [key, label] of Object.entries(PRIV_LABELS)) {
           const checked = u.privileges && u.privileges[key] ? 'checked' : '';
           html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
-            <span style="font-size:12px;">${label}</span>
+            <span style="font-size:0.75rem;">${label}</span>
             <label class="admin-switch" style="transform:scale(0.85);"><input type="checkbox" data-priv="${key}" data-user="${esc(u.username)}" ${checked}><span class="admin-slider"></span></label>
           </div>`;
         }
         // Rate limit
-        html += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.35;font-weight:600;margin:10px 0 4px;">Limits</div>';
+        html += '<div style="font-size:0.6rem;text-transform:uppercase;letter-spacing:0.5px;opacity:0.35;font-weight:600;margin:10px 0 4px;">Limits</div>';
         const maxMsg = (u.privileges && u.privileges.max_messages_per_day) || 0;
         html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
           <div>
-            <span style="font-size:12px;">Daily message limit</span>
-            <div style="font-size:10px;opacity:0.4;">0 = no limit</div>
+            <span style="font-size:0.75rem;">Daily message limit</span>
+            <div style="font-size:0.6rem;opacity:0.4;">0 = no limit</div>
           </div>
-          <input type="number" min="0" value="${maxMsg}" data-priv="max_messages_per_day" data-user="${esc(u.username)}" style="width:70px;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:12px;text-align:center;">
+          <input type="number" min="0" value="${maxMsg}" data-priv="max_messages_per_day" data-user="${esc(u.username)}" style="width:70px;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:0.75rem;text-align:center;">
         </div>`;
         // Allowed models — checkbox list
         const allowedSet = new Set((u.privileges && u.privileges.allowed_models) || []);
         const allEmpty = allowedSet.size === 0;
         html += `<div style="padding:4px 0;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
-            <span style="font-size:12px;">Allowed models</span>
+            <span style="font-size:0.75rem;">Allowed models</span>
             <div style="display:flex;gap:8px;">
-              <a href="#" class="priv-models-all" data-user="${esc(u.username)}" style="font-size:10px;opacity:0.5;">All</a>
-              <a href="#" class="priv-models-none" data-user="${esc(u.username)}" style="font-size:10px;opacity:0.5;">None</a>
+              <a href="#" class="priv-models-all" data-user="${esc(u.username)}" style="font-size:0.6rem;opacity:0.5;">All</a>
+              <a href="#" class="priv-models-none" data-user="${esc(u.username)}" style="font-size:0.6rem;opacity:0.5;">None</a>
             </div>
           </div>
-          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${allEmpty ? 'All models allowed (no restrictions)' : allowedSet.size + ' model(s) allowed'}</div>
+          <div style="font-size:0.6rem;opacity:0.4;margin-bottom:4px;">${allEmpty ? 'All models allowed (no restrictions)' : allowedSet.size + ' model(s) allowed'}</div>
           <div class="priv-models-list" data-user="${esc(u.username)}">
-            <span style="opacity:0.4;font-size:11px;">Loading models...</span>
+            <span style="opacity:0.4;font-size:0.7rem;">Loading models...</span>
           </div>
         </div>`;
         privPanel.innerHTML = html;
@@ -175,7 +175,7 @@ async function _loadModelsForUser(username, allowedSet, privPanel) {
       });
     });
     if (!allModels.length) {
-      listEl.innerHTML = '<span style="opacity:0.4;font-size:11px;">No models available</span>';
+      listEl.innerHTML = '<span style="opacity:0.4;font-size:0.7rem;">No models available</span>';
       return;
     }
     const allEmpty = allowedSet.size === 0;
@@ -184,7 +184,7 @@ async function _loadModelsForUser(username, allowedSet, privPanel) {
       return `<label>
         <input type="checkbox" class="priv-model-cb" data-mid="${esc(m.mid)}" ${checked}>
         <span>${esc(m.display)}</span>
-        <span style="opacity:0.3;font-size:10px;margin-left:auto;">${esc(m.epName)}</span>
+        <span style="opacity:0.3;font-size:0.6rem;margin-left:auto;">${esc(m.epName)}</span>
       </label>`;
     }).join('');
 
@@ -218,7 +218,7 @@ async function _loadModelsForUser(username, allowedSet, privPanel) {
       _saveModels();
     });
   } catch (e) {
-    listEl.innerHTML = '<span style="opacity:0.4;font-size:11px;">Failed to load models</span>';
+    listEl.innerHTML = '<span style="opacity:0.4;font-size:0.7rem;">Failed to load models</span>';
   }
 }
 
@@ -331,7 +331,7 @@ async function loadEndpoints() {
               ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
               ${statusBadge}
               ${ep.is_enabled ? '' : '<span class="admin-badge admin-badge-off">disabled</span>'}
-              ${hasModels ? '<span style="font-size:10px;opacity:0.4;">Click to manage models</span>' : ''}
+              ${hasModels ? '<span style="font-size:0.6rem;opacity:0.4;">Click to manage models</span>' : ''}
             </div>
             <div style="display:flex;gap:4px;align-items:center;">
               <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
@@ -451,7 +451,7 @@ async function loadEndpoints() {
           panel.innerHTML = '';
           let _modelsSpin = null;
           const _ld = document.createElement('span');
-          _ld.style.cssText = 'opacity:0.55;font-size:11px;display:inline-flex;align-items:center;gap:8px;';
+          _ld.style.cssText = 'opacity:0.55;font-size:0.7rem;display:inline-flex;align-items:center;gap:8px;';
           _ld.appendChild(document.createTextNode('Loading models…'));
           try {
             const _sp = (await import('./spinner.js')).default;
@@ -465,7 +465,7 @@ async function loadEndpoints() {
             const res = await fetch(`/api/model-endpoints/${epId}/models`, { credentials: 'same-origin' });
             const models = await res.json();
             _stopSpin();
-            if (!models.length) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px;">No models</span>'; return; }
+            if (!models.length) { panel.innerHTML = '<span style="opacity:0.5;font-size:0.7rem;">No models</span>'; return; }
             const hiddenSet = new Set(models.filter(m => m.is_hidden).map(m => m.id));
             const showSearch = models.length >= 8;
             panel.innerHTML = `<div class="mcp-tools-header">
@@ -506,7 +506,7 @@ async function loadEndpoints() {
             panel.querySelectorAll('input[type=checkbox]').forEach(cb => {
               cb.addEventListener('change', () => _saveEpModelState(epId, panel));
             });
-          } catch (e) { _stopSpin(); panel.innerHTML = '<span class="admin-error" style="font-size:11px;">Failed to load models</span>'; }
+          } catch (e) { _stopSpin(); panel.innerHTML = '<span class="admin-error" style="font-size:0.7rem;">Failed to load models</span>'; }
         }
       });
     });
@@ -748,7 +748,7 @@ function initEndpointForm() {
         wrap.appendChild(wp.element);
         const txt = document.createElement('span');
         txt.textContent = 'Scanning ports 8000-8020 for model servers...';
-        txt.style.cssText = 'font-size:12px;opacity:0.7;';
+        txt.style.cssText = 'font-size:0.75rem;opacity:0.7;';
         wrap.appendChild(txt);
         msg.appendChild(wrap);
         discoverBtn._wp = wp;
@@ -965,7 +965,7 @@ async function loadBuiltinTools() {
         <div class="admin-tool-cat-header" data-tool-cat="${catId}" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
           <span>${esc(cat)}</span>
           <span style="display:flex;align-items:center;gap:6px;" class="admin-tool-cat-right">
-            <span class="admin-tool-cat-count" style="font-size:10px;opacity:0.5;">${enabledCount}/${totalCount}</span>
+            <span class="admin-tool-cat-count" style="font-size:0.6rem;opacity:0.5;">${enabledCount}/${totalCount}</span>
             <label class="admin-switch" style="flex-shrink:0;">
               <input type="checkbox" data-tool-cat-toggle="${catId}" ${allEnabled ? 'checked' : ''}>
               <span class="admin-slider"></span>
@@ -1076,10 +1076,10 @@ async function loadMcpServers() {
           <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;">
             <span class="admin-user-name">${esc(s.name)}</span>
             <span class="admin-badge" style="background:${statusColor}33;color:${statusColor}">${statusText}</span>
-            ${hasTools ? `<span style="font-size:10px;opacity:0.4;">Click to manage tools</span>` : ''}
+            ${hasTools ? `<span style="font-size:0.6rem;opacity:0.4;">Click to manage tools</span>` : ''}
           </div>
           <div style="display:flex;gap:4px;align-items:center;">
-            ${s.needs_oauth ? `<a href="/api/mcp/oauth/authorize/${s.id}" target="_blank" class="admin-btn-sm" style="background:var(--red);color:#fff;text-decoration:none;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600;">Authorize</a>` : ''}
+            ${s.needs_oauth ? `<a href="/api/mcp/oauth/authorize/${s.id}" target="_blank" class="admin-btn-sm" style="background:var(--red);color:#fff;text-decoration:none;padding:3px 10px;border-radius:4px;font-size:0.7rem;font-weight:600;">Authorize</a>` : ''}
             <button class="admin-btn-sm" data-adm-mcp-reconnect="${s.id}">Reconnect</button>
             <button class="admin-btn-delete" style="border-color:${s.is_enabled ? 'color-mix(in srgb, var(--red) 30%, transparent)' : 'color-mix(in srgb, var(--fg) 30%, transparent)'};color:${s.is_enabled ? 'var(--red)' : 'var(--fg)'};" data-adm-mcp-toggle="${s.id}" data-adm-mcp-enable="${!s.is_enabled}">${s.is_enabled ? 'Disable' : 'Enable'}</button>
             <button class="admin-btn-delete" data-adm-mcp-delete="${s.id}">Delete</button>
@@ -1135,11 +1135,11 @@ async function loadMcpServers() {
         }
         if (!_toolsLoaded && isOpen) {
           _toolsLoaded = true;
-          panel.innerHTML = '<span style="opacity:0.5;font-size:11px;">Loading tools...</span>';
+          panel.innerHTML = '<span style="opacity:0.5;font-size:0.7rem;">Loading tools...</span>';
           try {
             const res = await fetch(`/api/mcp/servers/${sid}/tools`, { credentials: 'same-origin' });
             const tools = await res.json();
-            if (!tools.length) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px;">No tools</span>'; return; }
+            if (!tools.length) { panel.innerHTML = '<span style="opacity:0.5;font-size:0.7rem;">No tools</span>'; return; }
             const disabled = new Set(tools.filter(t => t.is_disabled).map(t => t.name));
             panel.innerHTML = `<div class="mcp-tools-header">
               <span>Tools</span>
@@ -1167,7 +1167,7 @@ async function loadMcpServers() {
             panel.querySelectorAll('input[type=checkbox]').forEach(cb => {
               cb.addEventListener('change', () => _saveMcpToolState(sid, panel));
             });
-          } catch (e) { panel.innerHTML = '<span class="admin-error" style="font-size:11px;">Failed to load tools</span>'; }
+          } catch (e) { panel.innerHTML = '<span class="admin-error" style="font-size:0.7rem;">Failed to load tools</span>'; }
         }
       });
     });
@@ -1234,10 +1234,10 @@ function initMcpForm() {
       row.className = 'admin-model-form-row';
       row.style.cssText = 'gap:6px;align-items:center;';
       const label = document.createElement('span');
-      label.style.cssText = 'font-size:11px;opacity:0.55;min-width:0;white-space:nowrap;';
+      label.style.cssText = 'font-size:0.7rem;opacity:0.55;min-width:0;white-space:nowrap;';
       label.textContent = pd.label || 'Provider';
       const select = document.createElement('select');
-      select.style.cssText = 'flex:1;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);font-size:12px;';
+      select.style.cssText = 'flex:1;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);font-size:0.75rem;';
       pd.options.forEach((opt, i) => {
         const o = document.createElement('option');
         o.value = i;
@@ -1269,7 +1269,7 @@ function initMcpForm() {
       row.className = 'admin-model-form-row';
       row.style.cssText = 'gap:6px;align-items:center;';
       const label = document.createElement('span');
-      label.style.cssText = 'font-size:11px;opacity:0.55;min-width:0;white-space:nowrap;';
+      label.style.cssText = 'font-size:0.7rem;opacity:0.55;min-width:0;white-space:nowrap;';
       label.textContent = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
       const input = document.createElement('input');
       input.type = key.toLowerCase().includes('secret') || key.toLowerCase().includes('token') || key.toLowerCase().includes('key') || key.toLowerCase().includes('password') ? 'password' : 'text';
@@ -1288,7 +1288,7 @@ function initMcpForm() {
       const helpLink = document.createElement('a');
       helpLink.textContent = 'How do I get these?';
       helpLink.href = '#';
-      helpLink.style.cssText = 'font-size:10.5px;opacity:0.5;margin-top:2px;display:inline-block;';
+      helpLink.style.cssText = 'font-size:0.65rem;opacity:0.5;margin-top:2px;display:inline-block;';
       helpLink.addEventListener('click', (e) => {
         e.preventDefault();
         helpBox.style.display = helpBox.style.display === 'none' ? '' : 'none';

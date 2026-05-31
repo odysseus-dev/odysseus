@@ -496,7 +496,7 @@ async function _fetchDependencies() {
     const label = document.createElement('div');
     label.className = 'hwfit-loading';
     label.textContent = 'Loading packages…';
-    label.style.cssText = 'text-align:center;opacity:0.5;font-size:11px;margin-top:6px;';
+    label.style.cssText = 'text-align:center;opacity:0.5;font-size:0.7rem;margin-top:6px;';
     list.appendChild(label);
   } catch {
     list.innerHTML = '<div class="hwfit-loading">Loading packages...</div>';
@@ -536,7 +536,7 @@ async function _fetchDependencies() {
       html += `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`;
       html += `<div class="cookbook-dep-info">`;
       html += `<div class="memory-item-title">${esc(pkg.name)}</div>`;
-      html += `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`;
+      html += `<div class="memory-item-meta" style="font-size:0.6rem;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`;
       html += `</div>`;
       html += `<span class="cookbook-dep-tag cookbook-dep-target">${targetLabel}</span>`;
       html += `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`;
@@ -651,7 +651,7 @@ async function _fetchDependencies() {
       const minW = 150;
       let left = Math.min(rect.right - minW, window.innerWidth - minW - 8);
       left = Math.max(8, left);
-      dropdown.style.cssText = `position:fixed;display:block;z-index:10001;top:${rect.bottom + 6}px;left:${left}px;right:auto;min-width:${minW}px;max-width:calc(100vw - 16px);background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:11px;`;
+      dropdown.style.cssText = `position:fixed;display:block;z-index:10001;top:${rect.bottom + 6}px;left:${left}px;right:auto;min-width:${minW}px;max-width:calc(100vw - 16px);background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:0.7rem;`;
       const upIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>';
       const it = document.createElement('div');
       it.className = 'dropdown-item-compact';
@@ -1114,7 +1114,7 @@ function _wireTabEvents(body) {
         const lbl = document.createElement('div');
         lbl.className = 'hwfit-loading';
         lbl.textContent = 'Scanning models…';
-        lbl.style.cssText = 'text-align:center;opacity:0.5;font-size:11px;margin-top:6px;';
+        lbl.style.cssText = 'text-align:center;opacity:0.5;font-size:0.7rem;margin-top:6px;';
         hfList.appendChild(lbl);
       } catch {
         hfList.innerHTML = '<div class="hwfit-loading">Scanning models…</div>';
@@ -1157,7 +1157,7 @@ function _wireTabEvents(body) {
           html += `<div class="doclib-card memory-item cookbook-hf-latest-card" data-repo="${esc(m.repo_id)}" style="cursor:pointer;">`;
           html += `<div style="flex:1;min-width:0;">`;
           html += `<div class="memory-item-title">${esc(shortName)} <a href="https://huggingface.co/${esc(m.repo_id)}" target="_blank" rel="noopener" class="cookbook-hf-link">HF \u2197</a></div>`;
-          html += `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${meta.join(' \u00b7 ')}</div>`;
+          html += `<div class="memory-item-meta" style="font-size:0.6rem;opacity:0.5;margin-top:2px;">${meta.join(' \u00b7 ')}</div>`;
           html += `</div>`;
           html += `</div>`;
         }
@@ -1241,10 +1241,10 @@ export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
   const _pIco = _platformIcon(s.platform);
   const _keyBtn = `<button class="cookbook-server-key-btn" title="Set up SSH key for this server" style="height:22px;box-sizing:border-box;display:inline-flex;align-items:center;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><circle cx="7.5" cy="15.5" r="5.5"/><path d="M12 11l8-8"/><path d="M17 6l3 3"/></svg>Key</button>`;
   const _checkBtn = `<button class="cookbook-server-check-btn" title="Check SSH connection" style="height:22px;box-sizing:border-box;display:inline-flex;align-items:center;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>Check</button>`;
-  html += `<span class="cookbook-server-title" style="display:flex;align-items:center;gap:6px;width:100%;font-size:13px;font-weight:600;margin-bottom:4px;">`;
+  html += `<span class="cookbook-server-title" style="display:flex;align-items:center;gap:6px;width:100%;font-size:0.8rem;font-weight:600;margin-bottom:4px;">`;
   html += `${esc(_srvTitle)}`;
   html += _pIco ? `<span class="cookbook-srv-platform" title="${esc(s.platform || '')}" style="display:inline-flex;align-items:center;opacity:0.55;">${_pIco}</span>` : '';
-  html += `<span class="cookbook-srv-test-msg" style="font-size:10px;font-weight:400;opacity:0.55;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative;top:2px;"></span>`;
+  html += `<span class="cookbook-srv-test-msg" style="font-size:0.6rem;font-weight:400;opacity:0.55;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative;top:2px;"></span>`;
   if (isNew) {
     // New server: Cancel (discard) sits top-right; the default toggle only makes
     // sense once the server is saved.
@@ -1259,13 +1259,13 @@ export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
   html += `<input type="text" class="hwfit-sf cookbook-srv-port" value="${esc(s.port || '')}" placeholder="Port" title="SSH port (default 22)" style="width:48px;flex-shrink:0;" ${isLocal ? 'readonly' : ''} />`;
   html += `<select class="hwfit-sf cookbook-srv-env">${envOpts}</select>`;
   html += `<input type="text" class="hwfit-sf cookbook-srv-path" value="${esc(s.envPath || '')}" placeholder="${s.platform === 'windows' ? 'venv path' : '~/venv'}" />`;
-  html += `<span class="cookbook-dep-tag cookbook-dep-target" style="font-size:8px;flex-shrink:0;min-width:46px;text-align:center;visibility:hidden;">placeholder</span>`;
+  html += `<span class="cookbook-dep-tag cookbook-dep-target" style="font-size:0.5rem;flex-shrink:0;min-width:46px;text-align:center;visibility:hidden;">placeholder</span>`;
   html += `<span class="cookbook-srv-actions" style="display:inline-flex;gap:4px;align-items:center;width:78px;flex-shrink:0;justify-content:flex-end;"></span>`;
   html += `</div>`;
   const modelDirs = Array.isArray(s.modelDirs) && s.modelDirs.length ? s.modelDirs : ['~/.cache/huggingface/hub'];
   const activeDlDir = s.downloadDir || '';
   html += `<div class="cookbook-modeldirs" style="margin:2px 0 0 0;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">`;
-  html += `<span style="width:100%;font-size:13px;font-weight:600;margin-bottom:3px;">Model Directory <span style="font-weight:400;opacity:0.5;font-size:11px;">— check the one downloads should go to</span></span>`;
+  html += `<span style="width:100%;font-size:0.8rem;font-weight:600;margin-bottom:3px;">Model Directory <span style="font-weight:400;opacity:0.5;font-size:0.7rem;">— check the one downloads should go to</span></span>`;
   for (let j = 0; j < modelDirs.length; j++) {
     const isDefault = modelDirs[j] === '~/.cache/huggingface/hub';
     const dirVal = isDefault ? '' : modelDirs[j];
@@ -1289,9 +1289,9 @@ export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
     html += `<div style="display:flex;gap:4px;align-items:center;">`;
     html += `<button type="button" class="memory-toolbar-btn cookbook-server-key-gen" style="height:23px;">Generate key</button>`;
     html += `<button type="button" class="memory-toolbar-btn cookbook-server-key-copy" style="height:23px;" disabled>Copy command</button>`;
-    html += `<span style="font-size:10px;opacity:0.55;line-height:1.25;">Docker: run this command in your terminal once.</span>`;
+    html += `<span style="font-size:0.6rem;opacity:0.55;line-height:1.25;">Docker: run this command in your terminal once.</span>`;
     html += `</div>`;
-    html += `<textarea class="memory-search-input cookbook-server-key-command" readonly rows="3" style="min-height:58px;resize:vertical;font-family:var(--mono,monospace);font-size:10px;line-height:1.35;">Enter user@host, then generate the key.</textarea>`;
+    html += `<textarea class="memory-search-input cookbook-server-key-command" readonly rows="3" style="min-height:58px;resize:vertical;font-family:var(--mono,monospace);font-size:0.6rem;line-height:1.35;">Enter user@host, then generate the key.</textarea>`;
     html += `</div>`;
   }
   html += `</div>`;
@@ -1415,7 +1415,7 @@ function _renderRecipes() {
   html += '<option value="context">Context</option></select>';
   html += '</div>';
   html += '<div class="hwfit-manual-panel hidden" id="hwfit-manual-panel">';
-  html += '<span class="hwfit-manual-note" style="font-size:10px;opacity:0.6;width:100%;margin-bottom:2px;">Simulator — these values REPLACE detected hardware.</span>';
+  html += '<span class="hwfit-manual-note" style="font-size:0.6rem;opacity:0.6;width:100%;margin-bottom:2px;">Simulator — these values REPLACE detected hardware.</span>';
   html += '<select class="hwfit-manual-mode"><option value="gpu">GPU</option><option value="ram">RAM</option></select>';
   html += '<label>GPUs<input class="hwfit-manual-gpus" type="text" inputmode="numeric" placeholder="1"></label>';
   html += '<label>VRAM per GPU<input class="hwfit-manual-vram" type="text" inputmode="decimal" placeholder="8 GB"></label>';
@@ -1424,7 +1424,7 @@ function _renderRecipes() {
   html += '<button type="button" class="hwfit-hw-manual-save">✓ Apply</button>';
   html += '<button type="button" class="hwfit-hw-manual-clear">× Clear</button>';
   html += '</div>';
-  html += '<div id="hwfit-hw-row" style="display:none;align-items:center;gap:4px;margin-top:3px;padding-top:2px;"><span style="font-size:10px;padding:2px 8px;border-radius:10px;background:color-mix(in srgb, var(--fg) 8%, transparent);color:var(--fg);opacity:0.7;white-space:nowrap;flex-shrink:0;position:relative;top:-1px;">Detected hardware</span><div class="hwfit-hw" id="hwfit-hw" style="flex:1;"></div></div>';
+  html += '<div id="hwfit-hw-row" style="display:none;align-items:center;gap:4px;margin-top:3px;padding-top:2px;"><span style="font-size:0.6rem;padding:2px 8px;border-radius:10px;background:color-mix(in srgb, var(--fg) 8%, transparent);color:var(--fg);opacity:0.7;white-space:nowrap;flex-shrink:0;position:relative;top:-1px;">Detected hardware</span><div class="hwfit-hw" id="hwfit-hw" style="flex:1;"></div></div>';
   html += '<div class="hwfit-list" id="hwfit-list"></div>';
 
   html += '</div></div>';
@@ -1457,7 +1457,7 @@ function _renderRecipes() {
 
   html += '<div class="memory-bulk-bar hidden" id="serve-bulk-bar">';
   html += '<label class="memory-bulk-check-all"><input type="checkbox" id="serve-select-all"> All</label>';
-  html += '<span id="serve-bulk-count" style="font-size:10px;opacity:0.5;">0 selected</span>';
+  html += '<span id="serve-bulk-count" style="font-size:0.6rem;opacity:0.5;">0 selected</span>';
   html += '<button class="memory-toolbar-btn danger" id="serve-bulk-delete" style="position:relative;top:-3px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>';
   html += '<button class="memory-toolbar-btn" id="serve-bulk-cancel" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-3px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
   html += '</div>';
@@ -1470,7 +1470,7 @@ function _renderRecipes() {
   html += '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">';
   html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">';
   html += '<h2 style="margin:0;padding:0;line-height:1;">Dependencies</h2>';
-  html += '<span style="font-size:10px;opacity:0.5;margin-left:auto;">Server</span>';
+  html += '<span style="font-size:0.6rem;opacity:0.5;margin-left:auto;">Server</span>';
   html += '<select class="cookbook-field-input" id="hwfit-deps-server" style="height:28px;min-width:70px;">';
   html += _buildServerOpts(false);
   html += '</select>';
@@ -1496,7 +1496,7 @@ function _renderRecipes() {
   // Bold green check shown when a token is stored (a placeholder can't style a
   // single glyph, so it's its own element next to the input).
   if (_es.hfTokenConfigured) {
-    html += `<span class="hwfit-hf-check" title="Token stored" style="font-weight:800;color:var(--green,#50fa7b);font-size:15px;line-height:1;flex-shrink:0;position:relative;top:2px;">✓</span>`;
+    html += `<span class="hwfit-hf-check" title="Token stored" style="font-weight:800;color:var(--green,#50fa7b);font-size:0.95rem;line-height:1;flex-shrink:0;position:relative;top:2px;">✓</span>`;
   }
   const hfPlaceholder = _es.hfTokenConfigured
     ? `Stored (${esc(_es.hfTokenMasked || 'configured')}) - enter a new token to replace`

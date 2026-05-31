@@ -296,7 +296,7 @@ async function _buildCompareUI() {
   headerBar.className = 'compare-header-bar';
   headerBar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:6px 10px;flex-shrink:0;';
   const headerLabel = document.createElement('span');
-  headerLabel.style.cssText = 'font-size:10px;font-weight:400;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;';
+  headerLabel.style.cssText = 'font-size:0.6rem;font-weight:400;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;';
   const _modeLabel = ({ search: ' search providers', agent: ' agents', research: ' research models' }[state._compareMode] || ' models');
   headerLabel.textContent = 'Comparing' + _modeLabel + (state._blindMode ? ' (blind)' : '') + ' · ' + state._timeout + 's timeout';
   // Left side: the Compare tool icon (two side-by-side panes, matching the
@@ -314,11 +314,11 @@ async function _buildCompareUI() {
   const headerActions = document.createElement('div');
   headerActions.style.cssText = 'display:flex;align-items:center;gap:2px;';
 
-  const _btnCSS = 'background:none;border:1px solid var(--border);color:var(--fg);cursor:pointer;padding:3px 10px;font-size:11px;font-weight:600;opacity:0.7;transition:all 0.15s;line-height:1;border-radius:4px;display:inline-flex;align-items:center;font-family:inherit;';
+  const _btnCSS = 'background:none;border:1px solid var(--border);color:var(--fg);cursor:pointer;padding:3px 10px;font-size:0.7rem;font-weight:600;opacity:0.7;transition:all 0.15s;line-height:1;border-radius:4px;display:inline-flex;align-items:center;font-family:inherit;';
 
   const checkBtn = document.createElement('button');
   checkBtn.id = 'compare-check-btn';
-  checkBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg><span style="font-size:11px;margin-left:3px;">Probe</span>';
+  checkBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg><span style="font-size:0.7rem;margin-left:3px;">Probe</span>';
   checkBtn.title = 'Probe unverified models with a small test request';
   checkBtn.style.cssText = _btnCSS;
   checkBtn.addEventListener('click', () => _checkUnprobed());
@@ -339,7 +339,7 @@ async function _buildCompareUI() {
   exportWrap.style.cssText = 'position:relative;display:inline-flex;';
   const exportBtn = document.createElement('button');
   exportBtn.id = 'compare-export-btn';
-  exportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span style="font-size:11px;margin-left:3px;">Export</span>';
+  exportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span style="font-size:0.7rem;margin-left:3px;">Export</span>';
   exportBtn.title = 'Export options';
   exportBtn.style.cssText = _btnCSS;
   exportBtn.addEventListener('click', (e) => {
@@ -351,7 +351,7 @@ async function _buildCompareUI() {
 
   const shuffleBtn = document.createElement('button');
   shuffleBtn.id = 'compare-shuffle-btn';
-  shuffleBtn.innerHTML = ICON_DICE + '<span style="font-size:11px;margin-left:3px;">Shuffle</span>';
+  shuffleBtn.innerHTML = ICON_DICE + '<span style="font-size:0.7rem;margin-left:3px;">Shuffle</span>';
   shuffleBtn.title = 'Shuffle pane positions';
   shuffleBtn.style.cssText = _btnCSS;
   shuffleBtn.addEventListener('click', () => shufflePanePositions());
@@ -359,7 +359,7 @@ async function _buildCompareUI() {
 
   const addBtn = document.createElement('button');
   addBtn.id = 'compare-add-btn';
-  addBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span style="font-size:11px;margin-left:3px;">Add</span>';
+  addBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span style="font-size:0.7rem;margin-left:3px;">Add</span>';
   addBtn.title = 'Add model pane';
   addBtn.style.cssText = _btnCSS;
   addBtn.addEventListener('click', () => _addPane(addBtn));
@@ -1016,7 +1016,7 @@ function _toggleExportMenu(btn) {
   const r = btn.getBoundingClientRect();
   const m = document.createElement('div');
   m.className = 'compare-export-menu';
-  m.style.cssText = 'position:fixed;z-index:10001;top:' + (r.bottom + 4) + 'px;left:' + r.left + 'px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;display:flex;flex-direction:column;min-width:170px;';
+  m.style.cssText = 'position:fixed;z-index:10001;top:' + (r.bottom + 4) + 'px;left:' + r.left + 'px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:0.75rem;display:flex;flex-direction:column;min-width:170px;';
   const opts = [
     { label: 'Copy as Markdown', fn: () => _exportCopyMarkdown(btn) },
     { label: 'Download .md',     fn: () => _exportDownloadMarkdown() },
@@ -1026,7 +1026,7 @@ function _toggleExportMenu(btn) {
     const item = document.createElement('button');
     item.type = 'button';
     item.textContent = o.label;
-    item.style.cssText = 'background:none;border:none;color:var(--fg);text-align:left;padding:8px 12px;border-radius:6px;cursor:pointer;font:inherit;font-size:12px;';
+    item.style.cssText = 'background:none;border:none;color:var(--fg);text-align:left;padding:8px 12px;border-radius:6px;cursor:pointer;font:inherit;font-size:0.75rem;';
     item.addEventListener('mouseenter', () => { item.style.background = 'color-mix(in srgb, var(--fg) 8%, transparent)'; });
     item.addEventListener('mouseleave', () => { item.style.background = 'none'; });
     item.addEventListener('click', () => { _closeExportMenu(); o.fn(); });
@@ -1144,12 +1144,12 @@ async function _exportComparison(btn) {
       ta.select(); document.execCommand('copy'); ta.remove();
     }
     if (btn) {
-      btn.innerHTML = '<span style="font-size:11px;">Copied!</span>';
+      btn.innerHTML = '<span style="font-size:0.7rem;">Copied!</span>';
       setTimeout(() => { btn.innerHTML = origLabel; }, 1500);
     }
   } catch (e) {
     if (btn) {
-      btn.innerHTML = '<span style="font-size:11px;color:var(--color-error);">Failed</span>';
+      btn.innerHTML = '<span style="font-size:0.7rem;color:var(--color-error);">Failed</span>';
       setTimeout(() => { btn.innerHTML = origLabel; }, 2000);
     }
   }

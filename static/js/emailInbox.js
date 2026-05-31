@@ -14,7 +14,7 @@ const _acct = () => window.__odysseusActiveEmailAccount
   ? `&account_id=${encodeURIComponent(window.__odysseusActiveEmailAccount)}`
   : '';
 
-const _emailSetupHint = () => '<div style="margin-top:6px;opacity:0.72;font-size:11px;">Setup: <span style="color:var(--accent,var(--red));">Settings &rsaquo; Integrations</span></div>';
+const _emailSetupHint = () => '<div style="margin-top:6px;opacity:0.72;font-size:0.7rem;">Setup: <span style="color:var(--accent,var(--red));">Settings &rsaquo; Integrations</span></div>';
 
 // SVG icons matching sessions.js dropdown style
 const _replyIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>';
@@ -936,7 +936,7 @@ function _showRemindSubmenu(em, parentDropdown) {
   parentDropdown.innerHTML = '';
   const header = document.createElement('div');
   header.className = 'dropdown-item-compact';
-  header.style.cssText = 'opacity:0.5;font-size:10px;pointer-events:none;text-transform:uppercase;letter-spacing:0.5px;padding-top:6px;';
+  header.style.cssText = 'opacity:0.5;font-size:0.6rem;pointer-events:none;text-transform:uppercase;letter-spacing:0.5px;padding-top:6px;';
   header.innerHTML = '<span>Remind me</span>';
   parentDropdown.appendChild(header);
 
@@ -958,7 +958,7 @@ function _showRemindSubmenu(em, parentDropdown) {
   for (const p of presets) {
     const item = document.createElement('div');
     item.className = 'dropdown-item-compact';
-    item.innerHTML = `<span>${p.label}</span><span style="margin-left:auto;opacity:0.5;font-size:10px;">${p.sub}</span>`;
+    item.innerHTML = `<span>${p.label}</span><span style="margin-left:auto;opacity:0.5;font-size:0.6rem;">${p.sub}</span>`;
     item.addEventListener('click', async (e) => {
       e.stopPropagation();
       parentDropdown.remove();
@@ -977,7 +977,7 @@ function _showRemindSubmenu(em, parentDropdown) {
     const def = new Date(tomorrow);
     const pad = n => String(n).padStart(2, '0');
     tmp.value = `${def.getFullYear()}-${pad(def.getMonth()+1)}-${pad(def.getDate())}T${pad(def.getHours())}:${pad(def.getMinutes())}`;
-    tmp.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:99999;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:13px;';
+    tmp.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:99999;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;';
     document.body.appendChild(tmp);
     tmp.focus();
     if (typeof tmp.showPicker === 'function') { try { tmp.showPicker(); } catch {} }

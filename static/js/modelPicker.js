@@ -168,7 +168,7 @@ function _initModelPickerDropdown() {
         const badge = document.createElement('span');
         badge.className = 'model-switch-stale-badge';
         badge.textContent = 'offline';
-        badge.style.cssText = 'font-size:10px;opacity:0.7;padding:1px 6px;border:1px solid var(--border);border-radius:8px;margin-left:6px;';
+        badge.style.cssText = 'font-size:0.6rem;opacity:0.7;padding:1px 6px;border:1px solid var(--border);border-radius:8px;margin-left:6px;';
         row.appendChild(badge);
       }
       const epSpan = document.createElement('span');

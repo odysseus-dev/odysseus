@@ -352,7 +352,7 @@ function _buildPanelHTML() {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.8;"><path d="M6 18h8"/><path d="M3 22h18"/><path d="M14 22a7 7 0 1 0 0-14h-1"/><path d="M9 14h2"/><path d="M9 12a2 2 0 0 1-2-2V6h4v4a2 2 0 0 1-2 2Z"/><path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3"/></svg>
           <span>Multi-step web research with an LLM-in-the-loop agent</span>
         </p>
-        <div id="research-no-past-hint" class="memory-desc doclib-desc" style="display:none;margin-top:-2px;font-size:11px;opacity:0.7;">All past research found in <button type="button" class="research-library-link">Library, Research</button></div>
+        <div id="research-no-past-hint" class="memory-desc doclib-desc" style="display:none;margin-top:-2px;font-size:0.7rem;opacity:0.7;">All past research found in <button type="button" class="research-library-link">Library, Research</button></div>
         <textarea id="research-query" class="research-query" placeholder="e.g. Trace Odysseus's ten-year journey home from Troy — every island, monster, and detour, and why each one cost him" rows="4"></textarea>
         <div class="research-category-row" id="research-category-row">
           <button class="research-cat active" data-cat="" title="LLM auto-detects the best format">Auto</button>
@@ -1160,7 +1160,7 @@ async function _copyResult(job, btn) {
     ta.value = text;
     ta.readOnly = false;
     ta.contentEditable = 'true';
-    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;';
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:1rem;';
     document.body.appendChild(ta);
     ta.focus();
     ta.select();

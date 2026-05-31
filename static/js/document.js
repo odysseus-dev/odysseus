@@ -103,7 +103,7 @@ import * as Modals from './modalManager.js';
   {
     const s = document.createElement('style');
     s.id = 'doc-tab-menu-styles';
-    s.textContent = `.doc-tab-menu-btn{background:none!important;border:none!important;outline:none!important;box-shadow:none!important;color:var(--fg);opacity:0.25;cursor:pointer;padding:2px 4px!important;height:auto!important;line-height:1;transition:opacity .15s;flex-shrink:0;-webkit-appearance:none;appearance:none}.doc-tab-menu-btn:focus,.doc-tab-menu-btn:active{outline:none!important;box-shadow:none!important;background:none!important}.doc-tab:hover .doc-tab-menu-btn{opacity:.5}.doc-tab-menu-btn:hover{opacity:1!important}.doc-tab-dropdown .dropdown-item-compact{padding:6px 8px;border-radius:6px;cursor:pointer;white-space:nowrap;border-bottom:none;display:flex;align-items:center;gap:10px;font-size:11px}.doc-tab-dropdown .dropdown-item-compact:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}.doc-tab-dropdown .dropdown-item-compact .dropdown-icon{width:14px;height:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;opacity:0.5}.doc-tab-dropdown .dropdown-divider{height:1px;margin:3px 0;background:color-mix(in srgb,var(--border) 40%,transparent)}.doc-tab-action-delete{color:var(--red,#e06c75)!important}.doc-tab-action-delete .dropdown-icon{opacity:0.7!important}`;
+    s.textContent = `.doc-tab-menu-btn{background:none!important;border:none!important;outline:none!important;box-shadow:none!important;color:var(--fg);opacity:0.25;cursor:pointer;padding:2px 4px!important;height:auto!important;line-height:1;transition:opacity .15s;flex-shrink:0;-webkit-appearance:none;appearance:none}.doc-tab-menu-btn:focus,.doc-tab-menu-btn:active{outline:none!important;box-shadow:none!important;background:none!important}.doc-tab:hover .doc-tab-menu-btn{opacity:.5}.doc-tab-menu-btn:hover{opacity:1!important}.doc-tab-dropdown .dropdown-item-compact{padding:6px 8px;border-radius:6px;cursor:pointer;white-space:nowrap;border-bottom:none;display:flex;align-items:center;gap:10px;font-size:0.7rem}.doc-tab-dropdown .dropdown-item-compact:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}.doc-tab-dropdown .dropdown-item-compact .dropdown-icon{width:14px;height:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;opacity:0.5}.doc-tab-dropdown .dropdown-divider{height:1px;margin:3px 0;background:color-mix(in srgb,var(--border) 40%,transparent)}.doc-tab-action-delete{color:var(--red,#e06c75)!important}.doc-tab-action-delete .dropdown-icon{opacity:0.7!important}`;
     document.head.appendChild(s);
   }
 
@@ -1113,7 +1113,7 @@ import * as Modals from './modalManager.js';
     const docId = activeDocId;
     // Keep the save pill across re-renders by detaching/re-attaching it
     const savedPill = document.getElementById('doc-pdf-save-pill');
-    pane.innerHTML = '<div style="color:#bbb;font-size:13px;text-align:center;padding:40px;">Loading PDF…</div>';
+    pane.innerHTML = '<div style="color:#bbb;font-size:0.8rem;text-align:center;padding:40px;">Loading PDF…</div>';
     if (savedPill) pane.appendChild(savedPill);
     let data;
     try {
@@ -1210,7 +1210,7 @@ import * as Modals from './modalManager.js';
               el.style.border = '1px dashed color-mix(in srgb, var(--accent, var(--red)) 65%, transparent)';
               el.style.background = 'color-mix(in srgb, var(--accent, var(--red)) 10%, transparent)';
               const span = document.createElement('span');
-              span.style.cssText = 'color:var(--accent, var(--red));font-size:11px;';
+              span.style.cssText = 'color:var(--accent, var(--red));font-size:0.7rem;';
               span.textContent = 'Sign here';
               el.appendChild(span);
             }
@@ -1241,7 +1241,7 @@ import * as Modals from './modalManager.js';
             if (opt === f.value) o.selected = true;
             el.appendChild(o);
           }
-          el.style.cssText = baseStyle + 'border:1px solid color-mix(in srgb, var(--accent, var(--red)) 45%, transparent);background:rgba(255,255,255,0.85);font-size:11px;padding:0 2px;';
+          el.style.cssText = baseStyle + 'border:1px solid color-mix(in srgb, var(--accent, var(--red)) 45%, transparent);background:rgba(255,255,255,0.85);font-size:0.7rem;padding:0 2px;';
         } else {
           el = document.createElement('input');
           el.type = 'text';
@@ -1271,7 +1271,7 @@ import * as Modals from './modalManager.js';
           today.type = 'button';
           today.textContent = 'Today';
           today.title = "Set to today's date";
-          today.style.cssText = `position:absolute;left:calc(${lPct}% + ${wPct}%);top:${tPct}%;height:${hPct}%;margin-left:4px;padding:0 6px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);background:rgba(255,255,255,0.95);color:var(--accent, var(--red));border-radius:3px;cursor:pointer;font-size:10px;line-height:1;white-space:nowrap;`;
+          today.style.cssText = `position:absolute;left:calc(${lPct}% + ${wPct}%);top:${tPct}%;height:${hPct}%;margin-left:4px;padding:0 6px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);background:rgba(255,255,255,0.95);color:var(--accent, var(--red));border-radius:3px;cursor:pointer;font-size:0.6rem;line-height:1;white-space:nowrap;`;
           today.addEventListener('click', () => {
             const d = new Date();
             const dd = String(d.getDate()).padStart(2, '0');
@@ -1364,7 +1364,7 @@ import * as Modals from './modalManager.js';
       input.innerHTML = `<svg viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;display:block;"><path d="M4 12 L10 18 L20 6" fill="none" stroke="#111" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
     } else if (kind === 'signature') {
       input = document.createElement('div');
-      input.style.cssText = `width:100%;height:100%;box-sizing:border-box;border:1px dashed color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;font-size:10px;color:var(--accent, var(--red));`;
+      input.style.cssText = `width:100%;height:100%;box-sizing:border-box;border:1px dashed color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;font-size:0.6rem;color:var(--accent, var(--red));`;
       input.textContent = (ann.value && ann.value.startsWith('signature:')) ? '' : 'Sign here';
       input.dataset.signatureId = (ann.value && ann.value.startsWith('signature:')) ? ann.value.slice(10) : '';
     } else {
@@ -1398,13 +1398,13 @@ import * as Modals from './modalManager.js';
     del.type = 'button';
     del.textContent = '✖';
     del.title = 'Delete annotation';
-    del.style.cssText = `position:absolute;top:${OFF}px;right:${OFF}px;width:${HS}px;height:${HS}px;padding:0 0 0 1px;border:1px solid var(--accent, var(--red));background:#fff;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:11px;line-height:1;display:${HIDE};font-weight:bold;touch-action:none;`;
+    del.style.cssText = `position:absolute;top:${OFF}px;right:${OFF}px;width:${HS}px;height:${HS}px;padding:0 0 0 1px;border:1px solid var(--accent, var(--red));background:#fff;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:0.7rem;line-height:1;display:${HIDE};font-weight:bold;touch-action:none;`;
 
     // ☰ drag handle — same size as the × button.
     const grip = document.createElement('div');
     grip.title = 'Drag to move';
     grip.textContent = '☰';
-    grip.style.cssText = `position:absolute;top:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:3px;cursor:move;font-size:11px;line-height:${HS - 2}px;text-align:center;display:${HIDE};touch-action:none;`;
+    grip.style.cssText = `position:absolute;top:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:3px;cursor:move;font-size:0.7rem;line-height:${HS - 2}px;text-align:center;display:${HIDE};touch-action:none;`;
 
     // ↘ resize handle — same size as the × button.
     const resize = document.createElement('div');
@@ -1418,7 +1418,7 @@ import * as Modals from './modalManager.js';
       menuBtn.type = 'button';
       menuBtn.textContent = '…';
       menuBtn.title = 'Text annotation options';
-      menuBtn.style.cssText = `position:absolute;bottom:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;padding:0;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:15px;line-height:0.8;display:${HIDE};font-weight:bold;touch-action:none;`;
+      menuBtn.style.cssText = `position:absolute;bottom:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;padding:0;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:0.95rem;line-height:0.8;display:${HIDE};font-weight:bold;touch-action:none;`;
     }
 
     // Set handle visibility together; clicking/tapping the annotation itself
@@ -1635,14 +1635,14 @@ import * as Modals from './modalManager.js';
     if (kind === 'text') {
       const popover = document.createElement('div');
       popover.className = 'pdf-annotation-text-menu';
-      popover.style.cssText = `position:absolute;bottom:${OFF + HS + 4}px;left:${OFF}px;display:none;background:#fff;border:1px solid var(--accent, var(--red));border-radius:4px;padding:6px 8px;box-shadow:0 2px 8px rgba(0,0,0,0.2);z-index:10;flex-direction:column;align-items:stretch;gap:6px;font-size:10px;color:#222;white-space:nowrap;`;
+      popover.style.cssText = `position:absolute;bottom:${OFF + HS + 4}px;left:${OFF}px;display:none;background:#fff;border:1px solid var(--accent, var(--red));border-radius:4px;padding:6px 8px;box-shadow:0 2px 8px rgba(0,0,0,0.2);z-index:10;flex-direction:column;align-items:stretch;gap:6px;font-size:0.6rem;color:#222;white-space:nowrap;`;
       popover.innerHTML = `
         <div style="display:flex;align-items:center;gap:6px;">
           <span>Line spacing</span>
           <input type="range" min="1" max="3" step="0.05" value="${ann.lineHeight || 1.3}" style="width:90px;accent-color:var(--accent, var(--red));" />
-          <input type="number" class="lh-val" min="0.5" max="5" step="0.01" value="${(ann.lineHeight || 1.3).toFixed(2)}" style="width:54px;font-size:10px;padding:1px 7px 1px 3px;border:1px solid var(--accent, var(--red));border-radius:3px;text-align:right;accent-color:var(--accent, var(--red));" />
+          <input type="number" class="lh-val" min="0.5" max="5" step="0.01" value="${(ann.lineHeight || 1.3).toFixed(2)}" style="width:54px;font-size:0.6rem;padding:1px 7px 1px 3px;border:1px solid var(--accent, var(--red));border-radius:3px;text-align:right;accent-color:var(--accent, var(--red));" />
         </div>
-        <button type="button" class="pdf-ann-today" style="height:22px;padding:0 7px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);color:var(--accent, var(--red));border-radius:4px;cursor:pointer;font-size:10px;font-family:inherit;text-align:left;">Today</button>
+        <button type="button" class="pdf-ann-today" style="height:22px;padding:0 7px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);color:var(--accent, var(--red));border-radius:4px;cursor:pointer;font-size:0.6rem;font-family:inherit;text-align:left;">Today</button>
       `;
       const slider = popover.querySelector('input[type="range"]');
       const valInput = popover.querySelector('.lh-val');
@@ -2154,7 +2154,7 @@ import * as Modals from './modalManager.js';
       }
     } else if (lang === 'csv') {
       show = true;
-      actionBtn.innerHTML = _csvActive ? _penIco : '<span style="font-size:12px;font-weight:600;">⊞</span>';
+      actionBtn.innerHTML = _csvActive ? _penIco : '<span style="font-size:0.75rem;font-weight:600;">⊞</span>';
       actionBtn.title = _csvActive ? 'Edit' : 'Table View';
       if (_csvActive) actionBtn.classList.add('active');
     } else if (_isRenderLang(lang)) {
@@ -2758,7 +2758,7 @@ import * as Modals from './modalManager.js';
       overlay.innerHTML = `
         <div class="modal-content" style="width:360px;max-width:90vw;">
           <div class="modal-header"><h4>No attachments found</h4></div>
-          <div class="modal-body" style="padding:16px;font-size:13px;opacity:0.8;">
+          <div class="modal-body" style="padding:16px;font-size:0.8rem;opacity:0.8;">
             Your message mentions an attachment, but nothing is attached. Send anyway?
           </div>
           <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;">
@@ -3568,13 +3568,13 @@ import * as Modals from './modalManager.js';
       <input type="hidden" id="doc-title-input" value="" />
       <div class="doc-mobile-grabber" id="doc-mobile-grabber" aria-hidden="true"></div>
       <div class="doc-editor-header" id="doc-editor-actions">
-        <button id="doc-undo-btn" class="doc-action-icon-btn" title="Undo (Ctrl+Z)" style="gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg><span style="font-size:11px;">Undo</span></button>
+        <button id="doc-undo-btn" class="doc-action-icon-btn" title="Undo (Ctrl+Z)" style="gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg><span style="font-size:0.7rem;">Undo</span></button>
         <button id="doc-header-preview-btn" class="doc-action-icon-btn" title="Run / Preview" style="display:none;opacity:0.85;gap:4px;"></button>
         <span id="doc-stream-indicator" class="doc-stream-indicator" style="display:none"><span class="doc-stream-dot"></span> editing</span>
         <span id="doc-version-badge" class="doc-version-badge" title="Version history" style="display:none">v1</span>
         <span style="flex:1"></span>
-        <button id="doc-export-pdf-btn" class="doc-action-icon-btn" title="Export PDF" style="display:none;opacity:0.7;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 18 15 15"/></svg> <span style="font-size:11px;">Export PDF</span></button>
-        <button id="doc-pdf-view-btn" class="doc-action-icon-btn" title="Toggle PDF view" style="display:none;opacity:0.7;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> <span style="font-size:11px;">PDF</span></button>
+        <button id="doc-export-pdf-btn" class="doc-action-icon-btn" title="Export PDF" style="display:none;opacity:0.7;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 18 15 15"/></svg> <span style="font-size:0.7rem;">Export PDF</span></button>
+        <button id="doc-pdf-view-btn" class="doc-action-icon-btn" title="Toggle PDF view" style="display:none;opacity:0.7;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> <span style="font-size:0.7rem;">PDF</span></button>
         <select id="doc-language-select" class="doc-language-select">
           <option value="">type</option>
           <option value="python">python</option>
@@ -3706,7 +3706,7 @@ import * as Modals from './modalManager.js';
       <div id="doc-csv-preview" class="doc-csv-preview" style="display:none"></div>
       <iframe id="doc-html-preview" class="doc-html-preview" sandbox="allow-scripts allow-modals" style="display:none"></iframe>
       <div id="doc-pdf-view" style="display:none;width:100%;flex:1;min-height:0;overflow:auto;background:#525659;padding:20px 0;position:relative;">
-        <div id="doc-pdf-save-pill" style="display:none;position:absolute;top:8px;right:14px;padding:4px 10px;border-radius:12px;font-size:11px;z-index:5;pointer-events:none;background:transparent;color:transparent;"></div>
+        <div id="doc-pdf-save-pill" style="display:none;position:absolute;top:8px;right:14px;padding:4px 10px;border-radius:12px;font-size:0.7rem;z-index:5;pointer-events:none;background:transparent;color:transparent;"></div>
       </div>
       <!-- Action footer sits AFTER all the content/preview panes so it stays
            pinned to the bottom no matter which pane (editor / md-preview /
@@ -7408,7 +7408,7 @@ import * as Modals from './modalManager.js';
     if (!_docTabMenu) {
       _docTabMenu = document.createElement('div');
       _docTabMenu.className = 'doc-tab-dropdown';
-      _docTabMenu.style.cssText = 'position:fixed;z-index:1000;min-width:0;width:max-content;padding:4px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);font-size:12px;display:none;';
+      _docTabMenu.style.cssText = 'position:fixed;z-index:1000;min-width:0;width:max-content;padding:4px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);font-size:0.75rem;display:none;';
       document.body.appendChild(_docTabMenu);
       // Close on outside click
       document.addEventListener('click', (e) => {
@@ -7911,7 +7911,7 @@ import * as Modals from './modalManager.js';
     if (lang === 'markdown' && markdownModule?.mdToHtml) {
       body = markdownModule.mdToHtml(text);
     } else {
-      body = '<pre style="white-space:pre-wrap;font-size:12px;font-family:monospace;">' +
+      body = '<pre style="white-space:pre-wrap;font-size:0.75rem;font-family:monospace;">' +
         text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
     }
     const title = docs.get(activeDocId)?.title || 'document';
@@ -7942,11 +7942,11 @@ import * as Modals from './modalManager.js';
     if (lang === 'markdown' && markdownModule?.mdToHtml) {
       html = markdownModule.mdToHtml(text);
     } else {
-      html = '<pre style="white-space:pre-wrap;font-size:11px;font-family:monospace;color:#000;background:#fff;">' +
+      html = '<pre style="white-space:pre-wrap;font-size:0.7rem;font-family:monospace;color:#000;background:#fff;">' +
         text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
     }
     const container = document.createElement('div');
-    container.style.cssText = 'padding:20px;font-family:sans-serif;font-size:12px;color:#000;background:#fff;line-height:1.6;';
+    container.style.cssText = 'padding:20px;font-family:sans-serif;font-size:0.75rem;color:#000;background:#fff;line-height:1.6;';
     container.innerHTML = html;
     const baseName = _getExportBaseName();
     window.html2pdf().set({

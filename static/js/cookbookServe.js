@@ -142,7 +142,7 @@ function _rerenderCachedModels() {
       ? ' <span class="cookbook-serve-running-pill" title="This model is currently being served">running</span>'
       : '';
     html += `<div class="memory-item-title"${_mc ? ` style="color:${_mc}"` : ''}>${modelLogo(m.repo_id)}${esc(shortName)}${hfLink ? ` <a href="${esc(hfLink)}" target="_blank" rel="noopener" class="cookbook-hf-link">HF ↗</a>` : ''}${_runningPill}</div>`;
-    html += `<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">${metaParts.join(' \u00b7 ')}</div>`;
+    html += `<div class="memory-item-meta" style="font-size:0.6rem;opacity:0.4;margin-top:2px;">${metaParts.join(' \u00b7 ')}</div>`;
     html += `</div>`;
     const _bk = _detectBackend(m).backend;
     const _bkIco = _bk === 'llamacpp' ? '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M7 3C5.5 5 5 8 5 11v7c0 1.5 1 3 3 3h1v-4h6v4h1c2 0 3-1.5 3-3v-7c0-3-.5-6-2-8l-1 3c-.5-2-1.5-4-3-5-.5 2-1 3-1.5 3S11 3.5 10.5 2L7 3z" fill="currentColor"/><circle cx="9" cy="11" r="1.5" fill="var(--bg,#1a1a2e)"/><circle cx="15" cy="11" r="1.5" fill="var(--bg,#1a1a2e)"/></svg>'
@@ -218,7 +218,7 @@ function _rerenderCachedModels() {
       const _serveIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
       const _retryIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
       const _deleteIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
-      const _selectIco = '<span style="font-size:16px;line-height:1;position:relative;top:-2px;">●</span>';
+      const _selectIco = '<span style="font-size:1rem;line-height:1;position:relative;top:-2px;">●</span>';
       const items = [];
       if (m && m.status === 'ready') items.push({ label: 'Serve', icon: _serveIco, action: 'serve' });
       if (m && m.status === 'downloading') items.push({ label: 'Retry', icon: _retryIco, action: 'retry' });
@@ -269,7 +269,7 @@ function _rerenderCachedModels() {
       });
       dropdown.appendChild(cancelDiv);
       const rect = btn.getBoundingClientRect();
-      dropdown.style.cssText = `position:fixed;z-index:10001;visibility:hidden;top:0;right:${window.innerWidth-rect.right}px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,0.3);font-size:12px;`;
+      dropdown.style.cssText = `position:fixed;z-index:10001;visibility:hidden;top:0;right:${window.innerWidth-rect.right}px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,0.3);font-size:0.75rem;`;
       document.body.appendChild(dropdown);
       // Clamp into the VISIBLE area (visualViewport, not innerHeight — they differ
       // on mobile under the dynamic toolbar). Flip above the button if there's no
@@ -671,7 +671,7 @@ function _rerenderCachedModels() {
         // Cap width/height to the viewport and start hidden — we clamp the final
         // position after mount (below) using the menu's real measured size, so it
         // can't run off-screen on a narrow mobile viewport.
-        dropdown.style.cssText = `position:fixed;display:block;visibility:hidden;z-index:10001;top:0;left:0;right:auto;min-width:${minW}px;max-width:calc(100vw - 16px);max-height:calc(100vh - 24px);overflow-y:auto;box-sizing:border-box;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:11px;`;
+        dropdown.style.cssText = `position:fixed;display:block;visibility:hidden;z-index:10001;top:0;left:0;right:auto;min-width:${minW}px;max-width:calc(100vw - 16px);max-height:calc(100vh - 24px);overflow-y:auto;box-sizing:border-box;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:0.7rem;`;
 
         if (!modelSlots.length) {
           const empty = document.createElement('div');
@@ -690,7 +690,7 @@ function _rerenderCachedModels() {
           del.type = 'button';
           del.innerHTML = '×';
           del.title = 'Delete';
-          del.style.cssText = 'background:none;border:none;color:var(--fg-muted);cursor:pointer;font-size:15px;line-height:1;padding:0 2px;flex-shrink:0;';
+          del.style.cssText = 'background:none;border:none;color:var(--fg-muted);cursor:pointer;font-size:0.95rem;line-height:1;padding:0 2px;flex-shrink:0;';
           del.addEventListener('mouseenter', () => { del.style.color = '#f44'; });
           del.addEventListener('mouseleave', () => { del.style.color = 'var(--fg-muted)'; });
           it.appendChild(lbl);
@@ -1452,7 +1452,7 @@ export async function _fetchCachedModels() {
   _dlWrap.appendChild(_dlWp.element);
   const _dlLabel = document.createElement('div');
   _dlLabel.textContent = 'Scanning cached models…';
-  _dlLabel.style.cssText = 'opacity:0.5;font-size:11px;';
+  _dlLabel.style.cssText = 'opacity:0.5;font-size:0.7rem;';
   _dlWrap.appendChild(_dlLabel);
   list.appendChild(_dlWrap);
 
@@ -1511,7 +1511,7 @@ export async function _fetchCachedModels() {
 
     if (!allModels.length) {
       if (!host) {
-        list.innerHTML = '<div class="hwfit-loading" style="flex-direction:column;gap:6px;text-align:center;"><div>No cached models found</div><div style="font-size:11px;opacity:0.55;max-width:420px;line-height:1.4;">Docker Local uses Odysseus’s cache in <code>data/huggingface</code>. Download a model here, or copy an existing host HuggingFace cache into that folder once.</div></div>';
+        list.innerHTML = '<div class="hwfit-loading" style="flex-direction:column;gap:6px;text-align:center;"><div>No cached models found</div><div style="font-size:0.7rem;opacity:0.55;max-width:420px;line-height:1.4;">Docker Local uses Odysseus’s cache in <code>data/huggingface</code>. Download a model here, or copy an existing host HuggingFace cache into that folder once.</div></div>';
       } else {
         list.innerHTML = '<div class="hwfit-loading">No cached models found</div>';
       }

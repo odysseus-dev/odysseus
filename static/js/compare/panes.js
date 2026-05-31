@@ -457,7 +457,7 @@ async function _createAndAppendPane(m) {
     const shuffleBtn = document.getElementById('compare-shuffle-btn');
     if (shuffleBtn) {
       const bubble = document.createElement('div');
-      bubble.style.cssText = 'position:absolute;top:100%;right:0;margin-top:6px;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;white-space:nowrap;z-index:10000;box-shadow:0 4px 12px rgba(0,0,0,0.25);pointer-events:none;opacity:0;transition:opacity 0.2s;';
+      bubble.style.cssText = 'position:absolute;top:100%;right:0;margin-top:6px;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:0.7rem;white-space:nowrap;z-index:10000;box-shadow:0 4px 12px rgba(0,0,0,0.25);pointer-events:none;opacity:0;transition:opacity 0.2s;';
       bubble.textContent = 'Shuffle models?';
       shuffleBtn.style.position = 'relative';
       shuffleBtn.appendChild(bubble);

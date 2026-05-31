@@ -199,7 +199,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const sel = document.createElement('div');
       sel.className = 'dropdown-item-compact';
       sel.innerHTML =
-        '<span class="dropdown-icon"><span style="font-size:16px;line-height:1;position:relative;top:-2px;">●</span></span>'
+        '<span class="dropdown-icon"><span style="font-size:1rem;line-height:1;position:relative;top:-2px;">●</span></span>'
         + '<span>Select</span>';
       sel.addEventListener('click', (e) => { e.stopPropagation(); dd.remove(); opts.onSelect(); });
       dd.appendChild(sel);
@@ -391,7 +391,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         grid.innerHTML =
           '<div class="doclib-empty" style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;">' +
             '<span>No documents yet</span>' +
-            '<span style="opacity:0.7;font-size:11px;">' +
+            '<span style="opacity:0.7;font-size:0.7rem;">' +
               '<a href="#" data-doclib-import style="color:var(--accent,var(--red));text-decoration:underline;">Import' + _impIco + '</a>' +
               ' &middot; or create one in a session' +
             '</span>' +
@@ -508,7 +508,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     titleEl.innerHTML = (_langSvg || _GEN_DOC_ICON) + _hlSearch(doc.title || 'Untitled');
     titleRow.appendChild(titleEl);
     const verBadge = document.createElement('span');
-    verBadge.style.cssText = 'font-size:9px;padding:1px 6px;border-radius:8px;background:color-mix(in srgb, var(--red) 15%, transparent);border:1px solid color-mix(in srgb, var(--red) 40%, transparent);color:var(--red);flex-shrink:0;';
+    verBadge.style.cssText = 'font-size:0.55rem;padding:1px 6px;border-radius:8px;background:color-mix(in srgb, var(--red) 15%, transparent);border:1px solid color-mix(in srgb, var(--red) 40%, transparent);color:var(--red);flex-shrink:0;';
     verBadge.textContent = 'v' + (doc.version_count || 1);
     titleRow.appendChild(verBadge);
     // Chevron pushed to the right end of the title row — collapsed
@@ -524,7 +524,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     // Meta line: session → [lang-icon language] → time
     const meta = document.createElement('div');
     meta.className = 'memory-item-meta';
-    meta.style.cssText = 'font-size:10px;opacity:0.55;margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+    meta.style.cssText = 'font-size:0.6rem;opacity:0.55;margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
     const _esc = (s) => uiModule.esc(String(s || ''));
     const pieces = [];
     if (doc.session_name) pieces.push(`<span>${_esc(doc.session_name)}</span>`);
@@ -582,7 +582,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           const rect = menuBtn.getBoundingClientRect();
           document.body.appendChild(dropdown);
           dropdown.dataset.owner = doc.id;
-          dropdown.style.cssText = 'position:fixed;z-index:10000;min-width:0;width:max-content;padding:4px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);font-size:12px;display:block;';
+          dropdown.style.cssText = 'position:fixed;z-index:10000;min-width:0;width:max-content;padding:4px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);font-size:0.75rem;display:block;';
           dropdown.style.top = (rect.bottom + 4) + 'px';
           dropdown.style.left = 'auto';
           dropdown.style.right = (window.innerWidth - rect.right) + 'px';
@@ -609,7 +609,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     // Dropdown menu
     const dropdown = document.createElement('div');
     dropdown.className = 'doclib-card-dropdown';
-    dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;z-index:1000;min-width:0;width:max-content;padding:4px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);font-size:12px;';
+    dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;z-index:1000;min-width:0;width:max-content;padding:4px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);font-size:0.75rem;';
 
     const _di = (svg) => `<span class="dropdown-icon">${svg}</span>`;
     const _openIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
@@ -706,7 +706,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     if (!document.getElementById('doclib-card-styles')) {
       const s = document.createElement('style');
       s.id = 'doclib-card-styles';
-      s.textContent = `.doclib-card:hover .doclib-card-icon-btn{opacity:.4}.doclib-card-icon-btn:hover{opacity:1!important}.doclib-card-text-btn{background:none;border:1px solid var(--border);color:var(--fg-muted);font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;transition:border-color .15s,color .15s}.doclib-card-text-btn:hover{border-color:var(--accent,var(--red));color:var(--accent,var(--red))}.doclib-card-text-btn-danger{border-color:var(--color-danger,#e06c75)!important;color:var(--color-danger,#e06c75)!important}.doclib-card-text-btn-danger:hover{border-color:#ff4d4d!important;color:#ff4d4d!important}.doclib-card-chevron{display:none;align-items:center;justify-content:center;align-self:center;opacity:0.6;transition:transform .15s ease;flex-shrink:0;height:14px;line-height:0}.doclib-card-expanded .doclib-card-chevron{display:inline-flex;transform:rotate(180deg)}.doclib-card-chevron svg{display:block}`;
+      s.textContent = `.doclib-card:hover .doclib-card-icon-btn{opacity:.4}.doclib-card-icon-btn:hover{opacity:1!important}.doclib-card-text-btn{background:none;border:1px solid var(--border);color:var(--fg-muted);font-size:0.6rem;padding:3px 8px;border-radius:4px;cursor:pointer;transition:border-color .15s,color .15s}.doclib-card-text-btn:hover{border-color:var(--accent,var(--red));color:var(--accent,var(--red))}.doclib-card-text-btn-danger{border-color:var(--color-danger,#e06c75)!important;color:var(--color-danger,#e06c75)!important}.doclib-card-text-btn-danger:hover{border-color:#ff4d4d!important;color:#ff4d4d!important}.doclib-card-chevron{display:none;align-items:center;justify-content:center;align-self:center;opacity:0.6;transition:transform .15s ease;flex-shrink:0;height:14px;line-height:0}.doclib-card-expanded .doclib-card-chevron{display:inline-flex;transform:rotate(180deg)}.doclib-card-chevron svg{display:block}`;
       document.head.appendChild(s);
     }
 
@@ -916,7 +916,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     } catch (e) {
       // On error, keep existing preview if available
       if (!existingPre) {
-        preview.innerHTML = '<div style="padding:8px;color:var(--color-error);font-size:10px;">Failed to load</div>';
+        preview.innerHTML = '<div style="padding:8px;color:var(--color-error);font-size:0.6rem;">Failed to load</div>';
       }
       if (actionsBar && !preview.contains(actionsBar)) preview.appendChild(actionsBar);
     }
@@ -1655,7 +1655,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             <div id="doclib-bulk-bar" class="memory-bulk-bar hidden" style="margin-bottom:5px;">
               <label class="memory-bulk-check-all" style="position:relative;top:0px;left:1px;"><input type="checkbox" id="doclib-select-all" /> All</label>
               <span id="doclib-selected-count">0 Selected</span>
-              <button id="doclib-bulk-actions" class="memory-toolbar-btn" style="position:relative;top:-2px;margin-left:auto;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Actions <span style="opacity:0.55;font-size:9px;">&#9660;</span></button>
+              <button id="doclib-bulk-actions" class="memory-toolbar-btn" style="position:relative;top:-2px;margin-left:auto;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Actions <span style="opacity:0.55;font-size:0.55rem;">&#9660;</span></button>
               <button id="doclib-bulk-cancel" class="memory-toolbar-btn" title="Cancel (Esc)" style="margin-left:4px;margin-right:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
             <div class="doclib-grid" id="doclib-grid"></div>
@@ -1837,7 +1837,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
       card.classList.add('doclib-card-expanded');
       preview.style.display = 'block';
-      preview.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 4px;">Loading…</div>';
+      preview.innerHTML = '<div style="opacity:0.4;font-size:0.7rem;padding:8px 4px;">Loading…</div>';
       try {
         const res = await fetch(`${API_BASE}/api/history/${session.id}`, { credentials: 'same-origin' });
         if (!res.ok) throw new Error('Failed');
@@ -1873,7 +1873,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
                 </div>
               </div>`;
             }).join('')
-          : '<div style="opacity:0.4;font-size:11px;padding:6px 4px;">No messages yet</div>';
+          : '<div style="opacity:0.4;font-size:0.7rem;padding:6px 4px;">No messages yet</div>';
         const isArchive = !!session.archived;
         // Archived chats get a Restore button (unarchive); active chats get the
         // Archive button. Matches the research + document archive previews.
@@ -1958,7 +1958,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           if (isArchive) _renderLibArchive(); else _renderLibChats();
         });
       } catch (e) {
-        preview.innerHTML = '<div style="opacity:0.5;font-size:11px;padding:6px 4px;color:var(--color-error);">Failed to load preview</div>';
+        preview.innerHTML = '<div style="opacity:0.5;font-size:0.7rem;padding:6px 4px;color:var(--color-error);">Failed to load preview</div>';
       }
     }
 
@@ -2013,7 +2013,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             cbHtml +
             '<div style="flex:1;min-width:0;">' +
               '<div class="memory-item-title">' + chatIconSvg + _esc(s.name || 'Untitled') + msgCountHtml + '</div>' +
-              '<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">' + [model, _relTime(s.updated_at)].filter(Boolean).join(' \u00b7 ') + '</div>' +
+              '<div class="memory-item-meta" style="font-size:0.6rem;opacity:0.4;margin-top:2px;">' + [model, _relTime(s.updated_at)].filter(Boolean).join(' \u00b7 ') + '</div>' +
             '</div>' +
             chevronSvg +
             '<div class="memory-item-actions"><button class="memory-item-btn _chat-menu" title="Actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>' +
@@ -2267,14 +2267,14 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
       card.classList.add('doclib-card-expanded');
       preview.style.display = 'block';
-      preview.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 4px;">Loading…</div>';
+      preview.innerHTML = '<div style="opacity:0.4;font-size:0.7rem;padding:8px 4px;">Loading…</div>';
       try {
         const res = await fetch(`${API_BASE}/api/document/${d.id}`, { credentials: 'same-origin' });
         if (!res.ok) throw new Error('failed');
         const full = await res.json();
         const content = (full.current_content || '').slice(0, 20000);
         const pre = document.createElement('pre');
-        pre.style.cssText = 'white-space:pre-wrap;word-break:break-word;font-size:11px;margin:6px 4px;max-height:50vh;overflow:auto;';
+        pre.style.cssText = 'white-space:pre-wrap;word-break:break-word;font-size:0.7rem;margin:6px 4px;max-height:50vh;overflow:auto;';
         pre.textContent = content || '(empty document)';
         preview.innerHTML = '';
         preview.appendChild(pre);
@@ -2307,7 +2307,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         });
         preview.appendChild(actions);
       } catch {
-        preview.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 4px;">Failed to load preview</div>';
+        preview.innerHTML = '<div style="opacity:0.4;font-size:0.7rem;padding:8px 4px;">Failed to load preview</div>';
       }
     }
 
@@ -2368,7 +2368,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             cbHtml +
             '<div style="flex:1;min-width:0;">' +
               '<div class="memory-item-title">' + arcIconSvg + _esc(s.name || 'Untitled') + '</div>' +
-              '<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">' + [model, _relTime(s.updated_at)].filter(Boolean).join(' \u00b7 ') + '</div>' +
+              '<div class="memory-item-meta" style="font-size:0.6rem;opacity:0.4;margin-top:2px;">' + [model, _relTime(s.updated_at)].filter(Boolean).join(' \u00b7 ') + '</div>' +
             '</div>' +
             '<div class="memory-item-actions"><button class="memory-item-btn _arc-menu" title="Actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>' +
           '</div>' +
@@ -2408,7 +2408,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             _dcb +
             '<div style="flex:1;min-width:0;">' +
               '<div class="memory-item-title">' + _arcDocIco + _esc(d.title || 'Untitled') + '</div>' +
-              '<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">' + ['Document', (d.language || 'text'), _relTime(d.updated_at)].filter(Boolean).join(' · ') + '</div>' +
+              '<div class="memory-item-meta" style="font-size:0.6rem;opacity:0.4;margin-top:2px;">' + ['Document', (d.language || 'text'), _relTime(d.updated_at)].filter(Boolean).join(' · ') + '</div>' +
             '</div>' +
             '<div class="memory-item-actions"><button class="memory-item-btn _arc-doc-menu" title="Actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>' +
           '</div>' +
@@ -2445,7 +2445,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             _rcb +
             '<div style="flex:1;min-width:0;">' +
               '<div class="memory-item-title">' + _arcResIco + _esc(r.query || 'Research') + '</div>' +
-              '<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">' + ['Research', (r.source_count ? r.source_count + ' sources' : ''), _relTime(r.completed_at ? new Date(r.completed_at * 1000).toISOString() : '')].filter(Boolean).join(' · ') + '</div>' +
+              '<div class="memory-item-meta" style="font-size:0.6rem;opacity:0.4;margin-top:2px;">' + ['Research', (r.source_count ? r.source_count + ' sources' : ''), _relTime(r.completed_at ? new Date(r.completed_at * 1000).toISOString() : '')].filter(Boolean).join(' · ') + '</div>' +
             '</div>' +
             '<div class="memory-item-actions"><button class="memory-item-btn _arc-res-menu" title="Actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>' +
           '</div>' +
@@ -2624,7 +2624,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
       card.classList.add('doclib-card-expanded');
       preview.style.display = 'block';
-      preview.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 4px;">Loading…</div>';
+      preview.innerHTML = '<div style="opacity:0.4;font-size:0.7rem;padding:8px 4px;">Loading…</div>';
       let detail = item;
       try {
         // Hit the per-research detail endpoint to pull sources + summary.
@@ -2651,7 +2651,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         : '';
       preview.innerHTML =
         '<div class="doclib-chat-preview-messages">' +
-          (summaryHtml || sourcesHtml || '<div style="opacity:0.4;font-size:11px;padding:6px 4px;">No preview available</div>') +
+          (summaryHtml || sourcesHtml || '<div style="opacity:0.4;font-size:0.7rem;padding:6px 4px;">No preview available</div>') +
           (summaryHtml && sourcesHtml ? sourcesHtml : '') +
         '</div>' +
         '<div class="doclib-chat-preview-actions">' +
@@ -2770,7 +2770,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         grid.innerHTML =
           '<div class="hwfit-loading" style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;">' +
             '<span>No research yet</span>' +
-            '<span style="opacity:0.7;font-size:11px;">' +
+            '<span style="opacity:0.7;font-size:0.7rem;">' +
               'create one in the <a href="#" data-doclib-open-research style="color:var(--accent,var(--red));text-decoration:underline;">Deep Research</a> tab' +
             '</span>' +
           '</div>';
@@ -2802,7 +2802,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         if (_researchSelectMode) html += `<input type="checkbox" class="memory-select-cb _res-cb" data-rid="${r.id}"${selected ? ' checked' : ''}>`;
         html += `<div style="flex:1;min-width:0;">`;
         html += `<div class="memory-item-title"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;opacity:0.4;flex-shrink:0;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>${_esc(r.query || 'Untitled Research')}</div>`;
-        html += `<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">${metaText}</div>`;
+        html += `<div class="memory-item-meta" style="font-size:0.6rem;opacity:0.4;margin-top:2px;">${metaText}</div>`;
         html += `</div>`;
         if (!_researchSelectMode) html += `<div class="memory-item-actions"><button class="memory-item-btn doclib-research-delete" data-rid="${r.id}" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>`;
         html += `</div>`;

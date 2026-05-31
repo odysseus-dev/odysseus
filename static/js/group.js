@@ -68,10 +68,10 @@ function _initGroupTab() {
       const sublabel = p.model ? p.model.display : '';
       row.innerHTML = `
         <span style="flex:1;min-width:0;">
-          <span style="font-size:12px;font-weight:500;">${uiModule.esc(label)}</span>
-          ${sublabel && sublabel !== label ? '<span style="font-size:10px;opacity:0.35;margin-left:4px;">' + uiModule.esc(sublabel) + '</span>' : ''}
+          <span style="font-size:0.75rem;font-weight:500;">${uiModule.esc(label)}</span>
+          ${sublabel && sublabel !== label ? '<span style="font-size:0.6rem;opacity:0.35;margin-left:4px;">' + uiModule.esc(sublabel) + '</span>' : ''}
         </span>
-        <button style="background:none;border:none;color:var(--fg);opacity:0.5;cursor:pointer;font-size:16px;padding:0 4px;line-height:1;position:relative;top:-4px;" data-idx="${idx}" title="Remove">&times;</button>
+        <button style="background:none;border:none;color:var(--fg);opacity:0.5;cursor:pointer;font-size:1rem;padding:0 4px;line-height:1;position:relative;top:-4px;" data-idx="${idx}" title="Remove">&times;</button>
       `;
       row.querySelector('button').addEventListener('click', () => { _groupParticipants.splice(idx, 1); _render(); });
       participantsEl.appendChild(row);
@@ -88,13 +88,13 @@ function _initGroupTab() {
 
     const charSel = document.createElement('select');
     charSel.className = 'preset-input';
-    charSel.style.cssText = 'font-size:11px;flex:1;height:26px;';
+    charSel.style.cssText = 'font-size:0.7rem;flex:1;height:26px;';
     charSel.innerHTML = '<option value="">Empty...</option>' +
       characters.map(c => '<option value="' + c.id + '">' + uiModule.esc(c.name) + '</option>').join('');
 
     const modelSel = document.createElement('select');
     modelSel.className = 'preset-input';
-    modelSel.style.cssText = 'font-size:11px;flex:1;height:26px;';
+    modelSel.style.cssText = 'font-size:0.7rem;flex:1;height:26px;';
     modelSel.innerHTML = '<option value="">Model…</option>' +
       models.map(m => '<option value="' + m.mid + '">' + uiModule.esc(m.display) + '</option>').join('');
 
@@ -223,7 +223,7 @@ function _initGroupTab() {
       groups.forEach((g, idx) => {
         const chip = document.createElement('button');
         chip.className = 'preset-save-btn';
-        chip.style.cssText = 'padding:3px 10px;font-size:11px;background:color-mix(in srgb, var(--fg) 5%, transparent);border:1px solid var(--border);';
+        chip.style.cssText = 'padding:3px 10px;font-size:0.7rem;background:color-mix(in srgb, var(--fg) 5%, transparent);border:1px solid var(--border);';
         const chipLabel = document.createElement('span');
         chipLabel.textContent = g.name || 'Group ' + (idx + 1);
         chip.appendChild(chipLabel);
@@ -348,7 +348,7 @@ export async function showModelPicker() {
 
     // Mode toggle
     const modeRow = document.createElement('div');
-    modeRow.style.cssText = 'display:flex;gap:8px;margin-bottom:10px;align-items:center;font-size:12px;';
+    modeRow.style.cssText = 'display:flex;gap:8px;margin-bottom:10px;align-items:center;font-size:0.75rem;';
     modeRow.innerHTML = `
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
         <input type="radio" name="group-mode" value="parallel" ${_mode === 'parallel' ? 'checked' : ''}> All respond
@@ -376,8 +376,8 @@ export async function showModelPicker() {
     const footer = document.createElement('div');
     footer.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-top:10px;';
     footer.innerHTML = `
-      <span id="group-selected-count" style="font-size:11px;opacity:0.5;">0 selected</span>
-      <button id="group-start-btn" class="btn-primary" disabled style="padding:6px 16px;font-size:12px;">Start Group Chat</button>
+      <span id="group-selected-count" style="font-size:0.7rem;opacity:0.5;">0 selected</span>
+      <button id="group-start-btn" class="btn-primary" disabled style="padding:6px 16px;font-size:0.75rem;">Start Group Chat</button>
     `;
     body.appendChild(footer);
 
@@ -417,7 +417,7 @@ export async function showModelPicker() {
     }
 
     async function render(filter) {
-      list.innerHTML = '<div style="opacity:0.4;padding:8px;font-size:12px;">Loading models…</div>';
+      list.innerHTML = '<div style="opacity:0.4;padding:8px;font-size:0.75rem;">Loading models…</div>';
       const all = await getAllModels();
       const q = (filter || '').toLowerCase();
       all.forEach(m => {
@@ -429,8 +429,8 @@ export async function showModelPicker() {
         row.innerHTML = `
           <input type="checkbox" ${selected.has(m.mid) ? 'checked' : ''} style="margin-right:6px;">
           ${logo ? '<span style="opacity:0.5;margin-right:4px;">' + logo + '</span>' : ''}
-          <span style="flex:1;font-size:12px;">${uiModule.esc(m.display)}</span>
-          <span style="font-size:10px;opacity:0.3;">${uiModule.esc(m.epName)}</span>
+          <span style="flex:1;font-size:0.75rem;">${uiModule.esc(m.display)}</span>
+          <span style="font-size:0.6rem;opacity:0.3;">${uiModule.esc(m.epName)}</span>
         `;
         row.addEventListener('click', (e) => {
           if (e.target.tagName === 'INPUT') return;
@@ -469,7 +469,7 @@ export async function showModelPicker() {
       // Step 2: Character assignment
       body.innerHTML = '';
       const stepTitle = document.createElement('div');
-      stepTitle.style.cssText = 'font-size:12px;opacity:0.5;margin-bottom:8px;';
+      stepTitle.style.cssText = 'font-size:0.75rem;opacity:0.5;margin-bottom:8px;';
       stepTitle.textContent = 'Assign characters (optional)';
       body.appendChild(stepTitle);
 
@@ -483,10 +483,10 @@ export async function showModelPicker() {
         const logo = providerLogo(m.mid);
         row.innerHTML = `
           ${logo ? '<span style="opacity:0.5;">' + logo + '</span>' : ''}
-          <span style="flex:1;font-size:12px;font-weight:500;">${uiModule.esc(m.display)}</span>
+          <span style="flex:1;font-size:0.75rem;font-weight:500;">${uiModule.esc(m.display)}</span>
         `;
         const sel = document.createElement('select');
-        sel.style.cssText = 'font-size:11px;padding:3px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--fg);max-width:140px;';
+        sel.style.cssText = 'font-size:0.7rem;padding:3px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--fg);max-width:140px;';
         sel.innerHTML = '<option value="">No character</option>';
         characters.forEach(c => {
           sel.innerHTML += `<option value="${c.id}">${uiModule.esc(c.name)}</option>`;
@@ -506,7 +506,7 @@ export async function showModelPicker() {
       // Go button
       const goBtn = document.createElement('button');
       goBtn.className = 'btn-primary';
-      goBtn.style.cssText = 'margin-top:10px;padding:6px 16px;font-size:12px;width:100%;';
+      goBtn.style.cssText = 'margin-top:10px;padding:6px 16px;font-size:0.75rem;width:100%;';
       goBtn.textContent = 'Start Group Chat';
       goBtn.addEventListener('click', () => {
         // Attach character info to picked models
@@ -845,14 +845,14 @@ async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
           else if (json.type === 'tool_start') {
             const toolDiv = document.createElement('div');
             toolDiv.className = 'agent-tool-event';
-            toolDiv.style.cssText = 'font-size:11px;opacity:0.5;padding:2px 0;font-family:monospace;';
+            toolDiv.style.cssText = 'font-size:0.7rem;opacity:0.5;padding:2px 0;font-family:monospace;';
             toolDiv.textContent = `⚙ ${json.tool || 'tool'}${json.command ? ': ' + json.command.substring(0, 60) : ''}`;
             bodyEl.appendChild(toolDiv);
           }
           else if (json.type === 'tool_output') {
             const outDiv = document.createElement('div');
             outDiv.className = 'agent-tool-output';
-            outDiv.style.cssText = 'font-size:10px;opacity:0.4;padding:2px 0;font-family:monospace;max-height:60px;overflow:hidden;';
+            outDiv.style.cssText = 'font-size:0.6rem;opacity:0.4;padding:2px 0;font-family:monospace;max-height:60px;overflow:hidden;';
             outDiv.textContent = (json.output || '').substring(0, 200);
             bodyEl.appendChild(outDiv);
           }

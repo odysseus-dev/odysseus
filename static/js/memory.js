@@ -594,7 +594,7 @@ export function renderMemoryList() {
     } else {
       memoryList.innerHTML = `<div class="memory-empty" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;">
         <span>No memories yet${_smiley}</span>
-        <span style="opacity:0.7;font-size:11px;display:block;">
+        <span style="opacity:0.7;font-size:0.7rem;display:block;">
           <a href="#" data-mem-goto-add style="color:var(--accent,var(--red));text-decoration:underline;">Import in Add tab</a>
         </span>
       </div>`;
@@ -728,7 +728,7 @@ export function renderMemoryList() {
       // pattern as the email/documents/skills Select item.
       const selectItem = document.createElement('div');
       selectItem.className = 'dropdown-item-compact';
-      selectItem.innerHTML = '<span class="dropdown-icon"><span style="font-size:16px;line-height:1;">●</span></span><span>Select</span>';
+      selectItem.innerHTML = '<span class="dropdown-icon"><span style="font-size:1rem;line-height:1;">●</span></span><span>Select</span>';
       selectItem.addEventListener('click', (e) => {
         e.stopPropagation();
         if (dropdown.parentNode) dropdown.remove();

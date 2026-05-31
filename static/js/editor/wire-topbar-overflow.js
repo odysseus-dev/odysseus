@@ -28,7 +28,7 @@ export function wireTopbarOverflow({ container }) {
   // narrow. The Inpaint model selector moved into the side panel.
   const aiGroup = [
     container.querySelector('#ge-ai-model'),
-    ...container.querySelectorAll('.ge-topbar span[style*="font-size:9px"]'),
+    ...container.querySelectorAll('.ge-topbar span[style*="font-size:0.55rem"]'),
   ].filter(Boolean);
 
   function syncOverflow() {

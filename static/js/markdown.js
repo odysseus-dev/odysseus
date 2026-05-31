@@ -177,7 +177,7 @@ export function extractThinkingBlocks(text) {
  */
 function createThinkingSection(thinkingContent, index = 0, thinkingTime = null) {
   const id = `thinking-${Date.now()}-${index}`;
-  const timeHtml = thinkingTime ? `<span style="font-size:11px;opacity:0.4;font-variant-numeric:tabular-nums;">${thinkingTime}s</span>` : '';
+  const timeHtml = thinkingTime ? `<span style="font-size:0.7rem;opacity:0.4;font-variant-numeric:tabular-nums;">${thinkingTime}s</span>` : '';
   return `
     <div class="thinking-section">
       <div class="thinking-header" data-thinking-id="${id}">

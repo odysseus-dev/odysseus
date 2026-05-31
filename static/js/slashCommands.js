@@ -4880,7 +4880,7 @@ async function _cmdFlip(args, ctx) {
   const isHeads = Math.random() < 0.5;
   const edge = Math.random() < 0.001;
   const coin = document.createElement('div');
-  coin.style.cssText = 'width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;border:3px solid var(--border);color:var(--fg);background:var(--panel);animation:egg-spin 0.6s ease-out;cursor:pointer;user-select:none;transition:transform 0.15s;';
+  coin.style.cssText = 'width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.75rem;font-weight:700;border:3px solid var(--border);color:var(--fg);background:var(--panel);animation:egg-spin 0.6s ease-out;cursor:pointer;user-select:none;transition:transform 0.15s;';
   coin.textContent = edge ? '!' : (isHeads ? 'H' : 'T');
   coin.title = edge ? 'Edge?!' : (isHeads ? 'Heads' : 'Tails');
   coin.addEventListener('click', () => {
@@ -4913,7 +4913,7 @@ async function _cmdRoll(args, ctx) {
   const results = Array.from({ length: count }, () => Math.floor(Math.random() * sides) + 1);
   const total = results.reduce((a, b) => a + b, 0);
   const dice = results.map((v, i) => {
-    return `<div style="min-width:42px;height:42px;border-radius:6px;border:2px solid var(--border);background:var(--panel);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:var(--red);animation:egg-spin 0.5s ease-out ${i*0.08}s both;cursor:pointer" title="d${sides}" onclick="this.style.animation='none';this.offsetHeight;var r=Math.floor(Math.random()*${sides})+1;this.textContent=r;this.style.animation='egg-shake 0.3s ease'">${v}</div>`;
+    return `<div style="min-width:42px;height:42px;border-radius:6px;border:2px solid var(--border);background:var(--panel);display:flex;align-items:center;justify-content:center;font-size:1.1rem;font-weight:700;color:var(--red);animation:egg-spin 0.5s ease-out ${i*0.08}s both;cursor:pointer" title="d${sides}" onclick="this.style.animation='none';this.offsetHeight;var r=Math.floor(Math.random()*${sides})+1;this.textContent=r;this.style.animation='egg-shake 0.3s ease'">${v}</div>`;
   }).join('');
   const totalHtml = count > 1 ? `<div style="font-size:0.8em;opacity:0.5;margin-top:4px">${count}d${sides} = ${total}</div>` : '';
   _eggRender(`<div style="display:flex;flex-direction:column;align-items:center;gap:4px"><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center">${dice}</div>${totalHtml}</div>`);
@@ -4935,7 +4935,7 @@ async function _cmd8Ball(args, ctx) {
   _eggRender(`<div style="display:flex;flex-direction:column;align-items:center;gap:10px">
     <div style="width:80px;height:80px;border-radius:50%;background:#111;border:3px solid #333;display:flex;align-items:center;justify-content:center;animation:egg-spin 0.8s ease-out">
       <div style="width:36px;height:36px;border-radius:50%;background:#1a1a3e;display:flex;align-items:center;justify-content:center">
-        <span style="color:#fff;font-size:18px;font-weight:900">8</span>
+        <span style="color:#fff;font-size:1.1rem;font-weight:900">8</span>
       </div>
     </div>
     <div style="font-size:0.8em;opacity:0.5;max-width:300px;text-align:center">${ctx.esc(q)}</div>
@@ -4986,7 +4986,7 @@ async function _cmdAscii(args, ctx) {
   };
   const chars = text.toUpperCase().split('').map(c => (FONT[c] || FONT['?']).split('\n'));
   const rows = [0,1,2,3,4].map(r => chars.map(c => c[r] || '     ').join(' '));
-  _eggRender(`<pre style="color:var(--red);font-size:10px;line-height:1.15;background:none;border:none;padding:0;margin:0;animation:egg-fade 0.3s ease-out">${rows.join('\n')}</pre>`);
+  _eggRender(`<pre style="color:var(--red);font-size:0.6rem;line-height:1.15;background:none;border:none;padding:0;margin:0;animation:egg-fade 0.3s ease-out">${rows.join('\n')}</pre>`);
   if (!document.getElementById('egg-styles')) { const s=document.createElement('style');s.id='egg-styles';s.textContent='@keyframes egg-spin{0%{transform:rotateY(0) scale(0.5);opacity:0}50%{transform:rotateY(540deg) scale(1.2)}100%{transform:rotateY(720deg) scale(1)}} @keyframes egg-shake{0%,100%{transform:rotate(0)}25%{transform:rotate(-8deg)}75%{transform:rotate(8deg)}} @keyframes egg-fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}';document.head.appendChild(s); }
   return true;
 }
@@ -5035,7 +5035,7 @@ async function _cmdSay(args, ctx) {
   const mid = '< ' + text + ' '.repeat(pad - text.length - 2) + ' >';
   const bot = ' ' + '-'.repeat(pad);
   const cow = `${top}\n${mid}\n${bot}\n        \\   ^__^\n         \\  (oo)\\_______\n            (__)\\       )\\/\\\n                ||----w |\n                ||     ||`;
-  _eggRender(`<pre style="font-size:11px;line-height:1.3;animation:egg-fade 0.3s ease-out">${ctx.esc(cow)}</pre>`);
+  _eggRender(`<pre style="font-size:0.7rem;line-height:1.3;animation:egg-fade 0.3s ease-out">${ctx.esc(cow)}</pre>`);
   if (!document.getElementById('egg-styles')) { const s=document.createElement('style');s.id='egg-styles';s.textContent='@keyframes egg-spin{0%{transform:rotateY(0) scale(0.5);opacity:0}50%{transform:rotateY(540deg) scale(1.2)}100%{transform:rotateY(720deg) scale(1)}} @keyframes egg-shake{0%,100%{transform:rotate(0)}25%{transform:rotate(-8deg)}75%{transform:rotate(8deg)}} @keyframes egg-fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}';document.head.appendChild(s); }
   return true;
 }
@@ -5105,7 +5105,7 @@ async function _cmdPing(args, ctx) {
       const models = ep.model_count || 0;
       const err = ep.error ? ' <span style="opacity:0.4;font-size:0.85em">(' + ctx.esc(ep.error).slice(0, 60) + ')</span>' : '';
       html += '<div style="display:flex;align-items:center;gap:8px;padding:3px 0">';
-      html += '<span style="color:' + color + ';font-size:12px">' + dot + '</span>';
+      html += '<span style="color:' + color + ';font-size:0.75rem">' + dot + '</span>';
       html += '<span style="min-width:140px">' + ctx.esc(ep.name) + '</span>';
       html += '<code style="min-width:60px;text-align:right;color:' + latencyColor + '">' + latency + '</code>';
       html += '<span style="opacity:0.4;font-size:0.85em">' + models + ' model' + (models !== 1 ? 's' : '') + '</span>';
@@ -5196,7 +5196,7 @@ async function _cmdProbe(args, ctx) {
             const modelName = (data.model || '').split('/').pop();
             const err = data.error ? ' <span style="opacity:0.4;font-size:0.85em">(' + ctx.esc(data.error) + ')</span>' : '';
             html += '<div style="display:flex;align-items:center;gap:8px;padding:2px 0 2px 20px">';
-            html += '<span style="color:' + color + ';font-size:12px">' + dot + '</span>';
+            html += '<span style="color:' + color + ';font-size:0.75rem">' + dot + '</span>';
             html += '<span style="min-width:180px">' + ctx.esc(modelName) + '</span>';
             html += '<code style="min-width:60px;text-align:right;color:' + latencyColor + '">' + latency + '</code>';
             html += err;

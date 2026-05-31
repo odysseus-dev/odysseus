@@ -333,7 +333,7 @@ function _hwfitShowError(list, host, detail) {
   div.style.cssText = 'flex-direction:column;gap:8px;text-align:center;';
   div.innerHTML =
     `<div style="color:var(--red);font-weight:600;">Couldn't scan ${where}</div>`
-    + (detail ? `<div style="opacity:0.6;font-size:11px;max-width:340px;line-height:1.4;">${esc(detail)}</div>` : '')
+    + (detail ? `<div style="opacity:0.6;font-size:0.7rem;max-width:340px;line-height:1.4;">${esc(detail)}</div>` : '')
     + `<button type="button" class="hwfit-gpu-btn" id="hwfit-retry" style="margin-top:2px;height:26px;">↻ Retry</button>`;
   list.innerHTML = '';
   list.appendChild(div);
@@ -373,7 +373,7 @@ export async function _hwfitFetch(fresh = false) {
     // long (remote SSH hardware probe), switch to "Scanning hardware…".
     const loadingLbl = document.createElement('div');
     loadingLbl.textContent = 'Loading…';
-    loadingLbl.style.cssText = 'text-align:center;opacity:0.5;font-size:11px;';
+    loadingLbl.style.cssText = 'text-align:center;opacity:0.5;font-size:0.7rem;';
     loadingDiv.appendChild(loadingLbl);
     setTimeout(() => { if (loadingLbl.isConnected) loadingLbl.textContent = 'Scanning hardware…'; }, 2000);
     list.innerHTML = '';
@@ -753,7 +753,7 @@ export function _hwfitRenderList(el, models) {
     const modeLabel = (m.run_mode || '').replace('_', '+');
     const vramLabel = m.required_gb ? m.required_gb.toFixed(1) + 'G' : '?';
     const moeBadge = m.is_moe ? '<span class="hwfit-badge hwfit-moe">MoE</span>' : '';
-    const imgBadge = m.is_image_gen ? '<span class="hwfit-badge" style="background:color-mix(in srgb, var(--red) 20%, transparent);color:var(--red);font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px;">IMG</span>' : '';
+    const imgBadge = m.is_image_gen ? '<span class="hwfit-badge" style="background:color-mix(in srgb, var(--red) 20%, transparent);color:var(--red);font-size:0.5rem;padding:1px 4px;border-radius:3px;margin-left:4px;">IMG</span>' : '';
     const dlDot = (_cachedModelIds && (_cachedModelIds.has(m.name) || [..._cachedModelIds].some(id => id === m.name?.split('/').pop()))) ? '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>' : '';
     html += `<div class="hwfit-row" data-model="${esc(m.name)}">`;
     html += `<span class="hwfit-col hwfit-fit" style="color:${fitColor}">${esc(fitLabel)}</span>`;
@@ -851,7 +851,7 @@ export function _expandModelRow(row, modelData) {
   const hfUrl = `https://huggingface.co/${dlRepo}`;
   let html = `<div class="hwfit-action-panel" data-model-name="${esc(modelData.name)}">`;
   html += `<div class="hwfit-panel-header">`;
-  html += `<span class="hwfit-panel-model">${esc(modelData.name)}${modelData.quant_repo ? ` <span style="opacity:0.5;font-size:10px;">(${esc(modelData.quant)})</span>` : ''}</span>`;
+  html += `<span class="hwfit-panel-model">${esc(modelData.name)}${modelData.quant_repo ? ` <span style="opacity:0.5;font-size:0.6rem;">(${esc(modelData.quant)})</span>` : ''}</span>`;
   html += `<span class="hwfit-panel-badge">${esc(label)}</span>`;
   html += `<a href="${esc(hfUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="View on HuggingFace">HF \u2197</a>`;
   html += `</div>`;
@@ -863,7 +863,7 @@ export function _expandModelRow(row, modelData) {
   }
   html += `</div>`;
   if (modelData.is_image_gen) {
-    html += `<div style="font-size:10px;opacity:0.5;margin-top:4px;">${esc((modelData.capabilities || []).join(' \u00B7 ') || '')}${modelData.description ? ' \u2014 ' + esc(modelData.description) : ''}</div>`;
+    html += `<div style="font-size:0.6rem;opacity:0.5;margin-top:4px;">${esc((modelData.capabilities || []).join(' \u00B7 ') || '')}${modelData.description ? ' \u2014 ' + esc(modelData.description) : ''}</div>`;
   }
   html += `</div>`;
 
@@ -1455,7 +1455,7 @@ export function _hwfitInit() {
               if (existingBadge) existingBadge.remove();
               const badge = document.createElement('span');
               badge.className = 'cookbook-platform-badge';
-              badge.style.cssText = 'font-size:8px;padding:1px 5px;border-radius:3px;border:1px solid ' + (data.platform === 'windows' ? 'var(--cyan,#56b6c2)' : 'var(--green,#98c379)') + ';color:' + (data.platform === 'windows' ? 'var(--cyan,#56b6c2)' : 'var(--green,#98c379)') + ';opacity:0.7;white-space:nowrap;flex-shrink:0;';
+              badge.style.cssText = 'font-size:0.5rem;padding:1px 5px;border-radius:3px;border:1px solid ' + (data.platform === 'windows' ? 'var(--cyan,#56b6c2)' : 'var(--green,#98c379)') + ';color:' + (data.platform === 'windows' ? 'var(--cyan,#56b6c2)' : 'var(--green,#98c379)') + ';opacity:0.7;white-space:nowrap;flex-shrink:0;';
               badge.textContent = data.platform;
               setupBtn.parentNode.insertBefore(badge, setupBtn);
             }

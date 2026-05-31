@@ -178,7 +178,7 @@ function _renderSettingsBody(body, data, tzList) {
       </label>
       <div class="assistant-field">
         <span style="display:flex;align-items:center;gap:8px;">Personality
-          <select id="assistant-character-pick" style="font-size:11px;padding:1px 6px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);max-width:180px;">
+          <select id="assistant-character-pick" style="font-size:0.7rem;padding:1px 6px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);max-width:180px;">
             <option value="">-- pick from character --</option>
           </select>
         </span>
@@ -209,8 +209,8 @@ function _renderSettingsBody(body, data, tzList) {
       </div>
       <div class="assistant-field">
         <span style="display:flex;align-items:center;gap:8px;">Tools
-          <button type="button" id="assistant-tools-all" class="assistant-tools-toggle" style="font-size:10px;opacity:0.5;cursor:pointer;background:none;border:1px solid var(--border);border-radius:3px;padding:1px 6px;">all</button>
-          <button type="button" id="assistant-tools-none" class="assistant-tools-toggle" style="font-size:10px;opacity:0.5;cursor:pointer;background:none;border:1px solid var(--border);border-radius:3px;padding:1px 6px;">none</button>
+          <button type="button" id="assistant-tools-all" class="assistant-tools-toggle" style="font-size:0.6rem;opacity:0.5;cursor:pointer;background:none;border:1px solid var(--border);border-radius:3px;padding:1px 6px;">all</button>
+          <button type="button" id="assistant-tools-none" class="assistant-tools-toggle" style="font-size:0.6rem;opacity:0.5;cursor:pointer;background:none;border:1px solid var(--border);border-radius:3px;padding:1px 6px;">none</button>
         </span>
         <div class="assistant-tools-grid" id="assistant-tools-grid">
           ${toolsHTML}

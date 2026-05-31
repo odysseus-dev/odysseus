@@ -139,7 +139,7 @@ export function showToast(msg, durationOrOpts) {
     // the button so the user can actually click Undo. The flag is reset on
     // the next plain showToast / showError call (those overwrite textContent
     // which strips the button + we clear inline style at the top below).
-    btn.style.cssText = 'padding:2px 10px;border:1px solid var(--fg);border-radius:4px;background:none;color:var(--fg);cursor:pointer;font-size:12px;pointer-events:auto;display:inline-flex;align-items:center;';
+    btn.style.cssText = 'padding:2px 10px;border:1px solid var(--fg);border-radius:4px;background:none;color:var(--fg);cursor:pointer;font-size:0.75rem;pointer-events:auto;display:inline-flex;align-items:center;';
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
@@ -153,7 +153,7 @@ export function showToast(msg, durationOrOpts) {
     if (actionHint && window.innerWidth > 768) {
       const hint = document.createElement('span');
       hint.textContent = actionHint;
-      hint.style.cssText = 'font-size:9px;opacity:0.55;letter-spacing:0.4px;text-transform:uppercase;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin-top:1px;pointer-events:none;';
+      hint.style.cssText = 'font-size:0.55rem;opacity:0.55;letter-spacing:0.4px;text-transform:uppercase;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin-top:1px;pointer-events:none;';
       stack.appendChild(hint);
     }
 
@@ -166,7 +166,7 @@ export function showToast(msg, durationOrOpts) {
     closeBtn.setAttribute('aria-label', 'Dismiss');
     closeBtn.title = 'Dismiss';
     closeBtn.textContent = '×';
-    closeBtn.style.cssText = 'margin-left:8px;padding:0;width:20px;height:20px;line-height:1;border:none;background:none;color:var(--fg);opacity:0.55;cursor:pointer;font-size:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;pointer-events:auto;';
+    closeBtn.style.cssText = 'margin-left:8px;padding:0;width:20px;height:20px;line-height:1;border:none;background:none;color:var(--fg);opacity:0.55;cursor:pointer;font-size:1.1rem;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;pointer-events:auto;';
     closeBtn.addEventListener('mouseenter', () => { closeBtn.style.opacity = '1'; });
     closeBtn.addEventListener('mouseleave', () => { closeBtn.style.opacity = '0.55'; });
     closeBtn.addEventListener('click', (e) => {

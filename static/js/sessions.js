@@ -503,7 +503,7 @@ function createSessionItem(s) {
   if (!isOpenClaw) {
     const selectMoreItem = document.createElement('div');
     selectMoreItem.className = 'dropdown-item-compact';
-    selectMoreItem.innerHTML = _icon('<span style="font-size:16px;line-height:1;">●</span>') + '<span>Select</span>';
+    selectMoreItem.innerHTML = _icon('<span style="font-size:1rem;line-height:1;">●</span>') + '<span>Select</span>';
     selectMoreItem.addEventListener('click', (e) => {
       e.stopPropagation();
       dropdown.style.display = 'none';
@@ -1155,7 +1155,7 @@ function _enterSelectMode() {
     const dot = document.createElement('span');
     dot.className = 'session-select-cb';
     dot.innerHTML = '○';
-    dot.style.cssText = 'cursor:pointer;font-size:16px;flex-shrink:0;opacity:0.4;transition:opacity 0.1s;user-select:none;';
+    dot.style.cssText = 'cursor:pointer;font-size:1rem;flex-shrink:0;opacity:0.4;transition:opacity 0.1s;user-select:none;';
     dot._checked = false;
     dot.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2483,7 +2483,7 @@ function _arcRenderCard(s) {
     ${checkboxHtml}
     <div style="flex:1;min-width:0;">
       <div class="memory-item-title">${uiModule.esc(s.name || 'Untitled')}</div>
-      <div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">
+      <div class="memory-item-meta" style="font-size:0.6rem;opacity:0.4;margin-top:2px;">
         <span>${modelShort || 'no model'}</span>
         <span>\u00b7</span>
         <span>${msgCount} msg${msgCount !== 1 ? 's' : ''}</span>
@@ -2588,7 +2588,7 @@ export function openLibrary(defaultTab) {
         </div>
         <div class="memory-bulk-bar hidden" id="lib-bulk-bar">
           <label class="memory-bulk-check-all"><input type="checkbox" id="lib-select-all"> All</label>
-          <span id="lib-selected-count" style="color:color-mix(in srgb, var(--fg) 50%, transparent);font-size:10px;flex:1;">0 selected</span>
+          <span id="lib-selected-count" style="color:color-mix(in srgb, var(--fg) 50%, transparent);font-size:0.6rem;flex:1;">0 selected</span>
           <button class="memory-toolbar-btn" id="lib-bulk-action1"></button>
           <button class="memory-toolbar-btn danger" id="lib-bulk-delete">Delete</button>
         </div>
@@ -2893,7 +2893,7 @@ function _buildLibCard(id, title, count, meta, time, isActive, isDoc) {
     ${cbHtml}
     <div style="flex:1;min-width:0;">
       <div class="memory-item-title"${isActive ? ' style="color:var(--accent);"' : ''}>${uiModule.esc(title)}</div>
-      <div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">${metaParts.join(' \u00b7 ')}</div>
+      <div class="memory-item-meta" style="font-size:0.6rem;opacity:0.4;margin-top:2px;">${metaParts.join(' \u00b7 ')}</div>
     </div>
     <div class="memory-item-actions">
       <button class="memory-item-btn archive-menu-btn" title="Actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
@@ -2953,7 +2953,7 @@ export function openArchive() {
         </div>
         <div class="memory-bulk-bar hidden" id="archive-bulk-bar">
           <label class="memory-bulk-check-all"><input type="checkbox" id="archive-select-all"> All</label>
-          <span id="archive-selected-count" style="color:color-mix(in srgb, var(--fg) 50%, transparent);font-size:10px;flex:1;">0 selected</span>
+          <span id="archive-selected-count" style="color:color-mix(in srgb, var(--fg) 50%, transparent);font-size:0.6rem;flex:1;">0 selected</span>
           <button class="memory-toolbar-btn" id="archive-bulk-restore">Restore</button>
           <button class="memory-toolbar-btn danger" id="archive-bulk-delete">Delete</button>
         </div>

@@ -34,7 +34,7 @@ export function createShortcutsPopover() {
       'border-radius:12px',
       'box-shadow:0 14px 36px rgba(0,0,0,0.5), inset 0 1px 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent)',
       'padding:12px 14px', 'min-width:540px', 'max-width:min(720px,92vw)',
-      'font-size:12px', 'line-height:1.5',
+      'font-size:0.75rem', 'line-height:1.5',
     ].join(';');
     el.innerHTML = shortcutsPopupHTML();
     document.body.appendChild(el);
