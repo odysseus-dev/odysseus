@@ -48,7 +48,7 @@ generated and printed on first boot).
 
 ### Option 1: Docker (recommended)
 ```bash
-git clone <your-odysseus-repo-url>
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
 cp .env.example .env       # optional, but recommended for explicit defaults
 docker compose up -d --build
@@ -101,7 +101,7 @@ sudo dnf install tmux
 
 Then install Odysseus:
 ```bash
-git clone <your-odysseus-repo-url>
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
 python3 -m venv venv
 source venv/bin/activate
@@ -112,7 +112,7 @@ uvicorn app:app --host 0.0.0.0 --port 7000
 
 ### Option 3: Manual install — Windows (PowerShell)
 ```powershell
-git clone <your-odysseus-repo-url>
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
 python -m venv venv
 venv\Scripts\Activate.ps1
