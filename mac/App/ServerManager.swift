@@ -33,7 +33,7 @@ class ServerManager: ObservableObject {
     }
     
     var port: Int {
-        get { defaults.integer(forKey: Self.portKey) == 0 ? 7000 : defaults.integer(forKey: Self.portKey) }
+        get { defaults.integer(forKey: Self.portKey) == 0 ? 7007 : defaults.integer(forKey: Self.portKey) }
         set { defaults.set(newValue, forKey: Self.portKey) }
     }
     
