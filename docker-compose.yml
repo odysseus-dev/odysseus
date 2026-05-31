@@ -2,7 +2,7 @@ services:
   odysseus:
     build: .
     ports:
-      - "7000:7000"
+      - "${ODYSSEUS_BIND:-7000}:7000"
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -13,7 +13,8 @@ services:
       # container, so persist its HuggingFace cache under ./data/huggingface.
       - ./data/huggingface:/app/.cache/huggingface
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       - SEARXNG_INSTANCE=http://searxng:8080
       - CHROMADB_HOST=chromadb
@@ -48,12 +49,12 @@ services:
   searxng:
     image: searxng/searxng:latest
     ports:
-      - "127.0.0.1:8080:8080"
+      - "${SEARXNG_BIND:-127.0.0.1:8080}:8080"
     volumes:
       - searxng-data:/etc/searxng
       - ./config/searxng/settings.yml:/etc/searxng/settings.yml
     environment:
-      - SEARXNG_BASE_URL=http://localhost:8080/
+      - SEARXNG_BASE_URL=${SEARXNG_BASE_URL:-http://localhost:8080/}
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5).read(1)\""]
       interval: 5s

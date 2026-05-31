@@ -1,0 +1,303 @@
+#!/usr/bin/env python3
+"""Small macOS launcher for Odysseus."""
+from __future__ import annotations
+
+import argparse
+import errno
+import os
+import platform
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+APP_PORT, SEARX_PORT, CHROMA_PORT, NTFY_PORT = 7000, 8080, 8100, 8091
+
+
+def run(args, root=ROOT, check=False, quiet=False):
+    if not quiet:
+        print("$ " + " ".join(map(str, args)), flush=True)
+    if check:
+        subprocess.run(list(map(str, args)), cwd=root, check=True)
+        return 0, ""
+    try:
+        p = subprocess.run(list(map(str, args)), cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+        return p.returncode, p.stdout.strip()
+    except Exception as exc:
+        return 1, str(exc)
+
+
+def parse_python_version(text):
+    m = re.search(r"Python\s+(\d+)\.(\d+)(?:\.(\d+))?", text)
+    return None if not m else (int(m[1]), int(m[2]), int(m[3] or 0))
+
+
+def classify_python_version(version):
+    if version is None:
+        return "unknown"
+    if version[0] != 3:
+        return "unsupported"
+    if version[1] in (11, 12):
+        return "supported"
+    return "too_new" if version[1] >= 13 else "too_old"
+
+
+def py_version(exe):
+    code, out = run([exe, "--version"], quiet=True)
+    return parse_python_version(out) if code == 0 else None
+
+
+def supported_python():
+    for name in ("python3.11", "python3.12", "python3"):
+        exe = shutil.which(name)
+        version = py_version(exe) if exe else None
+        if version and classify_python_version(version) == "supported":
+            return exe, version
+    return None
+
+
+def active_env_text(root):
+    env, example = root / ".env", root / ".env.example"
+    return env.read_text() if env.exists() else example.read_text() if example.exists() else ""
+
+
+def env_values(root):
+    values = {}
+    for line in active_env_text(root).splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in line:
+            key, val = line.split("=", 1)
+            values[key.strip()] = val.strip()
+    return values
+
+
+def set_env(root, updates):
+    text = active_env_text(root)
+    for key, val in updates.items():
+        line = f"{key}={val}"
+        if re.search(rf"^{re.escape(key)}\s*=", text, flags=re.M):
+            text = re.sub(rf"^{re.escape(key)}\s*=.*$", line, text, flags=re.M)
+        else:
+            text += ("\n" if text and not text.endswith("\n") else "") + line + "\n"
+    path = root / ".env"
+    path.write_text(text.rstrip() + "\n")
+    return path
+
+
+def split_bind(value, default_host, default_port):
+    raw = (value or str(default_port)).strip() or str(default_port)
+    host, port = default_host, raw
+    if ":" in raw:
+        host, port = raw.rsplit(":", 1)
+        host = host or default_host
+    try:
+        port = int(port)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid port binding {raw!r}. Use a bare port or host:port.") from exc
+    return host, port
+
+
+def public_url(host, port):
+    return f"http://{'localhost' if host in {'', '0.0.0.0', '::'} else host}:{port}"
+
+
+def probe_host(host):
+    return "127.0.0.1" if host in {"", "0.0.0.0", "::"} else host
+
+
+def port_free(port, host="127.0.0.1"):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((host, port))
+        return True, f"{host}:{port} is free"
+    except OSError as exc:
+        if exc.errno in {errno.EPERM, errno.EACCES}:
+            try:
+                with socket.create_connection((host, port), timeout=0.25):
+                    return False, f"{host}:{port} accepts connections"
+            except OSError:
+                return True, f"{host}:{port} did not accept a connection; bind check was not permitted"
+        return False, f"{host}:{port} is not available ({exc})"
+    finally:
+        sock.close()
+
+
+def prepare_env(root, docker_port=None, services=False, uid=None, gid=None, searx_bind=None, auto_searx=True):
+    values = env_values(root)
+    updates = {"PUID": str(os.getuid() if uid is None else uid), "PGID": str(os.getgid() if gid is None else gid)}
+    if docker_port is not None:
+        updates["ODYSSEUS_BIND"] = str(docker_port)
+    existing_bind = values.get("SEARXNG_BIND")
+    bind = existing_bind or searx_bind
+    if not bind and auto_searx and not port_free(SEARX_PORT)[0]:
+        bind = next((f"127.0.0.1:{p}" for p in (18080, 18081, 18082, 28080) if port_free(p)[0]), None)
+        if bind:
+            print(f"[WARN] 127.0.0.1:8080 is in use; binding bundled SearXNG to {bind}")
+    if bind and bind != existing_bind:
+        updates["SEARXNG_BIND"] = bind
+    if bind:
+        base = public_url(*split_bind(bind, "localhost", SEARX_PORT))
+        updates.setdefault("SEARXNG_BASE_URL", base + "/")
+        if services:
+            updates["SEARXNG_INSTANCE"] = base
+    return set_env(root, updates)
+
+
+def docker_ready(root):
+    if not shutil.which("docker"):
+        return False, "docker was not found on PATH"
+    code, out = run(["docker", "info"], root=root, quiet=True)
+    return (True, "Docker daemon is reachable") if code == 0 else (False, out.splitlines()[-1] if out else "Docker daemon is not reachable")
+
+
+def check_ports(root, include_app):
+    values = env_values(root)
+    code, out = run(["docker", "compose", "ps", "--services", "--status", "running"], root=root, quiet=True)
+    running = set(out.splitlines()) if code == 0 else set()
+    reqs = [("ChromaDB", "chromadb", "127.0.0.1", CHROMA_PORT), ("ntfy", "ntfy", "127.0.0.1", NTFY_PORT)]
+    if include_app:
+        host, port = split_bind(values.get("ODYSSEUS_BIND"), "127.0.0.1", APP_PORT)
+        reqs.append(("Odysseus", "odysseus", probe_host(host), port))
+    if values.get("SEARXNG_BIND"):
+        host, port = split_bind(values["SEARXNG_BIND"], "127.0.0.1", SEARX_PORT)
+        reqs.append(("SearXNG", "searxng", probe_host(host), port))
+    failures = []
+    for name, service, host, port in reqs:
+        if service in running:
+            continue
+        ok, detail = port_free(port, host)
+        if not ok:
+            failures.append(f"{name} needs {host}:{port}, but {detail}")
+    for failure in failures:
+        print(f"[FAIL] {failure}", file=sys.stderr)
+    if failures:
+        print("Stop the conflicting process, then rerun this command.", file=sys.stderr)
+    return bool(failures)
+
+
+def ensure_venv(root):
+    py = root / "venv" / "bin" / "python"
+    if py.exists():
+        version = py_version(str(py))
+        if classify_python_version(version) != "supported":
+            shown = "unknown" if version is None else ".".join(map(str, version))
+            raise SystemExit(f"Existing venv uses Python {shown}. Remove venv/ and rerun with python3.11 or python3.12.")
+        return py
+    choice = supported_python()
+    if not choice:
+        raise SystemExit("No supported Python found. Install python3.11 or python3.12, or use Docker.")
+    run([choice[0], "-m", "venv", "venv"], root=root, check=True)
+    return py
+
+
+def wait_for_health(url, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=3) as response:
+                if 200 <= response.status < 300:
+                    return True
+        except Exception:
+            time.sleep(2)
+    return False
+
+
+def doctor(args):
+    def row(name, status, detail):
+        print(f"[{status:<4}] {name}: {detail}")
+    row("Operating system", "OK" if platform.system() == "Darwin" else "WARN", platform.system())
+    row("CPU architecture", "OK" if platform.machine() in {"arm64", "x86_64"} else "WARN", platform.machine())
+    docker = shutil.which("docker")
+    row("Docker CLI", "OK" if docker else "FAIL", docker or "Install Docker Desktop")
+    if docker:
+        code, out = run(["docker", "compose", "version"], root=args.repo_root, quiet=True)
+        row("Docker Compose", "OK" if code == 0 else "FAIL", out or "docker compose failed")
+        ok, detail = docker_ready(args.repo_root)
+        row("Docker daemon", "OK" if ok else "WARN", detail)
+    py = shutil.which("python3")
+    version = py_version(py) if py else None
+    kind = classify_python_version(version)
+    hint = "; use python3.11 or python3.12" if kind in {"too_new", "too_old"} else ""
+    row("Default python3", "OK" if kind == "supported" else "WARN", f"{py or 'missing'} {version or ''}{hint}")
+    choice = supported_python()
+    row("Supported Python", "OK" if choice else "FAIL", f"{choice[0]} {choice[1]}" if choice else "Install python@3.11 or python@3.12")
+    row("tmux", "OK" if shutil.which("tmux") else "WARN", shutil.which("tmux") or "Install tmux for Cookbook")
+    for port in (APP_PORT, SEARX_PORT, NTFY_PORT, CHROMA_PORT):
+        ok, detail = port_free(port)
+        row(f"Port {port}", "OK" if ok else "WARN", detail)
+    return 0
+
+
+def docker(args):
+    prepare_env(args.repo_root, docker_port=args.port)
+    (args.repo_root / "data").mkdir(exist_ok=True)
+    (args.repo_root / "logs").mkdir(exist_ok=True)
+    ok, detail = docker_ready(args.repo_root)
+    if not ok:
+        print(f"[FAIL] Docker daemon: {detail}\nStart Docker Desktop, then rerun scripts/odysseus-mac docker.", file=sys.stderr)
+        return 1
+    if check_ports(args.repo_root, include_app=True):
+        return 1
+    try:
+        run(["docker", "compose", "up", "-d", "--build"], root=args.repo_root, check=True)
+    except subprocess.CalledProcessError as exc:
+        print(f"[FAIL] docker compose up failed with exit code {exc.returncode}.\nRun: docker compose logs --tail=120", file=sys.stderr)
+        return exc.returncode
+    host, port = split_bind(env_values(args.repo_root).get("ODYSSEUS_BIND"), "127.0.0.1", APP_PORT)
+    url = public_url(host, port)
+    if not wait_for_health(f"{url}/api/health", args.timeout):
+        print(f"[WARN] Odysseus did not become healthy within {int(args.timeout)}s.\nRun: docker compose logs --tail=120 odysseus", file=sys.stderr)
+        return 1
+    print(f"Odysseus is running: {url}")
+    return 0
+
+
+def native(args):
+    prepare_env(args.repo_root, services=args.with_services)
+    (args.repo_root / "data").mkdir(exist_ok=True)
+    (args.repo_root / "logs").mkdir(exist_ok=True)
+    ok, detail = port_free(args.port, probe_host(args.host))
+    if not ok:
+        print(f"[FAIL] Native Odysseus needs {args.host}:{args.port}, but {detail}", file=sys.stderr)
+        return 1
+    if args.with_services:
+        ok, detail = docker_ready(args.repo_root)
+        if not ok:
+            print(f"[FAIL] Docker daemon: {detail}\nStart Docker Desktop, then rerun scripts/odysseus-mac native --with-services.", file=sys.stderr)
+            return 1
+        if check_ports(args.repo_root, include_app=False):
+            return 1
+    py = ensure_venv(args.repo_root)
+    run([py, "-m", "pip", "install", "-r", "requirements.txt"], root=args.repo_root, check=True)
+    run([py, "setup.py"], root=args.repo_root, check=True)
+    if args.with_services:
+        run(["docker", "compose", "up", "-d", "chromadb", "searxng", "ntfy"], root=args.repo_root, check=True)
+    print(f"Odysseus starting on http://localhost:{args.port}")
+    return subprocess.call([py, "-m", "uvicorn", "app:app", "--host", args.host, "--port", str(args.port)], cwd=args.repo_root)
+
+
+def main(argv=None, repo_root=ROOT):
+    parser = argparse.ArgumentParser(description="MacBook launcher for Odysseus")
+    parser.set_defaults(repo_root=repo_root)
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("doctor", help="check macOS launch prerequisites").set_defaults(func=doctor)
+    d = sub.add_parser("docker", help="start the full Docker Compose stack")
+    d.add_argument("--port", type=int, default=None, help="persist an Odysseus host port override for Docker")
+    d.add_argument("--timeout", type=float, default=120.0)
+    d.set_defaults(func=docker)
+    n = sub.add_parser("native", help="start a native Python server")
+    n.add_argument("--with-services", action="store_true", help="start ChromaDB, SearXNG, and ntfy with Compose")
+    n.add_argument("--host", default="127.0.0.1")
+    n.add_argument("--port", type=int, default=APP_PORT)
+    n.set_defaults(func=native)
+    args = parser.parse_args(argv)
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

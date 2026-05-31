@@ -54,6 +54,14 @@ docker compose up -d --build
 Compose starts Odysseus, ChromaDB, SearXNG, and ntfy. First run does a full
 image build. Open `http://localhost:7000` after the containers are healthy.
 
+On macOS, the helper can do the same Docker startup with a few local checks:
+```bash
+scripts/odysseus-mac doctor
+scripts/odysseus-mac docker
+```
+It checks Docker Desktop, writes your host UID/GID to `.env` for editable
+bind-mounted files, and moves bundled SearXNG if `127.0.0.1:8080` is busy.
+
 Cookbook remote servers use an Odysseus-owned SSH key from `./data/ssh`
 inside Docker. In **Cookbook -> Settings -> Servers**, generate/copy the
 public key and add it to the remote server's `~/.ssh/authorized_keys`.
@@ -107,6 +115,10 @@ pip install -r requirements.txt
 python setup.py            # creates data dirs and prints an initial admin password
 uvicorn app:app --host 0.0.0.0 --port 7000
 ```
+
+For full native search/vector-memory support, also run ChromaDB and SearXNG
+locally. On macOS, use Docker unless you need native Python; if you do,
+`scripts/odysseus-mac native --with-services` handles the sidecar services.
 
 ### Option 3: Manual install — Windows (PowerShell)
 ```powershell

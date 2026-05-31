@@ -1,4 +1,4 @@
-#compdef odysseus odysseus-backup odysseus-calendar odysseus-contacts odysseus-cookbook odysseus-docs odysseus-gallery odysseus-mail odysseus-mcp odysseus-memory odysseus-notes odysseus-personal odysseus-preset odysseus-research odysseus-sessions odysseus-signature odysseus-skills odysseus-tasks odysseus-theme odysseus-webhook
+#compdef odysseus odysseus-backup odysseus-calendar odysseus-contacts odysseus-cookbook odysseus-docs odysseus-gallery odysseus-mac odysseus-mail odysseus-mcp odysseus-memory odysseus-notes odysseus-personal odysseus-preset odysseus-research odysseus-sessions odysseus-signature odysseus-skills odysseus-tasks odysseus-theme odysseus-webhook
 # Zsh tab-completion for the odysseus umbrella + sub-CLIs.
 #
 # Drop in any directory on $fpath, e.g.:
