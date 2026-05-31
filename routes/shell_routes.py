@@ -4,14 +4,19 @@ import asyncio
 import json
 import logging
 import os
-import pty
-import fcntl
 import shlex
 import shutil
 import uuid
 import tempfile
 from pathlib import Path
 from typing import Dict, Any
+
+try:
+    import fcntl
+    import pty
+except ImportError:
+    fcntl = None
+    pty = None
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
@@ -97,6 +102,11 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
 
 async def _generate_pty(cmd: str, timeout: int, request: Request):
     """Run command in a pseudo-TTY so tqdm/progress bars work natively."""
+    if pty is None or fcntl is None:
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': 'PTY streaming is not available on Windows'})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
+        return
+
     loop = asyncio.get_event_loop()
     master_fd, slave_fd = pty.openpty()
 
