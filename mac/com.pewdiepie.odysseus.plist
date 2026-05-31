@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.pewdiepie.odysseus</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__WORKSPACE__/venv/bin/uvicorn</string>
+		<string>app:app</string>
+		<string>--host</string>
+		<string>127.0.0.1</string>
+		<string>--port</string>
+		<string>7007</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>WorkingDirectory</key>
+	<string>__WORKSPACE__</string>
+	<key>StandardOutPath</key>
+	<string>__WORKSPACE__/logs/launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>__WORKSPACE__/logs/launchd.error.log</string>
+</dict>
+</plist>

@@ -108,10 +108,15 @@ def check_deps():
     if os.name != "nt" and shutil.which("tmux") is None:
         print("\n  [warn] tmux not found")
         print("         Cookbook uses tmux for background downloads and model serves.")
-        print("         Install it with your OS package manager, for example:")
-        print("           sudo apt install tmux")
-        print("           sudo pacman -S tmux")
-        print("           sudo dnf install tmux")
+        import sys
+        if sys.platform == "darwin":
+            print("         Install it using Homebrew:")
+            print("           brew install tmux")
+        else:
+            print("         Install it with your OS package manager, for example:")
+            print("           sudo apt install tmux")
+            print("           sudo pacman -S tmux")
+            print("           sudo dnf install tmux")
     elif os.name != "nt":
         print("  [ok] tmux installed")
 

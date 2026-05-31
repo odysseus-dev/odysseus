@@ -985,8 +985,8 @@ def setup_cookbook_routes() -> APIRouter:
             raise HTTPException(400, "Invalid ssh_port")
         pf = f"-p {port} " if port and port != "22" else ""
 
-        # Detect platform: Windows first (echo %OS% → Windows_NT), then Termux, then Linux
-        detect_cmd = f'ssh {pf}{host} "echo %OS%"'
+        # Detect platform: Windows first (echo %OS% → Windows_NT), then check macOS/Linux/Termux
+        detect_cmd = f'ssh {pf}{host} "uname 2>/dev/null || echo %OS%"'
         platform = "linux"
         try:
             proc = await asyncio.create_subprocess_shell(
@@ -996,6 +996,8 @@ def setup_cookbook_routes() -> APIRouter:
             out = stdout.decode().strip()
             if "Windows_NT" in out:
                 platform = "windows"
+            elif "Darwin" in out:
+                platform = "macos"
             else:
                 # Check for Termux
                 detect_cmd2 = f"ssh {pf}{host} 'test -d /data/data/com.termux && echo termux || echo linux'"
@@ -1019,6 +1021,19 @@ def setup_cookbook_routes() -> APIRouter:
                 '"'
             )
             cmd = f'ssh {pf}{host} {setup_script}'
+        elif platform == "macos":
+            # macOS setup: ensure tmux + huggingface-hub + hf_transfer via Homebrew & pip
+            setup_script = (
+                "if ! command -v tmux >/dev/null 2>&1; then "
+                "  if command -v brew >/dev/null 2>&1; then brew install tmux 2>/dev/null; fi; "
+                "fi; "
+                "command -v tmux >/dev/null 2>&1 || echo 'WARNING: tmux missing. Install manually.'; "
+                "pip install -q huggingface_hub hf_transfer 2>/dev/null || "
+                "pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null || "
+                "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null; "
+                "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
+            )
+            cmd = f"ssh {pf}{host} '{setup_script}'"
         elif platform == "termux":
             setup_script = (
                 "pkg install -y python tmux 2>/dev/null; "
