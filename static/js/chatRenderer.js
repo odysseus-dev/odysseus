@@ -660,6 +660,7 @@ export function isLocalEndpoint(url) {
   try { host = new URL(url).hostname; } catch (_e) { return true; }
   if (!host) return true;
   if (host === 'localhost' || host === '0.0.0.0' || host.endsWith('.local')) return true;
+  if (host === 'host.docker.internal') return true;  // Docker Desktop (Mac/Windows) → host machine; a model served there (e.g. Ollama) is local → free
   if (typeof window !== 'undefined' && window.location && host === window.location.hostname) return true;
   if (/^127\./.test(host)) return true;
   if (/^10\./.test(host)) return true;
