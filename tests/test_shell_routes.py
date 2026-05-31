@@ -1,8 +1,10 @@
 """Tests for shell_routes.py helpers."""
 
+import json
 import builtins
 import importlib.util
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 from routes.shell_routes import _find_line_break
@@ -18,6 +20,7 @@ def test_shell_routes_import_without_posix_pty_modules(monkeypatch):
         return real_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
+    cached_modules = {name: sys.modules.pop(name, None) for name in ("fcntl", "pty")}
 
     module_path = Path(__file__).resolve().parents[1] / "routes" / "shell_routes.py"
     spec = importlib.util.spec_from_file_location("_shell_routes_without_pty", module_path)
@@ -27,9 +30,35 @@ def test_shell_routes_import_without_posix_pty_modules(monkeypatch):
         spec.loader.exec_module(module)
     finally:
         sys.modules.pop(spec.name, None)
+        for name, cached_module in cached_modules.items():
+            if cached_module is not None:
+                sys.modules[name] = cached_module
 
     assert module.PTY_SUPPORTED is False
     assert module._find_line_break(b"ok\n") == (2, 1)
+
+
+async def test_generate_pty_reports_explicit_unsupported_error(monkeypatch):
+    """Clients can distinguish unsupported PTY mode from process failures."""
+    import routes.shell_routes as shell_routes
+
+    monkeypatch.setattr(shell_routes, "PTY_SUPPORTED", False)
+    monkeypatch.setattr(shell_routes, "_PTY_IMPORT_ERROR", ImportError("No module named 'termios'"))
+
+    request = SimpleNamespace(is_disconnected=lambda: False)
+    events = [
+        json.loads(chunk.removeprefix("data: ").strip())
+        async for chunk in shell_routes._generate_pty("echo hi", 5, request)
+    ]
+
+    assert events == [
+        {
+            "stream": "stderr",
+            "data": "PTY streaming is not supported on this platform: No module named 'termios'",
+            "error": shell_routes.PTY_UNSUPPORTED_ERROR,
+        },
+        {"exit_code": -1, "error": shell_routes.PTY_UNSUPPORTED_ERROR},
+    ]
 
 
 class TestFindLineBreak:

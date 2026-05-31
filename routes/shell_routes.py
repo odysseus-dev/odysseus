@@ -68,6 +68,7 @@ EXEC_TIMEOUT = 30  # seconds — shorter than agent's 60s
 STREAM_TIMEOUT = 120  # default for short commands
 MAX_OUTPUT = 200_000  # truncate limit
 TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "odysseus-tmux"
+PTY_UNSUPPORTED_ERROR = "pty_unsupported"
 
 
 class ShellExecRequest(BaseModel):
@@ -111,8 +112,8 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
         msg = "PTY streaming is not supported on this platform"
         if _PTY_IMPORT_ERROR:
             msg += f": {_PTY_IMPORT_ERROR}"
-        yield f"data: {json.dumps({'stream': 'stderr', 'data': msg})}\n\n"
-        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': msg, 'error': PTY_UNSUPPORTED_ERROR})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1, 'error': PTY_UNSUPPORTED_ERROR})}\n\n"
         return
 
     loop = asyncio.get_event_loop()
