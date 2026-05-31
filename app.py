@@ -9,10 +9,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from core.constants import BASE_DIR, STATIC_DIR
 from core.middleware import SecurityHeadersMiddleware, RequestTimeoutMiddleware
+from core.auth_middleware import setup_auth
 from core.exceptions import (
     SessionNotFoundError, InvalidFileUploadError,
     LLMServiceError, WebSearchError,
 )
+from core.lifecycle import on_startup, on_shutdown
+from routes.spa_routes import RevalidatingStatic
+from routes.register import register_routes
+from services.youtube import init_youtube
+from src.app_initializer import initialize_managers
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,23 +46,19 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestTimeoutMiddleware)
 
 # ── Auth ──
-from core.auth_middleware import setup_auth
 setup_auth(app)
 
 # ── Static files ──
 os.makedirs(STATIC_DIR, exist_ok=True)
-from routes.spa_routes import RevalidatingStatic
 app.mount("/static", RevalidatingStatic(directory="static"), name="static")
 
 # ── Initialize components ──
-from services.youtube import init_youtube
 init_youtube()
 
 rag_manager = None
 rag_available = False
 logger.info("Vector document RAG disabled (unused)")
 
-from src.app_initializer import initialize_managers
 components = initialize_managers(BASE_DIR, rag_manager)
 
 # ── Exception handlers ──
@@ -77,12 +79,9 @@ async def web_search_error_handler(request: Request, exc: WebSearchError):
     return JSONResponse(status_code=502, content={"error": "WEB_SEARCH_ERROR", "message": str(exc)})
 
 # ── Routes ──
-from routes.register import register_routes
 register_routes(app, components, rag_manager, rag_available)
 
 # ── Lifecycle ──
-from core.lifecycle import on_startup, on_shutdown
-
 @app.on_event("startup")
 async def startup_event():
     await on_startup(app)
