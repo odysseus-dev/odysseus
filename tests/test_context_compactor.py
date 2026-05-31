@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 for mod in [
     'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
     'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
-    'src.database', 'src.endpoint_resolver',
+    'src.database',
     'core.models', 'core.database',
 ]:
     if mod not in sys.modules:
