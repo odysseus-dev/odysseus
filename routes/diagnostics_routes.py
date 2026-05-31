@@ -1,4 +1,4 @@
-"""Diagnostics routes — /api/db/stats, /api/rag/stats, /api/test/youtube, /api/test-research."""
+"""Diagnostics routes — /api/db/stats, /api/test/youtube, /api/test-research."""
 
 import logging
 from typing import Dict, Any
@@ -12,8 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 def setup_diagnostics_routes(
-    rag_manager,
-    rag_available: bool,
     research_handler,
 ) -> APIRouter:
     router = APIRouter(tags=["diagnostics"])
@@ -26,12 +24,6 @@ def setup_diagnostics_routes(
         except Exception as e:
             logger.error(f"DB stats error: {e}")
             raise HTTPException(500, "Failed to retrieve database statistics")
-
-    @router.get("/api/rag/stats")
-    async def get_rag_stats() -> Dict[str, Any]:
-        if rag_available and rag_manager:
-            return rag_manager.get_stats()
-        return {"error": "RAG system not available"}
 
     @router.get("/api/test/youtube")
     async def test_youtube(url: str) -> Dict[str, Any]:

@@ -345,15 +345,24 @@ async def serve_generated_image(filename: str, request: Request):
 from services.youtube import init_youtube
 init_youtube()
 
-# ========= RAG (vector document RAG — DISABLED) =========
-# VectorRAG (ChromaDB-backed personal-document semantic search) is unused
-# (0 directories ever indexed) and its chromadb 1.4.1 / pydantic 2.12 client
-# can't even instantiate — it threw at init and cost ~30s of startup waiting on
-# the embedding probe. Disabled. All callers already guard on rag_available /
-# `if rag_manager`, so personal-doc routes degrade cleanly.
+# ========= RAG (vector document RAG — PERMANENTLY DISABLED) =========
+# RAG is permanently disabled due to unresolved ChromaDB issues:
+#   - chromadb 1.4.1 / pydantic 2.12 client cannot instantiate
+#   - Throws at init and costs ~30s of startup waiting on the embedding probe
+#   - 0 directories were ever indexed
+#
+# Affected files (all guard on rag_available / `if rag_manager`):
+#   - mcp_servers/rag_server.py       — MCP tool for RAG queries
+#   - routes/personal_routes.py       — personal-document upload/search routes
+#   - static/js/rag.js                — frontend RAG UI
+#   - src/ai_interaction.py           — agent RAG integration
+#   - routes/diagnostics_routes.py    — had GET /api/rag/stats (now removed)
+#
+# TODO: To re-enable, fix the ChromaDB/pydantic compatibility issue, then
+#       set rag_manager = VectorRAG(...) and rag_available = True.
 rag_manager = None
 rag_available = False
-logger.info("Vector document RAG disabled (unused)")
+logger.info("Vector document RAG permanently disabled (ChromaDB issues)")
 
 # ========= IMPORT CONFIG =========
 from src.config import config
@@ -466,7 +475,7 @@ app.include_router(setup_preset_routes(preset_manager))
 
 # Diagnostics
 from routes.diagnostics_routes import setup_diagnostics_routes
-app.include_router(setup_diagnostics_routes(rag_manager, rag_available, research_handler))
+app.include_router(setup_diagnostics_routes(research_handler))
 
 # Cleanup
 from routes.cleanup_routes import setup_cleanup_routes
