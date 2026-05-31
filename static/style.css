@@ -1208,6 +1208,25 @@ body.bg-pattern-sparkles {
     .section-header-btn.active { opacity: 0.9; color: var(--accent); }
     .section-header-btn svg { width: 12px; height: 12px; }
 
+    /* Chats library — grid icon, hover-reveal so the header only toggles collapse */
+    #sessions-section .chats-manage-btn {
+      opacity: 0;
+      transition: opacity 0.12s, background 0.08s;
+    }
+    #sessions-section .section-header-flex:hover .chats-manage-btn,
+    #sessions-section .chats-manage-btn:hover,
+    #sessions-section .chats-manage-btn:focus-visible {
+      opacity: 0.45;
+    }
+    #sessions-section .chats-manage-btn:hover,
+    #sessions-section .chats-manage-btn:focus-visible {
+      opacity: 1;
+    }
+    @media (hover: none) {
+      #sessions-section .chats-manage-btn { opacity: 0.35; }
+      #sessions-section .chats-manage-btn:active { opacity: 1; }
+    }
+
     /* Collapse chevron */
     .section-collapse-btn {
       all: unset;
