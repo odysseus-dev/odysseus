@@ -12,6 +12,8 @@ services:
       # Cookbook local model cache. Inside Docker, "Local" means the Odysseus
       # container, so persist its HuggingFace cache under ./data/huggingface.
       - ./data/huggingface:/app/.cache/huggingface
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     environment:

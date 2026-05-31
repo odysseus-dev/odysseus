@@ -6,7 +6,7 @@ from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Form
 
 from services.youtube.youtube_handler import extract_youtube_id, extract_transcript_async
-from core.constants import DEFAULT_HOST
+from src.constants import DEFAULT_HOST, SUGGESTED_LOCAL_LLM_URL, IS_DOCKER
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ def setup_diagnostics_routes(
     @router.post("/api/test-research")
     async def test_research(query: str = Form("What is machine learning?")) -> Dict[str, Any]:
         try:
-            endpoint = f"http://{DEFAULT_HOST}:8000/v1/chat/completions"
+            endpoint = SUGGESTED_LOCAL_LLM_URL.rstrip("/") + "/chat/completions"
             model = "gpt-oss-120b"
             result = await research_handler.call_research_service(query, endpoint, model)
             return {
@@ -67,5 +67,12 @@ def setup_diagnostics_routes(
             }
         except Exception as e:
             return {"status": "error", "error": str(e), "query": query}
+
+    @router.get("/api/system-info")
+    async def get_system_info() -> Dict[str, Any]:
+        return {
+            "docker": IS_DOCKER,
+            "suggested_local_url": SUGGESTED_LOCAL_LLM_URL,
+        }
 
     return router
