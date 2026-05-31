@@ -1,6 +1,9 @@
 services:
   odysseus:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_OPTIONAL: ${INSTALL_OPTIONAL:-false}
     ports:
       - "7000:7000"
     volumes:

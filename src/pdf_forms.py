@@ -12,7 +12,7 @@ from typing import Any
 # PyMuPDF is an OPTIONAL dependency (AGPL-3.0), required ONLY for the PDF
 # form-filling feature implemented in this module. The MIT core imports fine
 # without it; calling these functions without PyMuPDF raises a clear error.
-# See requirements-optional.txt.
+# See pyproject.toml [project.optional-dependencies].
 try:
     import fitz  # PyMuPDF — optional, AGPL-3.0
 except ImportError:  # pragma: no cover
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 _PYMUPDF_MISSING = (
     "PDF form features require PyMuPDF, an optional dependency. Install it with "
-    "`pip install -r requirements-optional.txt` (note: PyMuPDF is AGPL-3.0)."
+    "`uv pip install \".[optional]\"` (or `pip install \".[optional]\"`; note: PyMuPDF is AGPL-3.0)."
 )
 
 

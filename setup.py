@@ -101,7 +101,7 @@ def check_deps():
             missing.append(mod)
     if missing:
         print(f"\n  [warn] Missing packages: {', '.join(missing)}")
-        print(f"         Run: pip install -r requirements.txt")
+        print(f"         Run: uv pip install . (or pip install .)")
     else:
         print("  [ok] All core dependencies installed")
 

@@ -22,9 +22,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Install uv from the official image (much faster than pip)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 # Install Python deps first (layer cache)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+ARG INSTALL_OPTIONAL=false
+COPY pyproject.toml .
+RUN if [ "$INSTALL_OPTIONAL" = "true" ]; then \
+      uv pip install --system --no-cache ".[optional]"; \
+    else \
+      uv pip install --system --no-cache "."; \
+    fi
 
 # Copy app code
 COPY . .
