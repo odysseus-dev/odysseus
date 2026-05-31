@@ -35,8 +35,8 @@ services:
         condition: service_started
     restart: unless-stopped
     # GPU support is opt-in via the COMPOSE_FILE variable in .env.
-    # See .env.example -> "GPU support" and docker-compose.nvidia.yml
-    # / docker-compose.amd.yml for the available overlays.
+    # See .env.example -> "GPU support" and gpu.nvidia.yml
+    # / gpu.amd.yml for the available overlays.
 
   chromadb:
     image: chromadb/chroma:latest

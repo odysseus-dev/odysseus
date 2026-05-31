@@ -1,5 +1,5 @@
 # NVIDIA GPU overlay. Enable by setting COMPOSE_FILE in .env, e.g.:
-#   COMPOSE_FILE=docker-compose.yml:docker-compose.nvidia.yml
+#   COMPOSE_FILE=docker-compose.yml:gpu.nvidia.yml
 # Requires the NVIDIA Container Toolkit on the host (provides the `nvidia`
 # device driver to Docker). Verify with: docker info | grep -i nvidia
 services:
