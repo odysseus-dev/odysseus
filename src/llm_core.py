@@ -124,6 +124,22 @@ def _get_cached_response(cache_key: str) -> Optional[str]:
     """Get cached response if it exists."""
     return _response_cache.get(cache_key)
 
+
+_INTERNAL_MESSAGE_KEYS = {"metadata", "_protected"}
+
+
+def _sanitize_messages_for_api(messages: List[Dict]) -> List[Dict]:
+    """Remove Odysseus-only fields before sending messages upstream."""
+    return [
+        {
+            key: value
+            for key, value in message.items()
+            if key not in _INTERNAL_MESSAGE_KEYS
+        }
+        for message in messages
+    ]
+
+
 def _set_cached_response(cache_key: str, response: str) -> None:
     """Store response in cache."""
     if len(_response_cache) > 128:
@@ -409,7 +425,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     if isinstance(headers, dict):
         h.update(headers)
 
-    messages_copy = [msg.copy() for msg in messages]
+    messages_copy = _sanitize_messages_for_api(messages)
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -517,7 +533,7 @@ async def llm_call_async(
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
-    messages_copy = [msg.copy() for msg in messages]
+    messages_copy = _sanitize_messages_for_api(messages)
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -614,7 +630,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
       - data: [DONE]                       — end of stream
     """
     provider = _detect_provider(url)
-    messages_copy = [msg.copy() for msg in messages]
+    messages_copy = _sanitize_messages_for_api(messages)
 
     # Consolidate multiple system messages into one at the start.
     # Some models (e.g. Qwen3.5) reject system messages that aren't first.
