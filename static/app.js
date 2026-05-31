@@ -1081,6 +1081,20 @@ function initializeEventListeners() {
     userBarAdmin.addEventListener('click', () => adminModule.open());
   }
 
+  // Fetch system info (Docker detection, suggested local URL) — lightweight
+  fetch(`${API_BASE}/api/system-info`, { credentials: 'same-origin' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.suggested_local_url) {
+        window._ODY_SUGGESTED_LOCAL_URL = d.suggested_local_url;
+        const localUrlInput = document.getElementById('adm-epLocalUrl');
+        if (localUrlInput && !localUrlInput.value) {
+          localUrlInput.placeholder = 'Paste an endpoint URL, e.g. ' + d.suggested_local_url;
+        }
+      }
+    })
+    .catch(() => {});
+
   // Fetch auth status — populate user bar and show admin button if admin
   fetch(`${API_BASE}/api/auth/status`, { credentials: 'same-origin' })
     .then(r => r.json())
