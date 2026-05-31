@@ -6,7 +6,7 @@ python = "3.12.13"
 # Node: Active LTS line. Used for npx (Browser MCP server) and JS dev deps.
 node = "22.21.1"
 
-# Linter / formatter — pinned to a recent stable; bump with `mise upgrade ruff`.
+# Linter / formatter — always latest stable.
 ruff = "latest"
 
 # Container / filesystem vulnerability scanner.

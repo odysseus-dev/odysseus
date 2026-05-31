@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  # ── Python: lint + test ──────────────────────────────────────────────────
+  python:
+    name: Python lint & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          install: true   # installs everything in [tools]
+
+      - name: Install Python deps
+        run: mise run install
+
+      - name: Ruff lint
+        run: mise run lint
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+      - name: Test
+        run: python -m pytest
+
+  # ── JS: Biome check ─────────────────────────────────────────────────────
+  js:
+    name: JS lint & format (Biome)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+
+      - name: Biome check
+        run: mise run biome-check
+
+  # ── Security: Trivy filesystem scan ─────────────────────────────────────
+  security:
+    name: Trivy scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+
+      - name: Trivy filesystem scan
+        run: mise run scan
+
+  # ── Docker: build + image scan ───────────────────────────────────────────
+  docker:
+    name: Docker build & scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+
+      - name: Build image
+        run: mise run docker-build
+
+      - name: Trivy image scan
+        run: mise run scan-image
