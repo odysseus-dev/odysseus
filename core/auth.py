@@ -121,7 +121,7 @@ class AuthManager:
             logger.info(f"Migrated single-user auth to multi-user (admin: {old_user})")
 
     def _migrate_legacy_admin_role(self):
-        """Normalize setup.py's old role='admin' marker to is_admin=True."""
+        """Normalize setup_odysseus.py's old role='admin' marker to is_admin=True."""
         changed = False
         for username, user in self.users.items():
             if user.get("role") == "admin" and "is_admin" not in user:
