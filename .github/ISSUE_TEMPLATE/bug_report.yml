@@ -1,0 +1,74 @@
+name: Bug report
+description: Something is broken (crashes, wrong behavior, install failure, etc.)
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please fill this out carefully — it helps a lot.
+
+        **Note:** This project is very new and mostly maintained by one person right now. Fresh install / platform issues are extremely common.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug clearly. Include exact error messages if any.
+      placeholder: "When I do X, it crashes with..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps. Be as precise as possible.
+      placeholder: |
+        1. Clone the repo
+        2. Run `docker compose up`
+        3. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform / Environment
+      options:
+        - Docker (Linux)
+        - Docker (macOS)
+        - Docker (Windows)
+        - Manual install (Linux)
+        - Manual install (macOS)
+        - Manual install (Windows)
+        - Other / Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: "e.g. Ubuntu 24.04, macOS 15.4, Windows 11 24H2"
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version (if not using Docker)
+      placeholder: "e.g. 3.11.9"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / error output
+      description: Paste the actual error or relevant log section (not the entire 500 lines).
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and this is not a duplicate
+        - label: I tried the latest version on `main`
+        - label: This is a fresh install issue (not something that used to work)

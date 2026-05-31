@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Discussions (if enabled later)
+    url: https://github.com/pewdiepie-archdaemon/odysseus/discussions
+    about: For general questions, ideas, and community support.
+  - name: Existing Issues
+    url: https://github.com/pewdiepie-archdaemon/odysseus/issues
+    about: Please search open issues before creating a new one. Many install problems are already reported.
