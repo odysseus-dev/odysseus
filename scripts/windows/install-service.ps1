@@ -49,7 +49,8 @@ PREREQUISITES:
 }
 
 # --- Determine paths ---
-$ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectDir = (Resolve-Path "$ScriptDir\..\..").Path
 Set-Location -Path $ProjectDir
 
 # --- Check & Request Administrator Privileges ---

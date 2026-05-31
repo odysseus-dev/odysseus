@@ -2860,62 +2860,76 @@ def _scan_running_model_processes() -> List[Dict[str, Any]]:
 def _scan_running_model_processes_windows() -> List[Dict[str, Any]]:
     """Windows variant: use 'wmic process get' to scan for model servers."""
     import subprocess
-    out: List[Dict[str, Any]] = []
-    seen_keys: set = set()
+
     try:
-        # wmic is available on all Windows versions; returns CSV-like output
         result = subprocess.run(
             ["wmic", "process", "get", "ProcessId,CommandLine", "/FORMAT:CSV"],
             capture_output=True, text=True, timeout=10,
         )
-        if result.returncode != 0:
-            return []
-        for line in result.stdout.splitlines():
-            line = line.strip()
-            if not line or line.startswith("Node,"):
-                continue
-            # CSV format: Node,CommandLine,ProcessId
-            parts = line.split(",", 2)
-            if len(parts) < 3:
-                continue
-            cmdline = parts[1].strip()
-            try:
-                pid = int(parts[2].strip())
-            except (ValueError, IndexError):
-                continue
-            if not cmdline:
-                continue
-            lower = cmdline.lower()
-            for label, needles in _MODEL_PROCESS_PATTERNS:
-                if any(n.lower() in lower for n in needles):
-                    key = (label, cmdline.split()[0] if cmdline.split() else "")
-                    if key in seen_keys:
-                        break
-                    seen_keys.add(key)
-                    model = ""
-                    for tok in cmdline.split():
-                        sep = "\\" if "\\" in tok else "/"
-                        if sep in tok and any(s in tok.lower() for s in (
-                            "model", "checkpoint", ".safetensors", ".gguf", ".bin", "huggingface"
-                        )):
-                            model = tok
-                            break
-                    out.append({
-                        "session_id": f"pid-{pid}",
-                        "model": model or label,
-                        "phase": "running (external)",
-                        "type": "serve",
-                        "remote": "local",
-                        "pid": pid,
-                        "label": label,
-                        "cmdline_preview": cmdline[:140] + ("…" if len(cmdline) > 140 else ""),
-                        "external": True,
-                    })
-                    break
-    except Exception as e:
+    except Exception as e:  # wmic missing, timeout, etc.
         logger.debug(f"_scan_running_model_processes_windows failed: {e}")
-    return out
+        return []
+    if result.returncode != 0:
+        return []
 
+    out: List[Dict[str, Any]] = []
+    seen_keys: set = set()
+    MODEL_HINTS = ("model", "checkpoint", ".safetensors", ".gguf", ".bin", "huggingface")
+
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line or line.startswith("Node,"):
+            continue
+
+        # wmic CSV is alphabetical: Node, CommandLine, ProcessId.
+        # ProcessId is always last; the command line may itself contain commas.
+        match line.split(","):
+            case [_node, *cmd_parts, pid_str] if cmd_parts:
+                cmdline = ",".join(cmd_parts).strip()
+            case _:
+                continue
+
+        if not cmdline:
+            continue
+        try:
+            pid = int(pid_str.strip())
+        except ValueError:
+            continue
+
+        lower = cmdline.lower()
+        label = next(
+            (lbl for lbl, needles in _MODEL_PROCESS_PATTERNS
+             if any(n.lower() in lower for n in needles)),
+            None,
+        )
+        if label is None:
+            continue
+
+        toks = cmdline.split()
+        key = (label, toks[0] if toks else "")
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        model = next(
+            (tok for tok in toks
+             if ("\\" in tok or "/" in tok) and any(s in tok.lower() for s in MODEL_HINTS)),
+            "",
+        )
+
+        out.append({
+            "session_id": f"pid-{pid}",
+            "model": model or label,
+            "phase": "running (external)",
+            "type": "serve",
+            "remote": "local",
+            "pid": pid,
+            "label": label,
+            "cmdline_preview": cmdline[:140] + ("…" if len(cmdline) > 140 else ""),
+            "external": True,
+        })
+
+    return out
 
 async def do_download_model(content: str, owner: Optional[str] = None) -> Dict:
     """Download a HuggingFace model via the cookbook API."""

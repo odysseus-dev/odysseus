@@ -1,5 +1,7 @@
 from pathlib import Path
 from typing import List, Optional
+import sys
+IS_WINDOWS = sys.platform == "win32"
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
 

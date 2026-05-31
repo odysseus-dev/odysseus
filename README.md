@@ -114,14 +114,14 @@ Odysseus includes a seamless installation script for Windows that automatically 
 **Quick Install:**
 1. Clone the repository: `git clone <your-odysseus-repo-url>`
 2. Open the `odysseus` folder in File Explorer.
-3. Double-click the **`install-windows.bat`** file.
+3. Navigate to `scripts\windows\` and double-click the **`install-windows.bat`** file.
 
 *(You will receive a User Account Control prompt for Administrator privileges, which are required to register the background service).*
 
 Alternatively, you can run it from a PowerShell window:
 ```powershell
 cd odysseus
-powershell -ExecutionPolicy Bypass -File .\install-service.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install-service.ps1
 ```
 
 The script will set up the environment, register the background service, and print your initial admin credentials. Once it completes, open `http://localhost:7000`, log in with the generated admin password, and configure everything else inside **Settings**.

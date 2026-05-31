@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Depends
-
+from src.config import IS_WINDOWS
 from src.auth_helpers import require_user
 from pydantic import BaseModel
 
@@ -362,7 +362,7 @@ def setup_cookbook_routes() -> APIRouter:
             lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
 
         remote = req.remote_host  # None for local
-        is_windows = req.platform == "windows" or (not remote and _IS_WIN)
+        is_windows = req.platform == "windows" or (not remote and IS_WINDOWS)
         logger.info(f"Download request: repo={req.repo_id}, remote={remote}, ssh_port={req.ssh_port}, platform={req.platform}")
 
         if not is_windows and not await _binary_available("tmux", remote, req.ssh_port):
@@ -487,7 +487,7 @@ def setup_cookbook_routes() -> APIRouter:
                 f"scp -O {_pf}-q '{runner_path}' {remote}:{remote_runner} && "
                 f"ssh {_spf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
             )
-        elif not remote and _IS_WIN:
+        elif not remote and IS_WINDOWS:
             # ── Local Windows: PowerShell background job ──
             sd = str(TMUX_LOG_DIR).replace('/', '\\')
             launcher = Path("scripts/windows/launch_background.ps1").resolve()

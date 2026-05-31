@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Dict, Any
 
 # Unix-only modules — not available on Windows
-_IS_WINDOWS = os.name == "nt"
-if not _IS_WINDOWS:
+from src.config import IS_WINDOWS
+if not IS_WINDOWS:
     import pty
     import fcntl
 
@@ -102,7 +102,7 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
 async def _generate_pty(cmd: str, timeout: int, request: Request):
     """Run command in a pseudo-TTY so tqdm/progress bars work natively.
     Not available on Windows — returns an error event."""
-    if _IS_WINDOWS:
+    if IS_WINDOWS:
         yield f"data: {json.dumps({'stream': 'stderr', 'data': 'PTY mode is not available on Windows. Use standard shell exec instead.'})}\n\n"
         yield f"data: {json.dumps({'exit_code': -1})}\n\n"
         return
@@ -120,7 +120,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
         stdout=slave_fd,
         stderr=slave_fd,
         cwd=str(Path.home()),
-        preexec_fn=os.setsid if not _IS_WINDOWS else None,
+        preexec_fn=os.setsid if not IS_WINDOWS else None,
     )
     os.close(slave_fd)  # parent doesn't need the slave side
 
@@ -226,7 +226,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
 def _pty_read(fd: int) -> bytes | None:
     """Blocking read from PTY fd. Called via run_in_executor.
     Returns bytes on data, None on timeout (no data yet).
-    Unix-only — guarded by _IS_WINDOWS check in _generate_pty."""
+    Unix-only — guarded by IS_WINDOWS check in _generate_pty."""
     import select
     r, _, _ = select.select([fd], [], [], 1.0)
     if r:
@@ -243,7 +243,7 @@ async def _generate_tmux(cmd: str, request: Request):
     The tmux session survives browser disconnect — user can reconnect or
     `tmux attach -t <name>` to see it live.
     Not available on Windows — returns an error event."""
-    if _IS_WINDOWS:
+    if IS_WINDOWS:
         yield f"data: {json.dumps({'stream': 'stderr', 'data': 'tmux mode is not available on Windows. Cookbook uses PowerShell background jobs instead.'})}\n\n"
         yield f"data: {json.dumps({'exit_code': -1})}\n\n"
         return
