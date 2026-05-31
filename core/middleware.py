@@ -98,3 +98,36 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "frame-ancestors 'none'"
             )
         return response
+
+
+# Hard timeout for non-streaming requests. Whitelisted paths (streaming,
+# long-running shell exec, research) are exempt because they legitimately
+# stay open.
+REQUEST_HARD_TIMEOUT = float(os.getenv("REQUEST_HARD_TIMEOUT", "45"))
+_TIMEOUT_EXEMPT_PREFIXES = (
+    "/api/chat",            # streaming
+    "/api/shell/stream",    # SSE
+    "/api/research",        # multi-minute jobs
+    "/api/model/download",  # tmux setup may run pip installs
+    "/api/model/probe",     # SSE; iterates models with up to 8s timeout each
+    "/api/model-endpoints", # /probe sub-route also iterates models
+    "/api/cookbook/setup",   # remote pacman/apt installs
+    "/api/upload",          # large files
+    "/api/image",           # diffusion proxies — own 120s httpx timeout
+)
+
+
+class RequestTimeoutMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        import asyncio as _asyncio
+        from starlette.responses import JSONResponse as _JSONResponse
+        path = request.url.path or ""
+        if any(path.startswith(p) for p in _TIMEOUT_EXEMPT_PREFIXES):
+            return await call_next(request)
+        try:
+            return await _asyncio.wait_for(call_next(request), timeout=REQUEST_HARD_TIMEOUT)
+        except _asyncio.TimeoutError:
+            return _JSONResponse(
+                {"detail": f"Request exceeded {REQUEST_HARD_TIMEOUT:.0f}s timeout"},
+                status_code=504,
+            )
