@@ -570,7 +570,7 @@ export async function refreshModels(force = false) {
               'Tip: Attach images or files using the + button next to the input.',
             ]
           : [
-              'Tip: Press Ctrl+K to search across all your conversations.',
+              'Tip: Press Ctrl+K to search your workspace.',
               'Tip: Press Ctrl+B to quickly toggle the sidebar.',
               'Tip: Shift-click the sidebar toggle to swap it to the other side.',
               'Tip: Drag and drop files onto the chat to attach them.',
