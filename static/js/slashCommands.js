@@ -567,8 +567,14 @@ async function connectDetectedSetupEndpoint(detected) {
     // Pass explicit provider override for multi-protocol endpoints
     // (e.g. OpenCode Zen/Go that serve both OpenAI and Anthropic formats)
     if (detected.provider) fd.append('provider', detected.provider);
-    fd.append('require_models', 'true');
-    if (!isLocal) fd.append('skip_probe', 'true');
+    // For known cloud providers, skip the probe and rely on background
+    // model-list refresh — a 1s timeout on the probe is too short for
+    // remote APIs. Local endpoints still need a probe.
+    if (isLocal) {
+      fd.append('require_models', 'true');
+    } else {
+      fd.append('skip_probe', 'true');
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30000);
     const res = await fetch(`${API_BASE}/api/model-endpoints`, { method: 'POST', body: fd, credentials: 'same-origin', signal: controller.signal });
