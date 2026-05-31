@@ -8,6 +8,7 @@ import shlex
 import shutil
 import uuid
 import tempfile
+from collections import namedtuple
 from pathlib import Path
 from typing import Dict, Any
 
@@ -47,6 +48,35 @@ def _require_admin(request: Request):
 logger = logging.getLogger(__name__)
 
 PTY_SUPPORTED = pty is not None and fcntl is not None and hasattr(os, "setsid")
+
+
+DOCKER_IN_CONTAINER_HINT = (
+    "Not available inside the Odysseus container by design. The image ships no "
+    "docker CLI and no host socket is mounted. Run Docker-backed launches on a "
+    "remote server, where docker is checked over SSH. Mounting /var/run/docker.sock "
+    "into the container would grant it host-root access, so only do that if you "
+    "accept that risk."
+)
+
+
+def _running_in_container(dockerenv_path="/.dockerenv", cgroup_path="/proc/1/cgroup"):
+    if os.path.exists(dockerenv_path):
+        return True
+    try:
+        with open(cgroup_path, "r", encoding="utf-8") as fh:
+            contents = fh.read()
+    except OSError:
+        return False
+    return any(token in contents for token in ("docker", "containerd", "kubepods"))
+
+
+DockerLocalStatus = namedtuple("DockerLocalStatus", ["applicable", "install_hint"])
+
+
+def _local_docker_status(*, installed, in_container, default_hint):
+    if in_container and not installed:
+        return DockerLocalStatus(applicable=False, install_hint=DOCKER_IN_CONTAINER_HINT)
+    return DockerLocalStatus(applicable=True, install_hint=default_hint)
 
 
 def _find_line_break(buf):
@@ -591,7 +621,16 @@ def setup_shell_routes() -> APIRouter:
                 pkg["installed"] = bool(remote_status.get(pkg["name"], False))
                 continue
             if pkg.get("kind") == "system":
-                pkg["installed"] = shutil.which(pkg["name"]) is not None
+                installed = shutil.which(pkg["name"]) is not None
+                pkg["installed"] = installed
+                if pkg["name"] == "docker":
+                    status = _local_docker_status(
+                        installed=installed,
+                        in_container=_running_in_container(),
+                        default_hint=pkg.get("install_hint"),
+                    )
+                    pkg["applicable"] = status.applicable
+                    pkg["install_hint"] = status.install_hint
                 continue
             try:
                 if pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
