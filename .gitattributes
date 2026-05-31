@@ -1,0 +1,8 @@
+# Force LF line endings for files that run inside Linux containers.
+# Prevents Windows git (core.autocrlf=true) from checking out CRLF,
+# which breaks the #!/bin/sh shebang and causes "no such file or directory"
+# errors when Docker tries to exec the entrypoint.
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf

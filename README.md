@@ -46,7 +46,7 @@ to override deployment-level things like `AUTH_ENABLED`, `DATABASE_URL`,
 or pre-seed `ODYSSEUS_ADMIN_PASSWORD` (otherwise an initial password is
 generated and printed on first boot).
 
-### Option 1: Docker (recommended)
+### Option 1: Docker — Linux / macOS (recommended)
 ```bash
 git clone <your-odysseus-repo-url>
 cd odysseus
@@ -82,6 +82,51 @@ MemoryVectorStore initialized
 
 The Cookbook model catalog check should print a non-zero count. If it prints
 `0`, rebuild the Odysseus image with `docker compose build --no-cache odysseus`.
+
+---
+
+### Option 2: Docker — Windows (Docker Desktop)
+
+Windows has two known incompatibilities with the standard setup:
+
+- **CRLF line endings** — git on Windows (core.autocrlf=true) converts `entrypoint.sh` to CRLF on checkout, breaking the `#!/bin/sh` shebang inside the Linux container ("no such file or directory").
+- **Reserved ports** — Hyper-V (used by Docker Desktop) reserves port ranges that commonly include 8080, 8091, and 8100. Binding those ports fails with "access permissions" even if nothing is visibly using them.
+
+Both are handled by `Dockerfile.windows` and `docker-compose.windows.yml`. Use `launch-docker.ps1` which wires everything up automatically:
+
+```powershell
+git clone <your-odysseus-repo-url>
+cd odysseus
+.\launch-docker.ps1
+```
+
+The script creates `.env` on first run, pulls images, builds with `Dockerfile.windows`, and opens the browser when the app is ready.
+
+**Windows port layout** (all in the 7400–7699 range to avoid Hyper-V conflicts):
+
+| Service  | Windows host port | Internal port |
+|----------|:-----------------:|:-------------:|
+| Odysseus | **7400**          | 7000          |
+| ChromaDB | **7401**          | 8000          |
+| SearXNG  | **7402**          | 8080          |
+| ntfy     | **7403**          | 80            |
+
+Open `http://localhost:7400` after startup.
+
+If you prefer to run the commands manually:
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d --build
+```
+
+Useful checks:
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.windows.yml ps
+docker compose -f docker-compose.yml -f docker-compose.windows.yml logs --tail=120 odysseus
+```
+
+> **LLM on localhost?** If your LLM server is running on the Windows host (e.g. `http://127.0.0.1:8090/v1`), set `LLM_HOST=host.docker.internal` in `.env` — `127.0.0.1` inside a Docker container refers to the container itself, not your machine. `launch-docker.ps1` sets this automatically on first run.
+
+---
 
 ### Option 2: Manual install — Linux / macOS
 **Requirements:** Python 3.11+. On Linux/Termux, Cookbook also requires `tmux`
@@ -176,9 +221,14 @@ Key settings:
 ### Bundled services
 Docker Compose includes these by default:
 
-  - **ChromaDB** → vector store for semantic memory. In Docker, Odysseus connects to `chromadb:8000`; from the host it is exposed as `localhost:8100`.
-  - **SearXNG** → meta search for web search. In Docker, Odysseus connects to `searxng:8080`; from the host it is exposed only on `127.0.0.1:8080`.
-  - **ntfy** → local notification service, exposed as `localhost:8091`.
+| Service  | Linux host port | Windows host port | What it does |
+|----------|:---------------:|:-----------------:|--------------|
+| Odysseus | `7000`          | `7400`            | The app itself |
+| ChromaDB | `8100`          | `7401`            | Vector store for semantic memory |
+| SearXNG  | `8080` (localhost only) | `7402`   | Meta search for web search |
+| ntfy     | `8091`          | `7403`            | Local push notifications |
+
+Container-to-container networking is the same on both platforms (containers always talk on internal ports: `chromadb:8000`, `searxng:8080`). Only the host-side bindings differ.
 
 ### Optional external services
   - **Ollama** → local LLM server -- [ollama.ai](https://ollama.ai)

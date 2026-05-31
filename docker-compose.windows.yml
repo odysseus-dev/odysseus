@@ -1,0 +1,35 @@
+# Windows-specific Docker Compose overrides.
+# Fixes two Windows/Hyper-V incompatibilities in docker-compose.yml:
+#
+#   1. Host port conflicts — Hyper-V reserves port ranges that often include
+#      8080, 8091, 8100, etc. All host-side ports are remapped to 7400-7699.
+#      Internal container networking is unchanged (containers still talk to
+#      each other on their original ports).
+#
+#   2. SearXNG host binding — removes the 127.0.0.1 bind restriction that
+#      causes "access permissions" errors on Windows TCP stack.
+#
+# Usage (handled automatically by launch-docker.ps1):
+#   docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d --build
+
+services:
+  odysseus:
+    build:
+      context: .
+      dockerfile: Dockerfile.windows
+    ports:
+      - "7400:7000"
+
+  chromadb:
+    ports:
+      - "7401:8000"
+
+  searxng:
+    ports:
+      - "7402:8080"   # no 127.0.0.1 prefix — avoids Windows socket permission error
+
+  ntfy:
+    ports:
+      - "7403:80"
+    environment:
+      - NTFY_BASE_URL=http://localhost:7403

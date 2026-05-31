@@ -1,0 +1,45 @@
+FROM python:3.12-slim
+
+# System deps — same as the main Dockerfile plus dos2unix.
+# dos2unix is the key Windows addition: it strips CRLF line endings from
+# entrypoint.sh, which git (core.autocrlf=true) silently converts on Windows
+# checkout. Without this the shebang becomes "#!/bin/sh\r" and Linux refuses
+# to exec it ("no such file or directory").
+#
+# tmux        — Cookbook background downloads/serves
+# openssh-client — Cookbook remote server probes, setup, downloads, serves
+# git/cmake   — Cookbook builds llama.cpp on first launch
+# nodejs/npm  — npx for the optional built-in Browser MCP server
+# gosu        — clean privilege drop so signals reach uvicorn directly
+# dos2unix    — CRLF → LF fix for Windows-checked-out shell scripts
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    curl \
+    dos2unix \
+    git \
+    nodejs \
+    npm \
+    tmux \
+    openssh-client \
+    gosu \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+RUN mkdir -p data logs
+
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+# Strip Windows CRLF line endings before chmod — if git checked this out on
+# Windows the \r breaks the shebang interpreter lookup.
+RUN dos2unix /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
+
+EXPOSE 7000
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7000"]

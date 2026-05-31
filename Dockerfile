@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     curl \
+    dos2unix \
     git \
     nodejs \
     npm \
@@ -39,7 +40,9 @@ RUN mkdir -p data logs
 # update them) silently fails on EPERM, breaking skill extraction,
 # prefs persistence, mail attachments, etc.
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# Strip Windows CRLF line endings if the file was checked out on Windows
+# (git core.autocrlf=true turns LF→CRLF, breaking the #!/bin/sh shebang).
+RUN dos2unix /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 
 EXPOSE 7000
 
