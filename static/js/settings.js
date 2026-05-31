@@ -4089,17 +4089,26 @@ async function initUnifiedIntegrations() {
       el('uf-mcp-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
       el('uf-mcp-save').addEventListener('click', async () => {
         const transport = el('uf-mcp-transport').value;
-        const body = { name: el('uf-mcp-name').value, transport };
+        // routes/mcp_routes.py uses FastAPI Form(...) — send multipart, not JSON.
+        const fd = new FormData();
+        fd.append('name', el('uf-mcp-name').value);
+        fd.append('transport', transport);
         if (transport === 'stdio') {
-          body.command = el('uf-mcp-cmd').value;
-          try { body.args = JSON.parse(el('uf-mcp-args').value || '[]'); } catch (_) { body.args = []; }
-          try { body.env = JSON.parse(el('uf-mcp-env').value || '{}'); } catch (_) { body.env = {}; }
+          fd.append('command', el('uf-mcp-cmd').value);
+          let args = '[]'; try { args = JSON.stringify(JSON.parse(el('uf-mcp-args').value || '[]')); } catch (_) {}
+          let env  = '{}'; try { env  = JSON.stringify(JSON.parse(el('uf-mcp-env').value  || '{}')); } catch (_) {}
+          fd.append('args', args);
+          fd.append('env', env);
         } else {
-          body.url = el('uf-mcp-url').value;
+          fd.append('url', el('uf-mcp-url').value);
         }
         try {
-          await fetch('/api/mcp/servers', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-          el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
+          const r = await fetch('/api/mcp/servers', { method: 'POST', credentials: 'same-origin', body: fd });
+          if (r.ok) {
+            el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
+          } else {
+            el('uf-mcp-msg').textContent = `Failed (${r.status})`;
+          }
         } catch (_) { el('uf-mcp-msg').textContent = 'Failed'; }
       });
     }
