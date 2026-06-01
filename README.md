@@ -210,6 +210,18 @@ Docker Compose includes these by default. The bundled service ports bind to `127
 ### Optional external services
   - **Ollama** → local LLM server -- [ollama.ai](https://ollama.ai)
 
+### Built-in MCP servers (optional setup)
+
+Odysseus auto-registers a few built-in MCP servers at startup. The npx-based ones (currently the browser server, `@playwright/mcp`) only start when their npm package is already in the local npx cache. If a package isn't cached, that server is skipped with a startup log message explaining what to do, so a fresh install does not block on a multi-minute npm download or hang if Playwright system deps are missing.
+
+To enable the browser MCP (page navigation, screenshots, vision), run once:
+
+```bash
+npx -y @playwright/mcp@latest --version
+```
+
+That installs `@playwright/mcp` plus Playwright (~300MB total). Restart Odysseus and the server will register at startup.
+
 ### Ollama with Docker
 If Odysseus is running in Docker and Ollama is running on the host, add the endpoint in Settings as:
 

@@ -123,9 +123,13 @@ async def register_builtin_servers(mcp_manager):
             pkg_spec = _npx_package_from_args(args)
             if pkg_spec and not await _is_npx_package_cached(npx_path, pkg_spec):
                 logger.warning(
-                    f"Skipping {cfg['name']}: npx package {pkg_spec!r} is not "
-                    f"installed. Run `{os.path.basename(npx_path)} -y {pkg_spec} "
-                    f"--version` once to install it, then restart Odysseus."
+                    f"{cfg['name']} is not available.\n"
+                    f"  Reason: npm package {pkg_spec!r} is not installed in the npx cache.\n"
+                    f"  Impact: tools provided by this MCP server will be unavailable.\n"
+                    f"  Fix:    {os.path.basename(npx_path)} -y {pkg_spec} --version\n"
+                    f"          (run once, then restart Odysseus)\n"
+                    f"  Notes:  this server is optional; see README.md "
+                    f"'Built-in MCP servers' for details."
                 )
                 continue
 
