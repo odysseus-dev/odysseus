@@ -1,0 +1,163 @@
+{{- if .Values.searxng.enabled -}}
+{{- $name := include "odysseus.searxngName" . -}}
+{{- $secretName := default (printf "%s-secret" $name) .Values.searxng.secret.existingSecret -}}
+{{- $existingSecret := lookup "v1" "Secret" .Release.Namespace $secretName -}}
+{{- $secretKey := .Values.searxng.secret.key -}}
+{{- if not $secretKey -}}
+{{- if and $existingSecret (index $existingSecret.data "secret-key") -}}
+{{- $secretKey = index $existingSecret.data "secret-key" | b64dec -}}
+{{- else -}}
+{{- $secretKey = randAlphaNum 48 -}}
+{{- end -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+data:
+  settings.yml: |
+    use_default_settings: {{ .Values.searxng.settings.useDefaultSettings }}
+
+    server:
+      secret_key: "__SEARXNG_SECRET__"
+
+    search:
+      formats:
+        {{- range .Values.searxng.settings.formats }}
+        - {{ . }}
+        {{- end }}
+---
+{{- if and .Values.searxng.secret.create (not .Values.searxng.secret.existingSecret) }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+type: Opaque
+stringData:
+  secret-key: {{ $secretKey | quote }}
+---
+{{- end }}
+{{- if and .Values.searxng.persistence.enabled (not .Values.searxng.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+  {{- with .Values.searxng.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml .Values.searxng.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.searxng.persistence.size | quote }}
+  {{- if .Values.searxng.persistence.storageClass }}
+  storageClassName: {{ .Values.searxng.persistence.storageClass | quote }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "odysseus.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: searxng
+  template:
+    metadata:
+      labels:
+        {{- include "odysseus.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: searxng
+    spec:
+      containers:
+        - name: searxng
+          image: "{{ .Values.searxng.image.repository }}:{{ .Values.searxng.image.tag }}"
+          imagePullPolicy: {{ .Values.searxng.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              if [ ! -s /etc/searxng/settings.yml ] || grep -q 'odysseus-local-searxng-json-2026-05-30\|__SEARXNG_SECRET__' /etc/searxng/settings.yml; then
+                sed "s|__SEARXNG_SECRET__|${SEARXNG_SECRET}|g" /tmp/searxng-settings.yml.template > /etc/searxng/settings.yml
+              fi
+              exec /usr/local/searxng/entrypoint.sh
+          env:
+            - name: SEARXNG_BASE_URL
+              value: "http://{{ $name }}:{{ .Values.searxng.service.port }}/"
+            - name: SEARXNG_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ default "secret-key" .Values.searxng.secret.existingSecretKey }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 20
+          volumeMounts:
+            - name: searxng-template
+              mountPath: /tmp/searxng-settings.yml.template
+              subPath: settings.yml
+              readOnly: true
+            {{- if .Values.searxng.persistence.enabled }}
+            - name: searxng-data
+              mountPath: /etc/searxng
+            {{- end }}
+          {{- with .Values.searxng.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: searxng-template
+          configMap:
+            name: {{ $name }}
+        {{- if .Values.searxng.persistence.enabled }}
+        - name: searxng-data
+          persistentVolumeClaim:
+            claimName: {{ default $name .Values.searxng.persistence.existingClaim }}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+spec:
+  type: {{ .Values.searxng.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.searxng.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "odysseus.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+{{- end }}

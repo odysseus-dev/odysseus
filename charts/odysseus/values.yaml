@@ -1,0 +1,168 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/pewdiepie-archdaemon/odysseus
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 7000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: odysseus.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+env:
+  AUTH_ENABLED: "true"
+  LOCALHOST_BYPASS: "false"
+  DATABASE_URL: "sqlite:////app/data/app.db"
+  LLM_HOST: "localhost"
+  ODYSSEUS_INPROCESS_POLLERS: "1"
+  ODYSSEUS_INPROCESS_TASKS: "1"
+
+extraEnv: []
+extraEnvFrom: []
+
+secretEnv:
+  create: true
+  values: {}
+  existingSecret: ""
+
+persistence:
+  enabled: true
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
+  annotations: {}
+  existingClaim: ""
+
+volumeMounts:
+  data:
+    mountPath: /app/data
+    subPath: data
+  logs:
+    mountPath: /app/logs
+    subPath: logs
+  ssh:
+    mountPath: /app/.ssh
+    subPath: ssh
+  huggingface:
+    mountPath: /app/.cache/huggingface
+    subPath: huggingface
+  local:
+    mountPath: /app/.local
+    subPath: local
+
+setup:
+  enabled: true
+  command:
+    - uv
+    - run
+    - setup.py
+  env:
+    ODYSSEUS_SKIP_RUN_HINT: "1"
+
+odysseus:
+  command: []
+  args: []
+
+chromadb:
+  enabled: true
+  image:
+    repository: docker.io/chromadb/chroma
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 5Gi
+    annotations: {}
+    existingClaim: ""
+  resources: {}
+  env:
+    ANONYMIZED_TELEMETRY: "FALSE"
+
+searxng:
+  enabled: true
+  image:
+    repository: docker.io/searxng/searxng
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 1Gi
+    annotations: {}
+    existingClaim: ""
+  resources: {}
+  secret:
+    create: true
+    key: ""
+    existingSecret: ""
+    existingSecretKey: secret-key
+  settings:
+    useDefaultSettings: true
+    formats:
+      - html
+      - json
+
+ntfy:
+  enabled: false
+  image:
+    repository: docker.io/binwiederhier/ntfy
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  baseUrl: "http://odysseus-ntfy"
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 1Gi
+    annotations: {}
+    existingClaim: ""
+  resources: {}

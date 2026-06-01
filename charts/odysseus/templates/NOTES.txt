@@ -1,0 +1,26 @@
+Odysseus has been installed.
+
+The application Service is:
+  {{ include "odysseus.fullname" . }}:{{ .Values.service.port }}
+
+{{- if .Values.ingress.enabled }}
+Ingress hosts:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+To open a local tunnel:
+  kubectl port-forward svc/{{ include "odysseus.fullname" . }} 7000:{{ .Values.service.port }}
+
+Then visit:
+  http://127.0.0.1:7000
+{{- end }}
+
+If this is the first install and setup.enabled=true, the setup init container
+creates the data directories, initializes SQLite, and creates the first admin
+user when auth.json does not already exist.
+
+To provide secrets such as OPENAI_API_KEY or ODYSSEUS_ADMIN_PASSWORD, use either:
+  --set secretEnv.values.OPENAI_API_KEY=...
+
+or set secretEnv.existingSecret to the name of a Secret containing those keys.

@@ -1,0 +1,99 @@
+{{- if .Values.chromadb.enabled -}}
+{{- $name := include "odysseus.chromadbName" . -}}
+{{- if and .Values.chromadb.persistence.enabled (not .Values.chromadb.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chromadb
+  {{- with .Values.chromadb.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml .Values.chromadb.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.chromadb.persistence.size | quote }}
+  {{- if .Values.chromadb.persistence.storageClass }}
+  storageClassName: {{ .Values.chromadb.persistence.storageClass | quote }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chromadb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "odysseus.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: chromadb
+  template:
+    metadata:
+      labels:
+        {{- include "odysseus.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: chromadb
+    spec:
+      containers:
+        - name: chromadb
+          image: "{{ .Values.chromadb.image.repository }}:{{ .Values.chromadb.image.tag }}"
+          imagePullPolicy: {{ .Values.chromadb.image.pullPolicy }}
+          env:
+            {{- range $key, $value := .Values.chromadb.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 20
+          {{- if .Values.chromadb.persistence.enabled }}
+          volumeMounts:
+            - name: chromadb-data
+              mountPath: /chroma/chroma
+          {{- end }}
+          {{- with .Values.chromadb.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- if .Values.chromadb.persistence.enabled }}
+      volumes:
+        - name: chromadb-data
+          persistentVolumeClaim:
+            claimName: {{ default $name .Values.chromadb.persistence.existingClaim }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chromadb
+spec:
+  type: {{ .Values.chromadb.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.chromadb.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "odysseus.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: chromadb
+{{- end }}
