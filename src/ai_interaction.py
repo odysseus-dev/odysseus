@@ -1206,159 +1206,185 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
       Line 2+: action-specific params
 
     Actions:
-      list                    — list all memories (optional line 2: category filter)
-      add                     — line 2: text, optional line 3: category (fact|event|contact|preference)
-      edit                    — line 2: memory_id, line 3: new text
-      delete                  — line 2: memory_id
-      search                  — line 2: query
+      list   [category]      — list memories, optionally filtered by category
+      add    <text> [cat]    — add a memory; cat defaults to 'fact'
+      edit   <id> <new_text> — update memory text
+      delete <id>            — remove a memory
+      search <query>         — full-text or vector search
     """
     if not _memory_manager:
         return {"error": "Memory manager not available"}
 
-    lines = content.strip().split("\n")
+    lines = content.strip().split("\n") if content.strip() else []
     if not lines:
         return {"error": "Need at least 1 line: action"}
 
     action = lines[0].strip().lower()
 
-    if action == "list":
-        category_filter = lines[1].strip().lower() if len(lines) > 1 and lines[1].strip() else None
-        memories = _memory_manager.load(owner=owner)
-        if category_filter:
-            memories = [m for m in memories if m.get("category", "").lower() == category_filter]
-        if not memories:
-            return {"results": "No memories found" + (f" in category '{category_filter}'" if category_filter else "") + "."}
-        result_lines = [f"Found {len(memories)} memory entries:\n"]
-        for m in memories[:MEMORY_LIST_DISPLAY_LIMIT]:
-            cat = m.get("category", "fact")
-            mid = m.get("id", "?")[:8]
-            text = m.get("text", "")
-            if len(text) > MEMORY_TEXT_PREVIEW_LIMIT:
-                text = text[:MEMORY_TEXT_PREVIEW_LIMIT] + "..."
-            result_lines.append(f"- [{cat}] `{mid}` — {text}")
-        if len(memories) > MEMORY_LIST_DISPLAY_LIMIT:
-            result_lines.append(f"... and {len(memories) - MEMORY_LIST_DISPLAY_LIMIT} more")  # noqa
-        return {"results": "\n".join(result_lines)}
+    _HANDLERS = {
+        "list": _memory_action_list,
+        "add": _memory_action_add,
+        "edit": _memory_action_edit,
+        "delete": _memory_action_delete,
+        "search": _memory_action_search,
+    }
 
-    elif action == "add":
-        if len(lines) < 2:
-            return {"error": "Add needs line 2: memory text"}
-        text = lines[1].strip()
-        category = lines[2].strip().lower() if len(lines) > 2 and lines[2].strip() else "fact"
-        if not text:
-            return {"error": "Memory text cannot be empty"}
+    handler = _HANDLERS.get(action)
+    if not handler:
+        valid = ", ".join(sorted(_HANDLERS))
+        return {"error": f"Unknown action '{action}'. Use: {valid}"}
 
-        entry = _memory_manager.add_entry(text, source="ai_agent", category=category, owner=owner)
-        memories = _memory_manager.load_all()
-        memories.append(entry)
-        _memory_manager.save(memories)
+    return handler(lines, owner)
 
-        # Update vector index if available
-        if _memory_vector and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
-            try:
-                _memory_vector.add(entry["id"], text)
-            except Exception:
-                pass
-        try:
-            from src.event_bus import fire_event
-            fire_event("memory_added", owner)
-        except Exception:
-            logger.debug("memory_added event dispatch failed", exc_info=True)
 
-        return {"action": "add", "memory_id": entry["id"],
-                "results": f"Memory added: [{category}] {text}"}
+def _memory_action_list(lines: list, owner: Optional[str]) -> Dict:
+    """List memories, optionally filtered by category."""
+    category_filter = lines[1].strip().lower() if len(lines) > 1 and lines[1].strip() else None
+    memories = _memory_manager.load(owner=owner)
+    if category_filter:
+        memories = [m for m in memories if m.get("category", "").lower() == category_filter]
+    if not memories:
+        suffix = f" in category '{category_filter}'" if category_filter else ""
+        return {"results": f"No memories found{suffix}."}
 
-    elif action == "edit":
-        if len(lines) < 3:
-            return {"error": "Edit needs line 2: memory_id, line 3: new text"}
-        memory_id = lines[1].strip()
-        new_text = lines[2].strip()
-        if not new_text:
-            return {"error": "New text cannot be empty"}
+    result_lines = [f"Found {len(memories)} memory entries:\n"]
+    for m in memories[:MEMORY_LIST_DISPLAY_LIMIT]:
+        cat = m.get("category", "fact")
+        mid = m.get("id", "?")[:UUID_SHORT_ID_LENGTH]
+        text = m.get("text", "")
+        if len(text) > MEMORY_TEXT_PREVIEW_LIMIT:
+            text = text[:MEMORY_TEXT_PREVIEW_LIMIT] + "..."
+        result_lines.append(f"- [{cat}] `{mid}` — {text}")
+    if len(memories) > MEMORY_LIST_DISPLAY_LIMIT:
+        result_lines.append(f"... and {len(memories) - MEMORY_LIST_DISPLAY_LIMIT} more")
+    return {"results": "\n".join(result_lines)}
 
-        memories = _memory_manager.load_all()
-        found = False
-        for m in memories:
-            if m.get("id", "").startswith(memory_id):
-                # Verify ownership
-                if owner and m.get("owner") != owner:
-                    return {"error": f"Memory '{memory_id}' not found"}
-                m["text"] = new_text
-                m["timestamp"] = int(time.time())
-                found = True
-                full_id = m["id"]
-                break
-        if not found:
-            return {"error": f"Memory '{memory_id}' not found"}
-        _memory_manager.save(memories)
 
-        # Update vector index
-        if _memory_vector and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
-            try:
-                _memory_vector.add(full_id, new_text)
-            except Exception:
-                pass
+def _memory_action_add(lines: list, owner: Optional[str]) -> Dict:
+    """Add a new memory entry."""
+    if len(lines) < 2 or not lines[1].strip():
+        return {"error": "Add needs line 2: memory text"}
+    text = lines[1].strip()
+    category = lines[2].strip().lower() if len(lines) > 2 and lines[2].strip() else "fact"
 
-        return {"action": "edit", "memory_id": memory_id,
-                "results": f"Memory updated: {new_text}"}
+    entry = _memory_manager.add_entry(text, source="ai_agent", category=category, owner=owner)
+    memories = _memory_manager.load_all()
+    memories.append(entry)
+    _memory_manager.save(memories)
 
-    elif action == "delete":
-        if len(lines) < 2:
-            return {"error": "Delete needs line 2: memory_id"}
-        memory_id = lines[1].strip()
+    _memory_vector_add(entry["id"], text)
+    _fire_memory_event("memory_added", owner)
 
-        memories = _memory_manager.load_all()
-        original_len = len(memories)
-        full_id = None
-        delete_id = None
-        for m in memories:
-            if m.get("id", "").startswith(memory_id):
-                # Verify ownership
-                if owner and m.get("owner") != owner:
-                    return {"error": f"Memory '{memory_id}' not found"}
-                full_id = m["id"]
-                delete_id = m["id"]
-                break
-        memories = [m for m in memories if m.get("id") != delete_id]
-        if len(memories) == original_len:
-            return {"error": f"Memory '{memory_id}' not found"}
-        _memory_manager.save(memories)
+    return {"action": "add", "memory_id": entry["id"],
+            "results": f"Memory added: [{category}] {text}"}
 
-        # Remove from vector index
-        if _memory_vector and full_id and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
-            try:
-                _memory_vector.remove(full_id)
-            except Exception:
-                pass
 
-        return {"action": "delete", "memory_id": memory_id,
-                "results": f"Memory '{memory_id}' deleted"}
+def _memory_action_edit(lines: list, owner: Optional[str]) -> Dict:
+    """Edit an existing memory by (partial) ID."""
+    if len(lines) < 3 or not lines[2].strip():
+        return {"error": "Edit needs line 2: memory_id, line 3: new text"}
+    memory_id = lines[1].strip()
+    new_text = lines[2].strip()
 
-    elif action == "search":
-        if len(lines) < 2:
-            return {"error": "Search needs line 2: query"}
-        query = lines[1].strip()
-        memories = _memory_manager.load(owner=owner)
+    memories = _memory_manager.load_all()
+    full_id = None
+    for m in memories:
+        if m.get("id", "").startswith(memory_id):
+            if owner and m.get("owner") != owner:
+                return {"error": f"Memory '{memory_id}' not found"}
+            m["text"] = new_text
+            m["timestamp"] = int(time.time())
+            full_id = m["id"]
+            break
 
-        if hasattr(_memory_manager, 'get_relevant_memories'):
-            results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=MEMORY_SEARCH_RESULT_LIMIT)
-        else:
-            # Fallback: simple text search
-            query_lower = query.lower()
-            results = [m for m in memories if query_lower in m.get("text", "").lower()][:MEMORY_SEARCH_RESULT_LIMIT]
+    if not full_id:
+        return {"error": f"Memory '{memory_id}' not found"}
 
-        if not results:
-            return {"results": f"No memories found matching '{query}'."}
-        result_lines = [f"Found {len(results)} matching memories:\n"]
-        for m in results:
-            cat = m.get("category", "fact")
-            mid = m.get("id", "?")[:8]
-            text = m.get("text", "")
-            result_lines.append(f"- [{cat}] `{mid}` — {text}")
-        return {"results": "\n".join(result_lines)}
+    _memory_manager.save(memories)
+    _memory_vector_add(full_id, new_text)
+    return {"action": "edit", "memory_id": memory_id,
+            "results": f"Memory updated: {new_text}"}
 
+
+def _memory_action_delete(lines: list, owner: Optional[str]) -> Dict:
+    """Delete a memory by (partial) ID."""
+    if len(lines) < 2 or not lines[1].strip():
+        return {"error": "Delete needs line 2: memory_id"}
+    memory_id = lines[1].strip()
+
+    memories = _memory_manager.load_all()
+    original_len = len(memories)
+    full_id = None
+
+    for m in memories:
+        if m.get("id", "").startswith(memory_id):
+            if owner and m.get("owner") != owner:
+                return {"error": f"Memory '{memory_id}' not found"}
+            full_id = m["id"]
+            break
+
+    memories = [m for m in memories if m.get("id") != full_id]
+    if len(memories) == original_len:
+        return {"error": f"Memory '{memory_id}' not found"}
+
+    _memory_manager.save(memories)
+    _memory_vector_remove(full_id)
+    return {"action": "delete", "memory_id": memory_id,
+            "results": f"Memory '{memory_id}' deleted"}
+
+
+def _memory_action_search(lines: list, owner: Optional[str]) -> Dict:
+    """Search memories by text or vector similarity."""
+    if len(lines) < 2 or not lines[1].strip():
+        return {"error": "Search needs line 2: query"}
+    query = lines[1].strip()
+    memories = _memory_manager.load(owner=owner)
+
+    if hasattr(_memory_manager, "get_relevant_memories"):
+        results = _memory_manager.get_relevant_memories(
+            query, memories, threshold=0.05, max_items=MEMORY_SEARCH_RESULT_LIMIT
+        )
     else:
-        return {"error": f"Unknown action '{action}'. Use: list, add, edit, delete, search"}
+        query_lower = query.lower()
+        results = [m for m in memories if query_lower in m.get("text", "").lower()][:MEMORY_SEARCH_RESULT_LIMIT]
+
+    if not results:
+        return {"results": f"No memories found matching '{query}'."}
+
+    result_lines = [f"Found {len(results)} matching memories:\n"]
+    for m in results:
+        cat = m.get("category", "fact")
+        mid = m.get("id", "?")[:UUID_SHORT_ID_LENGTH]
+        text = m.get("text", "")
+        result_lines.append(f"- [{cat}] `{mid}` — {text}")
+    return {"results": "\n".join(result_lines)}
+
+
+def _memory_vector_add(memory_id: str, text: str) -> None:
+    """Add or update an entry in the memory vector index (best-effort)."""
+    if _memory_vector and hasattr(_memory_vector, "healthy") and _memory_vector.healthy:
+        try:
+            _memory_vector.add(memory_id, text)
+        except Exception:
+            pass
+
+
+def _memory_vector_remove(memory_id: Optional[str]) -> None:
+    """Remove an entry from the memory vector index (best-effort)."""
+    if memory_id and _memory_vector and hasattr(_memory_vector, "healthy") and _memory_vector.healthy:
+        try:
+            _memory_vector.remove(memory_id)
+        except Exception:
+            pass
+
+
+def _fire_memory_event(event: str, owner: Optional[str]) -> None:
+    """Emit an event on the event bus (best-effort, non-blocking)."""
+    try:
+        from src.event_bus import fire_event
+        fire_event(event, owner)
+    except Exception:
+        logger.debug("memory event dispatch failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2033,59 +2059,69 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
 async def dispatch_ai_tool(
     tool: str, content: str, session_id: Optional[str] = None, owner: Optional[str] = None
 ) -> Tuple[str, Dict]:
-    """Dispatch an AI interaction tool. Returns (description, result_dict)."""
+    """Dispatch an AI interaction tool. Returns (description, result_dict).
 
-    if tool == "chat_with_model":
-        model_spec = content.split("\n")[0].strip()[:60]
-        desc = f"chat_with_model: {model_spec}"
-        result = await do_chat_with_model(content, session_id)
+    Each entry in _TOOL_REGISTRY is:
+        tool_name -> (handler_coro, desc_fn)
+    where desc_fn(content) produces the human-readable description string.
+    """
+    # Registry: tool name → (coroutine_factory, description_factory)
+    # desc_fn receives raw content and returns a short label for the UI.
+    _TOOL_REGISTRY = {
+        "chat_with_model": (
+            lambda c: do_chat_with_model(c, session_id),
+            lambda c: f"chat_with_model: {get_first_line(c, 60)}",
+        ),
+        "ask_teacher": (
+            lambda c: do_ask_teacher(c, session_id),
+            lambda c: f"ask_teacher: {get_first_line(c, 60)}",
+        ),
+        "second_opinion": (
+            lambda c: do_second_opinion(c, session_id),
+            lambda c: f"second_opinion: {get_first_line(c, 60)}",
+        ),
+        "create_session": (
+            lambda c: do_create_session(c, session_id, owner=owner),
+            lambda c: f"create_session: {get_first_line(c, 60)}",
+        ),
+        "list_sessions": (
+            lambda c: do_list_sessions(c, session_id, owner=owner),
+            lambda c: f"list_sessions{': ' + c.strip()[:40] if c.strip() else ''}",
+        ),
+        "send_to_session": (
+            lambda c: do_send_to_session(c, session_id),
+            lambda c: f"send_to_session: {get_first_line(c, 20)}",
+        ),
+        "manage_session": (
+            lambda c: do_manage_session(c, session_id, owner=owner),
+            lambda c: f"manage_session: {get_action_from_content(c)}",
+        ),
+        "pipeline": (
+            lambda c: do_pipeline(c, session_id),
+            lambda c: "pipeline: running steps",
+        ),
+        "manage_memory": (
+            lambda c: do_manage_memory(c, session_id, owner=owner),
+            lambda c: f"manage_memory: {get_action_from_content(c)}",
+        ),
+        "list_models": (
+            lambda c: do_list_models(c, session_id),
+            lambda c: f"list_models{': ' + c.strip()[:40] if c.strip() else ''}",
+        ),
+        "ui_control": (
+            lambda c: do_ui_control(c, session_id),
+            lambda c: f"ui_control: {get_first_line(c, 60)}",
+        ),
+        "generate_image": (
+            lambda c: do_generate_image(c, session_id, owner=owner),
+            lambda c: f"generate_image: {get_first_line(c, 60)}",
+        ),
+    }
 
-    elif tool == "create_session":
-        name = content.split("\n")[0].strip()[:60]
-        desc = f"create_session: {name}"
-        result = await do_create_session(content, session_id, owner=owner)
+    if tool not in _TOOL_REGISTRY:
+        return f"unknown ai tool: {tool}", {"error": f"Unknown AI interaction tool: {tool}"}
 
-    elif tool == "list_sessions":
-        keyword = content.strip()[:40]
-        desc = f"list_sessions{': ' + keyword if keyword else ''}"
-        result = await do_list_sessions(content, session_id, owner=owner)
-
-    elif tool == "send_to_session":
-        sid = content.split("\n")[0].strip()[:20]
-        desc = f"send_to_session: {sid}"
-        result = await do_send_to_session(content, session_id)
-
-    elif tool == "pipeline":
-        desc = "pipeline: running steps"
-        result = await do_pipeline(content, session_id)
-
-    elif tool == "manage_session":
-        action = content.split("\n")[0].strip()[:40]
-        desc = f"manage_session: {action}"
-        result = await do_manage_session(content, session_id, owner=owner)
-
-    elif tool == "manage_memory":
-        action = content.split("\n")[0].strip()[:40]
-        desc = f"manage_memory: {action}"
-        result = await do_manage_memory(content, session_id, owner=owner)
-
-    elif tool == "list_models":
-        keyword = content.strip()[:40]
-        desc = f"list_models{': ' + keyword if keyword else ''}"
-        result = await do_list_models(content, session_id)
-
-    elif tool == "ui_control":
-        action = content.split("\n")[0].strip()[:60]
-        desc = f"ui_control: {action}"
-        result = await do_ui_control(content, session_id)
-
-    elif tool == "ask_teacher":
-        problem = content.split("\n", 1)[-1].strip()[:60]
-        desc = f"ask_teacher: {problem}"
-        result = await do_ask_teacher(content, session_id)
-
-    else:
-        desc = f"unknown ai tool: {tool}"
-        result = {"error": f"Unknown AI interaction tool: {tool}"}
-
+    handler_factory, desc_factory = _TOOL_REGISTRY[tool]
+    desc = desc_factory(content)
+    result = await handler_factory(content)
     return desc, result
