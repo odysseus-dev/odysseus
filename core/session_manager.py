@@ -587,20 +587,33 @@ class SessionManager:
     # Cleanup
     # ------------------------------------------------------------------
 
-    def cleanup_empty_sessions(self, auto_archive_days: int = 30) -> dict:
-        """Clean up empty and old sessions."""
+    def cleanup_empty_sessions(self, auto_archive_days: int = 30, min_age_hours: int = 1) -> dict:
+        """Clean up empty and old sessions.
+
+        Args:
+            auto_archive_days: Age in days before non-important sessions are archived.
+            min_age_hours: Minimum age in hours before an empty session can be deleted.
+                          Prevents deleting sessions that were just created.
+        """
         db = SessionLocal()
         stats = {'deleted_empty': 0, 'archived_old': 0, 'total_checked': 0}
 
         try:
             all_sessions = db.query(DbSession).all()
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=auto_archive_days)
+            min_age = datetime.now(timezone.utc) - timedelta(hours=min_age_hours)
 
             for db_session in all_sessions:
                 stats['total_checked'] += 1
 
-                # Delete empty sessions
+                # Delete empty sessions only if older than min_age_hours
                 if db_session.message_count == 0:
+                    if db_session.created_at is not None:
+                        created = db_session.created_at
+                        if created.tzinfo is None:
+                            created = created.replace(tzinfo=timezone.utc)
+                        if created > min_age:
+                            continue  # Too young to delete
                     if db_session.id in self.sessions:
                         del self.sessions[db_session.id]
                     db.delete(db_session)
