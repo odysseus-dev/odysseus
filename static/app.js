@@ -502,6 +502,8 @@ function initializeEventListeners() {
       // Close one modal at a time (last in DOM = topmost)
       // Map modal id → sidebar list-item id to clear active state
       const modalItemMap = {
+        'settings-modal': null,
+        'ge-shortcuts-modal': null,
         'cookbook-modal': null,
         'rename-session-modal': null,
         'rename-ai-modal': null,
@@ -510,7 +512,15 @@ function initializeEventListeners() {
       };
 
       // Dynamic modals (removed from DOM on close)
-      const dynamicModals = ['library-modal', 'archive-modal', 'doclib-modal', 'gallery-modal', 'tasks-modal'];
+      const dynamicModals = [
+        'email-lib-modal',
+        'research-overlay',
+        'library-modal',
+        'archive-modal',
+        'doclib-modal',
+        'gallery-modal',
+        'tasks-modal'
+      ];
       for (const id of dynamicModals) {
         const m = document.getElementById(id);
         if (id === 'gallery-modal') {
