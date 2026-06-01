@@ -161,7 +161,12 @@ server; safe to re-run):
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
 powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
+odysseus
 ```
+
+After the first run, the launcher registers an `odysseus` command in your
+PowerShell profile. Open a new terminal and type `odysseus` to start the server
+from any directory.
 
 Or do it by hand:
 
