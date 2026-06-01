@@ -12,12 +12,61 @@ This test asserts those calls run on a worker thread, not the loop thread; it
 fails if they are awaited inline again.
 """
 import os
-os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
-
+import sys
+import types
 import asyncio
 import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+
+
+# Stub `core.auth` / `core.database` before importing the route module.
+# `routes.auth_routes` does `from core.auth import AuthManager`, and importing
+# any `core.*` submodule first runs `core/__init__.py`, which transitively
+# imports `src.llm_core` (hangs at import under the project venv) and the
+# SQLAlchemy declarative models (metaclass blows up on a bare `core.database`
+# import / under the conftest's `sqlalchemy.*` MagicMock stubs). We only need
+# `AuthManager` as a type hint here — the handler is exercised with a MagicMock
+# — so stub the heavy modules out. Same trick as test_auth_regressions.py /
+# test_null_owner_gates.py.
+def _ensure_stub(name: str, **attrs):
+    """Create or augment a stub module, wiring it onto a stubbed parent package.
+
+    Augments existing entries because an earlier-run test may have already
+    stubbed the same module with a different attribute set. The parent package
+    gets `__path__` pointed at the real on-disk dir so genuinely-unstubbed
+    submodules still load normally, while `core/__init__.py` itself is bypassed
+    (the package is already in `sys.modules`)."""
+    if "." in name:
+        parent_name, _, child_name = name.rpartition(".")
+        if parent_name not in sys.modules:
+            parent = types.ModuleType(parent_name)
+            real_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                *parent_name.split("."),
+            )
+            parent.__path__ = [real_path] if os.path.isdir(real_path) else []
+            sys.modules[parent_name] = parent
+        else:
+            parent = sys.modules[parent_name]
+    else:
+        parent = None
+        child_name = None
+
+    mod = sys.modules.get(name)
+    if mod is None:
+        mod = types.ModuleType(name)
+        sys.modules[name] = mod
+    for k, v in attrs.items():
+        if not hasattr(mod, k):
+            setattr(mod, k, v)
+    if parent is not None and not hasattr(parent, child_name):
+        setattr(parent, child_name, mod)
+    return mod
+
+
+_ensure_stub("core.database", SessionLocal=MagicMock())
+_ensure_stub("core.auth", AuthManager=MagicMock())
 
 from routes.auth_routes import setup_auth_routes, LoginRequest
 
