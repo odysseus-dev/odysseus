@@ -49,6 +49,11 @@ docker compose up -d --build
 docker compose logs --tail=120 odysseus
 ```
 
+The container image is published to `ghcr.io/pewdiepie-archdaemon/odysseus` by CI:
+pushes to `main` update `:latest`, and publishing a GitHub Release builds the
+multi-arch (amd64 + arm64) tagged image. Pull requests only build-validate the
+image; they do not push.
+
 Mention what you ran in the pull request description. If you could not run a check, say so.
 
 ## Pull Requests

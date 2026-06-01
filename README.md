@@ -59,6 +59,22 @@ image build. Open `http://localhost:7000` after the containers are healthy.
 If port `7000` is already taken, set `APP_PORT=7001` (or another free port)
 in `.env`, recreate the container, and open `http://localhost:7001`.
 
+### Option 2: Prebuilt image (no local build)
+Pull the published image from the GitHub Container Registry instead of building
+it yourself — faster startup and no compiler toolchain needed. Multi-arch images
+are published for `linux/amd64` and `linux/arm64` (Raspberry Pi, Apple Silicon,
+arm home servers).
+```bash
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+cd odysseus
+cp .env.example .env       # optional, but recommended for explicit defaults
+docker compose -f docker-compose.prebuilt.yml up -d
+```
+This still needs the repo for SearXNG's bundled config. Pin a specific release by
+editing the image tag in `docker-compose.prebuilt.yml`
+(e.g. `ghcr.io/pewdiepie-archdaemon/odysseus:1.2.0`); otherwise it tracks `:latest`.
+Update with `docker compose -f docker-compose.prebuilt.yml pull && docker compose -f docker-compose.prebuilt.yml up -d`.
+
 Cookbook remote servers use an Odysseus-owned SSH key from `./data/ssh`
 inside Docker. In **Cookbook -> Settings -> Servers**, generate/copy the
 public key and add it to the remote server's `~/.ssh/authorized_keys`.
