@@ -808,6 +808,15 @@ def setup_cookbook_routes() -> APIRouter:
                 r"[A-Za-z0-9][A-Za-z0-9._\-\[\]<>=!,~]{0,200}", req.repo_id
             ):
                 raise HTTPException(400, "Invalid pip package name")
+            # The runner script prepends the Odysseus venv's bin to PATH so
+            # `python3 -m pip` is always available. But pip inside a venv
+            # rejects `--user` ("Can not perform a '--user' install"). Strip
+            # both flags so the install goes directly into the venv instead
+            # of ~/.local. The serve runners already prepend venv/bin to PATH,
+            # so tools like `vllm`/`llama-server` are found there at serve time.
+            # Only applies to local runs (remote hosts manage their own pip).
+            if not req.remote_host and sys.base_prefix != sys.prefix:
+                req.cmd = re.sub(r'\s+--(?:user|break-system-packages)\b', '', req.cmd)
         else:
             _validate_serve_model_id(req.repo_id)
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -894,6 +903,10 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
             if req.gpus:
                 runner_lines.append(f"export CUDA_VISIBLE_DEVICES='{req.gpus}'")
+            # Redirect pip/Python temp files to ~/.cache to avoid exhausting a
+            # small tmpfs at /tmp when installing large packages (torch wheels, etc.).
+            if is_pip_install and not remote:
+                runner_lines.append('export TMPDIR="${TMPDIR:-$HOME/.cache/pip-tmp}"; mkdir -p "$TMPDIR"')
             if req.env_prefix:
                 runner_lines.append(_safe_env_prefix(req.env_prefix))
             else:
