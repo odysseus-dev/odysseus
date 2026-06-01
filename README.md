@@ -235,6 +235,9 @@ Key settings:
 | `LLM_HOST` | `localhost` | Your LLM server (e.g. `llm-host.local:8000`) |
 | `LLM_HOSTS` | -- | Comma-separated list for model discovery |
 | `OPENAI_API_KEY` | -- | Optional OpenAI key. Prefer adding providers in the app unless pre-seeding. |
+| `CODEX_BIN` | `codex` | Optional path/name for the official Codex CLI used by Settings -> Integrations -> Codex / ChatGPT sign-in. |
+| `CODEX_HOME` | Codex default | Optional Codex credential/config home. If unset, the Codex CLI uses its own default, normally `~/.codex`. |
+| `ODYSSEUS_CODEX_AUTH_ENABLED` | `true` | Enables the admin-gated Codex / ChatGPT device-code auth UI. Set to `false` to hide/disable the flow. |
 | `SEARXNG_INSTANCE` | `http://localhost:8080` | SearXNG URL. Docker overrides this to `http://searxng:8080`. |
 | `SEARXNG_SECRET` | generated on first Docker boot | Optional SearXNG cookie/CSRF secret. Leave blank unless you need to pin it. |
 | `APP_BIND` | `127.0.0.1` | Docker Compose host bind address for the web UI. Use `0.0.0.0` only for intentional LAN/reverse-proxy access. |
@@ -257,6 +260,25 @@ npx -y @playwright/mcp@latest --version
 ```
 
 That installs `@playwright/mcp` plus Playwright (~300MB total). Restart Odysseus and the server will register at startup.
+
+### Codex / ChatGPT Sign-In
+Admins can link the Odysseus host to Codex from **Settings -> Integrations -> Codex / ChatGPT**. Odysseus starts the official Codex CLI device-code flow, equivalent to:
+
+```bash
+codex login --device-auth
+```
+
+The UI shows the verification URL and one-time device code, polls the CLI process for completion, and then uses `codex login status` / `codex logout` for status checks and unlinking. Install the Codex CLI first (`npm install -g @openai/codex`, or the current official install method), and set `CODEX_BIN` only if `codex` is not on the service user's `PATH`.
+
+Security notes:
+
+- Odysseus does not read, copy, or store Codex access or refresh tokens. Credential storage stays with Codex, normally under `~/.codex`.
+- Treat `~/.codex/auth.json`, any custom `CODEX_HOME`, and Codex login logs as secrets. Do not commit or upload them.
+- The Codex sign-in routes are admin-gated because logout/unlink affects the Codex identity available to the Odysseus host.
+- If you run Odysseus in Docker, mount a persistent, private Codex home and set strict host permissions, or sign-in state will be lost when the container is recreated.
+- Device-code auth can be disabled by a ChatGPT workspace admin. In that case the UI reports the Codex CLI failure and you must use a supported Codex login method outside Odysseus.
+
+MCP is not used for this authentication path. Odysseus MCP settings manage tool servers and are admin-only command execution plumbing; Codex account login belongs with provider/integration setup and should remain isolated from MCP server registration.
 
 ## Architecture
 ```

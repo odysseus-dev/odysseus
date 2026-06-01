@@ -765,6 +765,251 @@ function initEndpointForm() {
     return el(kind === 'local' ? 'adm-epLocalMsg' : 'adm-epApiMsg') || el('adm-epMsg');
   }
 
+  const codexCard = el('adm-codexProviderCard');
+  const codexStatusEl = el('adm-codexProviderStatus');
+  const codexDetailsEl = el('adm-codexProviderDetails');
+  const codexModelEl = el('adm-codexProviderModel');
+  const codexModelDropdownBtn = el('adm-codexModelDropdownBtn');
+  const codexModelPanel = el('adm-codexModelPanel');
+  const codexModelChevron = el('adm-codexModelChevron');
+  const codexModelList = el('adm-codexProviderModelList');
+  const codexModelCount = el('adm-codexModelCount');
+  const codexSelectAll = el('adm-codexSelectAll');
+  const codexSelectNone = el('adm-codexSelectNone');
+  const codexMsgEl = el('adm-codexProviderMsg');
+  const codexSignInBtn = el('adm-codexSignInBtn');
+  const codexTestBtn = el('adm-codexTestBtn');
+  const codexRefreshBtn = el('adm-codexRefreshBtn');
+  const codexAddModelBtn = el('adm-codexAddModelBtn');
+  let codexProviderStatus = null;
+
+  function _setCodexMsg(text, cls) {
+    if (!codexMsgEl) return;
+    codexMsgEl.textContent = text || '';
+    codexMsgEl.className = cls || 'adm-ep-inline-msg';
+  }
+
+  function _syncCodexModelCount() {
+    if (!codexModelList || !codexModelCount) return;
+    const boxes = Array.from(codexModelList.querySelectorAll('input[type=checkbox]'));
+    const checked = boxes.filter(cb => cb.checked).length;
+    codexModelCount.textContent = `${checked}/${boxes.length} selected`;
+  }
+
+  function _codexStatusLabel(status) {
+    if (status === 'disabled') return 'Disabled';
+    if (status === 'sign_in_required') return 'Sign-in required';
+    if (status === 'available') return 'Available';
+    if (status === 'unsupported_unsafe_cli_mode') return 'Safety blocked';
+    if (status === 'cli_unavailable') return 'CLI unavailable';
+    if (status === 'auth_status_failed') return 'Status unavailable';
+    return 'Unavailable';
+  }
+
+  function _renderCodexProviderStatus(data) {
+    if (!codexCard || !codexStatusEl || !codexDetailsEl) return;
+    const status = data && data.status ? data.status : 'unavailable';
+    const model = Array.isArray(data?.models) && data.models.length ? data.models[0] : null;
+    const available = status === 'available' && data.chat_supported === true && !!model;
+    const signInRequired = status === 'sign_in_required';
+    const disabled = status === 'disabled' || data?.feature_enabled === false;
+    codexProviderStatus = data || null;
+
+    codexStatusEl.textContent = _codexStatusLabel(status);
+    codexStatusEl.className = available ? 'admin-badge' : 'admin-badge admin-badge-off';
+    codexStatusEl.style.color = available ? 'var(--green,#50fa7b)' : '';
+
+    let details = 'Experimental, non-streaming, stateless. Uses Codex CLI auth. Add one of the supported Codex models here to make it selectable like Local/API models.';
+    if (disabled) details += ' Enable ODYSSEUS_CODEX_MODEL_PROVIDER_ENABLED=true to test this provider.';
+    else if (signInRequired) details += ' Sign in with Codex / ChatGPT before adding a model.';
+    else if (status === 'unsupported_unsafe_cli_mode') details += ' Chat is blocked until the Codex CLI safety flags are available.';
+    else if (status === 'cli_unavailable') details += ' Install or expose the Codex CLI in this runtime before adding a model.';
+    codexDetailsEl.textContent = details;
+
+    const models = Array.isArray(data?.models) ? data.models : [];
+    if (codexModelList) {
+      codexModelList.innerHTML = '';
+      if (available) {
+        models.forEach((m, idx) => {
+          const id = typeof m === 'string' ? m : (m && m.id) || '';
+          const display = (m && (m.display || m.name)) || id.split('/').pop() || id;
+          const label = document.createElement('label');
+          label.title = id;
+          label.className = 'adm-model-row';
+          label.dataset.codexModelRow = 'true';
+          label.innerHTML = `
+            <input type="checkbox" class="adm-cb-hidden" data-codex-model-id="${esc(id)}" data-codex-model-display="${esc(display)}" ${idx === 0 ? 'checked' : ''}>
+            <span class="adm-check-dot" aria-hidden="true"></span>
+            <span>${esc(display)}</span>
+          `;
+          codexModelList.appendChild(label);
+        });
+      } else {
+        const empty = document.createElement('span');
+        empty.style.cssText = 'opacity:0.5;font-size:11px;';
+        empty.textContent = signInRequired ? 'Sign in to load Codex models' : _codexStatusLabel(status);
+        codexModelList.appendChild(empty);
+      }
+      codexModelList.querySelectorAll('input[type=checkbox]').forEach(cb => {
+        cb.disabled = !available;
+        cb.addEventListener('change', _syncCodexModelCount);
+      });
+      _syncCodexModelCount();
+    }
+
+    if (codexModelEl) {
+      if (model && model.id) {
+        codexModelEl.style.display = '';
+        codexModelEl.innerHTML = `Model id: <code>${esc(model.id)}</code>`;
+      } else {
+        codexModelEl.style.display = 'none';
+        codexModelEl.textContent = '';
+      }
+    }
+    if (codexTestBtn) codexTestBtn.disabled = !available;
+    if (codexAddModelBtn) codexAddModelBtn.disabled = !available;
+    if (codexModelDropdownBtn) codexModelDropdownBtn.disabled = !available;
+    if (codexSignInBtn) codexSignInBtn.disabled = disabled;
+  }
+
+  async function _refreshCodexProviderStatus() {
+    if (!codexCard) return;
+    if (codexStatusEl) {
+      codexStatusEl.textContent = 'Checking';
+      codexStatusEl.className = 'admin-badge admin-badge-off';
+      codexStatusEl.style.color = '';
+    }
+    if (codexTestBtn) codexTestBtn.disabled = true;
+    _setCodexMsg('', '');
+    try {
+      const res = await fetch('/api/codex-model-provider/status', { credentials: 'same-origin' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        _renderCodexProviderStatus({ status: res.status === 403 ? 'admin_required' : 'unavailable' });
+        _setCodexMsg(res.status === 403 ? 'Admin access is required to view Codex provider status.' : 'Could not load Codex provider status.', 'admin-error');
+        return;
+      }
+      _renderCodexProviderStatus(data);
+    } catch (_) {
+      _renderCodexProviderStatus({ status: 'unavailable' });
+      _setCodexMsg('Could not load Codex provider status.', 'admin-error');
+    }
+  }
+
+  function _codexTestFailureMessage(data, httpStatus) {
+    const status = data && data.status ? data.status : '';
+    if (status === 'disabled') return 'Codex provider test is disabled. Enable ODYSSEUS_CODEX_MODEL_PROVIDER_ENABLED=true.';
+    if (status === 'sign_in_required') return 'Sign-in required before Codex provider test chat can run.';
+    if (status === 'cli_unavailable') return 'Codex CLI is unavailable in this runtime.';
+    if (status === 'unsupported_unsafe_cli_mode') return 'Safety blocked: this Codex CLI does not expose the required sandbox/approval flags for UI test chat.';
+    if (status === 'timeout') return 'Codex CLI test timed out.';
+    if (status === 'empty_response') return 'Codex CLI returned no assistant message.';
+    if (status === 'cli_failed') return 'Codex CLI test failed. No raw CLI output is shown in the UI.';
+    if (status === 'invalid_request') return 'Codex provider test request was invalid.';
+    return `Test failed (${httpStatus})`;
+  }
+
+  async function _testCodexProviderChat() {
+    if (!codexTestBtn) return;
+    const model = Array.isArray(codexProviderStatus?.models) && codexProviderStatus.models.length
+      ? codexProviderStatus.models[0].id
+      : 'codex-cli/chatgpt-experimental';
+    codexTestBtn.disabled = true;
+    codexTestBtn.textContent = 'Testing...';
+    _setCodexMsg('Running non-streaming Codex provider test...', '');
+    try {
+      const res = await fetch('/api/codex-model-provider/test-chat', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          prompt: 'Reply with exactly: Codex provider UI test ok',
+          timeout_seconds: 60,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        if (codexMsgEl) {
+          codexMsgEl.className = 'admin-success';
+          codexMsgEl.innerHTML = `Response: ${esc(data.message || '')}`;
+        }
+      } else {
+        _setCodexMsg(_codexTestFailureMessage(data, res.status), 'admin-error');
+      }
+    } catch (e) {
+      _setCodexMsg('Test failed: ' + (e && e.message ? e.message : 'request failed'), 'admin-error');
+    }
+    codexTestBtn.textContent = 'Test Chat';
+    if (codexProviderStatus) _renderCodexProviderStatus(codexProviderStatus);
+  }
+
+  async function _addCodexModelToPicker() {
+    if (!codexAddModelBtn) return;
+    const selectedModels = codexModelList
+      ? Array.from(codexModelList.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.dataset.codexModelId).filter(Boolean)
+      : [];
+    if (!selectedModels.length && Array.isArray(codexProviderStatus?.models) && codexProviderStatus.models.length) {
+      const first = codexProviderStatus.models[0];
+      selectedModels.push((typeof first === 'string') ? first : first.id);
+    }
+    if (!selectedModels.length) selectedModels.push('codex-cli/chatgpt-experimental');
+    codexAddModelBtn.disabled = true;
+    codexAddModelBtn.textContent = 'Adding...';
+    _setCodexMsg('Adding Codex model to chat picker...', '');
+    try {
+      const res = await fetch('/api/codex-model-provider/add-model', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ models: selectedModels }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok && data.endpoint) {
+        await loadEndpoints();
+        await _selectAddedModelInChat(data.endpoint);
+        _setCodexMsg(`Added ${data.models?.length || data.endpoint.models?.length || 1} Codex model(s) — first selected for chat.`, 'admin-success');
+      } else {
+        _setCodexMsg(data.detail || data.message || 'Failed to add Codex model', 'admin-error');
+      }
+    } catch (e) {
+      _setCodexMsg('Failed to add Codex model: ' + (e && e.message ? e.message : 'request failed'), 'admin-error');
+    }
+    codexAddModelBtn.textContent = 'Add';
+    if (codexProviderStatus) _renderCodexProviderStatus(codexProviderStatus);
+  }
+
+  if (codexSignInBtn) {
+    codexSignInBtn.addEventListener('click', () => {
+      if (settingsModule && typeof settingsModule.open === 'function') settingsModule.open('integrations');
+      setTimeout(() => {
+        document.dispatchEvent(new CustomEvent('odysseus:open-codex-auth'));
+      }, 50);
+      _setCodexMsg('Opened Settings -> Integrations -> Codex / ChatGPT. Refresh this card after sign-in completes.', '');
+    });
+  }
+  if (codexTestBtn) codexTestBtn.addEventListener('click', _testCodexProviderChat);
+  if (codexAddModelBtn) codexAddModelBtn.addEventListener('click', _addCodexModelToPicker);
+  if (codexModelDropdownBtn && codexModelPanel) codexModelDropdownBtn.addEventListener('click', () => {
+    codexModelPanel.classList.toggle('hidden');
+    const isOpen = !codexModelPanel.classList.contains('hidden');
+    if (codexModelChevron) codexModelChevron.style.transform = isOpen ? 'rotate(180deg)' : '';
+  });
+  if (codexSelectAll) codexSelectAll.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (!codexModelList) return;
+    codexModelList.querySelectorAll('input[type=checkbox]').forEach(cb => { if (!cb.disabled) cb.checked = true; });
+    _syncCodexModelCount();
+  });
+  if (codexSelectNone) codexSelectNone.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (!codexModelList) return;
+    codexModelList.querySelectorAll('input[type=checkbox]').forEach(cb => { if (!cb.disabled) cb.checked = false; });
+    _syncCodexModelCount();
+  });
+  if (codexRefreshBtn) codexRefreshBtn.addEventListener('click', _refreshCodexProviderStatus);
+  _refreshCodexProviderStatus();
+
   let apiTestController = null;
   const apiTestBtn = el('adm-epApiTestBtn');
   const apiCancelTestBtn = el('adm-epApiCancelTestBtn');

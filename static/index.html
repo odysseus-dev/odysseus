@@ -2071,6 +2071,47 @@
                   <button class="admin-btn-add" id="adm-epAddBtn" style="width:55px;text-align:center;">Add</button>
                 </div>
                 <div id="adm-epApiMsg" class="adm-ep-inline-msg"></div>
+                <div id="adm-codexProviderCard" class="admin-user-row" style="display:flex;flex-direction:column;align-items:stretch;gap:8px;margin-top:10px;">
+                  <div style="display:flex;align-items:flex-start;gap:10px;">
+                    <div style="flex:1;min-width:0;">
+                      <div class="admin-ep-name" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                        <span>Codex / ChatGPT</span>
+                        <span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 18%, transparent);color:var(--accent);">Experimental</span>
+                      </div>
+                      <div id="adm-codexProviderDetails" class="admin-ep-detail" style="white-space:normal;line-height:1.35;">
+                        Experimental, non-streaming, stateless provider using Codex CLI auth. Sign in, then add its supported model here.
+                      </div>
+                    </div>
+                    <span id="adm-codexProviderStatus" class="admin-badge admin-badge-off" style="white-space:nowrap;">Checking</span>
+                  </div>
+                  <div id="adm-codexProviderModel" class="admin-ep-detail" style="display:none;white-space:normal;"></div>
+                  <div class="admin-model-form-row adm-codex-add-row" style="align-items:center;gap:8px;margin-top:6px;">
+                    <button type="button" id="adm-codexModelDropdownBtn" class="adm-provider-picker-btn" style="flex:1;min-width:0;justify-content:space-between;">
+                      <span id="adm-codexModelDropdownLabel" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">select models</span>
+                      <span class="admin-user-chevron" id="adm-codexModelChevron" style="opacity:0.45;transition:transform 0.15s;">⌄</span>
+                    </button>
+                    <button type="button" class="admin-btn-add" id="adm-codexAddModelBtn" style="width:55px;text-align:center;flex:0 0 55px;">Add</button>
+                  </div>
+                  <div id="adm-codexModelPanel" class="mcp-tools-panel adm-codex-model-panel hidden" style="padding-top:6px;margin-top:4px;">
+                    <div class="mcp-tools-header">
+                      <span>Models</span>
+                      <span style="display:flex;gap:8px;align-items:center;">
+                        <span id="adm-codexModelCount" class="mcp-tools-count">0/0 selected</span>
+                        <a href="#" id="adm-codexSelectAll">All</a>
+                        <a href="#" id="adm-codexSelectNone">None</a>
+                      </span>
+                    </div>
+                    <div id="adm-codexProviderModelList" class="mcp-tools-list adm-codex-model-list">
+                      <span style="opacity:0.5;font-size:11px;">Sign in to load Codex models</span>
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                    <button type="button" class="admin-btn-sm" id="adm-codexSignInBtn">Open Codex sign-in</button>
+                    <button type="button" class="admin-btn-sm" id="adm-codexTestBtn">Test Chat</button>
+                    <button type="button" class="admin-btn-sm" id="adm-codexRefreshBtn" style="opacity:0.75;">Refresh</button>
+                  </div>
+                  <div id="adm-codexProviderMsg" class="adm-ep-inline-msg"></div>
+                </div>
               </div>
             </div>
           </div>

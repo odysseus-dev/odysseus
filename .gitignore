@@ -79,6 +79,13 @@ dev-docs/
 # Windows-port working docs (local only, not for public repo)
 docs/windows-port/
 
+# Local Codex CLI installs and credential homes
+codex-bin/
+codex-home/
+.codex/
+**/.codex/
+**/codex-home/
+
 # Local config
 compound.config.json
 *.error.log

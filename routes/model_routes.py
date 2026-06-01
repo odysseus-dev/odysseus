@@ -6,6 +6,8 @@ import json
 import time as _time
 import logging
 import httpx
+import asyncio
+import copy
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
@@ -585,6 +587,61 @@ def setup_model_routes(model_discovery):
 
         return {"hosts": [], "items": items}
 
+    def _append_codex_model_item(result: Dict[str, Any], owner: str = "", is_admin: bool = False) -> Dict[str, Any]:
+        """Refresh visible Codex CLI provider data without widening access.
+
+        Codex OAuth is server-local. Only expose it in the normal model picker
+        after an authorized Add Models flow has created a visible ModelEndpoint
+        row for this caller. This preserves /api/models owner filtering and
+        avoids leaking the server's Codex OAuth to unrelated users.
+        """
+        out = copy.deepcopy(result or {"hosts": [], "items": []})
+        items = out.setdefault("items", [])
+        try:
+            from src.codex_model_provider import CODEX_PROVIDER_ENDPOINT_ID, codex_model_picker_item
+        except Exception as exc:
+            logger.debug("Codex model picker imports unavailable: %s", exc)
+            return out
+
+        codex_already_visible = any((i or {}).get("endpoint_id") == CODEX_PROVIDER_ENDPOINT_ID for i in items)
+        if not codex_already_visible:
+            db = SessionLocal()
+            try:
+                q = db.query(ModelEndpoint).filter(
+                    ModelEndpoint.id == CODEX_PROVIDER_ENDPOINT_ID,
+                    ModelEndpoint.is_enabled == True,
+                )
+                if owner and not is_admin:
+                    q = owner_filter(q, ModelEndpoint, owner)
+                codex_already_visible = q.first() is not None
+            except Exception as exc:
+                logger.debug("Codex endpoint visibility check failed: %s", exc)
+                codex_already_visible = False
+            finally:
+                db.close()
+        if not codex_already_visible:
+            return out
+
+        try:
+            item = asyncio.run(codex_model_picker_item())
+        except RuntimeError:
+            # Defensive fallback if this sync route is ever called from a thread
+            # with a running loop; fail closed rather than breaking /api/models.
+            item = None
+        except Exception as exc:
+            logger.debug("Codex model picker item unavailable: %s", exc)
+            item = None
+        if item:
+            for idx, existing in enumerate(items):
+                if (existing or {}).get("endpoint_id") == item["endpoint_id"] or (existing or {}).get("url") == item.get("url"):
+                    merged = dict(existing or {})
+                    merged.update(item)
+                    items[idx] = merged
+                    break
+            else:
+                items.append(item)
+        return out
+
     @router.get("/models")
     def api_models(request: Request, refresh: bool = False):
         """Get available models — per-user (caller sees only their endpoints +
@@ -621,12 +678,12 @@ def setup_model_routes(model_discovery):
         _cache_key = (owner, _is_admin)
         cache_entry = _models_cache.get(_cache_key)
         if not refresh and cache_entry is not None and (now - cache_entry["time"]) < _MODELS_CACHE_TTL:
-            return cache_entry["data"]
+            return _append_codex_model_item(cache_entry["data"], owner=owner, is_admin=_is_admin)
         result = _fetch_models(owner=owner, is_admin=_is_admin)
         _models_cache[_cache_key] = {"data": result, "time": now}
         # Kick off background refresh to update caches from live endpoints
         _refresh_caches_bg()
-        return result
+        return _append_codex_model_item(result, owner=owner, is_admin=_is_admin)
 
     # Brief cache for local-probe results so picker-open doesn't hammer
     # /v1/models every time. 8s TTL — long enough to amortize cost,
@@ -1270,6 +1327,21 @@ def setup_model_routes(model_discovery):
                     _last_q = owner_filter(_last_q, ModelEndpoint, _user, include_shared=False)
                 ep = _last_q.first()
             if not ep:
+                try:
+                    from src.codex_model_provider import (
+                        CODEX_EXPERIMENTAL_MODEL_ID,
+                        CODEX_PROVIDER_ENDPOINT_ID,
+                        CODEX_PROVIDER_ENDPOINT_URL,
+                        codex_model_picker_item,
+                    )
+                    if asyncio.run(codex_model_picker_item()):
+                        return {
+                            "endpoint_id": CODEX_PROVIDER_ENDPOINT_ID,
+                            "endpoint_url": CODEX_PROVIDER_ENDPOINT_URL,
+                            "model": CODEX_EXPERIMENTAL_MODEL_ID,
+                        }
+                except Exception:
+                    pass
                 return {"endpoint_id": "", "endpoint_url": "", "model": ""}
             base = _normalize_base(ep.base_url)
             chat_url = build_chat_url(base)

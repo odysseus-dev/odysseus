@@ -3032,9 +3032,201 @@ const INTG_TYPES = {
   email:   { label: 'Email',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>' },
   mcp:     { label: 'MCP',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>' },
   vault:   { label: 'Vault',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' },
+  codex:   { label: 'Codex',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M2 12h20"/><path d="m16 6 2 2-2 2"/><path d="m8 18-2-2 2-2"/></svg>' },
 };
 
 let _unifiedInited = false;
+
+function initCodexAuth(root, onStateChange) {
+  const scope = root || document;
+  const q = (id) => scope.querySelector ? scope.querySelector(`#${id}`) : el(id);
+  const statusEl = q('codex-auth-status');
+  const deviceEl = q('codex-auth-device');
+  const urlEl = q('codex-auth-url');
+  const codeEl = q('codex-auth-code');
+  const startBtn = q('codex-auth-start');
+  const testBtn = q('codex-auth-test');
+  const cancelBtn = q('codex-auth-cancel');
+  const logoutBtn = q('codex-auth-logout');
+  const resultEl = q('codex-auth-result');
+  const diagEl = q('codex-auth-diagnostics');
+  if (!statusEl || !startBtn) return;
+  if (startBtn.dataset.codexAuthInited === '1') return;
+  startBtn.dataset.codexAuthInited = '1';
+
+  let pollTimer = null;
+  let lastListState = null;
+
+  function codexListState(data) {
+    const authenticated = !!(data?.codex_authenticated || data?.authenticated);
+    const running = !!(
+      data?.device_login_active
+      || data?.process_running
+      || data?.status === 'starting'
+      || data?.status === 'pending'
+    );
+    return `${authenticated ? '1' : '0'}:${running ? '1' : '0'}`;
+  }
+
+  function notifyStateChange(data) {
+    if (typeof onStateChange !== 'function') return;
+    const next = codexListState(data);
+    if (lastListState === null) {
+      lastListState = next;
+      return;
+    }
+    if (next === lastListState) return;
+    lastListState = next;
+    onStateChange(data);
+  }
+
+  function setBusy(btn, busy) {
+    if (!btn) return;
+    btn.disabled = !!busy;
+    btn.style.opacity = busy ? '0.45' : '';
+  }
+
+  function setResult(text, color) {
+    if (!resultEl) return;
+    resultEl.textContent = text || '';
+    resultEl.style.color = color || '';
+  }
+
+  function renderDiagnostics(data) {
+    if (!diagEl) return;
+    if (!data) {
+      diagEl.classList.add('hidden');
+      diagEl.textContent = '';
+      return;
+    }
+    const parts = [
+      `CLI installed: ${data.cli_found === false ? 'no' : 'yes'}`,
+      `executable: ${data.cli_executable === false ? 'no' : 'yes'}`,
+      `CODEX_BIN: ${data.configured_binary || 'codex'}`,
+      `resolved: ${data.resolved_binary_path || 'not found'}`,
+    ];
+    if (data.codex_home_path) parts.push(`CODEX_HOME: ${data.codex_home_path}`);
+    diagEl.textContent = parts.join('  ');
+    diagEl.classList.remove('hidden');
+  }
+
+  function render(data) {
+    const st = data.status || 'unknown';
+    const codexAuthed = !!(data.codex_authenticated || data.authenticated);
+    const cliMissing = st === 'missing_cli' || st === 'cli_missing' || st === 'cli_not_executable'
+      || data.error_code === 'missing_cli' || data.error_code === 'cli_missing' || data.error_code === 'cli_not_executable'
+      || data.cli_found === false || data.cli_executable === false;
+    const authRequired = st === 'auth_required' || data.error_code === 'auth_required';
+    let text = data.message || st;
+    if (authRequired) text = 'Odysseus session expired or admin auth required.';
+    else if (cliMissing) text = 'Codex CLI missing or CODEX_BIN invalid.';
+    else if (st === 'not_authenticated' || st === 'logged_out' || st === 'canceled') text = 'Codex CLI ready. Not signed in.';
+    else if (codexAuthed && data.auth_mode) text = `${text} (${data.auth_mode})`;
+    if (st === 'pending') text = 'Waiting for browser verification...';
+    if (st === 'starting') text = 'Starting device-code login...';
+    statusEl.textContent = text;
+    statusEl.style.color = (st === 'failed' || st === 'timeout' || cliMissing || st === 'disabled' || authRequired) ? 'var(--red)' : '';
+    renderDiagnostics(data);
+
+    const hasDevice = !!(data.verification_url && data.user_code && (st === 'pending' || st === 'starting' || data.device_login_active));
+    deviceEl?.classList.toggle('hidden', !hasDevice);
+    if (hasDevice) {
+      urlEl.textContent = data.verification_url;
+      urlEl.href = data.verification_url;
+      codeEl.textContent = data.user_code;
+    } else if (codeEl) {
+      codeEl.textContent = '';
+    }
+
+    const running = st === 'starting' || st === 'pending' || data.process_running || data.device_login_active;
+    cancelBtn?.classList.toggle('hidden', !running);
+    startBtn.textContent = codexAuthed ? 'Sign in again' : 'Sign in with Codex';
+    setBusy(startBtn, running);
+    setBusy(testBtn, running);
+    setBusy(logoutBtn, running);
+  }
+
+  async function request(path, method, busyText) {
+    if (busyText) {
+      statusEl.textContent = busyText;
+      statusEl.style.color = '';
+      setResult('', '');
+    }
+    try {
+      const res = await fetch(`/api/codex-auth/${path}`, { method: method || 'GET', credentials: 'same-origin' });
+      const data = await res.json().catch(() => ({ status: 'failed', message: `HTTP ${res.status}` }));
+      if (res.status === 401 || res.status === 403) {
+        data.status = 'auth_required';
+        data.error_code = 'auth_required';
+        data.message = 'Odysseus session expired or admin auth required.';
+      }
+      if (!res.ok) {
+        data.status = data.status || 'failed';
+        data.message = data.message || data.detail || `HTTP ${res.status}`;
+      }
+      render(data);
+      notifyStateChange(data);
+      return data;
+    } catch (e) {
+      const data = { status: 'failed', message: `Request failed: ${e.message || e}` };
+      render(data);
+      notifyStateChange(data);
+      return data;
+    }
+  }
+
+  async function refresh() {
+    try {
+      const data = await request('status');
+      const running = data.status === 'starting' || data.status === 'pending' || data.process_running;
+      if (running && !pollTimer) pollTimer = setInterval(refresh, 2500);
+      if (!running && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    } catch (e) {
+      statusEl.textContent = 'Failed to check Codex status';
+      statusEl.style.color = 'var(--red)';
+    }
+  }
+
+  startBtn.addEventListener('click', async () => {
+    const data = await request('start', 'POST', 'Requesting Codex device code...');
+    if (data.status === 'pending' && data.verification_url && data.user_code) {
+      setResult('Device code ready. Complete sign-in in the browser.', 'var(--green,#50fa7b)');
+    } else if (data.status === 'starting' || data.device_login_active) {
+      setResult('Waiting for Codex CLI to provide a device code...', '');
+    } else if (data.status === 'already_authenticated' || data.authenticated) {
+      setResult('Codex is already authenticated.', 'var(--green,#50fa7b)');
+    } else if (data.error_code) {
+      setResult(data.message || 'Codex sign-in could not start', 'var(--red)');
+    }
+    if (!pollTimer) pollTimer = setInterval(refresh, 2500);
+  });
+  testBtn?.addEventListener('click', async () => {
+    const data = await request('test', 'POST', 'Testing Codex connection...');
+    if (data.ok) {
+      statusEl.textContent = 'Codex connection is available';
+      statusEl.style.color = 'var(--green,#50fa7b)';
+      setResult('Test passed', 'var(--green,#50fa7b)');
+    } else {
+      const cliReady = data.cli_found !== false && data.cli_executable !== false;
+      const message = cliReady && (data.status === 'not_authenticated' || data.status === 'logged_out')
+        ? 'Codex CLI ready. Not signed in.'
+        : (data.message || 'Test failed');
+      setResult(message, 'var(--red)');
+    }
+  });
+  cancelBtn?.addEventListener('click', async () => {
+    await request('cancel', 'POST', 'Canceling Codex sign-in...');
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  });
+  logoutBtn?.addEventListener('click', async () => {
+    if (!await window.styledConfirm('Logout from Codex on this Odysseus host?', { confirmText: 'Logout', danger: true })) return;
+    const data = await request('logout', 'POST', 'Logging out from Codex...');
+    setResult(data.status === 'logged_out' ? 'Logged out' : (data.message || 'Logout finished'), data.status === 'logged_out' ? 'var(--green,#50fa7b)' : '');
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  });
+
+  refresh();
+}
 
 async function initUnifiedIntegrations() {
   if (_unifiedInited) return;
@@ -3051,7 +3243,7 @@ async function initUnifiedIntegrations() {
   }
 
   async function fetchAll() {
-    const [apiRes, calRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes] = await Promise.all([
+    const [apiRes, calRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes, codexRes] = await Promise.all([
       fetch('/api/auth/integrations', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { integrations: [] }).catch(() => ({ integrations: [] })),
       fetch('/api/calendar/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('/api/contacts/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
@@ -3059,11 +3251,36 @@ async function initUnifiedIntegrations() {
       fetch('/api/email/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
       fetch('/api/mcp/servers', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).catch(() => []),
       fetch('/api/vault/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
+      fetch('/api/codex-auth/status', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
     ]);
     const items = [];
     // API integrations
     for (const intg of (apiRes.integrations || [])) {
       items.push({ type: 'api', id: intg.id, name: intg.name || 'Unnamed', detail: intg.base_url || '', enabled: intg.enabled !== false, data: intg });
+    }
+    const codexAuthed = !!(codexRes.codex_authenticated || codexRes.authenticated);
+    const codexRunning = !!(
+      codexRes.device_login_active
+      || codexRes.process_running
+      || codexRes.status === 'starting'
+      || codexRes.status === 'pending'
+    );
+    const codexVisible = codexAuthed || codexRunning;
+    if (codexVisible) {
+      let codexDetail = 'ChatGPT sign-in through the Codex CLI';
+      if (codexAuthed && codexRes.auth_mode) codexDetail = `Signed in with ${codexRes.auth_mode}`;
+      else if (codexRunning) codexDetail = 'Device-code sign-in in progress';
+      else if (['not_authenticated', 'logged_out', 'canceled'].includes(codexRes.status)) codexDetail = 'Not signed in';
+      else if (codexRes.status === 'cli_missing' || codexRes.status === 'cli_not_executable') codexDetail = 'Codex CLI unavailable';
+      else if (codexRes.message && !/credential/i.test(codexRes.message)) codexDetail = codexRes.message;
+      items.push({
+        type: 'codex',
+        id: '__codex__',
+        name: 'Codex / ChatGPT',
+        detail: codexDetail,
+        enabled: codexAuthed,
+        data: codexRes,
+      });
     }
     // CalDAV
     if (calRes.url) {
@@ -3175,6 +3392,7 @@ async function initUnifiedIntegrations() {
           else if (type === 'email') await fetch(`/api/email/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'mcp') await fetch(`/api/mcp/servers/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'vault') await fetch('/api/vault/logout', { method: 'POST', credentials: 'same-origin' });
+          else if (type === 'codex') await fetch('/api/codex-auth/logout', { method: 'POST', credentials: 'same-origin' });
         } catch (_) {}
         formEl.style.display = 'none';
         await renderList();
@@ -3191,6 +3409,7 @@ async function initUnifiedIntegrations() {
     else if (type === 'email') showEmailForm(editId);
     else if (type === 'mcp') showMcpForm(editId);
     else if (type === 'vault') showVaultForm();
+    else if (type === 'codex') showCodexForm(editId);
   }
 
   // ── API form ──
@@ -4235,6 +4454,38 @@ async function initUnifiedIntegrations() {
   }
 
   // ── Add button with type picker ──
+  async function showCodexForm() {
+    formEl.innerHTML = `
+      <div class="admin-card" id="codex-auth-card" style="margin-top:8px">
+        <h2 style="font-size:13px">${INTG_TYPES.codex.icon} Codex / ChatGPT</h2>
+        <div class="admin-toggle-sub" style="margin-bottom:8px">Sign in with ChatGPT through the official Codex CLI device-code flow.</div>
+        <div id="codex-auth-status" style="font-size:12px;opacity:0.75;margin-bottom:8px;">Checking status...</div>
+        <div id="codex-auth-diagnostics" class="hidden" style="font-size:10px;opacity:0.65;margin:-2px 0 8px 0;line-height:1.35;word-break:break-word;"></div>
+        <div id="codex-auth-device" class="hidden" style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px;background:color-mix(in srgb, var(--panel) 70%, transparent);">
+          <div style="font-size:11px;opacity:0.65;margin-bottom:6px;">Open the verification URL, sign in, then enter this one-time code.</div>
+          <div style="display:grid;grid-template-columns:90px minmax(0,1fr);gap:6px 10px;align-items:center;font-size:12px;">
+            <span style="opacity:0.55;">URL</span><a id="codex-auth-url" href="#" target="_blank" rel="noopener noreferrer" style="color:var(--accent,var(--red));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></a>
+            <span style="opacity:0.55;">Code</span><code id="codex-auth-code" style="font-size:18px;letter-spacing:1px;"></code>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <button type="button" class="admin-btn-sm" id="codex-auth-start">Sign in with Codex</button>
+          <button type="button" class="admin-btn-sm" id="codex-auth-test" style="opacity:0.75;">Test</button>
+          <button type="button" class="admin-btn-sm hidden" id="codex-auth-cancel" style="opacity:0.75;">Cancel</button>
+          <button type="button" class="admin-btn-sm" id="codex-auth-logout" style="opacity:0.75;">Logout / Unlink</button>
+          <button type="button" class="admin-btn-sm" id="uf-codex-close" style="opacity:0.75;">Close</button>
+          <span id="codex-auth-result" style="font-size:11px"></span>
+        </div>
+      </div>`;
+    el('uf-codex-close').addEventListener('click', () => { formEl.style.display = 'none'; });
+    initCodexAuth(formEl, () => renderList());
+  }
+
+  document.addEventListener('odysseus:open-codex-auth', () => {
+    formEl.style.display = '';
+    showCodexForm();
+  });
+
   if (addBtn) {
     addBtn.addEventListener('click', () => {
       formEl.style.display = '';
@@ -4251,6 +4502,7 @@ async function initUnifiedIntegrations() {
                 <option value="carddav">Contacts (CardDAV)</option>
                 <option value="email">Email (IMAP/SMTP)</option>
                 <option value="mcp">MCP Tool Server</option>
+                <option value="codex">Codex / ChatGPT</option>
               </select>
             </div>
           </div>

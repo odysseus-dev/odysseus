@@ -10,8 +10,8 @@ import logging
 from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
-from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
-from src.auth_helpers import get_current_user
+from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, ModelEndpoint
+from src.auth_helpers import get_current_user, owner_filter
 
 
 def _verify_session_owner(request: Request, session_id: str):
@@ -172,6 +172,34 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         endpoint_id: str = Form(""),
     ):
         skip_val = str(skip_validation).lower() == "true"
+        try:
+            from src.codex_model_provider import CODEX_PROVIDER_ENDPOINT_ID, is_codex_provider_selection
+            if is_codex_provider_selection(endpoint_url, model):
+                user = get_current_user(request) or ""
+                is_admin = False
+                try:
+                    auth_mgr = getattr(request.app.state, "auth_manager", None)
+                    if user and auth_mgr is not None and getattr(auth_mgr, "is_admin", None):
+                        is_admin = bool(auth_mgr.is_admin(user))
+                except Exception:
+                    is_admin = False
+                db = SessionLocal()
+                try:
+                    q = db.query(ModelEndpoint).filter(
+                        ModelEndpoint.id == CODEX_PROVIDER_ENDPOINT_ID,
+                        ModelEndpoint.is_enabled == True,
+                    )
+                    if user and not is_admin:
+                        q = owner_filter(q, ModelEndpoint, user)
+                    if q.first() is None:
+                        raise HTTPException(403, "Codex model endpoint is not enabled for this user")
+                finally:
+                    db.close()
+                skip_val = True
+        except HTTPException:
+            raise
+        except Exception:
+            pass
 
         if not endpoint_url and not skip_val:
             raise HTTPException(400, "endpoint_url is required (choose from /api/models)")
@@ -230,7 +258,6 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         resolved_key = api_key.strip() if api_key else ""
         resolved_base = endpoint_url
         if not resolved_key and endpoint_id and endpoint_id.strip():
-            from core.database import ModelEndpoint
             _db = SessionLocal()
             try:
                 ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id.strip()).first()
@@ -286,10 +313,14 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     result["folder"] = folder if folder else None
             finally:
                 db.close()
-        # Switch model/endpoint mid-session
+        _is_codex_patch = False
+        try:
+            from src.codex_model_provider import CODEX_PROVIDER_ENDPOINT_ID, is_codex_provider_selection
+            _is_codex_patch = endpoint_id == CODEX_PROVIDER_ENDPOINT_ID or is_codex_provider_selection(endpoint_url, model)
+        except Exception:
+            _is_codex_patch = False
         if model is not None and endpoint_url is not None:
-            if endpoint_id:
-                from core.database import ModelEndpoint
+            if endpoint_id and not _is_codex_patch:
                 _db = SessionLocal()
                 try:
                     ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
