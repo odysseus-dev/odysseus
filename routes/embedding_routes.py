@@ -242,6 +242,23 @@ def setup_embedding_routes():
         if not url:
             raise HTTPException(400, "URL is required")
 
+        # SSRF guard: block private/internal ranges
+        from urllib.parse import urlparse
+        import ipaddress
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise HTTPException(400, "Only http/https URLs are allowed")
+        hostname = parsed.hostname or ""
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                raise HTTPException(400, "Private/internal addresses are not allowed")
+        except ValueError:
+            # hostname is a domain, not an IP — block common metadata patterns
+            blocked_domains = ("metadata.google.internal", "instance-data", "169.254.169.254")
+            if any(d in hostname for d in blocked_domains):
+                raise HTTPException(400, "Metadata service addresses are not allowed")
+
         # Quick health check
         try:
             import httpx
