@@ -138,6 +138,9 @@ def main():
         print("         This is OK if dependencies aren't installed yet.")
 
     print("\n5. Creating initial admin...")
+
+    admin_created = False
+
     try:
         admin_created = create_default_admin()
     except Exception as e:
