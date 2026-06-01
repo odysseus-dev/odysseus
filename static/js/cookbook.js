@@ -542,7 +542,11 @@ async function _fetchDependencies() {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
       if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
       if (pkg.installed) return `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn" title="Installed — click for actions"><span class="cookbook-dep-installed-label">Installed</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
-      if (isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-na" title="${esc(pkg.install_hint || 'Install this OS package on the selected server.')}">Missing</span>`;
+      if (isSystemDep) {
+        const depTip = esc(pkg.install_hint || 'Install this OS package on the selected server.');
+        const depLabel = pkg.applicable === false ? 'N/A ?' : 'Missing';
+        return `<span class="cookbook-dep-tag cookbook-dep-na" title="${depTip}">${depLabel}</span>`;
+      }
       return `<button class="cookbook-dep-tag cookbook-dep-install" data-dep-pip="${esc(pkg.pip)}" data-dep-target="${isLocal ? 'local' : 'remote'}">Install</button>`;
     };
 

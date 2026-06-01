@@ -546,3 +546,79 @@ def test_mcp_config_listing_is_admin_gated():
     assert "def list_servers(request: Request):" in src
     assert "def list_tools(request: Request):" in src
     assert "def list_server_tools(server_id: str, request: Request):" in src
+
+
+# ── web_fetch SSRF guard (PR #111 merge gate) ───────────────────────
+# web_fetch routes every request through src.search.content's
+# _public_http_url / _get_public_url, the same SSRF-safe fetcher used by
+# web_search and deep research. These pin that the guard blocks every
+# private/internal address class plus redirect-into-private and non-http
+# schemes, so the new tool can't be turned into an SSRF primitive.
+
+import ipaddress as _ipaddr
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("url", [
+    "http://127.0.0.1/",                  # IPv4 loopback
+    "http://localhost/",                  # loopback by name
+    "http://10.0.0.5/",                   # private LAN 10/8
+    "http://172.16.0.1/",                 # private LAN 172.16/12
+    "http://192.168.1.1/",                # private LAN 192.168/16
+    "http://169.254.169.254/latest/",     # link-local / cloud metadata
+    "http://metadata.google.internal/",   # metadata by name
+    "http://[::1]/",                      # IPv6 loopback
+    "http://[fc00::1]/",                  # IPv6 unique-local (ULA)
+    "http://[fe80::1]/",                  # IPv6 link-local
+    "file:///etc/passwd",                 # unsupported scheme
+    "ftp://example.com/",                 # unsupported scheme
+])
+def test_web_fetch_guard_blocks_private_and_bad_schemes(url):
+    from src.search.content import _public_http_url
+    assert _public_http_url(url) is False
+
+
+def test_web_fetch_guard_allows_public_ip():
+    from src.search.content import _public_http_url
+    assert _public_http_url("http://93.184.216.34/") is True
+
+
+def test_web_fetch_guard_blocks_dns_resolving_to_private(monkeypatch):
+    from src.search import content
+    monkeypatch.setattr(content, "_resolve_hostname_ips",
+                        lambda host: [_ipaddr.ip_address("10.0.0.5")])
+    assert content._public_http_url("https://innocent.example/") is False
+
+
+def test_web_fetch_guard_fails_closed_on_empty_resolution(monkeypatch):
+    # A hostname that resolves to nothing must be treated as non-public.
+    from src.search import content
+    monkeypatch.setattr(content, "_resolve_hostname_ips", lambda host: [])
+    assert content._public_http_url("https://innocent.example/") is False
+
+
+def test_web_fetch_guard_blocks_redirect_into_private(monkeypatch):
+    # A public URL that 302-redirects to an internal address must be blocked
+    # at the redirect hop, not followed.
+    import httpx
+    from src.search import content
+
+    monkeypatch.setattr(content, "_resolve_hostname_ips",
+                        lambda host: [_ipaddr.ip_address("93.184.216.34")])
+
+    class _Resp:
+        status_code = 302
+        headers = {"location": "http://169.254.169.254/latest/meta-data/"}
+
+    class _FakeClient:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def get(self, url): return _Resp()
+
+    monkeypatch.setattr(httpx, "Client", _FakeClient)
+
+    with _pytest.raises(httpx.RequestError) as exc:
+        content._get_public_url("http://public.example/start", headers={}, timeout=5)
+    assert "non-public" in str(exc.value)

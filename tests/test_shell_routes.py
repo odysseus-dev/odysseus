@@ -7,7 +7,12 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from routes.shell_routes import _find_line_break
+from routes.shell_routes import (
+    _find_line_break,
+    _running_in_container,
+    _docker_row_status,
+    DOCKER_IN_CONTAINER_HINT,
+)
 
 
 def test_shell_routes_import_without_posix_pty_modules(monkeypatch):
@@ -99,3 +104,81 @@ class TestFindLineBreak:
     def test_newline_before_cr(self):
         """\\n comes before \\r — should return \\n."""
         assert _find_line_break(b"ab\ncd\r") == (2, 1)
+
+
+class TestRunningInContainer:
+    """Detect whether the Odysseus process itself runs inside a container."""
+
+    def test_dockerenv_marker_present(self, tmp_path):
+        marker = tmp_path / ".dockerenv"
+        marker.write_text("")
+        assert _running_in_container(
+            dockerenv_path=str(marker), cgroup_path=str(tmp_path / "missing"),
+        ) is True
+
+    def test_cgroup_names_a_container_runtime(self, tmp_path):
+        cgroup = tmp_path / "cgroup"
+        cgroup.write_text("12:devices:/docker/abcdef0123456789\n")
+        assert _running_in_container(
+            dockerenv_path=str(tmp_path / "no-marker"), cgroup_path=str(cgroup),
+        ) is True
+
+    def test_bare_host_has_neither_signal(self, tmp_path):
+        cgroup = tmp_path / "cgroup"
+        cgroup.write_text("0::/user.slice/session-1.scope\n")
+        assert _running_in_container(
+            dockerenv_path=str(tmp_path / "no-marker"), cgroup_path=str(cgroup),
+        ) is False
+
+    def test_missing_cgroup_file_is_not_a_container(self, tmp_path):
+        assert _running_in_container(
+            dockerenv_path=str(tmp_path / "no-marker"),
+            cgroup_path=str(tmp_path / "also-missing"),
+        ) is False
+
+
+class TestDockerRowStatus:
+    """Applicability plus install hint for the docker dependency row."""
+
+    DEFAULT = "Install Docker on the selected server."
+
+    def test_in_container_and_absent_is_not_applicable_with_safe_default_hint(self):
+        status = _docker_row_status(
+            on_remote=False, in_container=True, installed=False, default_hint=self.DEFAULT,
+        )
+        assert status.applicable is False
+        assert status.install_hint == DOCKER_IN_CONTAINER_HINT
+
+    def test_in_container_but_present_is_applicable_with_default_hint(self):
+        status = _docker_row_status(
+            on_remote=False, in_container=True, installed=True, default_hint=self.DEFAULT,
+        )
+        assert status.applicable is True
+        assert status.install_hint == self.DEFAULT
+
+    def test_on_host_and_absent_stays_applicable_with_default_hint(self):
+        status = _docker_row_status(
+            on_remote=False, in_container=False, installed=False, default_hint=self.DEFAULT,
+        )
+        assert status.applicable is True
+        assert status.install_hint == self.DEFAULT
+
+    def test_remote_server_is_always_applicable_even_when_absent(self):
+        status = _docker_row_status(
+            on_remote=True, in_container=False, installed=False, default_hint=self.DEFAULT,
+        )
+        assert status.applicable is True
+        assert status.install_hint == self.DEFAULT
+
+    def test_remote_server_ignores_local_container_status(self):
+        status = _docker_row_status(
+            on_remote=True, in_container=True, installed=False, default_hint=self.DEFAULT,
+        )
+        assert status.applicable is True
+        assert status.install_hint == self.DEFAULT
+
+    def test_container_hint_steers_to_remote_and_warns_on_socket(self):
+        lowered = DOCKER_IN_CONTAINER_HINT.lower()
+        assert "remote" in lowered
+        assert "socket" in lowered
+        assert "host-root" in lowered or "host root" in lowered

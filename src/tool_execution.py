@@ -195,6 +195,7 @@ _MCP_TOOL_MAP = {
     "read_file":      ("filesystem", "read_file"),
     "write_file":     ("filesystem", "write_file"),
     "web_search":     ("web_search", "web_search"),
+    "web_fetch":      ("web_fetch",  "web_fetch"),
     "generate_image": ("image_gen",  "generate_image"),
 }
 
@@ -238,6 +239,7 @@ _MCP_ARG_PARSERS: Dict[str, callable] = {
     "bash":           lambda c: {"command": c},
     "python":         lambda c: {"code": c},
     "web_search":     lambda c: {"query": c.split("\n")[0].strip()},
+    "web_fetch":      lambda c: {"url": c.split("\n")[0].strip()},
     "read_file":      lambda c: {"path": c.split("\n")[0].strip()},
     "write_file":     _parse_write_file,
     "generate_image": _parse_generate_image,
@@ -462,6 +464,59 @@ async def _direct_fallback(
             output = text[:MAX_OUTPUT_CHARS] if len(text) > MAX_OUTPUT_CHARS else text
             if sources:
                 output += "\n\n<!-- SOURCES:" + _json.dumps(sources) + " -->"
+            return {"output": output, "exit_code": 0}
+
+        if tool == "web_fetch":
+            # Lightweight single-URL fetch. Wraps the SSRF-safe fetcher used
+            # by deep research, so private/loopback/metadata addresses are
+            # already blocked there.
+            from src.search.content import fetch_webpage_content
+            raw = content.strip()
+            url = ""
+            # Accept either a JSON arg ({"url": "..."}) or a plain URL/domain.
+            if raw.startswith("{"):
+                try:
+                    parsed = _json.loads(raw)
+                    if isinstance(parsed, dict):
+                        url = str(parsed.get("url") or "").strip()
+                except _json.JSONDecodeError:
+                    url = ""
+            if not url:
+                # Non-JSON (or JSON without a usable url): take the first line
+                # only, so a URL followed by commentary still parses.
+                url = raw.split("\n")[0].strip()
+            # Reject anything that isn't a single bare URL/domain token.
+            if not url or url.startswith("{") or any(c in url for c in (" ", "\t", "\n")):
+                return {"error": "web_fetch: provide a single URL or domain, e.g. example.com", "exit_code": 1}
+            low = url.lower()
+            if "://" in low and not low.startswith(("http://", "https://")):
+                return {"error": f"web_fetch: unsupported URL scheme (only http/https): {url[:80]}", "exit_code": 1}
+            # Accept bare domains like "example.com" by defaulting to https.
+            if not low.startswith(("http://", "https://")):
+                url = "https://" + url
+            loop = asyncio.get_running_loop()
+            try:
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, lambda: fetch_webpage_content(url, timeout=10)),
+                    timeout=30,
+                )
+            except asyncio.TimeoutError:
+                return {"error": f"web_fetch: timed out fetching {url}", "exit_code": 1}
+            err = result.get("error")
+            text = (result.get("content") or "").strip()
+            title = result.get("title") or ""
+
+            if not text:
+                if err:
+                    return {"error": f"web_fetch: {url}: {err}", "exit_code": 1}
+                # No extractable text: non-HTML body, or a pure client-rendered
+                # shell. The agent can fall back to the builtin_browser tool.
+                return {"error": f"web_fetch: {url}: no readable text content (not HTML, or the page needs JS/login)", "exit_code": 1}
+
+            header = (f"# {title}\n" if title else "") + f"Source: {url}\n\n"
+            output = header + text
+            if len(output) > MAX_OUTPUT_CHARS:
+                output = output[:MAX_OUTPUT_CHARS] + "\n\n[...truncated]"
             return {"output": output, "exit_code": 0}
 
         # manage_memory / generate_image still live as MCP servers
