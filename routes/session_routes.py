@@ -808,7 +808,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         }
         _THROWAWAY_MAX_MESSAGES = 4  # only delete if <= this many messages
         try:
-            rows = db.query(DbSession).filter(DbSession.archived == False).all()
+            rows = db.query(DbSession).filter(DbSession.archived == False, DbSession.owner == user).all()
             folder_map = {r.id: r.folder for r in rows}
             # Precompute per-session message counts in TWO aggregate queries
             # instead of 1–3 queries PER session — with many chats the per-row
@@ -1025,7 +1025,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         db = SessionLocal()
         try:
             for sid, folder_name in assignments.items():
-                db_session = db.query(DbSession).filter(DbSession.id == sid).first()
+                db_session = db.query(DbSession).filter(DbSession.id == sid, DbSession.owner == user).first()
                 if db_session:
                     db_session.folder = folder_name
                     db_session.updated_at = datetime.utcnow()

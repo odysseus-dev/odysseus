@@ -1213,6 +1213,7 @@ import createResearchSynapse from './researchSynapse.js';
       }
 
       let _nextIsError = false;
+      let _streamSawDone = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1255,6 +1256,7 @@ import createResearchSynapse from './researchSynapse.js';
             }
 
             if (data === '[DONE]') {
+              _streamSawDone = true;
               // Always update background map if entry exists (even if user switched back)
               var bgDone = _backgroundStreams.get(streamSessionId);
               if (bgDone) {
@@ -2218,6 +2220,10 @@ import createResearchSynapse from './researchSynapse.js';
             }
           }
         }
+      }
+
+      if (!_streamSawDone) {
+        throw new Error('Stream closed before completion');
       }
 
       _renderStream();

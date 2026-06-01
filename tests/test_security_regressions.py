@@ -96,6 +96,11 @@ def test_secret_storage_corrupt_token_returns_empty(tmp_path, monkeypatch):
     assert ss.decrypt("enc:not-a-valid-fernet-token") == ""
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX mode bits (0o600) don't exist on Windows; the key file is "
+    "protected by the user-profile NTFS ACL instead, and safe_chmod no-ops there.",
+)
 def test_secret_storage_key_created_with_safe_mode(tmp_path, monkeypatch):
     """The auto-generated key file must be mode 0o600 — anyone who can
     read it can decrypt every stored secret."""
@@ -161,6 +166,145 @@ def test_path_name_strips_traversal(token, expected):
     rely on. Pin its behaviour so a future "let's just use the raw
     token" regression is caught by tests."""
     assert Path(token).name == expected
+
+
+# -- upload owner gates -------------------------------------------------------
+
+def _make_upload_store(tmp_path):
+    upload_dir = tmp_path / "uploads"
+    dated = upload_dir / "2026" / "06" / "01"
+    dated.mkdir(parents=True)
+
+    alice_id = "a" * 32 + ".txt"
+    bob_id = "b" * 32 + ".txt"
+    alice_path = dated / alice_id
+    bob_path = dated / bob_id
+    alice_path.write_text("alice private note", encoding="utf-8")
+    bob_path.write_text("bob private note", encoding="utf-8")
+
+    index = {
+        "alice:h1": {
+            "id": alice_id,
+            "path": str(alice_path),
+            "mime": "text/plain",
+            "size": alice_path.stat().st_size,
+            "name": "alice.txt",
+            "original_name": "alice.txt",
+            "owner": "alice",
+        },
+        "bob:h2": {
+            "id": bob_id,
+            "path": str(bob_path),
+            "mime": "text/plain",
+            "size": bob_path.stat().st_size,
+            "name": "bob.txt",
+            "original_name": "bob.txt",
+            "owner": "bob",
+        },
+    }
+    (upload_dir / "uploads.json").write_text(json.dumps(index), encoding="utf-8")
+    return upload_dir, alice_id, bob_id
+
+
+def _stub_core_database_for_route_imports(monkeypatch):
+    from unittest.mock import MagicMock
+
+    core_pkg = types.ModuleType("core")
+    core_pkg.__path__ = []
+    models = types.ModuleType("core.models")
+    models.ChatMessage = MagicMock()
+
+    db = types.ModuleType("core.database")
+    for name in (
+        "SessionLocal",
+        "Session",
+        "ChatMessage",
+        "Document",
+        "DocumentVersion",
+        "GalleryImage",
+        "ModelEndpoint",
+    ):
+        setattr(db, name, MagicMock())
+    monkeypatch.setitem(sys.modules, "core", core_pkg)
+    monkeypatch.setitem(sys.modules, "core.models", models)
+    monkeypatch.setitem(sys.modules, "core.database", db)
+
+
+def test_upload_resolver_rejects_cross_owner_upload_ids(tmp_path):
+    from src.upload_handler import UploadHandler
+
+    upload_dir, alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+
+    assert handler.resolve_upload(alice_id, owner="alice")["id"] == alice_id
+    assert handler.resolve_upload(bob_id, owner="alice") is None
+
+
+def test_build_user_content_skips_cross_owner_attachments(tmp_path):
+    from src.document_processor import build_user_content
+    from src.upload_handler import UploadHandler
+
+    upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+
+    content = build_user_content(
+        "hello",
+        [bob_id],
+        str(upload_dir),
+        handler,
+        owner="alice",
+    )
+
+    assert content == "hello"
+    assert "bob private note" not in content
+
+
+def test_chat_preprocess_does_not_surface_cross_owner_attachment(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    for mod_name in ("src.chat_handler", "routes.chat_helpers"):
+        sys.modules.pop(mod_name, None)
+    _stub_core_database_for_route_imports(monkeypatch)
+    from src.chat_handler import ChatHandler
+    from src.upload_handler import UploadHandler
+    from src import settings
+
+    upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+    monkeypatch.setattr("src.chat_handler.UPLOAD_DIR", str(upload_dir))
+    monkeypatch.setattr(
+        settings,
+        "get_setting",
+        lambda key, default=None: False if key == "vision_enabled" else default,
+    )
+
+    chat_handler = ChatHandler(None, None, None, None, None, handler)
+    sess = SimpleNamespace(id="s1", owner="alice", model="text-model")
+
+    _enhanced, user_content, _text_ctx, _yt, attachment_meta = asyncio.run(
+        chat_handler.preprocess_message(
+            "hello",
+            [bob_id],
+            sess,
+        )
+    )
+
+    assert attachment_meta == []
+    assert user_content == "hello"
+    for mod_name in ("src.chat_handler", "routes.chat_helpers"):
+        sys.modules.pop(mod_name, None)
+
+
+def test_document_upload_lookup_rejects_cross_owner_marker(tmp_path, monkeypatch):
+    sys.modules.pop("routes.document_helpers", None)
+    _stub_core_database_for_route_imports(monkeypatch)
+    from routes.document_helpers import _locate_upload
+
+    upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
+
+    assert _locate_upload(str(upload_dir), bob_id, owner="alice") is None
+    assert _locate_upload(str(upload_dir), bob_id, owner="bob").endswith(bob_id)
+    sys.modules.pop("routes.document_helpers", None)
 
 
 # ── require_user dependency rejects anon callers ────────────────
@@ -300,6 +444,26 @@ def test_require_admin_allows_when_auth_explicitly_disabled(monkeypatch):
     assert require_admin(_Req()) is None
 
 
+def test_internal_tool_owner_header_logic_requires_known_user():
+    """Pin the owner-attribution branch used by app.AuthMiddleware without
+    booting the full FastAPI app."""
+    users = {
+        "alice": {"is_admin": False},
+        "AdminUser": {"is_admin": True},
+    }
+
+    def resolve_owner(header_value):
+        impersonate = (header_value or "").strip()
+        if impersonate and impersonate in users:
+            return impersonate
+        return "internal-tool"
+
+    assert resolve_owner("alice") == "alice"
+    assert resolve_owner("AdminUser") == "AdminUser"
+    assert resolve_owner("doesnotexist") == "internal-tool"
+    assert resolve_owner("") == "internal-tool"
+
+
 def test_auth_manager_migrates_legacy_admin_role(tmp_path):
     """Old setup.py wrote role='admin'; startup must turn that into is_admin."""
     sys.modules.pop("core.auth", None)
@@ -382,3 +546,79 @@ def test_mcp_config_listing_is_admin_gated():
     assert "def list_servers(request: Request):" in src
     assert "def list_tools(request: Request):" in src
     assert "def list_server_tools(server_id: str, request: Request):" in src
+
+
+# ── web_fetch SSRF guard (PR #111 merge gate) ───────────────────────
+# web_fetch routes every request through src.search.content's
+# _public_http_url / _get_public_url, the same SSRF-safe fetcher used by
+# web_search and deep research. These pin that the guard blocks every
+# private/internal address class plus redirect-into-private and non-http
+# schemes, so the new tool can't be turned into an SSRF primitive.
+
+import ipaddress as _ipaddr
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("url", [
+    "http://127.0.0.1/",                  # IPv4 loopback
+    "http://localhost/",                  # loopback by name
+    "http://10.0.0.5/",                   # private LAN 10/8
+    "http://172.16.0.1/",                 # private LAN 172.16/12
+    "http://192.168.1.1/",                # private LAN 192.168/16
+    "http://169.254.169.254/latest/",     # link-local / cloud metadata
+    "http://metadata.google.internal/",   # metadata by name
+    "http://[::1]/",                      # IPv6 loopback
+    "http://[fc00::1]/",                  # IPv6 unique-local (ULA)
+    "http://[fe80::1]/",                  # IPv6 link-local
+    "file:///etc/passwd",                 # unsupported scheme
+    "ftp://example.com/",                 # unsupported scheme
+])
+def test_web_fetch_guard_blocks_private_and_bad_schemes(url):
+    from src.search.content import _public_http_url
+    assert _public_http_url(url) is False
+
+
+def test_web_fetch_guard_allows_public_ip():
+    from src.search.content import _public_http_url
+    assert _public_http_url("http://93.184.216.34/") is True
+
+
+def test_web_fetch_guard_blocks_dns_resolving_to_private(monkeypatch):
+    from src.search import content
+    monkeypatch.setattr(content, "_resolve_hostname_ips",
+                        lambda host: [_ipaddr.ip_address("10.0.0.5")])
+    assert content._public_http_url("https://innocent.example/") is False
+
+
+def test_web_fetch_guard_fails_closed_on_empty_resolution(monkeypatch):
+    # A hostname that resolves to nothing must be treated as non-public.
+    from src.search import content
+    monkeypatch.setattr(content, "_resolve_hostname_ips", lambda host: [])
+    assert content._public_http_url("https://innocent.example/") is False
+
+
+def test_web_fetch_guard_blocks_redirect_into_private(monkeypatch):
+    # A public URL that 302-redirects to an internal address must be blocked
+    # at the redirect hop, not followed.
+    import httpx
+    from src.search import content
+
+    monkeypatch.setattr(content, "_resolve_hostname_ips",
+                        lambda host: [_ipaddr.ip_address("93.184.216.34")])
+
+    class _Resp:
+        status_code = 302
+        headers = {"location": "http://169.254.169.254/latest/meta-data/"}
+
+    class _FakeClient:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def get(self, url): return _Resp()
+
+    monkeypatch.setattr(httpx, "Client", _FakeClient)
+
+    with _pytest.raises(httpx.RequestError) as exc:
+        content._get_public_url("http://public.example/start", headers={}, timeout=5)
+    assert "non-public" in str(exc.value)

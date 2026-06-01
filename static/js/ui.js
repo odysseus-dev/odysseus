@@ -22,9 +22,14 @@ function _isTextEditingTarget(target) {
   return !!(el && el.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]'));
 }
 
+function _targetEl(target) {
+  return target && target.nodeType === 1 ? target : target?.parentElement || null;
+}
+
 const SPACE_CARD_SELECTOR = [
   '#email-lib-modal .doclib-card',
   '#doclib-modal .doclib-card',
+  '#doclib-modal .doclib-chat-row',
   '#memory-modal .doclib-card',
   '#tasks-modal .task-card',
   '#tasks-modal .task-log-row',
@@ -69,6 +74,31 @@ function _spaceWindowId(win) {
   return null;
 }
 
+function _spaceIsBlocked(e, surface) {
+  const target = _targetEl(e.target);
+  if (!target) return false;
+  if (_isTextEditingTarget(target)) return !surface || surface.contains(target);
+  const blocked = target.closest?.(SPACE_BLOCKED_SELECTOR);
+  return !!(blocked && (!surface || surface.contains(blocked)));
+}
+
+function _activateSpaceCard(card) {
+  if (!card || !document.contains(card)) return false;
+  if (card.matches('#tasks-modal .task-card')) {
+    const titleRow = card.querySelector('.memory-item-title')?.closest('div');
+    if (titleRow) {
+      titleRow.click();
+      return true;
+    }
+  }
+  card.dataset.spaceToggle = '1';
+  card.click();
+  setTimeout(() => {
+    try { delete card.dataset.spaceToggle; } catch {}
+  }, 0);
+  return true;
+}
+
 function _initHoverCardSpaceToggle() {
   if (document._odysseusHoverCardSpaceToggle) return;
   document._odysseusHoverCardSpaceToggle = true;
@@ -88,15 +118,14 @@ function _initHoverCardSpaceToggle() {
   }, true);
   document.addEventListener('keydown', (e) => {
     if (e.code !== 'Space' || e.repeat) return;
-    if (_isTextEditingTarget(e.target)) return;
-    const blocked = e.target?.closest?.(SPACE_BLOCKED_SELECTOR);
-    if (blocked) return;
     if (hoveredToggleCard && _isSpaceVisible(hoveredToggleCard)) {
+      if (_spaceIsBlocked(e, hoveredToggleCard)) return;
       e.preventDefault();
-      hoveredToggleCard.click();
+      _activateSpaceCard(hoveredToggleCard);
       return;
     }
     if (hoveredDockChip && document.contains(hoveredDockChip)) {
+      if (_spaceIsBlocked(e, hoveredDockChip)) return;
       const id = hoveredDockChip.dataset.modalId;
       if (id && Modals.isRegistered(id)) {
         e.preventDefault();
@@ -106,6 +135,7 @@ function _initHoverCardSpaceToggle() {
     }
     const id = _spaceWindowId(hoveredToggleWindow);
     if (!id) return;
+    if (_spaceIsBlocked(e, hoveredToggleWindow)) return;
     e.preventDefault();
     Modals.minimize(id);
   }, true);

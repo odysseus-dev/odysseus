@@ -389,6 +389,7 @@ def setup_chat_routes(
             disabled_tools.add("bash")
         if str(allow_web_search).lower() != "true":
             disabled_tools.add("web_search")
+            disabled_tools.add("web_fetch")
 
         # Nobody/incognito mode: deny tools that would expose the user's
         # persistent memory, past chats, or other identity-linked data.
@@ -452,7 +453,7 @@ def setup_chat_routes(
             disabled_tools.update(_compare_strip)
             # In chat mode compare, disable ALL agent tools (no bash, python, file ops)
             if chat_mode == 'chat':
-                disabled_tools.update({"bash", "python", "read_file", "write_file", "web_search", "search_chats", "manage_tasks"})
+                disabled_tools.update({"bash", "python", "read_file", "write_file", "web_search", "web_fetch", "search_chats", "manage_tasks"})
 
         async def stream_with_save() -> AsyncGenerator[str, None]:
             # _effective_mode is read-only here; closure captures it from

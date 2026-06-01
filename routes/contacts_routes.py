@@ -29,7 +29,7 @@ LOCAL_CONTACTS_FILE = DATA_DIR / "contacts.json"
 
 def _load_settings():
     if SETTINGS_FILE.exists():
-        return json.loads(SETTINGS_FILE.read_text())
+        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
     return {}
 
 
@@ -79,7 +79,7 @@ def _load_local_contacts() -> List[Dict]:
     try:
         if not LOCAL_CONTACTS_FILE.exists():
             return []
-        data = json.loads(LOCAL_CONTACTS_FILE.read_text())
+        data = json.loads(LOCAL_CONTACTS_FILE.read_text(encoding="utf-8"))
         rows = data.get("contacts", data) if isinstance(data, dict) else data
         return [_normalize_contact(c) for c in (rows or []) if isinstance(c, dict)]
     except Exception as e:

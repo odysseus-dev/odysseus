@@ -69,7 +69,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         if not path.exists():
             return False
         try:
-            return json.loads(path.read_text()).get("owner") == user
+            return json.loads(path.read_text(encoding="utf-8")).get("owner") == user
         except Exception:
             return False
 
@@ -130,7 +130,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         if not path.exists():
             raise HTTPException(404, "Research not found")
         try:
-            owner = json.loads(path.read_text()).get("owner")
+            owner = json.loads(path.read_text(encoding="utf-8")).get("owner")
         except Exception:
             raise HTTPException(404, "Research not found")
         if owner != user:
@@ -190,7 +190,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         items = []
         for p in data_dir.glob("*.json"):
             try:
-                d = json.loads(p.read_text())
+                d = json.loads(p.read_text(encoding="utf-8"))
                 # SECURITY: only show research belonging to this user. Legacy
                 # JSONs without an `owner` field are hidden — auth was the only
                 # gate before, so every user saw every other user's reports.
@@ -239,7 +239,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         if not path.exists():
             raise HTTPException(404, "Research not found")
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
         except Exception as e:
             raise HTTPException(500, f"Failed to read research: {e}")
         # SECURITY: 404 (not 403) so we don't leak that the report exists.
@@ -255,11 +255,11 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         if not path.exists():
             raise HTTPException(404, "Research not found")
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             if data.get("owner") != user:
                 raise HTTPException(404, "Research not found")
             data["archived"] = bool(archived)
-            path.write_text(json.dumps(data))
+            path.write_text(json.dumps(data), encoding="utf-8")
         except HTTPException:
             raise
         except Exception as e:
@@ -276,7 +276,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         if json_path.exists():
             # SECURITY: verify ownership before letting the caller delete it.
             try:
-                data = json.loads(json_path.read_text())
+                data = json.loads(json_path.read_text(encoding="utf-8"))
                 if data.get("owner") != user:
                     raise HTTPException(404, "Research not found")
             except HTTPException:
@@ -299,6 +299,8 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         endpoint_id: Optional[str] = None
         model: Optional[str] = None
         max_time: int = Field(default=300, ge=60, le=1800)
+        extraction_timeout: Optional[int] = Field(default=None, ge=15, le=600)
+        extraction_concurrency: Optional[int] = Field(default=None, ge=1, le=12)
         category: Optional[str] = None
 
     @router.post("/api/research/start")
@@ -401,6 +403,8 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             max_rounds=effective_max_rounds,
             search_provider=body.search_provider or None,
             category=body.category or None,
+            extraction_timeout=body.extraction_timeout,
+            extraction_concurrency=body.extraction_concurrency,
             owner=user,
         )
         return {"session_id": session_id, "status": "running", "query": body.query}
@@ -448,7 +452,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         if result is None:
             p = Path("data/deep_research") / f"{session_id}.json"
             if p.exists():
-                d = json.loads(p.read_text())
+                d = json.loads(p.read_text(encoding="utf-8"))
                 return {
                     "result": d.get("result", ""),
                     "sources": d.get("sources", []),
@@ -482,7 +486,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         path = Path("data/deep_research") / f"{session_id}.json"
         if path.exists():
             try:
-                disk = json.loads(path.read_text())
+                disk = json.loads(path.read_text(encoding="utf-8"))
                 if not result:
                     result = disk.get("result")
                 if not sources:

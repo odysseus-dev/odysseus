@@ -3639,7 +3639,7 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
 
     def _load(p):
         try:
-            return _json.loads(p.read_text())
+            return _json.loads(p.read_text(encoding="utf-8"))
         except Exception:
             return None
 
@@ -3874,7 +3874,7 @@ def _load_vault_config() -> Dict:
     p = Path("data/vault.json")
     if p.exists():
         try:
-            return json.loads(p.read_text())
+            return json.loads(p.read_text(encoding="utf-8"))
         except Exception:
             pass
     return {}
@@ -4027,13 +4027,13 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
     cfg = {}
     if p.exists():
         try:
-            cfg = json.loads(p.read_text())
+            cfg = json.loads(p.read_text(encoding="utf-8"))
         except Exception:
             pass
     cfg["session"] = session
     from datetime import datetime as _dt
     cfg["unlocked_at"] = _dt.utcnow().isoformat()
-    p.write_text(json.dumps(cfg, indent=2))
+    p.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     try:
         import os as _os
         _os.chmod(str(p), 0o600)

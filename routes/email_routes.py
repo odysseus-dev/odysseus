@@ -2834,7 +2834,7 @@ def setup_email_routes():
         if not path.exists():
             return {"total_unread": 0, "total_urgent": 0, "max_score": 0, "per_uid": {}}
         try:
-            data = _json.loads(path.read_text())
+            data = _json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return {"total_unread": 0, "total_urgent": 0, "max_score": 0, "per_uid": {}}
         # Drop `notified_uids` from the payload — it's an internal scheduler

@@ -226,7 +226,7 @@ def test_admin_only_actions_set_contains_shell_runners():
     # `_ADMIN_ONLY_ACTIONS` is a closure constant. Easiest pin: re-read
     # the source and check for the three risky entries + the admin gate
     # wording.
-    src = open(task_routes.__file__).read()
+    src = open(task_routes.__file__, encoding="utf-8").read()
     assert '"run_local"' in src
     assert '"run_script"' in src
     assert '"ssh_command"' in src
@@ -249,8 +249,8 @@ def test_ship_paused_housekeeping_stays_paused_by_default():
     from routes import task_routes
     from src import task_scheduler
 
-    route_src = open(task_routes.__file__).read()
-    scheduler_src = open(task_scheduler.__file__).read()
+    route_src = open(task_routes.__file__, encoding="utf-8").read()
+    scheduler_src = open(task_scheduler.__file__, encoding="utf-8").read()
     assert '"ship_paused": True' in scheduler_src
     assert 'defs.get("ship_paused")' in scheduler_src
     assert 'defs.get("ship_paused")' in route_src
@@ -259,5 +259,5 @@ def test_ship_paused_housekeeping_stays_paused_by_default():
 def test_task_payload_exposes_crew_member_id_for_ui_category():
     from routes import task_routes
 
-    src = open(task_routes.__file__).read()
+    src = open(task_routes.__file__, encoding="utf-8").read()
     assert '"crew_member_id"' in src

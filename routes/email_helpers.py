@@ -444,7 +444,7 @@ _init_scheduled_db()
 
 def _load_settings():
     if SETTINGS_FILE.exists():
-        return json.loads(SETTINGS_FILE.read_text())
+        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
     return {}
 
 
