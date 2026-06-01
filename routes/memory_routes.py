@@ -28,6 +28,7 @@ from core.database import SessionLocal
 from src.llm_core import llm_call_async
 from services.memory.memory_extractor import audit_memories
 from src.auth_helpers import get_current_user
+from src.endpoint_resolver import resolve_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -313,16 +314,30 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     @router.post("/import")
     async def import_memories_from_file(
         request: Request,
-        session: str = Form(...),
+        session: str | None = Form(None),
         file: UploadFile = File(...)
     ):
         """Extract memory suggestions from an uploaded file (PDF, TXT, MD, etc.)."""
         from src.auth_helpers import require_privilege
         require_privilege(request, "can_manage_memory")
-        try:
-            sess = session_manager.get_session(session)
-        except KeyError:
-            raise HTTPException(404, "Session not found — needed for LLM config")
+
+        endpoint_url = None
+        model = None
+        headers = {}
+
+        if session:
+            try:
+                sess = session_manager.get_session(session)
+                endpoint_url = sess.endpoint_url
+                model = sess.model
+                headers = sess.headers
+            except KeyError:
+                 raise HTTPException(404, "Session not found — needed for LLM config")
+        else:
+            endpoint_url, model, headers = resolve_endpoint("utility", owner=_owner(request))
+    
+        if not endpoint_url or not model:
+            raise HTTPException(400, "No LLM model configured. Set a default model in Settings.")
 
         # Read file content
         content = await file.read()
@@ -404,15 +419,15 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
 
         try:
             raw = await llm_call_async(
-                sess.endpoint_url,
-                sess.model,
+                endpoint_url,
+                model,
                 [
                     {"role": "system", "content": import_prompt},
                     {"role": "user", "content": f"Document: {filename}\n\n{text}"},
                 ],
                 temperature=0.2,
                 max_tokens=2000,
-                headers=sess.headers,
+                headers=headers,
             )
 
             # Parse JSON

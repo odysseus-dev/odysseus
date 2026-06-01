@@ -2457,6 +2457,20 @@ async function initEmailAccountsSettings() {
     manageBtn.dataset.bound = '1';
     manageBtn.addEventListener('click', () => open('integrations'));
   }
+  const tasksBtn = el('set-email-open-tasks');
+  if (tasksBtn && tasksBtn.dataset.bound !== '1') {
+    tasksBtn.dataset.bound = '1';
+    tasksBtn.addEventListener('click', async () => {
+      try {
+        const mod = await import('./tasks.js');
+        const openTasks = mod.openTasks || (mod.default && mod.default.openTasks);
+        if (typeof openTasks === 'function') openTasks();
+        else document.getElementById('tool-tasks-btn')?.click();
+      } catch (_) {
+        document.getElementById('tool-tasks-btn')?.click();
+      }
+    });
+  }
   const listEl = el('set-email-accounts-list');
   const msgEl = el('set-email-accounts-msg');
   const formEl = el('set-email-accounts-form');

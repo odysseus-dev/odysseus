@@ -300,7 +300,7 @@
               <input type="file" id="memory-import-file" accept=".txt,.md,.pdf,.csv,.log,.json,.py,.js,.html" hidden />
             </div>
             <p class="memory-desc doclib-desc" style="margin:4px 0 6px;">
-              Import a <code>.txt</code>, <code>.md</code>, <code>.pdf</code>, <code>.csv</code>, <code>.log</code>, <code>.json</code>, <code>.py</code>, <code>.js</code>, or <code>.html</code> file &mdash; the AI reads it and suggests candidate memories you can approve. Needs an open chat session (it uses that session's model).
+              Import a <code>.txt</code>, <code>.md</code>, <code>.pdf</code>, <code>.csv</code>, <code>.log</code>, <code>.json</code>, <code>.py</code>, <code>.js</code>, or <code>.html</code> file &mdash; the AI reads it and suggests candidate memories you can approve.
             </p>
             <div class="memory-add-row" style="margin-top:8px;">
               <div class="skill-ph-wrap" style="flex:1;min-width:0;">
@@ -697,10 +697,9 @@
           <div style="position:relative; display:inline-block; display:flex; gap:4px; align-items:center;">
             <button type="button" class="section-header-btn chats-manage-btn" id="chats-library-btn" title="Manage Chats (Library)">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="3" width="7" height="7"></rect>
-                <rect x="14" y="3" width="7" height="7"></rect>
-                <rect x="14" y="14" width="7" height="7"></rect>
-                <rect x="3" y="14" width="7" height="7"></rect>
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                <path d="M9 7h6M9 11h4"/>
               </svg>
             </button>
             <button type="button" class="section-header-btn" id="session-sort-btn" title="Sort sessions">
@@ -1391,7 +1390,7 @@
           </div>
           <div class="admin-card">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Utility Model <span style="font-size:0.72em;opacity:0.55;font-weight:normal;">(Recommended: Local Endpoint)</span></h2>
-            <div class="admin-toggle-sub" style="margin-bottom:8px">Runs background tasks (compaction, cleanup, auto-naming) on a small/local model instead of your chat model. Leave blank to use the chat model.</div>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Runs background tasks (compaction, cleanup, auto-naming, retrieving memories from files) on a small/local model instead of your chat model. Leave blank to use the chat model.</div>
             <div class="settings-col">
               <div class="settings-row">
                 <label class="settings-label">Endpoint</label>
@@ -1875,6 +1874,14 @@
             <div class="settings-row" style="align-items:center;">
               <div class="admin-toggle-sub" style="margin:0;flex:1;">Add, edit, delete, and test accounts in Integrations.</div>
               <button class="admin-btn-add" id="set-email-open-integrations">Manage in Integrations</button>
+            </div>
+          </div>
+
+          <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg>Email Tasks</h2>
+            <div class="settings-row" style="align-items:center;">
+              <div class="admin-toggle-sub" style="margin:0;flex:1;">Manage email background tasks in Tasks.</div>
+              <button class="admin-btn-add" id="set-email-open-tasks">Open Tasks</button>
             </div>
           </div>
 

@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -57,6 +58,40 @@ def _require_admin(request: Request):
     if not auth_manager.is_admin(user):
         raise HTTPException(403, "Admin only")
 
+
+def _reject_cross_site(request: Request):
+    """Reject browser cross-site navigations to shell-touching endpoints."""
+    if request.headers.get("sec-fetch-site") == "cross-site":
+        raise HTTPException(403, "Cross-site request rejected")
+
+
+_SSH_PORT_RE = re.compile(r"^\d{1,5}$")
+_SAFE_VENV_RE = re.compile(r"^[A-Za-z0-9_./~-]+$")
+
+
+def _ssh_base_argv(host: str, ssh_port: str | None) -> list[str]:
+    """Build an ssh argv prefix for remote probes without local-shell parsing."""
+    if not host or not str(host).strip() or str(host).lstrip().startswith("-"):
+        raise ValueError("invalid ssh host")
+    argv = ["ssh", "-o", "ConnectTimeout=6", "-o", "StrictHostKeyChecking=no"]
+    if ssh_port and str(ssh_port).strip() not in ("", "22"):
+        port = str(ssh_port).strip()
+        if not _SSH_PORT_RE.match(port) or not (1 <= int(port) <= 65535):
+            raise ValueError("invalid ssh port")
+        argv += ["-p", port]
+    argv.append(str(host).strip())
+    return argv
+
+
+def _venv_activate_prefix(venv: str | None) -> str:
+    """Return a remote activation prefix while preserving shell expansion of ~."""
+    if not venv:
+        return ""
+    if not _SAFE_VENV_RE.match(venv):
+        raise ValueError("invalid venv path")
+    act = venv if venv.endswith("/bin/activate") else venv.rstrip("/") + "/bin/activate"
+    return f". {act} && "
+
 logger = logging.getLogger(__name__)
 
 PTY_SUPPORTED = pty is not None and fcntl is not None and hasattr(os, "setsid")
@@ -90,6 +125,115 @@ def _docker_row_status(*, on_remote, in_container, installed, default_hint):
     if local_docker_unavailable:
         return DockerRowStatus(applicable=False, install_hint=DOCKER_IN_CONTAINER_HINT)
     return DockerRowStatus(applicable=True, install_hint=default_hint)
+
+
+def _package_installed_from_probe(name: str, probe: dict) -> bool:
+    """Return whether an optional dependency is usable by Cookbook.
+
+    A Python import alone is not enough: namespace packages can be created by a
+    same-named directory, and vLLM serving needs the CLI on PATH. Keep this
+    aligned with the actual serve command each backend launches.
+    """
+    binaries = probe.get("binaries") if isinstance(probe.get("binaries"), dict) else {}
+    dists = probe.get("dists") if isinstance(probe.get("dists"), dict) else {}
+    modules = probe.get("modules") if isinstance(probe.get("modules"), dict) else {}
+
+    if name == "vllm":
+        return bool(binaries.get("vllm"))
+    if name == "llama_cpp":
+        return bool(binaries.get("llama-server") or dists.get("llama-cpp-python"))
+    if name == "sglang":
+        return bool(dists.get("sglang") or modules.get("sglang", {}).get("real_module"))
+    if name == "diffusers":
+        return bool(
+            (dists.get("diffusers") or modules.get("diffusers", {}).get("real_module"))
+            and (dists.get("torch") or modules.get("torch", {}).get("real_module"))
+        )
+    if name == "hf_transfer":
+        return bool(dists.get("hf-transfer") or modules.get("hf_transfer", {}).get("real_module"))
+    return bool(dists.get(name) or modules.get(name, {}).get("real_module"))
+
+
+def _package_status_note(name: str, probe: dict) -> str:
+    binaries = probe.get("binaries") if isinstance(probe.get("binaries"), dict) else {}
+    modules = probe.get("modules") if isinstance(probe.get("modules"), dict) else {}
+    dists = probe.get("dists") if isinstance(probe.get("dists"), dict) else {}
+    module = modules.get(name) if isinstance(modules.get(name), dict) else {}
+    locations = module.get("locations") or []
+    if name == "vllm":
+        if binaries.get("vllm"):
+            return f"vLLM CLI: {binaries['vllm']}"
+        if module.get("found") and not dists.get("vllm"):
+            loc = locations[0] if locations else module.get("origin") or "unknown path"
+            return f"Python sees a vllm namespace at {loc}, but no vLLM CLI is on PATH."
+        return "vLLM CLI not found on PATH."
+    if name == "llama_cpp":
+        parts = []
+        if binaries.get("llama-server"):
+            parts.append(f"native llama-server: {binaries['llama-server']}")
+        if dists.get("llama-cpp-python"):
+            parts.append(f"python package: llama-cpp-python {dists['llama-cpp-python']}")
+        return "; ".join(parts) if parts else "No native llama-server or llama-cpp-python server package found."
+    if name == "diffusers":
+        if _package_installed_from_probe(name, probe):
+            return f"diffusers {dists.get('diffusers', 'available')} with torch {dists.get('torch', 'available')}"
+        return "Diffusers serving needs both diffusers and torch."
+    if name in dists:
+        return f"{name} {dists[name]}"
+    return ""
+
+
+def _package_probe_script(names: list[str]) -> str:
+    names_lit = ",".join(repr(n) for n in names)
+    return f"""
+import importlib.util
+import importlib.metadata as md
+import json
+import shutil
+
+names=[{names_lit}]
+dist_names={{
+    'vllm':['vllm'],
+    'llama_cpp':['llama-cpp-python'],
+    'sglang':['sglang'],
+    'diffusers':['diffusers','torch'],
+    'hf_transfer':['hf-transfer','hf_transfer'],
+}}
+bin_names={{
+    'vllm':['vllm'],
+    'llama_cpp':['llama-server'],
+}}
+
+def mod_status(n):
+    spec = importlib.util.find_spec(n)
+    loader = getattr(spec, 'loader', None) if spec else None
+    return {{
+        'found': bool(spec),
+        'origin': getattr(spec, 'origin', None) if spec else None,
+        'loader': type(loader).__name__ if loader else None,
+        'locations': list(getattr(spec, 'submodule_search_locations', []) or []),
+        'real_module': bool(spec and loader),
+    }}
+
+def dist_status(ds):
+    out = {{}}
+    for d in ds:
+        try:
+            out[d] = md.version(d)
+        except Exception:
+            pass
+    return out
+
+def probe(n):
+    mods = {{n: mod_status(n)}}
+    if n == 'diffusers':
+        mods['torch'] = mod_status('torch')
+    dists = dist_status(dist_names.get(n, [n]))
+    bins = {{b: shutil.which(b) for b in bin_names.get(n, [])}}
+    return {{'modules': mods, 'dists': dists, 'binaries': bins}}
+
+print(json.dumps({{n: probe(n) for n in names}}))
+"""
 
 
 def _find_line_break(buf):
@@ -646,13 +790,12 @@ def setup_shell_routes() -> APIRouter:
         never reflected because the check only ever looked at the local host.
         """
         _require_admin(request)
-        import importlib, shlex, json as _json
-        port_arg = ""
+        _reject_cross_site(request)
+        import importlib, importlib.metadata as importlib_metadata, shlex, json as _json
         if ssh_port and str(ssh_port).strip() not in ("", "22"):
             _port = str(ssh_port).strip()
-            if not _port.isdigit():
+            if not _SSH_PORT_RE.match(_port) or not (1 <= int(_port) <= 65535):
                 raise HTTPException(400, "Invalid ssh_port")
-            port_arg = f"-p {int(_port)} "
         packages = [
             # ── System ── OS binaries, not pip packages
             {"name": "tmux", "pip": "", "desc": "Required for Linux/Termux Cookbook background downloads and serves", "category": "System", "target": "remote", "kind": "system", "install_hint": "Run Cookbook server setup, or install tmux with apt/pacman/dnf/apk/zypper."},
@@ -672,32 +815,19 @@ def setup_shell_routes() -> APIRouter:
         # Remote check: for remote-target packages, probe the selected server's
         # venv over SSH so a remote `pip install` actually reflects here.
         remote_status: dict = {}
+        remote_details: dict = {}
         remote_names = [p["name"] for p in packages if p.get("target") == "remote" and p.get("kind") != "system"]
         remote_system_names = [p["name"] for p in packages if p.get("target") == "remote" and p.get("kind") == "system"]
         if host and remote_names:
             try:
-                names_lit = ",".join(repr(n) for n in remote_names)
-                py = (
-                    "import importlib.util,json,shutil;"
-                    f"names=[{names_lit}];"
-                    "status={n:(importlib.util.find_spec(n) is not None) for n in names};"
-                    "status['llama_cpp']=status.get('llama_cpp',False) or shutil.which('llama-server') is not None;"
-                    "print(json.dumps(status))"
-                )
-                src = ""
-                if venv:
-                    act = venv if venv.endswith("/bin/activate") else venv.rstrip("/") + "/bin/activate"
-                    # NOT shlex.quoted: a leading ~ must stay shell-expandable on
-                    # the remote (quoting it breaks `~/venv` → activation fails →
-                    # the && short-circuits and every package reads as missing).
-                    src = f". {act} && "
+                py = _package_probe_script(remote_names)
+                # `venv` is validated but left unquoted so leading ~ expands on
+                # the remote; quoting it breaks ~/venv activation.
+                src = _venv_activate_prefix(venv)
                 inner = f"{src}python3 -c {shlex.quote(py)}"
-                ssh_cmd = (
-                    f"ssh -o ConnectTimeout=6 -o StrictHostKeyChecking=no {port_arg}"
-                    f"{shlex.quote(host)} {shlex.quote(inner)}"
-                )
-                proc = await asyncio.create_subprocess_shell(
-                    ssh_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                argv = _ssh_base_argv(host, ssh_port) + [inner]
+                proc = await asyncio.create_subprocess_exec(
+                    *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
                 out, _err = await asyncio.wait_for(proc.communicate(), timeout=12)
                 txt = out.decode("utf-8", errors="replace").strip()
@@ -705,8 +835,15 @@ def setup_shell_routes() -> APIRouter:
                 for line in reversed(txt.splitlines()):
                     line = line.strip()
                     if line.startswith("{"):
-                        remote_status = _json.loads(line)
+                        remote_details = _json.loads(line)
+                        remote_status = {
+                            name: _package_installed_from_probe(name, probe)
+                            for name, probe in remote_details.items()
+                            if isinstance(probe, dict)
+                        }
                         break
+            except ValueError as e:
+                raise HTTPException(400, str(e))
             except Exception:
                 remote_status = {}
         if host and remote_system_names:
@@ -716,12 +853,9 @@ def setup_shell_routes() -> APIRouter:
                     qn = shlex.quote(name)
                     checks.append(f"if command -v {qn} >/dev/null 2>&1; then echo {qn}=1; else echo {qn}=0; fi")
                 inner = " ; ".join(checks)
-                ssh_cmd = (
-                    f"ssh -o ConnectTimeout=6 -o StrictHostKeyChecking=no {port_arg}"
-                    f"{shlex.quote(host)} {shlex.quote(inner)}"
-                )
-                proc = await asyncio.create_subprocess_shell(
-                    ssh_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                argv = _ssh_base_argv(host, ssh_port) + [inner]
+                proc = await asyncio.create_subprocess_exec(
+                    *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
                 out, _err = await asyncio.wait_for(proc.communicate(), timeout=12)
                 txt = out.decode("utf-8", errors="replace").strip()
@@ -729,6 +863,8 @@ def setup_shell_routes() -> APIRouter:
                     name, sep, value = line.strip().partition("=")
                     if sep and name in remote_system_names:
                         remote_status[name] = value == "1"
+            except ValueError as e:
+                raise HTTPException(400, str(e))
             except Exception:
                 pass
 
@@ -736,15 +872,28 @@ def setup_shell_routes() -> APIRouter:
             on_remote = bool(host and pkg.get("target") == "remote")
             if on_remote:
                 pkg["installed"] = bool(remote_status.get(pkg["name"], False))
+                probe = remote_details.get(pkg["name"])
+                if isinstance(probe, dict):
+                    pkg["details"] = probe
+                    note = _package_status_note(pkg["name"], probe)
+                    if note:
+                        pkg["status_note"] = note
             elif pkg.get("kind") == "system":
                 pkg["installed"] = shutil.which(pkg["name"]) is not None
             elif pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
                 pkg["installed"] = True
+                pkg["status_note"] = f"native llama-server: {shutil.which('llama-server')}"
             else:
                 try:
                     importlib.import_module(pkg["name"])
-                    pkg["installed"] = True
+                    if pkg["name"] == "vllm":
+                        pkg["installed"] = shutil.which("vllm") is not None
+                    else:
+                        importlib_metadata.version(pkg["name"].replace("_", "-"))
+                        pkg["installed"] = True
                 except ImportError:
+                    pkg["installed"] = False
+                except importlib_metadata.PackageNotFoundError:
                     pkg["installed"] = False
 
             if pkg["name"] == "docker":

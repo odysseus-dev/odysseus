@@ -1106,6 +1106,16 @@ import * as Modals from './modalManager.js';
     });
   }
 
+  async function _pdfResponseErrorMessage(res) {
+    const text = await res.text().catch(() => '');
+    try {
+      const data = JSON.parse(text);
+      if (typeof data?.detail === 'string') return data.detail;
+      if (data?.detail) return JSON.stringify(data.detail);
+    } catch (_) {}
+    return text || res.statusText || `HTTP ${res.status}`;
+  }
+
   async function _renderPdfPane() {
     const pane = document.getElementById('doc-pdf-view');
     if (!pane || !activeDocId) return;
@@ -1118,7 +1128,7 @@ import * as Modals from './modalManager.js';
     let data;
     try {
       const res = await fetch(`${API_BASE}/api/document/${docId}/render-pages`);
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw new Error(await _pdfResponseErrorMessage(res));
       data = await res.json();
     } catch (e) {
       pane.innerHTML = `<div style="color:#fbb;padding:40px;text-align:center;">Failed to load PDF view: ${_escHtml(e.message || String(e))}</div>`;
@@ -2296,6 +2306,48 @@ import * as Modals from './modalManager.js';
     return r && r.style.display !== 'none' ? r : null;
   }
 
+  function _stripEmailReplyQuoteText(text) {
+    const original = String(text || '');
+    if (!original) return { body: '', stripped: false };
+    const lines = original.split('\n');
+    const quoteIdx = lines.findIndex(line =>
+      /^-{5,}\s*Previous message\s*-{5,}$/i.test(line.trim())
+      || /^On .+ wrote:\s*$/i.test(line.trim())
+    );
+    if (quoteIdx <= 0) return { body: original.trim(), stripped: false };
+    const body = lines.slice(0, quoteIdx).join('\n').trim();
+    return { body, stripped: !!body };
+  }
+
+  function _emailReplyOwnText(text) {
+    return _stripEmailReplyQuoteText(text).body;
+  }
+
+  function _setEmailBodyText(textarea, value) {
+    if (!textarea) return;
+    textarea.value = value || '';
+    syncHighlighting();
+    const rich = _emailRichbodyActive();
+    if (rich) rich.innerHTML = _emailBodyToHtml(textarea.value);
+  }
+
+  async function _streamEmailBodyText(textarea, value) {
+    if (!textarea) return;
+    const finalText = String(value || '');
+    const maxFrames = 90;
+    const chunk = Math.max(8, Math.ceil(finalText.length / maxFrames));
+    textarea.value = '';
+    const rich = _emailRichbodyActive();
+    if (rich) rich.innerHTML = '';
+    for (let i = 0; i < finalText.length; i += chunk) {
+      const next = finalText.slice(0, i + chunk);
+      textarea.value = next;
+      if (rich) rich.innerHTML = _emailBodyToHtml(next);
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+    _setEmailBodyText(textarea, finalText);
+  }
+
   function _focusEmailBodyEnd() {
     const target = _emailRichbodyActive() || document.getElementById('doc-editor-textarea');
     if (!target) return;
@@ -2785,15 +2837,21 @@ import * as Modals from './modalManager.js';
     const references = document.getElementById('doc-email-references')?.value?.trim();
     const sourceUid = document.getElementById('doc-email-source-uid')?.value?.trim();
     const sourceFolder = document.getElementById('doc-email-source-folder')?.value?.trim() || 'INBOX';
-    const body = document.getElementById('doc-editor-textarea')?.value?.trim();
     // WYSIWYG: the rich body's HTML becomes the email's HTML part (server
     // sanitizes it). `body` (plain text mirror) stays the text/plain fallback.
     const _rich = _emailRichbodyActive();
+    if (_rich) _syncEmailRichbody(_rich);
+    const textarea = document.getElementById('doc-editor-textarea');
+    const body = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
     const bodyHtml = _rich ? _rich.innerHTML : null;
     const doc = docs.get(activeDocId);
     const attachments = (doc?._composeAtts || []).map(a => a.token);
     if (!to || !body) {
       if (uiModule) uiModule.showError('To and body are required');
+      return;
+    }
+    if (inReplyTo && !_emailReplyOwnText(body)) {
+      if (uiModule) uiModule.showError('Reply body is empty');
       return;
     }
     // Warn if body mentions attachments but none are actually attached
@@ -2819,12 +2877,13 @@ import * as Modals from './modalManager.js';
       let canceled = false;
       if (uiModule) {
         uiModule.showToast('Sending', {
-          duration: 1200,
+          duration: 3200,
+          leadingIcon: 'spinner',
           action: 'Cancel',
           onAction: () => { canceled = true; },
         });
       }
-      await _sleep(1000);
+      await _sleep(3000);
       if (!canceled) detachedEmailDoc = _detachActiveEmailForBackground(sendDocId);
       await _sleep(200);
       if (canceled) {
@@ -2834,28 +2893,10 @@ import * as Modals from './modalManager.js';
         return;
       }
 
-      let undone = false;
-      if (uiModule) {
-        uiModule.showToast('Message sent', {
-          duration: 2200,
-          leadingIcon: 'check',
-          action: 'Undo',
-          actionHint: 'undo send',
-          onAction: () => { undone = true; },
-        });
-      }
-      await _sleep(2200);
-      if (undone) {
-        _restoreDetachedEmailDoc(detachedEmailDoc);
-        detachedEmailDoc = null;
-        if (uiModule) uiModule.showToast('Send undone');
-        return;
-      }
-      if (uiModule) uiModule.showToast('Sending...', 2000);
-
       const activeAccountId = await _resolveComposeSendAccountId();
       const res = await fetch(`${API_BASE}/api/email/send`, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to, cc: cc || null, bcc: bcc || null, subject, body, body_html: bodyHtml,
@@ -2865,7 +2906,13 @@ import * as Modals from './modalManager.js';
           wait_for_delivery: true,
         }),
       });
-      const data = await res.json();
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (_) {
+        data = { success: false, error: `Send failed (${res.status})` };
+      }
+      if (!res.ok && data && !data.error) data.error = `Send failed (${res.status})`;
       if (data.success) {
         if (uiModule) {
           uiModule.showToast('Message sent', {
@@ -2951,8 +2998,10 @@ import * as Modals from './modalManager.js';
     const subject = document.getElementById('doc-email-subject')?.value?.trim();
     const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim();
     const references = document.getElementById('doc-email-references')?.value?.trim();
-    const body = document.getElementById('doc-editor-textarea')?.value?.trim();
     const _rich = _emailRichbodyActive();
+    if (_rich) _syncEmailRichbody(_rich);
+    const textarea = document.getElementById('doc-editor-textarea');
+    const body = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
     const bodyHtml = _rich ? _rich.innerHTML : null;
     const btn = document.getElementById('doc-email-draft-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
@@ -3064,6 +3113,32 @@ import * as Modals from './modalManager.js';
     const textarea = document.getElementById('doc-editor-textarea');
     if (!textarea) return;
     const currentBody = textarea.value || '';
+    const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim() || '';
+    const sourceUid = document.getElementById('doc-email-source-uid')?.value?.trim() || '';
+    const sourceFolder = document.getElementById('doc-email-source-folder')?.value?.trim() || 'INBOX';
+    const cleanAiReplyText = (text) => {
+      if (!text) return '';
+      let t = String(text);
+      const open = /<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+/i;
+      const close = /<<<\s*END\s*>>+/i;
+      const m = open.exec(t);
+      if (m) {
+        const rest = t.slice(m.index + m[0].length);
+        const c = close.exec(rest);
+        t = c ? rest.slice(0, c.index) : rest;
+      }
+      return t
+        .replace(/<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+/gi, '')
+        .replace(/<<<\s*END\s*>>+/gi, '')
+        .trim();
+    };
+    const shouldUseFastAiReply = () => {
+      const text = `${subject}\n${currentBody}`.toLowerCase();
+      if (/\b(attach(?:ed|ment)?|pdf|document|contract|invoice|receipt|quote|estimate|proposal|question|questions|details|schedule|booking|reservation|meeting|calendar|availability|confirm|confirmation|review|sign|signature)\b/.test(text)) {
+        return false;
+      }
+      return currentBody.length < 2500;
+    };
 
     // Use the current chat model
     let currentModel = '';
@@ -3086,22 +3161,24 @@ import * as Modals from './modalManager.js';
           original_body: currentBody,
           model: currentModel,
           session_id: currentSessionId,
+          message_id: inReplyTo,
+          uid: sourceUid,
+          folder: sourceFolder,
+          fast: shouldUseFastAiReply(),
         }),
       });
       const data = await res.json();
       if (data.success && data.reply) {
+        const cleanReply = cleanAiReplyText(data.reply);
         const lines = currentBody.split('\n');
         const quoteIdx = lines.findIndex(l => l.startsWith('On ') && l.includes(' wrote:'));
+        let newBody = '';
         if (quoteIdx > 0) {
-          const newBody = data.reply + '\n\n' + lines.slice(quoteIdx).join('\n');
-          textarea.value = newBody;
+          newBody = cleanReply + '\n\n' + lines.slice(quoteIdx).join('\n');
         } else {
-          textarea.value = data.reply + (currentBody ? '\n\n' + currentBody : '');
+          newBody = cleanReply + (currentBody ? '\n\n' + currentBody : '');
         }
-        syncHighlighting();
-        // Mirror into the WYSIWYG rich body if it's the active editor.
-        const _rb = _emailRichbodyActive();
-        if (_rb) _rb.innerHTML = _emailBodyToHtml(textarea.value);
+        await _streamEmailBodyText(textarea, newBody);
         if (uiModule) uiModule.showToast(`AI draft inserted (${data.model_used || 'AI'})`);
       } else {
         if (uiModule) uiModule.showError(data.error || 'Failed to generate reply');
@@ -3120,12 +3197,21 @@ import * as Modals from './modalManager.js';
     const subject = document.getElementById('doc-email-subject')?.value?.trim();
     const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim();
     const references = document.getElementById('doc-email-references')?.value?.trim();
-    const body = document.getElementById('doc-editor-textarea')?.value?.trim();
+    const _rich = _emailRichbodyActive();
+    if (_rich) _syncEmailRichbody(_rich);
+    const body = (_rich
+      ? (_rich.innerText || _rich.textContent || '')
+      : (document.getElementById('doc-editor-textarea')?.value || '')
+    ).trim();
     const doc = docs.get(activeDocId);
     const attachments = (doc?._composeAtts || []).map(a => a.token);
 
     if (!to || !body) {
       if (uiModule) uiModule.showError('To and body are required');
+      return;
+    }
+    if (inReplyTo && !_emailReplyOwnText(body)) {
+      if (uiModule) uiModule.showError('Reply body is empty');
       return;
     }
     if (attachments.length === 0 && _bodyMentionsAttachment(body)) {
@@ -5668,6 +5754,41 @@ import * as Modals from './modalManager.js';
     requestAnimationFrame(() => requestAnimationFrame(() => {
       switchToDoc(doc.id);
     }));
+  }
+
+  export async function replaceEmailReplyBody(docId, replyText) {
+    const doc = docs.get(docId);
+    if (!doc) return;
+    const fields = _parseEmailHeader(doc.content || '');
+    const lines = String(fields.body || '').split('\n');
+    const quoteIdx = lines.findIndex(line =>
+      /^-{5,}\s*Previous message\s*-{5,}$/i.test(line.trim())
+      || /^On .+ wrote:\s*$/i.test(line.trim())
+    );
+    const quote = quoteIdx >= 0 ? lines.slice(quoteIdx).join('\n') : '';
+    const ownText = _emailReplyOwnText(fields.body || '');
+    if (ownText && !/^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText)) {
+      if (uiModule) uiModule.showToast('AI reply ready, but draft was edited');
+      return;
+    }
+    const body = String(replyText || '').trim() + (quote ? `\n\n${quote}` : '');
+    doc.content = _buildEmailContent(
+      fields.to,
+      fields.subject,
+      fields.inReplyTo,
+      fields.references,
+      body,
+      fields.sourceUid,
+      fields.sourceFolder,
+      fields.cc,
+      fields.bcc,
+    );
+    if (activeDocId === docId) {
+      const textarea = document.getElementById('doc-editor-textarea');
+      if (textarea) await _streamEmailBodyText(textarea, body);
+    }
+    clearTimeout(_autoSaveDebounce);
+    _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
   }
 
   // Force the panel into a genuinely-open state. `isOpen` can be true while the
