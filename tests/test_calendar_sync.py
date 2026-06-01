@@ -299,7 +299,7 @@ class _FakeAsyncClient:
     async def get(self, url, headers=None, params=None):
         _FakeAsyncClient.calls.append(("GET", url, params))
         if url.endswith("/users/me"):
-            return _FakeResp({"resource": {"uri": "https://api.calendly.com/users/U", "name": "Amish"}})
+            return _FakeResp({"resource": {"uri": "https://api.calendly.com/users/U", "name": "Test User"}})
         # First scheduled_events page carries a cursor; second ends it.
         if params is not None:  # first hop (original params, no cursor baked in)
             return _FakeResp({
@@ -325,7 +325,7 @@ def test_calendly_fetch_events_paginates_and_is_read_only(monkeypatch):
 
     name, events = asyncio.run(calendly_sync._fetch_events("tok-123"))
 
-    assert name == "Amish"
+    assert name == "Test User"
     assert [e["uri"].rsplit("/", 1)[-1] for e in events] == ["E1", "E2"]
     # Every HTTP call was a GET — the sync never mutates the Calendly account.
     assert all(method == "GET" for method, _u, _p in _FakeAsyncClient.calls)
