@@ -1,0 +1,11 @@
+version: "0.5"
+processes:
+  chroma:
+    command: chroma run --path ./data/chroma
+    availability:
+      restart: "on_failure"
+  app:
+    command: python -m uvicorn app:app --host 0.0.0.0 --port 7000
+    depends_on:
+      chroma:
+        condition: process_started
