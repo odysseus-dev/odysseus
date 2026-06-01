@@ -429,6 +429,19 @@ function _rerenderCachedModels() {
       panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="prefix_cache"${sv('prefix_cache',false)?' checked':''} /> Prefix Caching${_h('Cache shared prompt prefixes across requests')}</label>`;
       panelHtml += `<label class="hwfit-sf-cb hwfit-backend-vllm"><input type="checkbox" class="hwfit-sf" data-field="auto_tool"${sv('auto_tool',false)?' checked':''} /> Auto Tool Choice${_h('Enable function/tool calling for agent mode')}</label>`;
       panelHtml += `</div>`;
+      // Row 2c: llama.cpp fit/perf flags (set by Auto profiles, editable by hand)
+      const _kvOpts = ['', 'q4_0', 'q8_0', 'f16'].map(k => `<option value="${k}"${sv('cache_type','')===k?' selected':''}>${k||'default'}</option>`).join('');
+      panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp">`;
+      panelHtml += `<label>${_l('CPU MoE','n-cpu-moe: number of MoE expert layers to run on CPU when the model is bigger than VRAM. 0 = all on GPU. Set automatically by the Auto profiles below.')}<input type="text" class="hwfit-sf" data-field="n_cpu_moe" value="${esc(sv('n_cpu_moe',''))}" placeholder="0" style="width:54px;" /></label>`;
+      panelHtml += `<label>${_l('KV Cache','cache-type-k/v: quantize the KV cache. q4_0 = smallest (more context), q8_0 = sharp long-context, f16 = full. Blank = llama.cpp default.')}<select class="hwfit-sf" data-field="cache_type">${_kvOpts}</select></label>`;
+      panelHtml += `<label class="hwfit-sf-cb" style="align-self:end;"><input type="checkbox" class="hwfit-sf" data-field="flash_attn"${sv('flash_attn',false)?' checked':''} /> Flash Attn${_h('--flash-attn on: faster attention + needed for quantized KV cache.')}</label>`;
+      panelHtml += `</div>`;
+      // Row 2d: Auto profiles — computed from detected hardware (see profiles.py).
+      // Buttons are injected after the panel mounts (needs an async fetch).
+      panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp hwfit-serve-profiles" style="align-items:center;gap:8px;">`;
+      panelHtml += `<span style="opacity:0.7;font-size:11px;">Auto profiles:</span>`;
+      panelHtml += `<span class="hwfit-profile-btns" style="display:flex;gap:6px;flex-wrap:wrap;"><span style="opacity:0.5;font-size:11px;">computing…</span></span>`;
+      panelHtml += `</div>`;
       // Row 3a: Checkboxes (llama.cpp-only)
       panelHtml += `<div class="hwfit-serve-checks hwfit-backend-llamacpp">`;
       panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="unified_mem"${sv('unified_mem',false)?' checked':''} /> Unified Memory${_h('For AMD APUs / Strix Halo: exports GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 so llama.cpp can address the full BIOS VRAM carveout instead of the default ~28 GB cap. No-op on discrete GPUs.')}</label>`;
@@ -537,6 +550,90 @@ function _rerenderCachedModels() {
         return cmd;
       }
       updateCmd();
+
+      // Context clamp. Two ceilings:
+      //  - ABSOLUTE_CTX_MAX: a hard sanity cap (no LLM trains past ~1M tokens),
+      //    so an obvious typo like 16000000 can never reach llama.cpp even when
+      //    we don't know the model's real limit (not in catalog / profiles
+      //    fetch failed). This is what stops the radv ErrorDeviceLost crash.
+      //  - panel._modelCtxMax: the model's actual trained limit (set by the
+      //    profiles fetch below) — a tighter, model-specific cap when known.
+      const ABSOLUTE_CTX_MAX = 1048576;   // 1M tokens — above any real n_ctx_train
+      const _ctxEl0 = panel.querySelector('[data-field="ctx"]');
+      function _clampCtx(announce) {
+        if (!_ctxEl0) return;
+        const cap = panel._modelCtxMax > 0 ? panel._modelCtxMax : ABSOLUTE_CTX_MAX;
+        const v = parseInt(_ctxEl0.value, 10);
+        if (Number.isFinite(v) && v > cap) {
+          _ctxEl0.value = String(cap);
+          _ctxEl0.title = `Capped to ${panel._modelCtxMax > 0 ? "this model's trained limit" : "the maximum sane context"} (${cap}).`;
+          if (announce) uiModule.showToast(`Context capped to ${cap}`);
+          updateCmd();
+        }
+      }
+      if (_ctxEl0) {
+        _ctxEl0.addEventListener('change', () => _clampCtx(false));
+        _ctxEl0.addEventListener('blur', () => _clampCtx(false));
+        _clampCtx(false);   // fix any stale/preset value already present
+      }
+
+      // Auto profiles — fetch hardware-computed llama.cpp profiles and render
+      // them as clickable chips. Clicking one fills the ctx/CPU-MoE/KV/flash
+      // fields and rebuilds the command. Computed from detected VRAM (see
+      // services/hwfit/profiles.py); rough on t/s, accurate on fit.
+      async function _loadServeProfiles() {
+        const wrap = panel.querySelector('.hwfit-profile-btns');
+        if (!wrap) return;
+        try {
+          const host = (_es.remoteHost || '').trim();
+          const params = new URLSearchParams({ model: repo });
+          if (host) {
+            params.set('host', host);
+            const _sp = (_es.servers || []).find(s => s.host === host)?.port;
+            if (_sp) params.set('ssh_port', _sp);
+          }
+          const res = await fetch(`/api/hwfit/profiles?${params}`);
+          const data = await res.json();
+          // Remember the model's trained context limit and clamp the ctx field
+          // to it — asking llama.cpp for ctx > n_ctx_train overflows and, with a
+          // quantized KV cache, can crash the GPU (radv ErrorDeviceLost).
+          const ctxMax = Number(data && data.model_ctx_max) || 0;
+          if (ctxMax > 0) {
+            panel._modelCtxMax = ctxMax;   // tighten the clamp to the real limit
+            _clampCtx(false);              // re-apply now that we know the model's max
+          }
+          const profs = (data && Array.isArray(data.profiles)) ? data.profiles : [];
+          if (!profs.length) { wrap.innerHTML = `<span style="opacity:0.5;font-size:11px;">no auto profile for this model</span>`; return; }
+          wrap.innerHTML = '';
+          for (const p of profs) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'cookbook-btn hwfit-profile-chip';
+            b.style.cssText = 'height:24px;padding:0 9px;font-size:11px;';
+            const off = p.offloads ? `, ncm${p.n_cpu_moe}` : ', all-GPU';
+            b.textContent = `${p.label} · ${p.quant} · ${Math.round(p.ctx/1024)}k${off}`;
+            b.title = `${p.note}\nKV ${p.cache_type}, ~${p.est_vram_gb} GB VRAM`;
+            b.addEventListener('click', () => {
+              const set = (field, val) => {
+                const el = panel.querySelector(`[data-field="${field}"]`);
+                if (!el) return;
+                if (el.type === 'checkbox') el.checked = !!val; else el.value = val;
+              };
+              set('ctx', p.ctx);
+              set('n_cpu_moe', p.n_cpu_moe || '');
+              set('cache_type', p.cache_type || '');
+              set('flash_attn', true);   // required for a quantized KV cache
+              wrap.querySelectorAll('.hwfit-profile-chip').forEach(x => x.classList.remove('cookbook-btn-active'));
+              b.classList.add('cookbook-btn-active');
+              updateCmd();
+            });
+            wrap.appendChild(b);
+          }
+        } catch {
+          wrap.innerHTML = `<span style="opacity:0.5;font-size:11px;">profile compute failed</span>`;
+        }
+      }
+      _loadServeProfiles();
 
       // Show/hide backend-specific sections
       function updateBackendVisibility() {
@@ -1188,6 +1285,12 @@ function _rerenderCachedModels() {
       // Launch button
       panel.querySelector('.hwfit-serve-launch').addEventListener('click', async (ev) => {
         const _launchBtn = ev.currentTarget;
+        // Final safety net: never launch with ctx beyond the model's trained
+        // limit (or the absolute sanity ceiling when the limit is unknown). A
+        // stale preset or typo (e.g. 16000000) overflows and, with a quantized
+        // KV cache, can crash the GPU. Skip only if the user hand-edited the raw
+        // command (then we respect their literal text).
+        if (!_cmdManuallyEdited) _clampCtx(true);
         if (!_cmdManuallyEdited) updateCmd();
         const launchCmd = _cmdTextarea ? _cmdTextarea.value.trim() : panel._cmd;
         const serveState = {};

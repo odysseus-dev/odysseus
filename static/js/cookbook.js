@@ -399,11 +399,32 @@ export function _buildServeCmd(f, modelName, backend) {
     // renders modern GGUF chat templates that the Python bindings' Jinja2
     // rejects (do_tojson ensure_ascii). Fall back to llama_cpp.server.
     // Don't suppress stderr — surface real errors (missing file, lib, OOM).
-    const _lcpServer = `${lcPrefix}${py} -m llama_cpp.server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} --n_gpu_layers ${f.ngl || '99'} --n_ctx ${f.ctx || '8192'}`;
+    // Optional perf/fit flags from a hardware profile (see services/hwfit/
+    // profiles.py). n_cpu_moe offloads MoE expert layers to CPU when the model
+    // is bigger than VRAM; flash-attn + a quantized KV cache cut KV memory and
+    // speed things up. Only emitted when set, so manual/older flows are unchanged.
+    const _ncm = (f.n_cpu_moe ?? '').toString().trim();
+    const _kv = (f.cache_type ?? '').toString().trim();
+    let _lcExtra = '';
+    let _lcpExtra = '';
+    if (_ncm !== '' && Number(_ncm) > 0) {
+      _lcExtra += ` --n-cpu-moe ${_ncm}`;
+      _lcpExtra += ` --n_cpu_moe ${_ncm}`;   // llama-cpp-python uses underscores
+    }
+    if (f.flash_attn) {
+      _lcExtra += ' --flash-attn on';
+      _lcpExtra += ' --flash_attn true';
+    }
+    if (_kv) {
+      _lcExtra += ` --cache-type-k ${_kv} --cache-type-v ${_kv}`;
+      // llama-cpp-python exposes these as type_k/type_v; pass through best-effort.
+      _lcpExtra += ` --type_k ${_kv} --type_v ${_kv}`;
+    }
+    const _lcpServer = `${lcPrefix}${py} -m llama_cpp.server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} --n_gpu_layers ${f.ngl || '99'} --n_ctx ${f.ctx || '8192'}${_lcpExtra}`;
     if (_isWindows()) {
       cmd += _lcpServer;
     } else {
-      cmd += `${lcPrefix}llama-server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} -ngl ${f.ngl || '99'} -c ${f.ctx || '8192'}`;
+      cmd += `${lcPrefix}llama-server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} -ngl ${f.ngl || '99'} -c ${f.ctx || '8192'}${_lcExtra}`;
       cmd += ` || ${_lcpServer}`;
     }
   } else if (backend === 'ollama') {
@@ -1423,6 +1444,16 @@ function _renderRecipes() {
   html += '<option value="Q3_K_M">Q3</option><option value="Q2_K">Q2</option>';
   html += '<option value="AWQ-4bit">AWQ</option><option value="FP8">FP8</option>';
   html += '<option value="">Native</option></select>';
+  // Engine filter: show only models whose serve engine matches. "llama.cpp"
+  // (GGUF) runs everywhere incl. consumer AMD/Apple; vLLM/SGLang are CUDA /
+  // datacenter-ROCm. Filtering is client-side via _detectBackend() in the
+  // hwfit renderer, so it composes with the quant/type/search filters.
+  html += '<select class="cookbook-field-input hwfit-engine" id="hwfit-engine" style="height:28px;" title="Filter by serving engine">';
+  html += '<option value="">Engine</option>';
+  html += '<option value="llamacpp">llama.cpp</option>';
+  html += '<option value="vllm">vLLM</option>';
+  html += '<option value="sglang">SGLang</option>';
+  html += '</select>';
   html += '</div>';
   html += '<div class="hwfit-toolbar" style="margin-top:7px;">';
   html += '<select class="cookbook-field-input hwfit-server-select" id="hwfit-server-select" style="height:28px;min-width:88px;position:relative;top:0px;">';

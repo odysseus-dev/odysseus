@@ -363,6 +363,17 @@ function _hwfitShowError(list, host, detail) {
   if (rb) rb.addEventListener('click', () => { _resetGpuToggleState(); _hwfitFetch(true); });
 }
 
+// Client-side "Engine" filter (llama.cpp / vLLM / SGLang). Empty = show all.
+// Uses the same _detectBackend() the serve commands use, so what you filter to
+// is exactly what would be launched. Pure view filter — no refetch needed.
+function _applyEngineFilter(models) {
+  const want = document.getElementById('hwfit-engine')?.value || '';
+  if (!want || !Array.isArray(models)) return models || [];
+  return models.filter(m => {
+    try { return _detectBackend(m).backend === want; } catch { return true; }
+  });
+}
+
 export async function _hwfitFetch(fresh = false) {
   const _tk = ++_hwfitFetchToken;
   const useCase = document.getElementById('hwfit-usecase')?.value || '';
@@ -382,7 +393,7 @@ export async function _hwfitFetch(fresh = false) {
   if (_cached) {
     _hwfitCache = _cached;
     _hwfitRenderHw(hw, _cached.system);
-    _hwfitRenderList(list, _cached.models);
+    _hwfitRenderList(list, _applyEngineFilter(_cached.models));
   } else {
     // Show spinner while scanning — stack the spinner above a text label
     // (the .hwfit-loading class is a centered flex ROW, so force column here).
@@ -523,7 +534,7 @@ export async function _hwfitFetch(fresh = false) {
         return asc ? av - bv : bv - av;
       });
     }
-    _hwfitRenderList(list, data.models);
+    _hwfitRenderList(list, _applyEngineFilter(data.models));
     // Persist this result so the next page load can paint it instantly.
     _writeScanCache(_sig, data);
     // Render GPU toggles — only on first scan (no override active)
@@ -738,9 +749,10 @@ export function _hwfitRenderList(el, models) {
     const hasHw = sys && ((sys.gpu_vram_gb || 0) > 0 || (sys.total_ram_gb || 0) > 8);
     const hasFilters = !!(document.getElementById('hwfit-search')?.value?.trim()
       || document.getElementById('hwfit-usecase')?.value
-      || document.getElementById('hwfit-quant')?.value);
+      || document.getElementById('hwfit-quant')?.value
+      || document.getElementById('hwfit-engine')?.value);
     let msg;
-    if (hasFilters) msg = 'No models match these filters — try clearing the search, use-case, or quant.';
+    if (hasFilters) msg = 'No models match these filters — try clearing the search, use-case, quant, or engine.';
     else if (hasHw) msg = 'No models fit — the hardware probe may have under-reported. Try Rescan.';
     else msg = 'No models fit your hardware';
     el.innerHTML = `<div class="hwfit-loading">${msg}</div>`;
@@ -1087,6 +1099,17 @@ export function _hwfitInit() {
   if (uc) uc.addEventListener('change', () => _hwfitFetch());
   if (sort) sort.addEventListener('change', () => _hwfitFetch());
   if (qpref) qpref.addEventListener('change', () => _hwfitFetch());
+  // Engine filter is a pure client-side view filter over the already-fetched
+  // list, so just re-render from cache instead of re-probing hardware.
+  const engine = document.getElementById('hwfit-engine');
+  if (engine) engine.addEventListener('change', () => {
+    const list = document.getElementById('hwfit-list');
+    if (list && _hwfitCache && Array.isArray(_hwfitCache.models)) {
+      _hwfitRenderList(list, _applyEngineFilter(_hwfitCache.models));
+    } else {
+      _hwfitFetch();
+    }
+  });
   // Rescan — force a fresh hardware probe (bypasses the per-host cache).
   const rescan = document.getElementById('hwfit-rescan');
   if (rescan && !rescan.dataset.bound) {
