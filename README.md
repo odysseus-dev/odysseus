@@ -125,7 +125,7 @@ This is the most robust and recommended way to run Odysseus locally without Dock
     ```
 note: by running these commands everything will be setup automatically. When you get your generated password copy it and then press enter.
       The services will start automatically! You can also quit your terminal if you want to and the application will still run!
-      You should also never change the flake.lock file!
+      You should also never change the flake.lock, if you want to update run, nix flake update!
 <details>
 <summary>Cookbook, GPU, Ollama, and troubleshooting notes</summary>
 
