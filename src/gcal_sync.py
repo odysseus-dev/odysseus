@@ -101,12 +101,20 @@ def _sync_blocking(owner: str, url: str, feed_bytes: bytes) -> dict:
             if not dtstart_p:
                 continue
 
-            uid_val = str(comp.get("uid", "")) or str(uuid.uuid4())
-            # Namespace the UID by this calendar so the same Google event UID
-            # appearing in two subscribed feeds (or a CalDAV mirror) doesn't
-            # collide on the shared CalendarEvent.uid primary key.
-            uid_val = f"{cal_id}:{uid_val}"
-            seen_uids.add(uid_val)
+            base_uid = str(comp.get("uid", "")) or str(uuid.uuid4())
+            # Recurring events appear in the feed as one master VEVENT plus a
+            # separate VEVENT per modified occurrence, all sharing the same UID
+            # and disambiguated only by RECURRENCE-ID. Fold RECURRENCE-ID into
+            # the key so those overrides become distinct rows instead of
+            # colliding on the UID primary key.
+            uid_val = f"{cal_id}:{base_uid}"
+            rid = comp.get("recurrence-id")
+            if rid is not None:
+                try:
+                    rid_key = rid.dt.isoformat() if hasattr(rid, "dt") else str(rid)
+                except Exception:
+                    rid_key = str(rid)
+                uid_val = f"{uid_val}:{rid_key}"
 
             start_dt, all_day = to_utc_naive(dtstart_p.dt)
 
@@ -121,8 +129,18 @@ def _sync_blocking(owner: str, url: str, feed_bytes: bytes) -> dict:
             # Skip events entirely outside the sync window so prune_stale's
             # window-scoped delete stays consistent with what we inserted.
             if end_dt < start or start_dt > end:
-                seen_uids.discard(uid_val)
                 continue
+
+            # SessionLocal runs with autoflush=False, so upsert_event's
+            # existing-row lookup can't see inserts still pending earlier in
+            # this same loop. A feed that lists the same key twice (true
+            # duplicate, or a recurrence row we can't otherwise disambiguate)
+            # would therefore add two rows with one UID and blow up the commit
+            # with a UNIQUE violation — taking the whole pull down with it.
+            # Dedupe in-memory: first occurrence wins for this pull.
+            if uid_val in seen_uids:
+                continue
+            seen_uids.add(uid_val)
 
             row_is_utc = (
                 not all_day

@@ -146,6 +146,12 @@ def _store_events(owner: str, display_name: str, events: list) -> dict:
                 continue
 
             uid_val = f"{cal_id}:{uri.rsplit('/', 1)[-1]}"
+            # SessionLocal is autoflush=False, so the upsert can't see inserts
+            # still pending earlier in this loop; if a paginated response ever
+            # repeated an event the duplicate add would fail the commit. Dedupe
+            # in-memory — first occurrence wins for this pull.
+            if uid_val in seen_uids:
+                continue
             seen_uids.add(uid_val)
 
             status = (ev.get("status") or "").lower()

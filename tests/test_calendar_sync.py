@@ -11,7 +11,7 @@ the PR thread.
 """
 
 import asyncio
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -108,6 +108,54 @@ def test_gcal_sync_blocking_parses_and_namespaces_uid(monkeypatch):
     # UID is "<cal_id>:<original-uid>"
     assert captured["fields"]["uid"] == f"{captured['cal_id']}:abc-123"
     assert captured["fields"]["is_utc"] is True
+
+
+def test_gcal_sync_blocking_handles_recurring_duplicate_uids(monkeypatch):
+    """A real Google feed lists recurring events as a master VEVENT plus one
+    VEVENT per modified occurrence, all sharing the same UID. Plus feeds can
+    repeat an identical UID outright. Because SessionLocal runs autoflush=False,
+    the upsert can't dedupe pending inserts mid-loop — so without care these
+    collide on the UID primary key and the whole commit fails (the bug that
+    silently stored zero events). This must NOT raise and must not emit two
+    rows for one key."""
+    added = []
+    monkeypatch.setattr(gcal_sync, "get_or_create_cal", lambda *a, **k: None)
+    monkeypatch.setattr(gcal_sync, "prune_stale", lambda *a, **k: 0)
+    monkeypatch.setattr(gcal_sync, "upsert_event", lambda db, cal_id, f: added.append(f["uid"]))
+
+    class _FakeSession:
+        def commit(self): pass
+        def rollback(self): pass
+        def close(self): pass
+
+    import core.database as db
+    monkeypatch.setattr(db, "SessionLocal", lambda: _FakeSession())
+
+    now = datetime.utcnow()
+    d1 = now.strftime("%Y%m%dT%H%M%SZ")
+    d2 = (now + timedelta(days=7)).strftime("%Y%m%dT%H%M%SZ")
+    # Master (RRULE) + an override occurrence (same UID, RECURRENCE-ID) +
+    # an exact-duplicate of the master UID.
+    ics = (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nX-WR-CALNAME:Recurring\r\n"
+        f"BEGIN:VEVENT\r\nUID:rec-1\r\nDTSTART:{d1}\r\nDTEND:{d1}\r\n"
+        "RRULE:FREQ=WEEKLY\r\nSUMMARY:Weekly standup\r\nEND:VEVENT\r\n"
+        f"BEGIN:VEVENT\r\nUID:rec-1\r\nRECURRENCE-ID:{d2}\r\nDTSTART:{d2}\r\n"
+        f"DTEND:{d2}\r\nSUMMARY:Weekly standup (moved)\r\nEND:VEVENT\r\n"
+        f"BEGIN:VEVENT\r\nUID:rec-1\r\nDTSTART:{d1}\r\nDTEND:{d1}\r\n"
+        "SUMMARY:Weekly standup DUP\r\nEND:VEVENT\r\n"
+        "END:VCALENDAR\r\n"
+    ).encode()
+
+    result = gcal_sync._sync_blocking("owner@x", "https://cal/feed.ics", ics)
+
+    assert not result["errors"]                 # no UNIQUE-violation crash
+    assert len(added) == len(set(added))         # no duplicate keys emitted
+    # Master and the RECURRENCE-ID override are distinct rows; the exact dup
+    # of the master is collapsed.
+    assert any(u.endswith(":rec-1") for u in added)
+    assert any(":rec-1:" in u for u in added)    # the override row
+    assert len(added) == 2
 
 
 def test_gcal_sync_blocking_rejects_garbage_feed():
