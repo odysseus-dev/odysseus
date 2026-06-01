@@ -1947,6 +1947,149 @@ function initCalDAV() {
   });
 }
 
+/* ── Software Update ── */
+function initSoftwareUpdate() {
+  // State machine: idle → checking → up_to_date | update_available → pulling → done
+  const sections = {
+    idle:      el('adm-update-idle'),
+    upToDate:  el('adm-update-up-to-date'),
+    available: el('adm-update-available'),
+    pulling:   el('adm-update-pulling'),
+    done:      el('adm-update-done'),
+    error:     el('adm-update-error'),
+  };
+  if (!sections.idle) return;
+
+  function _show(name) {
+    Object.entries(sections).forEach(([k, node]) => {
+      if (node) node.style.display = (k === name) ? '' : 'none';
+    });
+  }
+
+  function _err(msg) {
+    if (sections.error) {
+      sections.error.textContent = msg;
+      sections.error.className = 'admin-error';
+    }
+    _show('error');
+  }
+
+  async function _checkStatus() {
+    const statusLine = el('adm-update-status-line');
+    if (statusLine) statusLine.textContent = 'Checking…';
+    if (sections.idle) sections.idle.style.display = '';
+    ['adm-update-check-btn', 'adm-update-recheck-btn', 'adm-update-recheck2-btn', 'adm-update-again-btn'].forEach(id => {
+      const b = el(id); if (b) b.disabled = true;
+    });
+    try {
+      const res = await fetch('/api/admin/update/status', { credentials: 'same-origin' });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        _err(d.detail || 'Failed to check update status');
+        return;
+      }
+      const d = await res.json();
+      if (d.commits_behind === 0) {
+        const info = el('adm-update-current-info');
+        if (info) info.textContent = `Current: ${d.current_short} — ${d.current_message}`;
+        _show('upToDate');
+      } else {
+        const behind = el('adm-update-behind-count');
+        if (behind) behind.textContent = d.commits_behind;
+        const upInfo = el('adm-update-upstream-info');
+        if (upInfo) upInfo.textContent = `Latest: ${d.upstream_short} — ${d.upstream_message}`;
+        _show('available');
+      }
+    } catch (e) {
+      _err('Request failed: ' + (e.message || e));
+    } finally {
+      ['adm-update-check-btn', 'adm-update-recheck-btn', 'adm-update-recheck2-btn', 'adm-update-again-btn'].forEach(id => {
+        const b = el(id); if (b) b.disabled = false;
+      });
+    }
+  }
+
+  async function _doPull() {
+    _show('pulling');
+    const log = el('adm-update-log');
+    if (log) log.textContent = '';
+
+    function _appendLog(text) {
+      if (!log) return;
+      log.textContent += text + '\n';
+      log.scrollTop = log.scrollHeight;
+    }
+
+    try {
+      const res = await fetch('/api/admin/update/pull', {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (!res.ok || !res.body) {
+        const d = await res.json().catch(() => ({}));
+        _err(d.detail || 'Pull request failed');
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let exitCode = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop();
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const msg = JSON.parse(line.slice(6));
+            if (msg.data !== undefined) _appendLog(msg.data);
+            if (msg.exit_code !== undefined) exitCode = msg.exit_code;
+          } catch (_) {}
+        }
+      }
+
+      const doneMsg = el('adm-update-done-msg');
+      if (exitCode === 0) {
+        if (doneMsg) { doneMsg.textContent = 'Pull complete.'; doneMsg.style.color = 'var(--green,#4caf50)'; }
+      } else {
+        if (doneMsg) { doneMsg.textContent = `Pull exited with code ${exitCode}. See log above.`; doneMsg.style.color = 'var(--red,#e55)'; }
+      }
+      _show('done');
+    } catch (e) {
+      _err('Pull failed: ' + (e.message || e));
+    }
+  }
+
+  // Wire buttons
+  ['adm-update-check-btn'].forEach(id => {
+    const b = el(id); if (b) b.addEventListener('click', _checkStatus);
+  });
+  ['adm-update-recheck-btn', 'adm-update-recheck2-btn', 'adm-update-again-btn'].forEach(id => {
+    const b = el(id); if (b) b.addEventListener('click', _checkStatus);
+  });
+  const pullBtn = el('adm-update-pull-btn');
+  if (pullBtn) pullBtn.addEventListener('click', _doPull);
+
+  // Copy rebuild command
+  const copyBtn = el('adm-update-copy-btn');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+      const cmd = (el('adm-update-rebuild-cmd') || {}).textContent || 'docker compose up --build -d';
+      uiModule.copyToClipboard(cmd).then(() => {
+        const prev = copyBtn.innerHTML;
+        copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+        copyBtn.style.opacity = '1';
+        setTimeout(() => { copyBtn.innerHTML = prev; copyBtn.style.opacity = ''; }, 1400);
+      }).catch(() => {});
+    });
+  }
+}
+
 /* ── Data Backup (export/import) ── */
 function initBackup() {
   el('adm-exportDataBtn').addEventListener('click', async () => {
@@ -2037,7 +2180,7 @@ function initDangerZone() {
    ═══════════════════════════════════════════ */
 function initAll() {
   modalEl = el('settings-modal');
-  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, () => settingsModule.initIntegrations()];
+  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initSoftwareUpdate, initBackup, initDangerZone, () => settingsModule.initIntegrations()];
   for (const fn of inits) {
     try { fn(); } catch (e) { console.error('Admin init error in', fn.name || 'anonymous', e); }
   }
