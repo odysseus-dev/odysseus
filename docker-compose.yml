@@ -6,6 +6,9 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      # Git repo metadata — lets the update panel (Settings → System) run
+      # `git fetch` and `git pull` from inside the container.
+      - ./.git:/app/.git
       # Cookbook remote-server SSH identity. Odysseus can generate a key here;
       # add the shown public key to each remote server's authorized_keys.
       - ./data/ssh:/app/.ssh
