@@ -947,6 +947,15 @@ async def shutdown_event():
         await webhook_manager.close()
     except Exception as e:
         logger.warning(f"Webhook manager shutdown error: {e}")
+    # Drain any pending NPX MCP connect tasks before disconnecting servers,
+    # so their shielded tasks have a chance to finish cleanly rather than
+    # being force-cancelled by asyncio's shutdown_asyncgens (which would
+    # trip the cancel-scope issue inside mcp.client.stdio's task group).
+    try:
+        from src.builtin_mcp import drain_pending_npx_tasks
+        await drain_pending_npx_tasks()
+    except Exception as e:
+        logger.warning(f"NPX MCP drain error: {e}")
     # Disconnect all MCP servers
     try:
         await mcp_manager.disconnect_all()
