@@ -23,6 +23,7 @@ import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
+import usageModule from './js/usage.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -1046,6 +1047,17 @@ function initializeEventListeners() {
     toolThemeBtn.addEventListener('click', () => {
       const tm = document.getElementById('theme-modal');
       if (tm) tm.classList.remove('hidden');
+    });
+  }
+
+  const toolUsageBtn = el('tool-usage-btn');
+  if (toolUsageBtn) {
+    toolUsageBtn.addEventListener('click', async () => {
+      if (!usageModule) return;
+      const Modals = await import('./js/modalManager.js');
+      if (!Modals.toggle('usage-modal')) {
+        usageModule.openUsage();
+      }
     });
   }
 
@@ -2341,6 +2353,7 @@ function initializeEventListeners() {
     'tool-notes':          '#tool-notes-btn',
     'tool-tasks':          '#tool-tasks-btn',
     'tool-theme':          '#tool-theme-btn',
+    'tool-usage':          '#tool-usage-btn',
     'user-bar':            '#user-bar-profile',
     'sidebar-settings-btn':'#user-bar-settings',
     'chat-meta':           '.chat-meta-overlay',

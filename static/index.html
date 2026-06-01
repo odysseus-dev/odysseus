@@ -214,6 +214,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/css/usage.css">
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
   <link rel="modulepreload" href="/static/js/ui.js">
@@ -906,6 +907,18 @@
             <circle cx="9" cy="15" r="1.5" fill="currentColor"/>
           </svg>
           <span class="grow">Theme</span>
+        </div>
+        <div class="list-item" id="tool-usage-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            style="flex-shrink:0;opacity:0.5;">
+            <path d="M4 19V5"/>
+            <path d="M4 19h16"/>
+            <path d="M8 17V9"/>
+            <path d="M12 17V3"/>
+            <path d="M16 17v-6"/>
+          </svg>
+          <span class="grow">Usage</span>
         </div>
       </div>
     </div>
@@ -2239,6 +2252,7 @@
 <script type="module" src="/static/js/settings.js"></script>
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
+<script type="module" src="/static/js/usage.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>

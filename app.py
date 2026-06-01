@@ -552,6 +552,10 @@ app.include_router(setup_hwfit_routes())
 from routes.compare_routes import setup_compare_routes
 app.include_router(setup_compare_routes(session_manager))
 
+# Usage analytics
+from routes.usage_routes import setup_usage_routes
+app.include_router(setup_usage_routes())
+
 # User Preferences
 from routes.prefs_routes import setup_prefs_routes
 app.include_router(setup_prefs_routes())

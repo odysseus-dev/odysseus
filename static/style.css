@@ -4693,6 +4693,7 @@ body.bg-pattern-sparkles {
     .modal-dock-close:hover { color:var(--red); opacity:1; }
     .modal-body { flex:1; overflow-y:auto; }
     .modal-body button { margin-top:6px; }
+
     /* Styled confirm dialog — keeps backdrop */
     #styled-confirm-overlay {
       background:rgba(0,0,0,0.5);

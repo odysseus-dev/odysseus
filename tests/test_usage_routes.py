@@ -1,0 +1,61 @@
+from datetime import date, datetime
+
+from routes.usage_routes import (
+    ALL_USERS,
+    _aggregate_usage_rows,
+    _parse_message_metrics,
+    _resolve_owner_scope,
+)
+
+
+def test_parse_message_metrics_ignores_missing_or_zero_tokens():
+    assert _parse_message_metrics(None) is None
+    assert _parse_message_metrics("{}") is None
+    assert _parse_message_metrics('{"input_tokens": 0, "output_tokens": 0}') is None
+
+
+def test_aggregate_usage_rows_buckets_stacked_tokens_by_local_day():
+    rows = [
+        (datetime(2026, 6, 1, 4, 30), '{"input_tokens": 100, "output_tokens": 25, "usage_source": "real"}', "alice", "assistant"),
+        (datetime(2026, 6, 1, 18, 0), '{"input_tokens": 50, "output_tokens": 75, "usage_source": "estimated"}', "alice", "assistant"),
+        (datetime(2026, 6, 2, 2, 0), '{"input_tokens": 10, "output_tokens": 5, "usage_source": "real"}', "bob", "assistant"),
+        (datetime(2026, 6, 2, 3, 0), '{"not_tokens": true}', "bob", "assistant"),
+        (datetime(2026, 6, 2, 4, 0), '{"input_tokens": 999, "output_tokens": 999}', "bob", "user"),
+    ]
+
+    result = _aggregate_usage_rows(
+        rows,
+        start=date(2026, 5, 31),
+        end=date(2026, 6, 1),
+        tz_offset_minutes=300,
+    )
+
+    by_day = {row["date"]: row for row in result["daily"]}
+    assert by_day["2026-05-31"]["input_tokens"] == 100
+    assert by_day["2026-05-31"]["output_tokens"] == 25
+    assert by_day["2026-05-31"]["message_count"] == 1
+    assert by_day["2026-06-01"]["input_tokens"] == 60
+    assert by_day["2026-06-01"]["output_tokens"] == 80
+    assert by_day["2026-06-01"]["message_count"] == 4
+    assert result["totals"]["total_tokens"] == 265
+    assert result["totals"]["message_count"] == 5
+    assert result["totals"]["real_count"] == 2
+    assert result["totals"]["estimated_count"] == 1
+
+
+def test_resolve_owner_scope_admin_all_users():
+    owner_scope, selected_user = _resolve_owner_scope("admin", True, ALL_USERS)
+    assert owner_scope is None
+    assert selected_user == ALL_USERS
+
+
+def test_resolve_owner_scope_admin_single_user():
+    owner_scope, selected_user = _resolve_owner_scope("admin", True, "alice")
+    assert owner_scope == "alice"
+    assert selected_user == "alice"
+
+
+def test_resolve_owner_scope_non_admin_forces_own_user():
+    owner_scope, selected_user = _resolve_owner_scope("alice", False, "bob")
+    assert owner_scope == "alice"
+    assert selected_user == "alice"
