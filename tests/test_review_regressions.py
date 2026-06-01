@@ -350,6 +350,23 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
     assert len(user_messages) == 1
 
 
+def test_model_picker_does_not_autoselect_existing_session_from_cached_items():
+    picker_path = "c:/Users/Maciek/odysseus/static/js/modelPicker.js"
+    with open(picker_path, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    assert "if (!modelId && !currentSessionId && !_autoSelectingDefault" in source
+
+
+def test_chat_routes_repair_missing_session_model_before_chat_send():
+    routes_path = "c:/Users/Maciek/odysseus/routes/chat_routes.py"
+    with open(routes_path, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    assert "_repair_missing_session_model(sess)" in source
+    assert "This chat session has no saved model. Re-select a model in the picker." in source
+
+
 @pytest.mark.asyncio
 async def test_admin_agent_tools_require_admin(monkeypatch):
     auth_mod = _install_core_auth_stub(monkeypatch)

@@ -1,6 +1,7 @@
 """Tests for model route helper functions — pure logic, no server needed."""
 import sys
 import types
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import httpx
@@ -32,6 +33,8 @@ from routes.model_routes import (
     _is_chat_model,
     _classify_endpoint,
     _probe_endpoint,
+    _clear_sessions_for_endpoint,
+    _retarget_sessions_for_endpoint,
     _truthy,
     _PROVIDER_CURATED,
 )
@@ -296,3 +299,78 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
 
         assert _probe_endpoint("https://api.anthropic.com/v1") == ANTHROPIC_MODELS
+
+
+class _FakeEndpointUrlColumn:
+    def isnot(self, _value):
+        return self
+
+
+class _FakeDbSessionModel:
+    endpoint_url = _FakeEndpointUrlColumn()
+
+
+class _FakeSessionQuery:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def filter(self, *_conditions):
+        return self
+
+    def all(self):
+        return self.rows
+
+
+class _FakeSessionDb:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def query(self, _model):
+        return _FakeSessionQuery(self.rows)
+
+
+class TestSessionEndpointCleanup:
+    def test_clear_sessions_for_endpoint_preserves_model_and_url(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "DbSession", _FakeDbSessionModel)
+        row = SimpleNamespace(
+            endpoint_url="https://api.example.com/v1/chat/completions",
+            model="claude-sonnet-4-5",
+            headers={"Authorization": "Bearer old"},
+            updated_at=None,
+        )
+        other = SimpleNamespace(
+            endpoint_url="https://api.other.com/v1/chat/completions",
+            model="keep-me",
+            headers={"Authorization": "Bearer keep"},
+            updated_at=None,
+        )
+
+        cleared = _clear_sessions_for_endpoint(_FakeSessionDb([row, other]), "https://api.example.com/v1")
+
+        assert cleared == 1
+        assert row.endpoint_url == "https://api.example.com/v1/chat/completions"
+        assert row.model == "claude-sonnet-4-5"
+        assert row.headers == {}
+        assert other.headers == {"Authorization": "Bearer keep"}
+
+    def test_retarget_sessions_for_endpoint_updates_url_and_preserves_model(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "DbSession", _FakeDbSessionModel)
+        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+        monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+        row = SimpleNamespace(
+            endpoint_url="https://api.old.example/v1/chat/completions",
+            model="gpt-4o",
+            headers={"Authorization": "Bearer old"},
+            updated_at=None,
+        )
+
+        retargeted = _retarget_sessions_for_endpoint(
+            _FakeSessionDb([row]),
+            "https://api.old.example/v1",
+            "https://api.new.example/v1",
+        )
+
+        assert retargeted == 1
+        assert row.endpoint_url == "https://api.new.example/v1/chat/completions"
+        assert row.model == "gpt-4o"
+        assert row.headers == {}

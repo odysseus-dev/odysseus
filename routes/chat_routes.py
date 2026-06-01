@@ -96,6 +96,76 @@ def _clear_orphaned_session_endpoint(sess) -> bool:
         db.close()
 
 
+def _repair_missing_session_model(sess) -> bool:
+    """Rehydrate a session model from its endpoint when only the URL remains."""
+    if (getattr(sess, "model", "") or "").strip():
+        return True
+    session_url = (getattr(sess, "endpoint_url", "") or "").strip()
+    if not session_url:
+        return False
+
+    db = SessionLocal()
+    try:
+        ep = None
+        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        for candidate in endpoints:
+            if _session_url_matches_endpoint(session_url, getattr(candidate, "base_url", "") or ""):
+                ep = candidate
+                break
+        if not ep:
+            return False
+
+        models = []
+        if getattr(ep, "cached_models", None):
+            try:
+                parsed = json.loads(ep.cached_models) if isinstance(ep.cached_models, str) else ep.cached_models
+                if isinstance(parsed, list):
+                    models = [m for m in parsed if isinstance(m, str) and m.strip()]
+            except Exception:
+                models = []
+        if not models:
+            try:
+                from routes.model_routes import _probe_endpoint
+                probe_timeout = 3 if (":11434" in (ep.base_url or "") or "ollama" in (ep.base_url or "").lower()) else 1
+                models = _probe_endpoint(ep.base_url, ep.api_key or None, timeout=probe_timeout) or []
+                ep.cached_models = json.dumps(models) if models else None
+            except Exception as exc:
+                logger.warning("Failed to refresh models for session %s: %s", getattr(sess, "id", ""), exc)
+                models = []
+        if not models:
+            return False
+
+        repaired_model = models[0]
+        repaired_url = build_chat_url(_normalize_base(ep.base_url))
+        sess.model = repaired_model
+        sess.endpoint_url = repaired_url
+        if getattr(ep, "api_key", None):
+            try:
+                from src.endpoint_resolver import build_headers
+                sess.headers = build_headers(ep.api_key, ep.base_url)
+            except Exception:
+                pass
+
+        db_session = db.query(DBSession).filter(DBSession.id == sess.id).first()
+        if db_session:
+            db_session.model = repaired_model
+            db_session.endpoint_url = repaired_url
+            if getattr(sess, "headers", None):
+                db_session.headers = sess.headers
+            db_session.updated_at = datetime.utcnow()
+        db.commit()
+        return True
+    except Exception as exc:
+        logger.warning("Failed to repair missing model for session %s: %s", getattr(sess, "id", ""), exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        db.close()
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -132,6 +202,8 @@ def setup_chat_routes(
             raise HTTPException(404, f"Session '{session}' not found")
         if _clear_orphaned_session_endpoint(sess):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
+        if not _repair_missing_session_model(sess):
+            raise HTTPException(400, "This chat session has no saved model. Re-select a model in the picker.")
 
         # Same allowed_models + daily-cap gate as chat_stream (mirror so the
         # non-streaming path can't be used to bypass).
@@ -272,6 +344,8 @@ def setup_chat_routes(
             sess = session_manager.get_session(session)
             if _clear_orphaned_session_endpoint(sess):
                 raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
+            if not _repair_missing_session_model(sess):
+                raise HTTPException(400, "This chat session has no saved model. Re-select a model in the picker.")
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))
         except (ValueError, ValidationError):

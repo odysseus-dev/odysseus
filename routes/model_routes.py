@@ -70,6 +70,43 @@ def _provider_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
 
 
+def _session_uses_endpoint_url(session_url: str, base_url: str) -> bool:
+    if not session_url or not base_url:
+        return False
+    sess = session_url.rstrip("/")
+    base = _normalize_base(base_url).rstrip("/")
+    variants = {
+        base,
+        base + "/chat/completions",
+        build_chat_url(base).rstrip("/"),
+    }
+    return sess in variants or sess.startswith(base + "/")
+
+
+def _clear_sessions_for_endpoint(db, base_url: str) -> int:
+    cleared = 0
+    rows = db.query(DbSession).filter(DbSession.endpoint_url.isnot(None)).all()
+    for row in rows:
+        if _session_uses_endpoint_url(row.endpoint_url or "", base_url):
+            row.headers = {}
+            row.updated_at = datetime.utcnow()
+            cleared += 1
+    return cleared
+
+
+def _retarget_sessions_for_endpoint(db, old_base_url: str, new_base_url: str) -> int:
+    retargeted = 0
+    chat_url = build_chat_url(_normalize_base(new_base_url))
+    rows = db.query(DbSession).filter(DbSession.endpoint_url.isnot(None)).all()
+    for row in rows:
+        if _session_uses_endpoint_url(row.endpoint_url or "", old_base_url):
+            row.endpoint_url = chat_url
+            row.headers = {}
+            row.updated_at = datetime.utcnow()
+            retargeted += 1
+    return retargeted
+
+
 # ── Curated model lists per provider ──
 # For cloud providers that return 100+ models, only show these by default.
 # A model ID matches if it starts with or equals a curated entry.
@@ -1301,6 +1338,12 @@ def setup_model_routes(model_discovery):
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
             if not ep:
                 raise HTTPException(404, "Endpoint not found")
+            old_base_url = ep.base_url
+            refreshed_models = None
+            cleared_sessions = 0
+            cleared_loaded_sessions = 0
+            retargeted_sessions = 0
+            retargeted_loaded_sessions = 0
             if body:
                 if "supports_tools" in body:
                     v = body["supports_tools"]
@@ -1311,6 +1354,27 @@ def setup_model_routes(model_discovery):
                     ep.name = body["name"].strip() or ep.name
                 if "model_type" in body and isinstance(body["model_type"], str):
                     ep.model_type = body["model_type"].strip() or ep.model_type
+                if "base_url" in body and isinstance(body["base_url"], str):
+                    base_url = body["base_url"].strip().rstrip("/")
+                    for suffix in ["/models", "/chat/completions", "/completions", "/v1/messages"]:
+                        if base_url.endswith(suffix):
+                            base_url = base_url[:-len(suffix)].rstrip("/")
+                    if not base_url:
+                        raise HTTPException(400, "Base URL is required")
+                    from src.endpoint_resolver import resolve_url
+                    ep.base_url = resolve_url(_normalize_base(base_url))
+                if "api_key" in body and isinstance(body["api_key"], str):
+                    ep.api_key = body["api_key"].strip() or None
+                if ep.base_url != old_base_url or "api_key" in body:
+                    probe_timeout = 3 if (":11434" in ep.base_url or "ollama" in ep.base_url.lower()) else 1
+                    refreshed_models = _probe_endpoint(ep.base_url, ep.api_key or None, timeout=probe_timeout)
+                    ep.cached_models = json.dumps(refreshed_models) if refreshed_models else None
+                    if ep.base_url != old_base_url:
+                        retargeted_sessions = _retarget_sessions_for_endpoint(db, old_base_url, ep.base_url)
+                        retargeted_loaded_sessions = _retarget_loaded_sessions_for_endpoint(old_base_url, ep.base_url)
+                    else:
+                        cleared_sessions = _clear_sessions_for_endpoint(db, ep.base_url)
+                        cleared_loaded_sessions = _clear_loaded_sessions_for_endpoint(ep.base_url)
             else:
                 ep.is_enabled = not ep.is_enabled
             db.commit()
@@ -1321,6 +1385,13 @@ def setup_model_routes(model_discovery):
                 "supports_tools": ep.supports_tools,
                 "name": ep.name,
                 "model_type": ep.model_type,
+                "base_url": ep.base_url,
+                "has_key": bool(ep.api_key),
+                "models": refreshed_models,
+                "cleared_sessions": cleared_sessions,
+                "cleared_loaded_sessions": cleared_loaded_sessions,
+                "retargeted_sessions": retargeted_sessions,
+                "retargeted_loaded_sessions": retargeted_loaded_sessions,
             }
         finally:
             db.close()
@@ -1363,30 +1434,6 @@ def setup_model_routes(model_discovery):
             _save_settings(settings)
         return cleared
 
-    def _session_uses_endpoint_url(session_url: str, base_url: str) -> bool:
-        if not session_url or not base_url:
-            return False
-        sess = session_url.rstrip("/")
-        base = _normalize_base(base_url).rstrip("/")
-        variants = {
-            base,
-            base + "/chat/completions",
-            build_chat_url(base).rstrip("/"),
-        }
-        return sess in variants or sess.startswith(base + "/")
-
-    def _clear_sessions_for_endpoint(db, base_url: str) -> int:
-        cleared = 0
-        rows = db.query(DbSession).filter(DbSession.endpoint_url.isnot(None)).all()
-        for row in rows:
-            if _session_uses_endpoint_url(row.endpoint_url or "", base_url):
-                row.endpoint_url = ""
-                row.model = ""
-                row.headers = {}
-                row.updated_at = datetime.utcnow()
-                cleared += 1
-        return cleared
-
     def _clear_loaded_sessions_for_endpoint(base_url: str) -> int:
         try:
             from src.ai_interaction import get_session_manager
@@ -1399,13 +1446,31 @@ def setup_model_routes(model_discovery):
         try:
             for sess in list(getattr(manager, "sessions", {}).values()):
                 if _session_uses_endpoint_url(getattr(sess, "endpoint_url", "") or "", base_url):
-                    sess.endpoint_url = ""
-                    sess.model = ""
                     sess.headers = {}
                     cleared += 1
         except Exception:
             return cleared
         return cleared
+
+    def _retarget_loaded_sessions_for_endpoint(old_base_url: str, new_base_url: str) -> int:
+        try:
+            from src.ai_interaction import get_session_manager
+            manager = get_session_manager()
+        except Exception:
+            manager = None
+        if not manager:
+            return 0
+        retargeted = 0
+        chat_url = build_chat_url(_normalize_base(new_base_url))
+        try:
+            for sess in list(getattr(manager, "sessions", {}).values()):
+                if _session_uses_endpoint_url(getattr(sess, "endpoint_url", "") or "", old_base_url):
+                    sess.endpoint_url = chat_url
+                    sess.headers = {}
+                    retargeted += 1
+        except Exception:
+            return retargeted
+        return retargeted
 
     @router.get("/model-endpoints/{ep_id}/dependents")
     def get_endpoint_dependents(ep_id: str, request: Request):

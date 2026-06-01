@@ -455,25 +455,13 @@ export function updateModelPicker() {
       }
     }
   }
-  if (!modelId && !_autoSelectingDefault && window.modelsModule && window.modelsModule.getCachedItems) {
+  if (!modelId && !currentSessionId && !_autoSelectingDefault && window.modelsModule && window.modelsModule.getCachedItems) {
     const items = window.modelsModule.getCachedItems();
     const first = items.find(item => !item.offline && ((item.models || []).length || (item.models_extra || []).length));
     if (first) {
       const models = (first.models || []).concat(first.models_extra || []);
       modelId = models[0];
-      if (!currentSessionId) {
-        _deps.setPendingChat({ url: first.url, modelId, endpointId: first.endpoint_id });
-      } else {
-        if (s) { s.model = modelId; s.endpoint_url = first.url; }
-        _autoSelectingDefault = true;
-        const fd = new FormData();
-        fd.append('model', modelId);
-        fd.append('endpoint_url', first.url || '');
-        if (first.endpoint_id) fd.append('endpoint_id', first.endpoint_id);
-        fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd })
-          .catch(() => {})
-          .finally(() => { _autoSelectingDefault = false; });
-      }
+      _deps.setPendingChat({ url: first.url, modelId, endpointId: first.endpoint_id });
     }
   }
 
