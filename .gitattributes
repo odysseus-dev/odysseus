@@ -1,2 +1,8 @@
 *.sh text eol=lf
 docker/entrypoint.sh text eol=lf
+
+# Vendored, minified third-party bundles — kept byte-for-byte as published
+# upstream. Skip whitespace checks (minified output legitimately carries
+# trailing whitespace inside string literals, e.g. SVG path data in mermaid)
+# and exclude from GitHub language stats so they don't read as project source.
+static/lib/** -whitespace linguist-vendored

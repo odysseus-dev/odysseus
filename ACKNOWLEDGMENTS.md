@@ -65,6 +65,13 @@ Vendored in `static/lib/` and served directly:
 | [jsPDF](https://github.com/parallax/jsPDF) (bundled in html2pdf) | PDF generation | MIT |
 | [html2canvas](https://github.com/niklasvh/html2canvas) (bundled in html2pdf) | DOM → canvas rasterization | MIT |
 | [node-qrcode](https://github.com/soldair/node-qrcode) (`qrcode.min.js`) | QR-code rendering (2FA setup) | MIT |
+| [KaTeX](https://github.com/KaTeX/KaTeX) 0.16.22 (`katex/`) | Math typesetting (CSS, JS, fonts) | MIT |
+| [Mermaid](https://github.com/mermaid-js/mermaid) 11.15.0 (`mermaid.min.js`) | Diagrams from text | MIT |
+
+License texts for the vendored libraries that ship a copy with their bundle are
+kept alongside them — see [`static/lib/THIRD_PARTY_NOTICES.md`](static/lib/THIRD_PARTY_NOTICES.md),
+[`static/lib/katex/LICENSE`](static/lib/katex/LICENSE), and
+[`static/lib/mermaid.LICENSE.txt`](static/lib/mermaid.LICENSE.txt).
 
 ## Front-end libraries loaded at runtime (CDN)
 
@@ -72,8 +79,6 @@ Referenced from `cdn.jsdelivr.net` / `cdnjs.cloudflare.com` at runtime — not v
 
 | Library | Purpose | License |
 |---|---|---|
-| [KaTeX](https://github.com/KaTeX/KaTeX) 0.16.22 | Math typesetting | MIT |
-| [Mermaid](https://github.com/mermaid-js/mermaid) 11 | Diagrams from text | MIT |
 | [Pyodide](https://github.com/pyodide/pyodide) 0.27.5 | In-browser Python runtime | MPL-2.0 |
 | [PDFObject](https://github.com/pipwerks/PDFObject) 2.1.1 | Inline PDF embedding | MIT |
 
