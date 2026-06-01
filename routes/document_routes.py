@@ -63,7 +63,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 # unconfigured / localhost-bypass mode the middleware leaves
                 # current_user unset (None), and those sessions are already
                 # served freely everywhere else.
-                if user and session.owner and session.owner != user:
+                if user is None:
+                    raise HTTPException(403, "Authentication required")
+                if session.owner != user:
                     raise HTTPException(403, "Cannot create document in another user's session")
 
             doc_id = str(uuid.uuid4())
@@ -160,7 +162,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 sess = db.query(DbSession).filter(DbSession.id == session_id).first()
                 if not sess:
                     raise HTTPException(404, "Session not found")
-                if user and sess.owner and sess.owner != user:
+                if user is None:
+                    raise HTTPException(403, "Authentication required")
+                if sess.owner != user:
                     raise HTTPException(403, "Cannot import into another user's session")
             finally:
                 db.close()
@@ -352,7 +356,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # auth failures.
             if not session:
                 raise HTTPException(404, "Session not found")
-            if user and session.owner and session.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if session.owner != user:
                 raise HTTPException(403, "Access denied")
             docs = db.query(Document).filter(
                 Document.session_id == session_id
@@ -1298,8 +1304,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     # someone else's signature ID from doc markdown and have
                     # it stamped/exported.
                     _sig_q = db.query(Signature).filter(Signature.id.in_(ann_sig_ids))
-                    if user:
-                        _sig_q = _sig_q.filter(Signature.owner == user)
+                    if user is None:
+                        raise HTTPException(403, "Authentication required")
+                    _sig_q = _sig_q.filter(Signature.owner == user)
                     sig_rows = _sig_q.all()
                     for s in sig_rows:
                         try:
@@ -1384,9 +1391,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             stamps: dict = {}
             if sig_ids:
                 # SECURITY: filter by owner — same reason as render_pdf.
+                if user is None:
+                    raise HTTPException(403, "Authentication required")
                 _sig_q2 = db.query(Signature).filter(Signature.id.in_(list(sig_ids.values())))
-                if user:
-                    _sig_q2 = _sig_q2.filter(Signature.owner == user)
+                _sig_q2 = _sig_q2.filter(Signature.owner == user)
                 rows = _sig_q2.all()
                 by_id = {s.id: s for s in rows}
                 for field_name, sid in sig_ids.items():
@@ -1433,9 +1441,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     # SECURITY: filter by owner so a caller can't reference
                     # someone else's signature ID from doc markdown and have
                     # it stamped/exported.
+                    if user is None:
+                        raise HTTPException(403, "Authentication required")
                     _sig_q = db.query(Signature).filter(Signature.id.in_(ann_sig_ids))
-                    if user:
-                        _sig_q = _sig_q.filter(Signature.owner == user)
+                    _sig_q = _sig_q.filter(Signature.owner == user)
                     sig_rows = _sig_q.all()
                     for s in sig_rows:
                         try:
@@ -1526,9 +1535,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             stamps: dict = {}
             if sig_ids:
                 # SECURITY: filter by owner — same reason as render_pdf.
+                if user is None:
+                    raise HTTPException(403, "Authentication required")
                 _sig_q2 = db.query(Signature).filter(Signature.id.in_(list(sig_ids.values())))
-                if user:
-                    _sig_q2 = _sig_q2.filter(Signature.owner == user)
+                _sig_q2 = _sig_q2.filter(Signature.owner == user)
                 rows = _sig_q2.all()
                 by_id = {s.id: s for s in rows}
                 for fname, sid in sig_ids.items():
@@ -1569,9 +1579,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     # SECURITY: filter by owner so a caller can't reference
                     # someone else's signature ID from doc markdown and have
                     # it stamped/exported.
+                    if user is None:
+                        raise HTTPException(403, "Authentication required")
                     _sig_q = db.query(Signature).filter(Signature.id.in_(ann_sig_ids))
-                    if user:
-                        _sig_q = _sig_q.filter(Signature.owner == user)
+                    _sig_q = _sig_q.filter(Signature.owner == user)
                     sig_rows = _sig_q.all()
                     for s in sig_rows:
                         try:

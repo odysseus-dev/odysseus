@@ -519,7 +519,9 @@ def setup_model_routes(model_discovery):
         db = SessionLocal()
         try:
             q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
-            if owner and not is_admin:
+            if not owner:
+                raise HTTPException(403, "Authentication required")
+            if not is_admin:
                 # Regular users see: their own endpoints + null-owner
                 # (legacy / shared). Admins see everything.
                 q = owner_filter(q, ModelEndpoint, owner)
@@ -611,7 +613,9 @@ def setup_model_routes(model_discovery):
         _is_admin = False
         try:
             auth_mgr = getattr(request.app.state, "auth_manager", None)
-            if owner and auth_mgr is not None and getattr(auth_mgr, "is_admin", None):
+            if not owner:
+                raise HTTPException(403, "Authentication required")
+            if auth_mgr is not None and getattr(auth_mgr, "is_admin", None):
                 _is_admin = bool(auth_mgr.is_admin(owner))
         except Exception:
             _is_admin = False

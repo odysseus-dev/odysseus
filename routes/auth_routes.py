@@ -380,7 +380,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         for keybinds + TTS prefs, so it stays callable without admin."""
         user = _get_current_user(request)
         settings = _load_settings()
-        if user and auth_manager.is_admin(user):
+        if not user:
+            raise HTTPException(403, "Authentication required")
+        if auth_manager.is_admin(user):
             return settings
         return scrub_settings(settings)
 

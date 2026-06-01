@@ -49,7 +49,7 @@ class DraftUpdate(BaseModel):
 
 def _owns(d: EditorDraft, user: Optional[str]) -> bool:
     if user is None:
-        return True
+        return False
     return (d.owner or None) == user
 
 
@@ -76,8 +76,9 @@ def setup_editor_draft_routes() -> APIRouter:
         db = SessionLocal()
         try:
             q = db.query(EditorDraft).filter(EditorDraft.is_active == True)
-            if user is not None:
-                q = q.filter(EditorDraft.owner == user)
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            q = q.filter(EditorDraft.owner == user)
             rows = q.order_by(EditorDraft.updated_at.desc()).limit(200).all()
             return {"drafts": [_summary(d) for d in rows]}
         finally:
