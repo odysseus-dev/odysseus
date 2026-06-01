@@ -152,8 +152,8 @@ function _setupReply(text, remember = true) {
 
 function _showSetupEndpointChoices() {
   const providers = SETUP_PROVIDER_NAMES.map(name =>
-    '<span>' + name + '</span>'
-  ).join(', ');
+    '<span class="setup-clickable-provider" title="Click to setup ' + name + '">' + name + '</span>'
+  ).join(' ');
   return slashReply(
     '<div class="setup-guide-no-censor" style="display:grid;gap:10px;">' +
       '<div>' +
@@ -162,14 +162,14 @@ function _showSetupEndpointChoices() {
       '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%);">' +
         '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_LOCAL_ICON + 'Local setup</div>' +
         '<div>Paste endpoint URL in chat (example):</div>' +
-        '<pre style="margin:4px 0 0;"><code>http://localhost:11434/v1</code></pre>' +
+        '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" title="Click to fill in chat">http://localhost:11434/v1</code></pre>' +
         '<div style="margin-top:4px;">or</div>' +
-        '<pre style="margin:2px 0 0;"><code>http://llm-host.local:8000/v1</code></pre>' +
+        '<pre style="margin:2px 0 0;"><code class="setup-clickable-code" title="Click to fill in chat">http://llm-host.local:8000/v1</code></pre>' +
       '</div>' +
       '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%);">' +
         '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_API_ICON + 'API setup</div>' +
         '<div>Paste provider name then API key (example):</div>' +
-        '<pre style="margin:4px 0 0;"><code>deepseek sk-...</code></pre>' +
+        '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" title="Click to fill in chat">deepseek sk-...</code></pre>' +
         '<div style="margin-top:8px;font-size:1em;"><span>Supported providers:</span><br>' + providers + '</div>' +
       '</div>' +
     '</div>'
@@ -201,7 +201,9 @@ function _showSetupEndpointChoicesStreamed(options = {}) {
       text: 'deepseek sk-...',
       copyText: 'deepseek sk-...',
     },
-    { kind: 'p', html: '<strong>Supported providers:</strong><br>' + SETUP_PROVIDER_NAMES.join(', ') },
+    { kind: 'p', html: '<strong>Supported providers:</strong><br>' + SETUP_PROVIDER_NAMES.map(name =>
+      '<span class="setup-clickable-provider" title="Click to setup ' + name + '">' + name + '</span>'
+    ).join(' ') },
   ];
   return typewriterBlocksReply(blocks, { gap: '4px', bodyClass: 'setup-guide-no-censor', interval: 3 });
 }
@@ -388,10 +390,36 @@ function typewriterBlocksReply(blocks, options = {}) {
         pre.style.margin = '0';
         const code = document.createElement('code');
         pre.appendChild(code);
+        const useBtn = document.createElement('button');
+        useBtn.type = 'button';
+        useBtn.className = 'use-code';
+        useBtn.title = 'Use in Chat';
+        useBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>';
+        const copyText = block.copyText || block.text || '';
+        const useNow = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          let text = copyText;
+          if (text.includes('sk-...')) {
+            text = text.replace('sk-...', 'sk-');
+          }
+          const messageInput = document.getElementById('message');
+          if (messageInput) {
+            messageInput.value = text;
+            messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+            messageInput.focus();
+            messageInput.setSelectionRange(text.length, text.length);
+          }
+          useBtn.classList.add('used');
+          setTimeout(() => useBtn.classList.remove('used'), 1200);
+        };
+        useBtn.addEventListener('pointerdown', useNow);
+        useBtn.addEventListener('click', useNow);
+        pre.appendChild(useBtn);
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'copy-code';
-        const copyText = block.copyText || block.text || '';
         btn.setAttribute('data-code', copyText);
         btn.title = 'Copy';
         btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
@@ -5907,6 +5935,60 @@ async function handleSlashCommand(input) {
 export function initSlashCommands(deps) {
   API_BASE = deps.apiBase || '';
   if (deps.isStreaming) _isStreamingFn = deps.isStreaming;
+
+  // Global delegation for onboarding and setup clicks
+  document.addEventListener('click', (e) => {
+    // 1. Check for clicking the "/setup" trigger link on the welcome screen
+    const trigger = e.target.closest('.setup-trigger-link');
+    if (trigger) {
+      e.preventDefault();
+      const messageInput = document.getElementById('message');
+      if (messageInput) {
+        messageInput.value = '/setup';
+        messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+        messageInput.focus();
+        const chatForm = document.getElementById('chat-form');
+        if (chatForm) {
+          chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        }
+      }
+      return;
+    }
+
+    // 2. Check for clicking a clickable provider inside the setup guide
+    const providerEl = e.target.closest('.setup-clickable-provider');
+    if (providerEl) {
+      e.preventDefault();
+      const providerName = providerEl.textContent.trim();
+      const messageInput = document.getElementById('message');
+      if (messageInput) {
+        const text = providerName + ' sk-';
+        messageInput.value = text;
+        messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+        messageInput.focus();
+        messageInput.setSelectionRange(text.length, text.length);
+      }
+      return;
+    }
+
+    // 3. Check for clicking a clickable code block inside the setup guide
+    const codeEl = e.target.closest('.setup-clickable-code');
+    if (codeEl) {
+      e.preventDefault();
+      let text = codeEl.textContent.trim();
+      if (text.includes('sk-...')) {
+        text = text.replace('sk-...', 'sk-');
+      }
+      const messageInput = document.getElementById('message');
+      if (messageInput) {
+        messageInput.value = text;
+        messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+        messageInput.focus();
+        messageInput.setSelectionRange(text.length, text.length);
+      }
+      return;
+    }
+  });
 }
 
 /**

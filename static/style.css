@@ -2078,7 +2078,7 @@ body.bg-pattern-sparkles {
       min-height: 20px;
       min-width: 80px;
     }
-    
+
     /* Ensure code block headers are only slightly larger than regular text */
     pre h1, pre h2, pre h3, pre h4, pre h5, pre h6 {
       font-size: 1.1em;
@@ -2856,11 +2856,11 @@ body.bg-pattern-sparkles {
     .attach-strip:empty {
       display: none;
     }
-    .attach-strip { 
-      display: flex; 
-      gap: 6px; 
-      flex-wrap: wrap; 
-      margin: 6px 0 0; 
+    .attach-strip {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin: 6px 0 0;
       min-height: 32px;
       padding: 2px;
     }
@@ -3367,6 +3367,48 @@ body.bg-pattern-sparkles {
       border-color: var(--accent-primary, var(--red));
       background: color-mix(in srgb, var(--accent-primary, var(--red)) 12%, var(--bg));
     }
+    pre .use-code {
+      position:absolute; right:42px; top:6px;
+      background:var(--bg); color:var(--fg);
+      border:1px solid var(--border); border-radius:6px;
+      width:28px; height:28px; padding:0; cursor:pointer;
+      opacity:0; transition: opacity .15s, color .15s, border-color .15s;
+      display:flex; align-items:center; justify-content:center;
+    }
+    pre .use-code.bottom { top:auto; bottom:6px; }
+    pre:hover .use-code { opacity:0.7; }
+    pre .use-code:hover { opacity:1; }
+    pre .use-code.used {
+      opacity: 1;
+      color: var(--color-save-green, #4caf50);
+      border-color: var(--color-save-green, #4caf50);
+      background: color-mix(in srgb, var(--color-save-green, #4caf50) 18%, var(--bg));
+      animation: code-copy-pulse 0.36s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .setup-trigger-link {
+      color: var(--accent, var(--red));
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: underline;
+      transition: color 0.15s ease, opacity 0.15s ease;
+    }
+    .setup-clickable-provider {
+      cursor: pointer;
+      text-decoration: underline;
+      margin-right: 8px;
+      transition: color 0.15s ease, opacity 0.15s ease;
+    }
+    .setup-clickable-code {
+      cursor: pointer;
+      text-decoration: underline;
+      transition: color 0.15s ease, opacity 0.15s ease;
+    }
+    .setup-trigger-link:hover,
+    .setup-clickable-provider:hover,
+    .setup-clickable-code:hover {
+      color: var(--accent, var(--red)) !important;
+      opacity: 0.8;
+    }
 
     /* Tapping the code body (not a button) toggles the overlay buttons off so
        they stop covering the text on touch screens. Tap again to bring back. */
@@ -3593,10 +3635,10 @@ body.bg-pattern-sparkles {
       display:flex; align-items:center; gap:6px; border:1px solid var(--border); padding:4px; margin:4px 0; border-radius: 4px;
     }
     .models-row .grow,
-    .models-row select { 
-      flex:1; 
-      display:flex; 
-      align-items:center; 
+    .models-row select {
+      flex:1;
+      display:flex;
+      align-items:center;
       font-size: 9.75px;
     }
     .model-fav-btn {
@@ -4450,7 +4492,7 @@ body.bg-pattern-sparkles {
       padding: 4px;
       border-left: 2px solid var(--red);
       background: color-mix(in srgb, var(--red) 5%, transparent);
-    } 
+    }
     /* Loading indicator for messages */
     .loading-indicator {
       display: flex;
@@ -4908,7 +4950,7 @@ body.bg-pattern-sparkles {
       opacity: 0.6;
       cursor: not-allowed;
     }
-    
+
 /* ── Drag & Drop ── */
 
 /* ---------- Color palette (dark / light) ---------- */
@@ -4918,28 +4960,28 @@ body.bg-pattern-sparkles {
       background: color-mix(in srgb, var(--red) 10%, transparent) !important;
       border-color: var(--red) !important;
     }
-    
+
     .section[dnd-over="true"] {
       background: color-mix(in srgb, var(--red) 20%, transparent) !important;
       border-color: var(--red) !important;
       transform: scale(1.02);
     }
-    
+
     .drag-handle {
       cursor: grab;
       opacity: 0.5;
       padding: 0 6px;
       user-select: none;
     }
-    
+
     .drag-handle:hover {
       opacity: 0.8;
     }
-    
+
     .drag-handle:active {
       cursor: grabbing;
     }
-    
+
 /* ── UI Controls (Radio, Presets, Toolbar, Settings) ── */
 
 
@@ -4955,12 +4997,12 @@ body.bg-pattern-sparkles {
       cursor: pointer;
       transition: all 0.2s ease;
     }
-    
+
     .radio-option:hover {
       background: color-mix(in srgb, var(--fg) 9%, transparent);
       border-color: var(--fg);
     }
-    
+
     .radio-option input[type="radio"] {
       appearance: none;
       -webkit-appearance: none;
@@ -4975,22 +5017,22 @@ body.bg-pattern-sparkles {
       position: relative;
       flex-shrink: 0;
     }
-    
+
     .radio-option input[type="radio"]:checked {
       border-color: var(--red);
       background: var(--red);
     }
-    
+
     .radio-option input[type="radio"]:focus {
       box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 30%, transparent);
     }
-    
+
     .radio-label {
       color: var(--fg);
       font-size: 14px;
       user-select: none;
     }
-    
+
     /* Preset buttons */
     .preset-btn {
       height: 27.2px; /* 15% smaller than 32px */
@@ -5005,29 +5047,29 @@ body.bg-pattern-sparkles {
       cursor: pointer;
       transition: all 0.2s ease;
     }
-    
+
     .preset-btn:hover {
       background: var(--panel);
       border-color: var(--fg);
     }
-    
+
     .preset-btn.active {
       background: var(--panel);
       border-color: var(--fg);
       box-shadow: 0 0 0 1px var(--fg), 0 0 8px color-mix(in srgb, var(--fg) 16%, transparent);
       font-weight: 600;
     }
-    
+
     /* All preset buttons use the same blue color */
     .preset-btn {
       border-color: var(--red); /* Blue color */
     }
-    
+
     .preset-btn.active {
       border-color: var(--red); /* Blue color when active */
       box-shadow: 0 0 0 1px var(--red), 0 0 8px color-mix(in srgb, var(--red) 30%, transparent);
     }
-    
+
     /* Custom preset modal: the base .preset-modal-content sets overflow:hidden
        (for desktop rounded-corner clipping), which on the mobile sheet clipped
        the footer (Start/Cancel) off the bottom with no way to reach it. Let the
@@ -5572,7 +5614,7 @@ body.bg-pattern-sparkles {
       background: var(--border);
       margin: 4px 8px;
     }
-    
+
     /* Search toggle styles */
     .search-toggle {
       display: flex;
@@ -5582,7 +5624,7 @@ body.bg-pattern-sparkles {
       border-bottom: 1px solid var(--border);
       margin-bottom: 8px;
     }
-    
+
     .search-provider-label {
       font-size: 14px;
       color: var(--fg);
@@ -5597,24 +5639,24 @@ body.bg-pattern-sparkles {
       border-radius: 4px;
       transition: all 0.2s ease;
     }
-    
+
     #mic-btn:hover {
       background: color-mix(in srgb, var(--fg) 6%, transparent);
       border-color: var(--fg);
     }
-    
+
     #mic-btn.recording {
       background: var(--color-recording);
       border-color: var(--color-recording);
       animation: pulse 1.5s infinite;
     }
-    
+
     @keyframes pulse {
       0% { opacity: 1; }
       50% { opacity: 0.7; }
       100% { opacity: 1; }
     }
-    
+
     #recording-indicator {
       position: fixed;
       top: 10px;
@@ -5632,29 +5674,29 @@ body.bg-pattern-sparkles {
       justify-content: space-between;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     }
-    
+
     #recording-indicator.hidden {
       display: none !important;
     }
-    
+
     .recording-content {
       display: flex;
       align-items: center;
       gap: 12px;
       color: white;
     }
-    
+
     .recording-icon {
       color: var(--color-recording);
       font-size: 20px;
       animation: pulse 1.5s infinite;
     }
-    
+
     .recording-text {
       font-size: 16px;
       font-weight: 500;
     }
-    
+
     #stop-recording {
       background: var(--color-recording);
       color: white;
@@ -5666,32 +5708,32 @@ body.bg-pattern-sparkles {
       cursor: pointer;
       transition: background 0.2s ease;
     }
-    
+
     #stop-recording:hover {
       background: var(--color-recording-hover);
     }
-    
+
     /* Error state for recording */
     #recording-indicator.error {
       background: rgba(173, 26, 26, 0.9);
     }
-    
+
     .recording-error {
       color: var(--color-recording);
       font-size: 14px;
       margin-top: 4px;
     }
-    
+
     @media (max-width: 768px) {
       #recording-indicator {
         margin: 8px;
         padding: 10px;
       }
-      
+
       .recording-text {
         font-size: 14px;
       }
-      
+
       #stop-recording {
         padding: 6px 10px;
         font-size: 12px;
@@ -8605,11 +8647,11 @@ body.hide-thinking .thinking-section { display: none !important; }
     margin: 8px;
     padding: 10px;
   }
-  
+
   .recording-text {
     font-size: 14px;
   }
-  
+
   .stop-recording-btn {
     padding: 6px 10px;
     font-size: 12px;
