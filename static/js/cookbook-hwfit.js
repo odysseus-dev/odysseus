@@ -562,7 +562,13 @@ export function _hwfitRenderHw(el, sys) {
           );
         })();
   } else {
-    gpuChip = chip('gpu', 'No GPU');
+    // Cookbook can't tell docker-no-overlay from native-no-driver, so the
+    // tooltip names both paths.
+    const noGpuHint = 'No GPU detected. Docker: enable a GPU overlay in '
+      + '.env (COMPOSE_FILE — use ";" on Windows, ":" on Linux/macOS). '
+      + 'Native: install CUDA/ROCm drivers and an inference engine via '
+      + 'Cookbook → Dependencies. See README + .env.example for details.';
+    gpuChip = chip('gpu', 'No GPU', noGpuHint);
   }
   const vram = sys.gpu_vram_gb ? `${sys.gpu_vram_gb.toFixed(1)} GB VRAM` : '';
   const ram = `${sys.available_ram_gb?.toFixed(1) || '?'} / ${sys.total_ram_gb?.toFixed(1) || '?'} GB RAM`;

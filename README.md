@@ -117,6 +117,15 @@ COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml
 COMPOSE_FILE=docker-compose.yml:docker/gpu.amd.yml
 ```
 
+On **Windows** (Docker Desktop on WSL2, PowerShell, cmd) `COMPOSE_FILE` uses
+`;` instead of `:` as the separator — using `:` silently loads only the first
+file and Cookbook will keep reporting "No GPU":
+
+```powershell
+COMPOSE_FILE=docker-compose.yml;docker/gpu.nvidia.yml
+COMPOSE_FILE=docker-compose.yml;docker/gpu.amd.yml
+```
+
 Verify with:
 
 ```bash
