@@ -40,7 +40,7 @@ services:
     restart: unless-stopped
 
   chromadb:
-    image: chromadb/chroma:latest
+    image: docker.io/chromadb/chroma:latest
     ports:
       - "${CHROMADB_BIND:-127.0.0.1}:8100:8000"
     volumes:
@@ -50,7 +50,7 @@ services:
     restart: unless-stopped
 
   searxng:
-    image: searxng/searxng:latest
+    image: docker.io/searxng/searxng:latest
     entrypoint:
       - /bin/sh
       - -c
@@ -81,7 +81,7 @@ services:
     restart: unless-stopped
 
   ntfy:
-    image: binwiederhier/ntfy
+    image: docker.io/binwiederhier/ntfy
     command: serve
     ports:
       - "${NTFY_BIND:-127.0.0.1}:8091:80"
