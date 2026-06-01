@@ -60,6 +60,9 @@ class AuthManager:
         # Guards mutations of self._sessions and the on-disk sessions.json.
         # Validate/create/revoke run concurrently from the FastAPI threadpool.
         self._sessions_lock = threading.RLock()
+        # Guards the first-run setup check-and-write so concurrent requests
+        # cannot both observe is_configured==False and both create admin accounts.
+        self._setup_lock = threading.Lock()
         self._load()
         self._load_sessions()
         self._migrate_single_user()
@@ -157,9 +160,10 @@ class AuthManager:
 
     def setup(self, username: str, password: str) -> bool:
         """First-run admin setup. Only works if no users exist."""
-        if self.is_configured:
-            return False
-        return self.create_user(username, password, is_admin=True)
+        with self._setup_lock:
+            if self.is_configured:
+                return False
+            return self.create_user(username, password, is_admin=True)
 
     def create_user(self, username: str, password: str, is_admin: bool = False) -> bool:
         """Create a new user account."""
