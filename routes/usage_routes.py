@@ -88,6 +88,19 @@ def _empty_daily_buckets(start: date, end: date) -> dict[str, dict]:
     }
 
 
+def _empty_user_daily_buckets(start: date, end: date) -> dict[str, dict]:
+    return {
+        day: {
+            "date": day,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "message_count": 0,
+        }
+        for day in _date_range(start, end)
+    }
+
+
 def _aggregate_usage_rows(
     rows: Iterable[tuple[datetime, Any, Optional[str], str]],
     *,
@@ -110,6 +123,7 @@ def _aggregate_usage_rows(
         "total_tokens": 0,
         "message_count": 0,
     })
+    daily_by_user: dict[str, dict[str, dict]] = defaultdict(lambda: _empty_user_daily_buckets(start, end))
 
     for timestamp, meta_data, owner, role in rows:
         if not timestamp:
@@ -122,6 +136,7 @@ def _aggregate_usage_rows(
         bucket["message_count"] += 1
         totals["message_count"] += 1
         by_user[owner_key]["message_count"] += 1
+        daily_by_user[owner_key][day]["message_count"] += 1
 
         if role != "assistant":
             continue
@@ -135,6 +150,10 @@ def _aggregate_usage_rows(
         bucket["input_tokens"] += input_tokens
         bucket["output_tokens"] += output_tokens
         bucket["total_tokens"] += total_tokens
+        user_bucket = daily_by_user[owner_key][day]
+        user_bucket["input_tokens"] += input_tokens
+        user_bucket["output_tokens"] += output_tokens
+        user_bucket["total_tokens"] += total_tokens
 
         source = metrics.get("usage_source")
         if source == "estimated":
@@ -158,6 +177,10 @@ def _aggregate_usage_rows(
         "by_user": [
             {"user": user, **values}
             for user, values in sorted(by_user.items(), key=lambda item: item[0])
+        ],
+        "daily_by_user": [
+            {"user": user, "daily": [values[day] for day in sorted(values)]}
+            for user, values in sorted(daily_by_user.items(), key=lambda item: item[0])
         ],
     }
 

@@ -10,15 +10,23 @@ const ALL_USERS = '__all__';
 const RANGE_KEY = 'ody-usage-range';
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+const AVG_COLORS = ['#f6c177', '#9ccfd8', '#c4a7e7', '#eb6f92', '#31748f', '#ea9a97'];
 
 let modalEl = null;
+let chartResizeObserver = null;
+let chartResizeRaf = 0;
+let lastChartRenderWidth = 0;
+let lastChartRenderHeight = 0;
 let state = {
-  range: 'month',
+  range: 'last30',
   start: '',
   end: '',
   user: ALL_USERS,
   data: null,
   loading: false,
+  showInput: true,
+  showOutput: true,
+  showMovingAverage: false,
 };
 
 let picker = {
@@ -102,13 +110,66 @@ function sortedRange(start, end) {
   return start <= end ? { start, end } : { start: end, end: start };
 }
 
+function movingAverage(values, windowSize = 7) {
+  return values.map((_, index) => {
+    const start = Math.max(0, index - windowSize + 1);
+    const window = values.slice(start, index + 1);
+    const total = window.reduce((sum, value) => sum + Number(value || 0), 0);
+    return total / window.length;
+  });
+}
+
+function movingAverageSeries(data) {
+  if (!state.showMovingAverage) return [];
+  return (data?.daily_by_user || [])
+    .map((series, index) => {
+      const daily = series.daily || [];
+      const averages = movingAverage(daily.map(day => day.total_tokens || 0));
+      return {
+        user: series.user || 'unassigned',
+        color: AVG_COLORS[index % AVG_COLORS.length],
+        points: averages.map((value, pointIndex) => ({
+          date: daily[pointIndex]?.date || '',
+          value,
+        })),
+      };
+    })
+    .filter(series => series.points.length);
+}
+
+function smoothPath(points) {
+  if (!points.length) return '';
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+  const d = [`M ${points[0].x} ${points[0].y}`];
+  for (let i = 0; i < points.length - 1; i++) {
+    const previous = points[i - 1] || points[i];
+    const current = points[i];
+    const next = points[i + 1];
+    const following = points[i + 2] || next;
+    const cp1x = current.x + (next.x - previous.x) / 6;
+    const cp1y = current.y + (next.y - previous.y) / 6;
+    const cp2x = next.x - (following.x - current.x) / 6;
+    const cp2y = next.y - (following.y - current.y) / 6;
+    d.push(`C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${next.x} ${next.y}`);
+  }
+  return d.join(' ');
+}
+
 function closeUsage() {
+  if (chartResizeObserver) chartResizeObserver.disconnect();
+  chartResizeObserver = null;
+  if (chartResizeRaf) cancelAnimationFrame(chartResizeRaf);
+  chartResizeRaf = 0;
+  lastChartRenderWidth = 0;
+  picker.open = false;
+  document.getElementById('usage-range-popover')?.remove();
   if (modalEl) modalEl.remove();
   modalEl = null;
   Modals.unregister(MODAL_ID);
 }
 
 function minimizeUsage() {
+  closeRangePicker();
   Modals.minimize(MODAL_ID);
 }
 
@@ -123,7 +184,7 @@ function ensureDefaults() {
     try { return JSON.parse(localStorage.getItem(RANGE_KEY) || '{}'); } catch (_) { return {}; }
   })();
   if (saved.user) state.user = saved.user;
-  state = { ...state, range: 'month', ...rangeFor('month') };
+  state = { ...state, range: 'last30', ...rangeFor('last30') };
 }
 
 function saveRange() {
@@ -174,7 +235,7 @@ function renderSkeleton() {
             </div>
           </div>
           <div class="usage-filter-right">
-            <label id="usage-user-wrap" style="display:none;">Users <select id="usage-user"></select></label>
+            <label id="usage-user-wrap" style="display:none;">Users <select id="usage-user" class="usage-select"></select></label>
             <button type="button" class="usage-refresh" id="usage-refresh" title="Refresh from database" aria-label="Refresh from database">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
             </button>
@@ -230,14 +291,16 @@ function monthGrid(baseDate) {
   const first = new Date(baseDate.getFullYear(), baseDate.getMonth(), 1);
   const start = addDays(first, -first.getDay());
   const selected = sortedRange(picker.draftStart, picker.draftEnd);
+  const todayStr = ymd(new Date());
   let days = '';
   for (let i = 0; i < 42; i++) {
     const d = addDays(start, i);
     const day = ymd(d);
     const muted = d.getMonth() !== baseDate.getMonth();
+    const future = day > todayStr;
     const inRange = selected.start && selected.end && day > selected.start && day < selected.end;
     const isSelected = day === selected.start || day === selected.end;
-    days += `<button type="button" class="usage-range-day${muted ? ' muted' : ''}${inRange ? ' in-range' : ''}${isSelected ? ' selected' : ''}" data-day="${day}">${d.getDate()}</button>`;
+    days += `<button type="button" class="usage-range-day${muted ? ' muted' : ''}${future ? ' future' : ''}${inRange ? ' in-range' : ''}${isSelected ? ' selected' : ''}" data-day="${day}"${future ? ' disabled' : ''}>${d.getDate()}</button>`;
   }
   return `
     <div class="usage-range-month">
@@ -274,12 +337,19 @@ function applyRangePicker() {
 }
 
 function renderRangePicker() {
-  const popover = modalEl?.querySelector('#usage-range-popover');
+  const popover = document.getElementById('usage-range-popover');
   if (!popover) return;
   popover.hidden = !picker.open;
   if (!picker.open) {
     popover.innerHTML = '';
     return;
+  }
+  // Portal the popover to <body> so it isn't clipped by the modal's
+  // overflow:hidden, nor re-anchored as a fixed element by the modal's
+  // (animation-held) transform. This keeps it visible and correctly
+  // positioned even when the modal is narrow.
+  if (popover.parentElement !== document.body) {
+    document.body.appendChild(popover);
   }
   if (!picker.month) {
     const startDate = parseYmd(state.start);
@@ -308,7 +378,10 @@ function renderRangePicker() {
   popover.querySelectorAll('[data-usage-cal-nav]').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
-      picker.month = addMonths(picker.month, Number(btn.dataset.usageCalNav || 0));
+      const next = addMonths(picker.month, Number(btn.dataset.usageCalNav || 0));
+      const now = new Date();
+      const maxMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      picker.month = next > maxMonth ? maxMonth : next;
       renderRangePicker();
     });
   });
@@ -336,24 +409,66 @@ function renderRangePicker() {
     e.stopPropagation();
     applyRangePicker();
   });
+  clampRangePopover(popover);
 }
 
-function chartSvg(data) {
+function clampRangePopover(popover) {
+  // On mobile the stylesheet pins the popover with fixed positioning; leave it
+  // alone there and let CSS handle it.
+  if (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) {
+    popover.style.left = '';
+    popover.style.right = '';
+    popover.style.top = '';
+    return;
+  }
+  // The popover is position:fixed so it can spill outside the (overflow:hidden)
+  // modal when it's narrow. Anchor it to the trigger in viewport coordinates and
+  // clamp to the viewport so it never runs off-screen.
+  const trigger = modalEl?.querySelector('#usage-range-trigger');
+  if (!trigger) return;
+  popover.style.right = 'auto';
+  if (!picker.open) return;
+  const margin = 8;
+  const triggerRect = trigger.getBoundingClientRect();
+  const popRect = popover.getBoundingClientRect();
+  const popW = popRect.width;
+  const popH = popRect.height;
+
+  let left = triggerRect.left;
+  const maxLeft = window.innerWidth - margin - popW;
+  left = Math.min(left, maxLeft);
+  left = Math.max(margin, left);
+
+  let top = triggerRect.bottom + 6;
+  if (top + popH > window.innerHeight - margin) {
+    const above = triggerRect.top - 6 - popH;
+    top = above >= margin ? above : Math.max(margin, window.innerHeight - margin - popH);
+  }
+
+  popover.style.left = `${Math.round(left)}px`;
+  popover.style.top = `${Math.round(top)}px`;
+}
+
+function chartInnerSvg(data, width, height) {
   const daily = data?.daily || [];
-  const maxTotal = Math.max(0, ...daily.map(d => d.total_tokens || 0));
-  if (!daily.length || maxTotal === 0) {
+  const avgSeries = movingAverageSeries(data);
+  const visibleTotal = d => (state.showInput ? d.input_tokens || 0 : 0) + (state.showOutput ? d.output_tokens || 0 : 0);
+  const maxVisibleTotal = Math.max(0, ...daily.map(visibleTotal));
+  const maxAverageTotal = Math.max(0, ...avgSeries.flatMap(series => series.points.map(point => point.value || 0)));
+  const maxTotal = Math.max(maxVisibleTotal, maxAverageTotal, 1);
+  if (!daily.length) {
     return '<div class="usage-empty">No token usage found for this range.</div>';
   }
 
-  const width = Math.max(720, daily.length * 18);
-  const height = 320;
   const left = 54;
   const top = 18;
-  const bottom = 42;
+  const bottom = 56;
   const right = 12;
   const plotW = width - left - right;
   const plotH = height - top - bottom;
-  const barW = plotW / daily.length;
+  const slotW = plotW / daily.length;
+  const barGap = Math.min(Math.max(slotW * 0.18, 4), 10);
+  const barW = Math.max(slotW - barGap, 1);
   const yFor = val => top + plotH - (val / maxTotal) * plotH;
   const ticks = [0, 0.25, 0.5, 0.75, 1].map(p => Math.round(maxTotal * p));
   const every = Math.max(1, Math.ceil(daily.length / 10));
@@ -364,68 +479,165 @@ function chartSvg(data) {
   }).join('');
 
   const bars = daily.map((d, i) => {
-    const x = left + i * barW;
-    const input = d.input_tokens || 0;
-    const output = d.output_tokens || 0;
+    const laneX = left + i * slotW;
+    const x = laneX + barGap / 2;
+    const rawInput = d.input_tokens || 0;
+    const rawOutput = d.output_tokens || 0;
+    const input = state.showInput ? rawInput : 0;
+    const output = state.showOutput ? rawOutput : 0;
     const inputH = (input / maxTotal) * plotH;
     const outputH = (output / maxTotal) * plotH;
     const inputY = top + plotH - inputH;
     const outputY = inputY - outputH;
-    const label = i % every === 0 ? `<text x="${x + barW / 2}" y="${height - 18}" class="usage-axis-label usage-x-label" text-anchor="middle">${d.date.slice(5)}</text>` : '';
+    const centerX = laneX + slotW / 2;
+    const label = i % every === 0 ? `<text x="${centerX}" y="${height - 24}" class="usage-axis-label usage-x-label" text-anchor="middle">${d.date.slice(5)}</text>` : '';
     return `
-      <g class="usage-bar" data-date="${esc(d.date)}" data-input="${input}" data-output="${output}" data-total="${d.total_tokens || 0}" data-messages="${d.message_count || 0}">
+      <rect x="${laneX}" y="${top}" width="${slotW}" height="${plotH}" class="usage-hover-highlight" data-highlight-date="${esc(d.date)}"></rect>
+      <g class="usage-bar" data-bar-date="${esc(d.date)}">
         <rect x="${x}" y="${outputY}" width="${Math.max(barW, 1)}" height="${outputH}" class="usage-bar-output"></rect>
         <rect x="${x}" y="${inputY}" width="${Math.max(barW, 1)}" height="${inputH}" class="usage-bar-input"></rect>
         ${label}
       </g>
+      <rect x="${laneX}" y="${top}" width="${slotW}" height="${plotH}" class="usage-hover-target" data-date="${esc(d.date)}" data-input="${rawInput}" data-output="${rawOutput}" data-total="${d.total_tokens || 0}" data-messages="${d.message_count || 0}"></rect>
     `;
   }).join('');
 
+  const leftEdge = left;
+  const rightEdge = width - right;
+  const avgLines = avgSeries.map(series => {
+    const points = series.points.map((point, i) => {
+      const x = left + i * slotW + slotW / 2;
+      return { x, y: yFor(point.value || 0) };
+    });
+    // Stretch the line out to the chart edges instead of stopping at the
+    // centers of the first/last bars.
+    if (points.length) {
+      if (points[0].x > leftEdge) points.unshift({ x: leftEdge, y: points[0].y });
+      const lastPoint = points[points.length - 1];
+      if (lastPoint.x < rightEdge) points.push({ x: rightEdge, y: lastPoint.y });
+    }
+    return `<path class="usage-ma-line" d="${smoothPath(points)}" stroke="${esc(series.color)}" fill="none" vector-effect="non-scaling-stroke"><title>${esc(series.user)} 7-day average</title></path>`;
+  }).join('');
+
   return `
-    <div class="usage-chart-scroll">
-      <svg class="usage-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily token usage chart">
-        ${grid}
-        <line x1="${left}" y1="${top + plotH}" x2="${width - right}" y2="${top + plotH}" class="usage-axis-line"></line>
-        ${bars}
-      </svg>
-      <div class="usage-tooltip" id="usage-tooltip" hidden></div>
-    </div>
+    <svg class="usage-chart" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Daily token usage chart">
+      ${grid}
+      <line x1="${left}" y1="${top + plotH}" x2="${width - right}" y2="${top + plotH}" class="usage-axis-line"></line>
+      ${bars}
+      ${avgLines}
+    </svg>
+  `;
+}
+
+function chartShell() {
+  return `
+    <div class="usage-chart-scroll"></div>
+    <div class="usage-tooltip" id="usage-tooltip" hidden></div>
     <div class="usage-legend">
-      <span><i class="usage-legend-input"></i>Input tokens</span>
-      <span><i class="usage-legend-output"></i>Output tokens</span>
+      <button type="button" class="usage-legend-toggle${state.showInput ? ' active' : ''}" data-usage-series="input" aria-pressed="${state.showInput}">
+        <i class="usage-legend-input"></i>Input tokens
+      </button>
+      <button type="button" class="usage-legend-toggle${state.showOutput ? ' active' : ''}" data-usage-series="output" aria-pressed="${state.showOutput}">
+        <i class="usage-legend-output"></i>Output tokens
+      </button>
+      <button type="button" class="usage-legend-toggle${state.showMovingAverage ? ' active' : ''}" data-usage-series="average" aria-pressed="${state.showMovingAverage}">
+        <i class="usage-legend-average"></i>7-day average
+      </button>
     </div>
   `;
 }
 
 function wireChartTooltips() {
   const wrap = modalEl?.querySelector('#usage-chart-wrap');
+  const scroll = modalEl?.querySelector('.usage-chart-scroll');
   const tip = modalEl?.querySelector('#usage-tooltip');
   if (!wrap || !tip) return;
-  wrap.querySelectorAll('.usage-bar').forEach(bar => {
-    bar.addEventListener('mousemove', e => {
+  const clearActive = () => {
+    wrap.querySelectorAll('.usage-hover-highlight.active, .usage-bar.active').forEach(el => {
+      el.classList.remove('active');
+    });
+  };
+  const hideTooltip = () => {
+    clearActive();
+    tip.hidden = true;
+  };
+  const positionTooltip = e => {
+    const rect = wrap.getBoundingClientRect();
+    const padding = 8;
+    const preferredLeft = e.clientX - rect.left + 12;
+    const preferredTop = e.clientY - rect.top + 12;
+    const maxLeft = Math.max(padding, wrap.clientWidth - tip.offsetWidth - padding);
+    const maxTop = Math.max(padding, wrap.clientHeight - tip.offsetHeight - padding);
+    tip.style.left = `${Math.max(padding, Math.min(preferredLeft, maxLeft))}px`;
+    tip.style.top = `${Math.max(padding, Math.min(preferredTop, maxTop))}px`;
+  };
+  wrap.querySelectorAll('.usage-hover-target').forEach(target => {
+    target.addEventListener('mousemove', e => {
+      clearActive();
+      wrap.querySelector(`[data-highlight-date="${target.dataset.date}"]`)?.classList.add('active');
+      wrap.querySelector(`[data-bar-date="${target.dataset.date}"]`)?.classList.add('active');
       tip.hidden = false;
       tip.innerHTML = `
-        <strong>${esc(bar.dataset.date)}</strong>
-        <span>Total: ${fmtNum(bar.dataset.total)} tokens</span>
-        <span>Input: ${fmtNum(bar.dataset.input)}</span>
-        <span>Output: ${fmtNum(bar.dataset.output)}</span>
-        <span>Messages: ${fmtNum(bar.dataset.messages)}</span>
+        <strong>${esc(target.dataset.date)}</strong>
+        <span>Total: ${fmtNum(target.dataset.total)} tokens</span>
+        <span>Input: ${fmtNum(target.dataset.input)}</span>
+        <span>Output: ${fmtNum(target.dataset.output)}</span>
+        <span>Messages: ${fmtNum(target.dataset.messages)}</span>
       `;
-      const rect = wrap.getBoundingClientRect();
-      tip.style.left = `${e.clientX - rect.left + 12}px`;
-      tip.style.top = `${e.clientY - rect.top + 12}px`;
+      positionTooltip(e);
     });
-    bar.addEventListener('mouseleave', () => { tip.hidden = true; });
+  });
+  scroll?.addEventListener('mouseleave', hideTooltip);
+  wrap.addEventListener('mouseleave', hideTooltip);
+  wrap.querySelectorAll('[data-usage-series]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const series = btn.dataset.usageSeries;
+      if (series === 'input') state.showInput = !state.showInput;
+      if (series === 'output') state.showOutput = !state.showOutput;
+      if (series === 'average') state.showMovingAverage = !state.showMovingAverage;
+      renderChart(state.data);
+    });
   });
 }
 
 function renderChart(data) {
   const wrap = modalEl?.querySelector('#usage-chart-wrap');
   if (!wrap) return;
-  wrap.innerHTML = state.loading
-    ? '<div class="usage-loading">Loading usage...</div>'
-    : chartSvg(data);
+  if (state.loading && data) return;
+  if (state.loading) {
+    wrap.innerHTML = '<div class="usage-loading">Loading usage...</div>';
+    return;
+  }
+  lastChartRenderWidth = Math.round(wrap.clientWidth);
+  lastChartRenderHeight = Math.round(wrap.clientHeight);
+  wrap.innerHTML = chartShell();
+  const scroll = wrap.querySelector('.usage-chart-scroll');
+  if (scroll) {
+    const cs = getComputedStyle(scroll);
+    const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+    const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    const w = Math.max(1, Math.floor(scroll.clientWidth - padX));
+    const h = Math.max(1, Math.floor(scroll.clientHeight - padY));
+    scroll.innerHTML = chartInnerSvg(data, w, h);
+  }
   wireChartTooltips();
+}
+
+function watchChartSize() {
+  const wrap = modalEl?.querySelector('#usage-chart-wrap');
+  if (!wrap || chartResizeObserver) return;
+  chartResizeObserver = new ResizeObserver(() => {
+    if (!state.data || state.loading) return;
+    if (chartResizeRaf) cancelAnimationFrame(chartResizeRaf);
+    chartResizeRaf = requestAnimationFrame(() => {
+      chartResizeRaf = 0;
+      const nextWidth = Math.round(wrap.clientWidth);
+      const nextHeight = Math.round(wrap.clientHeight);
+      if (Math.abs(nextWidth - lastChartRenderWidth) < 2 && Math.abs(nextHeight - lastChartRenderHeight) < 2) return;
+      renderChart(state.data);
+    });
+  });
+  chartResizeObserver.observe(wrap);
 }
 
 async function loadUsage() {
@@ -513,6 +725,7 @@ export function openUsage() {
   });
   syncControls();
   wireControls();
+  watchChartSize();
   loadUsage();
 }
 

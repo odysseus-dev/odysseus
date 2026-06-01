@@ -41,6 +41,13 @@ def test_aggregate_usage_rows_buckets_stacked_tokens_by_local_day():
     assert result["totals"]["message_count"] == 5
     assert result["totals"]["real_count"] == 2
     assert result["totals"]["estimated_count"] == 1
+    by_user_daily = {row["user"]: row["daily"] for row in result["daily_by_user"]}
+    alice_daily = {row["date"]: row for row in by_user_daily["alice"]}
+    bob_daily = {row["date"]: row for row in by_user_daily["bob"]}
+    assert alice_daily["2026-05-31"]["total_tokens"] == 125
+    assert alice_daily["2026-06-01"]["total_tokens"] == 125
+    assert bob_daily["2026-06-01"]["total_tokens"] == 15
+    assert bob_daily["2026-06-01"]["message_count"] == 3
 
 
 def test_resolve_owner_scope_admin_all_users():
