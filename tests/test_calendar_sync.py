@@ -3,8 +3,14 @@
 These cover the pure logic (id derivation, datetime normalisation, URL/feed
 parsing, Calendly response shaping, multi-source result aggregation) without
 hitting the network or a database — the parts most likely to regress silently.
+
+The HTTP-boundary tests (Calendly pagination/read-only, secret non-leakage)
+use fakes/TestClient rather than live accounts so they run in CI; real-source
+validation against a live Google iCal feed and Calendly token is documented in
+the PR thread.
 """
 
+import asyncio
 from datetime import date, datetime, timezone
 
 import pytest
@@ -190,3 +196,136 @@ def test_aggregate_sync_results_sums_and_filters():
     assert "real error" in agg["errors"]
     assert any("boom" in e for e in agg["errors"])
     assert all("not configured" not in e for e in agg["errors"])
+
+
+# ── secret masking ──
+
+def test_mask_feed_url_omits_secret_path():
+    from routes.calendar_routes import _mask_feed_url
+    secret = (
+        "https://calendar.google.com/calendar/ical/"
+        "abc123SECRETtoken456%40group.calendar.google.com/private-DEADBEEF/basic.ics"
+    )
+    hint = _mask_feed_url(secret)
+    # Host + trailing filename are fine to show; the opaque secret segments
+    # that grant read access must not appear.
+    assert hint == "calendar.google.com/…/basic.ics"
+    assert "SECRET" not in hint
+    assert "DEADBEEF" not in hint
+
+
+def test_mask_feed_url_empty():
+    from routes.calendar_routes import _mask_feed_url
+    assert _mask_feed_url("") == ""
+    assert _mask_feed_url(None) == ""
+
+
+# ── Calendly: pagination + read-only (GET) at the HTTP boundary ──
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+class _FakeAsyncClient:
+    """Records every request so the test can assert the sync only ever GETs
+    (never mutates the remote) and follows pagination cursors."""
+
+    calls = []
+
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url, headers=None, params=None):
+        _FakeAsyncClient.calls.append(("GET", url, params))
+        if url.endswith("/users/me"):
+            return _FakeResp({"resource": {"uri": "https://api.calendly.com/users/U", "name": "Amish"}})
+        # First scheduled_events page carries a cursor; second ends it.
+        if params is not None:  # first hop (original params, no cursor baked in)
+            return _FakeResp({
+                "collection": [{"uri": "https://api.calendly.com/scheduled_events/E1",
+                                "name": "Call 1", "status": "active",
+                                "start_time": "2026-06-01T10:00:00Z",
+                                "end_time": "2026-06-01T10:30:00Z", "location": None}],
+                "pagination": {"next_page": "https://api.calendly.com/scheduled_events?page=2"},
+            })
+        return _FakeResp({
+            "collection": [{"uri": "https://api.calendly.com/scheduled_events/E2",
+                            "name": "Call 2", "status": "active",
+                            "start_time": "2026-06-02T10:00:00Z",
+                            "end_time": "2026-06-02T10:30:00Z", "location": None}],
+            "pagination": {"next_page": None},
+        })
+
+
+def test_calendly_fetch_events_paginates_and_is_read_only(monkeypatch):
+    import httpx
+    _FakeAsyncClient.calls = []
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+
+    name, events = asyncio.run(calendly_sync._fetch_events("tok-123"))
+
+    assert name == "Amish"
+    assert [e["uri"].rsplit("/", 1)[-1] for e in events] == ["E1", "E2"]
+    # Every HTTP call was a GET — the sync never mutates the Calendly account.
+    assert all(method == "GET" for method, _u, _p in _FakeAsyncClient.calls)
+    # The first scheduled_events hop constrained the window; the cursor hop
+    # dropped the original params (cursor is baked into next_page URL).
+    sched = [c for c in _FakeAsyncClient.calls if "scheduled_events" in c[1]]
+    assert sched[0][2] and "min_start_time" in sched[0][2] and "max_start_time" in sched[0][2]
+    assert sched[1][2] is None
+
+
+# ── secrets are never returned to the client (config GET endpoints) ──
+
+def _calendar_client(monkeypatch, prefs):
+    """Mount the calendar router on a bare app with auth + prefs stubbed."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    import routes.calendar_routes as cr
+    from routes import prefs_routes
+
+    monkeypatch.setattr(cr, "get_current_user", lambda request: "owner@test")
+    monkeypatch.setattr(prefs_routes, "_load_for_user", lambda user=None: dict(prefs))
+    monkeypatch.setattr(prefs_routes, "_save_for_user", lambda user, p: None)
+
+    app = FastAPI()
+    app.include_router(cr.setup_calendar_routes())
+    return TestClient(app)
+
+
+def test_gcal_config_get_never_leaks_secret_url(monkeypatch):
+    secret = ("https://calendar.google.com/calendar/ical/"
+              "TOTALLYsecretTOKEN%40group.calendar.google.com/private-CAFEBABE/basic.ics")
+    client = _calendar_client(monkeypatch, {"gcal": {"ics_url": secret}})
+    r = client.get("/api/calendar/gcal/config")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["has_url"] is True and body["configured"] is True
+    # The raw secret URL / token must never appear in the response.
+    blob = r.text
+    assert "TOTALLYsecretTOKEN" not in blob
+    assert "CAFEBABE" not in blob
+    assert "ics_url" not in body  # field that used to carry the full secret
+
+
+def test_calendly_config_get_never_leaks_token(monkeypatch):
+    client = _calendar_client(monkeypatch, {"calendly": {"token": "SUPER-secret-PAT-xyz"}})
+    r = client.get("/api/calendar/calendly/config")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["has_token"] is True and body["configured"] is True
+    assert body["token"] == ""
+    assert "SUPER-secret-PAT-xyz" not in r.text

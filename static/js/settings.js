@@ -2978,8 +2978,8 @@ async function initUnifiedIntegrations() {
       items.push({ type: 'caldav', id: '__caldav__', name: 'Calendar (CalDAV)', detail: calRes.url, enabled: true, data: calRes });
     }
     // Google Calendar (secret iCal feed)
-    if (gcalRes.configured || gcalRes.ics_url) {
-      items.push({ type: 'gcal', id: '__gcal__', name: 'Google Calendar', detail: 'iCal feed sync', enabled: true, data: gcalRes });
+    if (gcalRes.configured || gcalRes.has_url) {
+      items.push({ type: 'gcal', id: '__gcal__', name: 'Google Calendar', detail: gcalRes.hint || 'iCal feed sync', enabled: true, data: gcalRes });
     }
     // Calendly
     if (calendlyRes.configured || calendlyRes.has_token) {
@@ -3072,7 +3072,7 @@ async function initUnifiedIntegrations() {
         try {
           if (type === 'api') await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'caldav') await fetch('/api/calendar/config', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: '', username: '', password: '' }) });
-          else if (type === 'gcal') await fetch('/api/calendar/gcal/config', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ics_url: '' }) });
+          else if (type === 'gcal') await fetch('/api/calendar/gcal/config', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clear: true }) });
           else if (type === 'calendly') await fetch('/api/calendar/calendly/config', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clear: true }) });
           else if (type === 'carddav') {
             await fetch('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ carddav_url: '', carddav_username: '', carddav_password: '' }) });
@@ -3295,6 +3295,11 @@ async function initUnifiedIntegrations() {
 
   // ── Google Calendar form (secret iCal feed) ──
   async function showGCalForm() {
+    let hasUrl = false, hint = '';
+    try {
+      const r = await fetch('/api/calendar/gcal/config', { credentials: 'same-origin' });
+      const d = await r.json(); hasUrl = !!d.has_url; hint = d.hint || '';
+    } catch (_) {}
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
         <h2 style="font-size:13px">Google Calendar</h2>
@@ -3302,17 +3307,15 @@ async function initUnifiedIntegrations() {
           <div style="font-size:11px;opacity:0.6;line-height:1.4;margin-bottom:2px">
             In Google Calendar → Settings → your calendar → "Integrate calendar",
             copy the <b>Secret address in iCal format</b> and paste it below.
-            Sync is one-way (Google → Odysseus).
+            Sync is one-way (Google → Odysseus); the secret URL is stored
+            server-side and never shown again.
           </div>
-          <div class="settings-row"><label class="settings-label">iCal URL</label><input id="uf-gcal-url" class="settings-input" placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"></div>
+          <div class="settings-row"><label class="settings-label">iCal URL</label><input id="uf-gcal-url" class="settings-input" placeholder="${hasUrl ? esc(hint) + ' (saved — leave blank to keep)' : 'https://calendar.google.com/calendar/ical/.../basic.ics'}"></div>
           <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-gcal-save">Save</button><button class="admin-btn-sm" id="uf-gcal-test" style="opacity:0.7">Test</button><button class="admin-btn-sm" id="uf-gcal-cancel" style="opacity:0.7">Cancel</button><span id="uf-gcal-msg" style="font-size:11px"></span></div>
         </div>
       </div>`;
-    try {
-      const r = await fetch('/api/calendar/gcal/config', { credentials: 'same-origin' }); const d = await r.json();
-      el('uf-gcal-url').value = d.ics_url || '';
-    } catch (_) {}
     const _msg = (text, ok) => { const m = el('uf-gcal-msg'); m.textContent = text; m.style.color = ok ? 'var(--green,#50fa7b)' : 'var(--red)'; };
+    // Empty url body => test the stored feed (server falls back to it).
     const _test = async () => {
       try {
         const r = await fetch('/api/calendar/gcal/test', {
@@ -3330,15 +3333,21 @@ async function initUnifiedIntegrations() {
       _msg(d.ok ? `Connected — ${d.events ?? 0} events` : (d.error || 'Failed'), d.ok);
     });
     el('uf-gcal-save').addEventListener('click', async () => {
-      // Pre-validate the feed before persisting, same as CalDAV's save path.
-      _msg('Testing…', true); el('uf-gcal-msg').style.color = '';
-      const d = await _test();
-      if (!d.ok) { _msg(d.error || 'Feed unreachable — not saved', false); return; }
+      const url = el('uf-gcal-url').value.trim();
+      // Only re-validate when a URL was actually entered. A blank save on an
+      // already-configured feed is a no-op "keep existing".
+      if (url) {
+        _msg('Testing…', true); el('uf-gcal-msg').style.color = '';
+        const d = await _test();
+        if (!d.ok) { _msg(d.error || 'Feed unreachable — not saved', false); return; }
+      } else if (!hasUrl) {
+        _msg('Enter an iCal URL', false); return;
+      }
       try {
         await fetch('/api/calendar/gcal/config', {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ics_url: el('uf-gcal-url').value.trim() }),
+          body: JSON.stringify({ ics_url: url }),
         });
         _msg('Saved', true);
         formEl.style.display = 'none';

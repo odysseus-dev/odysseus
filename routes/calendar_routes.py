@@ -388,6 +388,28 @@ def _event_to_dict(ev: CalendarEvent) -> dict:
     }
 
 
+def _mask_feed_url(url: str) -> str:
+    """Render a secret feed URL as a non-reversible hint for display, e.g.
+    "calendar.google.com/…/basic.ics". Returns "" for an empty url. Never
+    includes the opaque secret path segment that grants read access."""
+    url = (url or "").strip()
+    if not url:
+        return ""
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(url if "://" in url else "https://" + url)
+        host = p.hostname or ""
+        last = ""
+        segs = [s for s in (p.path or "").split("/") if s]
+        if segs:
+            last = segs[-1]
+        # Only the host and the trailing filename (e.g. basic.ics) — the
+        # secret token lives in the middle segments, which we omit.
+        return f"{host}/…/{last}" if last else host
+    except Exception:
+        return "configured feed"
+
+
 def _aggregate_sync_results(results) -> dict:
     """Merge the per-source dicts returned by the calendar pulls into one
     {calendars, events, deleted, errors} summary. `results` may contain
@@ -563,9 +585,15 @@ def setup_calendar_routes() -> APIRouter:
         owner = _require_user(request)
         from routes.prefs_routes import _load_for_user
         cfg = (_load_for_user(owner) or {}).get("gcal", {}) or {}
+        url = cfg.get("ics_url", "") or ""
+        # A Google "secret address in iCal format" is a bearer secret — anyone
+        # holding it can read the calendar. Never hand it back to the client;
+        # return only a masked hint (host + last URL segment) so the UI can
+        # show *which* feed is configured without leaking the credential.
         return {
-            "ics_url": cfg.get("ics_url", "") or "",
-            "configured": bool(cfg.get("ics_url")),
+            "has_url": bool(url),
+            "configured": bool(url),
+            "hint": _mask_feed_url(url),
         }
 
     @router.post("/gcal/config")
@@ -578,11 +606,21 @@ def setup_calendar_routes() -> APIRouter:
             body = {}
         prefs = _load_for_user(owner) or {}
         url = (body.get("ics_url") or "").strip()
-        # Empty url => remove the integration entirely.
-        if not url:
+        cfg = dict(prefs.get("gcal") or {})
+        # Explicit clear flag (the "Remove" button) drops the integration.
+        if body.get("clear"):
             prefs.pop("gcal", None)
             _save_for_user(owner, prefs)
             return {"ok": True, "cleared": True}
+        # Blank url with nothing stored => nothing to do / clear. Blank url when
+        # one is already stored means "keep existing" (edit form re-submitted
+        # without re-pasting the secret URL), mirroring the password/token UX.
+        if not url:
+            if not cfg.get("ics_url"):
+                prefs.pop("gcal", None)
+                _save_for_user(owner, prefs)
+                return {"ok": True, "cleared": True}
+            return {"ok": True, "unchanged": True}
         prefs["gcal"] = {"ics_url": url}
         _save_for_user(owner, prefs)
         return {"ok": True}
