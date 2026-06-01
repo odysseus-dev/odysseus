@@ -22,7 +22,8 @@ import httpx
 
 from . import renderer as r
 from . import sandbox
-from .approval import ApprovalState, _ask
+from . import approval as _approval
+from .approval import ApprovalState
 from .config import (
     APPROVAL_AUTO, APPROVAL_DENY, CliConfig, to_chat_completions_url,
 )
@@ -170,7 +171,7 @@ async def _approve(state: ApprovalState, tool: str, preview: str, diff_lines=Non
     if state.policy == APPROVAL_DENY:
         r.info(f"{tool} blocked (read-only mode)")
         return False
-    decision = await _ask(tool, preview, diff_lines=diff_lines)
+    decision = await _approval._prompt(tool, preview, diff_lines=diff_lines)
     if decision == "always":
         state.grant_always(tool)
         return True

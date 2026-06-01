@@ -58,6 +58,9 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
                    help="shortcut for --approval auto (no prompts)")
     p.add_argument("--read-only", action="store_true",
                    help="shortcut for --approval deny (no system mutations)")
+    p.add_argument("--tui", action="store_true",
+                   help="launch the full-screen TUI (scrollable transcript, "
+                        "pinned status footer, input box)")
     p.add_argument("--legacy", action="store_true",
                    help="use the full Odysseus server agent loop (56 tools) "
                         "instead of the default lightweight native loop")
@@ -250,6 +253,26 @@ def main(argv: List[str] | None = None) -> int:
         toolcompat.install()
     except Exception as exc:  # pragma: no cover
         r.info(f"(tool-compat shim not installed: {exc})")
+
+    # Full-screen TUI mode (native loop only). The TUI manages its own approval
+    # state and rendering, so hand off here after the runtime is prepared.
+    if args.tui:
+        if args.legacy:
+            r.error("--tui is not supported with --legacy (native loop only).")
+            return 2
+        try:
+            from . import toolcompat
+            toolcompat.install()
+        except Exception:
+            pass
+        try:
+            from . import tui
+        except ImportError:
+            r.error("the TUI needs Textual. Install it with: "
+                    "pip install textual")
+            return 2
+        tui.run(cfg, resume=args.resume, autosave=not args.no_save)
+        return 0
 
     approval_state = ApprovalState(cfg.approval, cfg.project_root)
     install_approval(approval_state)

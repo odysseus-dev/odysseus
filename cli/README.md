@@ -58,10 +58,25 @@ ollama pull qwen2.5-coder:7b
 # from inside the project you want to work on:
 python -m odysseus_cli                       # interactive REPL
 python -m odysseus_cli "explain src/app.py"  # one-shot, then exit
+python -m odysseus_cli --tui                 # full-screen TUI (see below)
 
 # pick a model / endpoint explicitly:
 python -m odysseus_cli --model qwen2.5-coder:7b --endpoint http://localhost:11434/v1
 ```
+
+### Full-screen TUI (`--tui`)
+
+A Claude-Code-style full-screen interface: a scrollable transcript pane, a
+pinned status footer (model · tokens · context %), an input box, and modal
+tool-approval prompts. Requires Textual:
+
+```bash
+pip install textual
+python -m odysseus_cli --tui
+```
+
+The line-based REPL remains the default; `--tui` is opt-in and uses the native
+loop (not compatible with `--legacy`).
 
 ### Approval policy (safety)
 

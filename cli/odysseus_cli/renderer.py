@@ -35,13 +35,32 @@ def c(text: str, color: str) -> str:
     return f"{color}{text}{RESET}"
 
 
+# Optional output sink. When set (e.g. by the TUI), all rendered text is routed
+# to this callable instead of stdout. Receives the already-ANSI-colored string.
+_sink = None
+
+
+def set_sink(fn) -> None:
+    """Redirect rendered output to `fn(text)` (or back to stdout when None)."""
+    global _sink, _COLOR
+    _sink = fn
+    if fn is not None:
+        _COLOR = True  # force ANSI so the sink can colorize (e.g. Text.from_ansi)
+
+
 def write(text: str = "", end: str = "\n") -> None:
+    if _sink is not None:
+        _sink(text)
+        return
     sys.stdout.write(text + end)
     sys.stdout.flush()
 
 
 def delta(text: str) -> None:
     """Stream a chunk of the assistant's reply inline (no newline)."""
+    if _sink is not None:
+        _sink(text)
+        return
     sys.stdout.write(text)
     sys.stdout.flush()
 

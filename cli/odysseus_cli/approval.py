@@ -64,8 +64,26 @@ def _denied_result(tool: str, reason: str = ""):
     return desc, result
 
 
+# The prompt implementation is pluggable so a TUI can swap the input()-based
+# prompt for a modal. Defaults to the terminal prompt below.
+ask_user = None
+
+
+def set_prompt(fn) -> None:
+    """Override the approval prompt (e.g. a TUI modal). None restores default."""
+    global ask_user
+    ask_user = fn
+
+
+async def _prompt(tool: str, command: str, diff_lines=None) -> str:
+    """Dispatch to the active prompt implementation."""
+    if ask_user is not None:
+        return await ask_user(tool, command, diff_lines)
+    return await _ask(tool, command, diff_lines=diff_lines)
+
+
 async def _ask(tool: str, command: str, diff_lines=None) -> str:
-    """Prompt the user. Returns 'yes', 'always', or 'no'."""
+    """Prompt the user via the terminal. Returns 'yes', 'always', or 'no'."""
     r.write()
     r.write(r.c(f"  ⚠ allow {tool}?", r.BOLD + r.YELLOW))
     if diff_lines is not None:
@@ -130,7 +148,7 @@ def install(state: ApprovalState) -> None:
         if needs_gate and not state.always_allowed(tool):
             if state.policy == APPROVAL_DENY:
                 return _denied_result(tool, "read-only mode")
-            decision = await _ask(tool, content, diff_lines=diff_lines)
+            decision = await _prompt(tool, content, diff_lines=diff_lines)
             if decision == "no":
                 return _denied_result(tool)
             if decision == "always":
