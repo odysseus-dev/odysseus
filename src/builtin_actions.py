@@ -66,7 +66,16 @@ async def action_tidy_documents(owner: str, **kwargs) -> Tuple[str, bool]:
 
 
 async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
-    """Consolidate/deduplicate memories for the owner."""
+    """Consolidate/deduplicate memories.
+
+    Each owner's memories are tidied ONLY against their own. A specific owner
+    consolidates just their memories; an empty owner (the common case for
+    built-in housekeeping rows) processes EACH owner-group independently rather
+    than merging every user into one batch. This is what keeps a housekeeping
+    pass from comparing, leaking, or deleting one user's memories while
+    processing another's — and from sending everyone's memory text into a
+    single LLM call.
+    """
     try:
         import json
         import re
@@ -74,167 +83,186 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
         from src.memory import MemoryManager
+        from src.text_helpers import strip_think
 
         manager = MemoryManager(DATA_DIR)
         all_memories = manager.load_all()
 
-        # When the scheduled task was created without an explicit owner
-        # (the common case for built-in housekeeping rows), task.owner
-        # arrives as "" or None. The old filter then required memories
-        # with a matching empty owner — which excluded every real memory
-        # and the action no-op'd with "nothing to consolidate" even
-        # though hundreds of memories were sitting there. Treat empty
-        # owner as "no filter" so the housekeeping action actually runs.
+        def _mem_owner(mem: dict) -> str:
+            return (mem.get("owner") or "").strip()
+
         _owner_clean = (owner or "").strip()
         if _owner_clean:
-            def _belongs_to_owner(mem: dict) -> bool:
-                mem_owner = (mem.get("owner") or "").strip()
-                return mem_owner == _owner_clean or not mem_owner
+            groups = {_owner_clean: [m for m in all_memories if _mem_owner(m) == _owner_clean]}
         else:
-            def _belongs_to_owner(mem: dict) -> bool:
-                return True
+            groups = {}
+            for m in all_memories:
+                groups.setdefault(_mem_owner(m), []).append(m)
 
-        owner_memories = [m for m in all_memories if _belongs_to_owner(m)]
-        if not owner_memories:
-            raise TaskNoop("no memories to consolidate")
+        async def _tidy_group(grp_owner: str, grp_mems: list):
+            """Decide keep/clean/drop WITHIN a single owner-group.
 
-        url, model, headers = resolve_endpoint("utility", owner=owner)
-        if not url or not model:
-            url, model, headers = resolve_endpoint("default", owner=owner)
+            Returns (keep_ids:set, cleaned_by_id:dict, removed:int, changed:int,
+            used_llm:bool). Never touches memories outside this group.
+            """
+            if len(grp_mems) < 1:
+                return set(), {}, 0, 0, False
 
-        if url and model and len(owner_memories) >= 2:
-            try:
-                items = [
-                    {
-                        "id": m.get("id"),
-                        "category": m.get("category", "fact"),
-                        "text": (m.get("text") or "").strip()[:600],
-                    }
-                    for m in owner_memories
-                    if m.get("id") and (m.get("text") or "").strip()
-                ]
-                prompt = (
-                    "You are tidying a user's saved personal memories. Return ONLY raw JSON, no markdown.\n"
-                    "Remove memories that are empty, broken, trivial conversation filler, duplicates, or obsolete "
-                    "because a clearer newer memory replaces them. Preserve useful personal facts, preferences, "
-                    "contacts, project context, and instructions. If memories conflict, keep the clearest/latest "
-                    "one and drop the obsolete one.\n\n"
-                    "JSON shape:\n"
-                    "{\"keep\":[{\"id\":\"existing id\",\"text\":\"cleaned text\",\"category\":\"fact|preference|identity|event|contact|project|instruction\"}],"
-                    "\"drop\":[{\"id\":\"existing id\",\"reason\":\"short reason\"}]}\n\n"
-                    f"MEMORIES:\n{json.dumps(items, ensure_ascii=False)}"
-                )
-                raw = await llm_call_async(
-                    url=url,
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.0,
-                    max_tokens=4096,
-                    headers=headers,
-                    timeout=120,
-                )
-                from src.text_helpers import strip_think
+            ep_owner = grp_owner or None
+            url, model, headers = resolve_endpoint("utility", owner=ep_owner)
+            if not url or not model:
+                url, model, headers = resolve_endpoint("default", owner=ep_owner)
 
-                raw = strip_think(raw or "", prose=False, prompt_echo=False).strip()
-                raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
-                start = raw.find("{")
-                end = raw.rfind("}")
-                if start != -1 and end != -1 and end > start:
-                    decision = json.loads(raw[start:end + 1])
-                    keep_items = decision.get("keep") if isinstance(decision, dict) else None
-                    drop_items = decision.get("drop") if isinstance(decision, dict) else None
-                    if isinstance(keep_items, list) and isinstance(drop_items, list):
-                        by_id = {m.get("id"): m for m in owner_memories}
-                        keep_ids = set()
-                        cleaned_by_id = {}
-                        for item in keep_items:
-                            if not isinstance(item, dict):
-                                continue
-                            mid = item.get("id")
-                            if mid not in by_id:
-                                continue
-                            text = (item.get("text") or "").strip()
-                            if not text:
-                                continue
-                            keep_ids.add(mid)
-                            cleaned_by_id[mid] = {
-                                "text": text,
-                                "category": (item.get("category") or by_id[mid].get("category") or "fact").strip(),
-                            }
-
-                        if keep_ids:
-                            changed_text = 0
-                            kept_all = []
-                            for mem in all_memories:
-                                if not _belongs_to_owner(mem):
-                                    kept_all.append(mem)
+            if url and model and len(grp_mems) >= 2:
+                try:
+                    # Memories longer than this are truncated in the prompt, so we
+                    # must NOT later trust a "cleaned" rewrite for them — doing so
+                    # would silently discard everything past the window. The apply
+                    # step below keeps the original text for any truncated memory.
+                    window = 2000
+                    items = [
+                        {
+                            "id": m.get("id"),
+                            "category": m.get("category", "fact"),
+                            "text": (m.get("text") or "").strip()[:window],
+                        }
+                        for m in grp_mems
+                    ]
+                    prompt = (
+                        "You are tidying a user's saved personal memories. Return ONLY raw JSON, no markdown.\n"
+                        "Remove memories that are empty, broken, trivial conversation filler, duplicates, or obsolete "
+                        "because a clearer newer memory replaces them. Preserve useful personal facts, preferences, "
+                        "contacts, project context, and instructions. If memories conflict, keep the clearest/latest "
+                        "one and drop the obsolete one.\n\n"
+                        "JSON shape:\n"
+                        "{\"keep\":[{\"id\":\"existing id\",\"text\":\"cleaned text\",\"category\":\"fact|preference|identity|event|contact|project|instruction\"}],"
+                        "\"drop\":[{\"id\":\"existing id\",\"reason\":\"short reason\"}]}\n\n"
+                        f"MEMORIES:\n{json.dumps(items, ensure_ascii=False)}"
+                    )
+                    raw = await llm_call_async(
+                        url=url,
+                        model=model,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.0,
+                        max_tokens=4096,
+                        headers=headers,
+                        timeout=120,
+                    )
+                    raw = strip_think(raw or "", prose=False, prompt_echo=False).strip()
+                    raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
+                    start = raw.find("{")
+                    end = raw.rfind("}")
+                    if start != -1 and end != -1 and end > start:
+                        decision = json.loads(raw[start:end + 1])
+                        keep_items = decision.get("keep") if isinstance(decision, dict) else None
+                        drop_items = decision.get("drop") if isinstance(decision, dict) else None
+                        if isinstance(keep_items, list) and isinstance(drop_items, list):
+                            by_id = {m.get("id"): m for m in grp_mems}
+                            keep_ids = set()
+                            cleaned_by_id = {}
+                            for item in keep_items:
+                                if not isinstance(item, dict):
                                     continue
-                                mid = mem.get("id")
-                                if mid not in keep_ids:
+                                mid = item.get("id")
+                                if mid not in by_id:
                                     continue
-                                cleaned = cleaned_by_id.get(mid) or {}
-                                if cleaned.get("text") and cleaned["text"] != mem.get("text"):
-                                    mem["text"] = cleaned["text"]
-                                    changed_text += 1
-                                if cleaned.get("category"):
-                                    mem["category"] = cleaned["category"]
-                                if owner and not mem.get("owner"):
-                                    mem["owner"] = owner
-                                kept_all.append(mem)
-
-                            removed = len(owner_memories) - len(keep_ids)
-                            if removed or changed_text:
-                                manager.save(kept_all)
-                                reasons = [
-                                    (d.get("reason") or "").strip()
-                                    for d in drop_items
-                                    if isinstance(d, dict) and (d.get("reason") or "").strip()
-                                ][:3]
-                                reason_text = f": {'; '.join(reasons)}" if reasons else ""
-                                return (
-                                    f"AI tidied {len(owner_memories)} memories: "
-                                    f"removed {removed}, cleaned {changed_text}{reason_text}",
-                                    True,
+                                text = (item.get("text") or "").strip()
+                                if not text:
+                                    continue
+                                keep_ids.add(mid)
+                                entry = {
+                                    "category": (item.get("category") or by_id[mid].get("category") or "fact").strip(),
+                                }
+                                # Only accept a rewritten body when the LLM actually
+                                # saw the whole memory. For memories truncated to the
+                                # window, keep the original text verbatim — trusting
+                                # the rewrite would silently lose the tail.
+                                orig = (by_id[mid].get("text") or "").strip()
+                                if len(orig) <= window:
+                                    entry["text"] = text
+                                cleaned_by_id[mid] = entry
+                            if keep_ids:
+                                changed = sum(
+                                    1 for mid in keep_ids
+                                    if cleaned_by_id.get(mid, {}).get("text")
+                                    and cleaned_by_id[mid]["text"] != by_id[mid].get("text")
                                 )
+                                removed = len(grp_mems) - len(keep_ids)
+                                return keep_ids, cleaned_by_id, removed, changed, True
+                except Exception as ai_err:
+                    logger.warning(
+                        "AI memory tidy failed for group %r; falling back to duplicate cleanup: %s",
+                        grp_owner, ai_err,
+                    )
 
-                            raise TaskNoop(f"AI scanned {len(owner_memories)} memories, no changes")
-            except TaskNoop:
-                raise
-            except Exception as ai_err:
-                logger.warning("AI memory tidy failed; falling back to duplicate cleanup: %s", ai_err)
+            # Fallback: exact-duplicate cleanup within the group only.
+            seen = {}
+            keep_ids = set()
+            for mem in grp_mems:
+                text = (mem.get("text") or "").strip()
+                key = " ".join(text.lower().split())
+                if not key:
+                    continue
+                if key in seen:
+                    continue
+                seen[key] = mem
+                keep_ids.add(mem.get("id"))
+            removed = len(grp_mems) - len(keep_ids)
+            return keep_ids, {}, removed, 0, False
 
-        seen = {}
-        keep_ids = set()
-        removed_examples = []
-        for mem in owner_memories:
-            text = (mem.get("text") or "").strip()
-            key = " ".join(text.lower().split())
-            if not key:
-                removed_examples.append("(empty)")
+        survivors = set()
+        cleaned_all = {}
+        processed_ids = set()
+        total_in = 0
+        total_removed = 0
+        total_changed = 0
+        used_llm = False
+        for grp_owner, grp_mems in groups.items():
+            valid = [m for m in grp_mems if m.get("id") and (m.get("text") or "").strip()]
+            if not valid:
                 continue
-            if key in seen:
-                if len(removed_examples) < 3:
-                    removed_examples.append(text[:60] + ("..." if len(text) > 60 else ""))
+            total_in += len(valid)
+            for m in valid:
+                processed_ids.add(m.get("id"))
+            keep_ids, cleaned_by_id, removed, changed, did_llm = await _tidy_group(grp_owner, valid)
+            survivors |= keep_ids
+            cleaned_all.update(cleaned_by_id)
+            total_removed += removed
+            total_changed += changed
+            used_llm = used_llm or did_llm
+
+        if total_in == 0:
+            raise TaskNoop("no memories to consolidate")
+        if total_removed == 0 and total_changed == 0:
+            raise TaskNoop(f"scanned {total_in} memories, no changes")
+
+        # Apply decisions to one final store: drop processed memories not kept,
+        # apply cleaned text/category, and leave every un-processed memory
+        # (other owners' memories, id-less or empty rows) exactly as it was.
+        new_store = []
+        for mem in all_memories:
+            mid = mem.get("id")
+            if mid not in processed_ids:
+                new_store.append(mem)
                 continue
-            seen[key] = mem
-            keep_ids.add(mem.get("id"))
+            if mid not in survivors:
+                continue  # dropped within its own owner-group
+            cleaned = cleaned_all.get(mid) or {}
+            if cleaned.get("text") and cleaned["text"] != mem.get("text"):
+                mem["text"] = cleaned["text"]
+            if cleaned.get("category"):
+                mem["category"] = cleaned["category"]
+            new_store.append(mem)
+        manager.save(new_store)
 
-        removed = len(owner_memories) - len(keep_ids)
-        if removed == 0:
-            raise TaskNoop(f"scanned {len(owner_memories)} memories, no duplicates")
-
-        kept_all = [
-            m for m in all_memories
-            if not _belongs_to_owner(m) or m.get("id") in keep_ids
-        ]
-        if owner:
-            for mem in kept_all:
-                if mem.get("id") in keep_ids and not mem.get("owner"):
-                    mem["owner"] = owner
-        manager.save(kept_all)
-        preview = "; ".join(removed_examples)
-        extra = f" (+{removed - len(removed_examples)} more)" if removed > len(removed_examples) else ""
-        return f"Removed {removed} duplicate(s) of {len(owner_memories)}: {preview}{extra}", True
+        verb = "AI tidied" if used_llm else "Deduplicated"
+        return (
+            f"{verb} {total_in} memories across {len(groups)} owner-group(s): "
+            f"removed {total_removed}, cleaned {total_changed}",
+            True,
+        )
+    except TaskNoop:
+        raise
     except Exception as e:
         logger.error(f"consolidate_memory action failed: {e}")
         return str(e), False
