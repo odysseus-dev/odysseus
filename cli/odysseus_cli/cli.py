@@ -15,6 +15,13 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+
+# Importing readline transparently upgrades input() with arrow-key line editing,
+# history (up/down), and emacs keybindings. No symbols are used directly.
+try:
+    import readline  # noqa: F401
+except ImportError:  # pragma: no cover - readline absent on some platforms
+    pass
 from typing import Dict, List
 
 from . import __version__
