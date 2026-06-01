@@ -47,6 +47,7 @@ from core.exceptions import (
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
+from src.auth_helpers import is_public_task_webhook_path
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
@@ -154,7 +155,11 @@ if AUTH_ENABLED:
     AUTH_EXEMPT_PREFIXES = ["/static"]
 
     def _is_auth_exempt(path: str) -> bool:
-        return path in AUTH_EXEMPT_EXACT or any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES)
+        return (
+            path in AUTH_EXEMPT_EXACT
+            or any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES)
+            or is_public_task_webhook_path(path)
+        )
 
     # In-memory token cache: prefix → list[(token_id, token_hash, owner, scopes)]. The DB
     # query was running on every API-bearer request and scanning bcrypt

@@ -4,6 +4,12 @@ from typing import Optional
 from fastapi import Request, HTTPException
 
 
+def is_public_task_webhook_path(path: str) -> bool:
+    """Return True for task webhook trigger URLs where the path token is auth."""
+    parts = path.strip("/").split("/")
+    return len(parts) == 5 and parts[0] == "api" and parts[1] == "tasks" and parts[3] == "webhook"
+
+
 def get_current_user(request: Request) -> Optional[str]:
     """Get current username from request state (set by auth middleware)."""
     return getattr(request.state, 'current_user', None)

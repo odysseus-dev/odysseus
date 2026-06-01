@@ -243,6 +243,17 @@ def test_task_create_notification_default_allows_action_specific_defaults():
     assert req.notifications_enabled is None
 
 
+def test_task_webhook_trigger_path_is_the_only_public_task_webhook():
+    """Task webhook trigger URLs carry their own secret token in the path.
+    The similarly named regenerate endpoint still needs normal auth."""
+    from src.auth_helpers import is_public_task_webhook_path
+
+    assert is_public_task_webhook_path("/api/tasks/task-1/webhook/secret-token")
+    assert not is_public_task_webhook_path("/api/tasks/task-1/webhook-regenerate")
+    assert not is_public_task_webhook_path("/api/tasks/task-1/webhook")
+    assert not is_public_task_webhook_path("/api/tasks/task-1/runs/webhook/secret-token")
+
+
 def test_ship_paused_housekeeping_stays_paused_by_default():
     """Built-ins marked ship_paused are intentionally opt-in even after
     the user enables the rest of Tasks."""
