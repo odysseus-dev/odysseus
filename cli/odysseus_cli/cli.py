@@ -50,6 +50,9 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
                    help="shortcut for --approval auto (no prompts)")
     p.add_argument("--read-only", action="store_true",
                    help="shortcut for --approval deny (no system mutations)")
+    p.add_argument("--legacy", action="store_true",
+                   help="use the full Odysseus server agent loop (56 tools) "
+                        "instead of the default lightweight native loop")
     p.add_argument("--resume", action="store_true",
                    help="resume the last conversation for this project")
     p.add_argument("--no-save", action="store_true",
@@ -76,13 +79,25 @@ def _resolve_config(args: argparse.Namespace):
 
 
 async def _drive(cfg, approval_state: ApprovalState, one_shot: str | None,
-                 resume: bool = False, autosave: bool = True):
+                 resume: bool = False, autosave: bool = True, legacy: bool = False):
     from . import models as models_mod
     from . import session
-    from .agent import build_project_context, run_turn
+    from .agent import build_project_context
+
+    project_context = build_project_context(cfg.project_root)
+    if legacy:
+        from .agent import run_turn as _run_turn
+        async def run_turn(cfg, messages):
+            return await _run_turn(cfg, messages)
+        system_content = project_context
+    else:
+        from . import nativeagent
+        async def run_turn(cfg, messages):
+            return await nativeagent.run_turn(cfg, messages, approval_state)
+        system_content = nativeagent.system_prompt(cfg.project_root, project_context)
 
     messages: List[Dict] = [
-        {"role": "system", "content": build_project_context(cfg.project_root)},
+        {"role": "system", "content": system_content},
     ]
     if resume:
         prev = session.latest_for_root(cfg.project_root)
@@ -215,7 +230,8 @@ def main(argv: List[str] | None = None) -> int:
     one_shot = " ".join(args.prompt).strip() if args.prompt else None
     try:
         asyncio.run(_drive(cfg, approval_state, one_shot,
-                           resume=args.resume, autosave=not args.no_save))
+                           resume=args.resume, autosave=not args.no_save,
+                           legacy=args.legacy))
     except KeyboardInterrupt:
         return 130
     return 0

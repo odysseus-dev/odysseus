@@ -12,19 +12,31 @@ with a Claude-Code-style approval gate.
 ## How it works
 
 ```
-┌────────────┐   prompt    ┌──────────────────┐   /v1/chat   ┌──────────┐
-│  your      │ ──────────▶ │ Odysseus CLI     │ ───────────▶ │  Ollama  │
-│  terminal  │ ◀────────── │ (this package)   │ ◀─────────── │  (local) │
-└────────────┘  rendered   │  • agent loop    │   stream     └──────────┘
-                stream      │  • tools in $PWD │
-                           │  • approval gate │
-                           └──────────────────┘
+┌────────────┐   prompt    ┌──────────────────────┐  /v1/chat  ┌──────────┐
+│  your      │ ──────────▶ │ Odysseus CLI         │ ─────────▶ │  Ollama  │
+│  terminal  │ ◀────────── │  • native agent loop │ ◀───────── │  (local) │
+└────────────┘  rendered   │  • 6 coding tools    │            └──────────┘
+                           │  • tools in $PWD     │
+                           │  • approval gate     │
+                           └──────────────────────┘
 ```
 
-The CLI imports `stream_agent_loop` from the Odysseus repo and drives it against
-a local OpenAI-compatible server (Ollama by default). Tools run in your shell /
-filesystem — **not** inside the Odysseus Docker container — which is what makes
-it usable for real coding work.
+**Default: native loop (`nativeagent.py`).** A tight, "Claude Code-style" agent
+loop with a fixed 6-tool set — `read_file`, `write_file`, `edit_file`,
+`list_dir`, `grep`, `bash` — talking directly to the endpoint with clean
+tool-turn threading. This is what makes *local* models behave as agents: small
+models get confused by large tool surfaces, and Ollama doesn't lift their tool
+calls into the native `tool_calls` field (they arrive as JSON in the message
+content), so the loop parses and threads them itself, with a loop-guard that
+forces a final answer when a model repeats itself.
+
+**Legacy loop (`--legacy`).** Routes through the full Odysseus server agent loop
+(`stream_agent_loop`, 56 tools incl. email/calendar/MCP). More capable on strong
+API models, but tends to overwhelm small local models — use the native loop for
+local work.
+
+Either way, tools run in your shell / filesystem — **not** inside the Odysseus
+Docker container — which is what makes it usable for real coding work.
 
 ## Requirements
 
