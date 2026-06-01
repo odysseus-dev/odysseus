@@ -22,6 +22,7 @@ PROBE_HOST="$HOST"
 if [ "$PROBE_HOST" = "0.0.0.0" ] || [ "$PROBE_HOST" = "::" ]; then
   PROBE_HOST="127.0.0.1"
 fi
+VENV_DIR="$REPO_DIR/venv"
 
 # Friendly message on any failure — re-running is safe (every step is idempotent).
 trap 'echo; echo "✗ Setup failed above. It is safe to re-run ./start-macos.sh."; exit 1' ERR
@@ -113,20 +114,21 @@ fi
 # 3. Python environment + dependencies (kept inside the repo, in venv/).
 #    Named `venv` to match the manual steps and build-macos-app.sh, so the
 #    clickable .app reuses this same environment.
-if [ ! -d venv ]; then
+if [ ! -x "$VENV_DIR/bin/python" ]; then
   echo "▶ Creating Python environment…"
-  "$PY" -m venv venv
+  "$PY" -m venv "$VENV_DIR"
 fi
+VENV_PY="$VENV_DIR/bin/python"
 echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
-"$PY" -m pip install --quiet --upgrade pip
+"$VENV_PY" -m pip install --quiet --upgrade pip
 # Not --quiet: this is the slow step, so show progress (and any real errors).
-"$PY" -m pip install -r requirements.txt
+"$VENV_PY" -m pip install -r requirements.txt
 
 # 4. First-run setup: creates data dirs and prints an initial admin password
 #    the first time (idempotent — does nothing if already set up). Suppress its
 #    manual run hint — we launch the server ourselves just below.
 echo "▶ Preparing Odysseus…"
-ODYSSEUS_SKIP_RUN_HINT=1 ./venv/bin/python setup.py
+ODYSSEUS_SKIP_RUN_HINT=1 "$VENV_PY" setup.py
 
 # 5. Launch. Bind to loopback by default; opt into LAN/Tailscale with
 #    ODYSSEUS_HOST=0.0.0.0.
@@ -179,4 +181,4 @@ if [ -n "$TAILSCALE_URL" ]; then
 fi
 echo "  (this takes a few seconds; press Ctrl+C here to stop)"
 echo
-"$PY" -m uvicorn app:app --host "$HOST" --port "$PORT"
+"$VENV_PY" -m uvicorn app:app --host "$HOST" --port "$PORT"
