@@ -2,7 +2,7 @@
 <#
   Odysseus - native Windows launcher (no Docker).
 
-  One command to: create a virtualenv, install dependencies, run first-time
+  One command to: create a uv environment, install dependencies, run first-time
   setup (prints an admin password on first run), and start the server.
   Safe to re-run - it skips whatever already exists.
 
@@ -42,25 +42,22 @@ if (-not $pyExe) {
 }
 Write-Host ("Using Python: " + $pyExe)
 
-# 2. Create the virtualenv if missing
-$venvPy = Join-Path $PSScriptRoot "venv\Scripts\python.exe"
-if (-not (Test-Path $venvPy)) {
-    Write-Step "Creating virtual environment (venv)"
-    & $pyExe -m venv venv
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPy)) { Fail "Failed to create the virtual environment." }
-} else {
-    Write-Host "venv already exists - skipping creation."
+# 2. Locate uv
+Write-Step "Checking for uv"
+$uvExe = (Get-Command uv -ErrorAction SilentlyContinue).Source
+if (-not $uvExe) {
+    Fail "uv not found on PATH. Install it from https://docs.astral.sh/uv/getting-started/installation/, then re-run this script."
 }
+Write-Host ("Using uv: " + $uvExe)
 
 # 3. Install / update dependencies
 Write-Step "Installing dependencies (first run can take a few minutes)"
-& $venvPy -m pip install --upgrade pip --quiet
-& $venvPy -m pip install -r requirements.txt
-if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the pip error." }
+& $uvExe sync --python $pyExe
+if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the uv error." }
 
 # 4. First-time setup (creates data dirs, DB, .env, admin user)
 Write-Step "Running first-time setup"
-& $venvPy setup.py
+& $uvExe run setup.py
 if ($LASTEXITCODE -ne 0) { Fail "setup.py failed." }
 
 # 5. Friendly note about Git Bash (full Cookbook / agent-shell parity)
@@ -72,8 +69,8 @@ if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
     Write-Host "      https://git-scm.com/download/win" -ForegroundColor Yellow
 }
 
-# 6. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
+# 6. Start the server
 Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
-& $venvPy -m uvicorn app:app --host $BindHost --port $Port
+& $uvExe run uvicorn app:app --host $BindHost --port $Port

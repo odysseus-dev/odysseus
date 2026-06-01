@@ -29,9 +29,9 @@ declare -A _ODYSSEUS_SUBS_CACHE=()
 _odysseus_refresh_cache() {
     local dir="$(_odysseus_scripts_dir)"
     _ODYSSEUS_SUBS_CACHE=()
-    # Prefer the project venv's Python so deps (bcrypt, sqlalchemy, ...)
+    # Prefer the project uv environment's Python so deps (bcrypt, sqlalchemy, ...)
     # resolve. Falls back to system `python3` for container installs.
-    local py="$dir/../venv/bin/python"
+    local py="$dir/../.venv/bin/python"
     [ -x "$py" ] || py="$(command -v python3)"
     local f
     for f in "$dir"/odysseus-*; do

@@ -11,7 +11,7 @@ parents-parser pattern. Usage:
         from core.database import SessionLocal, Note  # or whatever
         quiet_logs()
     except ModuleNotFoundError as e:
-        fail(f"{e}\\nhint: run from repo root with venv active.", code=2)
+        fail(f"{e}\\nhint: run from repo root with `uv run {sys.argv[0]} ...`.", code=2)
 
     def cmd_list(args):
         ...

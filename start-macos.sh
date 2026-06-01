@@ -5,7 +5,7 @@
 #
 # Installs everything Odysseus needs via Homebrew, sets up a local Python
 # environment, and launches the app — so a generic Mac user can run it without
-# knowing anything about venvs, pip, or uvicorn. Safe to re-run; it skips work
+# knowing anything about venvs, uv, or uvicorn. Safe to re-run; it skips work
 # that's already done.
 #
 # Why native (not Docker): Cookbook serves models on whatever machine Odysseus
@@ -82,23 +82,20 @@ if [ -z "$PY" ] || [ ! -x "$PY" ]; then
   exit 1
 fi
 
-# 3. Python environment + dependencies (kept inside the repo, in venv/).
-#    Named `venv` to match the manual steps and build-macos-app.sh, so the
-#    clickable .app reuses this same environment.
-if [ ! -d venv ]; then
-  echo "▶ Creating Python environment…"
-  "$PY" -m venv venv
+# 3. Python environment + dependencies (kept inside the repo, in .venv/).
+#    uv creates and reuses this environment automatically.
+if ! command -v uv >/dev/null 2>&1; then
+  echo "▶ Installing uv…"
+  brew install uv
 fi
 echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
-"$PY" -m pip install --quiet --upgrade pip
-# Not --quiet: this is the slow step, so show progress (and any real errors).
-"$PY" -m pip install -r requirements.txt
+uv sync --python "$PY"
 
 # 4. First-run setup: creates data dirs and prints an initial admin password
 #    the first time (idempotent — does nothing if already set up). Suppress its
 #    manual run hint — we launch the server ourselves just below.
 echo "▶ Preparing Odysseus…"
-ODYSSEUS_SKIP_RUN_HINT=1 ./venv/bin/python setup.py
+ODYSSEUS_SKIP_RUN_HINT=1 uv run setup.py
 
 # 5. Launch. Bind to loopback only (safe default).
 URL="http://127.0.0.1:$PORT"
@@ -136,4 +133,4 @@ echo
 echo "▶ Starting Odysseus — it will open in your browser at $URL"
 echo "  (this takes a few seconds; press Ctrl+C here to stop)"
 echo
-"$PY" -m uvicorn app:app --host 127.0.0.1 --port "$PORT"
+uv run uvicorn app:app --host 127.0.0.1 --port "$PORT"

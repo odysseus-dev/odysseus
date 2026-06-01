@@ -16,8 +16,8 @@ USERS_FILE="$DOCKER_DIR/dovecot/conf/users"
 DEMO_USER="demo@odysseus.local"
 DEMO_PASS="demodemo"
 HERE="$REPO/scripts/demo_email"
-# Use the app's venv (has bcrypt/httpx + the app modules); fall back to python3.
-PY="$REPO/venv/bin/python"; [ -x "$PY" ] || PY="python3"
+# Use the app's uv environment (has bcrypt/httpx + the app modules); fall back to python3.
+PY="$REPO/.venv/bin/python"; [ -x "$PY" ] || PY="python3"
 
 reload_dovecot() {
   docker exec dovecot doveadm reload 2>/dev/null || docker restart dovecot >/dev/null

@@ -82,8 +82,8 @@ try:
 except ModuleNotFoundError as e:
     sys.stderr.write(
         f"error: {e}\n"
-        f"hint: run from the repo root with the venv active:\n"
-        f"      source venv/bin/activate && {sys.argv[0]} --help\n"
+        f"hint: run from the repo root with uv:\n"
+        f"      uv run {sys.argv[0]} --help\n"
     )
     sys.exit(2)
 

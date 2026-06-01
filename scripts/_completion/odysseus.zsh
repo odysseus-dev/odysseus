@@ -19,7 +19,7 @@ typeset -gA _odysseus_subs
 _odysseus_refresh() {
     _odysseus_subs=()
     local dir="$(_odysseus_scripts_dir)"
-    local py="$dir/../venv/bin/python"
+    local py="$dir/../.venv/bin/python"
     [[ -x "$py" ]] || py="$(command -v python3)"
     local f sub help_out commands
     for f in "$dir"/odysseus-*; do

@@ -5,10 +5,10 @@
 #
 # Produces:
 #   dist/Odysseus.app   — double-click: starts the local server (using this
-#                         repo's venv) and opens the UI in an app-style window.
+#                         repo's uv environment) and opens the UI in an app-style window.
 #   dist/Odysseus.dmg   — drag-to-Applications disk image (the downloadable).
 #
-# This is a *launcher* wrapper: it drives the venv we set up in this repo, it
+# This is a *launcher* wrapper: it drives the uv environment in this repo, it
 # does not bundle Python. The install path is baked into the app at build time,
 # so rebuild if you move the repo. Override the port with ODYSSEUS_PORT.
 set -e
@@ -75,7 +75,7 @@ PORT="__PORT__"
 URL="http://127.0.0.1:${PORT}"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
-UVICORN="$INSTALL_DIR/venv/bin/uvicorn"
+UV="$(command -v uv)"
 LOG="$INSTALL_DIR/logs/odysseus-app.log"
 
 notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"Odysseus\"" >/dev/null 2>&1; }
@@ -84,12 +84,11 @@ die_gui() {
   exit 1
 }
 
-[ -x "$UVICORN" ] || die_gui "Odysseus isn't set up yet. Open Terminal and run:
+[ -x "$UV" ] || die_gui "Odysseus isn't set up yet. Install uv, then open Terminal and run:
 
 cd $INSTALL_DIR
-python3.11 -m venv venv
-./venv/bin/pip install -r requirements.txt
-./venv/bin/python setup.py"
+uv sync
+uv run setup.py"
 
 # Open the UI in a chrome-less app window (Chromium browsers), else default browser.
 open_ui() {
@@ -119,7 +118,7 @@ fi
 
 notify "Starting…"
 cd "$INSTALL_DIR" || die_gui "Install folder not found: $INSTALL_DIR"
-"$UVICORN" app:app --host 127.0.0.1 --port "$PORT" >>"$LOG" 2>&1 &
+"$UV" run uvicorn app:app --host 127.0.0.1 --port "$PORT" >>"$LOG" 2>&1 &
 SERVER_PID=$!
 
 # Quitting the app stops the server it started.

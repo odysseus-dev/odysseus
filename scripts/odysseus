@@ -106,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return subprocess.call([str(sub), "--help"])
 
-    # `odysseus foo ...` → exec `odysseus-foo ...` under the project venv.
+    # `odysseus foo ...` → exec `odysseus-foo ...` under the project env.
     name = argv[0]
     sub = SCRIPTS_DIR / f"odysseus-{name}"
     if not sub.exists():
@@ -115,13 +115,13 @@ def main(argv: list[str] | None = None) -> int:
             f"Try `odysseus help` to see available ones.\n"
         )
         return 1
-    # Run the subcommand with the project's venv Python so dependencies
+    # Run the subcommand with the project's uv Python so dependencies
     # (bcrypt, sqlalchemy, fastapi, ...) resolve. Fall back to whatever
-    # `python` is on PATH if no venv is found — useful in container
+    # `python` is on PATH if no environment is found — useful in container
     # installs that wire the deps system-wide.
     repo_root = SCRIPTS_DIR.parent
-    venv_python = repo_root / "venv" / "bin" / "python"
-    py = str(venv_python) if venv_python.exists() else sys.executable
+    env_python = repo_root / ".venv" / "bin" / "python"
+    py = str(env_python) if env_python.exists() else sys.executable
     os.execv(py, [py, str(sub)] + argv[1:])
     return 0  # unreachable
 

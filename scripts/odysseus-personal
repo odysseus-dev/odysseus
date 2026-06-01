@@ -27,7 +27,7 @@ try:
     from src.personal_docs import PersonalDocsManager
     quiet_logs()
 except ModuleNotFoundError as e:
-    sys.stderr.write(f"error: {e}\nhint: run from repo root with venv active.\n")
+    sys.stderr.write(f"error: {e}\nhint: run from repo root via `uv run <script>`.\n")
     sys.exit(2)
 
 

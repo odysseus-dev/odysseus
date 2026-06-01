@@ -73,7 +73,7 @@ def create_default_admin():
         return "created"
     except ImportError:
         print("  [warn] bcrypt not installed — skipping admin user creation")
-        print("         Run: pip install bcrypt")
+        print("         Run: uv sync")
         return "skipped"
 
 
@@ -103,7 +103,7 @@ def check_deps():
             missing.append(mod)
     if missing:
         print(f"\n  [warn] Missing packages: {', '.join(missing)}")
-        print(f"         Run: pip install -r requirements.txt")
+        print(f"         Run: uv sync")
     else:
         print("  [ok] All core dependencies installed")
 
@@ -155,7 +155,7 @@ def main():
     # this, so suppress the manual hint there to avoid a contradictory URL.
     if not os.getenv("ODYSSEUS_SKIP_RUN_HINT"):
         print(f"\nStart the server with:")
-        print(f"  python -m uvicorn app:app --host 127.0.0.1 --port 7000")
+        print(f"  uv run uvicorn app:app --host 127.0.0.1 --port 7000")
         print(f"\nThen open http://localhost:7000")
 
     # Cleaned, action-focused final instruction strings
@@ -164,7 +164,7 @@ def main():
     elif admin_status == "exists":
         print("Login with your existing admin credentials.\n")
     elif admin_status == "skipped":
-        print("Admin creation did not happen: dependencies are missing.\nRun 'pip install bcrypt' and rerun setup.\n")
+        print("Admin creation did not happen: dependencies are missing.\nRun 'uv sync' and rerun setup.\n")
     elif admin_status == "failed":
         print("Admin creation did not happen: a system or file error occurred.\nCheck write permissions for the 'data' directory and rerun setup.\n")
     else:  # handling "failed" or any unhandled edge case
