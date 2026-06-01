@@ -152,6 +152,8 @@ import * as Modals from './modalManager.js';
       addDocToTabs,
       syncDocIndicator: _syncDocIndicator,
     });
+    _maybeOpenDocFromHash();
+    window.addEventListener('hashchange', _maybeOpenDocFromHash);
   }
 
   /** Update overflow-doc-btn accent indicator, toolbar indicator, and session list icon */
@@ -5811,14 +5813,29 @@ import * as Modals from './modalManager.js';
     }
     try {
       const res = await fetch(`${API_BASE}/api/document/${docId}`);
-      if (!res.ok) throw new Error('Not found');
+      if (!res.ok) throw new Error(res.status === 404 ? 'Not found' : `HTTP ${res.status}`);
       const doc = await res.json();
       addDocToTabs(doc, doc.session_id);
       _ensureDocPaneMounted();
       switchToDoc(doc.id);
     } catch (e) {
       console.error('Failed to load document:', e);
+      if (uiModule) {
+        const msg = e.message === 'Not found'
+          ? 'Document not found — try opening it from the Library.'
+          : 'Could not open document.';
+        uiModule.showError(msg);
+      }
     }
+  }
+
+  // Deep-link: #document-<id> opens that document on load / URL-bar nav.
+  // Clicks on in-chat document anchors are handled separately (they call
+  // preventDefault, so they don't change the hash); this covers refresh
+  // and pasted/typed document URLs, which previously did nothing.
+  function _maybeOpenDocFromHash() {
+    const m = (window.location.hash || '').match(/^#document-(.+)$/);
+    if (m) loadDocument(m[1]);
   }
 
   /** Open panel and ensure a document exists, creating a session if needed */
