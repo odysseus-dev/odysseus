@@ -35017,3 +35017,293 @@ body.theme-frosted .modal {
   font-family: 'Fira Code', ui-monospace, monospace;
   color: var(--accent, var(--red));
 }
+
+.doc-openui-btn {
+  color: color-mix(in srgb, var(--fg) 88%, var(--accent, #2aa198));
+  border-color: color-mix(in srgb, var(--accent, #2aa198) 35%, var(--border));
+}
+.doc-openui-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent, #2aa198) 12%, transparent);
+}
+.openui-generate-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: color-mix(in srgb, var(--bg) 54%, transparent);
+  backdrop-filter: blur(10px);
+}
+.openui-generate-modal {
+  width: min(560px, 100%);
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--border) 74%, var(--fg));
+  box-shadow: 0 24px 80px rgba(0,0,0,0.34);
+  border-radius: 8px;
+  padding: 16px;
+}
+.doc-openui-preview {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: color-mix(in srgb, var(--bg) 96%, var(--fg));
+  padding: 18px;
+}
+.doc-openui-preview .odysseus-openui-render {
+  min-height: 100%;
+}
+.doc-openui-loading,
+.doc-openui-error {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  font-size: 12px;
+}
+.doc-openui-error {
+  color: #f44336;
+  border-color: color-mix(in srgb, #f44336 45%, var(--border));
+}
+.inline-openui-response {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, var(--fg));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 94%, var(--fg));
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 22%, transparent),
+              0 10px 28px -14px color-mix(in srgb, #000 45%, transparent);
+}
+/* Theme bridge: remap OpenUI's design tokens onto Odysseus's theme tokens so
+   every generated surface inherits the active theme + accent (light/dark and
+   custom themes all flow through --bg/--fg/--accent/--border automatically).
+   Defined GLOBALLY (these --openui-* vars are only ever read by OpenUI-rendered
+   content, so this is safe on :root) and with :root:root specificity so it wins
+   over the library's own :root defaults AND its prefers-color-scheme override —
+   AND reaches content the library portals to document.body (Modals, popovers,
+   tooltips, date pickers) which sits outside .inline-openui-response.
+   Semantic colours (info/success/alert/danger) keep library defaults. */
+:root:root {
+  --openui-background: color-mix(in srgb, var(--bg) 92%, var(--fg));
+  --openui-foreground: color-mix(in srgb, var(--bg) 85%, var(--fg));
+  --openui-popover-background: color-mix(in srgb, var(--bg) 85%, var(--fg));
+  --openui-inverted-background: var(--fg);
+  --openui-overlay: color-mix(in srgb, #000 55%, transparent);
+
+  --openui-sunk-light: color-mix(in srgb, var(--fg) 3%, transparent);
+  --openui-sunk: color-mix(in srgb, var(--fg) 6%, transparent);
+  --openui-sunk-deep: color-mix(in srgb, var(--fg) 10%, transparent);
+  --openui-elevated-light: color-mix(in srgb, var(--fg) 5%, transparent);
+  --openui-elevated: color-mix(in srgb, var(--fg) 8%, transparent);
+  --openui-elevated-strong: color-mix(in srgb, var(--fg) 14%, transparent);
+  --openui-elevated-intense: color-mix(in srgb, var(--fg) 26%, transparent);
+  --openui-highlight-subtle: color-mix(in srgb, var(--fg) 3%, transparent);
+  --openui-highlight: color-mix(in srgb, var(--fg) 6%, transparent);
+  --openui-highlight-strong: color-mix(in srgb, var(--fg) 10%, transparent);
+  --openui-highlight-intense: color-mix(in srgb, var(--fg) 26%, transparent);
+
+  --openui-text-neutral-primary: var(--fg);
+  --openui-text-neutral-secondary: color-mix(in srgb, var(--fg) 62%, transparent);
+  --openui-text-neutral-tertiary: color-mix(in srgb, var(--fg) 32%, transparent);
+  --openui-text-neutral-link: var(--accent);
+  --openui-text-brand: var(--fg);
+  --openui-text-accent-primary: var(--bg);
+  --openui-text-accent-secondary: color-mix(in srgb, var(--bg) 60%, transparent);
+
+  --openui-interactive-accent-default: var(--accent);
+  --openui-interactive-accent-hover: color-mix(in srgb, var(--accent) 85%, var(--fg));
+  --openui-interactive-accent-pressed: color-mix(in srgb, var(--accent) 78%, #000);
+  --openui-interactive-accent-disabled: color-mix(in srgb, var(--accent) 40%, transparent);
+
+  --openui-chat-user-response-bg: color-mix(in srgb, var(--fg) 8%, transparent);
+  --openui-chat-user-response-text: var(--fg);
+
+  --openui-border-default: color-mix(in srgb, var(--border) 80%, transparent);
+  --openui-border-interactive: var(--border);
+  --openui-border-interactive-emphasis: color-mix(in srgb, var(--fg) 32%, transparent);
+  --openui-border-interactive-selected: var(--accent);
+  --openui-border-accent: color-mix(in srgb, var(--accent) 40%, transparent);
+  --openui-border-accent-emphasis: var(--accent);
+
+  --openui-font-body: var(--font-family, inherit);
+  --openui-font-heading: var(--font-family, inherit);
+  --openui-font-label: var(--font-family, inherit);
+  --openui-font-numbers: var(--font-family, inherit);
+}
+.inline-openui-mount {
+  min-height: 120px;
+  max-height: min(72vh, 760px);
+  overflow: auto;
+  padding: 14px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--fg) 24%, transparent) transparent;
+}
+.inline-openui-mount::-webkit-scrollbar { width: 9px; height: 9px; }
+.inline-openui-mount::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 20%, transparent);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.inline-openui-mount::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg) 34%, transparent);
+  background-clip: padding-box;
+}
+/* Let the surface size to its content instead of forcing a tall empty box. */
+.inline-openui-mount .odysseus-openui-render {
+  min-height: 0;
+}
+/* Widen OpenUI replies: a generative surface needs more room than a text
+   bubble, so let an AI message containing one span the full chat column. */
+.msg-ai:has(.inline-openui-response) {
+  width: 100%;
+  max-width: 100%;
+}
+/* Ghost / secondary / tertiary buttons render as a faint outline that's hard
+   to see in dark themes. Give them a real surface + fg-based text/border so
+   they read as buttons against any theme. Scoped with :root so it also covers
+   buttons the library portals to document.body, and beats the library's
+   single-class defaults without !important. */
+:root .openui-button-base-secondary,
+:root .openui-button-base-tertiary {
+  background-color: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 26%, transparent);
+}
+:root .openui-button-base-secondary:not(:disabled):hover,
+:root .openui-button-base-tertiary:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--fg) 15%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 38%, transparent);
+}
+/* Filled primary buttons: ensure the label contrasts with the accent fill. */
+:root .openui-button-base-primary {
+  color: var(--bg);
+}
+/* On-brand focus state for inputs/textareas/selects: the library's default is a
+   faint neutral ring — replace it with an accent border + accent halo so focus
+   reads clearly and matches the rest of Odysseus. (Error state keeps its red.) */
+:root .openui-input:not(.openui-input-error):focus,
+:root .openui-textarea:not(.openui-textarea-error):focus,
+:root .openui-select-trigger:focus,
+:root .openui-select-trigger:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--accent) 28%, transparent);
+  outline: none;
+}
+.inline-openui-loading,
+.inline-openui-error {
+  padding: 14px;
+  color: var(--muted, color-mix(in srgb, var(--fg) 62%, transparent));
+  font-size: 12px;
+}
+.inline-openui-error {
+  color: #f44336;
+}
+.inline-openui-source {
+  border-top: 1px solid var(--border);
+  padding: 8px 12px 12px;
+  font-size: 12px;
+}
+.inline-openui-source pre {
+  max-height: 220px;
+  overflow: auto;
+}
+.openui-generate-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.openui-kicker {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: color-mix(in srgb, var(--accent, #2aa198) 80%, var(--fg));
+  margin-bottom: 4px;
+}
+.openui-generate-head h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+}
+.openui-close {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.openui-prompt {
+  width: 100%;
+  min-height: 132px;
+  resize: vertical;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 11px 12px;
+  font: inherit;
+  line-height: 1.45;
+  outline: none;
+}
+.openui-prompt:focus {
+  border-color: color-mix(in srgb, var(--accent, #2aa198) 70%, var(--border));
+}
+.openui-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+.openui-status {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  opacity: 0.68;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.openui-primary,
+.openui-secondary {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.openui-primary {
+  padding: 0 12px;
+  background: var(--fg);
+  color: var(--bg);
+  border: 1px solid var(--fg);
+}
+.openui-primary:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.openui-secondary {
+  padding: 0 10px;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+@media (max-width: 520px) {
+  .openui-generate-overlay { align-items: flex-end; padding: 10px; }
+  .openui-generate-modal { padding: 14px; }
+  .openui-actions { flex-wrap: wrap; }
+  .openui-status { order: 3; flex-basis: 100%; }
+}
