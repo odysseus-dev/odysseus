@@ -58,7 +58,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # Tool render endpoints are served inside iframes — allow framing by self
         is_tool_render = path.startswith("/api/tools/") and path.endswith("/render")
-        # Visual report pages are self-contained HTML — need inline scripts + external images
+        # Visual report pages are self-contained HTML served at this origin.
+        # Their one inline <script> is nonce-tagged (see visual_report.py), so
+        # the report runs without script `unsafe-inline` — research synthesizes
+        # its body from scraped pages, and that content must never execute here.
         is_report = path.startswith("/api/research/report/")
 
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -67,7 +70,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if is_report:
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; "
-                "script-src 'self' 'unsafe-inline'; "
+                f"script-src 'self' 'nonce-{nonce}'; "
                 "style-src 'self' 'unsafe-inline'; "
                 "font-src 'self'; "
                 "img-src 'self' data: blob: https:; "

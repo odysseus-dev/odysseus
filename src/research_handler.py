@@ -555,8 +555,12 @@ class ResearchHandler:
                 pass
         return None
 
-    def get_report_html(self, session_id: str) -> Optional[str]:
-        """Generate the visual HTML report for a session (always fresh from JSON)."""
+    def get_report_html(self, session_id: str, nonce: str = "") -> Optional[str]:
+        """Generate the visual HTML report for a session (always fresh from JSON).
+
+        `nonce` is the request's CSP nonce; it tags the report's inline
+        <script> so the page works under the report's nonce-based script CSP.
+        """
         json_path = RESEARCH_DATA_DIR / f"{session_id}.json"
         if not json_path.exists():
             logger.warning(f"No JSON found for visual report: {json_path}")
@@ -575,6 +579,7 @@ class ResearchHandler:
                 category=data.get("category"),
                 session_id=session_id,
                 hidden_images=data.get("hidden_images") or [],
+                nonce=nonce,
             )
             logger.info(f"Visual report generated for {session_id}")
             return html_content

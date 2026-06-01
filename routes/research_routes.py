@@ -156,7 +156,8 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         _assert_owns_research(session_id, user)
         logger.info(f"Visual report requested for session {session_id}")
         try:
-            html_content = research_handler.get_report_html(session_id)
+            nonce = getattr(request.state, "csp_nonce", "")
+            html_content = research_handler.get_report_html(session_id, nonce=nonce)
         except Exception as e:
             logger.error(f"Visual report generation error: {e}", exc_info=True)
             raise HTTPException(500, f"Report generation failed: {e}")

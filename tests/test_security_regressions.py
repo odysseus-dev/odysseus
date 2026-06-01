@@ -1041,3 +1041,36 @@ def test_chat_active_document_lookup_is_owner_scoped():
     assert "filter( DBDocument.id == active_doc_id, ).first()" not in flat
     assert "filter(DBDocument.id == active_doc_id).first()" not in flat
     assert "filter(DBDocument.id == _mem_id).first()" not in flat
+
+
+# ── research report CSP is nonce-based (no script unsafe-inline) ──
+# The report body is markdown synthesized from scraped pages, and the report
+# page used to allow `script-src 'unsafe-inline'` — so HTML the model echoed
+# from a source could execute in the app origin. Script CSP is now nonce-based.
+
+def test_report_csp_drops_script_unsafe_inline_for_nonce():
+    src = Path(__file__).resolve().parents[1] / "core" / "middleware.py"
+    text = src.read_text()
+    report_block = text.split("if is_report:", 1)[1].split("elif is_tool_render", 1)[0]
+    assert "script-src 'self' 'nonce-{nonce}'" in report_block
+    # The script-src line must not carry unsafe-inline (style-src still may).
+    script_line = next(l for l in report_block.splitlines() if "script-src" in l)
+    assert "unsafe-inline" not in script_line
+
+
+def test_report_inline_script_carries_nonce_and_drops_inline_handlers():
+    import re
+    from src.visual_report import generate_visual_report
+
+    html = generate_visual_report(
+        question="Q",
+        report_markdown="## Heading\n\nSome body text.",
+        nonce="testnonce123",
+    )
+    # The report's own inline <script> is nonce-tagged so it still runs...
+    assert '<script nonce="testnonce123">' in html
+    # ...image error-hiding moved to a delegated listener...
+    assert "addEventListener('error'" in html
+    # ...and no <img> inline onerror= attribute remains (it couldn't run under
+    # the nonce CSP). Matches the attribute form, not JS like `probe.onerror =`.
+    assert not re.search(r'<img\b[^>]*\sonerror\s*=', html)
