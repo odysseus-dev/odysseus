@@ -168,6 +168,145 @@ def test_path_name_strips_traversal(token, expected):
     assert Path(token).name == expected
 
 
+# -- upload owner gates -------------------------------------------------------
+
+def _make_upload_store(tmp_path):
+    upload_dir = tmp_path / "uploads"
+    dated = upload_dir / "2026" / "06" / "01"
+    dated.mkdir(parents=True)
+
+    alice_id = "a" * 32 + ".txt"
+    bob_id = "b" * 32 + ".txt"
+    alice_path = dated / alice_id
+    bob_path = dated / bob_id
+    alice_path.write_text("alice private note", encoding="utf-8")
+    bob_path.write_text("bob private note", encoding="utf-8")
+
+    index = {
+        "alice:h1": {
+            "id": alice_id,
+            "path": str(alice_path),
+            "mime": "text/plain",
+            "size": alice_path.stat().st_size,
+            "name": "alice.txt",
+            "original_name": "alice.txt",
+            "owner": "alice",
+        },
+        "bob:h2": {
+            "id": bob_id,
+            "path": str(bob_path),
+            "mime": "text/plain",
+            "size": bob_path.stat().st_size,
+            "name": "bob.txt",
+            "original_name": "bob.txt",
+            "owner": "bob",
+        },
+    }
+    (upload_dir / "uploads.json").write_text(json.dumps(index), encoding="utf-8")
+    return upload_dir, alice_id, bob_id
+
+
+def _stub_core_database_for_route_imports(monkeypatch):
+    from unittest.mock import MagicMock
+
+    core_pkg = types.ModuleType("core")
+    core_pkg.__path__ = []
+    models = types.ModuleType("core.models")
+    models.ChatMessage = MagicMock()
+
+    db = types.ModuleType("core.database")
+    for name in (
+        "SessionLocal",
+        "Session",
+        "ChatMessage",
+        "Document",
+        "DocumentVersion",
+        "GalleryImage",
+        "ModelEndpoint",
+    ):
+        setattr(db, name, MagicMock())
+    monkeypatch.setitem(sys.modules, "core", core_pkg)
+    monkeypatch.setitem(sys.modules, "core.models", models)
+    monkeypatch.setitem(sys.modules, "core.database", db)
+
+
+def test_upload_resolver_rejects_cross_owner_upload_ids(tmp_path):
+    from src.upload_handler import UploadHandler
+
+    upload_dir, alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+
+    assert handler.resolve_upload(alice_id, owner="alice")["id"] == alice_id
+    assert handler.resolve_upload(bob_id, owner="alice") is None
+
+
+def test_build_user_content_skips_cross_owner_attachments(tmp_path):
+    from src.document_processor import build_user_content
+    from src.upload_handler import UploadHandler
+
+    upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+
+    content = build_user_content(
+        "hello",
+        [bob_id],
+        str(upload_dir),
+        handler,
+        owner="alice",
+    )
+
+    assert content == "hello"
+    assert "bob private note" not in content
+
+
+def test_chat_preprocess_does_not_surface_cross_owner_attachment(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    for mod_name in ("src.chat_handler", "routes.chat_helpers"):
+        sys.modules.pop(mod_name, None)
+    _stub_core_database_for_route_imports(monkeypatch)
+    from src.chat_handler import ChatHandler
+    from src.upload_handler import UploadHandler
+    from src import settings
+
+    upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+    monkeypatch.setattr("src.chat_handler.UPLOAD_DIR", str(upload_dir))
+    monkeypatch.setattr(
+        settings,
+        "get_setting",
+        lambda key, default=None: False if key == "vision_enabled" else default,
+    )
+
+    chat_handler = ChatHandler(None, None, None, None, None, handler)
+    sess = SimpleNamespace(id="s1", owner="alice", model="text-model")
+
+    _enhanced, user_content, _text_ctx, _yt, attachment_meta = asyncio.run(
+        chat_handler.preprocess_message(
+            "hello",
+            [bob_id],
+            sess,
+        )
+    )
+
+    assert attachment_meta == []
+    assert user_content == "hello"
+    for mod_name in ("src.chat_handler", "routes.chat_helpers"):
+        sys.modules.pop(mod_name, None)
+
+
+def test_document_upload_lookup_rejects_cross_owner_marker(tmp_path, monkeypatch):
+    sys.modules.pop("routes.document_helpers", None)
+    _stub_core_database_for_route_imports(monkeypatch)
+    from routes.document_helpers import _locate_upload
+
+    upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
+
+    assert _locate_upload(str(upload_dir), bob_id, owner="alice") is None
+    assert _locate_upload(str(upload_dir), bob_id, owner="bob").endswith(bob_id)
+    sys.modules.pop("routes.document_helpers", None)
+
+
 # ── require_user dependency rejects anon callers ────────────────
 
 def test_require_user_rejects_unauthenticated(monkeypatch):

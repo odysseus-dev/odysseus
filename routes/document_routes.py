@@ -24,6 +24,12 @@ from routes.document_helpers import (
     _PDF_RENDER_SCALE,
 )
 
+
+def _locate_current_user_upload(request: Request, upload_dir: str, upload_id: str, user: Optional[str]):
+    auth_manager = getattr(getattr(request.app, "state", None), "auth_manager", None)
+    return _locate_upload(upload_dir, upload_id, owner=user, auth_manager=auth_manager)
+
+
 def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     router = APIRouter(tags=["documents"])
 
@@ -160,7 +166,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             raise HTTPException(500, f"Upload failed: {e}")
 
         upload_id = meta["id"]
-        pdf_path = _locate_upload(UPLOAD_DIR, upload_id)
+        pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
         if not pdf_path:
             raise HTTPException(500, "Saved PDF could not be located")
 
@@ -401,7 +407,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 raise HTTPException(400, "Document is not a PDF — no pdf_source marker found")
             upload_id = m.group(1)
 
-            pdf_path = _locate_upload(UPLOAD_DIR, upload_id)
+            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, "Source PDF could not be located")
 
@@ -914,7 +920,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if not upload_id:
                 raise HTTPException(400, "Document is not linked to a source PDF")
 
-            pdf_path = _locate_upload(UPLOAD_DIR, upload_id)
+            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, f"Source PDF {upload_id} not found in uploads")
 
@@ -978,7 +984,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             upload_id = find_source_upload_id(doc.current_content or "")
             if not upload_id:
                 raise HTTPException(400, "Document is not linked to a source PDF")
-            pdf_path = _locate_upload(UPLOAD_DIR, upload_id)
+            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, f"Source PDF {upload_id} not found")
 
@@ -1046,7 +1052,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             upload_id = find_source_upload_id(doc.current_content or "")
             if not upload_id:
                 raise HTTPException(400, "Document is not linked to a source PDF")
-            pdf_path = _locate_upload(UPLOAD_DIR, upload_id)
+            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, "Source PDF not found")
         finally:
@@ -1101,7 +1107,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             upload_id = find_source_upload_id(doc.current_content or "")
             if not upload_id:
                 raise HTTPException(400, "Document is not linked to a source PDF")
-            pdf_path = _locate_upload(UPLOAD_DIR, upload_id)
+            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, "Source PDF not found")
         finally:
@@ -1250,7 +1256,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             upload_id = find_source_upload_id(doc.current_content or "")
             if not upload_id:
                 raise HTTPException(400, "Document is not linked to a source PDF")
-            pdf_path = _locate_upload(UPLOAD_DIR, upload_id)
+            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, f"Source PDF {upload_id} not found")
 
@@ -1345,7 +1351,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if not upload_id:
                 raise HTTPException(400, "Document is not linked to a source PDF")
 
-            pdf_path = _locate_upload(UPLOAD_DIR, upload_id)
+            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, f"Source PDF {upload_id} not found in uploads")
 
@@ -1489,7 +1495,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             upload_id = find_source_upload_id(doc.current_content or "")
             if not upload_id:
                 raise HTTPException(400, "Document is not linked to a source PDF")
-            pdf_path = _locate_upload(UPLOAD_DIR, upload_id)
+            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, f"Source PDF {upload_id} not found")
 

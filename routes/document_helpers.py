@@ -3,6 +3,8 @@
 """Document routes — CRUD for living documents with version history."""
 
 import logging
+import os
+import re
 from typing import Dict, Any, Optional
 
 from fastapi import HTTPException
@@ -12,6 +14,7 @@ from core.database import Document, DocumentVersion
 from core.database import Session as DbSession
 
 logger = logging.getLogger(__name__)
+_UPLOAD_ID_RE = re.compile(r"^[0-9a-fA-F]{32}\.[A-Za-z0-9]+$")
 
 
 # ---- Request schemas ----
@@ -126,40 +129,86 @@ def _slug(name: str) -> str:
 _PDF_RENDER_SCALE = 2.0
 
 
-def _locate_upload(upload_dir: str, file_id: str):
+def _upload_path_inside(upload_dir: str, path: str) -> bool:
+    base = os.path.realpath(upload_dir)
+    p = os.path.realpath(path)
+    try:
+        return os.path.commonpath([base, p]) == base
+    except Exception:
+        return False
+
+
+def _upload_owner_allowed(
+    meta: Optional[dict],
+    user: Optional[str],
+    auth_manager=None,
+    allow_admin: bool = True,
+) -> bool:
+    if not user:
+        return (
+            not bool(auth_manager and getattr(auth_manager, "is_configured", False))
+            and not (meta and meta.get("owner") is not None)
+        )
+    if allow_admin and auth_manager and hasattr(auth_manager, "is_admin"):
+        try:
+            if auth_manager.is_admin(user):
+                return True
+        except Exception:
+            pass
+    return bool(meta and meta.get("owner") == user)
+
+
+def _locate_upload(upload_dir: str, file_id: str, owner: Optional[str] = None, auth_manager=None):
     """Find an upload by its filename ID.
 
     Lookup order:
-      1. Direct hit at `upload_dir/file_id` (very small deployments).
-      2. The `uploads.json` index that `UploadHandler.save_upload` maintains —
-         maps file_hash → metadata containing the full path. O(1) once loaded.
+      1. The `uploads.json` index that `UploadHandler.save_upload` maintains,
+         so owner can be verified before a document reads the source file.
+      2. Direct hit at `upload_dir/file_id` (very small deployments).
       3. Fallback: `os.walk` the date-bucketed tree. Slow on large stores;
-         only triggers for legacy uploads recorded before the index existed.
+         only allowed after the index owner check passes, or in single-user /
+         admin-style contexts where no owner is enforced.
 
     `followlinks=False` keeps a stray symlink loop in `data/uploads/` from
     spinning the walker into infinite recursion.
     """
-    import os
     import json as _json
-    direct = os.path.join(upload_dir, file_id)
-    if os.path.exists(direct):
-        return direct
-    # O(1) via uploads.json
+
+    if not _UPLOAD_ID_RE.fullmatch(file_id or ""):
+        logger.warning("Rejected invalid upload id in document lookup: %r", file_id)
+        return None
+
+    meta = None
     try:
         idx_path = os.path.join(upload_dir, "uploads.json")
         if os.path.exists(idx_path):
             with open(idx_path, "r", encoding="utf-8") as f:
                 idx = _json.load(f)
-            for meta in (idx.values() if isinstance(idx, dict) else []):
-                if meta.get("id") == file_id:
-                    p = meta.get("path")
-                    if p and os.path.exists(p):
-                        return p
+            for item in (idx.values() if isinstance(idx, dict) else []):
+                if isinstance(item, dict) and item.get("id") == file_id:
+                    meta = item
+                    break
     except Exception:
-        pass
+        meta = None
+
+    if not _upload_owner_allowed(meta, owner, auth_manager):
+        logger.warning("Upload %s denied for document owner %s", file_id, owner)
+        return None
+
+    if meta:
+        p = meta.get("path")
+        if p and os.path.exists(p) and _upload_path_inside(upload_dir, p):
+            return p
+
+    direct = os.path.join(upload_dir, file_id)
+    if os.path.exists(direct) and _upload_path_inside(upload_dir, direct):
+        return direct
+
     for root, _dirs, files in os.walk(upload_dir, followlinks=False):
         if file_id in files:
-            return os.path.join(root, file_id)
+            p = os.path.join(root, file_id)
+            if _upload_path_inside(upload_dir, p):
+                return p
     return None
 
 
