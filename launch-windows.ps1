@@ -30,40 +30,28 @@ function Fail($msg) {
     exit 1
 }
 
-# 1. Locate a Python interpreter (3.11+ recommended)
-Write-Step "Checking for Python"
-$pyExe = $null
-foreach ($c in @("python", "py")) {
-    $cmd = Get-Command $c -ErrorAction SilentlyContinue
-    if ($cmd) { $pyExe = $cmd.Source; break }
+# 1. Locate uv (fast Python package manager)
+Write-Step "Checking for uv"
+if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+    Write-Host "uv not found. Installing uv via powershell script..."
+    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+        Fail "uv install failed. Please install it manually: https://github.com/astral-sh/uv"
+    }
 }
-if (-not $pyExe) {
-    Fail "Python not found on PATH. Install Python 3.11+ from https://www.python.org/downloads/ (check 'Add to PATH'), then re-run this script."
-}
-Write-Host ("Using Python: " + $pyExe)
+Write-Host "uv is ready."
 
-# 2. Create the virtualenv if missing
-$venvPy = Join-Path $PSScriptRoot "venv\Scripts\python.exe"
-if (-not (Test-Path $venvPy)) {
-    Write-Step "Creating virtual environment (venv)"
-    & $pyExe -m venv venv
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPy)) { Fail "Failed to create the virtual environment." }
-} else {
-    Write-Host "venv already exists - skipping creation."
-}
+# 2. Sync dependencies (manages venv automatically)
+Write-Step "Syncing dependencies (managed by uv)"
+& uv sync --quiet
+if ($LASTEXITCODE -ne 0) { Fail "uv sync failed." }
 
-# 3. Install / update dependencies
-Write-Step "Installing dependencies (first run can take a few minutes)"
-& $venvPy -m pip install --upgrade pip --quiet
-& $venvPy -m pip install -r requirements.txt
-if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the pip error." }
-
-# 4. First-time setup (creates data dirs, DB, .env, admin user)
+# 3. First-time setup (creates data dirs, DB, .env, admin user)
 Write-Step "Running first-time setup"
-& $venvPy setup.py
+& uv run setup.py
 if ($LASTEXITCODE -ne 0) { Fail "setup.py failed." }
 
-# 5. Friendly note about Git Bash (full Cookbook / agent-shell parity)
+# 4. Friendly note about Git Bash (full Cookbook / agent-shell parity)
 if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
     Write-Host ""
     Write-Host "NOTE: Git Bash (bash.exe) was not found on PATH." -ForegroundColor Yellow
@@ -72,8 +60,8 @@ if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
     Write-Host "      https://git-scm.com/download/win" -ForegroundColor Yellow
 }
 
-# 6. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
+# 5. Start the server (uv run uvicorn)
 Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
-& $venvPy -m uvicorn app:app --host $BindHost --port $Port
+& uv run uvicorn app:app --host $BindHost --port $Port

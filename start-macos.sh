@@ -66,39 +66,26 @@ done
 #    - tmux      : Cookbook runs model downloads/serves in the background
 #    - llama.cpp : a prebuilt, Metal-enabled llama-server so Cookbook can serve
 #                  GGUF models on the GPU with no compile step
-#    - python@3.11 : installed only if no suitable (arm64) Python was found above
+#    - uv        : Python package manager (super fast, manages venvs)
 echo "▶ Installing dependencies (Homebrew)…"
-if [ -n "$PY" ]; then
-  echo "  (using $("$PY" --version 2>&1) at $PY)"
-  brew install tmux llama.cpp
-else
-  brew install python@3.11 tmux llama.cpp
-  PY="$(command -v /opt/homebrew/bin/python3.11 || command -v python3.11 || true)"
-fi
+brew install tmux llama.cpp uv
 
-if [ -z "$PY" ] || [ ! -x "$PY" ]; then
-  echo "✗ Couldn't find a Python 3.11+ to build the environment with."
-  echo "  Check: ls /opt/homebrew/bin/python3*  (or install one: brew install python@3.11)"
-  exit 1
-fi
+# 3. Python environment + dependencies (managed by uv).
+#    `uv sync` creates/updates the .venv/ directory automatically based
+#    on pyproject.toml. We symlink it to `venv` for compatibility with
+#    older scripts/launchers (like build-macos-app.sh).
+echo "▶ Syncing Python environment (first run downloads a few — can take a few minutes)…"
+uv sync --quiet
 
-# 3. Python environment + dependencies (kept inside the repo, in venv/).
-#    Named `venv` to match the manual steps and build-macos-app.sh, so the
-#    clickable .app reuses this same environment.
-if [ ! -d venv ]; then
-  echo "▶ Creating Python environment…"
-  "$PY" -m venv venv
+if [ ! -L venv ] && [ ! -d venv ]; then
+  ln -s .venv venv
 fi
-echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
-./venv/bin/python -m pip install --quiet --upgrade pip
-# Not --quiet: this is the slow step, so show progress (and any real errors).
-./venv/bin/python -m pip install -r requirements.txt
 
 # 4. First-run setup: creates data dirs and prints an initial admin password
 #    the first time (idempotent — does nothing if already set up). Suppress its
 #    manual run hint — we launch the server ourselves just below.
 echo "▶ Preparing Odysseus…"
-ODYSSEUS_SKIP_RUN_HINT=1 ./venv/bin/python setup.py
+ODYSSEUS_SKIP_RUN_HINT=1 uv run setup.py
 
 # 5. Launch. Bind to loopback only (safe default).
 URL="http://127.0.0.1:$PORT"
@@ -136,4 +123,4 @@ echo
 echo "▶ Starting Odysseus — it will open in your browser at $URL"
 echo "  (this takes a few seconds; press Ctrl+C here to stop)"
 echo
-./venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port "$PORT"
+uv run uvicorn app:app --host 127.0.0.1 --port "$PORT"

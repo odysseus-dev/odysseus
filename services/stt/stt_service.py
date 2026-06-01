@@ -66,7 +66,7 @@ class STTService:
                 self._whisper_model = WhisperModel(model_size, device=device, compute_type=compute_type)
                 logger.info(f"faster-whisper model '{model_size}' loaded on {device}")
             except ImportError:
-                logger.warning("faster-whisper not installed. Install with: pip install faster-whisper")
+                logger.warning("faster-whisper not installed. Install with: uv pip install faster-whisper")
                 return None
             except Exception as e:
                 logger.error(f"Failed to load whisper model: {e}")

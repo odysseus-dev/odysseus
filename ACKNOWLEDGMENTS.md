@@ -89,7 +89,7 @@ Bundled in `static/fonts/`:
 
 ## Python dependencies
 
-Core (`requirements.txt`) and optional (`requirements-optional.txt`):
+Core and optional dependencies are managed in `pyproject.toml`.
 
 | Package | License |
 |---|---|

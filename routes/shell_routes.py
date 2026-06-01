@@ -623,7 +623,7 @@ def setup_shell_routes() -> APIRouter:
                 raise HTTPException(400, "Invalid ssh_port")
             port_arg = f"-p {int(_port)} "
         packages = [
-            # ── System ── OS binaries, not pip packages
+            # ── System ── OS binaries, not uv packages
             {"name": "tmux", "pip": "", "desc": "Required for Linux/Termux Cookbook background downloads and serves", "category": "System", "target": "remote", "kind": "system", "install_hint": "Run Cookbook server setup, or install tmux with apt/pacman/dnf/apk/zypper."},
             {"name": "docker", "pip": "", "desc": "Required only for Docker-backed launch commands", "category": "System", "target": "remote", "kind": "system", "install_hint": "Install Docker on the selected server and allow this user to run docker."},
             # ── LLM ── installs on GPU servers for model serving/downloading
@@ -639,7 +639,7 @@ def setup_shell_routes() -> APIRouter:
             {"name": "playwright", "pip": "playwright", "desc": "Browser automation for web tools", "category": "Tools", "target": "local"},
         ]
         # Remote check: for remote-target packages, probe the selected server's
-        # venv over SSH so a remote `pip install` actually reflects here.
+        # venv over SSH so a remote `uv pip install` actually reflects here.
         remote_status: dict = {}
         remote_names = [p["name"] for p in packages if p.get("target") == "remote" and p.get("kind") != "system"]
         remote_system_names = [p["name"] for p in packages if p.get("target") == "remote" and p.get("kind") == "system"]
@@ -720,14 +720,14 @@ def setup_shell_routes() -> APIRouter:
 
     @router.post("/api/cookbook/packages/install")
     async def install_package(request: Request):
-        """Install a package via pip. Admin only — pip install is effectively code exec."""
+        """Install a package via uv. Admin only — uv pip install is effectively code exec."""
         _require_admin(request)
         import sys as _sys
         body = await request.json()
         pip_name = body.get("pip")
         if not pip_name:
             return {"ok": False, "error": "No package specified"}
-        # Validate against known packages to prevent arbitrary pip install
+        # Validate against known packages to prevent arbitrary uv pip install
         known = {
             "rembg[gpu]", "hf_transfer", "llama-cpp-python[server]", "sglang[all]", "diffusers", "diffusers[torch]",
             "TTS", "bark", "faster-whisper", "playwright", "realesrgan", "gfpgan",
@@ -735,7 +735,7 @@ def setup_shell_routes() -> APIRouter:
         }
         if pip_name not in known:
             return {"ok": False, "error": f"Unknown package: {pip_name}"}
-        cmd = [_sys.executable, "-m", "pip", "install", pip_name]
+        cmd = ["uv", "pip", "install", pip_name]
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )

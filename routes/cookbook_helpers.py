@@ -109,8 +109,8 @@ def _local_tooling_path_export(executable: str) -> str:
     cookbook runners shell out to (`hf`, `python`). tmux runners start from a
     fresh login shell with the venv NOT activated, so without this they can't
     find `hf` and downloads fail with "hf: command not found" — notably on
-    macOS, where the `pip --user` self-heal also misses (`pip` isn't a command,
-    only `pip3`/`python3 -m pip`). Local runs only; meaningless over SSH.
+    macOS, where the `uv pip` self-heal also misses (`pip` isn't a command,
+    only `uv pip`). Local runs only; meaningless over SSH.
     """
     bin_dir = os.path.dirname(os.path.abspath(executable))
     # Escape for a double-quoted context: $PATH must still expand, but spaces

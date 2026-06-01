@@ -1454,7 +1454,7 @@ def setup_gallery_routes() -> APIRouter:
                 tmp.putalpha(mask_img)
                 cut = tmp
             except Exception:
-                return {"error": "No background removal model available. Install rembg: pip install rembg"}
+                return {"error": "No background removal model available. Install rembg: uv pip install rembg"}
 
         # Compose the cropped result back into a full-size transparent canvas.
         if bbox:

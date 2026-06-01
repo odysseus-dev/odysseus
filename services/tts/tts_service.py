@@ -236,7 +236,7 @@ class _KokoroPipeline:
             logger.info("Kokoro-82M TTS pipeline loaded")
         except ImportError as e:
             logger.warning(f"Kokoro TTS not available: {e}")
-            logger.warning("Install with: pip install kokoro soundfile")
+            logger.warning("Install with: uv pip install kokoro soundfile")
         except Exception as e:
             logger.error(f"Kokoro init failed: {e}", exc_info=True)
 

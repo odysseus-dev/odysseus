@@ -77,7 +77,7 @@ export const ERROR_PATTERNS = [
         const task = taskEl ? _loadTasks().find(t => t.sessionId === taskEl.dataset.taskId) : null;
         const host = task?.remoteHost || '';
         const prefix = _buildEnvPrefix();
-        const pipCmd = prefix ? prefix + ' pip install -U vllm' : 'pip install -U vllm';
+        const pipCmd = prefix ? prefix + ' uv pip install -U vllm' : 'uv pip install -U vllm';
         const cmd = host ? _sshCmd(host, pipCmd) : pipCmd;
         _launchServeTask('update-vllm', 'pip-update', cmd);
       }},
@@ -367,7 +367,7 @@ export const ERROR_PATTERNS = [
         const task = taskEl ? _loadTasks().find(t => t.sessionId === taskEl.dataset.taskId) : null;
         const host = task?.remoteHost || '';
         const prefix = _buildEnvPrefix();
-        const pipCmd = prefix ? prefix + ' pip install -U vllm' : 'pip install -U vllm';
+        const pipCmd = prefix ? prefix + ' uv pip install -U vllm' : 'uv pip install -U vllm';
         const cmd = host ? _sshCmd(host, pipCmd) : pipCmd;
         _launchServeTask('update-vllm', 'pip-update', cmd);
       }},

@@ -105,7 +105,7 @@ class McpManager:
             return True
 
         except ImportError:
-            logger.warning("MCP package not installed. Install with: pip install mcp")
+            logger.warning("MCP package not installed. Install with: uv pip install mcp")
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
 
@@ -147,7 +147,7 @@ class McpManager:
             return True
 
         except ImportError:
-            logger.warning("MCP package not installed. Install with: pip install mcp")
+            logger.warning("MCP package not installed. Install with: uv pip install mcp")
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
 

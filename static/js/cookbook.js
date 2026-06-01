@@ -587,15 +587,10 @@ async function _fetchDependencies() {
         if (depsServerSel) _applyServerSelection(depsServerSel.value);
       }
       const targetHost = isLocalOnly ? 'this server' : (_envState.remoteHost || 'local');
-      // Always go through `python -m pip` so the leading token is `python`
+      // Always go through `uv pip`
       // — matches the /api/model/serve allow-list (bare `pip` is blocked).
-      // Inside a venv/conda env, `--user` is invalid (pip refuses), so we
-      // only add `--user --break-system-packages` when there's no env —
-      // for PEP-668-locked system pythons (Arch, newer Debian).
-      const _inEnv = _envState.env === 'venv' || _envState.env === 'conda';
-      const _pipFlags = (!_isWindows() && !_inEnv) ? ' --user --break-system-packages' : '';
       const _py = _isWindows() ? 'python' : 'python3';
-      const cmd = `${_py} -m pip install${upgrade ? ' -U' : ''}${_pipFlags} "${pipName}"`;
+      const cmd = `uv pip install${upgrade ? ' -U' : ''} "${pipName}"`;
       let envPrefix = '';
       if (_isWindows()) {
         if (_envState.env === 'venv' && _envState.envPath) {

@@ -73,7 +73,7 @@ def create_default_admin():
         return "created"
     except ImportError:
         print("  [warn] bcrypt not installed — skipping admin user creation")
-        print("         Run: pip install bcrypt")
+        print("         Run: uv pip install bcrypt")
         return "skipped"
 
 
@@ -103,7 +103,7 @@ def check_deps():
             missing.append(mod)
     if missing:
         print(f"\n  [warn] Missing packages: {', '.join(missing)}")
-        print(f"         Run: pip install -r requirements.txt")
+        print(f"         Run: uv sync")
     else:
         print("  [ok] All core dependencies installed")
 

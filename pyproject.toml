@@ -1,3 +1,45 @@
+[project]
+name = "odysseus"
+version = "1.0.0"
+description = "Odysseus project"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "python-dotenv",
+    "httpx",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "SQLAlchemy",
+    "pypdf",
+    "beautifulsoup4",
+    "charset-normalizer",
+    "numpy",
+    "chromadb-client",
+    "fastembed",
+    "youtube-transcript-api",
+    "markdown",
+    "icalendar",
+    "python-dateutil",
+    "caldav",
+    "cryptography",
+    "bcrypt",
+    "mcp",
+    "pyotp",
+    "qrcode[pil]",
+    "croniter",
+    "pytest",
+    "pytest-asyncio",
+]
+
+[project.optional-dependencies]
+optional = [
+    "duckduckgo-search",
+    "PyMuPDF",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

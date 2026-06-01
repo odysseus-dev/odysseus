@@ -20,11 +20,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     && rm -rf /var/lib/apt/lists/*
 
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 WORKDIR /app
 
 # Install Python deps first (layer cache)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY pyproject.toml uv.lock ./
+ARG INSTALL_OPTIONAL=false
+RUN if [ "$INSTALL_OPTIONAL" = "true" ]; then \
+        uv sync --frozen --extra optional; \
+    else \
+        uv sync --frozen; \
+    fi
+
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy app code
 COPY . .

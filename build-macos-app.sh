@@ -75,7 +75,7 @@ PORT="__PORT__"
 URL="http://127.0.0.1:${PORT}"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
-UVICORN="$INSTALL_DIR/venv/bin/uvicorn"
+UVICORN="uv"
 LOG="$INSTALL_DIR/logs/odysseus-app.log"
 
 notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"Odysseus\"" >/dev/null 2>&1; }
@@ -84,12 +84,10 @@ die_gui() {
   exit 1
 }
 
-[ -x "$UVICORN" ] || die_gui "Odysseus isn't set up yet. Open Terminal and run:
+command -v uv >/dev/null 2>&1 || die_gui "uv not found. Odysseus needs the uv package manager to run natively on macOS. Open Terminal and run:
 
 cd $INSTALL_DIR
-python3.11 -m venv venv
-./venv/bin/pip install -r requirements.txt
-./venv/bin/python setup.py"
+./start-macos.sh"
 
 # Open the UI in a chrome-less app window (Chromium browsers), else default browser.
 open_ui() {

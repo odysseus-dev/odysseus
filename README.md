@@ -63,13 +63,10 @@ taken, set `APP_PORT=7001` in `.env` and recreate the container.
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python setup.py
-python -m uvicorn app:app --host 0.0.0.0 --port 7000
+uv sync
+uv run uvicorn app:app --host 0.0.0.0 --port 7000
 ```
-Requirements: Python 3.11+. Cookbook also needs `tmux` for background model
+Requirements: `uv` and Python 3.11+. Cookbook also needs `tmux` for background model
 downloads and serves.
 
 ### Apple Silicon
@@ -168,11 +165,8 @@ Or do it by hand:
 ```powershell
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
-python -m venv venv
-venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python setup.py
-python -m uvicorn app:app --host 127.0.0.1 --port 7000
+uv sync
+uv run uvicorn app:app --host 0.0.0.0 --port 7000
 ```
 
 **Requirements:** Python 3.11+. The core app (chat, agent, memory, documents,

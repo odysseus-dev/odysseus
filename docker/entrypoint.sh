@@ -46,14 +46,14 @@ for dir in /app /app/data /app/logs; do
     fi
 done
 
-# Cookbook installs vllm/etc. via `pip install --user`, which pulls
+# Cookbook installs vllm/etc. via `uv pip install`, which pulls
 # nvidia-cuda-* wheels into /app/.local but does not set CUDA_HOME or
 # symlink /usr/local/cuda. vllm 0.22+ then crashes during engine init
 # when FlashInfer tries to JIT a sampler kernel ("Could not find nvcc",
 # then "CUDA compiler and toolkit headers are incompatible" on the
 # mixed cuda-nvcc 13.3 / cuda-runtime 13.0 wheel combo).
 #
-# Auto-set CUDA_HOME if a pip-installed nvcc is present, and disable the
+# Auto-set CUDA_HOME if a uv-installed nvcc is present, and disable the
 # FlashInfer JIT sampler — sampler only, no impact on attention path.
 # No-op when vllm isn't installed.
 for cu in /app/.local/lib/python*/site-packages/nvidia/cu13; do
