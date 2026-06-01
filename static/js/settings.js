@@ -6,6 +6,7 @@ import searchModule from './search.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { clearDockSide } from './modalSnap.js';
 import { sortModelIds } from './modelSort.js';
+import i18n from './i18n.js';
 
 let initialized = false;
 let modalEl = null;
@@ -1915,6 +1916,92 @@ async function initShortcuts() {
 /* ═══════════════════════════════════════════
    INIT & REFRESH
    ═══════════════════════════════════════════ */
+async function initLanguageSettings() {
+  const select = el('set-languageSelect');
+  const uploadBtn = el('set-languageUploadBtn');
+  const uploadInput = el('set-languageUploadInput');
+  const msg = el('set-languageMsg');
+  if (!select || !uploadBtn || !uploadInput) return;
+
+  const setMsg = (key, fallback, color) => {
+    if (!msg) return;
+    msg.textContent = key ? i18n.t(key, fallback) : '';
+    msg.style.color = color || '';
+  };
+
+  async function renderLanguages(selected) {
+    try { await i18n.ready; } catch (_) {}
+    let list = i18n.getLocales();
+    if (!list.length) list = await i18n.refreshLocales();
+    const current = selected || i18n.getLocale();
+    select.innerHTML = '';
+    list.forEach(locale => {
+      const opt = document.createElement('option');
+      opt.value = locale.code;
+      opt.textContent = locale.nativeName && locale.nativeName !== locale.name
+        ? `${locale.nativeName} (${locale.name})`
+        : (locale.nativeName || locale.name || locale.code);
+      select.appendChild(opt);
+    });
+    if (Array.from(select.options).some(opt => opt.value === current)) {
+      select.value = current;
+    }
+  }
+
+  await renderLanguages();
+
+  select.addEventListener('change', async () => {
+    setMsg('settings.language.saving', 'Saving...');
+    try {
+      await i18n.setLocale(select.value);
+      await renderLanguages(select.value);
+      setMsg('settings.language.saved', 'Language saved.');
+    } catch (e) {
+      console.warn('[settings] language save failed', e);
+      setMsg('settings.language.saveFailed', 'Failed to save language.', 'var(--red)');
+    }
+  });
+
+  uploadBtn.addEventListener('click', () => uploadInput.click());
+  uploadInput.addEventListener('change', async () => {
+    const file = uploadInput.files && uploadInput.files[0];
+    uploadInput.value = '';
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.json')) {
+      setMsg('settings.language.invalidFile', 'Upload a .json file.', 'var(--red)');
+      return;
+    }
+
+    setMsg('settings.language.uploading', 'Uploading...');
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const res = await fetch('/api/i18n/locales', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: formData,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+      await i18n.refreshLocales();
+      const code = data.locale && data.locale.code ? data.locale.code : i18n.getLocale();
+      await i18n.setLocale(code);
+      await renderLanguages(code);
+      setMsg('settings.language.uploaded', 'Language uploaded.');
+    } catch (e) {
+      console.warn('[settings] language upload failed', e);
+      if (msg) {
+        msg.textContent = e && e.message ? e.message : i18n.t('settings.language.uploadFailed', 'Upload failed.');
+        msg.style.color = 'var(--red)';
+      }
+    }
+  });
+
+  window.addEventListener('odysseus:i18n-changed', () => {
+    renderLanguages(i18n.getLocale()).catch(() => {});
+  });
+}
+
 function initAccount() {
   // Populate user info
   fetch('/api/auth/status', { credentials: 'same-origin' })
@@ -2109,6 +2196,7 @@ function initAll() {
   initResearchSearchSettings();
   initAgentSettings();
   initAppearance();
+  initLanguageSettings();
   initShortcuts();
   initAccount();
   initIntegrations();

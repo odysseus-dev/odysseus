@@ -1341,6 +1341,10 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 0 0 0 20 4 4 0 0 1 0-8 4 4 0 0 0 0-8"/></svg>
             <span>Appearance</span>
           </button>
+          <button class="settings-nav-item" data-settings-tab="language">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/></svg>
+            <span data-i18n="settings.language.nav">Language</span>
+          </button>
           <button class="settings-nav-item" data-settings-tab="shortcuts">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>
             <span>Shortcuts</span>
@@ -1832,6 +1836,25 @@
 
 
         <!-- ═══ ACCOUNT TAB ═══ -->
+        <div data-settings-panel="language" class="hidden">
+          <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/></svg><span data-i18n="settings.language.title">Language</span></h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px" data-i18n="settings.language.description">Choose the interface language or upload a new JSON language pack.</div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label" for="set-languageSelect" data-i18n="settings.language.currentLabel">Current language</label>
+                <select id="set-languageSelect" class="settings-select"></select>
+              </div>
+              <div class="settings-row" style="align-items:center;gap:8px;flex-wrap:wrap;">
+                <input type="file" id="set-languageUploadInput" accept="application/json,.json" style="display:none;">
+                <button type="button" class="admin-btn-add" id="set-languageUploadBtn" data-i18n="settings.language.uploadButton">Upload JSON</button>
+                <span id="set-languageMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 55%, transparent);"></span>
+              </div>
+              <div class="admin-toggle-sub" style="margin-top:2px" data-i18n="settings.language.uploadHint">Language files are saved into static/i18n and become available in this menu.</div>
+            </div>
+          </div>
+        </div>
+
         <div data-settings-panel="account" class="hidden">
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Account</h2>
@@ -2221,6 +2244,7 @@
 
 
 <!-- Load modules in this order -->
+<script type="module" src="/static/js/i18n.js"></script>
 <script type="module" src="/static/js/storage.js"></script>
 <script type="module" src="/static/js/ui.js"></script>
 <script type="module" src="/static/js/markdown.js"></script>
