@@ -469,7 +469,8 @@ async def _generate_tmux(cmd: str, request: Request):
         f"EC=${{PIPESTATUS[0]}}\n"
         f"echo ':::EXIT_CODE:::'$EC >> '{log_path}'\n"
         f"rm -f '{script_path}'\n"
-        f"exit $EC\n"
+        f"exit $EC\n",
+        encoding="utf-8",
     )
     script_path.chmod(0o755)
     logger.info("tmux wrapper script created: session=%s path=%s", session_id, script_path)
@@ -504,7 +505,7 @@ async def _generate_tmux(cmd: str, request: Request):
         # Read new lines from log
         try:
             if log_path.exists():
-                lines = log_path.read_text(errors="replace").splitlines()
+                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
                 new_lines = lines[lines_sent:]
                 for line in new_lines:
                     if line.startswith(":::EXIT_CODE:::"):
@@ -532,7 +533,7 @@ async def _generate_tmux(cmd: str, request: Request):
             # Session ended — do one final read
             await asyncio.sleep(0.5)
             if log_path.exists():
-                lines = log_path.read_text(errors="replace").splitlines()
+                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
                 for line in lines[lines_sent:]:
                     if line.startswith(":::EXIT_CODE:::"):
                         try:
