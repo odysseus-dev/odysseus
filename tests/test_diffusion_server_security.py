@@ -106,6 +106,34 @@ def _starlette_available() -> bool:
     return importlib.util.find_spec("starlette") is not None
 
 
+def _asgi_get(app, url, headers=None):
+    """Drive a single GET against an ASGI ``app`` over httpx's in-process
+    ``ASGITransport`` on a fresh event loop.
+
+    This deliberately avoids ``starlette.testclient.TestClient``: its
+    context-manager form spins up an ``anyio`` blocking portal (to run the
+    lifespan), which deadlocks under some pytest / anyio / asyncio test
+    configurations — the focused Host-header test hung indefinitely during
+    review (see PR #347). A direct ASGI call needs neither a portal nor a
+    lifespan, so it stays reliable regardless of the host project's async
+    test plugins.
+
+    The request ``Host`` is derived from ``url`` so the TrustedHost allowlist
+    sees exactly the hostname under test; ``Origin`` and friends go through
+    ``headers``.
+    """
+    import asyncio
+
+    import httpx
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport) as client:
+            return await client.get(url, headers=headers or {})
+
+    return asyncio.run(_run())
+
+
 @pytest.mark.skipif(not _starlette_available(), reason="starlette not installed")
 def test_trusted_host_middleware_rejects_attacker_host():
     """A request with an attacker-controlled Host header (the DNS-rebinding
@@ -113,7 +141,6 @@ def test_trusted_host_middleware_rejects_attacker_host():
     from fastapi import FastAPI
     from fastapi.middleware.cors import CORSMiddleware  # noqa: F401  (parity import)
     from starlette.middleware.trustedhost import TrustedHostMiddleware
-    from starlette.testclient import TestClient
 
     ns = _load_helpers()
     allowed = ns["_compute_allowed_hosts"]("127.0.0.1")
@@ -125,13 +152,12 @@ def test_trusted_host_middleware_rejects_attacker_host():
     def health():
         return {"status": "ok"}
 
-    with TestClient(app) as client:
-        # Legitimate request goes through.
-        ok = client.get("/health", headers={"Host": "127.0.0.1"})
-        assert ok.status_code == 200
-        # Attacker-controlled hostname (DNS-rebinding scenario) is rejected.
-        bad = client.get("/health", headers={"Host": "evil.example.com"})
-        assert bad.status_code == 400
+    # Legitimate request (Host: 127.0.0.1) goes through.
+    ok = _asgi_get(app, "http://127.0.0.1/health")
+    assert ok.status_code == 200
+    # Attacker-controlled hostname (DNS-rebinding scenario) is rejected.
+    bad = _asgi_get(app, "http://evil.example.com/health")
+    assert bad.status_code == 400
 
 
 @pytest.mark.skipif(not _starlette_available(), reason="starlette not installed")
@@ -140,7 +166,6 @@ def test_cors_default_deny_does_not_emit_wildcard_acao():
     Access-Control-Allow-Origin at all (definitely not the wildcard)."""
     from fastapi import FastAPI
     from starlette.middleware.trustedhost import TrustedHostMiddleware
-    from starlette.testclient import TestClient
 
     ns = _load_helpers()
     allowed = ns["_compute_allowed_hosts"]("127.0.0.1")
@@ -156,19 +181,19 @@ def test_cors_default_deny_does_not_emit_wildcard_acao():
     def list_models():
         return {"data": []}
 
-    with TestClient(app) as client:
-        resp = client.get(
-            "/v1/models",
-            headers={"Host": "127.0.0.1", "Origin": "https://evil.example.com"},
-        )
-        # The request itself succeeds (Host is allowed), but the response
-        # carries no ACAO — so a real browser would block the attacker page
-        # from reading the body.
-        acao = resp.headers.get("access-control-allow-origin")
-        assert acao is None or acao == "", (
-            f"unexpected ACAO header: {acao!r} — the regression was wildcard CORS, "
-            f"so any non-empty default fails this gate"
-        )
+    # Host is allowed, so the request itself succeeds — but the response must
+    # carry no ACAO, so a real browser would block the attacker page from
+    # reading the body.
+    resp = _asgi_get(
+        app,
+        "http://127.0.0.1/v1/models",
+        headers={"Origin": "https://evil.example.com"},
+    )
+    acao = resp.headers.get("access-control-allow-origin")
+    assert acao is None or acao == "", (
+        f"unexpected ACAO header: {acao!r} — the regression was wildcard CORS, "
+        f"so any non-empty default fails this gate"
+    )
 
 
 @pytest.mark.skipif(not _starlette_available(), reason="starlette not installed")
@@ -178,7 +203,6 @@ def test_explicit_cors_origin_does_not_widen_to_wildcard():
     from fastapi import FastAPI
     from fastapi.middleware.cors import CORSMiddleware
     from starlette.middleware.trustedhost import TrustedHostMiddleware
-    from starlette.testclient import TestClient
 
     ns = _load_helpers()
     allowed = ns["_compute_allowed_hosts"]("127.0.0.1")
@@ -197,19 +221,20 @@ def test_explicit_cors_origin_does_not_widen_to_wildcard():
     def list_models():
         return {"data": []}
 
-    with TestClient(app) as client:
-        # Allowed origin: ACAO echoes that origin (NOT '*').
-        ok = client.get(
-            "/v1/models",
-            headers={"Host": "127.0.0.1", "Origin": "http://localhost:7000"},
-        )
-        assert ok.status_code == 200
-        assert ok.headers.get("access-control-allow-origin") == "http://localhost:7000"
-        # Foreign origin: ACAO must NOT echo it, must NOT be '*'.
-        bad = client.get(
-            "/v1/models",
-            headers={"Host": "127.0.0.1", "Origin": "https://evil.example.com"},
-        )
-        bad_acao = bad.headers.get("access-control-allow-origin")
-        assert bad_acao != "*"
-        assert bad_acao != "https://evil.example.com"
+    # Allowed origin: ACAO echoes that origin (NOT '*').
+    ok = _asgi_get(
+        app,
+        "http://127.0.0.1/v1/models",
+        headers={"Origin": "http://localhost:7000"},
+    )
+    assert ok.status_code == 200
+    assert ok.headers.get("access-control-allow-origin") == "http://localhost:7000"
+    # Foreign origin: ACAO must NOT echo it, must NOT be '*'.
+    bad = _asgi_get(
+        app,
+        "http://127.0.0.1/v1/models",
+        headers={"Origin": "https://evil.example.com"},
+    )
+    bad_acao = bad.headers.get("access-control-allow-origin")
+    assert bad_acao != "*"
+    assert bad_acao != "https://evil.example.com"
