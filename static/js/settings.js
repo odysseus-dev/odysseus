@@ -1619,6 +1619,9 @@ function initAgentPickerUI() {
     items.forEach(function(item) {
       item.addEventListener('click', function(e) {
         e.stopPropagation();
+        var previousVal = globalAgentStyle;
+        var previousText = agentPickerLabel ? agentPickerLabel.textContent : '';
+        
         var val = this.getAttribute('data-value');
         var text = this.textContent;
         if (agentPickerLabel) agentPickerLabel.textContent = text;
@@ -1632,7 +1635,14 @@ function initAgentPickerUI() {
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ agent_prompt_style: globalAgentStyle })
-        }).catch(err => console.error(err));
+        }).then(function(r) {
+          if (!r.ok) throw new Error('Save failed');
+        }).catch(function(err) {
+          console.error('Failed to save agent style:', err);
+          globalAgentStyle = previousVal;
+          if (agentPickerLabel) agentPickerLabel.textContent = previousText;
+          updateActiveItem(previousVal);
+        });
       });
     });
   }
