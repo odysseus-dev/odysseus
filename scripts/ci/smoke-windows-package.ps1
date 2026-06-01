@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)][string]$ExePath,
-    [string]$Host = "127.0.0.1",
+    [string]$BindHost = "127.0.0.1",
     [int]$Port = 7000,
     [int]$StartupTimeoutSec = 90
 )
@@ -15,7 +15,7 @@ $stdoutPath = Join-Path $PWD "odysseus-windows-smoke.stdout.log"
 $stderrPath = Join-Path $PWD "odysseus-windows-smoke.stderr.log"
 Remove-Item -LiteralPath $stdoutPath, $stderrPath -ErrorAction SilentlyContinue
 
-$env:ODYSSEUS_HOST = $Host
+$env:ODYSSEUS_HOST = $BindHost
 $env:ODYSSEUS_PORT = [string]$Port
 $env:AUTH_ENABLED = "false"
 $env:LOCALHOST_BYPASS = "true"
@@ -30,7 +30,7 @@ $proc = Start-Process -FilePath $ExePath `
 
 try {
     $deadline = (Get-Date).AddSeconds($StartupTimeoutSec)
-    $healthUrl = "http://$Host`:$Port/api/health"
+    $healthUrl = "http://$BindHost`:$Port/api/health"
     $started = $false
 
     while ((Get-Date) -lt $deadline) {
@@ -66,4 +66,3 @@ finally {
         $proc.WaitForExit()
     }
 }
-
