@@ -357,8 +357,16 @@
     display: inline-flex; align-items: center; gap: 14px; margin: 18px auto 8px;
     background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
     padding: 12px 16px; font-family: ui-monospace, monospace; font-size: 14px; color: var(--fg);
+    text-align: left;
   }
   .codeblock .prompt { color: var(--accent); }
+  .codeblock .copy-btn {
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    color: var(--muted); cursor: pointer; font-size: 12px; padding: 4px 10px;
+    font-family: inherit; transition: border-color .12s ease, color .12s ease;
+  }
+  .codeblock .copy-btn:hover { border-color: var(--accent); color: var(--fg); }
+  .codeblock .copy-btn.copied { border-color: var(--green); color: var(--green); }
   .pill-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 44px; }
   .pill { font-size: 12.5px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; background: var(--panel); }
 
@@ -369,6 +377,9 @@
     .grid { grid-template-columns: repeat(2, 1fr); }
     .shotrow { grid-template-columns: 1fr; }
     .nav-links a:not(.btn) { display: none; }
+    .codeblock { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; overflow-wrap: anywhere; }
+    .codeblock > span { flex: 1 1 auto; min-width: 0; }
+    .codeblock .copy-btn { margin-left: auto; }
   }
   @media (max-width: 520px) {
     .grid { grid-template-columns: 1fr; }
@@ -660,7 +671,7 @@
         <div class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5"/><path d="M12 19h8"/></svg>Get started</div>
         <h2 class="h" style="margin-bottom:6px;">Odysseus is yours.</h2>
         <p class="sub center" style="margin:0 auto;">It's open source and free. No sales team, no demo request, no Trojan horse.</p>
-        <div class="codeblock"><span class="prompt">$</span> git clone https://github.com/pewdiepie-archdaemon/odysseus.git &amp;&amp; cd odysseus</div>
+        <div class="codeblock"><span><span class="prompt">$</span> git clone https://github.com/pewdiepie-archdaemon/odysseus.git &amp;&amp; cd odysseus</span><button class="copy-btn" data-copy="git clone https://github.com/pewdiepie-archdaemon/odysseus.git && cd odysseus">Copy</button></div>
         <div>
           <a class="btn primary" href="https://github.com/pewdiepie-archdaemon/odysseus" target="_blank" style="margin-top:14px;">View on GitHub</a>
         </div>
@@ -924,6 +935,18 @@
       });
 
       show(0);
+    })();
+
+    // Copy button for the codeblock command.
+    (function () {
+      var btn = document.querySelector('.codeblock .copy-btn');
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        navigator.clipboard.writeText(btn.getAttribute('data-copy')).then(function () {
+          btn.textContent = 'Copied!'; btn.classList.add('copied');
+          setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+        });
+      });
     })();
   </script>
 

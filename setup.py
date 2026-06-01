@@ -65,7 +65,7 @@ def create_default_admin():
                 }
             }
         }
-        with open(auth_path, "w") as f:
+        with open(auth_path, "w", encoding="utf-8") as f:
             json.dump(auth_data, f, indent=2)
         print(f"  [ok] Initial admin user created ({username})")
         print(f"        Temporary password: {password}")
@@ -111,9 +111,12 @@ def check_deps():
         print("\n  [warn] tmux not found")
         print("         Cookbook uses tmux for background downloads and model serves.")
         print("         Install it with your OS package manager, for example:")
-        print("           sudo apt install tmux")
-        print("           sudo pacman -S tmux")
-        print("           sudo dnf install tmux")
+        if sys.platform == "darwin":
+            print("           brew install tmux")
+        else:
+            print("           sudo apt install tmux")
+            print("           sudo pacman -S tmux")
+            print("           sudo dnf install tmux")
     elif os.name != "nt":
         print("  [ok] tmux installed")
 
@@ -148,17 +151,13 @@ def main():
         admin_status = "failed"
 
     print("\n=== Setup complete ===")
-    print(f"\nStart the server with:")
-    print(f"  python -m uvicorn app:app --host 0.0.0.0 --port 7000")
-    print(f"\nThen open http://localhost:7000")
-    if admin_status == "created":
-        print(f"Login with the admin username and temporary password printed above.\n")
-    elif admin_status == "exists":
-        print(f"Login with your existing admin credentials.\n")
-    elif admin_status == "skipped":
-        print(f"WARNING: Admin user was NOT created because dependencies are missing. Please run 'pip install bcrypt' and execute this setup script again to generate your admin account.\n")
-    elif admin_status == "failed":
-        print(f"ERROR: Admin user creation failed due to a system or file error. Please check write permissions for the 'data' directory.\n")
+    # start-macos.sh launches the server itself (on its own port) right after
+    # this, so suppress the manual hint there to avoid a contradictory URL.
+    if not os.getenv("ODYSSEUS_SKIP_RUN_HINT"):
+        print(f"\nStart the server with:")
+        print(f"  python -m uvicorn app:app --host 127.0.0.1 --port 7000")
+        print(f"\nThen open http://localhost:7000")
+    print(f"Login with the admin username and temporary password printed above.\n")
 
 
 if __name__ == "__main__":

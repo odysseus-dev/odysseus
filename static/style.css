@@ -3534,6 +3534,32 @@ body.bg-pattern-sparkles {
       max-width: min(360px, calc(100vw - 32px));
     }
     .toast.show { opacity:1; transform: translateX(0); }
+    .toast .toast-checkmark {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      margin-right: 7px;
+      color: var(--green, #50fa7b);
+      vertical-align: -3px;
+      transform: scale(0.65);
+      opacity: 0;
+      animation: toastCheckPop 360ms cubic-bezier(0.2, 0.9, 0.25, 1.25) forwards;
+    }
+    .toast .toast-checkmark svg polyline {
+      stroke-dasharray: 24;
+      stroke-dashoffset: 24;
+      animation: toastCheckDraw 420ms ease-out 120ms forwards;
+    }
+    @keyframes toastCheckPop {
+      0% { opacity: 0; transform: scale(0.65); }
+      65% { opacity: 1; transform: scale(1.16); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+    @keyframes toastCheckDraw {
+      to { stroke-dashoffset: 0; }
+    }
     .toast.exiting {
       opacity: 0;
       transform: translateX(-120%);
@@ -9929,19 +9955,44 @@ textarea.memory-add-input {
   opacity: 0.85 !important;
   filter: saturate(0.9);
 }
-.task-paused-badge {
+.task-status-badge {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--orange, #ff9800);
-  background: color-mix(in srgb, var(--orange, #ff9800) 12%, transparent);
-  padding: 2px 6px;
-  border-radius: 10px;
+  letter-spacing: 0.3px;
+  padding: 1px 6px;
+  border-radius: 3px;
   flex-shrink: 0;
+  cursor: pointer;
+  border: 1px solid transparent;
+  line-height: 16px;
+  font-family: 'Fira Code', monospace;
+  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease, filter 0.12s ease;
+  user-select: none;
+}
+.task-paused-badge {
+  color: var(--orange, #ffb86c);
+  background: color-mix(in srgb, var(--orange, #ffb86c) 22%, transparent);
+  border-color: color-mix(in srgb, var(--orange, #ffb86c) 35%, transparent);
+}
+.task-active-badge {
+  color: var(--green, #50fa7b);
+  background: color-mix(in srgb, var(--green, #50fa7b) 20%, transparent);
+  border-color: color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
+}
+.task-status-badge:hover {
+  filter: brightness(1.08) saturate(1.15);
+}
+.task-paused-badge:hover {
+  background: color-mix(in srgb, var(--orange, #ffb86c) 30%, transparent);
+  border-color: color-mix(in srgb, var(--orange, #ffb86c) 55%, transparent);
+}
+.task-active-badge:hover {
+  background: color-mix(in srgb, var(--green, #50fa7b) 28%, transparent);
+  border-color: color-mix(in srgb, var(--green, #50fa7b) 55%, transparent);
 }
 
 .task-builtin-badge {
@@ -10654,6 +10705,8 @@ textarea.memory-add-input {
   flex: 1;
   min-width: 0;
   max-width: 70vw;
+  container-type: inline-size;
+  container-name: docpane;
   display: flex;
   flex-direction: column;
   background: var(--bg);
@@ -14210,6 +14263,30 @@ body.left-dock-active {
 #doclib-modal.doclib-fullscreen .doclib-modal-content {
   transition: none !important;
 }
+.modal.modal-right-docked .email-reader-header,
+.modal.modal-left-docked .email-reader-header {
+  flex-direction: column;
+  gap: 6px;
+}
+.modal.modal-right-docked .email-reader-actions,
+.modal.modal-left-docked .email-reader-actions {
+  align-self: flex-end;
+}
+.modal.modal-right-docked .email-reader-meta-row,
+.modal.modal-left-docked .email-reader-meta-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+  align-items: start;
+}
+.modal.modal-right-docked .email-reader-meta-row strong,
+.modal.modal-left-docked .email-reader-meta-row strong {
+  min-width: 0;
+}
+.modal.modal-right-docked .recipient-chip,
+.modal.modal-left-docked .recipient-chip {
+  max-width: 100%;
+}
 .archive-list {
   margin-top: 8px;
   border-top: 1px solid var(--border);
@@ -14344,6 +14421,9 @@ body.left-dock-active {
   display: flex !important;
   flex: 1 1 auto !important;
 }
+#email-lib-modal.email-reading .doclib-modal-content {
+  min-height: var(--email-reading-modal-min-h, auto);
+}
 #email-lib-modal .doclib-card.doclib-card-expanded {
   flex: 1 1 auto !important;
   height: 100% !important;
@@ -14351,6 +14431,7 @@ body.left-dock-active {
      overbearing on desktop; the size jump alone is enough signal. */
   border: 1px solid var(--border) !important;
   box-shadow: 0 6px 18px rgba(0,0,0,0.12) !important;
+  animation: none !important;
 }
 /* Desktop-only, ONLY on the currently-expanded email card. Nudges the title
    row down 6px / right 2px, bolds the subject, hides the timestamp from the
@@ -26020,6 +26101,13 @@ button .spinner-whirlpool {
   min-height: 0;
   font-size: 12px;
 }
+.email-card-reader-loading {
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+.email-card-reader-loading .spinner-whirlpool,
+.email-card-reader-loading .ai-spinner-whirlpool {
+  opacity: 0.85;
+}
 /* Per-email unread dot in the expanded reader's title row. Background color
    stays inline (per-sender hue from _senderColor), but the dot gets a soft
    breathing glow + a 4px vertical nudge so it reads as centered against
@@ -26100,6 +26188,27 @@ button .spinner-whirlpool {
   background: color-mix(in srgb, var(--accent-primary, var(--red)) 15%, transparent);
   border-color: var(--accent-primary, var(--red));
   max-width: 500px;
+}
+@container docpane (max-width: 460px) {
+  .email-reader-header {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .email-reader-actions {
+    align-self: flex-end;
+  }
+  .email-reader-meta-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2px;
+    align-items: start;
+  }
+  .email-reader-meta-row strong {
+    min-width: 0;
+  }
+  .recipient-chip {
+    max-width: 100%;
+  }
 }
 .email-reader-actions {
   display: flex; gap: 4px; flex-wrap: nowrap; align-items: center;
@@ -27564,6 +27673,21 @@ body.doc-find-active mark.doc-find-mark.current {
   min-width: 0;
 }
 .email-field input:focus { border-color: var(--accent, #4a9eff); }
+@container docpane (max-width: 460px) {
+  .doc-email-header .email-field {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 3px;
+    align-items: stretch;
+  }
+  .doc-email-header .email-field label {
+    min-width: 0;
+    text-align: left;
+  }
+  .doc-email-header .email-field input {
+    width: 100%;
+  }
+}
 /* Cc toggle and attach button are absolute so they don't steal width from the To input */
 .email-field .email-cc-toggle {
   position: absolute; right: 6px; top: 50%; transform: translateY(-50%);

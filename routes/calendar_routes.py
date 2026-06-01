@@ -3,10 +3,13 @@
 import logging
 import uuid
 from datetime import datetime, date, timedelta
-from typing import Optional
+from typing import Optional, List, Tuple
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
+from sqlalchemy import or_, and_
+from dateutil.rrule import rrulestr, rruleset
+from dateutil.rrule import DAILY, WEEKLY, MONTHLY, YEARLY
 
 from core.database import SessionLocal, CalendarCal, CalendarEvent
 from src.auth_helpers import get_current_user
@@ -59,6 +62,23 @@ def _get_or_404_event(db, uid: str, owner: str) -> CalendarEvent:
     if owner and cal and (cal.owner is None or cal.owner != owner):
         raise HTTPException(404, "Event not found")
     return ev
+
+
+def _resolve_base_uid(uid: str) -> str:
+    """Extract the base series UID from a compound occurrence UID.
+
+    Compound UIDs have the form ``{base_uid}::{date_suffix}``.
+    For plain UIDs (no ``::``), returns the UID unchanged.
+    """
+    if not uid:
+        raise ValueError("empty uid")
+    idx = uid.find("::")
+    if idx == -1:
+        return uid       # plain UID — no suffix
+    base = uid[:idx]
+    if not base:
+        raise ValueError("malformed compound UID: missing base before ::")
+    return base
 
 # ── Pydantic models ──
 
@@ -387,6 +407,95 @@ def _event_to_dict(ev: CalendarEvent) -> dict:
     }
 
 
+# ── Recurrence expansion ──
+
+def _expand_rrule(
+    ev: CalendarEvent, start: datetime, end: datetime
+) -> List[dict]:
+    """Expand a single recurring CalendarEvent into occurrence dicts.
+
+    Each occurrence gets a stable compound UID of the form
+    ``{base_uid}::{date_or_datetime}`` so the frontend can tell
+    occurrences apart while the series UID is still recoverable
+    for edit/delete targeting.
+
+    Non-recurring events (empty rrule) are returned as a single-item
+    list — the caller doesn't need to branch.
+    """
+    duration = ev.dtend - ev.dtstart
+
+    if not ev.rrule or not ev.rrule.strip():
+        # Non-recurring — return the base event as-is. list_events
+        # already filters non-recurring rows with the overlap check
+        # in SQL, so we don't re-check here.
+        d = _event_to_dict(ev)
+        d["is_recurrence"] = False
+        d["series_uid"] = ev.uid
+        return [d]
+
+    # Parse the rrule, applying it to the base dtstart.
+    try:
+        rule = rrulestr(ev.rrule, dtstart=ev.dtstart)
+    except Exception as ex:
+        logger.warning(
+            "Failed to parse rrule=%r for event %s: %s", ev.rrule, ev.uid, ex
+        )
+        d = _event_to_dict(ev)
+        d["is_recurrence"] = False
+        d["series_uid"] = ev.uid
+        # Malformed RRULE rows are fetched by the recurring SQL branch
+        # with only dtstart < end_dt — the base event may not actually
+        # overlap the window. Only return if it does.
+        if ev.dtstart < end and ev.dtend > start:
+            return [d]
+        return []
+
+    # Expand from start - duration so multi-day / overnight occurrences
+    # that start before the window but end inside it are captured
+    # (matching non-recurring overlap semantics: dtstart < end AND
+    # dtend > start).
+    expand_start = start - duration
+    occurrences = rule.between(expand_start, end, inc=True)
+    if not occurrences:
+        return []
+
+    results = []
+    base = _event_to_dict(ev)
+
+    for occ_start in occurrences:
+        occ_end = occ_start + duration
+
+        # Overlap filter: occurrence must intersect [start, end).
+        # This enforces exclusive-end semantics (occ_start >= end is
+        # excluded) and includes multi-day crossings (occ_end > start).
+        if occ_start >= end or occ_end <= start:
+            continue
+
+        # Build the compound uid: {base_uid}::{date} or ::{datetime}
+        if ev.all_day:
+            occ_uid = f"{ev.uid}::{occ_start.strftime('%Y-%m-%d')}"
+        else:
+            occ_uid = f"{ev.uid}::{occ_start.strftime('%Y-%m-%dT%H:%M')}"
+
+        d = dict(base)
+        d["uid"] = occ_uid
+        d["series_uid"] = ev.uid
+        d["is_recurrence"] = True
+
+        if ev.all_day:
+            d["dtstart"] = occ_start.strftime("%Y-%m-%d")
+            d["dtend"] = occ_end.strftime("%Y-%m-%d")
+        else:
+            suffix = "Z" if getattr(ev, "is_utc", False) else ""
+            d["dtstart"] = occ_start.isoformat() + suffix
+            d["dtend"] = occ_end.isoformat() + suffix
+            d["is_utc"] = bool(getattr(ev, "is_utc", False))
+
+        results.append(d)
+
+    return results
+
+
 # ── Routes ──
 
 def setup_calendar_routes() -> APIRouter:
@@ -535,11 +644,29 @@ def setup_calendar_routes() -> APIRouter:
         db = SessionLocal()
         try:
             # Scope events to calendars owned by the caller.
+            # Non-recurring events must overlap the query window; recurring
+            # events (with RRULE) whose base dtstart is before the window end
+            # are fetched so their actual occurrences can be expanded
+            # server-side and appear in every year they repeat, not just the
+            # DTSTART year.
             q = db.query(CalendarEvent).join(CalendarCal).filter(
-                CalendarEvent.dtstart < end_dt,
-                CalendarEvent.dtend > start_dt,
                 CalendarEvent.status != "cancelled",
                 CalendarCal.owner == owner,
+                or_(
+                    # Non-recurring: event times must overlap the query window
+                    and_(
+                        or_(CalendarEvent.rrule == "", CalendarEvent.rrule.is_(None)),
+                        CalendarEvent.dtstart < end_dt,
+                        CalendarEvent.dtend > start_dt,
+                    ),
+                    # Recurring: dtstart before window end — RRULE expansion
+                    # generates the actual occurrences within the window
+                    and_(
+                        CalendarEvent.rrule.isnot(None),
+                        CalendarEvent.rrule != "",
+                        CalendarEvent.dtstart < end_dt,
+                    ),
+                ),
             )
             if calendar:
                 q = q.filter(
@@ -547,7 +674,15 @@ def setup_calendar_routes() -> APIRouter:
                     (CalendarCal.name == calendar)
                 )
             events = q.order_by(CalendarEvent.dtstart).all()
-            return {"events": [_event_to_dict(e) for e in events]}
+
+            # Expand recurring events into individual occurrences.
+            expanded = []
+            for e in events:
+                expanded.extend(_expand_rrule(e, start_dt, end_dt))
+
+            # Sort by occurrence start time for consistent frontend ordering.
+            expanded.sort(key=lambda d: d["dtstart"])
+            return {"events": expanded}
         except HTTPException:
             raise
         except Exception as e:
@@ -617,9 +752,13 @@ def setup_calendar_routes() -> APIRouter:
     @router.put("/events/{uid}")
     async def update_event(request: Request, uid: str, data: EventUpdate):
         owner = _require_user(request)
+        try:
+            base_uid = _resolve_base_uid(uid)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
         db = SessionLocal()
         try:
-            ev = _get_or_404_event(db, uid, owner)
+            ev = _get_or_404_event(db, base_uid, owner)
             if data.summary is not None:
                 ev.summary = data.summary
             if data.description is not None:
@@ -659,9 +798,13 @@ def setup_calendar_routes() -> APIRouter:
     @router.delete("/events/{uid}")
     async def delete_event(request: Request, uid: str):
         owner = _require_user(request)
+        try:
+            base_uid = _resolve_base_uid(uid)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
         db = SessionLocal()
         try:
-            ev = _get_or_404_event(db, uid, owner)
+            ev = _get_or_404_event(db, base_uid, owner)
             db.delete(ev)
             db.commit()
             return {"ok": True}
@@ -902,8 +1045,8 @@ def setup_calendar_routes() -> APIRouter:
                     lines.append(f"DTSTART:{ev.dtstart.strftime('%Y%m%dT%H%M%S')}")
                     lines.append(f"DTEND:{ev.dtend.strftime('%Y%m%dT%H%M%S')}")
                 if ev.description:
-                    escaped_desc = ev.description.replace(chr(10), "\\n")
-                    lines.append(f"DESCRIPTION:{escaped_desc}")
+                    desc = ev.description.replace(chr(10), '\\n')
+                    lines.append(f"DESCRIPTION:{desc}")
                 if ev.location:
                     lines.append(f"LOCATION:{ev.location}")
                 if ev.rrule:

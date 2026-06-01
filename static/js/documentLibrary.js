@@ -87,6 +87,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
   /** Collapse an expanded card */
   function _collapseExpandedCard(card) {
     const grid = card.closest('.doclib-grid');
+    const instant = card?.dataset?.spaceToggle === '1';
     card.classList.remove('doclib-card-expanded');
     // Release the height lock so grid returns to natural size
     if (grid) {
@@ -97,7 +98,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     if (reader) reader.remove();
 
     // Fade siblings back in
-    if (grid) {
+    if (grid && !instant) {
       const siblings = [...grid.querySelectorAll('.doclib-card')].filter(c => c !== card);
       siblings.forEach(s => { s.style.opacity = '0'; });
       requestAnimationFrame(() => {
@@ -812,6 +813,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
   async function libraryExpandCard(card, doc) {
     const grid = card.closest('.doclib-grid');
+    const instant = card?.dataset?.spaceToggle === '1';
 
     // Already expanded — collapse
     if (card.classList.contains('doclib-card-expanded')) {
@@ -829,8 +831,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     // Force explicit starting opacity so the first transition works
     siblings.forEach(s => { s.style.opacity = '1'; });
     // Force reflow so the browser registers the starting value
-    if (siblings.length) siblings[0].offsetHeight;
-    siblings.forEach(s => { s.style.transition = 'opacity 0.12s ease'; s.style.opacity = '0'; });
+    if (!instant) {
+      if (siblings.length) siblings[0].offsetHeight;
+      siblings.forEach(s => { s.style.transition = 'opacity 0.12s ease'; s.style.opacity = '0'; });
+    }
 
     // Capture the full grid + toolbar height so the modal stays the same
     // size on desktop. On mobile the modal is full-height and we want the
@@ -844,7 +848,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     }
 
     // Wait for fade-out, then expand
-    await new Promise(r => setTimeout(r, 120));
+    if (!instant) await new Promise(r => setTimeout(r, 120));
 
     card.classList.add('doclib-card-expanded');
     if (grid) grid.scrollTop = 0;

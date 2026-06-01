@@ -1451,6 +1451,14 @@
                 <label class="settings-label">Max Tokens</label>
                 <input id="set-researchMaxTokens" type="text" inputmode="numeric" placeholder="8192 (default)" class="settings-select" style="width:120px;">
               </div>
+              <div class="settings-row">
+                <label class="settings-label">Extract Timeout</label>
+                <input id="set-researchExtractTimeout" type="text" inputmode="numeric" placeholder="90 sec" class="settings-select" style="width:120px;">
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Extract Parallel</label>
+                <input id="set-researchExtractConcurrency" type="text" inputmode="numeric" placeholder="3" class="settings-select" style="width:120px;">
+              </div>
               <div id="set-researchMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
@@ -2036,6 +2044,7 @@
                   <option value="https://api.deepseek.com/v1" data-logo="deepseek" selected>DeepSeek</option>
                   <option value="https://api.openai.com/v1" data-logo="openai">OpenAI</option>
                   <option value="https://openrouter.ai/api/v1" data-logo="openrouter">OpenRouter</option>
+                  <option value="https://ollama.com/api" data-logo="ollama">Ollama Cloud</option>
                   <option value="https://api.groq.com/openai/v1" data-logo="groq">Groq</option>
                   <option value="https://api.mistral.ai/v1" data-logo="mistral">Mistral</option>
                   <option value="https://api.together.xyz/v1" data-logo="together">Together AI</option>

@@ -145,7 +145,7 @@ async def dispatch_reminder(
             _slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
             cache_path = _P(f"data/note_pings_{_slug}.json")
             if cache_path.exists():
-                cache = _json.loads(cache_path.read_text())
+                cache = _json.loads(cache_path.read_text(encoding="utf-8"))
             last = cache.get(cache_key)
             if last:
                 last_channel = None
@@ -428,7 +428,7 @@ async def dispatch_reminder(
                 _STATE = _P(f"data/note_pings_{_slug}.json")
             _STATE.parent.mkdir(parents=True, exist_ok=True)
             try:
-                _cache = cache or (_json.loads(_STATE.read_text()) if _STATE.exists() else {})
+                _cache = cache or (_json.loads(_STATE.read_text(encoding="utf-8")) if _STATE.exists() else {})
             except Exception:
                 _cache = {}
             sent_channel = "email" if email_sent else "ntfy" if ntfy_sent else "browser"
@@ -436,7 +436,7 @@ async def dispatch_reminder(
                 "at": _dt.now(_tz.utc).isoformat(),
                 "channel": sent_channel,
             }
-            _STATE.write_text(_json.dumps(_cache))
+            _STATE.write_text(_json.dumps(_cache), encoding="utf-8")
         except Exception as _e:
             logger.debug(f"dispatch_reminder: cache write failed: {_e}")
 

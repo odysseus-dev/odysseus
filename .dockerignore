@@ -18,6 +18,8 @@ build/
 .vscode/
 .idea/
 dev-docs/
+docs/
+*.md
 *.db
 *.sqlite
 *.sqlite3

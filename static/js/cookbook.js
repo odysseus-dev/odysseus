@@ -171,6 +171,13 @@ export function _isWindows(hostOrTask) {
   return _getPlatform(hostOrTask) === 'windows';
 }
 
+/** Check if the detected (local) hardware is Apple Silicon / Metal. Keys off the
+ *  hardware probe's backend rather than a platform string, since a local Mac
+ *  reports no platform but does report backend: "metal". */
+export function _isMetal() {
+  return ['metal', 'mps', 'apple'].includes(String(_hwfitCache?.system?.backend || '').toLowerCase());
+}
+
 /** Detect model-specific vLLM optimizations */
 function _detectModelOptimizations(modelName) {
   const n = (modelName || '').toLowerCase();
@@ -249,6 +256,13 @@ export function _detectBackend(model) {
 
   // Windows → default to llama.cpp (no vLLM support on Windows)
   if (_isWindows()) {
+    return { backend: 'llamacpp', label: 'llama.cpp' };
+  }
+
+  // Apple Silicon (Metal) → llama.cpp (GGUF). vLLM/SGLang are CUDA/ROCm-only and
+  // don't run on macOS; AWQ/GPTQ/FP8 (vLLM-only) models are already filtered out
+  // of metal Cookbook results, so llama.cpp is always the right engine here.
+  if (['metal', 'mps', 'apple'].includes(sysBackend)) {
     return { backend: 'llamacpp', label: 'llama.cpp' };
   }
 
@@ -1764,6 +1778,7 @@ const shared = {
   _sshPrefix,
   _getPlatform,
   _isWindows,
+  _isMetal,
   _buildEnvPrefix,
   _buildServeCmd,
   _shellQuote,

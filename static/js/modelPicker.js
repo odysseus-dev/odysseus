@@ -4,6 +4,7 @@
 import { providerLogo } from './providers.js';
 import uiModule from './ui.js';
 import settingsModule from './settings.js';
+import { sortModelObjects } from './modelSort.js';
 
 const API_BASE = window.location.origin;
 
@@ -156,7 +157,7 @@ function _initModelPickerDropdown() {
         });
       });
     });
-    return result;
+    return sortModelObjects(result);
   }
 
   function _populate(filter) {
@@ -184,6 +185,8 @@ function _initModelPickerDropdown() {
       if (favs.includes(m.mid)) favModels.push(m);
       else restModels.push(m);
     });
+    sortModelObjects(favModels).forEach(function(m, i) { favModels[i] = m; });
+    sortModelObjects(restModels).forEach(function(m, i) { restModels[i] = m; });
 
     function _addSection(label) {
       const el = document.createElement('div');
