@@ -453,7 +453,7 @@ export function openEmailLibrary(opts = {}) {
   const existing = document.getElementById('email-lib-modal');
   if (existing) existing.remove();
   if (state._libEscHandler) {
-    document.removeEventListener('keydown', state._libEscHandler);
+    document.removeEventListener('keydown', state._libEscHandler, true);
     state._libEscHandler = null;
   }
   state._libOpen = true;
@@ -958,11 +958,13 @@ export function openEmailLibrary(opts = {}) {
 
   // ESC to close + Arrow nav + Delete on the selected / currently-expanded email.
   state._libEscHandler = (e) => {
+    const modal = document.getElementById('email-lib-modal');
+    if (!modal || modal.classList.contains('hidden')) return;
     if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
       if (state._selectMode) {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation?.();
         state._selectMode = false;
         state._selectedUids.clear();
         _updateBulkBar();
@@ -995,7 +997,7 @@ export function openEmailLibrary(opts = {}) {
       }
     }
   };
-  document.addEventListener('keydown', state._libEscHandler);
+  document.addEventListener('keydown', state._libEscHandler, true);
 
   _loadAccounts();
   _loadFolders();
@@ -1047,7 +1049,7 @@ export function closeEmailLibrary() {
   if (modal) modal.remove();
   _clearEmailDocumentSplit();
   if (state._libEscHandler) {
-    document.removeEventListener('keydown', state._libEscHandler);
+    document.removeEventListener('keydown', state._libEscHandler, true);
     state._libEscHandler = null;
   }
   state._libOpen = false;
@@ -1788,6 +1790,34 @@ function _syncCardNavArrows(card) {
   if (next) next.disabled = !_findSiblingEmailCard(card, 1);
 }
 
+const _emailReadPrefetching = new Set();
+
+function _prefetchAdjacentEmails(card, count = 3) {
+  if (!card || state._libFolder === '__scheduled__') return;
+  const grid = card.closest('.doclib-grid');
+  if (!grid) return;
+  const cards = [...grid.querySelectorAll('.doclib-card[data-uid]')];
+  const idx = cards.indexOf(card);
+  if (idx === -1) return;
+  const targets = [];
+  for (let i = 1; i <= count; i++) {
+    if (cards[idx + i]) targets.push(cards[idx + i]);
+  }
+  if (targets.length < count) {
+    for (let i = 1; targets.length < count && cards[idx - i]; i++) targets.push(cards[idx - i]);
+  }
+  for (const target of targets) {
+    const uid = target.dataset.uid;
+    if (!uid) continue;
+    const key = `${state._libAccountId || ''}|${state._libFolder}|${uid}`;
+    if (_emailReadPrefetching.has(key)) continue;
+    _emailReadPrefetching.add(key);
+    fetch(`${API_BASE}/api/email/read/${encodeURIComponent(uid)}?folder=${encodeURIComponent(state._libFolder)}${_acct()}&mark_seen=false`)
+      .catch(() => {})
+      .finally(() => _emailReadPrefetching.delete(key));
+  }
+}
+
 async function _toggleCardPreview(card, em) {
   const grid = card.closest('.doclib-grid');
 
@@ -1843,6 +1873,7 @@ async function _toggleCardPreview(card, em) {
 
     // Mark as read locally
     _syncEmailReadState(em.uid, true);
+    _prefetchAdjacentEmails(card);
 
     // Build the attachments wrap using the shared helper so the signature-
     // image filter (small inline PNGs/JPGs, Outlook image001 placeholders,

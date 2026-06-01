@@ -2376,6 +2376,11 @@ async function initReminderSettings() {
 async function initEmailAccountsSettings() {
   const root = el('settings-modal');
   if (!root || !root.querySelector('[data-settings-panel="email"]')) return;
+  const manageBtn = el('set-email-open-integrations');
+  if (manageBtn && manageBtn.dataset.bound !== '1') {
+    manageBtn.dataset.bound = '1';
+    manageBtn.addEventListener('click', () => open('integrations'));
+  }
   const listEl = el('set-email-accounts-list');
   const msgEl = el('set-email-accounts-msg');
   const formEl = el('set-email-accounts-form');
@@ -2932,7 +2937,8 @@ async function initIntegrations() {
 const INTG_TYPES = {
   api:     { label: 'API',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>' },
   caldav:  { label: 'CalDAV',  icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' },
-  carddav: { label: 'Contacts', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
+  contacts: { label: 'Contacts', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
+  carddav: { label: 'CardDAV', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
   email:   { label: 'Email',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>' },
   mcp:     { label: 'MCP',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>' },
   vault:   { label: 'Vault',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' },
@@ -2973,14 +2979,24 @@ async function initUnifiedIntegrations() {
     if (calRes.url) {
       items.push({ type: 'caldav', id: '__caldav__', name: 'Calendar (CalDAV)', detail: calRes.url, enabled: true, data: calRes });
     }
-    // Contacts / CardDAV
+    // Contacts import first, then the optional CardDAV sync account.
     const contactCount = Number(contactsRes.count || (contactsRes.contacts || []).length || 0);
-    if (cardRes.url || contactCount > 0) {
+    if (contactCount > 0) {
+      items.push({
+        type: 'contacts',
+        id: '__contacts__',
+        name: 'Contacts Import',
+        detail: `${contactCount} contact${contactCount === 1 ? '' : 's'}`,
+        enabled: true,
+        data: contactsRes,
+      });
+    }
+    if (cardRes.url) {
       items.push({
         type: 'carddav',
         id: '__carddav__',
-        name: 'Contacts',
-        detail: cardRes.url || `${contactCount} contact${contactCount === 1 ? '' : 's'}`,
+        name: 'Contacts (CardDAV)',
+        detail: cardRes.url,
         enabled: true,
         data: cardRes,
       });
@@ -3060,9 +3076,11 @@ async function initUnifiedIntegrations() {
         try {
           if (type === 'api') await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'caldav') await fetch('/api/calendar/config', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: '', username: '', password: '' }) });
+          else if (type === 'contacts') {
+            await fetch('/api/contacts/clear', { method: 'DELETE', credentials: 'same-origin' });
+          }
           else if (type === 'carddav') {
             await fetch('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ carddav_url: '', carddav_username: '', carddav_password: '' }) });
-            await fetch('/api/contacts/clear', { method: 'DELETE', credentials: 'same-origin' });
           }
           else if (type === 'email') await fetch(`/api/email/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'mcp') await fetch(`/api/mcp/servers/${id}`, { method: 'DELETE', credentials: 'same-origin' });
@@ -3079,7 +3097,7 @@ async function initUnifiedIntegrations() {
     formEl.style.display = '';
     if (type === 'api') showApiForm(editId);
     else if (type === 'caldav') showCalDavForm();
-    else if (type === 'carddav') showCardDavForm();
+    else if (type === 'contacts' || type === 'carddav') showCardDavForm();
     else if (type === 'email') showEmailForm(editId);
     else if (type === 'mcp') showMcpForm(editId);
     else if (type === 'vault') showVaultForm();
@@ -3291,7 +3309,7 @@ async function initUnifiedIntegrations() {
       </div>
       <div class="admin-card contacts-manager" style="margin-top:8px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <h2 style="font-size:13px;margin:0;">Contacts <span id="cm-count" style="opacity:0.5;font-weight:normal;font-size:11px;"></span></h2>
+          <h2 style="font-size:13px;margin:0;">Contacts Import <span id="cm-count" style="opacity:0.5;font-weight:normal;font-size:11px;"></span></h2>
           <button class="admin-btn-sm" id="cm-import-btn" style="margin-left:auto;">Import</button>
           <button class="admin-btn-sm" id="cm-export-vcf-btn">Export .vcf</button>
           <button class="admin-btn-sm" id="cm-export-csv-btn">Export .csv</button>
@@ -3860,7 +3878,7 @@ async function initUnifiedIntegrations() {
         }
         el('uf-email-msg').textContent = 'Saved';
         el('uf-email-msg').style.color = 'var(--green,#50fa7b)';
-        integrationNotice = 'Email account saved. Go to Settings > Email for writing style, auto-tagging, spam triage, reminders, and reply settings.';
+        integrationNotice = 'Email account saved. For more settings, go to Settings > Email.';
         formEl.style.display = 'none';
         await renderList();
         notifyIntegrationsChanged();
@@ -4101,17 +4119,26 @@ async function initUnifiedIntegrations() {
       el('uf-mcp-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
       el('uf-mcp-save').addEventListener('click', async () => {
         const transport = el('uf-mcp-transport').value;
-        const body = { name: el('uf-mcp-name').value, transport };
+        // routes/mcp_routes.py uses FastAPI Form(...) — send multipart, not JSON.
+        const fd = new FormData();
+        fd.append('name', el('uf-mcp-name').value);
+        fd.append('transport', transport);
         if (transport === 'stdio') {
-          body.command = el('uf-mcp-cmd').value;
-          try { body.args = JSON.parse(el('uf-mcp-args').value || '[]'); } catch (_) { body.args = []; }
-          try { body.env = JSON.parse(el('uf-mcp-env').value || '{}'); } catch (_) { body.env = {}; }
+          fd.append('command', el('uf-mcp-cmd').value);
+          let args = '[]'; try { args = JSON.stringify(JSON.parse(el('uf-mcp-args').value || '[]')); } catch (_) {}
+          let env  = '{}'; try { env  = JSON.stringify(JSON.parse(el('uf-mcp-env').value  || '{}')); } catch (_) {}
+          fd.append('args', args);
+          fd.append('env', env);
         } else {
-          body.url = el('uf-mcp-url').value;
+          fd.append('url', el('uf-mcp-url').value);
         }
         try {
-          await fetch('/api/mcp/servers', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-          el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
+          const r = await fetch('/api/mcp/servers', { method: 'POST', credentials: 'same-origin', body: fd });
+          if (r.ok) {
+            el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
+          } else {
+            el('uf-mcp-msg').textContent = `Failed (${r.status})`;
+          }
         } catch (_) { el('uf-mcp-msg').textContent = 'Failed'; }
       });
     }
@@ -4130,7 +4157,8 @@ async function initUnifiedIntegrations() {
                 <option value="">Select...</option>
                 <option value="api">API Service</option>
                 <option value="caldav">CalDAV Calendar</option>
-                <option value="carddav">Contacts</option>
+                <option value="contacts">Contacts Import</option>
+                <option value="carddav">Contacts (CardDAV)</option>
                 <option value="email">Email (IMAP/SMTP)</option>
                 <option value="mcp">MCP Tool Server</option>
               </select>

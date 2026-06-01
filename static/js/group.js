@@ -487,10 +487,11 @@ export async function showModelPicker() {
         `;
         const sel = document.createElement('select');
         sel.style.cssText = 'font-size:11px;padding:3px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--fg);max-width:140px;';
-        sel.innerHTML = '<option value="">No character</option>';
+        let optsHtml = '<option value="">No character</option>';
         characters.forEach(c => {
-          sel.innerHTML += `<option value="${c.id}">${uiModule.esc(c.name)}</option>`;
+          optsHtml += `<option value="${c.id}">${uiModule.esc(c.name)}</option>`;
         });
+        sel.innerHTML = optsHtml;
         sel.addEventListener('change', () => {
           if (sel.value) {
             const ch = characters.find(c => c.id === sel.value);

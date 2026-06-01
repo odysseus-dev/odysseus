@@ -516,14 +516,15 @@ export function styledPrompt(message, {
   });
 }
 
+// Lookup table for esc(); hoisted out of the replace callback so it is
+// allocated once rather than per matched character.
+const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 /**
  * HTML-escape a string to prevent XSS.
  * Canonical implementation — other modules should use uiModule.esc() instead of local copies.
  */
 export function esc(s) {
-  return (s || '').replace(/[&<>"']/g, function(m) {
-    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
-  });
+  return (s || '').replace(/[&<>"']/g, (m) => _ESC_MAP[m]);
 }
 
 // ── Mobile: suppress synthetic click/mousedown on backdrop ──

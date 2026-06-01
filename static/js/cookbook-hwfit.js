@@ -1094,12 +1094,13 @@ export function _hwfitInit() {
     for (const sel of selectors) {
       if (!sel) continue;
       const currentVal = sel.value;
-      sel.innerHTML = `<option value="local">Local</option>`;
+      let html = `<option value="local">Local</option>`;
       _envState.servers.forEach((s, i) => {
         if (!s.host) return;
         const label = s.name || s.host || `Server ${i + 1}`;
-        sel.innerHTML += `<option value="${i}">${uiModule.esc(label)}</option>`;
+        html += `<option value="${i}">${uiModule.esc(label)}</option>`;
       });
+      sel.innerHTML = html;
       sel.value = currentVal;
     }
   }
