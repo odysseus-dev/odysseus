@@ -607,9 +607,6 @@ app.include_router(setup_compare_routes(session_manager))
 from routes.prefs_routes import setup_prefs_routes
 app.include_router(setup_prefs_routes())
 
-from routes.i18n_routes import setup_i18n_routes
-app.include_router(setup_i18n_routes())
-
 # Backup (export/import user data)
 from routes.backup_routes import setup_backup_routes
 app.include_router(setup_backup_routes(memory_manager, preset_manager, skills_manager))

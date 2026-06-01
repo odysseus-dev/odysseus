@@ -12,6 +12,11 @@ import tempfile
 from pathlib import Path
 from typing import Dict, Any
 
+# POSIX-only: `pty`/`fcntl` transitively import `termios`, which does NOT exist
+# on Windows, so importing them unconditionally crashed app startup there
+# (ModuleNotFoundError: termios — issues #140/#92/#63/#149/#150). The PTY code
+# path is only reachable on POSIX; Windows uses pipe streaming + a detached-job
+# fallback for the tmux feature (see _generate_win_detached).
 try:
     import fcntl
     import pty
@@ -31,15 +36,6 @@ from core.platform_compat import (
     detached_popen_kwargs,
     find_bash,
 )
-
-# POSIX-only: `pty`/`fcntl` transitively import `termios`, which does NOT exist
-# on Windows, so importing them unconditionally crashed app startup on Windows
-# (ModuleNotFoundError: termios — issues #140/#92/#63). Guard them; the PTY code
-# path is only reachable on POSIX. Windows uses pipe streaming + a detached-job
-# fallback for the tmux feature (see _generate_win_detached).
-if not IS_WINDOWS:
-    import pty
-    import fcntl
 
 
 def _require_admin(request: Request):
