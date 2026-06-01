@@ -32,8 +32,12 @@ _KV_FACTOR = {"q4_0": 0.5, "q8_0": 1.0, "f16": 2.0}
 _QUANT_LADDER = ["Q8_0", "Q6_K", "Q5_K_M", "Q4_K_M", "Q3_K_M", "Q2_K"]
 
 
-def _weights_gb(model, quant):
-    """VRAM for the full weights at a given quant (all experts live in memory)."""
+def _weights_gb(model, quant, fixed_gb=None):
+    """VRAM for the full weights. When fixed_gb is given (serving a specific GGUF
+    file already on disk), use its real size — the quant is whatever the file is,
+    not something we get to pick."""
+    if fixed_gb and fixed_gb > 0:
+        return float(fixed_gb)
     return params_b(model) * QUANT_BPP.get(quant, 0.58)
 
 
@@ -60,7 +64,7 @@ def _n_layers(model):
     return 32
 
 
-def _cpu_moe_for_budget(model, quant, kv_gb, vram_budget_gb):
+def _cpu_moe_for_budget(model, quant, kv_gb, vram_budget_gb, fixed_gb=None):
     """How many MoE layers must move to CPU so weights+KV fit vram_budget_gb.
 
     Returns (n_cpu_moe, fits_fully). When the model already fits, n_cpu_moe=0.
@@ -68,7 +72,7 @@ def _cpu_moe_for_budget(model, quant, kv_gb, vram_budget_gb):
     this for MoE (where --n-cpu-moe applies); dense models just report whether
     they fit at the given n_gpu_layers=999.
     """
-    weights = _weights_gb(model, quant)
+    weights = _weights_gb(model, quant, fixed_gb)
     needed = weights + kv_gb + 0.6  # +0.6 GB runtime/compute buffers
     if needed <= vram_budget_gb:
         return 0, True
@@ -84,16 +88,26 @@ def _cpu_moe_for_budget(model, quant, kv_gb, vram_budget_gb):
     return n, False
 
 
-def compute_serve_profiles(system, model):
+def compute_serve_profiles(system, model, serve_weights_gb=None, serve_quant=None):
     """Return a list of profile dicts for llama.cpp serving of `model` on `system`.
 
     Each profile: {key, label, quant, n_gpu_layers, n_cpu_moe, cache_type, ctx,
                    est_vram_gb, fits, note}. Empty list if no GGUF path makes
     sense (caller should fall back to manual flags).
+
+    DOWNLOAD mode (default): the quant isn't chosen yet, so profiles vary it
+    (Quality=Q6, Balanced=Q4, Speed=Q2…) to show download options.
+
+    SERVE mode (serve_weights_gb set): a specific GGUF file already exists on
+    disk — its quant is FIXED. Profiles then keep that quant/size and differ only
+    in the actual serving knobs (n_cpu_moe, KV-cache type, context). serve_quant
+    is the file's quant label (e.g. "Q4_K_M") just for display.
     """
     vram = float(system.get("gpu_vram_gb") or 0)
     if vram <= 0:
         return []
+
+    serve_mode = bool(serve_weights_gb and serve_weights_gb > 0)
 
     # Never propose more context than the model was trained for — asking llama.cpp
     # for ctx > n_ctx_train triggers a "training context overflow" and, with a
@@ -144,26 +158,40 @@ def compute_serve_profiles(system, model):
         # MoE quality: keep the preferred (big) quant; offload handles overflow.
         return prefer
 
-    specs = [
-        # key, label, prefer_quant, full_fit, kv_type, ctx, note
-        ("quality", "Quality", "Q6_K", False, "q8_0", 131072,
-         "Biggest quant + sharp q8 KV cache. Best answers; offloads MoE layers to CPU if needed."),
-        ("balanced", "Balanced", "Q4_K_M", False, "q4_0", 131072,
-         "Q4 weights + compact q4 KV. Good speed/quality mix at full context."),
-        ("speed", "Speed", "Q4_K_M", True, "q4_0", 32768,
-         "Smallest offload + trimmed context for the fastest tokens/s."),
-    ]
+    if serve_mode:
+        # Fixed file on disk — quant can't change. Vary only the serving knobs.
+        fq = serve_quant or model.get("quantization") or "GGUF"
+        specs = [
+            # key, label, prefer_quant, full_fit, kv_type, ctx, note
+            ("quality", "Quality", fq, False, "q8_0", 131072,
+             "Sharp q8 KV cache + full context. Best long-context accuracy; offloads MoE layers to CPU if needed."),
+            ("balanced", "Balanced", fq, False, "q4_0", 131072,
+             "Compact q4 KV at full context — good speed/quality mix."),
+            ("speed", "Speed", fq, False, "q4_0", 32768,
+             "Trimmed context + light KV for the fastest tokens/s."),
+        ]
+    else:
+        specs = [
+            # key, label, prefer_quant, full_fit, kv_type, ctx, note
+            ("quality", "Quality", "Q6_K", False, "q8_0", 131072,
+             "Biggest quant + sharp q8 KV cache. Best answers; offloads MoE layers to CPU if needed."),
+            ("balanced", "Balanced", "Q4_K_M", False, "q4_0", 131072,
+             "Q4 weights + compact q4 KV. Good speed/quality mix at full context."),
+            ("speed", "Speed", "Q4_K_M", True, "q4_0", 32768,
+             "Smallest offload + trimmed context for the fastest tokens/s."),
+        ]
 
     profiles = []
     for key, label, prefer_q, full_fit, kv_type, ctx, note in specs:
-        quant = _pick_quant(prefer_q, full_fit)
+        # In serve mode the quant is fixed (the file's); in download mode we pick.
+        quant = prefer_q if serve_mode else _pick_quant(prefer_q, full_fit)
         # Shrink context if even the chosen KV won't fit alongside weights.
         # Start from the smaller of the profile's target and the model's limit.
         cur_ctx = min(ctx, model_ctx_max)
         while cur_ctx >= 8192:
             kv = _kv_gb(model, cur_ctx, kv_type)
-            n_cpu_moe, fits = _cpu_moe_for_budget(model, quant, kv, budget)
-            est = _weights_gb(model, quant) + kv + 0.6
+            n_cpu_moe, fits = _cpu_moe_for_budget(model, quant, kv, budget, fixed_gb=serve_weights_gb)
+            est = _weights_gb(model, quant, serve_weights_gb) + kv + 0.6
             # If a non-MoE model can't fit even fully offloaded, try less context.
             if model.get("is_moe") or fits or cur_ctx <= 8192:
                 profiles.append({

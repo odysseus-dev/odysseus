@@ -176,7 +176,7 @@ def setup_hwfit_routes():
         return {"system": system, "models": results}
 
     @router.get("/profiles")
-    def get_serve_profiles(model: str = "", host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False):
+    def get_serve_profiles(model: str = "", host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, serve_weights_gb: float = 0.0, serve_quant: str = ""):
         """Compute llama.cpp serve profiles (Quality/Balanced/Speed) for `model`
         against the detected hardware on `host` (or local). Returns concrete
         flags (n_gpu_layers, n_cpu_moe, cache_type, ctx) the serve UI can apply.
@@ -225,7 +225,11 @@ def setup_hwfit_routes():
                 break
         return {
             "system": system,
-            "profiles": compute_serve_profiles(system, m),
+            "profiles": compute_serve_profiles(
+                system, m,
+                serve_weights_gb=(serve_weights_gb or None),
+                serve_quant=(serve_quant or None),
+            ),
             "model_ctx_max": model_ctx_max,
         }
 

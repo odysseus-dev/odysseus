@@ -92,3 +92,19 @@ def test_vision_model_leaves_encoder_headroom():
     vis = dict(_QWEN_35B_MOE, name="Qwen3-VL-35B", is_multimodal=True)
     for p in compute_serve_profiles(_sys(15.9), vis):
         assert p["est_vram_gb"] <= 15.9 - 1.0 + 0.05  # ~1.1 GB encoder headroom
+
+
+def test_serve_mode_keeps_fixed_quant():
+    """Serving a specific GGUF file: the quant is fixed (the file's), so every
+    profile must keep it and vary only the serving knobs (KV/ctx/offload) — not
+    propose a different quant (which makes no sense for an on-disk file)."""
+    profs = compute_serve_profiles(_sys(15.9), _QWEN_35B_MOE,
+                                   serve_weights_gb=20.6, serve_quant="Q4_K_M")
+    assert profs
+    assert all(p["quant"] == "Q4_K_M" for p in profs), [p["quant"] for p in profs]
+    # The knobs should still differ across profiles (KV type and/or context).
+    kvs = {p["cache_type"] for p in profs}
+    ctxs = {p["ctx"] for p in profs}
+    assert len(kvs) > 1 or len(ctxs) > 1, "serve profiles are identical"
+    # All must fit the card.
+    assert all(p["est_vram_gb"] <= 16.0 for p in profs)

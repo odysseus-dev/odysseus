@@ -592,6 +592,14 @@ function _rerenderCachedModels() {
             const _sp = (_es.servers || []).find(s => s.host === host)?.port;
             if (_sp) params.set('ssh_port', _sp);
           }
+          // SERVE mode: this is a specific GGUF file already on disk, so its quant
+          // is fixed — tell the profiler the file's real size + quant so it varies
+          // only the serving knobs (KV/ctx/offload), not the quant. Parse the size
+          // from m.size (e.g. "20.6 GB") and the quant from the file/repo name.
+          const _sizeMatch = String(m.size || '').match(/([\d.]+)\s*GB/i);
+          if (_sizeMatch) params.set('serve_weights_gb', _sizeMatch[1]);
+          const _qMatch = String(repo).match(/(Q\d[\w]*|IQ\d[\w]*|F16|BF16|FP8)/i);
+          if (_qMatch) params.set('serve_quant', _qMatch[1]);
           const res = await fetch(`/api/hwfit/profiles?${params}`);
           const data = await res.json();
           // Remember the model's trained context limit and clamp the ctx field
