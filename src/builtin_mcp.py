@@ -74,6 +74,8 @@ _BUILTIN_SERVERS = {
     "github":     ("mcp_servers/github_server.py",     "Built-in: GitHub"),
     "filesystem": ("mcp_servers/filesystem_server.py", "Built-in: Filesystem"),
     "tech_duinn": ("mcp_servers/tech_duinn_server.py", "Built-in: Tech Duinn"),
+    "whisper":    ("mcp_servers/whisper_server.py",    "Built-in: Whisper STT"),
+    "security":   ("mcp_servers/security_server.py",   "Built-in: Security Scanner"),
 }
 
 # NPX-based built-in servers (run via npx, not Python)

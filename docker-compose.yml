@@ -36,6 +36,18 @@ services:
       # Find yours with:  id -u  /  id -g
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+    # GPU passthrough — requires nvidia-container-toolkit on host.
+    # Uncomment the deploy section below to enable GPU access inside the
+    # container (for local model serving via Cookbook/vLLM/llama.cpp).
+    # Ollama runs on the host and is already reachable via
+    # host.docker.internal:11434 without GPU passthrough.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     depends_on:
       searxng:
         condition: service_healthy

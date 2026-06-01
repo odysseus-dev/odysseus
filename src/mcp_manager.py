@@ -356,6 +356,8 @@ class McpManager:
             "github",
             "filesystem",
             "tech_duinn",
+            "whisper",
+            "security",
         }
 
     def get_server_status(self, server_id: str) -> Dict:
