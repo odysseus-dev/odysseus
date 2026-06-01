@@ -216,6 +216,7 @@ class TaskScheduler:
         self._executing_lock = asyncio.Lock()
         self._pending_notifications = []  # completed task notifications
         self._task_defer_counts = {}
+        self._task_error_counts = {}
         # Strict serial execution — exactly one task runs at a time. Anything
         # else (manual trigger, scheduled dispatch, task chain) waits behind
         # the semaphore as "queued" and starts when the current run finishes.
@@ -697,6 +698,7 @@ class TaskScheduler:
             task.last_run = datetime.utcnow()
             task.run_count = (task.run_count or 0) + 1
             self._task_defer_counts.pop(task_id, None)
+            self._task_error_counts.pop(task_id, None)
 
             # Compute next run only for schedule-triggered tasks
             if (task.trigger_type or "schedule") == "schedule":
@@ -780,17 +782,29 @@ class TaskScheduler:
                     run_obj.finished_at = datetime.utcnow()
                 # Advance next_run even on failure so a broken task doesn't
                 # busy-loop the scheduler every tick with a stale past date.
+                # Use exponential backoff for the delay.
+                self._task_error_counts[task_id] = self._task_error_counts.get(task_id, 0) + 1
+                errors = self._task_error_counts[task_id]
+                
                 task_obj = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
                 if task_obj and (task_obj.trigger_type or "schedule") == "schedule":
                     task_obj.last_run = datetime.utcnow()
                     try:
-                        task_obj.next_run = compute_next_run(
+                        next_scheduled = compute_next_run(
                             task_obj.schedule, task_obj.scheduled_time,
                             task_obj.scheduled_day, task_obj.scheduled_date,
                             after=datetime.utcnow(),
                             cron_expression=task_obj.cron_expression,
                             tz_name=_resolve_task_timezone(db, task_obj),
                         )
+                        # Exponential backoff: 5, 10, 20, 40, up to 60 minutes
+                        backoff_minutes = min(60, 5 * (2 ** (errors - 1)))
+                        backoff_time = datetime.utcnow() + timedelta(minutes=backoff_minutes)
+                        
+                        if next_scheduled:
+                            task_obj.next_run = max(next_scheduled, backoff_time)
+                        else:
+                            task_obj.next_run = backoff_time
                     except Exception:
                         pass
                 try:
