@@ -107,7 +107,9 @@ def setup_signature_routes() -> APIRouter:
             sig = db.query(Signature).filter(Signature.id == sig_id).first()
             if not sig:
                 raise HTTPException(404, "Signature not found")
-            if user and sig.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if sig.owner != user:
                 raise HTTPException(403, "Not your signature")
             db.delete(sig)
             db.commit()

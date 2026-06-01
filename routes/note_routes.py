@@ -478,8 +478,9 @@ def setup_note_routes(task_scheduler=None):
         db = SessionLocal()
         try:
             q = db.query(Note)
-            if user is not None:
-                q = q.filter(Note.owner == user)
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            q = q.filter(Note.owner == user)
             if archived is not None:
                 q = q.filter(Note.archived == archived)
             else:
@@ -534,9 +535,9 @@ def setup_note_routes(task_scheduler=None):
             note = db.query(Note).filter(Note.id == note_id).first()
             if not note:
                 raise HTTPException(404, "Note not found")
-            # SECURITY: strict ownership — previously `note.owner and note.owner != user`
-            # let any user touch a row whose owner field was null/empty.
-            if user is not None and note.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if note.owner != user:
                 raise HTTPException(404, "Note not found")
             return _note_to_dict(note)
         finally:
@@ -551,9 +552,9 @@ def setup_note_routes(task_scheduler=None):
             note = db.query(Note).filter(Note.id == note_id).first()
             if not note:
                 raise HTTPException(404, "Note not found")
-            # SECURITY: strict ownership — previously `note.owner and note.owner != user`
-            # let any user touch a row whose owner field was null/empty.
-            if user is not None and note.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if note.owner != user:
                 raise HTTPException(404, "Note not found")
 
             if body.title is not None:
@@ -599,9 +600,9 @@ def setup_note_routes(task_scheduler=None):
             note = db.query(Note).filter(Note.id == note_id).first()
             if not note:
                 raise HTTPException(404, "Note not found")
-            # SECURITY: strict ownership — previously `note.owner and note.owner != user`
-            # let any user touch a row whose owner field was null/empty.
-            if user is not None and note.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if note.owner != user:
                 raise HTTPException(404, "Note not found")
             db.delete(note)
             db.commit()
@@ -618,9 +619,9 @@ def setup_note_routes(task_scheduler=None):
             note = db.query(Note).filter(Note.id == note_id).first()
             if not note:
                 raise HTTPException(404, "Note not found")
-            # SECURITY: strict ownership — previously `note.owner and note.owner != user`
-            # let any user touch a row whose owner field was null/empty.
-            if user is not None and note.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if note.owner != user:
                 raise HTTPException(404, "Note not found")
             note.pinned = not note.pinned
             db.commit()
@@ -637,9 +638,9 @@ def setup_note_routes(task_scheduler=None):
             note = db.query(Note).filter(Note.id == note_id).first()
             if not note:
                 raise HTTPException(404, "Note not found")
-            # SECURITY: strict ownership — previously `note.owner and note.owner != user`
-            # let any user touch a row whose owner field was null/empty.
-            if user is not None and note.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if note.owner != user:
                 raise HTTPException(404, "Note not found")
             note.archived = not note.archived
             db.commit()
@@ -656,9 +657,9 @@ def setup_note_routes(task_scheduler=None):
             note = db.query(Note).filter(Note.id == note_id).first()
             if not note:
                 raise HTTPException(404, "Note not found")
-            # SECURITY: strict ownership — previously `note.owner and note.owner != user`
-            # let any user touch a row whose owner field was null/empty.
-            if user is not None and note.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if note.owner != user:
                 raise HTTPException(404, "Note not found")
             if not note.items:
                 raise HTTPException(400, "Note has no checklist items")
@@ -725,11 +726,12 @@ def setup_note_routes(task_scheduler=None):
         try:
             for i, nid in enumerate(ids):
                 q = db.query(Note).filter(Note.id == nid)
-                if user is not None:
-                    if _allow_null:
-                        q = q.filter((Note.owner == user) | (Note.owner == None))  # noqa: E711
-                    else:
-                        q = q.filter(Note.owner == user)
+                if user is None:
+                    raise HTTPException(403, "Authentication required")
+                if _allow_null:
+                    q = q.filter((Note.owner == user) | (Note.owner == None))  # noqa: E711
+                else:
+                    q = q.filter(Note.owner == user)
                 note = q.first()
                 if note:
                     note.sort_order = i

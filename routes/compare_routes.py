@@ -132,7 +132,9 @@ def setup_compare_routes(session_manager: SessionManager):
                 raise HTTPException(404, "Comparison not found")
             # SECURITY: strict ownership — null-owner Comparisons were
             # accessible to every user.
-            if user and comp.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if comp.owner != user:
                 raise HTTPException(404, "Comparison not found")
             if comp.winner:
                 raise HTTPException(400, "Already voted")
@@ -237,7 +239,9 @@ def setup_compare_routes(session_manager: SessionManager):
                 raise HTTPException(404, "Comparison not found")
             # SECURITY: strict ownership — null-owner Comparisons were
             # accessible to every user.
-            if user and comp.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if comp.owner != user:
                 raise HTTPException(404, "Comparison not found")
             db.delete(comp)
             db.commit()

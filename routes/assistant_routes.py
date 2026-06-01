@@ -299,7 +299,9 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 raise HTTPException(404, "Task not found")
-            if user and task.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if task.owner != user:
                 raise HTTPException(404, "Task not found")
             run = db.query(TaskRun).filter(
                 TaskRun.task_id == task_id,

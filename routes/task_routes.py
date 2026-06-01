@@ -233,8 +233,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         db = SessionLocal()
         try:
             q = db.query(ScheduledTask)
-            if user:
-                q = q.filter(ScheduledTask.owner == user)
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            q = q.filter(ScheduledTask.owner == user)
             if status:
                 q = q.filter(ScheduledTask.status == status)
             tasks = q.order_by(ScheduledTask.created_at.desc()).all()
@@ -508,7 +509,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 raise HTTPException(404, "Task not found")
-            if user and task.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if task.owner != user:
                 raise HTTPException(403, "Access denied")
             return _task_to_dict(task)
         finally:
@@ -522,7 +525,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 raise HTTPException(404, "Task not found")
-            if user and task.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if task.owner != user:
                 raise HTTPException(403, "Access denied")
 
             if req.name is not None:
@@ -608,7 +613,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 raise HTTPException(404, "Task not found")
-            if user and task.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if task.owner != user:
                 raise HTTPException(403, "Access denied")
             db.delete(task)
             db.commit()
@@ -624,7 +631,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 raise HTTPException(404, "Task not found")
-            if user and task.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if task.owner != user:
                 raise HTTPException(403, "Access denied")
             task.status = "paused"
             db.commit()
@@ -640,7 +649,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 raise HTTPException(404, "Task not found")
-            if user and task.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if task.owner != user:
                 raise HTTPException(403, "Access denied")
             task.status = "active"
             if (task.trigger_type or "schedule") == "schedule":
@@ -702,7 +713,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 raise HTTPException(404, "Task not found")
-            if user and task.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if task.owner != user:
                 raise HTTPException(403, "Access denied")
         finally:
             db.close()
@@ -719,7 +732,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 raise HTTPException(404, "Task not found")
-            if user and task.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if task.owner != user:
                 raise HTTPException(403, "Access denied")
         finally:
             db.close()
@@ -738,8 +753,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             q = db.query(TaskRun, ScheduledTask).join(
                 ScheduledTask, TaskRun.task_id == ScheduledTask.id
             )
-            if user:
-                # Strict owner scope — was previously OR'ing in `owner IS NULL`
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            # Strict owner scope
                 # rows for "legacy single-user" back-compat, but that leaks any
                 # legacy/migrated task's full result text to every authenticated
                 # user. _migrate_assign_legacy_owner runs on startup to claim
@@ -797,7 +813,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 raise HTTPException(404, "Task not found")
-            if user and task.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if task.owner != user:
                 raise HTTPException(403, "Access denied")
             runs = db.query(TaskRun).filter(TaskRun.task_id == task_id)\
                 .order_by(TaskRun.started_at.desc())\
@@ -897,7 +915,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 raise HTTPException(404, "Task not found")
-            if user and task.owner != user:
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            if task.owner != user:
                 raise HTTPException(403, "Access denied")
             task.webhook_token = secrets.token_urlsafe(32)
             db.commit()
