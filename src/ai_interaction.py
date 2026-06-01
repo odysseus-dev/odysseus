@@ -334,10 +334,257 @@ def get_db_session():
 
 
 # ---------------------------------------------------------------------------
+# Image generation helpers
+# ---------------------------------------------------------------------------
+
+def _image_classify_model(model_id: str) -> Dict:
+    """Classify a model as gpt-image, dall-e, or local diffusion.
+
+    Returns:
+        Dict with boolean flags: is_gpt_image, is_dalle, is_local_diffusion
+    """
+    is_gpt_image = "gpt-image" in model_id.lower()
+    is_dalle = "dall-e" in model_id.lower()
+    return {
+        "is_gpt_image": is_gpt_image,
+        "is_dalle": is_dalle,
+        "is_local_diffusion": not is_gpt_image and not is_dalle,
+    }
+
+
+_VALID_GPT_SIZES = {"1024x1024", "1024x1536", "1536x1024", "auto"}
+_VALID_DALLE3_SIZES = {"1024x1024", "1024x1792", "1792x1024"}
+_DEFAULT_IMAGE_SIZE = "1024x1024"
+
+
+def _image_clamp_size(size: str, *, is_gpt_image: bool, is_dalle: bool) -> str:
+    """Clamp size to the allowed values for the given model family.
+
+    Local diffusion models accept any WxH string.
+    """
+    if is_gpt_image and size not in _VALID_GPT_SIZES:
+        return _DEFAULT_IMAGE_SIZE
+    if is_dalle and size not in _VALID_DALLE3_SIZES:
+        return _DEFAULT_IMAGE_SIZE
+    return size
+
+
+def _image_build_payload(
+    model_id: str,
+    prompt: str,
+    size: str,
+    quality: str,
+    *,
+    is_gpt_image: bool,
+    is_dalle: bool,
+    is_local_diffusion: bool,
+) -> Dict:
+    """Build the images/generations API request payload."""
+    payload: Dict = {
+        "model": model_id,
+        "prompt": prompt,
+        "n": 1,
+        "size": size,
+    }
+    # DALL-E 3 does not accept a quality field; others do
+    if is_gpt_image or is_local_diffusion:
+        payload["quality"] = quality if quality in ("low", "medium", "high", "auto") else "medium"
+    return payload
+
+
+def _image_derive_generations_url(chat_url: str) -> str:
+    """Derive the images/generations endpoint URL from the chat completions URL."""
+    base = chat_url.replace("/chat/completions", "").replace("/v1/messages", "").rstrip("/")
+    return base + "/images/generations"
+
+
+def _image_auto_detect_model_spec() -> str:
+    """Probe configured endpoints and return the first usable image model spec.
+
+    Returns empty string if nothing is found.
+    """
+    for candidate in ("gpt-image-1.5", "gpt-image-1", "dall-e-3"):
+        try:
+            _resolve_model(candidate)
+            return candidate
+        except ValueError:
+            continue
+
+    # Fallback: scan image-type endpoints registered in the database
+    try:
+        import httpx as _req
+        from src.database import SessionLocal as _ISL, ModelEndpoint as _IME
+        _idb = _ISL()
+        try:
+            eps = _idb.query(_IME).filter(
+                _IME.is_enabled == True,
+                _IME.model_type == "image",
+            ).all()
+            for ep in eps:
+                base = ep.base_url.rstrip("/")
+                if not base.endswith("/v1"):
+                    base += "/v1"
+                try:
+                    r = _req.get(base + "/models", timeout=HTTP_TIMEOUT_IMAGE_ENDPOINT)
+                    r.raise_for_status()
+                    model_ids = [m.get("id") for m in (r.json().get("data") or []) if m.get("id")]
+                    if model_ids:
+                        return model_ids[0]
+                except Exception:
+                    continue
+        finally:
+            _idb.close()
+    except Exception:
+        pass
+
+    return ""
+
+
+def _image_save_to_gallery(
+    filename: str, prompt: str, model_id: str, size: str, quality: str,
+    session_id: Optional[str], owner: Optional[str],
+) -> str:
+    """Insert a GalleryImage row and return the new UUID (or '' on failure)."""
+    try:
+        from src.database import SessionLocal as _GSL, GalleryImage
+        new_id = str(uuid.uuid4())
+        with get_db_session() as db:
+            db.add(GalleryImage(
+                id=new_id,
+                filename=filename,
+                prompt=prompt,
+                model=model_id,
+                size=size,
+                quality=quality,
+                session_id=session_id,
+                owner=owner,
+            ))
+            db.commit()
+        return new_id
+    except Exception as exc:
+        logger.warning(f"Failed to save gallery record: {exc}")
+        return ""
+
+
+async def _image_save_b64(
+    b64_data: str, prompt: str, model_id: str, size: str, quality: str,
+    session_id: Optional[str], owner: Optional[str],
+) -> tuple:
+    """Decode a base64 image, save to disk, persist gallery record.
+
+    Returns:
+        (image_url, image_id)
+    """
+    import base64
+    from pathlib import Path
+
+    img_dir = Path("data/generated_images")
+    img_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{uuid.uuid4().hex[:12]}.png"
+    (img_dir / filename).write_bytes(base64.b64decode(b64_data))
+    image_url = f"/api/generated-image/{filename}"
+    image_id = _image_save_to_gallery(filename, prompt, model_id, size, quality, session_id, owner)
+    return image_url, image_id
+
+
+async def _image_download_and_save(
+    remote_url: str, prompt: str, model_id: str, size: str, quality: str,
+    session_id: Optional[str], owner: Optional[str],
+) -> tuple:
+    """Download an external image URL, save locally, persist gallery record.
+
+    Returns:
+        (image_url, image_id) — falls back to remote_url if download fails.
+    """
+    import httpx
+    from pathlib import Path
+
+    try:
+        dl = httpx.get(remote_url, timeout=HTTP_TIMEOUT_IMAGE_DOWNLOAD)
+        if dl.status_code == 200:
+            img_dir = Path("data/generated_images")
+            img_dir.mkdir(parents=True, exist_ok=True)
+            filename = f"{uuid.uuid4().hex[:12]}.png"
+            (img_dir / filename).write_bytes(dl.content)
+            image_url = f"/api/generated-image/{filename}"
+            image_id = _image_save_to_gallery(filename, prompt, model_id, size, quality, session_id, owner)
+            return image_url, image_id
+    except Exception as exc:
+        logger.warning(f"Failed to download image: {exc}")
+
+    return remote_url, ""  # Fallback to external URL
+
+
+# ---------------------------------------------------------------------------
+# Pipeline helpers
+# ---------------------------------------------------------------------------
+
+def _pipeline_parse_steps(content: str):
+    """Parse pipeline steps from JSON or pipe-delimited line format.
+
+    Returns:
+        (steps, error_dict) — exactly one of them is None.
+    """
+    stripped = content.strip()
+    if not stripped:
+        return None, {"error": "No pipeline steps provided"}
+
+    # Try JSON first
+    steps = None
+    if stripped.startswith(("{", "[")):
+        try:
+            import json as _json
+            data = _json.loads(stripped)
+            steps = data.get("steps") if isinstance(data, dict) else data
+        except (ValueError, TypeError):
+            pass
+
+    # Fall back to line-based format: model | instruction
+    if steps is None:
+        steps = []
+        for line in stripped.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            if "|" not in line:
+                return None, {"error": "Each line must be: model | instruction (or use JSON format)"}
+            model_part, instruction_part = line.split("|", 1)
+            steps.append({"model": model_part.strip(), "instruction": instruction_part.strip()})
+
+    if not steps:
+        return None, {"error": "No pipeline steps provided"}
+
+    return steps, None
+
+
+# ---------------------------------------------------------------------------
+# Second-opinion helpers
+# ---------------------------------------------------------------------------
+
+def _second_opinion_build_context(messages: list) -> str:
+    """Build a readable context string from the most recent session messages.
+
+    Returns:
+        Formatted string with [ROLE]: text lines, or '' if nothing to show.
+    """
+    recent = messages[-SESSION_CONTEXT_WINDOW:] if len(messages) > SESSION_CONTEXT_WINDOW else messages
+    parts = []
+    for m in recent:
+        role = m.get("role", "unknown").upper()
+        text = m.get("content", "")
+        if isinstance(text, list):
+            text = " ".join(p.get("text", "") for p in text if isinstance(p, dict))
+        if text:
+            parts.append(f"[{role}]: {text[:CONTEXT_MESSAGE_TEXT_LIMIT]}")
+    return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Model resolution
 # ---------------------------------------------------------------------------
 
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url, build_headers, build_models_url
+from src.llm_core import llm_call_async
 
 
 def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
@@ -430,7 +677,6 @@ async def do_chat_with_model(content: str, session_id: Optional[str] = None) -> 
       Line 1: model_name (or model_name@endpoint_name)
       Line 2+: the message to send
     """
-    from src.llm_core import llm_call_async
 
     lines = content.strip().split("\n", 1)
     if not lines or not lines[0].strip():
@@ -470,7 +716,6 @@ async def do_ask_teacher(content: str, session_id: Optional[str] = None) -> Dict
       Line 1: model_name (or 'auto')
       Line 2+: the problem description
     """
-    from src.llm_core import llm_call_async
     from src.settings import get_setting
 
     lines = content.strip().split("\n", 1)
@@ -520,7 +765,6 @@ async def do_second_opinion(content: str, session_id: Optional[str] = None) -> D
       3. Send feedback back to the session's own model → evaluate & unify
       4. Return both the review and the unified response
     """
-    from src.llm_core import llm_call_async
 
     lines = content.strip().split("\n", 1)
     if not lines or not lines[0].strip():
@@ -534,25 +778,13 @@ async def do_second_opinion(content: str, session_id: Optional[str] = None) -> D
     except ValueError as e:
         return {"error": str(e)}
 
-    # Pull recent conversation context from current session
+    # Pull recent conversation context from the active session
     context_text = ""
     sess = None
     if session_id and _session_manager:
         sess = _session_manager.get_session(session_id)
         if sess:
-            messages = sess.get_context_messages()
-            recent = messages[-SESSION_CONTEXT_WINDOW:] if len(messages) > SESSION_CONTEXT_WINDOW else messages
-            parts = []
-            for m in recent:
-                role = m.get("role", "unknown").upper()
-                text = m.get("content", "")
-                if isinstance(text, list):
-                    text = " ".join(
-                        p.get("text", "") for p in text if isinstance(p, dict)
-                    )
-                if text:
-                    parts.append(f"[{role}]: {text[:CONTEXT_MESSAGE_TEXT_LIMIT]}")
-            context_text = "\n\n".join(parts)
+            context_text = _second_opinion_build_context(sess.get_context_messages())
 
     if not context_text:
         return {"error": "No conversation context found to review"}
@@ -769,7 +1001,6 @@ async def do_send_to_session(content: str, session_id: Optional[str] = None) -> 
       Line 1: session_id
       Line 2+: message
     """
-    from src.llm_core import llm_call_async
     from core.models import ChatMessage
 
     if not _session_manager:
@@ -832,43 +1063,18 @@ async def do_pipeline(content: str, session_id: Optional[str] = None) -> Dict:
         {"model": "model_a", "instruction": "Revise based on this critique"}
       ]}
 
-    Or line format:
-      Line 1: step1_model | step1_instruction
-      Line 2: step2_model | step2_instruction
-      ...
+    Or pipe-delimited line format:
+      model_a | Draft an essay about X
+      model_b | Critique the following draft
     """
-    from src.llm_core import llm_call_async
+    steps, parse_error = _pipeline_parse_steps(content)
+    if parse_error:
+        return parse_error
 
-    # Try JSON parse first
-    steps = None
-    try:
-        data = json.loads(content.strip())
-        if isinstance(data, dict) and "steps" in data:
-            steps = data["steps"]
-        elif isinstance(data, list):
-            steps = data
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    # Fall back to line format: model | instruction
-    if not steps:
-        steps = []
-        for line in content.strip().split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            if "|" in line:
-                parts = line.split("|", 1)
-                steps.append({"model": parts[0].strip(), "instruction": parts[1].strip()})
-            else:
-                return {"error": "Each line must be: model | instruction (or use JSON format)"}
-
-    if not steps:
-        return {"error": "No pipeline steps provided"}
     if len(steps) > MAX_PIPELINE_STEPS:
         return {"error": f"Maximum {MAX_PIPELINE_STEPS} steps allowed"}
 
-    # Resolve all models first (fail fast)
+    # Resolve all models first so we fail fast before executing anything
     resolved = []
     for i, step in enumerate(steps):
         model_spec = step.get("model", "").strip()
@@ -881,20 +1087,16 @@ async def do_pipeline(content: str, session_id: Optional[str] = None) -> Dict:
         except ValueError as e:
             return {"error": f"Step {i + 1}: {e}"}
 
-    # Execute pipeline
+    # Execute the pipeline, chaining each step's output into the next
     step_outputs = []
     previous_output = None
 
     try:
         for i, (url, model, headers, instruction) in enumerate(resolved):
-            if previous_output:
-                user_content = (
-                    f"Previous step's output:\n\n{previous_output}\n\n"
-                    f"Your task: {instruction}"
-                )
-            else:
-                user_content = instruction
-
+            user_content = (
+                f"Previous step's output:\n\n{previous_output}\n\nYour task: {instruction}"
+                if previous_output else instruction
+            )
             messages = [
                 {"role": "system", "content": f"You are step {i + 1} in a processing pipeline. {instruction}"},
                 {"role": "user", "content": user_content},
@@ -1850,206 +2052,104 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
 
     Content format:
       Line 1: prompt describing the image
-      Line 2: model name (optional, default auto-detects: prefers gpt-image-1.5 > gpt-image-1)
+      Line 2: model name (optional, auto-detects if omitted)
       Line 3: size (optional, defaults to 1024x1024)
-      Line 4: quality (optional, defaults to medium — options: low, medium, high, auto)
+      Line 4: quality (optional: low, medium, high, auto — defaults to medium)
     """
-    import base64
     import httpx
-    from pathlib import Path
 
-    lines = content.strip().split("\n")
+    lines = content.strip().split(chr(10)) if content.strip() else []
     prompt = lines[0].strip() if lines else ""
-    model_spec = lines[1].strip() if len(lines) > 1 and lines[1].strip() else ""
-    size = lines[2].strip() if len(lines) > 2 and lines[2].strip() else "1024x1024"
-    quality = lines[3].strip() if len(lines) > 3 and lines[3].strip() else "medium"
-
     if not prompt:
         return {"error": "Image prompt is required (line 1)"}
 
-    # Load admin settings for defaults
+    model_spec = lines[1].strip() if len(lines) > 1 and lines[1].strip() else ""
+    size = lines[2].strip() if len(lines) > 2 and lines[2].strip() else _DEFAULT_IMAGE_SIZE
+    quality = lines[3].strip() if len(lines) > 3 and lines[3].strip() else "medium"
+
+    # Apply admin-configured defaults when caller did not specify
     try:
         from src.settings import load_settings
-        _settings = load_settings()
+        settings = load_settings()
     except Exception:
-        _settings = {}
+        settings = {}
 
-    # Use admin-configured model/quality if not specified by the tool call
     if not model_spec:
-        model_spec = _settings.get("image_model", "")
-    if quality == "medium" and _settings.get("image_quality"):
-        quality = _settings["image_quality"]
+        model_spec = settings.get("image_model", "")
+    if quality == "medium" and settings.get("image_quality"):
+        quality = settings["image_quality"]
 
-    # Auto-detect best available image model if still not set
+    # Auto-detect the best available image model
     if not model_spec:
-        for candidate in ("gpt-image-1.5", "gpt-image-1", "dall-e-3"):
-            try:
-                _resolve_model(candidate)
-                model_spec = candidate
-                break
-            except ValueError:
-                continue
-        # Fallback: find any locally registered image-type endpoint
-        if not model_spec:
-            try:
-                from src.database import SessionLocal, ModelEndpoint
-                import httpx as _req
-                _idb = SessionLocal()
-                try:
-                    _img_eps = _idb.query(ModelEndpoint).filter(
-                        ModelEndpoint.is_enabled == True,
-                        ModelEndpoint.model_type == "image",
-                    ).all()
-                    for _iep in _img_eps:
-                        _ibase = _iep.base_url.rstrip("/")
-                        if not _ibase.endswith("/v1"):
-                            _ibase += "/v1"
-                        try:
-                            _r = _req.get(_ibase + "/models", timeout=HTTP_TIMEOUT_IMAGE_ENDPOINT)
-                            _r.raise_for_status()
-                            _mids = [m.get("id") for m in (_r.json().get("data") or []) if m.get("id")]
-                            if _mids:
-                                model_spec = _mids[0]
-                                break
-                        except Exception:
-                            continue
-                finally:
-                    _idb.close()
-            except Exception:
-                pass
-        if not model_spec:
-            return {"error": "No image model found. Configure one in Admin → Image Generation."}
+        model_spec = _image_auto_detect_model_spec()
+    if not model_spec:
+        return {"error": "No image model found. Configure one in Admin → Image Generation."}
 
-    # Resolve the model to find the right endpoint
     try:
         url, model_id, headers = _resolve_model(model_spec)
     except ValueError:
         return {"error": f"No endpoint found with image model '{model_spec}'. "
                 "Configure an OpenAI-compatible endpoint with image generation support."}
 
-    # Detect if this is a GPT image model vs DALL-E vs local diffusion
-    is_gpt_image = "gpt-image" in model_id.lower()
-    is_dalle = "dall-e" in model_id.lower()
-    is_local_diffusion = not is_gpt_image and not is_dalle
+    model_kind = _image_classify_model(model_id)
+    size = _image_clamp_size(size, **{k: model_kind[k] for k in ("is_gpt_image", "is_dalle")})
+    payload = _image_build_payload(model_id, prompt, size, quality, **model_kind)
+    images_url = _image_derive_generations_url(url)
+    effective_quality = payload.get("quality", "medium")
 
-    # Build the images endpoint URL from the chat completions URL
-    base_url = url.replace("/chat/completions", "").replace("/v1/messages", "").rstrip("/")
-    images_url = base_url + "/images/generations"
-
-    # Validate size for cloud image models (local diffusion accepts any WxH)
-    valid_gpt_sizes = {"1024x1024", "1024x1536", "1536x1024", "auto"}
-    valid_dalle3_sizes = {"1024x1024", "1024x1792", "1792x1024"}
-    if is_gpt_image and size not in valid_gpt_sizes:
-        size = "1024x1024"
-    elif is_dalle and size not in valid_dalle3_sizes:
-        size = "1024x1024"
-
-    payload = {
-        "model": model_id,
-        "prompt": prompt,
-        "n": 1,
-        "size": size,
-    }
-
-    # GPT image models and local diffusion support quality; DALL-E does not
-    if is_gpt_image or is_local_diffusion:
-        if quality in ("low", "medium", "high", "auto"):
-            payload["quality"] = quality
-        else:
-            payload["quality"] = "medium"
-
-    logger.info(f"Image generation: model={model_id}, size={size}, quality={quality}, prompt={prompt[:IMAGE_PROMPT_LOG_LIMIT]}")
+    logger.info(
+        f"Image generation: model={model_id}, size={size}, quality={quality}, "
+        f"prompt={prompt[:IMAGE_PROMPT_LOG_LIMIT]}"
+    )
 
     try:
-        # GPT image models can take 30-120s+ depending on quality
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)) as client:
+        # GPT image models can take 30-120s+
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)
+        ) as client:
             resp = await client.post(images_url, json=payload, headers=headers)
 
-            if resp.status_code != 200:
-                error_text = resp.text[:ERROR_TEXT_DISPLAY_LIMIT]
-                try:
-                    err_json = resp.json()
-                    error_text = err_json.get("error", {}).get("message", error_text) if isinstance(err_json.get("error"), dict) else str(err_json.get("error", error_text))
-                except Exception:
-                    pass
-                return {"error": f"Image generation failed ({resp.status_code}): {error_text}"}
+        if resp.status_code != 200:
+            error_text = resp.text[:ERROR_TEXT_DISPLAY_LIMIT]
+            try:
+                err_obj = resp.json().get("error", error_text)
+                error_text = err_obj.get("message", error_text) if isinstance(err_obj, dict) else str(err_obj)
+            except Exception:
+                pass
+            return {"error": f"Image generation failed ({resp.status_code}): {error_text}"}
 
-            data = resp.json()
-            images = data.get("data", [])
-            if not images:
-                return {"error": "No images returned from API"}
+        images = resp.json().get("data", [])
+        if not images:
+            return {"error": "No images returned from API"}
 
-            img = images[0]
-            image_url = None
-            image_id = None
+        img = images[0]
 
-            def _save_to_gallery(filename: str) -> str:
-                """Insert a GalleryImage row and return the new id (or '')."""
-                try:
-                    from src.database import SessionLocal as _GallerySL, GalleryImage
-                    new_id = str(uuid.uuid4())
-                    _gdb = _GallerySL()
-                    _gdb.add(GalleryImage(
-                        id=new_id,
-                        filename=filename,
-                        prompt=prompt,
-                        model=model_id,
-                        size=size,
-                        quality=payload.get("quality", "medium"),
-                        session_id=session_id,
-                        owner=owner,
-                    ))
-                    _gdb.commit()
-                    _gdb.close()
-                    return new_id
-                except Exception as _ge:
-                    logger.warning(f"Failed to save gallery record: {_ge}")
-                    return ""
+        if img.get("b64_json"):
+            image_url, image_id = await _image_save_b64(
+                img["b64_json"], prompt, model_id, size, effective_quality, session_id, owner
+            )
+        elif img.get("url"):
+            image_url, image_id = await _image_download_and_save(
+                img["url"], prompt, model_id, size, effective_quality, session_id, owner
+            )
+        else:
+            return {"error": "Image API returned unexpected format (no b64_json or url)"}
 
-            # GPT image models always return b64_json; DALL-E may return url
-            if img.get("b64_json"):
-                img_dir = Path("data/generated_images")
-                img_dir.mkdir(parents=True, exist_ok=True)
-                filename = f"{uuid.uuid4().hex[:12]}.png"
-                img_path = img_dir / filename
-                img_path.write_bytes(base64.b64decode(img.get("b64_json")))
-                image_url = f"/api/generated-image/{filename}"
-                image_id = _save_to_gallery(filename)
-
-            elif img.get("url"):
-                # Download external URL and save locally (DALL-E returns temp URLs)
-                try:
-                    dl_resp = httpx.get(img["url"], timeout=HTTP_TIMEOUT_IMAGE_DOWNLOAD)
-                    if dl_resp.status_code == 200:
-                        img_dir = Path("data/generated_images")
-                        img_dir.mkdir(parents=True, exist_ok=True)
-                        filename = f"{uuid.uuid4().hex[:12]}.png"
-                        img_path = img_dir / filename
-                        img_path.write_bytes(dl_resp.content)
-                        image_url = f"/api/generated-image/{filename}"
-                        image_id = _save_to_gallery(filename)
-                    else:
-                        image_url = img["url"]  # fallback to external URL
-                except Exception as _dl_e:
-                    logger.warning(f"Failed to download DALL-E image: {_dl_e}")
-                    image_url = img["url"]  # fallback to external URL
-            else:
-                return {"error": "Image API returned unexpected format (no b64_json or url)"}
-
-            return {
-                "results": f"Generated image for: {prompt[:100]}",
-                "image_url": image_url,
-                "image_id": image_id,
-                "image_prompt": prompt,
-                "image_model": model_id,
-                "image_size": size,
-                "image_quality": payload.get("quality", "medium"),
-            }
+        return {
+            "results": f"Generated image for: {prompt[:100]}",
+            "image_url": image_url,
+            "image_id": image_id,
+            "image_prompt": prompt,
+            "image_model": model_id,
+            "image_size": size,
+            "image_quality": effective_quality,
+        }
 
     except httpx.TimeoutException:
         return {"error": "Image generation timed out (300s). The model may be overloaded — try again or use quality=low."}
     except Exception as e:
         return {"error": f"Image generation error: {str(e)}"}
+
 
 
 # ---------------------------------------------------------------------------
