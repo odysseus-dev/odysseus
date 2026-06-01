@@ -1,6 +1,13 @@
 services:
   odysseus:
     build: .
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     ports:
       - "${APP_PORT:-7000}:7000"
     volumes:
