@@ -616,7 +616,7 @@ def setup_shell_routes() -> APIRouter:
         known = {
             "rembg[gpu]", "hf_transfer", "llama-cpp-python[server]", "sglang[all]", "diffusers", "diffusers[torch]",
             "TTS", "bark", "faster-whisper", "playwright", "realesrgan", "gfpgan",
-            "insightface", "onnxruntime-gpu", "onnxruntime", "hdbscan",
+            "insightface", "onnxruntime-gpu", "onnxruntime", "hdbscan", "vllm",
         }
         if pip_name not in known:
             return {"ok": False, "error": f"Unknown package: {pip_name}"}
