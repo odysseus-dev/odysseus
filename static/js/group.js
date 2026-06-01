@@ -81,8 +81,7 @@ function _initGroupTab() {
   }
 
   addBtn.addEventListener('click', async () => {
-    const models = await _getModels();
-    const characters = _getCharacterList();
+    const [models, characters] = await Promise.all([_getModels(), _getCharacterList()]);
 
     const picker = document.createElement('div');
     picker.style.cssText = 'display:flex;gap:4px;align-items:center;';
@@ -244,13 +243,12 @@ function _initGroupTab() {
         chip.title = (g.participants || []).map(p => p.characterName || p.modelDisplay || '?').join(', ');
         chip.addEventListener('click', async () => {
           // Load preset participants
-          const models = await _getModels();
+          const [models, chars] = await Promise.all([_getModels(), _getCharacterList()]);
           _groupParticipants.length = 0;
           (g.participants || []).forEach(p => {
             const model = models.find(m => m.mid === p.modelId) || models[0];
             const entry = { model: model || null, character: null };
             if (p.characterId) {
-              const chars = _getCharacterList();
               entry.character = chars.find(c => c.id === p.characterId) || null;
             }
             if (entry.model) _groupParticipants.push(entry);
@@ -284,7 +282,7 @@ function _initGroupTab() {
   });
 }
 
-function _getCharacterList() {
+async function _getCharacterList() {
   // Built-in characters from PROMPT_TEMPLATES
   const chars = PROMPT_TEMPLATES.filter(t => t.isCharacter).map(t => ({
     id: t.id, name: t.name, prompt: t.prompt,
@@ -300,18 +298,15 @@ function _getCharacterList() {
       });
     }
   } catch (e) {}
-  // Also try loading user templates
+  // Load user templates and wait for them before returning
   try {
-    fetch(API_BASE + '/api/presets/templates', { credentials: 'same-origin' })
-      .then(r => r.json())
-      .then(data => {
-        (data.templates || []).forEach(t => {
-          if (t.isCharacter && !chars.find(c => c.id === t.id)) {
-            chars.push({ id: t.id, name: t.name, prompt: t.prompt || '' });
-          }
-        });
-      })
-      .catch(() => {});
+    const r = await fetch(API_BASE + '/api/presets/templates', { credentials: 'same-origin' });
+    const data = await r.json();
+    (data.templates || []).forEach(t => {
+      if (t.isCharacter && !chars.find(c => c.id === t.id)) {
+        chars.push({ id: t.id, name: t.name, prompt: t.prompt || '' });
+      }
+    });
   } catch (e) {}
   return chars;
 }
@@ -475,7 +470,7 @@ export async function showModelPicker() {
       body.appendChild(stepTitle);
 
       // Build character options
-      const characters = _getCharacterList();
+      const characters = await _getCharacterList();
       const assignments = {}; // mid -> {characterId, characterName, characterPrompt}
 
       for (const m of picked) {
