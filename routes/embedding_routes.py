@@ -245,6 +245,7 @@ def setup_embedding_routes():
         # SSRF guard: block private/internal ranges
         from urllib.parse import urlparse
         import ipaddress
+        import socket
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https"):
             raise HTTPException(400, "Only http/https URLs are allowed")
@@ -254,20 +255,36 @@ def setup_embedding_routes():
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
                 raise HTTPException(400, "Private/internal addresses are not allowed")
         except ValueError:
-            # hostname is a domain, not an IP — block common metadata patterns
-            blocked_domains = ("metadata.google.internal", "instance-data", "169.254.169.254")
-            if any(d in hostname for d in blocked_domains):
-                raise HTTPException(400, "Metadata service addresses are not allowed")
+            # hostname is a domain — resolve it and check every address
+            try:
+                addrinfos = socket.getaddrinfo(hostname, parsed.port or 80)
+            except socket.gaierror:
+                raise HTTPException(400, f"Could not resolve hostname: {hostname}")
+            for family, type_, proto, canonname, sockaddr in addrinfos:
+                addr = sockaddr[0]
+                try:
+                    resolved_ip = ipaddress.ip_address(addr)
+                except ValueError:
+                    continue
+                if (resolved_ip.is_private or resolved_ip.is_loopback
+                        or resolved_ip.is_link_local or resolved_ip.is_reserved):
+                    raise HTTPException(
+                        400,
+                        f"Hostname {hostname} resolves to blocked address: {addr}",
+                    )
 
-        # Quick health check
+        # Quick health check — no redirects to avoid redirect-based SSRF
         try:
             import httpx
             resp = httpx.post(
                 url,
                 json={"input": ["test"], "model": model or "test"},
                 timeout=10,
+                follow_redirects=False,
             )
             resp.raise_for_status()
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(400, f"Endpoint unreachable: {e}")
 

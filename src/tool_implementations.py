@@ -2702,6 +2702,11 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     # Normalize path to prevent double-slash and traversal bypasses
     # (e.g. "//api/admin/..." or "/api/chat/../../api/admin/...")
     path = posixpath.normpath(path)
+    # posixpath.normpath preserves exactly two leading slashes (POSIX semantics:
+    # //path is distinct from /path). Collapse to a single leading slash so
+    # blocklist prefix matching works against //api/admin/... style bypasses.
+    while path.startswith("//"):
+        path = path[1:]
     if any(path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
         return {"error": f"Path blocked for safety: {path}. Auth/user/admin endpoints are off-limits via app_api.", "exit_code": 1}
 

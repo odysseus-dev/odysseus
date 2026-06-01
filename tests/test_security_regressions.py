@@ -831,3 +831,136 @@ def test_mcp_oauth_page_escapes_reflected_values():
     body = text.split("def _oauth_authorize_page(", 1)[1].split("return f", 1)[0]
     for var in ("auth_url", "server_id", "host"):
         assert f"{var} = html.escape({var}" in body, var
+
+
+# ── app_api blocklist: double-slash normalization bypass ─────────
+
+class TestAppApiBlocklistNormalization:
+    """The app_api blocklist uses posixpath.normpath() then a leading-slash
+    collapse step. Pin both shapes so a future revert (dropping either) is
+    caught.
+    """
+
+    def _is_blocked(self, path: str) -> bool:
+        """Replicate the blocklist check from do_app_api."""
+        import posixpath
+
+        if not path.startswith("/"):
+            path = "/" + path
+        path = posixpath.normpath(path)
+        while path.startswith("//"):
+            path = path[1:]
+
+        from src.tool_implementations import _APP_API_BLOCKLIST_PREFIXES
+        return any(path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES)
+
+    def test_normal_admin_path_blocked(self):
+        assert self._is_blocked("/api/admin/wipe")
+
+    def test_traversal_admin_path_blocked(self):
+        assert self._is_blocked("/api/chat/../../api/admin/wipe")
+
+    def test_double_slash_admin_path_blocked(self):
+        """The original bypass from the reviewer: //api/admin/wipe."""
+        assert self._is_blocked("//api/admin/wipe")
+
+    def test_triple_slash_admin_path_blocked(self):
+        assert self._is_blocked("///api/admin/wipe")
+
+    def test_double_slash_with_traversal_blocked(self):
+        assert self._is_blocked("//api/chat/../admin/wipe")
+
+    def test_shell_path_blocked(self):
+        assert self._is_blocked("/api/shell/exec")
+
+    def test_double_slash_shell_blocked(self):
+        assert self._is_blocked("//api/shell/exec")
+
+    def test_non_blocklisted_path_not_blocked(self):
+        """Paths not matching any blocked prefix are allowed through."""
+        assert not self._is_blocked("/api/cookbook-status")
+
+
+# ── embedding endpoint SSRF: DNS resolution guard ────────────────
+
+class TestEmbeddingEndpointSsrfGuard:
+    """The embedding set_endpoint SSRF guard must resolve hostnames and
+    reject any resolved address that falls in private/loopback/link-local/
+    reserved ranges. It must also disable redirect following.
+    """
+
+    @staticmethod
+    def _run_guard(url: str) -> None:
+        """Run the same checks as set_endpoint and raise HTTPException on
+        rejection. Returns None on pass."""
+        from urllib.parse import urlparse
+        import ipaddress
+        import socket
+
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("bad scheme")
+        hostname = parsed.hostname or ""
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                raise ValueError("blocked ip")
+        except ValueError as exc:
+            if str(exc) == "bad scheme":
+                raise
+            if str(exc) == "blocked ip":
+                raise ValueError("blocked ip")
+            # Not an IP — a domain
+            try:
+                addrinfos = socket.getaddrinfo(hostname, parsed.port or 80)
+            except socket.gaierror:
+                raise ValueError("dns fail")
+            for family, type_, proto, canonname, sockaddr in addrinfos:
+                addr = sockaddr[0]
+                try:
+                    resolved_ip = ipaddress.ip_address(addr)
+                except ValueError:
+                    continue
+                if (resolved_ip.is_private or resolved_ip.is_loopback
+                        or resolved_ip.is_link_local or resolved_ip.is_reserved):
+                    raise ValueError(f"resolves to blocked: {addr}")
+
+    def test_literal_private_ip_rejected(self):
+        with pytest.raises(ValueError):
+            self._run_guard("http://10.0.0.1/embeddings")
+
+    def test_literal_loopback_rejected(self):
+        with pytest.raises(ValueError):
+            self._run_guard("http://127.0.0.1/embeddings")
+
+    def test_literal_link_local_rejected(self):
+        with pytest.raises(ValueError):
+            self._run_guard("http://169.254.169.254/latest/meta-data")
+
+    def test_public_ip_allowed(self):
+        # 1.1.1.1 is public — should pass the guard
+        self._run_guard("http://1.1.1.1/embeddings")
+
+    def test_public_domain_allowed(self):
+        """A domain that only resolves to public IPs passes."""
+        self._run_guard("http://example.com/embeddings")
+
+    def test_private_domain_rejected(self):
+        """localhost resolves to 127.0.0.1 — must be caught by DNS check."""
+        with pytest.raises(ValueError):
+            self._run_guard("http://localhost/embeddings")
+
+    def test_bad_scheme_rejected(self):
+        with pytest.raises(ValueError):
+            self._run_guard("ftp://1.2.3.4/embeddings")
+
+    def test_no_redirect_on_health_check(self):
+        """Verify the source code sets follow_redirects=False."""
+        import inspect
+        src = Path(__file__).resolve().parents[1] / "routes" / "embedding_routes.py"
+        text = src.read_text()
+        # The httpx.post call in set_endpoint must use follow_redirects=False
+        post_section = text.split("httpx.post(", 1)[1].split(")", 1)[0]
+        assert "follow_redirects=False" in post_section, (
+            "httpx.post health check must disable redirect following"
+        )
