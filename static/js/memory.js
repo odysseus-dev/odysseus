@@ -1102,6 +1102,10 @@ export async function extractMemory(sessionId) {
     header.appendChild(backBtn);
     body.appendChild(header);
 
+    const suggestList = document.createElement('div');
+    suggestList.className = 'memory-suggestions-list';
+    body.appendChild(suggestList);
+
     suggestions.forEach(s => {
       const div = document.createElement('div');
       div.className = 'memory-suggestion-item';
@@ -1123,7 +1127,7 @@ export async function extractMemory(sessionId) {
       });
       div.appendChild(txt);
       div.appendChild(btn);
-      body.appendChild(div);
+      suggestList.appendChild(div);
     });
   }
 
@@ -1261,6 +1265,10 @@ async function handleImportFile(file) {
       header.appendChild(headerActions);
       body.appendChild(header);
 
+      const reviewList = document.createElement('div');
+      reviewList.className = 'memory-suggestions-list';
+      body.appendChild(reviewList);
+
       reviewItems.forEach(item => {
         const div = document.createElement('div');
         div.className = 'memory-suggestion-item';
@@ -1307,7 +1315,7 @@ async function handleImportFile(file) {
 
         div.appendChild(content);
         div.appendChild(actionWrap);
-        body.appendChild(div);
+        reviewList.appendChild(div);
       });
     }
 

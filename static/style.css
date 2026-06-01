@@ -9946,6 +9946,8 @@ textarea.memory-add-input {
   gap: 4px;
 }
 
+.memory-list.hidden { display: none; }
+
 .memory-item.task-paused {
   opacity: 0.45 !important;
   filter: saturate(0.55);
@@ -10503,20 +10505,27 @@ textarea.memory-add-input {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  /* Bound the import-review list to the modal like the sibling .memory-list,
-     so a long list scrolls internally instead of overflowing the
-     overflow:hidden .admin-card — which clipped lower entries and their
-     save/discard controls with no usable scroll area. */
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  overflow-y: hidden;
   overflow-x: hidden;
-  /* Small gutter so the scrollbar doesn't sit flush against the item cards. */
-  padding-right: 4px;
+  padding-right: 0;
 }
 
 .memory-suggestions.hidden {
   display: none;
+}
+
+.memory-suggestions-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
 }
 
 .memory-suggestions-header {
@@ -10527,13 +10536,8 @@ textarea.memory-add-input {
   color: color-mix(in srgb, var(--fg) 70%, transparent);
   padding-bottom: 4px;
   border-bottom: 1px solid var(--border);
-  /* Pin the title + save all/back controls to the top of the scrolling
-     review list so they stay reachable while the items scroll under them.
-     Opaque background masks items passing beneath. */
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--panel);
+  padding-right: 4px;
+  flex-shrink: 0;
 }
 .memory-suggestions-actions,
 .memory-suggestion-actions {
