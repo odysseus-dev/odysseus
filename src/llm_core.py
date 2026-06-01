@@ -1003,8 +1003,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                     delta = j["choices"][0].get("delta", {})
                                     if isinstance(delta, dict):
                                         # Text content
-                                        # Reasoning tokens (VLLM --reasoning-parser, e.g. Qwen3/DeepSeek-R1)
-                                        reasoning = delta.get("reasoning_content", "")
+                                        # Reasoning tokens: vLLM uses "reasoning_content", Ollama uses "reasoning"
+                                        reasoning = delta.get("reasoning_content", "") or delta.get("reasoning", "")
                                         if reasoning:
                                             yield f'data: {json.dumps({"delta": reasoning, "thinking": True})}\n\n'
                                         content = delta.get("content", "")
