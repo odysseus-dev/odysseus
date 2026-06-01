@@ -9,11 +9,12 @@ don't regress. Specifically:
   anonymous/no-owner callers.
 """
 
+import asyncio
+import ast
 import os
+import pytest
 import sys
 import types
-import asyncio
-import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -264,6 +265,36 @@ def test_task_payload_exposes_crew_member_id_for_ui_category():
 
 
 def test_task_webhook_route_is_auth_exempt_but_regenerate_is_not():
-    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app.py"), encoding="utf-8").read()
-    assert 'if path.endswith("/webhook-regenerate"):' in src
-    assert 'return any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES) and "/webhook/" in path' in src
+    app_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "app.py",
+    )
+    module = ast.parse(open(app_path, encoding="utf-8").read(), filename=app_path)
+    auth_block = next(
+        node for node in module.body
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "AUTH_ENABLED"
+    )
+    wanted = {"AUTH_EXEMPT_EXACT", "AUTH_EXEMPT_PREFIXES"}
+    extracted = []
+    for node in auth_block.body:
+        if isinstance(node, ast.Assign):
+            targets = {
+                target.id for target in node.targets if isinstance(target, ast.Name)
+            }
+            if wanted & targets:
+                extracted.append(node)
+        elif isinstance(node, ast.FunctionDef) and node.name in {
+            "_is_public_task_webhook_path",
+            "_is_auth_exempt",
+        }:
+            extracted.append(node)
+    ns = {}
+    exec(compile(ast.Module(body=extracted, type_ignores=[]), app_path, "exec"), ns)
+    is_auth_exempt = ns["_is_auth_exempt"]
+
+    assert is_auth_exempt("/static/app.js") is True
+    assert is_auth_exempt("/api/tasks/task-123/webhook/token-456") is True
+    assert is_auth_exempt("/api/tasks/task-123/webhook-regenerate") is False
+    assert is_auth_exempt("/api/tasks/task-123/webhook") is False
