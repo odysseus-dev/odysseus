@@ -480,7 +480,7 @@ def _image_save_to_gallery(
 def _image_save_b64(
     b64_data: str, prompt: str, model_id: str, size: str, quality: str,
     session_id: Optional[str], owner: Optional[str],
-) -> tuple:
+) -> Tuple[str, str]:
     """Decode a base64 image, save to disk, persist gallery record.
 
     Returns:
@@ -501,7 +501,7 @@ def _image_save_b64(
 async def _image_download_and_save(
     remote_url: str, prompt: str, model_id: str, size: str, quality: str,
     session_id: Optional[str], owner: Optional[str],
-) -> tuple:
+) -> Tuple[str, str]:
     """Download an external image URL, save locally, persist gallery record.
 
     Returns:
@@ -903,7 +903,7 @@ def do_create_session(content: str, session_id: Optional[str] = None, owner: Opt
     except ValueError as e:
         return {"error": str(e)}
 
-    sid = str(uuid.uuid4())[:8]
+    sid = str(uuid.uuid4())[:UUID_SHORT_ID_LENGTH]
     try:
         _session_manager.create_session(
             session_id=sid,
