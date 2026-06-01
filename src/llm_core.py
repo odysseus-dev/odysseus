@@ -236,7 +236,9 @@ def _host_match(url: str, *domains: str) -> bool:
     if not url:
         return False
     try:
-        host = (urlparse(url).hostname or "").lower()
+        # rstrip(".") so a fully-qualified host with a trailing dot
+        # ("api.anthropic.com.") still matches "anthropic.com".
+        host = (urlparse(url).hostname or "").lower().rstrip(".")
     except Exception:
         return False
     if not host:
@@ -245,15 +247,21 @@ def _host_match(url: str, *domains: str) -> bool:
 
 
 def _detect_provider(url: str) -> str:
-    """Detect API provider from URL."""
-    u = (url or "").lower()
+    """Detect the API provider from a configured endpoint URL.
+
+    Matches on hostname (exact or subdomain) rather than substring, so a URL
+    that merely contains a provider's domain in its path or query — or a
+    look-alike host such as ``anthropic.com.example`` — is not misclassified.
+    Unknown hosts fall back to the OpenAI-compatible default, which the
+    majority of providers implement.
+    """
     if _is_ollama_native_url(url):
         return "ollama"
-    if "anthropic.com" in u:
+    if _host_match(url, "anthropic.com"):
         return "anthropic"
-    if "openrouter.ai" in u:
+    if _host_match(url, "openrouter.ai"):
         return "openrouter"
-    if "groq.com" in u:
+    if _host_match(url, "groq.com"):
         return "groq"
     return "openai"
 
