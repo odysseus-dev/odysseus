@@ -95,21 +95,89 @@ def cmd_list(args) -> None:
 
 # ─── gpus ────────────────────────────────────────────────────────────
 
+def _macos_metal_gpu() -> list | None:
+    """Apple Silicon has no discrete VRAM — report total unified memory as the
+    GPU budget so the web UI's picker shows the Mac's Metal GPU instead of
+    'no GPU'. `free` is approximated from vm_stat (page-granular); macOS doesn't
+    expose Metal utilization to the shell, so util is 0. Returns None off macOS."""
+    if sys.platform != "darwin":
+        return None
+
+    def _sysctl(key: str) -> str | None:
+        try:
+            r = subprocess.run(["sysctl", "-n", key], capture_output=True, text=True, timeout=5)
+            return r.stdout.strip() if r.returncode == 0 else None
+        except Exception:
+            return None
+
+    memsize = _sysctl("hw.memsize")
+    if not memsize or not memsize.isdigit():
+        return None
+    total_mb = int(memsize) // (1024 * 1024)
+    name = _sysctl("machdep.cpu.brand_string") or "Apple Silicon"
+
+    free_mb = total_mb
+    try:
+        vm = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5)
+        if vm.returncode == 0:
+            page_size, pages = 4096, {}
+            for line in vm.stdout.splitlines():
+                if "page size of" in line:
+                    m = re.search(r"page size of (\d+)", line)
+                    if m:
+                        page_size = int(m.group(1))
+                elif ":" in line:
+                    k, v = line.split(":", 1)
+                    v = v.strip().rstrip(".")
+                    if v.isdigit():
+                        pages[k.strip()] = int(v)
+            free_pages = (pages.get("Pages free", 0) + pages.get("Pages inactive", 0)
+                          + pages.get("Pages speculative", 0))
+            if free_pages:
+                free_mb = (free_pages * page_size) // (1024 * 1024)
+    except Exception:
+        pass
+
+    return [{
+        "index": 0,
+        "name": name,
+        "free_mb": free_mb,
+        "total_mb": total_mb,
+        "used_mb": max(0, total_mb - free_mb),
+        "util_pct": 0,
+        "uuid": "apple-metal-0",
+        "unified_memory": True,
+        "busy": (free_mb / total_mb) < 0.5 if total_mb else False,
+    }]
+
+
 def cmd_gpus(args) -> None:
     """Same shape the web UI gets — index/name/free_mb/total_mb/used_mb/
-    util_pct/uuid. Returns `[]` with an `error` field if nvidia-smi is
-    missing (laptop / CPU-only box). Pass `--host user@box` to run over
-    SSH against a remote machine."""
+    util_pct/uuid. On Apple Silicon (no nvidia-smi) reports the Metal GPU's
+    unified memory instead. Returns `[]` with an `error` field only on a
+    CPU-only non-Mac box. Pass `--host user@box` to run over SSH."""
     query = "nvidia-smi --query-gpu=index,name,memory.free,memory.total,memory.used,utilization.gpu,uuid --format=csv,noheader,nounits"
     prefix = _ssh_prefix(args.host, args.ssh_port)
     cmd = prefix + (query.split() if not prefix else [query])
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
     except FileNotFoundError:
+        # No nvidia-smi locally → try the Metal fallback before giving up.
+        if not prefix:
+            mac = _macos_metal_gpu()
+            if mac is not None:
+                emit({"ok": True, "gpus": mac, "backend": "metal"}, args)
+                return
         msg = "ssh not found" if prefix else "nvidia-smi not found"
         emit({"ok": False, "error": msg, "gpus": []}, args)
         return
     if out.returncode != 0:
+        # nvidia-smi present but errored (or no NVIDIA GPU) — fall back to Metal.
+        if not prefix:
+            mac = _macos_metal_gpu()
+            if mac is not None:
+                emit({"ok": True, "gpus": mac, "backend": "metal"}, args)
+                return
         emit({"ok": False, "error": out.stderr.strip()[:200], "gpus": []}, args)
         return
     gpus = []

@@ -1,6 +1,5 @@
 # routes/compare_routes.py
 """Model A/B comparison routes."""
-
 import json
 import uuid
 import random
@@ -22,7 +21,7 @@ router = APIRouter(prefix="/api/compare", tags=["compare"])
 class RecordVoteRequest(BaseModel):
     prompt: str
     models: List[str]
-    winner: str  # model name or "tie"
+    winner: str           # model name or "tie"
     is_blind: bool = True
 
 
@@ -49,11 +48,8 @@ def setup_compare_routes(session_manager: SessionManager):
         sid_b = str(uuid.uuid4())
 
         # Create ephemeral sessions (prefixed [CMP])
-        for sid, model, endpoint in [
-            (sid_a, model_a, endpoint_a),
-            (sid_b, model_b, endpoint_b),
-        ]:
-            user = getattr(request.state, "current_user", None)
+        for sid, model, endpoint in [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]:
+            user = getattr(request.state, 'current_user', None)
             session_manager.create_session(
                 session_id=sid,
                 name=f"[CMP] {model.split('/')[-1]}",
@@ -66,20 +62,16 @@ def setup_compare_routes(session_manager: SessionManager):
             db = SessionLocal()
             try:
                 from core.database import ModelEndpoint
-
+                from src.endpoint_resolver import build_headers, normalize_base
                 # Find matching endpoint by URL
-                ep = (
-                    db.query(ModelEndpoint)
-                    .filter(
-                        ModelEndpoint.base_url
-                        == endpoint.replace("/chat/completions", "")
-                    )
-                    .first()
-                )
+                base = normalize_base(endpoint)
+                ep = db.query(ModelEndpoint).filter(
+                    ModelEndpoint.base_url == base
+                ).first()
                 if ep and ep.api_key:
                     s = session_manager.sessions.get(sid)
                     if s:
-                        s.headers = {"Authorization": f"Bearer {ep.api_key}"}
+                        s.headers = build_headers(ep.api_key, ep.base_url)
             finally:
                 db.close()
 
@@ -145,11 +137,7 @@ def setup_compare_routes(session_manager: SessionManager):
             if comp.winner:
                 raise HTTPException(400, "Already voted")
 
-            mapping = (
-                json.loads(comp.blind_mapping)
-                if comp.blind_mapping
-                else {"left": "a", "right": "b"}
-            )
+            mapping = json.loads(comp.blind_mapping) if comp.blind_mapping else {"left": "a", "right": "b"}
 
             if winner == "tie":
                 comp.winner = "tie"

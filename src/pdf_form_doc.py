@@ -29,7 +29,7 @@ _FRONT_MATTER_RE = re.compile(
 # Freeform annotation bullet — mirrors the JS regex in static/js/document.js.
 # Coords are page percentages (0–100); kind/lh are optional for backward compat.
 _ANNOTATION_RE = re.compile(
-    r"^[ \t]*-\s+(?P<value>.*?)\s*<!--\s*annotation\s+id=(?P<id>[\w-]+)\s+page=(?P<page>\d+)\s+x=(?P<x>[\d.]+)\s+y=(?P<y>[\d.]+)\s+w=(?P<w>[\d.]+)\s+h=(?P<h>[\d.]+)(?:\s+kind=(?P<kind>\w+))?(?:\s+lh=(?P<lh>[\d.]+))?\s*-->[ \t]*$",
+    r'^[ \t]*-\s+(?P<value>.*?)\s*<!--\s*annotation\s+id=(?P<id>[\w-]+)\s+page=(?P<page>\d+)\s+x=(?P<x>[\d.]+)\s+y=(?P<y>[\d.]+)\s+w=(?P<w>[\d.]+)\s+h=(?P<h>[\d.]+)(?:\s+kind=(?P<kind>\w+))?(?:\s+lh=(?P<lh>[\d.]+))?\s*-->[ \t]*$',
     re.MULTILINE,
 )
 
@@ -71,26 +71,21 @@ def parse_markdown_annotations(content: str) -> list[dict]:
         try:
             raw = m.group("value")
             value = "" if raw == "_(empty)_" else _unescape_annotation_value(raw)
-            out.append(
-                {
-                    "id": m.group("id"),
-                    "page": int(m.group("page")),
-                    "x": float(m.group("x")),
-                    "y": float(m.group("y")),
-                    "w": float(m.group("w")),
-                    "h": float(m.group("h")),
-                    "kind": m.group("kind") or "text",
-                    "line_height": float(m.group("lh")) if m.group("lh") else 1.3,
-                    "value": value,
-                }
-            )
+            out.append({
+                "id": m.group("id"),
+                "page": int(m.group("page")),
+                "x": float(m.group("x")),
+                "y": float(m.group("y")),
+                "w": float(m.group("w")),
+                "h": float(m.group("h")),
+                "kind": m.group("kind") or "text",
+                "line_height": float(m.group("lh")) if m.group("lh") else 1.3,
+                "value": value,
+            })
         except (ValueError, TypeError) as e:
-            logger.warning(
-                f"Skipping malformed annotation bullet near offset {m.start()}: {e}"
-            )
+            logger.warning(f"Skipping malformed annotation bullet near offset {m.start()}: {e}")
             continue
     return out
-
 
 # Plain-PDF marker: same shape as the form-source marker but emitted for any
 # imported PDF (no AcroForm fields). Lets the existing render-pages /
@@ -107,7 +102,7 @@ _PLAIN_FRONT_MATTER_RE = re.compile(
 #   - **label** [opts]: value <!-- field=NAME-ENC type=choice -->
 #   - [x] **label** <!-- field=NAME-ENC type=checkbox -->
 _FIELD_BULLET_RE = re.compile(
-    r"^\s*-\s+(?P<body>.*?)\s*<!--\s*field=(?P<name>[A-Za-z0-9_.%-]+)\s+type=(?P<type>\w+)\s*-->\s*$"
+    r'^\s*-\s+(?P<body>.*?)\s*<!--\s*field=(?P<name>[A-Za-z0-9_.%-]+)\s+type=(?P<type>\w+)\s*-->\s*$'
 )
 
 
@@ -130,13 +125,10 @@ def _encode_name(name: str) -> str:
 def _decode_name(enc: str) -> str:
     """Inverse of _encode_name."""
     import urllib.parse
-
     return urllib.parse.unquote(enc or "")
-
-
-_TEXT_VALUE_RE = re.compile(r"\*\*[^*]+:\*\*\s*(?P<value>.*)$")
-_CHOICE_VALUE_RE = re.compile(r"\*\*[^*]+\*\*\s*\[[^\]]*\]\s*:\s*(?P<value>.*)$")
-_CHECKBOX_VALUE_RE = re.compile(r"^\s*\[(?P<state>[xX ])\]")
+_TEXT_VALUE_RE = re.compile(r'\*\*[^*]+:\*\*\s*(?P<value>.*)$')
+_CHOICE_VALUE_RE = re.compile(r'\*\*[^*]+\*\*\s*\[[^\]]*\]\s*:\s*(?P<value>.*)$')
+_CHECKBOX_VALUE_RE = re.compile(r'^\s*\[(?P<state>[xX ])\]')
 
 _PLACEHOLDERS = {"_(empty)_", "_(not selected)_", "_(empty)_.", "_(unsigned)_"}
 
@@ -150,7 +142,7 @@ def save_field_sidecar(pdf_path: str, fields: list[dict[str, Any]]) -> str:
     """Persist the field schema next to its source PDF. Returns the sidecar path."""
     path = sidecar_path(pdf_path)
     try:
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(fields, f, indent=2)
     except Exception as e:
         logger.warning(f"Failed to write field sidecar {path}: {e}")
@@ -163,7 +155,7 @@ def load_field_sidecar(pdf_path: str) -> Optional[list[dict[str, Any]]]:
     if not os.path.exists(path):
         return None
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
         logger.warning(f"Failed to read field sidecar {path}: {e}")
@@ -175,16 +167,21 @@ def find_source_upload_id(content: str) -> Optional[str]:
 
     Matches both the form-source marker (`pdf_form_source`) used for fillable
     PDFs and the plain marker (`pdf_source`) used for any imported PDF.
+    Rejects malformed ids (path traversal, wrong shape) before any lookup.
     """
-    m = _FRONT_MATTER_RE.search(content or "") or _PLAIN_FRONT_MATTER_RE.search(
-        content or ""
-    )
-    return m.group("upload_id") if m else None
+    from src.upload_handler import is_valid_upload_id
+
+    m = _FRONT_MATTER_RE.search(content or "") or _PLAIN_FRONT_MATTER_RE.search(content or "")
+    if not m:
+        return None
+    upload_id = m.group("upload_id")
+    if not is_valid_upload_id(upload_id):
+        logger.warning("Ignoring invalid pdf_source upload_id in document content: %r", upload_id)
+        return None
+    return upload_id
 
 
-def render_plain_pdf_markdown(
-    upload_id: str, title: str, body_text: Optional[str] = None
-) -> str:
+def render_plain_pdf_markdown(upload_id: str, title: str, body_text: Optional[str] = None) -> str:
     """Build the markdown wrapper for a non-form PDF imported into the editor.
 
     The hidden front-matter pointer links the doc to the source PDF so the
@@ -216,12 +213,7 @@ def create_plain_pdf_document(
     so the existing /render-pages and /page/{n}.png endpoints can serve the
     pages without form-field overlays.
     """
-    from src.database import (
-        SessionLocal,
-        Document,
-        DocumentVersion,
-        Session as DbSession,
-    )
+    from src.database import SessionLocal, Document, DocumentVersion, Session as DbSession
     from src.tool_implementations import set_active_document
 
     content = render_plain_pdf_markdown(upload_id, title, body_text)
@@ -331,20 +323,20 @@ def _format_field_bullet(f: dict[str, Any]) -> str:
     value = _flatten(f.get("value"))
 
     if ftype == "checkbox":
-        body = f"{_checkbox_marker(value)} **{label}**"
+        body = f'{_checkbox_marker(value)} **{label}**'
     elif ftype == "choice":
         opts = f.get("options") or []
         opts_str = " / ".join(opts) if opts else ""
         shown = value if value else "_(not selected)_"
-        body = f"**{label}** [{opts_str}]: {shown}"
+        body = f'**{label}** [{opts_str}]: {shown}'
     elif ftype == "signature":
         shown = value if (value and value.startswith("signature:")) else "_(unsigned)_"
-        body = f"**{label}:** {shown}"
+        body = f'**{label}:** {shown}'
     else:
         shown = value if value else "_(empty)_"
-        body = f"**{label}:** {shown}"
+        body = f'**{label}:** {shown}'
 
-    return f"- {body} <!-- field={name} type={ftype} -->"
+    return f'- {body} <!-- field={name} type={ftype} -->'
 
 
 def render_form_as_markdown(
@@ -404,12 +396,7 @@ def create_form_markdown_document(
     "markdown" — the form-ness is signalled only by the front-matter pointer
     inside the content, which the export route looks for.
     """
-    from src.database import (
-        SessionLocal,
-        Document,
-        DocumentVersion,
-        Session as DbSession,
-    )
+    from src.database import SessionLocal, Document, DocumentVersion, Session as DbSession
     from src.tool_implementations import set_active_document
 
     content = render_form_as_markdown(fields, upload_id, title, intro_text=intro_text)

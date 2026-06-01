@@ -294,6 +294,21 @@ export const ERROR_PATTERNS = [
     ],
   },
   {
+    pattern: /Either a revision or a version must be specified|transformers\.integrations\.hub_kernels|kernels\/layer/i,
+    message: 'vLLM/Transformers kernel package mismatch.',
+    fixes: [
+      { label: 'Update vLLM/Transformers/kernels', action: (panel) => {
+        const taskEl = panel.closest('.cookbook-task');
+        const task = taskEl ? _loadTasks().find(t => t.sessionId === taskEl.dataset.taskId) : null;
+        const host = task?.remoteHost || '';
+        const prefix = _buildEnvPrefix();
+        const pipCmd = prefix ? prefix + ' python3 -m pip install -U vllm transformers kernels' : 'python3 -m pip install -U vllm transformers kernels';
+        const cmd = host ? _sshCmd(host, pipCmd) : pipCmd;
+        _launchServeTask('update-vllm-stack', 'pip-update', cmd);
+      }},
+    ],
+  },
+  {
     pattern: /ollama.*command not found/i,
     message: 'Ollama is not installed on this server. Run: curl -fsSL https://ollama.com/install.sh | sh',
     fixes: [
@@ -308,10 +323,10 @@ export const ERROR_PATTERNS = [
     ],
   },
   {
-    pattern: /diffusers.*No module named|diffusers.*command not found/i,
-    message: 'Diffusers is not installed. Run: pip install diffusers transformers accelerate',
+    pattern: /No module named ['"]?torch|No module named ['"]?diffusers|diffusers.*command not found/i,
+    message: 'Diffusion serving needs PyTorch and diffusers. Install diffusers from Cookbook → Dependencies.',
     fixes: [
-      { label: 'Copy install command', action: () => _copyText('pip install diffusers transformers accelerate') },
+      { label: 'Copy install command', action: () => _copyText('python3 -m pip install "diffusers[torch]"') },
     ],
   },
   {

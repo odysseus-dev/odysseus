@@ -44,7 +44,7 @@ def _wipe_memory_files():
             continue
         try:
             if name == "memory.json":
-                with open(p, "w") as f:
+                with open(p, "w", encoding="utf-8") as f:
                     json.dump([], f)
             else:
                 os.remove(p)

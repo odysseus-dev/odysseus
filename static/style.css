@@ -546,11 +546,12 @@ body.bg-pattern-sparkles {
     .sidebar-brand-title {
       font-size: 1rem;
       font-weight: 600;
+      line-height: 1.35;
       color: var(--brand-color, var(--red));
       white-space: nowrap;
       user-select: none;
       position: relative;
-      top: 1px;
+      top: 0;
       left: -10px;
     }
     .sidebar-sep {
@@ -1208,6 +1209,25 @@ body.bg-pattern-sparkles {
     .section-header-btn.active { opacity: 0.9; color: var(--accent); }
     .section-header-btn svg { width: 12px; height: 12px; }
 
+    /* Chats library — grid icon, hover-reveal so the header only toggles collapse */
+    #sessions-section .chats-manage-btn {
+      opacity: 0;
+      transition: opacity 0.12s, background 0.08s;
+    }
+    #sessions-section .section-header-flex:hover .chats-manage-btn,
+    #sessions-section .chats-manage-btn:hover,
+    #sessions-section .chats-manage-btn:focus-visible {
+      opacity: 0.45;
+    }
+    #sessions-section .chats-manage-btn:hover,
+    #sessions-section .chats-manage-btn:focus-visible {
+      opacity: 1;
+    }
+    @media (hover: none) {
+      #sessions-section .chats-manage-btn { opacity: 0.35; }
+      #sessions-section .chats-manage-btn:active { opacity: 1; }
+    }
+
     /* Collapse chevron */
     .section-collapse-btn {
       all: unset;
@@ -1579,7 +1599,7 @@ body.bg-pattern-sparkles {
       margin: 0;
       border-radius: 4px;
       border: none;
-      line-height: 1;
+      line-height: 1.3;
       font-size: 13px;
       background: transparent;
       transition: background 0.08s;
@@ -2578,6 +2598,26 @@ body.bg-pattern-sparkles {
       animation: picker-roll-down 0.15s ease-in forwards;
     }
     .model-picker-menu.hidden { display: none; }
+    .model-picker-search-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 30px;
+      gap: 4px;
+      align-items: center;
+      margin-bottom: 4px;
+      transition: grid-template-columns 0.18s ease, gap 0.18s ease;
+    }
+    .model-picker-menu.no-models .model-picker-search-row {
+      margin-bottom: 0;
+    }
+    .model-picker-search-row.searching {
+      grid-template-columns: minmax(0, 1fr) 0px;
+      gap: 0;
+    }
+    .model-picker-search-row.searching .model-picker-action-btn {
+      opacity: 0;
+      transform: translateX(10px) scale(0.88);
+      pointer-events: none;
+    }
     .model-picker-menu input[type="text"] {
       width: 100%;
       box-sizing: border-box;
@@ -2589,8 +2629,8 @@ body.bg-pattern-sparkles {
       color: var(--fg);
       font-family: inherit;
       outline: none;
-      margin-bottom: 4px;
-      transition: border-color 0.15s;
+      min-width: 0;
+      transition: border-color 0.15s, padding 0.18s ease, background 0.18s ease;
     }
     .model-picker-menu input[type="text"]:focus {
       border-color: var(--red);
@@ -2598,9 +2638,50 @@ body.bg-pattern-sparkles {
     .model-picker-menu input[type="text"]::placeholder {
       color: color-mix(in srgb, var(--fg) 30%, transparent);
     }
+    .model-picker-action-btn {
+      appearance: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: color-mix(in srgb, var(--fg) 4%, transparent);
+      color: color-mix(in srgb, var(--fg) 66%, transparent);
+      cursor: pointer;
+      padding: 0;
+      overflow: hidden;
+      transform: translateX(0) scale(1);
+      transition: opacity 0.16s ease, transform 0.18s ease, border-color 0.15s, color 0.15s, background 0.15s;
+    }
+    .model-picker-action-btn:hover,
+    .model-picker-action-btn:focus-visible {
+      border-color: var(--red);
+      color: var(--fg);
+      background: color-mix(in srgb, var(--red) 10%, var(--panel));
+      outline: none;
+    }
+    .model-picker-action-btn.primary {
+      color: var(--red);
+      background: color-mix(in srgb, var(--red) 8%, transparent);
+    }
+    .model-picker-action-btn svg {
+      width: 14px;
+      height: 14px;
+      transition: transform 0.28s ease;
+    }
+    .model-picker-action-btn:hover svg,
+    .model-picker-action-btn:focus-visible svg {
+      transform: rotate(90deg);
+    }
     .model-picker-list {
       max-height: min(280px, 50dvh);
       overflow-y: auto;
+    }
+    .model-picker-list.is-empty {
+      max-height: 0;
+      overflow: hidden;
     }
     .model-picker-list .model-switch-item {
       display: flex;
@@ -2614,6 +2695,14 @@ body.bg-pattern-sparkles {
     }
     .model-picker-list .model-switch-item:hover {
       background: color-mix(in srgb, var(--red) 8%, transparent);
+    }
+    .model-picker-list .model-switch-empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px 8px;
+      color: color-mix(in srgb, var(--fg) 50%, transparent);
+      font-size: 0.82em;
     }
     .model-picker-list .mp-section-label {
       font-size: 0.72em;
@@ -3444,8 +3533,39 @@ body.bg-pattern-sparkles {
       box-shadow: 0 4px 12px rgba(0,0,0,0.2);
       backdrop-filter: blur(12px);
       max-width: min(360px, calc(100vw - 32px));
+      min-width: min(220px, calc(100vw - 32px));
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      box-sizing: border-box;
     }
     .toast.show { opacity:1; transform: translateX(0); }
+    .toast .toast-checkmark {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      margin-right: 7px;
+      color: var(--green, #50fa7b);
+      vertical-align: -3px;
+      transform: scale(0.65);
+      opacity: 0;
+      animation: toastCheckPop 360ms cubic-bezier(0.2, 0.9, 0.25, 1.25) forwards;
+    }
+    .toast .toast-checkmark svg polyline {
+      stroke-dasharray: 24;
+      stroke-dashoffset: 24;
+      animation: toastCheckDraw 420ms ease-out 120ms forwards;
+    }
+    @keyframes toastCheckPop {
+      0% { opacity: 0; transform: scale(0.65); }
+      65% { opacity: 1; transform: scale(1.16); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+    @keyframes toastCheckDraw {
+      to { stroke-dashoffset: 0; }
+    }
     .toast.exiting {
       opacity: 0;
       transform: translateX(-120%);
@@ -9841,19 +9961,59 @@ textarea.memory-add-input {
   opacity: 0.85 !important;
   filter: saturate(0.9);
 }
-.task-paused-badge {
+.task-status-badge {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--orange, #ff9800);
-  background: color-mix(in srgb, var(--orange, #ff9800) 12%, transparent);
-  padding: 2px 6px;
-  border-radius: 10px;
+  letter-spacing: 0.3px;
+  padding: 1px 6px;
+  border-radius: 3px;
   flex-shrink: 0;
+  cursor: pointer;
+  border: 1px solid transparent;
+  line-height: 16px;
+  font-family: 'Fira Code', monospace;
+  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease, filter 0.12s ease;
+  user-select: none;
+}
+.task-paused-badge {
+  color: var(--orange, #ffb86c);
+  background: color-mix(in srgb, var(--orange, #ffb86c) 22%, transparent);
+  border-color: color-mix(in srgb, var(--orange, #ffb86c) 35%, transparent);
+}
+.task-active-badge {
+  color: var(--green, #50fa7b);
+  background: color-mix(in srgb, var(--green, #50fa7b) 20%, transparent);
+  border-color: color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
+}
+.task-run-now-badge {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 34%, transparent);
+}
+.task-card-run-btn {
+  appearance: none;
+  height: 20px;
+  min-height: 0;
+  box-sizing: border-box;
+}
+.task-status-badge:hover {
+  filter: brightness(1.08) saturate(1.15);
+}
+.task-paused-badge:hover {
+  background: color-mix(in srgb, var(--orange, #ffb86c) 30%, transparent);
+  border-color: color-mix(in srgb, var(--orange, #ffb86c) 55%, transparent);
+}
+.task-active-badge:hover {
+  background: color-mix(in srgb, var(--green, #50fa7b) 28%, transparent);
+  border-color: color-mix(in srgb, var(--green, #50fa7b) 55%, transparent);
+}
+.task-run-now-badge:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 24%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 52%, transparent);
 }
 
 .task-builtin-badge {
@@ -10343,6 +10503,16 @@ textarea.memory-add-input {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* Bound the import-review list to the modal like the sibling .memory-list,
+     so a long list scrolls internally instead of overflowing the
+     overflow:hidden .admin-card — which clipped lower entries and their
+     save/discard controls with no usable scroll area. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Small gutter so the scrollbar doesn't sit flush against the item cards. */
+  padding-right: 4px;
 }
 
 .memory-suggestions.hidden {
@@ -10357,6 +10527,13 @@ textarea.memory-add-input {
   color: color-mix(in srgb, var(--fg) 70%, transparent);
   padding-bottom: 4px;
   border-bottom: 1px solid var(--border);
+  /* Pin the title + save all/back controls to the top of the scrolling
+     review list so they stay reachable while the items scroll under them.
+     Opaque background masks items passing beneath. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
 }
 .memory-suggestions-actions,
 .memory-suggestion-actions {
@@ -10566,6 +10743,8 @@ textarea.memory-add-input {
   flex: 1;
   min-width: 0;
   max-width: 70vw;
+  container-type: inline-size;
+  container-name: docpane;
   display: flex;
   flex-direction: column;
   background: var(--bg);
@@ -13102,9 +13281,54 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 /* Collapsed: hide the form body and point the caret right. */
 .adm-add-section.collapsed .admin-model-form { display: none; }
 .adm-add-section.collapsed .adm-section-caret { transform: rotate(-90deg); }
+.adm-quickstart-section {
+  margin-top: 7px;
+}
+.adm-quickstart-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.72;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.adm-quickstart-toggle:hover {
+  opacity: 1;
+  border-color: var(--red);
+}
+.adm-quickstart-section:not(.collapsed) .adm-quickstart-toggle {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.adm-quickstart-body {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  padding: 6px 8px;
+}
+.adm-quickstart-section.collapsed .adm-quickstart-body { display: none; }
+.adm-quickstart-section.collapsed .adm-section-caret { transform: rotate(-90deg); }
 
 /* Custom provider picker (logo + name) replacing the native <select> */
 .adm-provider-picker { position: relative; margin-bottom: 6px; }
+.adm-provider-combo {
+  display: flex;
+  align-items: stretch;
+}
+.adm-provider-combo input {
+  flex: 1;
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
 .adm-provider-btn {
   width: 100%;
   display: flex; align-items: center; gap: 8px;
@@ -13112,6 +13336,14 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   border: 1px solid var(--border); border-radius: 6px;
   padding: 5px 8px; font-family: inherit; font-size: 12px;
   cursor: pointer; text-align: left;
+}
+.adm-provider-combo .adm-provider-btn {
+  width: 128px;
+  flex-shrink: 0;
+  border-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  justify-content: space-between;
 }
 .adm-provider-btn:hover { border-color: color-mix(in srgb, var(--fg) 30%, var(--border)); }
 .adm-provider-current { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -13343,6 +13575,11 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   gap: 6px;
 }
 .admin-model-form-row input { flex: 1; }
+.adm-ep-inline-msg {
+  min-height: 16px;
+  margin-top: 5px;
+  font-size: 11px;
+}
 
 /* Endpoint items */
 .admin-ep-item {
@@ -14064,6 +14301,30 @@ body.left-dock-active {
 #doclib-modal.doclib-fullscreen .doclib-modal-content {
   transition: none !important;
 }
+.modal.modal-right-docked .email-reader-header,
+.modal.modal-left-docked .email-reader-header {
+  flex-direction: column;
+  gap: 6px;
+}
+.modal.modal-right-docked .email-reader-actions,
+.modal.modal-left-docked .email-reader-actions {
+  align-self: flex-end;
+}
+.modal.modal-right-docked .email-reader-meta-row,
+.modal.modal-left-docked .email-reader-meta-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+  align-items: start;
+}
+.modal.modal-right-docked .email-reader-meta-row strong,
+.modal.modal-left-docked .email-reader-meta-row strong {
+  min-width: 0;
+}
+.modal.modal-right-docked .recipient-chip,
+.modal.modal-left-docked .recipient-chip {
+  max-width: 100%;
+}
 .archive-list {
   margin-top: 8px;
   border-top: 1px solid var(--border);
@@ -14198,6 +14459,9 @@ body.left-dock-active {
   display: flex !important;
   flex: 1 1 auto !important;
 }
+#email-lib-modal.email-reading .doclib-modal-content {
+  min-height: var(--email-reading-modal-min-h, auto);
+}
 #email-lib-modal .doclib-card.doclib-card-expanded {
   flex: 1 1 auto !important;
   height: 100% !important;
@@ -14205,6 +14469,7 @@ body.left-dock-active {
      overbearing on desktop; the size jump alone is enough signal. */
   border: 1px solid var(--border) !important;
   box-shadow: 0 6px 18px rgba(0,0,0,0.12) !important;
+  animation: none !important;
 }
 /* Desktop-only, ONLY on the currently-expanded email card. Nudges the title
    row down 6px / right 2px, bolds the subject, hides the timestamp from the
@@ -17880,6 +18145,21 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-settings-stack.hidden { display: none; }
 .cookbook-dep-row.cookbook-dep-blocked { opacity: 0.4; }
 .cookbook-dep-info { flex: 1; min-width: 0; }
+.cookbook-dep-section {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 12px 2px 4px;
+}
+.cookbook-dep-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+.cookbook-dep-section-note {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+}
 .cookbook-dep-tag {
   font-size: 9px;
   padding: 0 8px;
@@ -17911,7 +18191,10 @@ body.gallery-selecting .gallery-dl-btn,
   border: 1px solid color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
 }
 .cookbook-dep-na {
-  color: color-mix(in srgb, var(--fg) 35%, transparent);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  cursor: help;
 }
 .cookbook-dep-install {
   background: var(--accent, var(--red));
@@ -20272,11 +20555,10 @@ body:not(.welcome-ready) #welcome-screen {
   margin-bottom: 0;
 }
 .task-log-row.expanded .task-log-row-head { margin-bottom: 4px; }
-/* Collapsed: body + footer hidden. Expanded: visible. Running/skipped rows
-   don't expand at all (no body to show). */
-.task-log-row:not(.expanded):not(.is-running):not(.is-skipped) .task-log-row-body,
-.task-log-row:not(.expanded):not(.is-running):not(.is-skipped) .task-log-row-actions,
-.task-log-row:not(.expanded):not(.is-running):not(.is-skipped) .task-log-prompt {
+/* Collapsed: body + footer hidden. Expanded: visible. */
+.task-log-row:not(.expanded):not(.is-skipped) .task-log-row-body,
+.task-log-row:not(.expanded):not(.is-skipped) .task-log-row-actions,
+.task-log-row:not(.expanded):not(.is-skipped) .task-log-prompt {
   display: none;
 }
 .task-log-name {
@@ -20324,6 +20606,26 @@ body:not(.welcome-ready) #welcome-screen {
   margin-left: 6px;
   opacity: 0.6;
   font-variant-numeric: tabular-nums;
+}
+.task-log-stop {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: .72;
+  padding: 0;
+  margin-left: 6px;
+  width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  top: -2px;
+}
+.task-log-stop:hover {
+  opacity: 1;
+  color: var(--red, #f87171);
 }
 
 /* Slim single-line row for skipped (noop) runs — body/actions stripped, font
@@ -20472,7 +20774,10 @@ body:not(.welcome-ready) #welcome-screen {
   margin-top: 4px;
 }
 .task-log-open-chat,
-.task-log-copy {
+.task-log-open-report,
+.task-log-copy,
+.task-log-clear-cache,
+.task-log-run-again {
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -20488,10 +20793,21 @@ body:not(.welcome-ready) #welcome-screen {
   line-height: 1.4;
 }
 .task-log-open-chat:hover,
-.task-log-copy:hover {
+.task-log-open-report:hover,
+.task-log-copy:hover,
+.task-log-clear-cache:hover,
+.task-log-run-again:hover {
   color: var(--fg);
   border-color: color-mix(in srgb, var(--fg) 30%, transparent);
   background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.task-log-row-actions > .task-log-open-chat,
+.task-log-row-actions > .task-log-copy {
+  margin-left: auto;
+}
+.task-log-clear-cache svg {
+  position: relative;
+  top: 2px;
 }
 /* Activity filter chips — toggle-out model: ON by default (solid),
    click to toggle OFF (dimmed + strikethrough) to hide that group. */
@@ -25859,6 +26175,13 @@ button .spinner-whirlpool {
   min-height: 0;
   font-size: 12px;
 }
+.email-card-reader-loading {
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+.email-card-reader-loading .spinner-whirlpool,
+.email-card-reader-loading .ai-spinner-whirlpool {
+  opacity: 0.85;
+}
 /* Per-email unread dot in the expanded reader's title row. Background color
    stays inline (per-sender hue from _senderColor), but the dot gets a soft
    breathing glow + a 4px vertical nudge so it reads as centered against
@@ -25939,6 +26262,27 @@ button .spinner-whirlpool {
   background: color-mix(in srgb, var(--accent-primary, var(--red)) 15%, transparent);
   border-color: var(--accent-primary, var(--red));
   max-width: 500px;
+}
+@container docpane (max-width: 460px) {
+  .email-reader-header {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .email-reader-actions {
+    align-self: flex-end;
+  }
+  .email-reader-meta-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2px;
+    align-items: start;
+  }
+  .email-reader-meta-row strong {
+    min-width: 0;
+  }
+  .recipient-chip {
+    max-width: 100%;
+  }
 }
 .email-reader-actions {
   display: flex; gap: 4px; flex-wrap: nowrap; align-items: center;
@@ -27403,9 +27747,24 @@ body.doc-find-active mark.doc-find-mark.current {
   min-width: 0;
 }
 .email-field input:focus { border-color: var(--accent, #4a9eff); }
+@container docpane (max-width: 460px) {
+  .doc-email-header .email-field {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 3px;
+    align-items: stretch;
+  }
+  .doc-email-header .email-field label {
+    min-width: 0;
+    text-align: left;
+  }
+  .doc-email-header .email-field input {
+    width: 100%;
+  }
+}
 /* Cc toggle and attach button are absolute so they don't steal width from the To input */
 .email-field .email-cc-toggle {
-  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  position: absolute; right: 6px; top: calc(50% + 4px); transform: translateY(-50%);
   z-index: 2;
 }
 .email-field input { padding-right: 60px; }
@@ -31743,6 +32102,33 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
    inside #email-lib-accounts pack to the left as normal flex items. */
 .email-accounts-row > .memory-toolbar-btn { flex-shrink: 0; margin-left: auto; }
 #email-lib-accounts { justify-content: flex-start; }
+.email-accounts-loading-whirlpool {
+  width: 14px;
+  height: 14px;
+  margin: 3px 4px 0 1px;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.email-accounts-loading-label {
+  font-size: 10px;
+  opacity: 0.55;
+  position: relative;
+  top: 2px;
+  white-space: nowrap;
+}
+.email-loading-with-label {
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+}
+.email-loading-label {
+  font-size: 11px;
+  opacity: 0.6;
+}
 
 /* Refresh button now lives top-right in the modal header next to the close X.
    Borderless (matches the close X), and a fixed square box so the spin and the
@@ -32505,6 +32891,7 @@ button.cal-event-more:hover { opacity:1 !important; }
 .cal-form-bespoke input[type="time"]::-webkit-calendar-picker-indicator,
 .cal-form-bespoke input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   background-color: var(--accent, var(--red));
+  background-image: none;
   cursor: pointer;
   width: 14px; height: 14px;
 }

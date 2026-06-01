@@ -217,7 +217,7 @@ def _load_config(account: str | None = None) -> dict:
                 Path(__file__).resolve().parent.parent / "data" / "settings.json"
             )
             if settings_path.exists():
-                settings = json.loads(settings_path.read_text())
+                settings = json.loads(settings_path.read_text(encoding="utf-8"))
                 for key in (
                     "imap_host",
                     "imap_port",

@@ -452,9 +452,8 @@ import createResearchSynapse from './researchSynapse.js';
         } else {
           addMessage('assistant',
             'No chat session active. You can:\n\n' +
-            '- Pick a model from the sidebar to start a chat\n' +
-            '- Run `/setup` to configure an endpoint\n' +
-            '- Run `/new` to create a session manually\n' +
+            '- Open the model picker in the chat box and pick a model\n' +
+            '- Use the `+` button in the model picker to add a model endpoint\n' +
             '- Use `/help` to see all available commands');
           _releaseSendFlag();
           return;
@@ -462,9 +461,8 @@ import createResearchSynapse from './researchSynapse.js';
       } catch (e) {
         addMessage('assistant',
           'No chat session active. You can:\n\n' +
-          '- Pick a model from the sidebar to start a chat\n' +
-          '- Run `/setup` to configure an endpoint\n' +
-          '- Run `/new` to create a session manually\n' +
+          '- Open the model picker in the chat box and pick a model\n' +
+          '- Use the `+` button in the model picker to add a model endpoint\n' +
           '- Use `/help` to see all available commands');
         _releaseSendFlag();
         return;
@@ -514,6 +512,9 @@ import createResearchSynapse from './researchSynapse.js';
     let timedOut = false;
     let processingProbeTimer = null;
     let processingProbeAbort = null;
+    let _renderStream = () => {};
+    let _cancelThinkingTimer = () => {};
+    let _removeThinkingSpinner = () => {};
     const clearProcessingProbe = () => {
       if (processingProbeTimer) {
         clearTimeout(processingProbeTimer);
@@ -988,13 +989,13 @@ import createResearchSynapse from './researchSynapse.js';
       }
       const esc = uiModule.esc;
       // Remove thinking spinner helper
-      function _removeThinkingSpinner() {
+      _removeThinkingSpinner = () => {
         const el = document.querySelector('.agent-thinking-dots');
         if (el) {
           if (el._spinner) el._spinner.destroy();
           el.remove();
         }
-      }
+      };
 
       // Tool-aware thinking spinner
       let _lastToolName = '';
@@ -1058,9 +1059,9 @@ import createResearchSynapse from './researchSynapse.js';
           }
         }, 400);
       }
-      function _cancelThinkingTimer() {
+      _cancelThinkingTimer = () => {
         if (_textPauseTimer) { clearTimeout(_textPauseTimer); _textPauseTimer = null; }
-      }
+      };
 
       // Document streaming state (text-fence detection)
       let _docFenceOpened = false;
@@ -1087,7 +1088,7 @@ import createResearchSynapse from './researchSynapse.js';
       }
 
       // Direct render helper for streaming text
-      function _renderStream() {
+      _renderStream = () => {
         let dt = stripToolBlocks(roundText);
         const bodyEl = roundHolder.querySelector('.body');
         const contentEl = _ensureStreamLayout(bodyEl);
@@ -1186,7 +1187,7 @@ import createResearchSynapse from './researchSynapse.js';
         contentEl._prevTextLen = contentEl.textContent.length;
         if (window.hljs) contentEl.querySelectorAll('pre code').forEach((b) => window.hljs.highlightElement(b));
         uiModule.scrollHistory();
-      }
+      };
 
       // Walk text nodes, skip past `prevLen` characters of old text,
       // wrap everything after that in <span class="token-new"> for fade-in
@@ -1215,6 +1216,7 @@ import createResearchSynapse from './researchSynapse.js';
       }
 
       let _nextIsError = false;
+      let _streamSawDone = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1257,6 +1259,7 @@ import createResearchSynapse from './researchSynapse.js';
             }
 
             if (data === '[DONE]') {
+              _streamSawDone = true;
               // Always update background map if entry exists (even if user switched back)
               var bgDone = _backgroundStreams.get(streamSessionId);
               if (bgDone) {
@@ -2220,6 +2223,10 @@ import createResearchSynapse from './researchSynapse.js';
             }
           }
         }
+      }
+
+      if (!_streamSawDone) {
+        throw new Error('Stream closed before completion');
       }
 
       _renderStream();

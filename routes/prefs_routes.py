@@ -12,7 +12,7 @@ PREFS_FILE = os.path.join("data", "user_prefs.json")
 def _load():
     """Load the raw prefs file (internal use only)."""
     try:
-        with open(PREFS_FILE, "r") as f:
+        with open(PREFS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
@@ -20,7 +20,7 @@ def _load():
 
 def _save(prefs):
     os.makedirs(os.path.dirname(PREFS_FILE), exist_ok=True)
-    with open(PREFS_FILE, "w") as f:
+    with open(PREFS_FILE, "w", encoding="utf-8") as f:
         json.dump(prefs, f, indent=2)
 
 

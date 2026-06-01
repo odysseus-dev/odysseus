@@ -57,21 +57,68 @@ export function _setPanelCheckbox(panel, field, checked) {
 
 // ── Command builder: download ──
 
+function _firstGgufSource(model) {
+  const sources = Array.isArray(model?.gguf_sources) ? model.gguf_sources : [];
+  return sources.find(src => src && src.repo) || null;
+}
+
+function _looksLikeGgufRepo(model) {
+  const haystack = `${model?.quant_repo || ''} ${model?.repo_id || ''} ${model?.path || ''} ${model?.name || ''}`.toLowerCase();
+  return !!model?.is_gguf || haystack.includes('gguf') || haystack.includes('.gguf');
+}
+
+function _ggufDownloadSource(model, backend) {
+  if (backend !== 'llamacpp') return null;
+  const source = _firstGgufSource(model);
+  if (source) return source;
+  if (_looksLikeGgufRepo(model)) {
+    const repo = model?.quant_repo || model?.repo_id || model?.name;
+    if (repo) return { repo };
+  }
+  return null;
+}
+
+function _ggufIncludePattern(model, source) {
+  if (source?.file) return source.file;
+  if (model?.quant) return `*${model.quant}*`;
+  return '*.gguf';
+}
+
+function _missingGgufMessage(model) {
+  const name = model?.name || 'this model';
+  return `No GGUF source is configured for ${name}. Pick a model with a GGUF source, or paste the GGUF repo in Download.`;
+}
+
+function _bashQuote(value) {
+  return "'" + String(value ?? '').replace(/'/g, "'\\''") + "'";
+}
+
+function _missingGgufCommand(model) {
+  const msg = _missingGgufMessage(model);
+  if (_isWindows()) {
+    return `Write-Error ${JSON.stringify(msg)}; exit 1`;
+  }
+  return `printf '%s\\n' ${_bashQuote(msg)} >&2; exit 1`;
+}
+
 export function _buildDownloadCmd(model, backend) {
   let cmd = '';
   if (backend === 'ollama') {
     cmd = `ollama pull ${model.name.split('/').pop().toLowerCase()}`;
   } else {
-    const repo = (backend === 'llamacpp' && model.gguf_sources && model.gguf_sources.length)
-      ? model.gguf_sources[0].repo : model.name;
-    const includeArg = (backend === 'llamacpp' && model.gguf_sources && model.gguf_sources.length)
-      ? `, allow_patterns=["*${model.quant || ''}*"]` : '';
-    // Reflect the server's download target in the preview (matches the real
-    // download path built server-side). '' = default HF cache.
-    const _dlDir = (_envState.servers.find(s => s.host === (_envState.remoteHost || '')) || {}).downloadDir || '';
-    const _localDirArg = _dlDir ? `, local_dir=os.path.expanduser('${_dlDir.replace(/\/$/, '')}/${repo.split('/').pop()}')` : '';
-    const _py = _isWindows() ? 'python' : 'python3';
-    cmd = `${_py} -u -c "
+    const ggufSource = _ggufDownloadSource(model, backend);
+    if (backend === 'llamacpp' && !ggufSource) {
+      cmd = _missingGgufCommand(model);
+    } else {
+      const repo = ggufSource?.repo || model.name;
+      const includePattern = backend === 'llamacpp' ? _ggufIncludePattern(model, ggufSource) : null;
+      const includeArg = includePattern ? `, allow_patterns=["${includePattern.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]` : '';
+      // Reflect the server's download target in the preview (matches the real
+      // download path built server-side). '' = default HF cache.
+      const _dlDir = (_envState.servers.find(s => s.host === (_envState.remoteHost || '')) || {}).downloadDir || '';
+      const _localDirArg = _dlDir ? `, local_dir=os.path.expanduser('${_dlDir.replace(/\/$/, '')}/${repo.split('/').pop()}')` : '';
+      const _py = _isWindows() ? 'python' : 'python3';
+      cmd = `${_py} -u -c "
 import sys, time, os
 os.environ['HF_HUB_DISABLE_PROGRESS_BARS']='0'
 os.environ['TQDM_DISABLE']='0'
@@ -125,6 +172,7 @@ try:
 except Exception as e:
  print(f'ERROR {e}',file=sys.stderr,flush=True);sys.exit(1)
 "`;
+    }
   }
   const prefix = _buildEnvPrefix();
   let full = prefix ? prefix + ' ' + cmd : cmd;
@@ -402,10 +450,13 @@ export async function _runPanelCmd(panel, cmd, opts = {}) {
 // ── Model download (dedicated endpoint, tmux-backed) ──
 
 export async function _runModelDownload(panel, model, backend, hostOverride) {
-  const repo = (backend === 'llamacpp' && model.gguf_sources && model.gguf_sources.length)
-    ? model.gguf_sources[0].repo : (model.quant_repo || model.name);
-  const include = (backend === 'llamacpp' && model.gguf_sources && model.gguf_sources.length)
-    ? `*${model.quant || ''}*` : null;
+  const ggufSource = _ggufDownloadSource(model, backend);
+  if (backend === 'llamacpp' && !ggufSource) {
+    uiModule.showToast(_missingGgufMessage(model));
+    return;
+  }
+  const repo = ggufSource?.repo || model.quant_repo || model.name;
+  const include = backend === 'llamacpp' ? _ggufIncludePattern(model, ggufSource) : null;
 
   _syncEnvFromPanel(panel);
 

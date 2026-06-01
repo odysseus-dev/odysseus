@@ -61,6 +61,9 @@ class AuthManager:
         # Guards mutations of self._sessions and the on-disk sessions.json.
         # Validate/create/revoke run concurrently from the FastAPI threadpool.
         self._sessions_lock = threading.RLock()
+        # Guards the first-run setup check-and-write so concurrent requests
+        # cannot both observe is_configured==False and both create admin accounts.
+        self._setup_lock = threading.Lock()
         self._load()
         self._load_sessions()
         self._migrate_single_user()
@@ -69,7 +72,7 @@ class AuthManager:
     def _load(self):
         try:
             if os.path.exists(self.auth_path):
-                with open(self.auth_path, "r") as f:
+                with open(self.auth_path, "r", encoding="utf-8") as f:
                     self._config = json.load(f)
                 logger.info("Auth config loaded")
             else:
@@ -83,7 +86,7 @@ class AuthManager:
         """Load persisted session tokens from disk, pruning expired ones."""
         try:
             if os.path.exists(self._sessions_path):
-                with open(self._sessions_path, "r") as f:
+                with open(self._sessions_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 now = time.time()
                 self._sessions = {
@@ -160,9 +163,10 @@ class AuthManager:
 
     def setup(self, username: str, password: str) -> bool:
         """First-run admin setup. Only works if no users exist."""
-        if self.is_configured:
-            return False
-        return self.create_user(username, password, is_admin=True)
+        with self._setup_lock:
+            if self.is_configured:
+                return False
+            return self.create_user(username, password, is_admin=True)
 
     def create_user(self, username: str, password: str, is_admin: bool = False) -> bool:
         """Create a new user account."""
@@ -215,6 +219,36 @@ class AuthManager:
             self._save_sessions()
         logger.info(
             f"Deleted user '{username}' (by {requesting_user}); revoked {revoked} active session(s)"
+        )
+        return True
+
+    def rename_user(self, old_username: str, new_username: str, requesting_user: str) -> bool:
+        """Rename a user in auth config and active sessions. Admin only."""
+        old_username = old_username.strip().lower()
+        new_username = new_username.strip().lower()
+        requesting_user = (requesting_user or "").strip().lower()
+        if not old_username or not new_username:
+            return False
+        if old_username not in self.users:
+            return False
+        if new_username in self.users:
+            return False
+        if not self.users.get(requesting_user, {}).get("is_admin"):
+            return False
+        self._config.setdefault("users", {})[new_username] = self._config["users"].pop(old_username)
+        self._save()
+
+        renamed_sessions = 0
+        with self._sessions_lock:
+            for sess in self._sessions.values():
+                if (sess or {}).get("username") == old_username:
+                    sess["username"] = new_username
+                    renamed_sessions += 1
+        if renamed_sessions:
+            self._save_sessions()
+        logger.info(
+            "Renamed user '%s' -> '%s' (by %s); updated %d active session(s)",
+            old_username, new_username, requesting_user, renamed_sessions,
         )
         return True
 

@@ -13,13 +13,33 @@ def normalize_base(url: str) -> str:
     for suffix in ["/models", "/chat/completions", "/completions", "/v1/messages"]:
         if url.endswith(suffix):
             url = url[: -len(suffix)].rstrip("/")
+    for suffix in ["/chat", "/tags", "/generate"]:
+        if url.endswith("/api" + suffix):
+            url = url[: -len(suffix)].rstrip("/")
     return url
 
 
 def _detect_provider(url: str) -> str:
+    parsed = urlparse(url or "")
+    host = parsed.hostname or ""
+    path = (parsed.path or "").rstrip("/")
+    if host.endswith("ollama.com") or (parsed.port == 11434 and (path == "/api" or path.startswith("/api/"))):
+        return "ollama"
     if "anthropic.com" in (url or ""):
         return "anthropic"
     return "openai"
+
+
+def _ollama_api_root(base: str) -> str:
+    base = (base or "").strip().rstrip("/")
+    parsed = urlparse(base)
+    host = parsed.hostname or ""
+    path = (parsed.path or "").rstrip("/")
+    if path.endswith("/api"):
+        return base
+    if host.endswith("ollama.com"):
+        return f"{parsed.scheme}://{parsed.netloc}/api"
+    return base
 
 
 def build_chat_url(base: str) -> str:
@@ -29,7 +49,16 @@ def build_chat_url(base: str) -> str:
         if host.endswith("anthropic.com") and base.rstrip("/").endswith("/v1"):
             base = base.rstrip("/")[:-3].rstrip("/")
         return base + "/v1/messages"
+    if provider == "ollama":
+        return _ollama_api_root(base) + "/chat"
     return base + "/chat/completions"
+
+
+def build_models_url(base: str) -> str:
+    provider = _detect_provider(base)
+    if provider == "ollama":
+        return _ollama_api_root(base) + "/tags"
+    return base + "/models"
 
 
 def build_headers(api_key, base: str) -> dict:
@@ -65,6 +94,9 @@ class TestNormalizeBase:
             normalize_base("https://api.anthropic.com/v1/messages")
             == "https://api.anthropic.com"
         )
+
+    def test_strips_ollama_native_chat(self):
+        assert normalize_base("https://ollama.com/api/chat") == "https://ollama.com/api"
 
     def test_trailing_slash(self):
         assert (
@@ -107,6 +139,20 @@ class TestBuildChatUrl:
             build_chat_url("http://localhost:8000/v1")
             == "http://localhost:8000/v1/chat/completions"
         )
+
+    def test_ollama_cloud_native_api(self):
+        assert build_chat_url("https://ollama.com/api") == "https://ollama.com/api/chat"
+
+    def test_ollama_cloud_root_adds_api(self):
+        assert build_chat_url("https://ollama.com") == "https://ollama.com/api/chat"
+
+
+class TestBuildModelsUrl:
+    def test_openai_models(self):
+        assert build_models_url("https://api.openai.com/v1") == "https://api.openai.com/v1/models"
+
+    def test_ollama_tags(self):
+        assert build_models_url("https://ollama.com/api") == "https://ollama.com/api/tags"
 
 
 class TestBuildHeaders:

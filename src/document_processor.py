@@ -17,47 +17,19 @@ def _is_text_file(path: str) -> bool:
     """Check if file has text extension."""
     return any(
         path.lower().endswith(ext)
-        for ext in (
-            ".txt",
-            ".py",
-            ".html",
-            ".htm",
-            ".md",
-            ".json",
-            ".csv",
-            ".log",
-            ".js",
-        )
+        for ext in (".txt", ".py", ".html", ".htm", ".md", ".json", ".csv", ".log", ".js")
     )
 
 
 def _process_text_file(path: str) -> str:
     """Process text file with enhanced formatting and metadata."""
     language_map = {
-        ".py": "python",
-        ".js": "javascript",
-        ".html": "html",
-        ".css": "css",
-        ".json": "json",
-        ".md": "markdown",
-        ".txt": "text",
-        ".csv": "csv",
-        ".log": "log",
-        ".sh": "bash",
-        ".yml": "yaml",
-        ".yaml": "yaml",
-        ".xml": "xml",
-        ".sql": "sql",
-        ".cpp": "cpp",
-        ".c": "c",
-        ".java": "java",
-        ".go": "go",
-        ".rs": "rust",
-        ".php": "php",
-        ".rb": "ruby",
-        ".ts": "typescript",
-        ".jsx": "javascript",
-        ".tsx": "typescript",
+        ".py": "python", ".js": "javascript", ".html": "html", ".css": "css",
+        ".json": "json", ".md": "markdown", ".txt": "text", ".csv": "csv",
+        ".log": "log", ".sh": "bash", ".yml": "yaml", ".yaml": "yaml",
+        ".xml": "xml", ".sql": "sql", ".cpp": "cpp", ".c": "c",
+        ".java": "java", ".go": "go", ".rs": "rust", ".php": "php",
+        ".rb": "ruby", ".ts": "typescript", ".jsx": "javascript", ".tsx": "typescript",
     }
 
     filename = os.path.basename(path)
@@ -67,7 +39,6 @@ def _process_text_file(path: str) -> str:
 
     try:
         from src.personal_docs import read_text_file
-
         content = read_text_file(path)
     except Exception:
         try:
@@ -77,7 +48,6 @@ def _process_text_file(path: str) -> str:
                 content = raw_data.decode("utf-8")
             except UnicodeDecodeError:
                 from charset_normalizer import detect
-
                 encoding = (detect(raw_data) or {}).get("encoding") or "utf-8"
                 content = raw_data.decode(encoding, errors="replace")
         except Exception as e:
@@ -118,27 +88,9 @@ def _process_text_file(path: str) -> str:
     header += f"[Type: {language}, Lines: {line_count}, Size: {size_str} bytes]"
 
     code_extensions = {
-        ".py",
-        ".js",
-        ".html",
-        ".css",
-        ".json",
-        ".md",
-        ".sh",
-        ".yml",
-        ".yaml",
-        ".xml",
-        ".sql",
-        ".cpp",
-        ".c",
-        ".java",
-        ".go",
-        ".rs",
-        ".php",
-        ".rb",
-        ".ts",
-        ".jsx",
-        ".tsx",
+        ".py", ".js", ".html", ".css", ".json", ".md", ".sh", ".yml", ".yaml",
+        ".xml", ".sql", ".cpp", ".c", ".java", ".go", ".rs", ".php", ".rb",
+        ".ts", ".jsx", ".tsx",
     }
     if ext in code_extensions:
         code_block = f"```{language}\n{content}"
@@ -157,7 +109,6 @@ def _process_pdf(path: str) -> str:
     """Process PDF file with text extraction (pypdf). Uses VL model for image-heavy pages."""
     try:
         from pypdf import PdfReader
-
         pdf_text = ""
         reader = PdfReader(path)
 
@@ -174,9 +125,7 @@ def _process_pdf(path: str) -> str:
             if images and len(page_text) < 50:
                 for img_index, img in enumerate(images[:3]):  # cap at 3 images per page
                     try:
-                        with tempfile.NamedTemporaryFile(
-                            suffix=".png", delete=False
-                        ) as tmp:
+                        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                             temp_img_path = tmp.name
                         try:
                             img.image.save(temp_img_path, "PNG")  # pypdf -> PIL image
@@ -207,7 +156,6 @@ def _load_vl_settings() -> dict:
     """Load admin settings from disk."""
     try:
         from src.settings import load_settings
-
         return load_settings()
     except Exception:
         return {}
@@ -226,17 +174,10 @@ def _resolve_vl_model(configured: str) -> tuple:
 
     # Auto-detect: try known vision-capable models in priority order
     candidates = [
-        "gpt-4o",
-        "gpt-4o-mini",
-        "gpt-4.1",
-        "gpt-4.1-mini",
-        "claude-sonnet-4-5-20250929",
-        "claude-opus-4-20250514",
-        "gemini-2.0-flash",
-        "gemini-2.5-pro",
-        "llava",
-        "pixtral",
-        "qwen2-vl",
+        "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini",
+        "claude-sonnet-4-5-20250929", "claude-opus-4-20250514",
+        "gemini-2.0-flash", "gemini-2.5-pro",
+        "llava", "pixtral", "qwen2-vl",
     ]
     for candidate in candidates:
         try:
@@ -253,31 +194,19 @@ def analyze_image_with_vl_result(image_path: str) -> dict:
     try:
         settings = _load_vl_settings()
         if not settings.get("vision_enabled", True):
-            return {
-                "text": "[Vision is disabled — enable it in Settings → Vision]",
-                "model": "",
-            }
+            return {"text": "[Vision is disabled — enable it in Settings → Vision]", "model": ""}
         vl_model = settings.get("vision_model", "")
 
         try:
             url, model_id, headers = _resolve_vl_model(vl_model)
         except ValueError:
-            return {
-                "text": "[No vision model configured — set one in Settings → Vision]",
-                "model": vl_model or "",
-            }
+            return {"text": "[No vision model configured — set one in Settings → Vision]", "model": vl_model or ""}
 
         with open(image_path, "rb") as f:
             img_data = base64.b64encode(f.read()).decode("utf-8")
 
         ext = os.path.splitext(image_path)[1].lower()
-        mime_map = {
-            ".jpg": "jpeg",
-            ".jpeg": "jpeg",
-            ".png": "png",
-            ".gif": "gif",
-            ".webp": "webp",
-        }
+        mime_map = {".jpg": "jpeg", ".jpeg": "jpeg", ".png": "png", ".gif": "gif", ".webp": "webp"}
         img_format = mime_map.get(ext, "jpeg")
 
         vl_messages = [
@@ -285,12 +214,7 @@ def analyze_image_with_vl_result(image_path: str) -> dict:
                 "role": "user",
                 "content": [
                     {"type": "text", "text": "Describe this image in detail"},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/{img_format};base64,{img_data}"
-                        },
-                    },
+                    {"type": "image_url", "image_url": {"url": f"data:image/{img_format};base64,{img_data}"}},
                 ],
             }
         ]
@@ -299,35 +223,22 @@ def analyze_image_with_vl_result(image_path: str) -> dict:
         # — same shape as task/chat but its own list (`vision_model_fallbacks`).
         try:
             from src.endpoint_resolver import resolve_vision_fallback_candidates
-
-            _vl_candidates = [
-                (url, model_id, headers)
-            ] + resolve_vision_fallback_candidates()
+            _vl_candidates = [(url, model_id, headers)] + resolve_vision_fallback_candidates()
         except Exception:
             _vl_candidates = [(url, model_id, headers)]
 
         last_err = None
-        for i, (_url, _model, _headers) in enumerate(
-            [c for c in _vl_candidates if c and c[0] and c[1]]
-        ):
+        for i, (_url, _model, _headers) in enumerate([c for c in _vl_candidates if c and c[0] and c[1]]):
             try:
-                description = llm_call(
-                    _url, _model, vl_messages, headers=_headers, timeout=30
-                )
+                description = llm_call(_url, _model, vl_messages, headers=_headers, timeout=120)
                 logger.info("VL analysis complete with model %s", _model)
                 return {"text": description, "model": _model}
             except Exception as e:
                 last_err = e
                 tag = "primary" if i == 0 else "candidate"
-                logger.warning(
-                    f"[vision fallback] {tag} {_model} failed ({type(e).__name__}); trying next"
-                )
+                logger.warning(f"[vision fallback] {tag} {_model} failed ({type(e).__name__}); trying next")
                 continue
-        raise (
-            last_err
-            if last_err
-            else RuntimeError("No vision model endpoint configured")
-        )
+        raise last_err if last_err else RuntimeError("No vision model endpoint configured")
 
     except Exception as e:
         logger.error(f"VL model unavailable: {e}")
@@ -346,6 +257,8 @@ def build_user_content(
     upload_handler,
     session_id: str | None = None,
     auto_opened_docs: list[Dict[str, Any]] | None = None,
+    owner: str | None = None,
+    resolved_uploads: dict[str, Dict[str, Any]] | None = None,
 ) -> str | List[Dict[str, Any]]:
     """Build user content with attachments (text, images, audio, documents).
 
@@ -357,89 +270,62 @@ def build_user_content(
     """
     content = [{"type": "text", "text": text}]
 
-    for fid in attachment_ids:
-        if not upload_handler.validate_upload_id(fid):
-            logger.warning(f"Invalid attachment ID format: {fid}")
+    for fid in attachment_ids or []:
+        upload_info = (resolved_uploads or {}).get(fid)
+        if upload_info is None and hasattr(upload_handler, "resolve_upload"):
+            upload_info = upload_handler.resolve_upload(fid, owner=owner)
+        if upload_info is None:
+            logger.warning(f"Attachment {fid} not found or not authorized")
             continue
 
-        path = os.path.join(upload_dir, fid)
-        if not (upload_handler.inside_base_dir(path) and os.path.exists(path)):
-            found = False
-            for root, dirs, files in os.walk(upload_dir):
-                if fid in files and not fid.endswith(".json"):
-                    path = os.path.join(root, fid)
-                    if upload_handler.inside_base_dir(path):
-                        found = True
-                        logger.info(f"Found attachment {fid} at {path}")
-                        break
-            if not found:
-                logger.warning(f"Attachment {fid} not found in upload directories")
-                continue
-
-        if not upload_handler.inside_base_dir(path):
+        path = upload_info.get("path")
+        if not path or not os.path.exists(path):
+            logger.warning(f"Attachment {fid} path is missing")
+            continue
+        if hasattr(upload_handler, "_inside_upload_dir") and not upload_handler._inside_upload_dir(path):
+            logger.warning(f"Attachment {fid} path is outside upload directory: {path}")
+            continue
+        if not hasattr(upload_handler, "_inside_upload_dir") and not upload_handler.inside_base_dir(path):
             logger.warning(f"Attachment {fid} path is outside base directory: {path}")
             continue
 
         _, ext = os.path.splitext(path.lower())
-        mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        mime = upload_info.get("mime") or mimetypes.guess_type(path)[0] or "application/octet-stream"
+        display_name = upload_info.get("name") or upload_info.get("original_name") or path
 
-        if upload_handler.is_image_file(path, mime):
+        if upload_handler.is_image_file(display_name, mime):
             try:
                 with open(path, "rb") as image_file:
                     encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
                 image_format = ext[1:]
-                content.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/{image_format};base64,{encoded_string}"
-                        },
-                    }
-                )
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/{image_format};base64,{encoded_string}"},
+                })
             except Exception as e:
                 logger.error(f"Failed to encode image {fid}: {e}")
                 if content and content[0]["type"] == "text":
-                    content[0]["text"] += (
-                        "\n\n[Image attached but could not be processed]"
-                    )
+                    content[0]["text"] += "\n\n[Image attached but could not be processed]"
                 else:
-                    content.insert(
-                        0,
-                        {
-                            "type": "text",
-                            "text": "[Image attached but could not be processed]",
-                        },
-                    )
+                    content.insert(0, {"type": "text", "text": "[Image attached but could not be processed]"})
 
-        elif upload_handler.is_audio_file(path, mime):
+        elif upload_handler.is_audio_file(display_name, mime):
             try:
                 with open(path, "rb") as audio_file:
                     encoded_string = base64.b64encode(audio_file.read()).decode("utf-8")
                 audio_format = ext[1:]
-                content.append(
-                    {
-                        "type": "audio",
-                        "audio": {
-                            "url": f"data:audio/{audio_format};base64,{encoded_string}"
-                        },
-                    }
-                )
+                content.append({
+                    "type": "audio",
+                    "audio": {"url": f"data:audio/{audio_format};base64,{encoded_string}"},
+                })
             except Exception as e:
                 logger.error(f"Failed to encode audio {fid}: {e}")
                 if content and content[0]["type"] == "text":
-                    content[0]["text"] += (
-                        "\n\n[Audio attached but could not be processed]"
-                    )
+                    content[0]["text"] += "\n\n[Audio attached but could not be processed]"
                 else:
-                    content.insert(
-                        0,
-                        {
-                            "type": "text",
-                            "text": "[Audio attached but could not be processed]",
-                        },
-                    )
+                    content.insert(0, {"type": "text", "text": "[Audio attached but could not be processed]"})
 
-        elif upload_handler.is_document_file(path, mime):
+        elif upload_handler.is_document_file(display_name, mime):
             if mime == "application/pdf":
                 extracted_text = None
                 if session_id:
@@ -450,14 +336,13 @@ def build_user_content(
                             create_form_markdown_document,
                             create_plain_pdf_document,
                         )
-
                         title = os.path.splitext(os.path.basename(path))[0]
                         # Pull the PDF prose once — used as either intro_text
                         # (form path) or the doc body (plain path).
                         try:
-                            pdf_body_text = (
-                                _process_pdf(path).lstrip("\n[PDF content]:").strip()
-                            )
+                            pdf_body_text = _process_pdf(path).lstrip(
+                                "\n[PDF content]:"
+                            ).strip()
                         except Exception:
                             pdf_body_text = None
 
@@ -501,7 +386,9 @@ def build_user_content(
                                     f"the Export PDF button when done.]"
                                 )
                                 if body_for_chat:
-                                    extracted_text += f"\n\n[PDF content — {title}]:\n{body_for_chat}{truncated_marker}"
+                                    extracted_text += (
+                                        f"\n\n[PDF content — {title}]:\n{body_for_chat}{truncated_marker}"
+                                    )
                         else:
                             doc_id = create_plain_pdf_document(
                                 session_id=session_id,
@@ -510,30 +397,29 @@ def build_user_content(
                                 body_text=pdf_body_text,
                             )
                             if doc_id:
-                                extracted_text = f"\n\n[PDF attached: {title} — opened in document viewer.]"
+                                extracted_text = (
+                                    f"\n\n[PDF attached: {title} — opened in document viewer.]"
+                                )
                                 if body_for_chat:
-                                    extracted_text += f"\n\n[PDF content — {title}]:\n{body_for_chat}{truncated_marker}"
+                                    extracted_text += (
+                                        f"\n\n[PDF content — {title}]:\n{body_for_chat}{truncated_marker}"
+                                    )
 
                         if doc_id and auto_opened_docs is not None:
                             from src.database import SessionLocal, Document
-
                             _db = SessionLocal()
                             try:
-                                _d = (
-                                    _db.query(Document)
-                                    .filter(Document.id == doc_id)
-                                    .first()
-                                )
+                                _d = _db.query(Document).filter(
+                                    Document.id == doc_id
+                                ).first()
                                 if _d:
-                                    auto_opened_docs.append(
-                                        {
-                                            "doc_id": _d.id,
-                                            "title": _d.title,
-                                            "language": _d.language,
-                                            "content": _d.current_content,
-                                            "version": _d.version_count,
-                                        }
-                                    )
+                                    auto_opened_docs.append({
+                                        "doc_id": _d.id,
+                                        "title": _d.title,
+                                        "language": _d.language,
+                                        "content": _d.current_content,
+                                        "version": _d.version_count,
+                                    })
                             finally:
                                 _db.close()
                     except Exception as e:
@@ -555,11 +441,7 @@ def build_user_content(
             else:
                 content.insert(0, {"type": "text", "text": "[Attached non-text file]"})
 
-    has_media = any(
-        item.get("type") in ["image_url", "audio"]
-        for item in content
-        if isinstance(item, dict)
-    )
+    has_media = any(item.get("type") in ["image_url", "audio"] for item in content if isinstance(item, dict))
     if not has_media and content:
         combined_text = ""
         for item in content:

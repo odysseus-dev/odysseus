@@ -46,6 +46,36 @@ for dir in /app /app/data /app/logs; do
     fi
 done
 
+# Cookbook installs vllm/etc. via `pip install --user`, which pulls
+# nvidia-cuda-* wheels into /app/.local but does not set CUDA_HOME or
+# symlink /usr/local/cuda. vllm 0.22+ then crashes during engine init
+# when FlashInfer tries to JIT a sampler kernel ("Could not find nvcc",
+# then "CUDA compiler and toolkit headers are incompatible" on the
+# mixed cuda-nvcc 13.3 / cuda-runtime 13.0 wheel combo).
+#
+# Auto-set CUDA_HOME if a pip-installed nvcc is present, and disable the
+# FlashInfer JIT sampler — sampler only, no impact on attention path.
+# No-op when vllm isn't installed.
+#
+# Checked layouts (all are real pip-wheel install paths):
+#   nvidia/cu13        — nvidia-nvcc-cu13 (CUDA 13.x wheel style)
+#   nvidia/cu12        — nvidia-nvcc-cu12 (CUDA 12.x wheel style)
+#   nvidia/cuda_nvcc   — nvidia-cuda-nvcc-cu12 (older cu12 sub-package style)
+for cu in \
+    /app/.local/lib/python*/site-packages/nvidia/cu13 \
+    /app/.local/lib/python*/site-packages/nvidia/cu12 \
+    /app/.local/lib/python*/site-packages/nvidia/cuda_nvcc; do
+    if [ -x "$cu/bin/nvcc" ]; then
+        export CUDA_HOME="$cu"
+        break
+    fi
+done
+# Disable the FlashInfer JIT sampler unconditionally — it is sampler-only
+# and has no impact on the attention path, but requires nvcc + matching
+# CUDA headers at startup. Without this, vLLM crashes with "Could not find
+# nvcc" even when the GPU itself is fully visible to the container.
+export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
+
 # Drop root and run the actual app. `gosu` is preferred over `su` /
 # `sudo` because it cleans up the process tree (no extra shell layer)
 # so signals (SIGTERM from `docker stop`) reach uvicorn directly.

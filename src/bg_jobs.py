@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import os
-import signal
+import shlex
 import subprocess
 import time
 import uuid
@@ -30,6 +30,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.atomic_io import atomic_write_json
+from core.platform_compat import (
+    detached_popen_kwargs,
+    find_bash,
+    kill_process_tree,
+    pid_alive,
+)
 
 _DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
 _JOBS_DIR = _DATA_DIR / "bg_jobs"
@@ -49,7 +55,7 @@ _RETENTION_S = 3600  # 1 hour after follow-up
 def _load() -> Dict[str, Dict[str, Any]]:
     try:
         if _STORE.exists():
-            return json.loads(_STORE.read_text()) or {}
+            return json.loads(_STORE.read_text(encoding="utf-8")) or {}
     except Exception:
         pass
     return {}
@@ -60,21 +66,15 @@ def _save(jobs: Dict[str, Dict[str, Any]]) -> None:
 
 
 def _pid_alive(pid: Optional[int]) -> bool:
-    if not pid:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ProcessLookupError):
-        return False
+    # Delegates to the platform-safe probe. NB: a bare os.kill(pid, 0) is unsafe
+    # on Windows — CPython routes it to TerminateProcess, which would KILL the
+    # job we're only trying to check. core.platform_compat.pid_alive handles
+    # both OSes correctly.
+    return pid_alive(pid)
 
 
-def launch(
-    command: str,
-    session_id: str,
-    cwd: Optional[str] = None,
-    max_runtime_s: int = DEFAULT_MAX_RUNTIME_S,
-) -> Dict[str, Any]:
+def launch(command: str, session_id: str, cwd: Optional[str] = None,
+           max_runtime_s: int = DEFAULT_MAX_RUNTIME_S) -> Dict[str, Any]:
     """Launch `command` detached. Returns the job record (status='running').
 
     Output + the final exit code are written to files so status survives a
@@ -92,32 +92,59 @@ def launch(
     # command in `( … )` — the wrapper can't be broken by an unbalanced paren or
     # a trailing line-continuation in the command. `$?` is the child's real
     # exit status.
-    cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
-    cmd_path.write_text(command + "\n")
-    wrapper = f"bash {cmd_path} > {log_path} 2>&1\necho $? > {exit_path}\n"
-    script_path = _JOBS_DIR / f"{job_id}.sh"
-    script_path.write_text(wrapper)
+    bash = find_bash()
+    if bash:
+        # POSIX, or Windows with Git Bash/WSL. The user command goes in its OWN
+        # script file, run as a child `bash` — an `exit` inside it only ends
+        # that child (so the wrapper still records the exit code), and an
+        # unbalanced paren / trailing line-continuation in the command can't
+        # break the wrapper. `$?` is the child's real exit status. Paths are
+        # emitted as POSIX (forward-slash) + shell-quoted so Git Bash on Windows
+        # handles drive paths and spaces correctly.
+        cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
+        cmd_path.write_text(command + "\n", encoding="utf-8")
+        lp, xp, cp = (shlex.quote(p.as_posix()) for p in (log_path, exit_path, cmd_path))
+        script_path = _JOBS_DIR / f"{job_id}.sh"
+        script_path.write_text(
+            f"bash {cp} > {lp} 2>&1\n"
+            f"echo $? > {xp}\n",
+            encoding="utf-8",
+        )
+        argv = [bash, str(script_path)]
+    else:
+        # Windows without any bash installed: cmd.exe wrapper. The command runs
+        # in its own child .cmd so %ERRORLEVEL% is the command's real exit code.
+        child_path = _JOBS_DIR / f"{job_id}.child.cmd"
+        child_path.write_text("@echo off\r\n" + command + "\r\n", encoding="utf-8")
+        script_path = _JOBS_DIR / f"{job_id}.cmd"
+        script_path.write_text(
+            "@echo off\r\n"
+            f'call "{child_path}" > "{log_path}" 2>&1\r\n'
+            f'echo %ERRORLEVEL%> "{exit_path}"\r\n',
+            encoding="utf-8",
+        )
+        argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
 
     proc = subprocess.Popen(
-        ["bash", str(script_path)],
+        argv,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
         cwd=cwd or None,
-        start_new_session=True,  # setsid — detach from the request lifecycle
+        **detached_popen_kwargs(),  # detach from the request lifecycle (setsid / DETACHED_PROCESS)
     )
 
     rec = {
         "id": job_id,
         "session_id": session_id,
         "command": command,
-        "status": "running",  # running | done | failed
+        "status": "running",       # running | done | failed
         "pid": proc.pid,
         "started_at": time.time(),
         "ended_at": None,
         "exit_code": None,
         "max_runtime_s": max_runtime_s,
-        "followed_up": False,  # has the agent been re-invoked with the result?
+        "followed_up": False,       # has the agent been re-invoked with the result?
         "log_path": str(log_path),
         "exit_path": str(exit_path),
     }
@@ -129,13 +156,13 @@ def launch(
 
 def _read_output(rec: Dict[str, Any]) -> str:
     try:
-        txt = Path(rec["log_path"]).read_text(errors="replace")
+        txt = Path(rec["log_path"]).read_text(encoding="utf-8", errors="replace")
     except Exception:
         return ""
     if len(txt) > _MAX_OUTPUT_CHARS:
         # Keep head + tail — the interesting bits are usually at both ends.
         head = txt[: _MAX_OUTPUT_CHARS // 2]
-        tail = txt[-_MAX_OUTPUT_CHARS // 2 :]
+        tail = txt[-_MAX_OUTPUT_CHARS // 2:]
         txt = head + "\n…[truncated]…\n" + tail
     return txt
 
@@ -143,16 +170,12 @@ def _read_output(rec: Dict[str, Any]) -> str:
 def _prune(jobs: Dict[str, Dict[str, Any]], now: float) -> bool:
     """Drop records (and their on-disk files) for jobs that finished, were
     followed up, and are older than the retention window. Mutates `jobs`."""
-    stale = [
-        jid
-        for jid, rec in jobs.items()
-        if rec.get("followed_up")
-        and rec.get("ended_at")
-        and (now - rec["ended_at"]) > _RETENTION_S
-    ]
+    stale = [jid for jid, rec in jobs.items()
+             if rec.get("followed_up") and rec.get("ended_at")
+             and (now - rec["ended_at"]) > _RETENTION_S]
     for jid in stale:
         jobs.pop(jid, None)
-        for p in _JOBS_DIR.glob(f"{jid}.*"):  # .sh .cmd.sh .log .exit
+        for p in _JOBS_DIR.glob(f"{jid}.*"):   # .sh .cmd.sh .log .exit
             try:
                 p.unlink()
             except Exception:
@@ -179,9 +202,7 @@ def refresh() -> Dict[str, Dict[str, Any]]:
             rec["status"] = "done" if code == 0 else "failed"
             rec["ended_at"] = now
             changed = True
-        elif (now - rec.get("started_at", now)) > rec.get(
-            "max_runtime_s", DEFAULT_MAX_RUNTIME_S
-        ):
+        elif (now - rec.get("started_at", now)) > rec.get("max_runtime_s", DEFAULT_MAX_RUNTIME_S):
             # Runaway / stuck — reap it but STILL surface a follow-up.
             _kill(rec.get("pid"))
             rec["status"] = "failed"
@@ -205,26 +226,16 @@ def refresh() -> Dict[str, Dict[str, Any]]:
 
 
 def _kill(pid: Optional[int]) -> None:
-    if not pid:
-        return
-    try:
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
-    except Exception:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except Exception:
-            pass
+    # Cross-platform process-tree teardown (POSIX killpg / Windows taskkill /T).
+    kill_process_tree(pid)
 
 
 def pending_followups() -> List[Dict[str, Any]]:
     """Finished jobs the agent hasn't been re-invoked for yet. The monitor
     drains these; mark_followed_up() flips the flag only on success."""
     jobs = refresh()
-    return [
-        r
-        for r in jobs.values()
-        if r.get("status") in ("done", "failed") and not r.get("followed_up")
-    ]
+    return [r for r in jobs.values()
+            if r.get("status") in ("done", "failed") and not r.get("followed_up")]
 
 
 def mark_followed_up(job_id: str) -> None:

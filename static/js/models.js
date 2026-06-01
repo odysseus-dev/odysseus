@@ -11,6 +11,7 @@ import dragSortModule from './dragSort.js';
 import spinnerModule from './spinner.js';
 import { modelColor } from './chatRenderer.js';
 import { providerLogo } from './providers.js';
+import { sortModelIds } from './modelSort.js';
 
 let API_BASE = '';
 let _cachedItems = []; // cached /api/models items for model-switch dropdown
@@ -603,7 +604,7 @@ export async function refreshProviders() {
 
     if (openai) {
       const models = (openai.items?.[0]?.models) || [];
-      models.forEach(m => {
+      sortModelIds(models).forEach(m => {
         const opt = document.createElement('option');
         opt.value = m;
         opt.textContent = m;

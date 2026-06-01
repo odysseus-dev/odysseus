@@ -45,6 +45,7 @@ let _loadPresets;
 let _savePresets;
 let _copyText;
 let _persistEnvState;
+let _refreshDependencies;
 let modelLogo;
 let esc;
 let _detectBackend;
@@ -372,6 +373,13 @@ function _updateTask(sessionId, updates) {
       if (uptime) uptime.style.display = 'none';
     }
   }
+}
+
+function _refreshDepsAfterInstall(task) {
+  if (!task || task.type !== 'download' || !task.payload?._dep) return;
+  try {
+    _refreshDependencies?.({ host: task.remoteHost || '', port: task.sshPort || '', venv: task.payload?.env_path || '' });
+  } catch {}
 }
 
 export function _removeTask(sessionId) {
@@ -731,7 +739,7 @@ async function _retryDownload(name, payload) {
       uiModule.showToast('Download failed: ' + (data.error || ''));
       return;
     }
-    _addTask(data.session_id, name, 'download', payload);
+    _addTask(data.session_id, name, 'download', _payload);
     uiModule.showToast(`Downloading ${name}...`);
   } catch (e) {
     uiModule.showToast('Download failed: ' + e.message);
@@ -1940,6 +1948,7 @@ async function _reconnectTask(el, task) {
             const _chk = el.querySelector('.cookbook-task-check'); if (_chk && task.type !== 'download') _chk.style.display = '';
             const _sb = el.querySelector('.cookbook-task-serve-btn'); if (_sb) _sb.style.display = '';
             _showCookbookNotif();
+            _refreshDepsAfterInstall(task);
           }
         }
         _renderRunningTab();
@@ -2138,6 +2147,7 @@ async function _reconnectTask(el, task) {
               _updateTask(task.sessionId, { status: 'done' });
               const _sb2 = el.querySelector('.cookbook-task-serve-btn'); if (_sb2) _sb2.style.display = '';
               _showCookbookNotif();
+              _refreshDepsAfterInstall(task);
               fetch('/api/shell/exec', {
                 method: 'POST', credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
@@ -2155,10 +2165,6 @@ async function _reconnectTask(el, task) {
           if (badge) {
             const info = _parseServePhase(snapshot);
             if (info.status === 'ready' && !task._serveReady) {
-              task._serveReady = true;
-              _updateTask(task.sessionId, { _serveReady: true });
-            }
-            if (!task._serveReady && task.ts && (Date.now() - task.ts) > 300000) {
               task._serveReady = true;
               _updateTask(task.sessionId, { _serveReady: true });
             }
@@ -2678,6 +2684,7 @@ export function initRunning(shared) {
   _savePresets = shared._savePresets;
   _copyText = shared._copyText;
   _persistEnvState = shared._persistEnvState;
+  _refreshDependencies = shared._refreshDependencies;
   modelLogo = shared.modelLogo;
   esc = shared.esc;
   _detectBackend = shared._detectBackend;

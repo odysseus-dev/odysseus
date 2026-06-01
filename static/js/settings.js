@@ -5,6 +5,7 @@ import uiModule from './ui.js';
 import searchModule from './search.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { clearDockSide } from './modalSnap.js';
+import { sortModelIds } from './modelSort.js';
 
 let initialized = false;
 let modalEl = null;
@@ -31,6 +32,7 @@ function initTabs() {
       // they flip toggles instead of having to close + reopen the modal.
       document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
       syncAppearanceOpacity(tab === 'appearance');
+      if (tab === 'ai') refreshAiModelEndpoints();
     });
   });
 }
@@ -160,6 +162,93 @@ function initOpacityToggle() {
    AI TAB
    ═══════════════════════════════════════════ */
 
+const _aiEndpointRefreshers = new Set();
+let _aiEndpointRefreshInFlight = null;
+
+async function _fetchModelEndpoints() {
+  const epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+  const endpoints = await epRes.json();
+  return Array.isArray(endpoints) ? endpoints : [];
+}
+
+function _endpointLabel(ep) {
+  return ep.name + (ep.online ? '' : ' (offline)');
+}
+
+function _fillEndpointSelect(selectEl, endpoints, selected, keepBlank) {
+  if (!selectEl) return;
+  const previous = selected !== undefined ? selected : selectEl.value;
+  const blankText = keepBlank && selectEl.options[0] && selectEl.options[0].value === ''
+    ? selectEl.options[0].textContent
+    : null;
+  while (selectEl.options.length) selectEl.remove(0);
+  if (blankText !== null) {
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = blankText;
+    selectEl.appendChild(blank);
+  }
+  (endpoints || []).forEach(function(ep) {
+    if (!ep.is_enabled) return;
+    const opt = document.createElement('option');
+    opt.value = ep.id;
+    opt.textContent = _endpointLabel(ep);
+    selectEl.appendChild(opt);
+  });
+  if (previous && Array.from(selectEl.options).some(function(o) { return o.value === previous; })) {
+    selectEl.value = previous;
+  } else if (blankText !== null) {
+    selectEl.value = '';
+  }
+}
+
+function _fillModelSelect(selectEl, models, selected, keepBlank) {
+  if (!selectEl) return;
+  const previous = selected !== undefined ? selected : selectEl.value;
+  const blankText = keepBlank && selectEl.options[0] && selectEl.options[0].value === ''
+    ? selectEl.options[0].textContent
+    : null;
+  while (selectEl.options.length) selectEl.remove(0);
+  if (blankText !== null) {
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = blankText;
+    selectEl.appendChild(blank);
+  }
+  sortModelIds(models).forEach(function(m) {
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = String(m).split('/').pop();
+    selectEl.appendChild(opt);
+  });
+  if (previous && Array.from(selectEl.options).some(function(o) { return o.value === previous; })) {
+    selectEl.value = previous;
+  } else if (blankText !== null) {
+    selectEl.value = '';
+  }
+}
+
+function _registerAiEndpointRefresh(fn) {
+  _aiEndpointRefreshers.add(fn);
+}
+
+export async function refreshAiModelEndpoints() {
+  if (_aiEndpointRefreshInFlight) return _aiEndpointRefreshInFlight;
+  _aiEndpointRefreshInFlight = (async function() {
+    try {
+      const endpoints = await _fetchModelEndpoints();
+      _aiEndpointRefreshers.forEach(function(fn) {
+        try { fn(endpoints); } catch (e) { console.warn('[settings] endpoint refresh handler failed', e); }
+      });
+    } catch (e) {
+      console.warn('[settings] failed to refresh model endpoints', e);
+    } finally {
+      _aiEndpointRefreshInFlight = null;
+    }
+  })();
+  return _aiEndpointRefreshInFlight;
+}
+
 /* Shared fallback-chain widget — mirrors the Default Chat Model fallback UI
  * for other model cards (Utility, Vision, …). Pass in the container/button
  * IDs, the endpoints list, the settings key to persist under, and the
@@ -181,7 +270,7 @@ function _bindFallbackWidget(opts) {
     while (selectEl.options.length) selectEl.remove(0);
     var ep = (endpointsRef() || []).find(function(e) { return e.id === epId; });
     if (ep && ep.models) {
-      ep.models.forEach(function(m) {
+      sortModelIds(ep.models).forEach(function(m) {
         if (!modelsFilter(m, ep)) return;
         var o = document.createElement('option');
         o.value = m;
@@ -270,6 +359,7 @@ function _bindFallbackWidget(opts) {
 
   return {
     setInitial: function(list) { current = (list || []).slice(); render(); },
+    refresh: render,
   };
 }
 
@@ -289,31 +379,21 @@ async function initDefaultChat() {
 
   // Fill any <select> with the models for a given endpoint id.
   function fillModels(selectEl, epId, selected) {
-    while (selectEl.options.length) selectEl.remove(0);
     var ep = _endpoints.find(function(e) { return e.id === epId; });
-    if (ep && ep.models) {
-      ep.models.forEach(function(m) {
-        var opt = document.createElement('option');
-        opt.value = m;
-        opt.textContent = m.split('/').pop();
-        selectEl.appendChild(opt);
-      });
-    }
-    if (selected) selectEl.value = selected;
+    _fillModelSelect(selectEl, ep ? ep.models : [], selected, false);
   }
 
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    _endpoints = await epRes.json();
-    enabledEndpoints().forEach(function(ep) {
-      var opt = document.createElement('option');
-      opt.value = ep.id;
-      opt.textContent = ep.name + (ep.online ? '' : ' (offline)');
-      epSel.appendChild(opt);
-    });
+    _endpoints = await _fetchModelEndpoints();
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, false);
   } catch (e) { console.warn('Failed to load endpoints for default chat', e); }
 
   function refreshModels(selectedModel) { fillModels(modelSel, epSel.value, selectedModel); }
+  function refreshEndpointOptions(selectedEndpoint, selectedModel) {
+    _fillEndpointSelect(epSel, _endpoints, selectedEndpoint !== undefined ? selectedEndpoint : epSel.value, false);
+    refreshModels(selectedModel !== undefined ? selectedModel : modelSel.value);
+    renderFallbacks();
+  }
 
   // Render the fallback chain. Each row is endpoint + model + remove.
   function renderFallbacks() {
@@ -409,6 +489,11 @@ async function initDefaultChat() {
     renderFallbacks();
     saveDefault();
   });
+
+  _registerAiEndpointRefresh(function(endpoints) {
+    _endpoints = endpoints;
+    refreshEndpointOptions(epSel.value, modelSel.value);
+  });
 }
 
 /* ── Utility Model ── */
@@ -417,35 +502,19 @@ async function initUtilityModel() {
   var modelSel = el('set-utilityModelSelect');
   var msg = el('set-utilityChatMsg');
   var _endpoints = [];
+  var fallbackWidget = null;
   if (epSel && epSel.options[0]) epSel.options[0].textContent = 'Same as chat';
   if (modelSel && modelSel.options[0]) modelSel.options[0].textContent = 'Same as chat';
 
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    _endpoints = await epRes.json();
-    _endpoints.forEach(function(ep) {
-      if (!ep.is_enabled) return;
-      var opt = document.createElement('option');
-      opt.value = ep.id;
-      opt.textContent = ep.name + (ep.online ? '' : ' (offline)');
-      epSel.appendChild(opt);
-    });
+    _endpoints = await _fetchModelEndpoints();
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
   } catch (e) { console.warn('Failed to load endpoints for utility model', e); }
 
   function refreshModels(selectedModel) {
-    while (modelSel.options.length > 1) modelSel.remove(1);
     var epId = epSel.value;
-    if (!epId) { modelSel.value = ''; return; }
     var ep = _endpoints.find(function(e) { return e.id === epId; });
-    if (ep && ep.models) {
-      ep.models.forEach(function(m) {
-        var opt = document.createElement('option');
-        opt.value = m;
-        opt.textContent = m.split('/').pop();
-        modelSel.appendChild(opt);
-      });
-    }
-    if (selectedModel) modelSel.value = selectedModel;
+    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
   }
 
   try {
@@ -453,7 +522,7 @@ async function initUtilityModel() {
     var settings = await res.json();
     if (settings.utility_endpoint_id) epSel.value = settings.utility_endpoint_id;
     refreshModels(settings.utility_model || '');
-    _bindFallbackWidget({
+    fallbackWidget = _bindFallbackWidget({
       containerId: 'set-utilityFallbacks',
       addBtnId: 'set-utilityAddFallback',
       endpoints: function() { return _endpoints; },
@@ -483,6 +552,13 @@ async function initUtilityModel() {
 
   epSel.addEventListener('change', function() { refreshModels(''); saveUtility(); });
   modelSel.addEventListener('change', saveUtility);
+
+  _registerAiEndpointRefresh(function(endpoints) {
+    _endpoints = endpoints;
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
+    refreshModels(modelSel.value);
+    if (fallbackWidget && fallbackWidget.refresh) fallbackWidget.refresh();
+  });
 }
 
 /* ── Teacher Model ── */
@@ -501,31 +577,14 @@ async function initTeacherModel() {
   var _endpoints = [];
 
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    _endpoints = await epRes.json();
-    _endpoints.forEach(function(ep) {
-      if (!ep.is_enabled) return;
-      var opt = document.createElement('option');
-      opt.value = ep.id;
-      opt.textContent = ep.name + (ep.online ? '' : ' (offline)');
-      epSel.appendChild(opt);
-    });
+    _endpoints = await _fetchModelEndpoints();
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
   } catch (e) { console.warn('Failed to load endpoints for teacher model', e); }
 
   function refreshModels(selectedModel) {
-    while (modelSel.options.length > 1) modelSel.remove(1);
     var epId = epSel.value;
-    if (!epId) { modelSel.value = ''; return; }
     var ep = _endpoints.find(function(e) { return e.id === epId; });
-    if (ep && ep.models) {
-      ep.models.forEach(function(m) {
-        var opt = document.createElement('option');
-        opt.value = m;
-        opt.textContent = m.split('/').pop();
-        modelSel.appendChild(opt);
-      });
-    }
-    if (selectedModel) modelSel.value = selectedModel;
+    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
   }
 
   // Disable / enable the endpoint+model dropdowns based on the
@@ -595,6 +654,12 @@ async function initTeacherModel() {
   }
   epSel.addEventListener('change', function() { refreshModels(''); saveTeacher(); });
   modelSel.addEventListener('change', saveTeacher);
+
+  _registerAiEndpointRefresh(function(endpoints) {
+    _endpoints = endpoints;
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
+    refreshModels(modelSel.value);
+  });
 }
 
 /* ── Image Generation ── */
@@ -624,7 +689,7 @@ async function initImageSettings() {
         if (_isInpaintModel(mid)) imageModels.push(mid);
       });
     });
-    imageModels.forEach(mid => { const opt = document.createElement('option'); opt.value = mid; opt.textContent = mid; modelSel.appendChild(opt); });
+    sortModelIds(imageModels).forEach(mid => { const opt = document.createElement('option'); opt.value = mid; opt.textContent = mid; modelSel.appendChild(opt); });
     // Hardcoded fallbacks shown as "(not detected)" so users know what to
     // download/serve to enable inpaint here.
     ['stable-diffusion-3.5-medium', 'stable-diffusion-inpainting'].forEach(mid => {
@@ -666,6 +731,7 @@ async function initVisionSettings() {
   const enabledToggle = el('set-visionEnabledToggle');
   const configWrap = vlSel ? vlSel.closest('div[style*="flex-direction"]') : null;
   var _visionEndpoints = [];
+  var visionFallbackWidget = null;
   var _vlExclude = ['audio', 'realtime', 'tts', 'dall-e', 'embedding', 'search', 'whisper'];
   function _isVisionModel(mid) {
     var lower = String(mid || '').toLowerCase();
@@ -674,27 +740,30 @@ async function initVisionSettings() {
   try {
     const modelsRes = await fetch('/api/models', { credentials: 'same-origin' });
     const modelsData = await modelsRes.json();
+    const visionModels = [];
     (modelsData.items || []).forEach(item => {
       if (item.offline) return;
       (item.models || []).forEach(mid => {
         if (_isVisionModel(mid)) {
-          var opt = document.createElement('option'); opt.value = mid; opt.textContent = mid; vlSel.appendChild(opt);
+          visionModels.push(mid);
         }
       });
+    });
+    sortModelIds(visionModels).forEach(mid => {
+      var opt = document.createElement('option'); opt.value = mid; opt.textContent = mid; vlSel.appendChild(opt);
     });
   } catch (e) { console.warn('Failed to load models for vision settings', e); }
   // Also pull the raw endpoint list so the fallback widget can resolve
   // endpoint-id → models the same way the other cards do.
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    _visionEndpoints = await epRes.json();
+    _visionEndpoints = await _fetchModelEndpoints();
   } catch (e) { console.warn('Failed to load endpoints for vision fallback', e); }
   try {
     const settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     const settings = await settingsRes.json();
     if (settings.vision_model) vlSel.value = settings.vision_model;
     if (enabledToggle) enabledToggle.checked = settings.vision_enabled !== false;
-    _bindFallbackWidget({
+    visionFallbackWidget = _bindFallbackWidget({
       containerId: 'set-visionFallbacks',
       addBtnId: 'set-visionAddFallback',
       endpoints: function() { return _visionEndpoints; },
@@ -725,6 +794,11 @@ async function initVisionSettings() {
   }
   vlSel.addEventListener('change', saveSettings);
   if (enabledToggle) enabledToggle.addEventListener('change', function() { syncVisionDisabled(); saveSettings(); });
+
+  _registerAiEndpointRefresh(function(endpoints) {
+    _visionEndpoints = endpoints;
+    if (visionFallbackWidget && visionFallbackWidget.refresh) visionFallbackWidget.refresh();
+  });
 }
 
 /* ── Face Recognition ── */
@@ -1291,46 +1365,30 @@ async function initResearchSettings() {
   var epSel = el('set-researchEndpoint');
   var modelSel = el('set-researchModel');
   var tokensInput = el('set-researchMaxTokens');
+  var extractTimeoutInput = el('set-researchExtractTimeout');
+  var extractConcurrencyInput = el('set-researchExtractConcurrency');
   var msg = el('set-researchMsg');
+  var endpoints = [];
 
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    var endpoints = await epRes.json();
-    endpoints.forEach(function(ep) {
-      if (!ep.is_enabled) return;
-      var opt = document.createElement('option');
-      opt.value = ep.id;
-      opt.textContent = ep.name + (ep.online ? '' : ' (offline)');
-      epSel.appendChild(opt);
-    });
+    endpoints = await _fetchModelEndpoints();
+    _fillEndpointSelect(epSel, endpoints, epSel.value, true);
   } catch (e) { console.warn('Failed to load endpoints for research', e); }
 
-  async function refreshModels(selectedModel) {
+  function refreshModels(selectedModel) {
     var epId = epSel.value;
-    while (modelSel.options.length > 1) modelSel.remove(1);
-    if (!epId) { modelSel.value = ''; return; }
-    try {
-      var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-      var endpoints = await epRes.json();
-      var ep = endpoints.find(function(e) { return e.id === epId; });
-      if (ep && ep.models) {
-        ep.models.forEach(function(m) {
-          var opt = document.createElement('option');
-          opt.value = m;
-          opt.textContent = m.split('/').pop();
-          modelSel.appendChild(opt);
-        });
-      }
-      if (selectedModel) modelSel.value = selectedModel;
-    } catch (e) { /* ignore */ }
+    var ep = endpoints.find(function(e) { return e.id === epId; });
+    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
   }
 
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
     if (settings.research_endpoint_id) epSel.value = settings.research_endpoint_id;
-    await refreshModels(settings.research_model || '');
+    refreshModels(settings.research_model || '');
     if (settings.research_max_tokens) tokensInput.value = settings.research_max_tokens;
+    if (settings.research_extraction_timeout_seconds) extractTimeoutInput.value = settings.research_extraction_timeout_seconds;
+    if (settings.research_extraction_concurrency) extractConcurrencyInput.value = settings.research_extraction_concurrency;
   } catch (e) { console.warn('Failed to load research settings', e); }
 
   function showStatus() {
@@ -1342,6 +1400,12 @@ async function initResearchSettings() {
     }
     if (tokensInput.value) {
       parts.push('Max tokens: ' + tokensInput.value);
+    }
+    if (extractTimeoutInput.value) {
+      parts.push('Extract: ' + extractTimeoutInput.value + 's');
+    }
+    if (extractConcurrencyInput.value) {
+      parts.push('Parallel: ' + extractConcurrencyInput.value);
     }
     if (parts.length) {
       msg.textContent = parts.join(' · ');
@@ -1360,6 +1424,10 @@ async function initResearchSettings() {
     };
     var tv = parseInt(tokensInput.value, 10);
     if (tv && tv >= 1024) payload.research_max_tokens = tv;
+    var et = parseInt(extractTimeoutInput.value, 10);
+    if (et && et >= 15 && et <= 600) payload.research_extraction_timeout_seconds = et;
+    var ec = parseInt(extractConcurrencyInput.value, 10);
+    if (ec && ec >= 1 && ec <= 12) payload.research_extraction_concurrency = ec;
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -1371,11 +1439,19 @@ async function initResearchSettings() {
   }
 
   epSel.addEventListener('change', async function() {
-    await refreshModels('');
+    refreshModels('');
     saveResearch();
   });
   modelSel.addEventListener('change', saveResearch);
   tokensInput.addEventListener('change', saveResearch);
+  extractTimeoutInput.addEventListener('change', saveResearch);
+  extractConcurrencyInput.addEventListener('change', saveResearch);
+
+  _registerAiEndpointRefresh(function(nextEndpoints) {
+    endpoints = nextEndpoints;
+    _fillEndpointSelect(epSel, endpoints, epSel.value, true);
+    refreshModels(modelSel.value);
+  });
 }
 
 /* ── Deep Research Search (Search tab) ── */
@@ -2376,6 +2452,25 @@ async function initReminderSettings() {
 async function initEmailAccountsSettings() {
   const root = el('settings-modal');
   if (!root || !root.querySelector('[data-settings-panel="email"]')) return;
+  const manageBtn = el('set-email-open-integrations');
+  if (manageBtn && manageBtn.dataset.bound !== '1') {
+    manageBtn.dataset.bound = '1';
+    manageBtn.addEventListener('click', () => open('integrations'));
+  }
+  const tasksBtn = el('set-email-open-tasks');
+  if (tasksBtn && tasksBtn.dataset.bound !== '1') {
+    tasksBtn.dataset.bound = '1';
+    tasksBtn.addEventListener('click', async () => {
+      try {
+        const mod = await import('./tasks.js');
+        const openTasks = mod.openTasks || (mod.default && mod.default.openTasks);
+        if (typeof openTasks === 'function') openTasks();
+        else document.getElementById('tool-tasks-btn')?.click();
+      } catch (_) {
+        document.getElementById('tool-tasks-btn')?.click();
+      }
+    });
+  }
   const listEl = el('set-email-accounts-list');
   const msgEl = el('set-email-accounts-msg');
   const formEl = el('set-email-accounts-form');
@@ -2932,7 +3027,8 @@ async function initIntegrations() {
 const INTG_TYPES = {
   api:     { label: 'API',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>' },
   caldav:  { label: 'CalDAV',  icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' },
-  carddav: { label: 'Contacts', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
+  contacts: { label: 'Contacts', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
+  carddav: { label: 'CardDAV', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
   email:   { label: 'Email',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>' },
   mcp:     { label: 'MCP',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>' },
   vault:   { label: 'Vault',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' },
@@ -2973,14 +3069,24 @@ async function initUnifiedIntegrations() {
     if (calRes.url) {
       items.push({ type: 'caldav', id: '__caldav__', name: 'Calendar (CalDAV)', detail: calRes.url, enabled: true, data: calRes });
     }
-    // Contacts / CardDAV
+    // Contacts import first, then the optional CardDAV sync account.
     const contactCount = Number(contactsRes.count || (contactsRes.contacts || []).length || 0);
-    if (cardRes.url || contactCount > 0) {
+    if (contactCount > 0) {
+      items.push({
+        type: 'contacts',
+        id: '__contacts__',
+        name: 'Contacts Import',
+        detail: `${contactCount} contact${contactCount === 1 ? '' : 's'}`,
+        enabled: true,
+        data: contactsRes,
+      });
+    }
+    if (cardRes.url) {
       items.push({
         type: 'carddav',
         id: '__carddav__',
-        name: 'Contacts',
-        detail: cardRes.url || `${contactCount} contact${contactCount === 1 ? '' : 's'}`,
+        name: 'Contacts (CardDAV)',
+        detail: cardRes.url,
         enabled: true,
         data: cardRes,
       });
@@ -3060,9 +3166,11 @@ async function initUnifiedIntegrations() {
         try {
           if (type === 'api') await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'caldav') await fetch('/api/calendar/config', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: '', username: '', password: '' }) });
+          else if (type === 'contacts') {
+            await fetch('/api/contacts/clear', { method: 'DELETE', credentials: 'same-origin' });
+          }
           else if (type === 'carddav') {
             await fetch('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ carddav_url: '', carddav_username: '', carddav_password: '' }) });
-            await fetch('/api/contacts/clear', { method: 'DELETE', credentials: 'same-origin' });
           }
           else if (type === 'email') await fetch(`/api/email/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'mcp') await fetch(`/api/mcp/servers/${id}`, { method: 'DELETE', credentials: 'same-origin' });
@@ -3079,7 +3187,7 @@ async function initUnifiedIntegrations() {
     formEl.style.display = '';
     if (type === 'api') showApiForm(editId);
     else if (type === 'caldav') showCalDavForm();
-    else if (type === 'carddav') showCardDavForm();
+    else if (type === 'contacts' || type === 'carddav') showCardDavForm();
     else if (type === 'email') showEmailForm(editId);
     else if (type === 'mcp') showMcpForm(editId);
     else if (type === 'vault') showVaultForm();
@@ -3117,13 +3225,14 @@ async function initUnifiedIntegrations() {
           <div class="settings-row"><label class="settings-label">Preset</label><select id="uf-api-preset" class="settings-select"><option value="">Custom (no preset)</option>${selectOpts}</select></div>
           <div class="settings-row"><label class="settings-label">Name</label><input id="uf-api-name" class="settings-input" placeholder="My Service"></div>
           <div class="settings-row"><label class="settings-label">Base URL</label><input id="uf-api-url" class="settings-input" placeholder="http://localhost:8080"></div>
+          <div id="uf-api-ntfy-hint" style="display:none;font-size:11px;line-height:1.35;opacity:0.68;margin:-2px 0 2px 106px;"></div>
           <div class="settings-row"><label class="settings-label">Auth${_apiHint('How this service expects the credential to be sent. <b>Bearer</b> = sends "Authorization: Bearer YOUR_KEY" (most modern APIs, ntfy, OpenAI-style). <b>Header</b> = sends YOUR_KEY verbatim under a header name you choose (Miniflux uses X-Auth-Token). <b>Basic</b> = HTTP basic auth (user:pass). <b>None</b> = the API is open / no auth.')}</label><select id="uf-api-auth" class="settings-input"><option value="bearer">Bearer (most common)</option><option value="header">Header</option><option value="basic">Basic</option><option value="none">None</option></select></div>
           <div class="settings-row" id="uf-api-header-row"><label class="settings-label">Header${_apiHint('The HTTP header name the key goes under (Miniflux: X-Auth-Token; most others: Authorization). Only used when Auth = Header.')}</label><input id="uf-api-header" class="settings-input" placeholder="X-Auth-Token"></div>
           <div class="settings-row"><label class="settings-label">API Key${_apiHint('The secret token the service issued you (generated in its admin panel / settings). Used to prove your identity on each request. Required for any Auth mode except None.')}</label><input id="uf-api-key" class="settings-input" type="password" placeholder="Token/key"></div>
           <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-api-save">Save</button><button class="admin-btn-sm" id="uf-api-test" style="opacity:0.7">Test</button><button class="admin-btn-sm" id="uf-api-cancel" style="opacity:0.7">Cancel</button><span id="uf-api-msg" style="font-size:11px"></span></div>
         </div>
       </div>`;
-    const preset = el('uf-api-preset'), name = el('uf-api-name'), url = el('uf-api-url'), auth = el('uf-api-auth'), header = el('uf-api-header'), key = el('uf-api-key');
+    const preset = el('uf-api-preset'), name = el('uf-api-name'), url = el('uf-api-url'), auth = el('uf-api-auth'), header = el('uf-api-header'), key = el('uf-api-key'), ntfyHint = el('uf-api-ntfy-hint');
     let _editId = editId && editId !== 'new' ? editId : null;
     // Load existing
     if (_editId) {
@@ -3138,12 +3247,23 @@ async function initUnifiedIntegrations() {
     // no typed-name → key lookup is needed (datalist-era leftover).
     const _applyPreset = () => {
       const p = presets[preset.value];
+      const isNtfy = preset.value === 'ntfy' || (p && (p.name || '').toLowerCase() === 'ntfy');
+      if (ntfyHint) {
+        ntfyHint.style.display = isNtfy ? 'block' : 'none';
+        if (isNtfy) {
+          ntfyHint.innerHTML = 'Enter the ntfy server URL Odysseus can reach. Examples: <code>http://127.0.0.1:8091</code>, <code>http://100.x.y.z:8091</code>, or <code>https://ntfy.example.com</code>.';
+        }
+      }
+      if (url) {
+        url.placeholder = isNtfy ? 'http://127.0.0.1:8091' : 'http://localhost:8080';
+      }
       if (!p) return;
       name.value = p.name || '';
       auth.value = p.auth_type || 'none';
       header.value = p.auth_header || '';
     };
     preset.addEventListener('change', _applyPreset);
+    _applyPreset();
     el('uf-api-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
     el('uf-api-save').addEventListener('click', async () => {
       const presetKey = preset.value || undefined;
@@ -3176,7 +3296,7 @@ async function initUnifiedIntegrations() {
           el('uf-api-msg').textContent = d.message || 'Connected';
           el('uf-api-msg').style.color = 'var(--green,#50fa7b)';
         } else {
-          el('uf-api-msg').textContent = (d.message || d.error || d.detail || `HTTP ${r.status}`).slice(0, 200);
+          el('uf-api-msg').textContent = (d.message || d.error || d.detail || `HTTP ${r.status}`).slice(0, 360);
           el('uf-api-msg').style.color = 'var(--red)';
         }
       } catch (e) { el('uf-api-msg').textContent = 'Error: ' + e.message; el('uf-api-msg').style.color = 'var(--red)'; }
@@ -3279,7 +3399,7 @@ async function initUnifiedIntegrations() {
       </div>
       <div class="admin-card contacts-manager" style="margin-top:8px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <h2 style="font-size:13px;margin:0;">Contacts <span id="cm-count" style="opacity:0.5;font-weight:normal;font-size:11px;"></span></h2>
+          <h2 style="font-size:13px;margin:0;">Contacts Import <span id="cm-count" style="opacity:0.5;font-weight:normal;font-size:11px;"></span></h2>
           <button class="admin-btn-sm" id="cm-import-btn" style="margin-left:auto;">Import</button>
           <button class="admin-btn-sm" id="cm-export-vcf-btn">Export .vcf</button>
           <button class="admin-btn-sm" id="cm-export-csv-btn">Export .csv</button>
@@ -3848,7 +3968,7 @@ async function initUnifiedIntegrations() {
         }
         el('uf-email-msg').textContent = 'Saved';
         el('uf-email-msg').style.color = 'var(--green,#50fa7b)';
-        integrationNotice = 'Email account saved. Go to Settings > Email for writing style, auto-tagging, spam triage, reminders, and reply settings.';
+        integrationNotice = 'Email account saved. For more settings, go to Settings > Email.';
         formEl.style.display = 'none';
         await renderList();
         notifyIntegrationsChanged();
@@ -4089,17 +4209,26 @@ async function initUnifiedIntegrations() {
       el('uf-mcp-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
       el('uf-mcp-save').addEventListener('click', async () => {
         const transport = el('uf-mcp-transport').value;
-        const body = { name: el('uf-mcp-name').value, transport };
+        // routes/mcp_routes.py uses FastAPI Form(...) — send multipart, not JSON.
+        const fd = new FormData();
+        fd.append('name', el('uf-mcp-name').value);
+        fd.append('transport', transport);
         if (transport === 'stdio') {
-          body.command = el('uf-mcp-cmd').value;
-          try { body.args = JSON.parse(el('uf-mcp-args').value || '[]'); } catch (_) { body.args = []; }
-          try { body.env = JSON.parse(el('uf-mcp-env').value || '{}'); } catch (_) { body.env = {}; }
+          fd.append('command', el('uf-mcp-cmd').value);
+          let args = '[]'; try { args = JSON.stringify(JSON.parse(el('uf-mcp-args').value || '[]')); } catch (_) {}
+          let env  = '{}'; try { env  = JSON.stringify(JSON.parse(el('uf-mcp-env').value  || '{}')); } catch (_) {}
+          fd.append('args', args);
+          fd.append('env', env);
         } else {
-          body.url = el('uf-mcp-url').value;
+          fd.append('url', el('uf-mcp-url').value);
         }
         try {
-          await fetch('/api/mcp/servers', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-          el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
+          const r = await fetch('/api/mcp/servers', { method: 'POST', credentials: 'same-origin', body: fd });
+          if (r.ok) {
+            el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
+          } else {
+            el('uf-mcp-msg').textContent = `Failed (${r.status})`;
+          }
         } catch (_) { el('uf-mcp-msg').textContent = 'Failed'; }
       });
     }
@@ -4118,7 +4247,8 @@ async function initUnifiedIntegrations() {
                 <option value="">Select...</option>
                 <option value="api">API Service</option>
                 <option value="caldav">CalDAV Calendar</option>
-                <option value="carddav">Contacts</option>
+                <option value="contacts">Contacts Import</option>
+                <option value="carddav">Contacts (CardDAV)</option>
                 <option value="email">Email (IMAP/SMTP)</option>
                 <option value="mcp">MCP Tool Server</option>
               </select>
@@ -4162,6 +4292,7 @@ export function open(tab) {
   const activeTab = tab || (modalEl.querySelector('[data-settings-tab].active') || {}).dataset?.settingsTab || 'services';
   document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
   syncAppearanceOpacity(activeTab === 'appearance');
+  if (activeTab === 'ai') refreshAiModelEndpoints();
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }
@@ -4186,7 +4317,7 @@ export function close() {
   }
 }
 
-const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility };
+const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints };
 
 
 export default settingsModule;

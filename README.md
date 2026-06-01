@@ -22,7 +22,10 @@ A self-hosted AI workspace -- meant to be the self-hosted version of the UI expe
   - **Extras** -- more to explore, happy if you give it a go!<br>　<sub>image editor · theme editor · file uploads (vision + PDF) · web search · presets · sessions · 2FA</sub>
 
 ## Demo
-A full, hover-to-play tour lives on the landing page (`docs/index.html`). A few looks:
+A full, hover-to-play tour lives on the landing page (`docs/index.html`).
+
+<details>
+<summary>Screenshots / clips</summary>
 
 ### Chat & Agents
 ![Chat & Agents](docs/chat.gif)
@@ -35,89 +38,158 @@ A full, hover-to-play tour lives on the landing page (`docs/index.html`). A few 
 ### Notes & Tasks
 ![Notes & Tasks](docs/notes.gif)
 
+</details>
+
 ## Quick Start
 
-Defaults work out of the box — clone, run, configure inside the app.
-Open the **Settings** panel after first login to point Odysseus at your LLM
-server, search provider, email account, etc. Only touch `.env` if you need
-to override deployment-level things like `AUTH_ENABLED`, `DATABASE_URL`,
-or pre-seed `ODYSSEUS_ADMIN_PASSWORD` (otherwise an initial password is
-generated and printed on first boot).
+Defaults work out of the box: clone, run, then configure models/search/email
+inside **Settings**. Only edit `.env` for deployment-level overrides like
+`APP_BIND`, `APP_PORT`, `AUTH_ENABLED`, `DATABASE_URL`, or a pre-seeded admin password.
 
-### Option 1: Docker (recommended)
+On first setup, Odysseus creates an admin account (`admin` unless
+`ODYSSEUS_ADMIN_USER` is set) and prints a temporary password in the terminal.
+For Docker installs, the same line is in `docker compose logs odysseus`.
+Use that for the first login, then change it in **Settings**.
+
+Contributing? See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and
+pull request guidelines.
+
+### Docker (recommended)
 ```bash
-git clone <your-odysseus-repo-url>
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
 cp .env.example .env       # optional, but recommended for explicit defaults
 docker compose up -d --build
 ```
-Compose starts Odysseus, ChromaDB, SearXNG, and ntfy. First run does a full
-image build. Open `http://localhost:7000` after the containers are healthy.
+Open `http://localhost:7000` when the containers are healthy. Docker Compose
+binds the web UI to `127.0.0.1` by default. If the port is taken, set
+`APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
+only when you intentionally want LAN/reverse-proxy access.
 
-Cookbook remote servers use an Odysseus-owned SSH key from `./data/ssh`
-inside Docker. In **Cookbook -> Settings -> Servers**, generate/copy the
-public key and add it to the remote server's `~/.ssh/authorized_keys`.
-After generating the key, you can also install it from the host with:
+### Native Linux / macOS
 ```bash
-ssh-copy-id -i data/ssh/id_ed25519.pub user@server
-```
-Cookbook local downloads are stored in `./data/huggingface`, mounted as
-`~/.cache/huggingface` inside the Odysseus container.
-
-Useful checks:
-```bash
-docker compose ps
-docker compose logs --tail=120 odysseus
-docker compose logs odysseus | grep -E 'ChromaDB|MemoryVectorStore|DEGRADED'
-docker compose exec odysseus python -c "from services.hwfit.models import get_models; print(len(get_models()))"
-```
-
-Expected vector-memory startup lines in Docker:
-```text
-ChromaDB connected: chromadb:8000
-MemoryVectorStore initialized
-```
-
-The Cookbook model catalog check should print a non-zero count. If it prints
-`0`, rebuild the Odysseus image with `docker compose build --no-cache odysseus`.
-
-### Option 2: Manual install — Linux / macOS
-**Requirements:** Python 3.11+. On Linux/Termux, Cookbook also requires `tmux`
-for background model downloads and serves.
-
-Install system packages first:
-```bash
-# Debian/Ubuntu
-sudo apt install tmux
-
-# Arch
-sudo pacman -S tmux
-
-# Fedora
-sudo dnf install tmux
-```
-
-Then install Odysseus:
-```bash
-git clone <your-odysseus-repo-url>
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-python setup.py            # creates data dirs and prints an initial admin password
-uvicorn app:app --host 0.0.0.0 --port 7000
+python setup.py
+python -m uvicorn app:app --host 127.0.0.1 --port 7000
+```
+Requirements: Python 3.11+. Cookbook also needs `tmux` for background model
+downloads and serves. Use `--host 0.0.0.0` only when you intentionally want
+LAN/reverse-proxy access.
+
+### Apple Silicon
+Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
+M-series Mac, run Odysseus natively:
+
+```bash
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+cd odysseus
+./start-macos.sh
 ```
 
-### Option 3: Manual install — Windows (PowerShell)
+It launches at `http://127.0.0.1:7860`. To build a clickable app wrapper:
+
+```bash
+./build-macos-app.sh
+```
+
+<details>
+<summary>Cookbook, GPU, Ollama, and troubleshooting notes</summary>
+
+**Docker bundled services.** Compose starts Odysseus, ChromaDB, SearXNG, and
+ntfy. Odysseus and the bundled service ports bind to `127.0.0.1` by default, so
+they are reachable from the host but not exposed to your LAN/public internet
+unless you opt in.
+
+**Cookbook storage in Docker.** Downloads live in `./data/huggingface`
+(`~/.cache/huggingface` in the container). Cookbook-installed Python CLIs and
+serve engines live in `./data/local` (`~/.local` in the container), so they
+survive container recreation.
+
+**Remote servers.** In **Cookbook -> Settings -> Servers**, generate the
+Odysseus SSH key and add the public key to the remote server's
+`~/.ssh/authorized_keys`. From the host you can also run:
+
+```bash
+ssh-copy-id -i data/ssh/id_ed25519.pub user@server
+```
+
+**NVIDIA / AMD Docker GPU overlays.** Install the host runtime first, then add
+one of these to `.env`:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml
+COMPOSE_FILE=docker-compose.yml:docker/gpu.amd.yml
+```
+
+Verify with:
+
+```bash
+docker compose exec odysseus nvidia-smi -L
+docker compose exec odysseus rocm-smi
+```
+
+**Ollama with Docker.** If Ollama runs on the host, add this endpoint in
+Settings:
+
+```text
+http://host.docker.internal:11434/v1
+```
+
+Ollama must listen outside its own loopback interface:
+
+```bash
+OLLAMA_HOST=0.0.0.0:11434 ollama serve
+```
+
+**Useful checks.**
+
+```bash
+docker compose ps
+docker compose logs --tail=120 odysseus
+docker compose logs odysseus | grep -E 'ChromaDB|MemoryVectorStore|DEGRADED'
+```
+
+**macOS details.** `start-macos.sh` installs Homebrew deps, creates the venv,
+runs setup, and starts uvicorn on port `7860` because AirPlay often holds
+`7000`. It uses llama.cpp/Ollama for Metal. vLLM/SGLang are CUDA/ROCm-only and
+do not run on macOS. MLX-only models are not served by Odysseus.
+
+</details>
+
+### Native Windows
+
+**One-command launcher** (creates the venv, installs deps, runs setup, starts the
+server; safe to re-run):
+
 ```powershell
-git clone <your-odysseus-repo-url>
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+cd odysseus
+powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
+```
+
+Or do it by hand:
+
+```powershell
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
 python -m venv venv
 venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python setup.py
-uvicorn app:app --host 0.0.0.0 --port 7000
+python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
+
+**Requirements:** Python 3.11+. The core app (chat, agent, memory, documents,
+email, calendar, deep research) runs fully native. For full **Cookbook** background
+model downloads and the agent shell tool, also install
+[Git for Windows](https://git-scm.com/download/win) (provides `bash.exe`).
+Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Windows,
+[Ollama](https://ollama.com/download) is the easiest path — point Odysseus at
+`http://localhost:11434/v1` in Settings.
 
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
@@ -164,6 +236,9 @@ Key settings:
 | `LLM_HOSTS` | -- | Comma-separated list for model discovery |
 | `OPENAI_API_KEY` | -- | Optional OpenAI key. Prefer adding providers in the app unless pre-seeding. |
 | `SEARXNG_INSTANCE` | `http://localhost:8080` | SearXNG URL. Docker overrides this to `http://searxng:8080`. |
+| `SEARXNG_SECRET` | generated on first Docker boot | Optional SearXNG cookie/CSRF secret. Leave blank unless you need to pin it. |
+| `APP_BIND` | `127.0.0.1` | Docker Compose host bind address for the web UI. Use `0.0.0.0` only for intentional LAN/reverse-proxy access. |
+| `APP_PORT` | `7000` | Docker Compose host port for the web UI. |
 | `AUTH_ENABLED` | `true` | Enable/disable login |
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | Database connection string |
@@ -171,15 +246,17 @@ Key settings:
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
 | `EMBEDDING_URL` | -- | OpenAI-compatible embeddings endpoint |
 
-### Bundled services
-Docker Compose includes these by default:
+### Built-in MCP servers (optional setup)
 
-  - **ChromaDB** → vector store for semantic memory. In Docker, Odysseus connects to `chromadb:8000`; from the host it is exposed as `localhost:8100`.
-  - **SearXNG** → meta search for web search. In Docker, Odysseus connects to `searxng:8080`; from the host it is exposed only on `127.0.0.1:8080`.
-  - **ntfy** → local notification service, exposed as `localhost:8091`.
+Odysseus auto-registers a few built-in MCP servers at startup. The npx-based ones (currently the browser server, `@playwright/mcp`) only start when their npm package is already in the local npx cache. If a package isn't cached, that server is skipped with a startup log message explaining what to do, so a fresh install does not block on a multi-minute npm download or hang if Playwright system deps are missing.
 
-### Optional external services
-  - **Ollama** → local LLM server -- [ollama.ai](https://ollama.ai)
+To enable the browser MCP (page navigation, screenshots, vision), run once:
+
+```bash
+npx -y @playwright/mcp@latest --version
+```
+
+That installs `@playwright/mcp` plus Playwright (~300MB total). Restart Odysseus and the server will register at startup.
 
 ## Architecture
 ```
@@ -195,6 +272,16 @@ docs/      landing page (index.html) + preview clips
 ## Data
 All user data lives in `data/` (gitignored): `app.db` (sessions, messages, documents),
 `memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/`, `settings.json`.
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=pewdiepie-archdaemon%2Fodysseus&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=pewdiepie-archdaemon/odysseus&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=pewdiepie-archdaemon/odysseus&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=pewdiepie-archdaemon/odysseus&type=date&legend=top-left" />
+ </picture>
+</a>
 
 ## License
 MIT -- see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).

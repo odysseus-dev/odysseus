@@ -3350,11 +3350,11 @@
  {
   "name": "warshanks/Qwen3-8B-abliterated-AWQ",
   "provider": "warshanks",
-  "parameter_count": "2.2B",
-  "parameters_raw": 2174236152,
-  "min_ram_gb": 1.2,
-  "recommended_ram_gb": 2.0,
-  "min_vram_gb": 1.1,
+  "parameter_count": "8.2B",
+  "parameters_raw": 8190735872,
+  "min_ram_gb": 3.2,
+  "recommended_ram_gb": 6.4,
+  "min_vram_gb": 5.3,
   "quantization": "AWQ-4bit",
   "context_length": 40960,
   "use_case": "General purpose text generation",
@@ -4564,11 +4564,11 @@
  {
   "name": "stelterlab/Qwen3-Coder-30B-A3B-Instruct-AWQ",
   "provider": "stelterlab",
-  "parameter_count": "4.6B",
-  "parameters_raw": 4605856128,
-  "min_ram_gb": 2.6,
-  "recommended_ram_gb": 4.3,
-  "min_vram_gb": 2.4,
+  "parameter_count": "30.5B",
+  "parameters_raw": 30532122624,
+  "min_ram_gb": 10.9,
+  "recommended_ram_gb": 21.8,
+  "min_vram_gb": 18.2,
   "quantization": "AWQ-4bit",
   "context_length": 262144,
   "use_case": "Code generation and completion",
@@ -4583,7 +4583,7 @@
   "is_moe": true,
   "num_experts": 128,
   "active_experts": 8,
-  "active_parameters": 503765510,
+  "active_parameters": 3300000000,
   "_discovered": true,
   "format": "awq"
  },
@@ -4697,11 +4697,11 @@
  {
   "name": "stelterlab/NVIDIA-Nemotron-3-Nano-30B-A3B-AWQ",
   "provider": "stelterlab",
-  "parameter_count": "5.1B",
-  "parameters_raw": 5053827112,
-  "min_ram_gb": 2.8,
-  "recommended_ram_gb": 4.7,
-  "min_vram_gb": 2.6,
+  "parameter_count": "30.5B",
+  "parameters_raw": 30532122624,
+  "min_ram_gb": 10.9,
+  "recommended_ram_gb": 21.8,
+  "min_vram_gb": 18.2,
   "quantization": "AWQ-4bit",
   "context_length": 262144,
   "use_case": "General purpose text generation",
@@ -4712,7 +4712,11 @@
   "hf_likes": 4,
   "release_date": "2026-01-31",
   "_discovered": true,
-  "format": "awq"
+  "format": "awq",
+  "is_moe": true,
+  "num_experts": 128,
+  "active_experts": 8,
+  "active_parameters": 3300000000
  },
  {
   "name": "lmstudio-community/Qwen3-32B-MLX-4bit",
@@ -7031,7 +7035,8 @@
   "gguf_sources": [
    {
     "repo": "unsloth/Qwen3.5-9B-GGUF",
-    "provider": "unsloth"
+    "provider": "unsloth",
+    "file": "Qwen3.5-9B-Q4_K_M.gguf"
    }
   ]
  },
@@ -12586,11 +12591,11 @@
  {
   "name": "QuantTrio/sarvam-30b-AWQ",
   "provider": "QuantTrio",
-  "parameter_count": "7.0B",
-  "parameters_raw": 7000000000,
-  "min_ram_gb": 4.0,
-  "recommended_ram_gb": 5.2,
-  "min_vram_gb": 4.0,
+  "parameter_count": "30.0B",
+  "parameters_raw": 30000000000,
+  "min_ram_gb": 10.7,
+  "recommended_ram_gb": 21.5,
+  "min_vram_gb": 17.9,
   "quantization": "AWQ-4bit",
   "context_length": 131072,
   "use_case": "Chat, multilingual",
@@ -12605,11 +12610,11 @@
  {
   "name": "QuantTrio/sarvam-105b-AWQ",
   "provider": "QuantTrio",
-  "parameter_count": "19.0B",
-  "parameters_raw": 19000000000,
-  "min_ram_gb": 10.0,
-  "recommended_ram_gb": 13.0,
-  "min_vram_gb": 10.0,
+  "parameter_count": "105.0B",
+  "parameters_raw": 105000000000,
+  "min_ram_gb": 36.8,
+  "recommended_ram_gb": 73.7,
+  "min_vram_gb": 61.4,
   "quantization": "AWQ-4bit",
   "context_length": 131072,
   "use_case": "Chat, multilingual",
@@ -13729,7 +13734,13 @@
   "architecture": "qwen3",
   "pipeline_tag": "text-generation",
   "release_date": "2026-04-01",
-  "gguf_sources": [],
+  "gguf_sources": [
+   {
+    "repo": "unsloth/Qwen3.6-27B-GGUF",
+    "provider": "unsloth",
+    "file": "Qwen3.6-27B-Q4_K_M.gguf"
+   }
+  ],
   "capabilities": []
  },
  {
@@ -13792,7 +13803,13 @@
   "architecture": "qwen3_moe",
   "pipeline_tag": "text-generation",
   "release_date": "2026-04-01",
-  "gguf_sources": [],
+  "gguf_sources": [
+   {
+    "repo": "unsloth/Qwen3.6-35B-A3B-GGUF",
+    "provider": "unsloth",
+    "file": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+   }
+  ],
   "capabilities": []
  },
  {
@@ -17884,21 +17901,26 @@
  {
   "name": "cyankiwi/Qwen3-Coder-Next-REAM-AWQ-4bit",
   "provider": "cyankiwi",
-  "parameter_count": "11.4B",
-  "parameters_raw": 11412204288,
-  "min_ram_gb": 4.3,
-  "recommended_ram_gb": 8.5,
-  "min_vram_gb": 7.1,
+  "parameter_count": "79.7B",
+  "parameters_raw": 79674391296,
+  "min_ram_gb": 22.3,
+  "recommended_ram_gb": 44.6,
+  "min_vram_gb": 40.8,
   "quantization": "AWQ-4bit",
   "context_length": 32768,
-  "use_case": "General purpose",
+  "use_case": "Coding",
   "capabilities": [],
   "pipeline_tag": "text-generation",
   "architecture": "qwen3_next",
   "hf_downloads": 695,
   "hf_likes": 10,
   "release_date": "2026-02-19",
-  "_discovered": true
+  "is_moe": true,
+  "num_experts": 512,
+  "active_experts": 10,
+  "active_parameters": null,
+  "_discovered": true,
+  "format": "awq"
  },
  {
   "name": "cyankiwi/INTELLECT-3.1-AWQ-8bit",

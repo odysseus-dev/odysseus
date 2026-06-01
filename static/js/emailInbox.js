@@ -5,9 +5,10 @@
 
 import spinnerModule from './spinner.js';
 import sessionModule from './sessions.js';
-import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibOpen } from './emailLibrary.js';
+import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibOpen, prewarmEmailLibrary } from './emailLibrary.js';
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
+import { buildReplyAllCc } from './emailLibrary/replyRecipients.js';
 
 const API_BASE = window.location.origin;
 const _acct = () => window.__odysseusActiveEmailAccount
@@ -25,6 +26,36 @@ const _starIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" s
 const _starFilledIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
 const _bellIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>';
 const _icon = (svg) => `<span class="dropdown-icon">${svg}</span>`;
+const _replySeparator = '---------- Previous message ----------';
+
+function _cleanAiReplyText(text) {
+  if (!text) return '';
+  let t = String(text);
+  const open = /<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+/i;
+  const close = /<<<\s*END\s*>>+/i;
+  const m = open.exec(t);
+  if (m) {
+    const rest = t.slice(m.index + m[0].length);
+    const c = close.exec(rest);
+    t = c ? rest.slice(0, c.index) : rest;
+  }
+  return t
+    .replace(/<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+/gi, '')
+    .replace(/<<<\s*END\s*>>+/gi, '')
+    .trim();
+}
+
+function _shouldUseFastAiReply(data) {
+  const body = String(data?.body || data?.body_html || '');
+  const subject = String(data?.subject || '');
+  const atts = Array.isArray(data?.attachments) ? data.attachments : [];
+  if (atts.length > 0) return false;
+  const text = `${subject}\n${body}`.toLowerCase();
+  if (/\b(attach(?:ed|ment)?|pdf|document|contract|invoice|receipt|quote|estimate|proposal|question|questions|details|schedule|booking|reservation|meeting|calendar|availability|confirm|confirmation|review|sign|signature)\b/.test(text)) {
+    return false;
+  }
+  return body.length < 2500;
+}
 
 let _emails = [];
 let _currentFolder = 'INBOX';
@@ -161,6 +192,7 @@ function _bindEvents() {
   // Initial unread count check, refresh every 60s
   _refreshUnreadCount();
   setInterval(_refreshUnreadCount, 60000);
+  prewarmEmailLibrary({ delay: 3000 });
 
   // Deep-link: #email=<folder>:<uid> opens the library and expands that card
   _maybeOpenFromHash();
@@ -607,52 +639,10 @@ function _createEmailItem(em) {
 }
 
 async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
-  // If AI Reply mode: use cached reply if available, otherwise generate
+  const aiReplyMode = mode === 'ai-reply-fast' ? 'fast' : (mode === 'ai-reply-full' ? 'full' : '');
+  const wantsAiReply = mode === 'ai-reply' || !!aiReplyMode;
   let aiSuggestedBody = null;
-  if (mode === 'ai-reply' && preloadedData) {
-    const data = preloadedData;
-    // Check for pre-generated cached reply first (instant!)
-    if (data.cached_ai_reply) {
-      aiSuggestedBody = data.cached_ai_reply;
-    } else {
-      // No cache — generate on demand
-      try {
-        let currentModel = '';
-        let currentSessionId = '';
-        try {
-          currentModel = sessionModule?.getCurrentModel() || '';
-          currentSessionId = sessionModule?.getCurrentSessionId() || '';
-        } catch (_) {}
-        const res = await fetch(`${API_BASE}/api/email/ai-reply`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            to: data.from_address,
-            subject: `Re: ${data.subject}`,
-            original_body: data.body,
-            model: currentModel,
-            session_id: currentSessionId,
-            message_id: data.message_id || '',
-            uid: String(em.uid || ''),
-            folder: _currentFolder,
-          }),
-        });
-        const result = await res.json();
-        if (result.success && result.reply) {
-          aiSuggestedBody = result.reply;
-        } else {
-          // Don't silently open a blank draft — tell the user it failed so a
-          // model/endpoint problem (e.g. empty response) is visible.
-          // uiModule isn't statically imported here; use the dynamic pattern.
-          const _msg = result.error || 'AI reply could not be generated';
-          console.error('AI reply generation failed:', _msg);
-          import('./ui.js').then(m => m.showError && m.showError('AI reply failed: ' + _msg)).catch(() => {});
-        }
-      } catch (e) {
-        console.error('AI reply generation failed:', e);
-        import('./ui.js').then(m => m.showError && m.showError('AI reply failed: ' + (e.message || e))).catch(() => {});
-      }
-    }
+  if (wantsAiReply) {
     // Fall through to reply-all (not plain reply) so the generated AI
     // draft addresses everyone on the original thread. On single-
     // recipient emails this collapses to a regular reply since there's
@@ -680,6 +670,54 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
       console.error('Failed to read email:', data.error);
       return;
     }
+    if (wantsAiReply) {
+      if (data.cached_ai_reply) {
+        aiSuggestedBody = _cleanAiReplyText(data.cached_ai_reply);
+      } else {
+        let draftToastTimer = null;
+        draftToastTimer = setTimeout(() => {
+          import('./ui.js').then(m => m.showToast && m.showToast('Drafting AI reply', { duration: 3000, leadingIcon: 'spinner' })).catch(() => {});
+        }, 450);
+        try {
+          let currentModel = '';
+          let currentSessionId = '';
+          try {
+            currentModel = sessionModule?.getCurrentModel() || '';
+            currentSessionId = sessionModule?.getCurrentSessionId() || '';
+          } catch (_) {}
+          const res = await fetch(`${API_BASE}/api/email/ai-reply`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: data.from_address,
+              subject: `Re: ${data.subject}`,
+              original_body: data.body,
+              model: currentModel,
+              session_id: currentSessionId,
+              message_id: data.message_id || '',
+              uid: String(em.uid || ''),
+              folder: _currentFolder,
+              fast: aiReplyMode ? aiReplyMode === 'fast' : _shouldUseFastAiReply(data),
+            }),
+          });
+          const result = await res.json();
+          if (draftToastTimer) clearTimeout(draftToastTimer);
+          if (result.success && result.reply) {
+            aiSuggestedBody = _cleanAiReplyText(result.reply);
+          } else {
+            const _msg = result.error || 'AI reply could not be generated';
+            console.error('AI reply generation failed:', _msg);
+            import('./ui.js').then(m => m.showError && m.showError('AI reply failed: ' + _msg)).catch(() => {});
+            return;
+          }
+        } catch (e) {
+          if (draftToastTimer) clearTimeout(draftToastTimer);
+          console.error('AI reply generation failed:', e);
+          import('./ui.js').then(m => m.showError && m.showError('AI reply failed: ' + (e.message || e))).catch(() => {});
+          return;
+        }
+      }
+    }
 
     em.is_read = true;
     if (itemEl) itemEl.classList.remove('email-unread');
@@ -695,17 +733,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
 
     if (mode === 'reply-all') {
       // Build reply-all: TO = original sender, CC = everyone else (To + Cc minus me)
-      const origTo = (data.to || '').split(',').map(s => s.trim()).filter(Boolean);
-      const origCc = (data.cc || '').split(',').map(s => s.trim()).filter(Boolean);
-      const allOthers = [...origTo, ...origCc]
-        .filter(addr => {
-          // Extract email from "Name <email@x>" or "email@x"
-          const match = addr.match(/<([^>]+)>/) || [null, addr];
-          return !match[1].toLowerCase().includes(myAddress);
-        });
-      if (allOthers.length > 0) {
-        ccAddresses = allOthers.join(', ');
-      }
+      ccAddresses = buildReplyAllCc(data, myAddress);
     } else if (mode === 'forward') {
       toAddress = '';
       subjectPrefix = 'Fwd: ';
@@ -780,7 +808,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
       } else {
         content += '\n\n';
       }
-      content += `On ${niceDate}, ${data.from_name} <${data.from_address}> wrote:\n${quotedBody}`;
+      content += `${_replySeparator}\nOn ${niceDate}, ${data.from_name} <${data.from_address}> wrote:\n${quotedBody}`;
     }
 
     if (_docModule) {
