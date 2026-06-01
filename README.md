@@ -117,19 +117,55 @@ Odysseus SSH key and add the public key to the remote server's
 ssh-copy-id -i data/ssh/id_ed25519.pub user@server
 ```
 
-**NVIDIA / AMD Docker GPU overlays.** Install the host runtime first, then add
-one of these to `.env`:
+**NVIDIA Docker GPU overlay.** `scripts/check-docker-gpu.sh` diagnoses GPU
+passthrough and can optionally install the host runtime or update `.env`.
+Cookbook can only detect GPUs that Docker exposes to the container — if the
+host runtime is not configured, Cookbook sees the iGPU, another card, or CPU
+instead of your NVIDIA GPU.
+
+```bash
+# Read-only diagnostic (default — installs nothing, never edits .env):
+scripts/check-docker-gpu.sh
+
+# Print OS-specific install commands without running them:
+scripts/check-docker-gpu.sh --print-install-commands
+
+# Install NVIDIA Container Toolkit on Ubuntu/Debian (requires sudo):
+scripts/check-docker-gpu.sh --install-nvidia-toolkit
+
+# Write COMPOSE_FILE to .env (only when GPU passthrough is confirmed working):
+scripts/check-docker-gpu.sh --enable-nvidia-overlay
+
+# Full assisted setup — install toolkit, then enable overlay if passthrough works:
+scripts/check-docker-gpu.sh --install-nvidia-toolkit --enable-nvidia-overlay
+```
+
+Safety notes:
+- The app never installs host GPU runtime automatically.
+- The app never edits `.env` automatically.
+- `.env` is only modified when `--enable-nvidia-overlay` is explicitly passed,
+  and only after GPU passthrough succeeds. `--yes` skips prompts but does not
+  bypass the passthrough gate.
+- `.env.bak.*` backups created by `--enable-nvidia-overlay` are ignored by
+  Git and the Docker build context.
+
+To enable manually without the script, add this to `.env`:
 
 ```bash
 COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml
+```
+
+**AMD / ROCm.** AMD GPU passthrough is not automated. Add manually:
+
+```bash
 COMPOSE_FILE=docker-compose.yml:docker/gpu.amd.yml
 ```
 
-Verify with:
+Verify after enabling either overlay:
 
 ```bash
-docker compose exec odysseus nvidia-smi -L
-docker compose exec odysseus rocm-smi
+docker compose exec odysseus nvidia-smi -L   # NVIDIA
+docker compose exec odysseus rocm-smi        # AMD
 ```
 
 **Ollama with Docker.** If Ollama runs on the host, add this endpoint in
