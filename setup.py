@@ -74,7 +74,7 @@ def create_default_admin():
     except ImportError:
         print("  [warn] bcrypt not installed — skipping admin user creation")
         print("         Run: pip install bcrypt")
-        return "skipped" 
+        return "skipped"
 
 
 def create_env():
@@ -142,7 +142,7 @@ def main():
 
     print("\n5. Creating initial admin...")
 
-    admin_status = "failed" 
+    admin_status = "failed"
 
     try:
         admin_status = create_default_admin()
@@ -157,16 +157,16 @@ def main():
         print(f"\nStart the server with:")
         print(f"  python -m uvicorn app:app --host 127.0.0.1 --port 7000")
         print(f"\nThen open http://localhost:7000")
-    
-    # Conditional logic based on your dynamic status tracker
+
+    # Cleaned, action-focused final instruction strings
     if admin_status == "created":
-        print(f"Login with the admin username and temporary password printed above.\n")
+        print("Login with the admin username and temporary password printed above.\n")
     elif admin_status == "exists":
-        print(f"Login with your existing admin credentials.\n")
+        print("Login with your existing admin credentials.\n")
     elif admin_status == "skipped":
-        print(f"WARNING: Admin user was NOT created because dependencies are missing. Please run 'pip install bcrypt' and execute this setup script again to generate your admin account.\n")
+        print("Admin creation did not happen: dependencies are missing.\nRun 'pip install bcrypt' and rerun setup.\n")
     elif admin_status == "failed":
-        print(f"ERROR: Admin user creation failed due to a system or file error. Please check write permissions for the 'data' directory.\n")
+        print("Admin creation did not happen: a system or file error occurred.\nCheck write permissions for the 'data' directory and rerun setup.\n")
 
 
 if __name__ == "__main__":
