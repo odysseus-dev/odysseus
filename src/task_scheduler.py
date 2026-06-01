@@ -207,6 +207,7 @@ HOUSEKEEPING_DEFAULTS = {
     "tidy_documents":       {"name": "Documents Tidy",           "trigger_type": "event", "trigger_event": "document_created", "trigger_count": 5, "schedule": None, "scheduled_time": None, "cron_expression": None, "legacy_names": ["Tidy Documents"]},
     "consolidate_memory":   {"name": "Memory Tidy",              "trigger_type": "event", "trigger_event": "memory_added", "trigger_count": 5, "schedule": None, "scheduled_time": None, "cron_expression": None, "legacy_names": ["Tidy Memory"]},
     "tidy_research":        {"name": "Research Tidy",            "trigger_type": "event", "trigger_event": "research_completed", "trigger_count": 5, "schedule": None, "scheduled_time": None, "cron_expression": None, "legacy_names": ["Tidy Research"]},
+    "tidy_task_runs":       {"name": "Task Logs Tidy",           "schedule": "daily", "scheduled_time": "03:00", "cron_expression": None},
     "summarize_emails":     {"name": "Email (Summary)",          "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Tidy Email (Summary)"]},
     "draft_email_replies":  {"name": "Email AI Auto Reply",      "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Tidy Email (Replies)", "AI Auto Reply"]},
     "extract_email_events": {"name": "Email Calendar Events",    "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */1 * * *", "ship_paused": True, "legacy_names": ["Email → Calendar Events"]},
@@ -561,6 +562,39 @@ class TaskScheduler:
             return sorted(owners)
         except Exception:
             return []
+        finally:
+            db.close()
+
+    def get_timeline(self, days: int = 1) -> list:
+        """Calculate the next scheduled runs for all active tasks."""
+        timeline = []
+        db = SessionLocal()
+        try:
+            from datetime import datetime, timedelta
+            now = datetime.utcnow()
+            horizon = now + timedelta(days=days)
+
+            tasks = db.query(ScheduledTask).filter(ScheduledTask.paused == False).all()  # noqa: E712
+            for t in tasks:
+                if t.trigger_type == "event":
+                    continue
+                
+                next_run = t.next_run
+                # If next_run is in the past or None, calculate it
+                if not next_run or next_run < now:
+                    next_run = self._calculate_next_run(t)
+                
+                if next_run and next_run <= horizon:
+                    timeline.append({
+                        "id": t.id,
+                        "name": t.name or t.action,
+                        "action": t.action,
+                        "next_run": next_run.isoformat() + "Z",
+                        "schedule": t.schedule,
+                    })
+            
+            timeline.sort(key=lambda x: x["next_run"])
+            return timeline
         finally:
             db.close()
 

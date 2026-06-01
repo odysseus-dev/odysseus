@@ -2203,11 +2203,44 @@ async def action_cookbook_serve(
     return f"Launched {repo_id} (session {sid})", True
 
 
+async def action_tidy_task_runs(owner: str, **kwargs) -> Tuple[str, bool]:
+    """Delete old TaskRun records to keep the database small."""
+    try:
+        from core.database import SessionLocal, TaskRun
+        from sqlalchemy import delete
+        from datetime import datetime, timedelta
+
+        # Default: keep 30 days of logs.
+        # Future: could be a setting `cleanup_task_logs_days`.
+        retention_days = 30
+        cutoff = datetime.utcnow() - timedelta(days=retention_days)
+
+        db = SessionLocal()
+        try:
+            # We don't filter by owner here because TaskRun doesn't have an owner column.
+            # It's a global housekeeping task.
+            q = delete(TaskRun).where(TaskRun.finished_at < cutoff)
+            result = db.execute(q)
+            count = result.rowcount
+            db.commit()
+            if count > 0:
+                return f"Cleaned up {count} old task run logs (older than {retention_days} days)", True
+            raise TaskNoop("no old task logs to clean up")
+        finally:
+            db.close()
+    except TaskNoop:
+        raise
+    except Exception as e:
+        logger.error(f"tidy_task_runs action failed: {e}")
+        return str(e), False
+
+
 BUILTIN_ACTIONS = {
     "tidy_sessions": action_tidy_sessions,
     "tidy_documents": action_tidy_documents,
     "consolidate_memory": action_consolidate_memory,
     "tidy_research": action_tidy_research,
+    "tidy_task_runs": action_tidy_task_runs,
     "summarize_emails": action_summarize_emails,
     "draft_email_replies": action_draft_email_replies,
     "extract_email_events": action_extract_email_events,
@@ -2232,6 +2265,7 @@ BUILTIN_ACTION_INFO = {
     "tidy_documents": "Remove junk/empty documents",
     "consolidate_memory": "Remove duplicate memories",
     "tidy_research": "Remove orphaned research files (sessions that were deleted)",
+    "tidy_task_runs": "Remove old background task run logs (retention: 30 days)",
     "summarize_emails": "Pre-generate AI summaries for new inbox emails",
     "draft_email_replies": "Pre-draft AI reply suggestions for new inbox emails",
     "extract_email_events": "Scan emails for booking/meeting confirmations and auto-add to calendar",
