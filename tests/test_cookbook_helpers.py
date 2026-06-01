@@ -2,6 +2,7 @@ import pytest
 from fastapi import HTTPException
 
 from routes.cookbook_helpers import (
+    _append_serve_exit_code_lines,
     _local_tooling_path_export,
     _safe_env_prefix,
     _validate_gpus,
@@ -58,3 +59,18 @@ def test_local_tooling_path_export_preserves_spaces_and_expands_path():
     line = _local_tooling_path_export("/Users/John Smith/.venv/bin/python3")
     assert line == 'export PATH="/Users/John Smith/.venv/bin:$PATH"'
     assert line.endswith(':$PATH"')  # $PATH stays expandable in double quotes
+
+
+def test_serve_runner_preserves_command_exit_code():
+    """The serve wrapper must capture `$?` before any echo resets it.
+
+    Otherwise a failed command can be reported as `Process exited with code 0`,
+    which hides the real failure from both the UI and diagnosis logic.
+    """
+    runner_lines = ["vllm serve Qwen/Qwen3.6-35B-A3B-NVFP4 --host 0.0.0.0 --port 8000"]
+    _append_serve_exit_code_lines(runner_lines, keep_shell_open=True)
+    script = "\n".join(runner_lines)
+
+    assert "ODYSSEUS_CMD_EXIT=$?" in script
+    assert 'echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="' in script
+    assert 'echo "=== Process exited with code $? ==="' not in script

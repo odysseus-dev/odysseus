@@ -36,7 +36,7 @@ from routes.cookbook_helpers import (
     _validate_repo_id, _validate_include, _validate_remote_host, _validate_token,
     _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
-    _safe_env_prefix, _local_tooling_path_export,
+    _safe_env_prefix, _local_tooling_path_export, _append_serve_exit_code_lines,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -1057,10 +1057,10 @@ def setup_cookbook_routes() -> APIRouter:
             if local_windows:
                 # Detached background process — no interactive shell to keep open.
                 # Print the exit marker the status poller looks for, then stop.
-                runner_lines.append('echo ""; echo "=== Process exited with code $? ==="')
+                _append_serve_exit_code_lines(runner_lines, keep_shell_open=False)
             else:
                 # Keep shell open after exit so user can see errors
-                runner_lines.append('echo ""; echo "=== Process exited with code $? ==="; exec "${SHELL:-/bin/bash}"')
+                _append_serve_exit_code_lines(runner_lines, keep_shell_open=True)
 
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
             runner_path.write_text("\n".join(runner_lines) + "\n", encoding="utf-8")
