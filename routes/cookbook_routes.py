@@ -1004,9 +1004,33 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('      && cmake --build build -j"$NPROC" --target llama-server \\')
                 runner_lines.append('      && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
                 runner_lines.append('  else')
-                runner_lines.append('    cd ~/llama.cpp && { cmake -B build -DGGML_CUDA=ON 2>/dev/null || cmake -B build; } \\')
-                runner_lines.append('      && cmake --build build -j"$NPROC" --target llama-server \\')
-                runner_lines.append('      && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                # Detect pip-installed nvcc (from vLLM/nvidia CUDA wheels) and put
+                # it on PATH so cmake's CUDA configure can find it.  We check the
+                # same three layouts as entrypoint.sh:
+                #   nvidia/cu13       — nvidia-nvcc-cu13
+                #   nvidia/cu12       — nvidia-nvcc-cu12
+                #   nvidia/cuda_nvcc  — nvidia-cuda-nvcc-cu12 (sub-package style)
+                runner_lines.append('    for _cudir in ~/.local/lib/python*/site-packages/nvidia/cu13 ~/.local/lib/python*/site-packages/nvidia/cu12 ~/.local/lib/python*/site-packages/nvidia/cuda_nvcc; do')
+                runner_lines.append('      [ -x "$_cudir/bin/nvcc" ] && export CUDA_HOME="$_cudir" && export PATH="$_cudir/bin:$PATH" && break')
+                runner_lines.append('    done')
+                # rm -rf build so a prior poisoned CMakeCache.txt (e.g. from a
+                # failed CUDA attempt) doesn't cause the next configure to reuse
+                # stale settings and silently produce a CPU-only binary.
+                runner_lines.append('    cd ~/llama.cpp && rm -rf build')
+                runner_lines.append('    if command -v nvcc &>/dev/null; then')
+                runner_lines.append('      echo "[odysseus] CUDA nvcc found — building llama-server with CUDA (GPU) support..."')
+                runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON \\')
+                runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\')
+                runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                runner_lines.append('    else')
+                runner_lines.append('      echo "[odysseus] WARNING: nvcc not found — building llama-server for CPU only."')
+                runner_lines.append('      echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
+                runner_lines.append('      echo "[odysseus]   To get a GPU build, first install vLLM via Cookbook -> Dependencies"')
+                runner_lines.append('      echo "[odysseus]   (its CUDA wheels include nvcc), then re-launch this serve task."')
+                runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release \\')
+                runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\')
+                runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                runner_lines.append('    fi')
                 runner_lines.append('  fi')
                 runner_lines.append('  # If the native build failed, fall back to the Python bindings.')
                 runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
