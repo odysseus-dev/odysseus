@@ -137,7 +137,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from src.document_processor import _process_pdf
         import os
 
-        user = get_current_user(request)
+        from src.auth_helpers import require_privilege
+        user = require_privilege(request, "can_use_documents")
 
         # session_id is optional — a library import isn't tied to a chat. When
         # given, validate it; otherwise the PDF becomes a session-less library
