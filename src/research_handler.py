@@ -645,7 +645,7 @@ class ResearchHandler:
                 extraction_timeout if extraction_timeout is not None else get_setting("research_extraction_timeout_seconds", 90),
                 default=90,
                 minimum=15,
-                maximum=600,
+                maximum=3600,
             )
             _extraction_concurrency = _bounded_int(
                 extraction_concurrency if extraction_concurrency is not None else get_setting("research_extraction_concurrency", 3),
