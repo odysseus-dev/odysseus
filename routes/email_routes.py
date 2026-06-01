@@ -1994,9 +1994,8 @@ def setup_email_routes():
 
         try:
             cfg = _resolve_send_config(req.account_id, owner=owner)
-            logger.info(f"Send config: account={cfg.get('account_name')!r}, smtp={cfg.get('smtp_host')}, user={cfg.get('smtp_user')}, oauth={cfg.get('oauth_provider')!r}")
         except Exception as e:
-            logger.error(f"_resolve_send_config failed: account_id={req.account_id!r}, owner={owner!r}, error={e}")
+            logger.warning(f"No SMTP-capable account resolved: {e}")
             return {"success": False, "error": str(e) or "No SMTP-capable email account configured"}
 
         # Use 'mixed' if we have attachments, 'alternative' otherwise
@@ -3055,6 +3054,31 @@ def setup_email_routes():
 
     # ── Google OAuth2 routes ──
 
+    def _make_oauth_state(account_id: str, owner: str) -> str:
+        """Return a HMAC-signed, base64-encoded state token encoding account_id + owner."""
+        import hmac as _hmac, hashlib as _hl, secrets as _sec, json as _json, base64 as _b64
+        from src.secret_storage import _load_or_create_key
+        nonce = _sec.token_hex(16)
+        payload = _json.dumps({"a": account_id, "o": owner, "n": nonce}, separators=(",", ":"))
+        key = _load_or_create_key()
+        sig = _hmac.new(key, payload.encode(), _hl.sha256).hexdigest()
+        return _b64.urlsafe_b64encode(f"{payload}|{sig}".encode()).decode()
+
+    def _verify_oauth_state(state: str) -> dict | None:
+        """Verify HMAC signature and return payload dict, or None if invalid."""
+        import hmac as _hmac, hashlib as _hl, json as _json, base64 as _b64
+        from src.secret_storage import _load_or_create_key
+        try:
+            decoded = _b64.urlsafe_b64decode(state.encode()).decode()
+            payload, sig = decoded.rsplit("|", 1)
+            key = _load_or_create_key()
+            expected = _hmac.new(key, payload.encode(), _hl.sha256).hexdigest()
+            if not _hmac.compare_digest(sig, expected):
+                return None
+            return _json.loads(payload)
+        except Exception:
+            return None
+
     @router.get("/oauth/google/authorize")
     async def google_oauth_authorize(account_id: str = Query(...), request: Request = None, owner: str = Depends(require_user)):
         import urllib.parse
@@ -3066,7 +3090,7 @@ def setup_email_routes():
             os.environ.get("GOOGLE_OAUTH_REDIRECT_URI")
             or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
         )
-        logger.info(f"Google OAuth authorize → redirect_uri={redirect_uri}")
+        state = _make_oauth_state(account_id, owner)
         params = urllib.parse.urlencode({
             "client_id": client_id,
             "redirect_uri": redirect_uri,
@@ -3074,7 +3098,7 @@ def setup_email_routes():
             "scope": "https://mail.google.com/ email",
             "access_type": "offline",
             "prompt": "consent",
-            "state": account_id,
+            "state": state,
         })
         from fastapi.responses import RedirectResponse as _RR
         return _RR(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
@@ -3089,10 +3113,14 @@ def setup_email_routes():
         import urllib.parse
         from fastapi.responses import RedirectResponse as _RR
         if error:
-            return _RR(f"/?section=integrations&email_oauth_error={urllib.parse.quote(error or '')}")
+            return _RR("/?section=integrations&email_oauth_error=google_error")
         if not code or not state:
             return _RR("/?section=integrations&email_oauth_error=missing_code")
-        account_id = state
+        state_data = _verify_oauth_state(state)
+        if not state_data:
+            return _RR("/?section=integrations&email_oauth_error=invalid_state")
+        account_id = state_data.get("a", "")
+        owner = state_data.get("o", "")
         client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
         client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
         redirect_uri = (
@@ -3110,9 +3138,9 @@ def setup_email_routes():
             }, timeout=10)
             resp.raise_for_status()
             data = resp.json()
-        except Exception as e:
-            logger.error(f"Google token exchange failed: {e}")
-            return _RR(f"/?section=integrations&email_oauth_error={urllib.parse.quote(str(e))}")
+        except Exception:
+            logger.warning("Google token exchange failed")
+            return _RR("/?section=integrations&email_oauth_error=token_exchange_failed")
         access_token = data.get("access_token", "")
         refresh_token = data.get("refresh_token", "")
         expiry = str(int(time.time()) + data.get("expires_in", 3600))
@@ -3132,9 +3160,13 @@ def setup_email_routes():
         from src.secret_storage import encrypt as _enc
         db = SessionLocal()
         try:
-            row = db.get(EmailAccount, account_id)
+            row = db.query(EmailAccount).filter(EmailAccount.id == account_id).first()
             if not row:
                 return _RR("/?section=integrations&email_oauth_error=account_not_found")
+            # SECURITY: verify the account belongs to the initiating user.
+            if owner and row.owner and row.owner != owner:
+                logger.warning("OAuth callback owner mismatch — rejecting token write")
+                return _RR("/?section=integrations&email_oauth_error=ownership_error")
             row.oauth_provider = "google"
             row.oauth_access_token = _enc(access_token)
             if refresh_token:
