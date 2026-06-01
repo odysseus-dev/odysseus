@@ -2,7 +2,10 @@ services:
   odysseus:
     build: .
     ports:
-      - "7000:7000"
+      # Host-side port is configurable via ODYSSEUS_PORT in .env.
+      # MacOS users may need to change this — port 7000 is used by the
+      # AirPlay Receiver by default. See issue #219.
+      - "${ODYSSEUS_PORT:-7000}:7000"
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
