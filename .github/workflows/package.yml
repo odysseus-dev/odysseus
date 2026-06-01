@@ -194,16 +194,12 @@ jobs:
         include:
           - target: fedora43
             container: fedora:43
-            install: dnf --disablerepo='fedora-cisco-openh264' install -y bash ca-certificates git python3 rpm-build systemd-rpm-macros
           - target: fedora44
             container: fedora:44
-            install: dnf --disablerepo='fedora-cisco-openh264' install -y bash ca-certificates git python3 rpm-build systemd-rpm-macros
           - target: el10
             container: quay.io/centos/centos:stream10
-            install: dnf install -y bash ca-certificates git python3 rpm-build systemd-rpm-macros
           - target: opensuse-tumbleweed
             container: opensuse/tumbleweed:latest
-            install: zypper --non-interactive --gpg-auto-import-keys refresh && zypper --non-interactive install bash ca-certificates git python3 rpm-build systemd-rpm-macros
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -226,7 +222,7 @@ jobs:
             -v "$PWD:/work" \
             -w /work \
             "${{ matrix.container }}" \
-            sh -lc '${{ matrix.install }} && bash scripts/ci/build-rpm-package.sh "${{ matrix.target }}" && chown -R "$(stat -c "%u:%g" /work)" artifacts'
+            sh -lc 'bash scripts/ci/install-rpm-build-deps.sh "${{ matrix.target }}" && bash scripts/ci/build-rpm-package.sh "${{ matrix.target }}" && chown -R "$(stat -c "%u:%g" /work)" artifacts'
           VERSION=$(awk -F'"' '/^version = / { print $2; exit }' pyproject.toml)
           bash scripts/ci/finalize-artifacts.sh artifacts "rpm-${{ matrix.target }}" "$VERSION" "linux" "rpm"
 
