@@ -5,12 +5,16 @@ A plugin can register agent tools, mount HTTP routes, and run background
 services, and it can be **enabled/disabled live** from **Settings → Plugins**
 (no restart). Plugins can live in their own git repos and be shared.
 
+New here? Copy `plugins/example/` and skim **[GUIDE.md](GUIDE.md)** for theming,
+auth, CSP, heavy-deps, and distribution conventions.
+
 - [Why plugins?](#why-plugins)
 - [Quick start](#quick-start)
 - [Anatomy](#anatomy)
 - [Manifest reference](#manifest-reference)
 - [The `ctx` (PluginContext)](#the-ctx-plugincontext)
 - [Worked examples](#worked-examples) — route, background service, agent tool
+- [UI pages & theming](#ui-pages--theming)
 - [Lifecycle & enable/disable](#lifecycle--enabledisable)
 - [Per-plugin storage](#per-plugin-storage)
 - [Auth & permissions](#auth--permissions)
@@ -83,6 +87,7 @@ AST), so keep it a plain literal dict.
 | `category` | no | Grouping label (e.g. `Networking`, `Tools`). Default `General`. |
 | `permission` | no | Who may toggle it: `"admin"` (default) or `"user"`. |
 | `requires` | no | Informational list of pip packages / external binaries. |
+| `ui` | no | `{"open": "/api/plugins/<id>/page", "label": "Open"}` — adds an **Open** button on the plugin's Settings → Plugins card, linking to a page your plugin serves. |
 
 ## The `ctx` (PluginContext)
 
@@ -162,6 +167,25 @@ def setup(ctx):
 ```
 
 A plugin can do **any combination** of the above in one `setup(ctx)`.
+
+## UI pages & theming
+
+A plugin can serve a page that matches the interface. Add a `ui` entry to the
+manifest (above) for an **Open** button, serve the page from a route, and link
+the shared theme layer so it picks up the user's active theme + customization
+(with no flash):
+
+```html
+<link rel="stylesheet" href="/static/plugin-theme.css">
+<script src="/static/js/plugin-theme.js"></script>
+```
+
+That gives you `od-wrap` / `od-card` / `od-btn` / `od-input` / `od-header`
+components built on the app's theme variables, so the page recolors with any
+preset or custom theme. Include the `od-header` (or a link to `/`) so users can
+get back to the main interface — plugin pages open in a new tab. See
+[`plugins/example/`](example/plugin.py) for a working page and
+**[GUIDE.md](GUIDE.md)** (theming, auth, CSP, heavy deps, distribution).
 
 ## Lifecycle & enable/disable
 

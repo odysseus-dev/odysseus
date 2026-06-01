@@ -216,6 +216,10 @@ function _pluginCard(p) {
           <span style="opacity:.5;font-weight:normal;font-size:.8em;border:1px solid var(--border,#444);border-radius:6px;padding:1px 6px;margin-left:6px;">${esc(p.category)}</span></div>
         <div class="admin-toggle-sub" style="margin-top:2px;">${esc(p.description)}${p.author ? ' — by ' + esc(p.author) : ''}</div>
       </div>
+      ${(p.ui && p.ui.open && p.enabled && p.status === 'loaded')
+        ? `<a class="admin-btn-sm" href="${esc(p.ui.open)}" target="_blank" rel="noopener"
+             style="text-decoration:none;display:inline-flex;align-items:center;gap:4px;">${esc(p.ui.label || 'Open')} ↗</a>`
+        : ''}
       <button class="admin-btn-sm plugin-toggle" data-id="${esc(p.id)}" data-enabled="${p.enabled ? '1' : '0'}"
         style="min-width:78px;${p.enabled ? 'background:var(--accent,#3a6);color:#fff;' : ''}">${p.enabled ? 'Enabled' : 'Disabled'}</button>
     </div>${err}

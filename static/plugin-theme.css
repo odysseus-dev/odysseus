@@ -1,0 +1,52 @@
+/* Plugin theme layer — components built on the main Odysseus CSS variables so
+ * plugin pages match the active theme + user customization. Defaults below are
+ * the built-in "dark" theme; theme.js overrides them with the user's actual
+ * theme before first paint. */
+:root {
+  --bg: #282c34; --fg: #9cdef2; --panel: #111111; --border: #355a66; --red: #e06c75;
+  --input-bg: #111111; --input-border: #355a66; --send-btn-bg: #e06c75; --send-btn-hover: #e06c75;
+  --brand-color: #e06c75; --toggle-active: #e06c75; --code-bg: #0c0c0c; --code-fg: #9cdef2;
+  --font-family: 'Fira Code', monospace;
+  --od-radius: 12px; --od-gap: 12px;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-family); font-size: 14px; line-height: 1.5; }
+.od-wrap { max-width: 920px; margin: 0 auto; padding: 24px; }
+h1 { font-size: 18px; margin: 0 0 4px; }
+h2 { font-size: 14px; margin: 18px 0 8px; opacity: .9; }
+a { color: var(--brand-color); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.muted { opacity: .65; }
+.od-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--od-radius); padding: 14px; margin: var(--od-gap) 0; }
+.od-btn { font: inherit; display: inline-flex; align-items: center; gap: 6px; background: var(--send-btn-bg); color: #fff; border: 1px solid var(--send-btn-bg); border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+.od-btn:hover { background: var(--send-btn-hover); border-color: var(--send-btn-hover); }
+.od-btn:disabled { opacity: .5; cursor: default; }
+.od-btn.ghost { background: transparent; color: var(--fg); border-color: var(--border); }
+.od-btn.ghost:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.od-input { font: inherit; background: var(--input-bg); border: 1px solid var(--input-border); color: var(--fg); border-radius: 8px; padding: 8px; }
+.od-input::placeholder { color: var(--fg); opacity: .45; }
+.od-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+pre, code { background: var(--code-bg); color: var(--code-fg); border: 1px solid var(--border); border-radius: 8px; }
+pre { padding: 12px; overflow: auto; white-space: pre-wrap; }
+code { padding: 2px 6px; }
+.badge { font-size: .78em; border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; opacity: .85; }
+.bar { height: 6px; background: color-mix(in srgb, var(--fg) 12%, transparent); border-radius: 4px; overflow: hidden; margin-top: 6px; }
+.bar > i { display: block; height: 100%; width: 0; background: var(--send-btn-bg); transition: width .3s; }
+.ok { color: #7fd69a; } .warn { color: #e6c07a; }
+.density-compact .od-card { padding: 10px; }
+.density-spacious .od-card { padding: 18px; }
+
+/* Themed top bar with a "back to the main interface" brand link. */
+.od-header { display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+  background: var(--sidebar-bg); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; }
+.od-header .brand { display: inline-flex; align-items: center; gap: 6px; color: var(--brand-color);
+  font-weight: 600; text-decoration: none; }
+.od-header .brand:hover { opacity: .85; text-decoration: none; }
+.od-header .brand svg { width: 16px; height: 16px; }
+.od-header .od-title { opacity: .7; font-size: 13px; }
+.od-header .spacer { flex: 1; }
+.od-backpill { display: inline-flex; align-items: center; gap: 5px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 8px; padding: 4px 9px; color: var(--brand-color);
+  text-decoration: none; font-size: 12px; }
+.od-backpill:hover { text-decoration: none; opacity: .85; }

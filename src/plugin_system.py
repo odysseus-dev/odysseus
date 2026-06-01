@@ -144,6 +144,10 @@ class PluginRecord:
             "category": m.get("category", "General"),
             "permission": m.get("permission", "admin"),
             "requires": m.get("requires", []),
+            # Optional UI contribution: {"open": "/api/.../page", "label": "Open"}.
+            # The Plugins panel renders an "Open" button for enabled plugins that
+            # declare it — a plugin's only hook into the frontend.
+            "ui": m.get("ui"),
             "enabled": self.enabled,
             "status": self.status,
             "error": self.error,

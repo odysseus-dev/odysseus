@@ -12,6 +12,28 @@
       "homepage": "https://github.com/kanaru-dev/odysseus-plugin-cloudflare-tunnel",
       "download": "https://github.com/kanaru-dev/odysseus-plugin-cloudflare-tunnel/releases/download/v1.0.1/cloudflare_tunnel-1.0.1.zip",
       "sha256": "4dbce57eb8f8ea360de09696e4e44749952b09660a691c8bce78b414440f507b"
+    },
+    {
+      "id": "mcp_server",
+      "name": "MCP Server",
+      "version": "1.0.0",
+      "author": "kanaru-dev",
+      "category": "Integrations",
+      "description": "Expose Odysseus to external MCP clients (Claude Code, Cursor, …) over Streamable HTTP so they can run its tools. Reuses Odysseus auth (API token).",
+      "homepage": "https://github.com/kanaru-dev/odysseus-plugin-mcp-server",
+      "download": "https://github.com/kanaru-dev/odysseus-plugin-mcp-server/releases/download/v1.0.0/mcp_server-1.0.0.zip",
+      "sha256": "cdf6e00b647efbdd356e7672551f28cb1a9fc1b26a2ac0eb31d0beb9a0099fdc"
+    },
+    {
+      "id": "image_splat",
+      "name": "Image → Splat",
+      "version": "1.0.0",
+      "author": "kanaru-dev",
+      "category": "Media",
+      "description": "Turn a gallery image into a 3D Gaussian Splat with Apple SHARP, with a built-in WebGL viewer. Model downloaded on demand (not bundled).",
+      "homepage": "https://github.com/kanaru-dev/odysseus-plugin-image-splat",
+      "download": "https://github.com/kanaru-dev/odysseus-plugin-image-splat/releases/download/v1.0.0/image_splat-1.0.0.zip",
+      "sha256": "d840cad42327104cbd03348ffd46764d18a96d6ce333d1eb527001c1e448b842"
     }
   ]
 }
