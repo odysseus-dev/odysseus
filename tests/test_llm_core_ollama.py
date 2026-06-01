@@ -9,6 +9,12 @@ def test_detects_ollama_cloud_native_provider():
     assert llm_core._detect_provider("https://ollama.com/api/chat") == "ollama"
 
 
+def test_detects_venice_provider():
+    assert llm_core._detect_provider("https://api.venice.ai/api/v1") == "venice"
+    assert llm_core._detect_provider("https://api.venice.ai/api/v1/chat/completions") == "venice"
+    assert llm_core._provider_label("https://api.venice.ai/api/v1") == "Venice"
+
+
 def test_llm_call_posts_native_ollama_payload(monkeypatch):
     seen = {}
 

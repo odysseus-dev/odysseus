@@ -53,6 +53,9 @@ def _models_url(base: str) -> str:
         return _anthropic_api_root(base) + "/v1/models"
     if provider == "ollama" or host.endswith("ollama.com"):
         return _ollama_api_root(base) + "/tags"
+    if provider == "venice" or host.endswith("venice.ai"):
+        # Venice lists image/tts/video models too; ?type=text keeps chat models.
+        return base.rstrip("/") + "/models?type=text"
     return base.rstrip("/") + "/models"
 
 
@@ -136,6 +139,7 @@ _URL_TO_CURATED = {
     "api.x.ai": "xai",
     "openrouter.ai": "openrouter",
     "ollama.com": "ollama",
+    "api.venice.ai": "venice",
 }
 
 
@@ -154,7 +158,9 @@ def _match_provider_curated(base_url: str, provider: str) -> str:
 def _curate_models(model_ids, provider):
     """Partition model_ids into (curated, extra) based on provider's curated list.
     If no curated list exists for the provider, returns (model_ids, [])."""
-    if provider == "openrouter":
+    # Providers with large/dynamic catalogs already filtered upstream
+    # (e.g. Venice via ?type=text) — show everything as curated, no subset.
+    if provider in ("openrouter", "venice"):
         return model_ids, []
     curated_list = _PROVIDER_CURATED.get(provider)
     if not curated_list:

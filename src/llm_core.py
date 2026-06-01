@@ -223,6 +223,8 @@ def _detect_provider(url: str) -> str:
         return "openrouter"
     if "groq.com" in u:
         return "groq"
+    if "venice.ai" in u:
+        return "venice"
     return "openai"
 
 
@@ -245,6 +247,7 @@ def _provider_label(url: str) -> str:
     if "openai.com" in u: return "OpenAI"
     if "openrouter.ai" in u: return "OpenRouter"
     if "groq.com" in u: return "Groq"
+    if "venice.ai" in u: return "Venice"
     if "mistral.ai" in u: return "Mistral"
     if "deepseek.com" in u: return "DeepSeek"
     if "googleapis.com" in u or "generativelanguage" in u: return "Google"

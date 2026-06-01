@@ -151,6 +151,10 @@ def build_models_url(base: str) -> str:
         return _anthropic_api_root(base) + "/v1/models"
     if provider == "ollama" or host.endswith("ollama.com"):
         return _ollama_api_root(base) + "/tags"
+    if provider == "venice" or host.endswith("venice.ai"):
+        # Venice's /models returns image/tts/video models too; ?type=text
+        # keeps only chat/completions models in the picker.
+        return base + "/models?type=text"
     return base + "/models"
 
 

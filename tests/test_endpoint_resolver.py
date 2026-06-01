@@ -25,6 +25,8 @@ def _detect_provider(url: str) -> str:
         return "ollama"
     if "anthropic.com" in (url or ""):
         return "anthropic"
+    if "venice.ai" in (url or ""):
+        return "venice"
     return "openai"
 
 
@@ -56,6 +58,8 @@ def build_models_url(base: str) -> str:
     provider = _detect_provider(base)
     if provider == "ollama":
         return _ollama_api_root(base) + "/tags"
+    if provider == "venice":
+        return base + "/models?type=text"
     return base + "/models"
 
 
@@ -116,6 +120,9 @@ class TestBuildChatUrl:
     def test_ollama_cloud_root_adds_api(self):
         assert build_chat_url("https://ollama.com") == "https://ollama.com/api/chat"
 
+    def test_venice_openai_compatible(self):
+        assert build_chat_url("https://api.venice.ai/api/v1") == "https://api.venice.ai/api/v1/chat/completions"
+
 
 class TestBuildModelsUrl:
     def test_openai_models(self):
@@ -123,6 +130,14 @@ class TestBuildModelsUrl:
 
     def test_ollama_tags(self):
         assert build_models_url("https://ollama.com/api") == "https://ollama.com/api/tags"
+
+    def test_venice_filters_to_text_models(self):
+        assert build_models_url("https://api.venice.ai/api/v1") == "https://api.venice.ai/api/v1/models?type=text"
+
+
+class TestBuildHeadersVenice:
+    def test_venice_bearer(self):
+        assert build_headers("vn-abc", "https://api.venice.ai/api/v1") == {"Authorization": "Bearer vn-abc"}
 
 
 class TestBuildHeaders:
