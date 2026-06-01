@@ -448,6 +448,22 @@ async def _direct_fallback(
                     time_filter = "month"
                 elif " news" in q_lc or q_lc.startswith("news ") or q_lc.endswith(" news"):
                     time_filter = "week"
+            # Reformulate a conversational question into a keyword search query
+            # ("is albert einstein still alive?" -> "Albert Einstein death date").
+            # Best-effort via the utility LLM; returns the original on any failure,
+            # so search is never worse than before. Skip for already-terse queries
+            # (<= 4 words rarely need it and it saves a call).
+            if query and len(query.split()) > 4:
+                try:
+                    from services.search.query import rewrite_search_query
+                    rewritten = await asyncio.wait_for(
+                        rewrite_search_query(query), timeout=8
+                    )
+                    if rewritten and rewritten != query:
+                        logger.info("search query rewrite: %r -> %r", query, rewritten)
+                        query = rewritten
+                except Exception:
+                    pass  # keep the original query
             loop = asyncio.get_running_loop()
             text, sources = await asyncio.wait_for(
                 loop.run_in_executor(
