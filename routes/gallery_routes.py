@@ -3,6 +3,9 @@
 import os
 import hashlib
 import logging
+import re
+import uuid
+from pathlib import Path
 from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -122,7 +125,11 @@ def setup_gallery_routes() -> APIRouter:
             content = await file.read()
             img_dir = Path("data/generated_images")
             img_dir.mkdir(parents=True, exist_ok=True)
-            img_path = img_dir / img.filename
+            # Use a safe filename to prevent path traversal via multipart name
+            safe_fname = re.sub(r'[^\w\-_\.]', '_', Path(img.filename).name)[:128]
+            if not safe_fname:
+                safe_fname = uuid.uuid4().hex[:12] + Path(img.filename).suffix
+            img_path = img_dir / safe_fname
             img_path.write_bytes(content)
 
             # Refresh dimensions in case the editor resized the canvas.
