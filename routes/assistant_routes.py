@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, CrewMember, ScheduledTask
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, verify_ownership
 from src.task_scheduler import compute_next_run
 
 
@@ -299,7 +299,7 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 raise HTTPException(404, "Task not found")
-            if task.owner != user:
+            if user and task.owner != user:
                 raise HTTPException(404, "Task not found")
             run = db.query(TaskRun).filter(
                 TaskRun.task_id == task_id,

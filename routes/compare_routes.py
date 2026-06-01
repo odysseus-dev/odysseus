@@ -11,7 +11,7 @@ import logging
 
 from core.database import Comparison, SessionLocal
 from core.session_manager import SessionManager
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, verify_ownership
 
 logger = logging.getLogger(__name__)
 
@@ -130,10 +130,7 @@ def setup_compare_routes(session_manager: SessionManager):
             comp = db.query(Comparison).filter(Comparison.id == comp_id).first()
             if not comp:
                 raise HTTPException(404, "Comparison not found")
-            # SECURITY: strict ownership — null-owner Comparisons were
-            # accessible to every user.
-            if comp.owner != user:
-                raise HTTPException(404, "Comparison not found")
+            verify_ownership(comp, user, model_name="Comparison")
             if comp.winner:
                 raise HTTPException(400, "Already voted")
 
@@ -235,10 +232,7 @@ def setup_compare_routes(session_manager: SessionManager):
             comp = db.query(Comparison).filter(Comparison.id == comp_id).first()
             if not comp:
                 raise HTTPException(404, "Comparison not found")
-            # SECURITY: strict ownership — null-owner Comparisons were
-            # accessible to every user.
-            if comp.owner != user:
-                raise HTTPException(404, "Comparison not found")
+            verify_ownership(comp, user, model_name="Comparison")
             db.delete(comp)
             db.commit()
             return {"status": "deleted"}
