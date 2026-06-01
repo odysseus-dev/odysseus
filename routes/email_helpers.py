@@ -140,6 +140,105 @@ def _get_valid_google_token(account_id: str, cfg: dict) -> str | None:
     return _refresh_google_token(account_id)
 
 
+# ── Microsoft (Office 365 / Outlook) OAuth ──
+#
+# Microsoft 365 is accessed via the Graph API (see src/email_graph.py), not
+# IMAP/SMTP XOAUTH2 — Microsoft has disabled Basic Auth for Exchange Online and
+# some tenants block IMAP entirely. Only the OAuth token plumbing lives here,
+# mirroring the Google helpers above; the mail operations live in GraphBackend.
+
+# Graph mail access + offline refresh. `offline_access` yields the refresh
+# token; `User.Read` powers the /me lookup used to auto-fill the address.
+MICROSOFT_OAUTH_SCOPES = "offline_access User.Read Mail.ReadWrite Mail.Send"
+
+
+def _microsoft_tenant() -> str:
+    """Azure AD tenant for the authorize/token endpoints.
+
+    `common` accepts both consumer (outlook.com/hotmail) and work/school
+    accounts; operators can pin a single tenant id via env.
+    """
+    return os.environ.get("MICROSOFT_OAUTH_TENANT", "").strip() or "common"
+
+
+def _refresh_microsoft_token(account_id: str) -> str | None:
+    """Exchange the stored Microsoft refresh token for a new access token.
+
+    Mirrors `_refresh_google_token`. Microsoft's token endpoint wants the
+    `scope` on refresh too, and rotates the refresh token — persist the new
+    one when returned so the grant doesn't silently expire.
+    """
+    import httpx
+    from core.database import SessionLocal as _SL, EmailAccount as _EA
+    from src.secret_storage import encrypt as _enc, decrypt as _dec
+    client_id = os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "")
+    client_secret = os.environ.get("MICROSOFT_OAUTH_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        return None
+    db = _SL()
+    try:
+        row = db.get(_EA, account_id)
+        if not row or not row.oauth_refresh_token:
+            return None
+        refresh_token = _dec(row.oauth_refresh_token or "")
+        if not refresh_token:
+            return None
+        token_url = f"https://login.microsoftonline.com/{_microsoft_tenant()}/oauth2/v2.0/token"
+        resp = httpx.post(token_url, data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+            "scope": MICROSOFT_OAUTH_SCOPES,
+        }, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        access_token = data["access_token"]
+        row.oauth_access_token = _enc(access_token)
+        row.oauth_token_expiry = str(int(time.time()) + data.get("expires_in", 3600))
+        # Microsoft rotates refresh tokens — keep the latest.
+        if data.get("refresh_token"):
+            row.oauth_refresh_token = _enc(data["refresh_token"])
+        db.commit()
+        return access_token
+    except Exception as e:
+        logger.warning(f"Microsoft token refresh failed: {e}")
+        return None
+    finally:
+        db.close()
+
+
+def _get_valid_microsoft_token(account_id: str, cfg: dict) -> str | None:
+    """Return a valid Microsoft access token, refreshing if expired or missing."""
+    from src.secret_storage import decrypt as _dec
+    access_token = _dec(cfg.get("oauth_access_token") or "")
+    expiry_str = cfg.get("oauth_token_expiry") or ""
+    if access_token and expiry_str:
+        try:
+            if int(expiry_str) - 60 > time.time():
+                return access_token
+        except (ValueError, TypeError):
+            pass
+    return _refresh_microsoft_token(account_id)
+
+
+def _graph_backend(account_id: str | None, owner: str = ""):
+    """Return a GraphBackend for Microsoft 365 accounts, else None.
+
+    The single dispatch point that decides IMAP vs Graph: callers branch on a
+    non-None return. Resolves the account config (one indexed lookup) and only
+    builds a backend when the account authenticates via Microsoft OAuth.
+    """
+    try:
+        cfg = _get_email_config(account_id, owner=owner)
+    except Exception:
+        return None
+    if cfg.get("oauth_provider") != "microsoft":
+        return None
+    from src.email_graph import GraphBackend
+    return GraphBackend(cfg, owner=owner)
+
+
 def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message: str | bytes, timeout: int = 30) -> None:
     """Send through SMTP using the conventional TLS mode for the configured port.
 
@@ -148,6 +247,14 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
     directly against 587 raises the classic "[SSL: WRONG_VERSION_NUMBER]"
     error even when credentials are correct.
     """
+    # Microsoft 365 accounts send through Graph /sendMail (no SMTP) — Graph
+    # also files the message in Sent Items, so the caller skips the append.
+    if cfg.get("oauth_provider") == "microsoft":
+        from src.email_graph import GraphBackend
+        raw = message.encode() if isinstance(message, str) else message
+        GraphBackend(cfg).send_mime(raw)
+        return
+
     host = cfg["smtp_host"]
     port = int(cfg.get("smtp_port") or 465)
     user = cfg.get("smtp_user") or ""

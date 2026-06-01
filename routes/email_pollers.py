@@ -129,6 +129,15 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
     if not auto_sum and not auto_reply and not auto_tag and not auto_spam and not auto_cal:
         return "Nothing to do"
 
+    # Microsoft 365 accounts are accessed via Graph, not IMAP. The AI scan
+    # loop below is still IMAP-only, so skip Graph accounts cleanly rather than
+    # crashing on _imap_connect. (Graph-backed AI triage is a follow-up.)
+    try:
+        if _get_email_config(account_id).get("oauth_provider") == "microsoft":
+            return "Skipped (Microsoft Graph account — AI triage not yet supported)"
+    except Exception:
+        pass
+
     try:
         conn = _imap_connect(account_id)
         from datetime import timedelta as _td
@@ -907,13 +916,15 @@ def _scheduled_poll_once() -> dict:
 
                 _send_smtp_message(cfg, cfg["from_address"], recipients, outer.as_string())
 
-                # Append to local Sent folder
-                try:
-                    with _imap() as imap:
-                        sent_folder = _detect_sent_folder(imap)
-                        imap.append(sent_folder, "\\Seen", None, outer.as_bytes())
-                except Exception as e:
-                    logger.warning(f"Failed to append scheduled {sid} to Sent: {e}")
+                # Append to local Sent folder. Graph /sendMail already files
+                # the message in Sent Items, so skip the IMAP append there.
+                if cfg.get("oauth_provider") != "microsoft":
+                    try:
+                        with _imap() as imap:
+                            sent_folder = _detect_sent_folder(imap)
+                            imap.append(sent_folder, "\\Seen", None, outer.as_bytes())
+                    except Exception as e:
+                        logger.warning(f"Failed to append scheduled {sid} to Sent: {e}")
 
                 _cleanup_compose_uploads(attachments)
 

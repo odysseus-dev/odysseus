@@ -2519,6 +2519,7 @@ async function initEmailAccountsSettings() {
       migadu:            { label: 'Migadu',                     imap: { host: 'imap.migadu.com',       port: 993, starttls: false }, smtp: { host: 'smtp.migadu.com',       port: 465 } },
       icloud:            { label: 'iCloud',                     imap: { host: 'imap.mail.me.com',      port: 993, starttls: false }, smtp: { host: 'smtp.mail.me.com',      port: 587 } },
       outlook:           { label: 'Outlook / Office 365',       imap: { host: 'outlook.office365.com', port: 993, starttls: false }, smtp: { host: 'smtp.office365.com',    port: 587 } },
+      microsoft_365:     { label: 'Microsoft 365 / Outlook (OAuth)', imap: { host: 'outlook.office365.com', port: 993, starttls: false }, smtp: { host: 'smtp.office365.com', port: 587 }, oauth: 'microsoft' },
       fastmail:          { label: 'Fastmail',                   imap: { host: 'imap.fastmail.com',     port: 993, starttls: false }, smtp: { host: 'smtp.fastmail.com',     port: 465 } },
       yahoo:             { label: 'Yahoo',                      imap: { host: 'imap.mail.yahoo.com',   port: 993, starttls: false }, smtp: { host: 'smtp.mail.yahoo.com',   port: 465 } },
       dovecot:           { label: 'Dovecot IMAP (no SMTP)',     imap: { host: '',                      port: 31143, starttls: false }, smtp: { host: '',                     port: 465 } },
@@ -2534,9 +2535,9 @@ async function initEmailAccountsSettings() {
         <div class="settings-row"><label class="settings-label">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="eaf-from" class="settings-input" placeholder="you@example.com" value="${esc(a.from_address || '')}"></div>
         <div class="settings-row"><label class="settings-label">Display Name${_hint('Your name as it appears in the From: field of emails you send, e.g. Jane Smith. Auto-filled from Google during OAuth.')}</label><input id="eaf-display-name" class="settings-input" placeholder="Your Name" value="${esc(a.display_name || '')}"></div>
         <div id="eaf-oauth-section" style="display:none;margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:6px;background:color-mix(in srgb,var(--accent,#50fa7b) 6%,transparent)">
-          <div style="font-size:11px;font-weight:600;margin-bottom:6px">Google OAuth2 — required for Workspace / .edu accounts</div>
-          <div id="eaf-oauth-status" style="font-size:11px;opacity:0.7;margin-bottom:6px">${a.oauth_provider === 'google' ? '✓ Connected via Google OAuth' : 'Not connected — click below to authorize'}</div>
-          <button type="button" id="eaf-oauth-btn" class="admin-btn-add" style="font-size:11px">${a.oauth_provider === 'google' ? 'Reconnect with Google' : 'Connect with Google'}</button>
+          <div id="eaf-oauth-title" style="font-size:11px;font-weight:600;margin-bottom:6px"></div>
+          <div id="eaf-oauth-status" style="font-size:11px;opacity:0.7;margin-bottom:6px"></div>
+          <button type="button" id="eaf-oauth-btn" class="admin-btn-add" style="font-size:11px"></button>
         </div>
         <div style="font-size:11px;font-weight:600;opacity:0.6;margin:6px 0 2px">IMAP (Receiving)</div>
         <div class="settings-row"><label class="settings-label">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="eaf-imap-host" class="settings-input" value="${esc(a.imap_host || '')}"></div>
@@ -2564,14 +2565,36 @@ async function initEmailAccountsSettings() {
       </div>
     `;
 
+    // Labels per OAuth provider — drives the connect section + authorize URL.
+    const OAUTH_META = {
+      google:    { name: 'Google',    note: 'required for Workspace / .edu accounts' },
+      microsoft: { name: 'Microsoft', note: 'required for Microsoft 365 / Outlook accounts' },
+    };
+    // The OAuth provider this form is currently wired to ('' = none). Read by
+    // the connect button to pick the authorize endpoint.
+    let _activeOauth = '';
+
     // Show/hide OAuth section and password fields based on provider selection.
     function _syncOauthUI(providerKey) {
       const p = PROVIDERS[providerKey];
-      const isOauth = !!(p && p.oauth);
+      const prov = (p && p.oauth) || '';
+      _activeOauth = prov;
+      const isOauth = !!prov;
       el('eaf-oauth-section').style.display = isOauth ? '' : 'none';
       formEl.querySelectorAll('.eaf-password-section').forEach(r => {
         r.style.display = isOauth ? 'none' : '';
       });
+      if (isOauth) {
+        const meta = OAUTH_META[prov] || { name: prov, note: '' };
+        const connected = a.oauth_provider === prov;
+        el('eaf-oauth-title').textContent = `${meta.name} OAuth2 — ${meta.note}`;
+        el('eaf-oauth-status').textContent = connected
+          ? `✓ Connected via ${meta.name} OAuth`
+          : 'Not connected — click below to authorize';
+        el('eaf-oauth-btn').textContent = connected
+          ? `Reconnect with ${meta.name}`
+          : `Connect with ${meta.name}`;
+      }
     }
 
     // Provider preset → autofill host/port/STARTTLS for both halves.
@@ -2588,6 +2611,7 @@ async function initEmailAccountsSettings() {
 
     // Init OAuth UI for accounts already connected via OAuth.
     if (a.oauth_provider === 'google') _syncOauthUI('google_workspace');
+    else if (a.oauth_provider === 'microsoft') _syncOauthUI('microsoft_365');
 
     // "Connect with Google" button — save the account first, then redirect to OAuth.
     el('eaf-oauth-btn').addEventListener('click', async () => {
@@ -2610,7 +2634,8 @@ async function initEmailAccountsSettings() {
       const d = await r.json();
       if (!d.ok) { el('eaf-msg').textContent = d.error || 'Save failed'; el('eaf-msg').style.color = 'var(--red)'; return; }
       const accId = isEdit ? a.id : d.id;
-      window.location.href = `/api/email/oauth/google/authorize?account_id=${encodeURIComponent(accId)}`;
+      const prov = _activeOauth || 'google';
+      window.location.href = `/api/email/oauth/${prov}/authorize?account_id=${encodeURIComponent(accId)}`;
     });
 
     // "Same as IMAP" toggle — hide the SMTP creds rows when on. The save

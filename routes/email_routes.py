@@ -42,7 +42,7 @@ from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
     _q, _attach_compose_uploads, _cleanup_compose_uploads,
     _load_settings, _save_settings, _get_email_config,
-    _send_smtp_message, make_oauth_state, verify_oauth_state,
+    _send_smtp_message, make_oauth_state, verify_oauth_state, _graph_backend,
     _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
     _extract_attachment_text, _list_attachments_from_msg,
     _extract_attachment_to_disk, _extract_html, _extract_text,
@@ -593,6 +593,11 @@ def setup_email_routes():
         SECURITY: `owner` is propagated so when `account_id` is missing,
         the fallback config lookup is scoped to this user's accounts only.
         """
+        # Microsoft 365 accounts go through Graph, not IMAP — delegate and
+        # return the identical dict shape. See src/email_graph.py.
+        _gb = _graph_backend(account_id, owner)
+        if _gb is not None:
+            return _gb.list_emails(folder, limit, offset, filter_, from_addr, has_attachments_only)
         try:
             conn = _imap_connect(account_id, owner=owner)
             select_status, _ = conn.select(_q(folder), readonly=True)
@@ -1134,6 +1139,10 @@ def setup_email_routes():
         BODY.PEEK[] keeps the fetch itself from tripping \\Seen.
         """
         import time as _t
+        # Microsoft 365 accounts read through Graph, not IMAP.
+        _gb = _graph_backend(account_id, owner)
+        if _gb is not None:
+            return _gb.read_email(uid, folder, mark_seen)
         _t0 = _t.monotonic()
         raw = None
         _t_select = 0.0
@@ -1281,9 +1290,13 @@ def setup_email_routes():
 
     def _mark_email_seen_sync(uid, folder, account_id, owner):
         try:
-            with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
-                conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Seen")
+            _gb = _graph_backend(account_id, owner)
+            if _gb is not None:
+                _gb.set_read(uid, True)
+            else:
+                with _imap(account_id, owner=owner) as conn:
+                    conn.select(_q(folder))
+                    conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Seen")
             _invalidate_list_cache(account_id, folder)
         except Exception as e:
             logger.debug(f"mark-seen after cached read failed uid={uid}: {e}")
@@ -1359,6 +1372,9 @@ def setup_email_routes():
     async def list_attachments(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """List attachments for an email."""
         try:
+            _gb = _graph_backend(account_id, owner)
+            if _gb is not None:
+                return {"attachments": _gb._list_attachments(uid), "uid": uid}
             with _imap(account_id, owner=owner) as conn:
                 conn.select(_q(folder), readonly=True)
                 status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
@@ -1376,6 +1392,21 @@ def setup_email_routes():
     async def download_attachment(uid: str, index: int, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """Download a specific attachment by email UID and attachment index. Saves to local disk and returns the file."""
         try:
+            # Per-email folder. The uid (Graph message id) can contain '/' and
+            # other path-unsafe chars, so flatten it for the directory name.
+            _safe_uid = re.sub(r"[^A-Za-z0-9_.-]", "_", str(uid))[:128]
+            target_dir = ATTACHMENTS_DIR / f"{folder}_{_safe_uid}"
+            _gb = _graph_backend(account_id, owner)
+            if _gb is not None:
+                fname, _ctype, blob = _gb.get_attachment(uid, index)
+                target_dir.mkdir(parents=True, exist_ok=True)
+                filepath = target_dir / (Path(fname).name or f"attachment_{index}")
+                filepath.write_bytes(blob)
+                return FileResponse(
+                    path=str(filepath),
+                    filename=filepath.name,
+                    media_type="application/octet-stream",
+                )
             with _imap(account_id, owner=owner) as conn:
                 conn.select(_q(folder), readonly=True)
                 status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
@@ -1642,10 +1673,14 @@ def setup_email_routes():
     async def mark_unread(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """Mark an email as unread (clear \\Seen flag)."""
         try:
-            with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
-                if not _store_email_flag(conn, uid, "\\Seen", add=False):
-                    return {"success": False, "error": "Email not found"}
+            _gb = _graph_backend(account_id, owner)
+            if _gb is not None:
+                _gb.set_read(uid, False)
+            else:
+                with _imap(account_id, owner=owner) as conn:
+                    conn.select(_q(folder))
+                    if not _store_email_flag(conn, uid, "\\Seen", add=False):
+                        return {"success": False, "error": "Email not found"}
             _invalidate_list_cache(account_id, folder)
             return {"success": True}
         except Exception as e:
@@ -1656,10 +1691,14 @@ def setup_email_routes():
     async def mark_read(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """Mark an email as read (set \\Seen flag)."""
         try:
-            with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
-                if not _store_email_flag(conn, uid, "\\Seen", add=True):
-                    return {"success": False, "error": "Email not found"}
+            _gb = _graph_backend(account_id, owner)
+            if _gb is not None:
+                _gb.set_read(uid, True)
+            else:
+                with _imap(account_id, owner=owner) as conn:
+                    conn.select(_q(folder))
+                    if not _store_email_flag(conn, uid, "\\Seen", add=True):
+                        return {"success": False, "error": "Email not found"}
             _invalidate_list_cache(account_id, folder)
             return {"success": True}
         except Exception as e:
@@ -1670,10 +1709,14 @@ def setup_email_routes():
     async def archive_email(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """Move email to Archive folder."""
         try:
-            with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
-                if not _move_email_message(conn, uid, "Archive", role="archive"):
-                    return {"success": False, "error": "Email not found"}
+            _gb = _graph_backend(account_id, owner)
+            if _gb is not None:
+                _gb.move(uid, "Archive")
+            else:
+                with _imap(account_id, owner=owner) as conn:
+                    conn.select(_q(folder))
+                    if not _move_email_message(conn, uid, "Archive", role="archive"):
+                        return {"success": False, "error": "Email not found"}
             _invalidate_list_cache(account_id)
             return {"success": True}
         except Exception as e:
@@ -1684,10 +1727,14 @@ def setup_email_routes():
     async def delete_email(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """Move email to Trash."""
         try:
-            with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
-                if not _move_email_message(conn, uid, "Trash", role="trash"):
-                    return {"success": False, "error": "Email not found"}
+            _gb = _graph_backend(account_id, owner)
+            if _gb is not None:
+                _gb.delete(uid, permanent=False)
+            else:
+                with _imap(account_id, owner=owner) as conn:
+                    conn.select(_q(folder))
+                    if not _move_email_message(conn, uid, "Trash", role="trash"):
+                        return {"success": False, "error": "Email not found"}
             _invalidate_list_cache(account_id)
             return {"success": True}
         except Exception as e:
@@ -1698,11 +1745,15 @@ def setup_email_routes():
     async def delete_email_permanent(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """Permanently delete an email (no Trash)."""
         try:
-            with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
-                if not _store_email_flag(conn, uid, "\\Deleted", add=True):
-                    return {"success": False, "error": "Email not found"}
-                conn.expunge()
+            _gb = _graph_backend(account_id, owner)
+            if _gb is not None:
+                _gb.delete(uid, permanent=True)
+            else:
+                with _imap(account_id, owner=owner) as conn:
+                    conn.select(_q(folder))
+                    if not _store_email_flag(conn, uid, "\\Deleted", add=True):
+                        return {"success": False, "error": "Email not found"}
+                    conn.expunge()
             _invalidate_list_cache(account_id, folder)
             return {"success": True}
         except Exception as e:
@@ -1788,10 +1839,14 @@ def setup_email_routes():
     async def move_email(uid: str, folder: str = Query("INBOX"), dest: str = Query(...), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """Move an email to another folder."""
         try:
-            with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder))
-                if not _move_email_message(conn, uid, dest):
-                    return {"success": False, "error": f"Failed to move to {dest}"}
+            _gb = _graph_backend(account_id, owner)
+            if _gb is not None:
+                _gb.move(uid, dest)
+            else:
+                with _imap(account_id, owner=owner) as conn:
+                    conn.select(_q(folder))
+                    if not _move_email_message(conn, uid, dest):
+                        return {"success": False, "error": f"Failed to move to {dest}"}
             _invalidate_list_cache(account_id)
             return {"success": True}
         except Exception as e:
@@ -1800,7 +1855,10 @@ def setup_email_routes():
 
     @router.get("/folders")
     async def list_folders(account_id: str | None = Query(None), owner: str = Depends(require_owner)):
-        """List IMAP folders."""
+        """List IMAP folders (or Graph mail folders for Microsoft accounts)."""
+        _gb = _graph_backend(account_id, owner)
+        if _gb is not None:
+            return _gb.list_folders()
         try:
             with _imap(account_id, owner=owner) as conn:
                 status, folders = conn.list()
@@ -1820,6 +1878,10 @@ def setup_email_routes():
     async def mark_answered(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """Mark an email as answered (set \\Answered flag)."""
         try:
+            # Graph/Exchange has no per-message \Answered flag; treat as a
+            # no-op success so the UI flow (hide from "unanswered") still works.
+            if _graph_backend(account_id, owner) is not None:
+                return {"success": True}
             with _imap(account_id, owner=owner) as conn:
                 conn.select(_q(folder))
                 if not _store_email_flag(conn, uid, "\\Answered", add=True):
@@ -1833,6 +1895,8 @@ def setup_email_routes():
     async def clear_answered(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """Clear the \\Answered flag from an email."""
         try:
+            if _graph_backend(account_id, owner) is not None:
+                return {"success": True}
             with _imap(account_id, owner=owner) as conn:
                 conn.select(_q(folder))
                 if not _store_email_flag(conn, uid, "\\Answered", add=False):
@@ -2182,6 +2246,12 @@ def setup_email_routes():
                     "sent_uid": None,
                     "message_id": _message_id,
                 }
+                # Microsoft 365: Graph /sendMail already filed the message in
+                # Sent Items, and there's no IMAP to append through.
+                if _oauth_provider == "microsoft":
+                    delivery_result["sent_folder"] = "Sent Items"
+                    _cleanup_compose_uploads(_atts)
+                    return delivery_result
                 try:
                     with _imap(_account_id, owner=owner) as imap:
                         sent_folder = _detect_sent_folder(imap)
@@ -3245,6 +3315,127 @@ def setup_email_routes():
             if not row.smtp_host:
                 row.smtp_host = "smtp.gmail.com"
                 row.smtp_port = 587
+            if email_addr:
+                if not row.imap_user:
+                    row.imap_user = email_addr
+                if not row.smtp_user:
+                    row.smtp_user = email_addr
+                if not row.from_address:
+                    row.from_address = email_addr
+                if not row.name or row.name == row.id:
+                    row.name = email_addr
+            if display_name and not row.display_name:
+                row.display_name = display_name
+            db.commit()
+        finally:
+            db.close()
+        return _RR("/?section=integrations&email_oauth_success=1")
+
+    # ── Microsoft 365 / Outlook OAuth routes ──
+    # Unlike Google, Microsoft accounts use the Graph API (src/email_graph.py)
+    # for all mail operations rather than IMAP/SMTP — so the callback stores
+    # tokens + the resolved address but does NOT fill imap_host/smtp_host.
+
+    @router.get("/oauth/microsoft/authorize")
+    async def microsoft_oauth_authorize(account_id: str = Query(...), request: Request = None, owner: str = Depends(require_user)):
+        import urllib.parse
+        from routes.email_helpers import MICROSOFT_OAUTH_SCOPES, _microsoft_tenant
+        _assert_owns_account(account_id, owner)
+        client_id = os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "")
+        if not client_id:
+            raise HTTPException(400, "MICROSOFT_OAUTH_CLIENT_ID not set — add it to .env")
+        redirect_uri = (
+            os.environ.get("MICROSOFT_OAUTH_REDIRECT_URI")
+            or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/microsoft/callback"
+        )
+        state = make_oauth_state(account_id, owner)
+        params = urllib.parse.urlencode({
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": MICROSOFT_OAUTH_SCOPES,
+            "response_mode": "query",
+            "prompt": "select_account",
+            "state": state,
+        })
+        from fastapi.responses import RedirectResponse as _RR
+        authorize_url = f"https://login.microsoftonline.com/{_microsoft_tenant()}/oauth2/v2.0/authorize?{params}"
+        return _RR(authorize_url)
+
+    @router.get("/oauth/microsoft/callback")
+    async def microsoft_oauth_callback(
+        code: str = Query(None),
+        state: str = Query(None),
+        error: str = Query(None),
+        request: Request = None,
+    ):
+        from fastapi.responses import RedirectResponse as _RR
+        from routes.email_helpers import MICROSOFT_OAUTH_SCOPES, _microsoft_tenant
+        if error:
+            return _RR("/?section=integrations&email_oauth_error=microsoft_error")
+        if not code or not state:
+            return _RR("/?section=integrations&email_oauth_error=missing_code")
+        state_data = verify_oauth_state(state)
+        if not state_data:
+            return _RR("/?section=integrations&email_oauth_error=invalid_state")
+        account_id = state_data.get("a", "")
+        owner = state_data.get("o", "")
+        client_id = os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "")
+        client_secret = os.environ.get("MICROSOFT_OAUTH_CLIENT_SECRET", "")
+        redirect_uri = (
+            os.environ.get("MICROSOFT_OAUTH_REDIRECT_URI")
+            or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/microsoft/callback"
+        )
+        import httpx as _httpx
+        try:
+            resp = _httpx.post(
+                f"https://login.microsoftonline.com/{_microsoft_tenant()}/oauth2/v2.0/token",
+                data={
+                    "code": code,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                    "scope": MICROSOFT_OAUTH_SCOPES,
+                }, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            logger.warning("Microsoft token exchange failed")
+            return _RR("/?section=integrations&email_oauth_error=token_exchange_failed")
+        access_token = data.get("access_token", "")
+        refresh_token = data.get("refresh_token", "")
+        expiry = str(int(time.time()) + data.get("expires_in", 3600))
+        # Resolve the mailbox address + display name from Graph /me so we can
+        # auto-fill from_address. `mail` can be null on some accounts; fall
+        # back to userPrincipalName.
+        email_addr = ""
+        display_name = ""
+        try:
+            me = _httpx.get("https://graph.microsoft.com/v1.0/me",
+                            headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
+            if me.is_success:
+                me_data = me.json()
+                email_addr = me_data.get("mail") or me_data.get("userPrincipalName") or ""
+                display_name = me_data.get("displayName", "")
+        except Exception:
+            pass
+        from core.database import SessionLocal, EmailAccount
+        from src.secret_storage import encrypt as _enc
+        db = SessionLocal()
+        try:
+            row = db.query(EmailAccount).filter(EmailAccount.id == account_id).first()
+            if not row:
+                return _RR("/?section=integrations&email_oauth_error=account_not_found")
+            # SECURITY: verify the account belongs to the initiating user.
+            if owner and row.owner and row.owner != owner:
+                logger.warning("OAuth callback owner mismatch — rejecting token write")
+                return _RR("/?section=integrations&email_oauth_error=ownership_error")
+            row.oauth_provider = "microsoft"
+            row.oauth_access_token = _enc(access_token)
+            if refresh_token:
+                row.oauth_refresh_token = _enc(refresh_token)
+            row.oauth_token_expiry = expiry
             if email_addr:
                 if not row.imap_user:
                     row.imap_user = email_addr
