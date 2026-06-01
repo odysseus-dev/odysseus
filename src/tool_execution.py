@@ -404,6 +404,78 @@ def _split_bg_marker(content: str):
     return False, content
 
 
+# ---------------------------------------------------------------------------
+# Filesystem confinement for the agent FILE tools
+# (read_file / write_file / edit_file / glob / grep)
+# ---------------------------------------------------------------------------
+# These tools are confined to a workspace root and resolve + validate every
+# path on each call. Unlike bash/python — a real shell can always cd out, so
+# starting it in a root is only a guardrail — the file tools never spawn a
+# shell, so this IS an enforced boundary for them. Enforcement lives here in
+# the executor, which every call path (local-model fenced blocks AND hosted
+# tool_calls, both serialized to the same fenced content) funnels through, so
+# the boundary cannot be bypassed by choosing a different call path.
+
+def _agent_fs_root() -> str:
+    """Absolute, symlink-resolved workspace root the file tools are confined to.
+
+    Defaults to the process working directory (the project/install dir Odysseus
+    runs from). Override with the ``ODYSSEUS_AGENT_FS_ROOT`` env var or the
+    ``agent_fs_root`` app setting to point the agent at a different workspace.
+    """
+    root = os.environ.get("ODYSSEUS_AGENT_FS_ROOT")
+    if not root:
+        try:
+            from src.settings import get_setting
+            root = get_setting("agent_fs_root", "") or None
+        except Exception:
+            root = None
+    if not root:
+        root = os.getcwd()
+    try:
+        return os.path.realpath(root)
+    except Exception:
+        return os.path.abspath(root)
+
+
+def _within_root(root: str, real_path: str) -> bool:
+    """True if ``real_path`` is ``root`` itself or nested inside it. Case- and
+    separator-normalized so it is correct on case-insensitive filesystems
+    (Windows, macOS) and never false-positives on a sibling like
+    ``/work-other`` when the root is ``/work``."""
+    r = os.path.normcase(root.rstrip(os.sep)) or os.sep
+    p = os.path.normcase(real_path)
+    return p == r or p.startswith(r + os.sep)
+
+
+def _resolve_in_root(path: str):
+    """Resolve a file-tool path against the workspace root, rejecting escapes.
+
+    Returns ``(resolved_abs_path, None)`` when the path is safe, or
+    ``(None, error_message)`` when it must be refused. ``os.path.realpath``
+    resolves symlinks on the existing portion of the path and lexically
+    normalizes the rest (including ``..``), so every escape vector collapses to
+    one containment check:
+
+      * absolute paths outside the root  -> rejected
+      * ``..`` traversal                 -> rejected after normalization
+      * a symlink (leaf or parent dir) whose target leaves the root -> rejected
+        (for not-yet-existing create paths the symlinked parent is still
+        resolved, so it can't be used as an escape hatch)
+    """
+    if path is None or not str(path).strip():
+        return None, "path required"
+    root = _agent_fs_root()
+    candidate = path if os.path.isabs(path) else os.path.join(root, path)
+    try:
+        real = os.path.realpath(candidate)
+    except (OSError, ValueError):
+        return None, f"invalid path: {path}"
+    if _within_root(root, real):
+        return real, None
+    return None, f"path is outside the agent workspace root: {path}"
+
+
 async def _direct_fallback(
     tool: str,
     content: str,
@@ -487,6 +559,9 @@ async def _direct_fallback(
             path = content.split("\n", 1)[0].strip()
             if not path:
                 return {"error": "read_file: path required", "exit_code": 1}
+            path, _err = _resolve_in_root(path)
+            if _err:
+                return {"error": f"read_file: {_err}", "exit_code": 1}
             try:
                 # Run blocking read in a thread to keep the loop responsive
                 def _read():
@@ -510,6 +585,9 @@ async def _direct_fallback(
             body = lines[1] if len(lines) > 1 else ""
             if not path:
                 return {"error": "write_file: path required", "exit_code": 1}
+            path, _err = _resolve_in_root(path)
+            if _err:
+                return {"error": f"write_file: {_err}", "exit_code": 1}
             try:
                 def _write():
                     import os
@@ -534,6 +612,9 @@ async def _direct_fallback(
             replace_all = bool(args.get("replace_all"))
             if not path:
                 return {"error": "edit_file: path required", "exit_code": 1}
+            path, _err = _resolve_in_root(path)
+            if _err:
+                return {"error": f"edit_file: {_err}", "exit_code": 1}
 
             def _edit():
                 exists = os.path.exists(path)
@@ -595,9 +676,16 @@ async def _direct_fallback(
             import shutil as _shutil
             args = _parse_glob(content)
             pattern = (args.get("pattern") or "").strip()
-            root = (args.get("path") or "").strip() or os.getcwd()
             if not pattern:
                 return {"error": "glob: pattern required", "exit_code": 1}
+            agent_root = _agent_fs_root()
+            _raw_root = (args.get("path") or "").strip()
+            if _raw_root:
+                root, _err = _resolve_in_root(_raw_root)
+                if _err:
+                    return {"error": f"glob: {_err}", "exit_code": 1}
+            else:
+                root = agent_root
 
             def _do_glob():
                 matches: list[str] = []
@@ -625,6 +713,10 @@ async def _direct_fallback(
                     for p in _glob.glob(pat, recursive=True):
                         if os.path.isfile(p):
                             matches.append(p)
+                # Defense in depth: drop anything that resolves outside the
+                # workspace root (e.g. a symlinked directory the glob followed).
+                matches = [p for p in matches
+                           if _within_root(agent_root, os.path.realpath(p))]
                 # Sort newest-mtime first; missing files sort last.
                 def _mtime(p):
                     try:
@@ -662,7 +754,13 @@ async def _direct_fallback(
             pattern = args.get("pattern") or ""
             if not pattern:
                 return {"error": "grep: pattern required", "exit_code": 1}
-            search_path = (args.get("path") or "").strip() or os.getcwd()
+            _raw_sp = (args.get("path") or "").strip()
+            if _raw_sp:
+                search_path, _err = _resolve_in_root(_raw_sp)
+                if _err:
+                    return {"error": f"grep: {_err}", "exit_code": 1}
+            else:
+                search_path = _agent_fs_root()
             file_glob = args.get("glob")
             mode = args.get("output_mode") or "files_with_matches"
             ignore_case = bool(args.get("-i"))
