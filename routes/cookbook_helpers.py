@@ -144,6 +144,19 @@ def _local_tooling_path_export(executable: str) -> str:
     return f'export PATH="{esc}:$PATH"'
 
 
+def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m pip", upgrade: bool = False) -> str:
+    """Build a bash pip install fallback chain.
+
+    Try the active interpreter/environment first. `--user` is invalid inside
+    many venvs, so keep the user-site fallback for PEP-668 system Pythons only
+    after the venv-safe attempt has failed.
+    """
+    upgrade_flag = " -U" if upgrade else ""
+    base = f"{python_cmd} install -q{upgrade_flag} {package} 2>/dev/null"
+    user = f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {package} 2>/dev/null"
+    return f"{base} || {user}"
+
+
 def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
     """Build the standalone Python scanner used by /api/model/cached."""
     lines = [
