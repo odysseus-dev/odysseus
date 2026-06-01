@@ -55,6 +55,19 @@ def test_parse_sse_skips_garbage():
 
 
 # ── Approval gate ──────────────────────────────────────────────────────────
+def test_picker_numbered_fallback_selects(monkeypatch):
+    from odysseus_cli import picker
+    monkeypatch.setattr("builtins.input", lambda _="": "2")
+    chosen = picker._numbered_fallback(["a", "b", "c"], "a", "pick")
+    assert chosen == "b"
+
+
+def test_picker_numbered_fallback_cancel(monkeypatch):
+    from odysseus_cli import picker
+    monkeypatch.setattr("builtins.input", lambda _="": "")  # blank → cancel
+    assert picker._numbered_fallback(["a", "b"], None, "pick") is None
+
+
 def test_welcome_box_renders(capsys):
     from odysseus_cli import renderer
     renderer.welcome_box("0.1.0", "qwen2.5-coder:14b", "/tmp/proj", "ask", "Rohit")

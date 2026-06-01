@@ -204,18 +204,12 @@ async def _drive(cfg, approval_state: ApprovalState, one_shot: str | None,
                     r.info(f"no models found at {cfg.endpoint} "
                            "(is Ollama running?)")
                     continue
-                for i, name in enumerate(last_models, 1):
-                    mark = r.c("  ← current", r.GREEN) if name == cfg.model else ""
-                    r.info(f"  {i}. {name}{mark}")
-                try:
-                    sel = input(r.c("  switch to #  (Enter to cancel): ", r.CYAN)).strip()
-                except (EOFError, KeyboardInterrupt):
-                    sel = ""
-                if sel.isdigit() and 1 <= int(sel) <= len(last_models):
-                    cfg = cfg.with_overrides(model=last_models[int(sel) - 1])
+                from . import picker
+                chosen = picker.select(last_models, current=cfg.model,
+                                       prompt="switch model")
+                if chosen and chosen != cfg.model:
+                    cfg = cfg.with_overrides(model=chosen)
                     r.info(f"model → {cfg.model}")
-                elif sel:
-                    r.info("cancelled — unknown selection.")
                 continue
             if cmd == "model" and rest:
                 target = rest
