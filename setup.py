@@ -167,6 +167,8 @@ def main():
         print("Admin creation did not happen: dependencies are missing.\nRun 'pip install bcrypt' and rerun setup.\n")
     elif admin_status == "failed":
         print("Admin creation did not happen: a system or file error occurred.\nCheck write permissions for the 'data' directory and rerun setup.\n")
+    else:  # handling "failed" or any unhandled edge case
+        print("Admin creation did not happen: a system or file error occurred.\nCheck write permissions for the 'data' directory and rerun setup.\n")
 
 
 if __name__ == "__main__":
