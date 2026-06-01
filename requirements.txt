@@ -1,5 +1,9 @@
 fastapi
 uvicorn
+# WebSocket transport for uvicorn. Plain `uvicorn` ships no WS implementation,
+# so /ws/pty (routes/pty_routes.py — the real interactive ConPTY terminal)
+# silently fails to connect on a clean install without this. Required, not optional.
+websockets
 python-multipart
 python-dotenv
 httpx
@@ -37,5 +41,18 @@ mcp
 pyotp
 qrcode[pil]
 croniter
+# Real interactive terminal (routes/pty_routes.py). Windows uses pywinpty
+# (ConPTY pseudoconsole); POSIX uses the stdlib pty module (no extra dep).
+pywinpty; sys_platform == "win32"
+# Headless Windows service (scripts/windows_service_runner.py). The pywin32
+# ServiceFramework is what lets the service answer the SCM start handshake;
+# without it the service can't even be imported/registered and start fails
+# with Error 1053. Nothing pulls pywin32 in transitively, so it MUST be
+# declared or the service is missing on a clean install.
+pywin32; sys_platform == "win32"
+# GGUF model download for the local llama.cpp hub (services/llama/manager.py
+# imports hf_hub_download directly). fastembed pulls it in transitively, but —
+# exactly like python-dateutil above — we declare the direct import explicitly.
+huggingface_hub
 pytest
 pytest-asyncio

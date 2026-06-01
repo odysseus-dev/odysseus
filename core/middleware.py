@@ -94,7 +94,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "font-src 'self' https://cdn.jsdelivr.net; "
                 "img-src 'self' data: blob:; "
                 "media-src 'self' blob:; "
-                "connect-src 'self'; "
+                # ws:/wss: needed for the interactive PTY terminal (/ws/pty).
+                "connect-src 'self' ws: wss:; "
                 "frame-src 'self'; "
                 "frame-ancestors 'none'"
             )
