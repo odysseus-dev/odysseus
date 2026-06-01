@@ -296,3 +296,15 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
 
         assert _probe_endpoint("https://api.anthropic.com/v1") == ANTHROPIC_MODELS
+
+
+def test_endpoint_probe_timeout_uses_longer_timeout_for_local_ollama():
+    assert model_routes._endpoint_probe_timeout("http://localhost:11434/v1", default=1) == 3
+
+
+def test_endpoint_probe_timeout_uses_longer_timeout_for_ollama_hostname():
+    assert model_routes._endpoint_probe_timeout("https://ollama.example.com/v1", default=2) == 3
+
+
+def test_endpoint_probe_timeout_uses_default_for_non_ollama_endpoint():
+    assert model_routes._endpoint_probe_timeout("https://api.example.com/v1", default=2) == 2

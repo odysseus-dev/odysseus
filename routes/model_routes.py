@@ -379,6 +379,14 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     return []
 
 
+
+def _endpoint_probe_timeout(base_url: str, default: float) -> float:
+    """Use a longer probe timeout for local/Ollama endpoints."""
+    if ":11434" in base_url or "ollama" in base_url.lower():
+        return 3
+    return default
+
+
 def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> Dict[str, Any]:
     """Reachability probe that does not require installed/listed models."""
     from src.endpoint_resolver import resolve_url
@@ -993,7 +1001,7 @@ def setup_model_routes(model_discovery):
             _db_dedup.close()
 
         # Quick model list fetch (1s timeout — if endpoint is slow, it'll update on next refresh)
-        _probe_timeout = 3 if (":11434" in base_url or "ollama" in base_url.lower()) else 1
+        _probe_timeout = _endpoint_probe_timeout(base_url, default=1)
         model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=_probe_timeout) if should_probe else []
         ping = {"reachable": False, "error": None}
         if should_probe and not model_ids:
@@ -1063,7 +1071,7 @@ def setup_model_routes(model_discovery):
             raise HTTPException(400, "Base URL is required")
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
-        probe_timeout = 3 if (":11434" in base_url or "ollama" in base_url.lower()) else 2
+        probe_timeout = _endpoint_probe_timeout(base_url, default=2)
         models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
         ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
         return {
