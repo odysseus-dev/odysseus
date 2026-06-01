@@ -3,10 +3,21 @@
     "type": "git",
     "url": "https://github.com/pewdiepie-archdaemon/odysseus.git"
   },
+  "scripts": {
+    "build:openui": "node scripts/generate_openui_prompt.mjs && esbuild static/js/openui-renderer.jsx --bundle --format=esm --outfile=static/vendor/openui-renderer.js --loader:.css=css"
+  },
   "devDependencies": {
     "@antithesishq/bombadil": "^0.3.2"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.98.0"
+    "@anthropic-ai/sdk": "^0.98.0",
+    "@openuidev/react-headless": "^0.8.2",
+    "@openuidev/react-lang": "^0.2.6",
+    "@openuidev/react-ui": "^0.11.8",
+    "esbuild": "^0.28.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "zod": "^4.4.3",
+    "zustand": "^4.5.7"
   }
 }
