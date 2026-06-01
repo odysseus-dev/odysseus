@@ -577,6 +577,17 @@ class SkillsManager:
             def _passes(s):
                 if s.get("status") == "published":
                     return True
+                # Teacher-escalation drafts are auto-written from a (possibly
+                # untrusted) trace and injected as authoritative guidance, so they
+                # must EARN injection with an explicit, parseable confidence that
+                # clears the bar — fail closed on a missing/garbage value instead
+                # of treating it as 1.0. Hand-authored legacy drafts keep the
+                # lenient "unset → keep" behavior so they don't silently vanish.
+                if s.get("source") == "teacher-escalation":
+                    c = s.get("confidence")
+                    if c is None:
+                        return False
+                    return _to_float(c, 0.0) >= min_confidence  # unparseable → fail closed
                 c = s.get("confidence")
                 if c is None:
                     return True  # unset → don't filter (legacy)
