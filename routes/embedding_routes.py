@@ -6,8 +6,9 @@ import shutil
 import logging
 import asyncio
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Form
+from fastapi import APIRouter, HTTPException, Form, Depends
 from core.constants import BASE_DIR
+from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ def _save_custom_endpoint(data: dict):
 
 
 def setup_embedding_routes():
-    router = APIRouter(prefix="/api/embeddings")
+    router = APIRouter(prefix="/api/embeddings", dependencies=[Depends(require_admin)])
 
     @router.get("/models")
     def list_models():

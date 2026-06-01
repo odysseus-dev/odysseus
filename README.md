@@ -44,15 +44,20 @@ to override deployment-level things like `AUTH_ENABLED`, `DATABASE_URL`,
 or pre-seed `ODYSSEUS_ADMIN_PASSWORD` (otherwise an initial password is
 generated and printed on first boot).
 
+Contributing? See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and
+pull request guidelines.
+
 ### Option 1: Docker (recommended)
 ```bash
-git clone <your-odysseus-repo-url>
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
 cp .env.example .env       # optional, but recommended for explicit defaults
 docker compose up -d --build
 ```
 Compose starts Odysseus, ChromaDB, SearXNG, and ntfy. First run does a full
 image build. Open `http://localhost:7000` after the containers are healthy.
+If port `7000` is already taken, set `APP_PORT=7001` (or another free port)
+in `.env`, recreate the container, and open `http://localhost:7001`.
 
 Cookbook remote servers use an Odysseus-owned SSH key from `./data/ssh`
 inside Docker. In **Cookbook -> Settings -> Servers**, generate/copy the
@@ -62,7 +67,22 @@ After generating the key, you can also install it from the host with:
 ssh-copy-id -i data/ssh/id_ed25519.pub user@server
 ```
 Cookbook local downloads are stored in `./data/huggingface`, mounted as
-`~/.cache/huggingface` inside the Odysseus container.
+`~/.cache/huggingface` inside the Odysseus container. Cookbook-installed
+serve engines and Python CLIs are stored in `./data/local`, mounted as
+`~/.local`, so vLLM/llama.cpp installs survive container recreation.
+
+After downloading a model, open **Cookbook -> Serve**, pick the cached model,
+and launch it. When the server answers `/v1/models`, Odysseus adds it to the
+chat model picker automatically. For NVIDIA GPUs in Docker, install the NVIDIA
+Container Toolkit and add `gpus: all` to the `odysseus` service if `nvidia-smi`
+is not visible inside the container.
+
+The default Docker image is intentionally slim. For Python-based serve engines,
+use **Cookbook -> Dependencies** to install vLLM, SGLang, llama-cpp-python, or
+diffusers into the persisted `./data/local` mount. Native CUDA builds inside the
+container also require CUDA toolkit binaries such as `nvcc`; if those are not
+installed in the container, use prebuilt Python wheels or serve from a remote
+GPU host that already has the toolkit.
 
 Useful checks:
 ```bash
@@ -99,24 +119,27 @@ sudo dnf install tmux
 
 Then install Odysseus:
 ```bash
-git clone <your-odysseus-repo-url>
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 python setup.py            # creates data dirs and prints an initial admin password
-uvicorn app:app --host 0.0.0.0 --port 7000
+python -m uvicorn app:app --host 0.0.0.0 --port 7000
 ```
 
 ### Option 3: Manual install — Windows (PowerShell)
+Windows support is not actively tested. Use it with caution; Docker on Linux
+or a Linux/macOS manual install is the safer path for now.
+
 ```powershell
-git clone <your-odysseus-repo-url>
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
 python -m venv venv
 venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python setup.py
-uvicorn app:app --host 0.0.0.0 --port 7000
+python -m uvicorn app:app --host 0.0.0.0 --port 7000
 ```
 
 Open `http://localhost:7000`, log in with the generated admin password,
@@ -164,6 +187,7 @@ Key settings:
 | `LLM_HOSTS` | -- | Comma-separated list for model discovery |
 | `OPENAI_API_KEY` | -- | Optional OpenAI key. Prefer adding providers in the app unless pre-seeding. |
 | `SEARXNG_INSTANCE` | `http://localhost:8080` | SearXNG URL. Docker overrides this to `http://searxng:8080`. |
+| `SEARXNG_SECRET` | generated on first Docker boot | Optional SearXNG cookie/CSRF secret. Leave blank unless you need to pin it. |
 | `AUTH_ENABLED` | `true` | Enable/disable login |
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | Database connection string |
@@ -172,14 +196,38 @@ Key settings:
 | `EMBEDDING_URL` | -- | OpenAI-compatible embeddings endpoint |
 
 ### Bundled services
-Docker Compose includes these by default:
+Docker Compose includes these by default. The bundled service ports bind to `127.0.0.1` unless you opt in to a different bind address in `.env`, so they are reachable from the host machine but not from your LAN or the public internet by default:
 
-  - **ChromaDB** → vector store for semantic memory. In Docker, Odysseus connects to `chromadb:8000`; from the host it is exposed as `localhost:8100`.
-  - **SearXNG** → meta search for web search. In Docker, Odysseus connects to `searxng:8080`; from the host it is exposed only on `127.0.0.1:8080`.
-  - **ntfy** → local notification service, exposed as `localhost:8091`.
+  - **ChromaDB** → vector store for semantic memory. In Docker, Odysseus connects to `chromadb:8000`; from the host it is exposed as `${CHROMADB_BIND:-127.0.0.1}:8100`.
+  - **SearXNG** → meta search for web search. In Docker, Odysseus connects to `searxng:8080`; from the host it is exposed as `127.0.0.1:8080`.
+  - **ntfy** → local notification service, exposed as `${NTFY_BIND:-127.0.0.1}:8091`.
+
+**Phone push notifications via ntfy:** A phone cannot subscribe to `127.0.0.1` on your server. To expose ntfy safely without opening it on every interface:
+
+  - **Tailscale (recommended)** — set `NTFY_BIND=<tailscale-host-ip>` and `NTFY_BASE_URL=http://<tailscale-host-ip>:8091` in `.env`, recreate ntfy, then point the ntfy Android/iOS app at `http://<tailscale-host-ip>:8091/<your-topic>`.
+  - **Enable ntfy auth and bind to LAN** — add `NTFY_AUTH_FILE` + `NTFY_AUTH_DEFAULT_ACCESS=deny-all` to the `ntfy` service, create a user with `docker compose exec ntfy ntfy user add ...`, then set `NTFY_BIND` to your LAN IP. See the [ntfy docs](https://docs.ntfy.sh/config/#access-control).
 
 ### Optional external services
   - **Ollama** → local LLM server -- [ollama.ai](https://ollama.ai)
+
+### Ollama with Docker
+If Odysseus is running in Docker and Ollama is running on the host, add the endpoint in Settings as:
+
+`http://host.docker.internal:11434/v1`
+
+The default Compose file already maps `host.docker.internal` on Linux. Ollama also needs to listen outside its own loopback interface:
+
+```bash
+OLLAMA_HOST=0.0.0.0:11434 ollama serve
+```
+
+For a systemd Ollama install, set that in the Ollama service override. If Odysseus can see Ollama but requests hang or fail, check that your host firewall allows Docker bridge traffic to port `11434`.
+
+First-token latency is usually Ollama/model/hardware, not Odysseus. To compare, test Ollama directly:
+
+```bash
+curl http://127.0.0.1:11434/v1/models
+```
 
 ## Architecture
 ```

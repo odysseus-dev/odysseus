@@ -142,9 +142,24 @@ ANTHROPIC_MODELS = [
 
 def _detect_provider(url: str) -> str:
     """Detect API provider from URL."""
-    if "anthropic.com" in (url or ""):
+    u = (url or "").lower()
+    if "anthropic.com" in u:
         return "anthropic"
+    if "openrouter.ai" in u:
+        return "openrouter"
+    if "groq.com" in u:
+        return "groq"
     return "openai"
+
+
+def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str, str]:
+    h = {"Content-Type": "application/json"}
+    if isinstance(headers, dict):
+        h.update(headers)
+    if provider == "openrouter":
+        h.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
+        h.setdefault("X-OpenRouter-Title", "Odysseus")
+    return h
 
 
 def _provider_label(url: str) -> str:
@@ -160,6 +175,7 @@ def _provider_label(url: str) -> str:
     if "googleapis.com" in u or "generativelanguage" in u: return "Google"
     if "together.xyz" in u or "together.ai" in u: return "Together"
     if "fireworks.ai" in u: return "Fireworks"
+    if "ollama" in u or ":11434" in u: return "Ollama"
     if "localhost" in u or "127.0.0.1" in u: return "local endpoint"
     try:
         from urllib.parse import urlparse
@@ -356,6 +372,19 @@ def _parse_anthropic_response(data: dict) -> str:
             return block.get("text", "")
     return ""
 
+
+def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
+    """Strip Odysseus-only metadata before sending messages to providers."""
+    allowed = {"role", "content", "name", "tool_call_id", "tool_calls", "function_call"}
+    cleaned = []
+    for msg in messages or []:
+        if not isinstance(msg, dict):
+            continue
+        item = {k: v for k, v in msg.items() if k in allowed and v is not None}
+        if "role" in item and "content" in item:
+            cleaned.append(item)
+    return cleaned
+
 def _normalize_anthropic_url(url: str) -> str:
     """Ensure Anthropic URL points to /v1/messages."""
     url = url.rstrip("/")
@@ -375,8 +404,20 @@ def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT,
             h.update(headers)
         r = httpx.get(base_chat_url.replace("/chat/completions", "/models"), headers=h, timeout=timeout)
         r.raise_for_status()
-        return [m.get("id") for m in (r.json().get("data") or []) if m.get("id")]
+        data = r.json()
+        ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+        if ids:
+            return ids
+        return [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
     except Exception:
+        try:
+            if ":11434" in base_chat_url or "ollama" in base_chat_url.lower():
+                root = base_chat_url.replace("/v1/chat/completions", "").replace("/chat/completions", "").rstrip("/")
+                r = httpx.get(root + "/api/tags", timeout=timeout)
+                r.raise_for_status()
+                return [m.get("name") or m.get("model") for m in (r.json().get("models") or []) if m.get("name") or m.get("model")]
+        except Exception:
+            pass
         return []
 
 def normalize_model_id(endpoint_url: str, requested: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT) -> Optional[str]:
@@ -397,7 +438,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None, 
              timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
-    h = {"Content-Type": "application/json"}
+    h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
     # double-encoded) — otherwise h.update() throws "dictionary update sequence
     # element #0 has length 1; 2 is required".
@@ -409,7 +450,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     if isinstance(headers, dict):
         h.update(headers)
 
-    messages_copy = [msg.copy() for msg in messages]
+    messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -517,7 +558,7 @@ async def llm_call_async(
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
-    messages_copy = [msg.copy() for msg in messages]
+    messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -544,9 +585,7 @@ async def llm_call_async(
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
     else:
         target_url = url
-        h = {"Content-Type": "application/json"}
-        if headers:
-            h.update(headers)
+        h = _provider_headers(provider, headers)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -614,7 +653,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
       - data: [DONE]                       — end of stream
     """
     provider = _detect_provider(url)
-    messages_copy = [msg.copy() for msg in messages]
+    messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
     # Some models (e.g. Qwen3.5) reject system messages that aren't first.
@@ -641,16 +680,15 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             "messages": messages_copy,
             "temperature": temperature,
             "stream": True,
-            "stream_options": {"include_usage": True},
         }
+        if provider not in {"openrouter", "groq"}:
+            payload["stream_options"] = {"include_usage": True}
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
         if tools:
             payload["tools"] = tools
-        h = {"Content-Type": "application/json"}
-        if headers:
-            h.update(headers)
+        h = _provider_headers(provider, headers)
 
     # Short connect timeout: a reachable peer answers SYN in <100ms even on
     # Tailscale. 3s is plenty; 30s let one dead upstream wedge the UI.

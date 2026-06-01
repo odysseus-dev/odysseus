@@ -101,6 +101,24 @@ function _extractSetupProviderCredential(input) {
   return null;
 }
 
+function _normalizeSetupBaseUrl(raw) {
+  let u = (raw || '').trim();
+  u = u.replace(/^https?:\/(?!\/)/, m => m + '/');
+  u = u.replace(/^htp:/, 'http:').replace(/^htps:/, 'https:');
+  if (!/^https?:\/\//i.test(u)) u = 'http://' + u;
+  u = u.replace(/\/+$/, '');
+  u = u.replace(/\/v1\/(models|chat\/completions|completions|messages)\/?$/i, '/v1');
+  u = u.replace(/\/(models|chat\/completions|completions|v1\/messages)\/?$/i, '');
+  u = u.replace(/\/v1\/v1$/i, '/v1');
+  if (!u.includes('api.') && !u.includes('openrouter') && !u.endsWith('/v1')) {
+    try {
+      const parsed = new URL(u);
+      if (!parsed.pathname || parsed.pathname === '/') u += '/v1';
+    } catch (_) {}
+  }
+  return u;
+}
+
 function _clearSetupGuideMessages() {
   Storage.remove('odysseus-setup-guide-messages');
 }
@@ -823,7 +841,7 @@ async function _cmdSessionNew(args, ctx) {
     } catch (e) { /* ignore */ }
   }
   if (!endpointUrl || !model) {
-    slashReply('No model available — pick one from the sidebar or run <code>/setup</code> to configure an endpoint');
+    slashReply('No model available — open the model picker and use the <code>+</code> button to add a model endpoint.');
     return true;
   }
 
@@ -4668,15 +4686,39 @@ function _clearSetupCommandInput() {
 async function _cmdSetup(args, ctx) {
   _hideWelcomeScreen();
   _clearSetupCommandInput();
+  const topic = (args[0] || '').trim().toLowerCase();
+  const topicArgs = args.slice(1);
+  const provider = _setupProviderFromInput(topic);
+  if (provider) {
+    _clearSetupGuideMessages();
+    const credential = topicArgs.join(' ').trim();
+    if (credential) {
+      await connectDetectedSetupEndpoint({ base_url: provider.url, api_key: credential, name: provider.name });
+    } else {
+      pendingSetupProvider = provider;
+      setupMode = 'endpoint-key-for-provider';
+      await _setupReply(`Paste your ${provider.name} API key.`);
+    }
+    return true;
+  }
+  if (topic === 'local') {
+    _clearSetupGuideMessages();
+    const rawUrl = topicArgs.join(' ').trim();
+    if (rawUrl) {
+      const normalized = _normalizeSetupBaseUrl(rawUrl);
+      await connectDetectedSetupEndpoint({ base_url: normalized, api_key: '', name: 'Local' });
+    } else {
+      setupMode = 'endpoint-provider-first';
+      await _setupReply('Paste your local endpoint URL, for example http://100.x.x.x:11434/v1.');
+    }
+    return true;
+  }
 
   // Check if models are already configured
   const modelsBox = document.getElementById('models');
   const hasModels = modelsBox && modelsBox.querySelector('.models-row');
 
   if (hasModels) {
-    const topic = (args[0] || '').trim().toLowerCase();
-    const topicArgs = args.slice(1);
-
     if (!topic) {
       _clearSetupGuideMessages();
       return _showSetupEndpointGuide();
@@ -5377,9 +5419,9 @@ const COMMANDS = {
   setup: {
     alias: ['su', 'seutp'],
     category: 'Getting started',
-    help: 'Quick endpoint setup wizard',
+    help: 'Add local or API model endpoints',
     handler: _cmdSetup,
-    usage: '/setup'
+    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup endpoint'
   },
   demo: {
     alias: ['tour'],

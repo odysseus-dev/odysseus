@@ -125,15 +125,19 @@ def build_chat_url(base: str) -> str:
 
 def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     """Build auth headers for an endpoint."""
-    if not api_key:
-        return {}
     provider = _detect_provider(base)
+    headers: Dict[str, str] = {}
     if provider == "anthropic":
-        return {
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        }
-    return {"Authorization": f"Bearer {api_key}"}
+        if api_key:
+            headers["x-api-key"] = api_key
+        headers["anthropic-version"] = "2023-06-01"
+        return headers
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    if provider == "openrouter":
+        headers.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
+        headers.setdefault("X-OpenRouter-Title", "Odysseus")
+    return headers
 
 
 def resolve_endpoint(

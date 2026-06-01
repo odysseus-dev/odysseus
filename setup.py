@@ -143,7 +143,7 @@ def main():
 
     print("\n=== Setup complete ===")
     print(f"\nStart the server with:")
-    print(f"  uvicorn app:app --host 0.0.0.0 --port 7000")
+    print(f"  python -m uvicorn app:app --host 0.0.0.0 --port 7000")
     print(f"\nThen open http://localhost:7000")
     print(f"Login with the admin username and temporary password printed above.\n")
 

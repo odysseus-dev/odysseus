@@ -693,8 +693,16 @@
 
       <div class="section" id="sessions-section">
         <div class="section-header-flex">
-          <span class="section-title" id="chats-section-title"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="chats-section-label" class="section-title-label" style="cursor:pointer;" title="Open Library">Chats</span><span id="chats-notif-dot" class="sidebar-notif-dot" style="display:none"></span></span>
-          <div style="position:relative; display:inline-block;">
+          <span class="section-title" id="chats-section-title"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="chats-section-label" class="section-title-label">Chats</span><span id="chats-notif-dot" class="sidebar-notif-dot" style="display:none"></span></span>
+          <div style="position:relative; display:inline-block; display:flex; gap:4px; align-items:center;">
+            <button type="button" class="section-header-btn chats-manage-btn" id="chats-library-btn" title="Manage Chats (Library)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+              </svg>
+            </button>
             <button type="button" class="section-header-btn" id="session-sort-btn" title="Sort sessions">
               <svg class="sort-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="4" y1="6" x2="20" y2="6"/>
@@ -980,7 +988,12 @@
         <div class="model-picker-wrap" id="model-picker-wrap">
           <button type="button" class="model-picker-btn" id="model-picker-btn" title="Switch model"><span id="model-picker-label">Select model</span> <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg></button>
           <div class="model-picker-menu hidden" id="model-picker-menu">
-            <input type="text" id="model-picker-search" placeholder="Search models..." autocomplete="off">
+            <div class="model-picker-search-row">
+              <input type="text" id="model-picker-search" placeholder="Search models..." autocomplete="off">
+              <button type="button" class="model-picker-action-btn primary" id="model-picker-add-models-btn" title="Add model endpoints" aria-label="Add model endpoints">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+              </button>
+            </div>
             <div class="model-picker-list" id="model-picker-list"></div>
           </div>
         </div>
@@ -1963,7 +1976,7 @@
         <div data-settings-panel="services">
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>Add Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoints)</span></h2>
-            <div class="admin-toggle-sub" style="margin-bottom:10px">Connect to a cloud API or scan your network for a local model server.</div>
+            <div class="admin-toggle-sub" style="margin-bottom:10px">Connect local models first, or add a cloud API.</div>
 
             <!-- Local subsection -->
             <div class="adm-add-section collapsible collapsed" id="adm-add-local">
@@ -1974,19 +1987,30 @@
               </div>
               <div class="admin-model-form">
                 <div class="admin-model-form-row">
-                  <input id="adm-epLocalUrl" type="text" placeholder="Paste an endpoint URL, e.g. http://localhost:8000/v1" style="flex:1">
-                </div>
-                <div class="admin-model-form-row">
-                  <button class="admin-btn-sm" id="adm-epDiscoverBtn" title="Scan your network for running model servers">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Scan for Servers
-                  </button>
-                  <span style="flex:1"></span>
-                  <select id="adm-epLocalType" style="padding:5px;width:80px;">
+                  <input id="adm-epLocalUrl" type="text" placeholder="Paste endpoint URL, e.g. http://localhost:11434/v1" style="flex:1">
+                  <select id="adm-epLocalType" style="padding:5px;width:72px;flex-shrink:0;">
                     <option value="llm">LLM</option>
                     <option value="image">Image</option>
                   </select>
+                </div>
+                <div class="admin-model-form-row">
+                  <span style="flex:1"></span>
+                  <button class="admin-btn-sm" id="adm-epLocalTestBtn" style="width:55px;text-align:center;">Test</button>
                   <button class="admin-btn-add" id="adm-epLocalAddBtn" style="width:55px;text-align:center;">Add</button>
                 </div>
+                <div class="adm-quickstart-section collapsed" id="adm-add-local-quickstart">
+                  <div class="adm-quickstart-toggle" role="button" tabindex="0" aria-expanded="false">
+                    <span>Quickstart</span>
+                    <svg class="adm-section-caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                  </div>
+                  <div class="adm-quickstart-body">
+                    <button class="admin-btn-sm" id="adm-epDiscoverBtn" title="Scan your network for running model servers">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Scan for Servers
+                    </button>
+                    <button class="admin-btn-sm" id="adm-epOllamaBtn" title="Fill the default Ollama endpoint">Ollama</button>
+                  </div>
+                </div>
+                <div id="adm-epLocalMsg" class="adm-ep-inline-msg"></div>
               </div>
             </div>
 
@@ -2001,9 +2025,10 @@
                 <!-- Custom picker (with logos). Hidden native <select> mirrors
                      its value so the existing JS that reads adm-epProvider
                      keeps working unchanged. -->
-                <div class="adm-provider-picker" id="adm-provider-picker">
-                  <button type="button" class="adm-provider-btn" id="adm-provider-btn">
-                    <span class="adm-provider-current"><span class="adm-provider-logo"></span><span class="adm-provider-name">Custom URL</span></span>
+                <div class="adm-provider-picker adm-provider-combo" id="adm-provider-picker">
+                  <input id="adm-epUrl" type="text" placeholder="Base URL or pick provider" autocomplete="off">
+                  <button type="button" class="adm-provider-btn" id="adm-provider-btn" title="Pick provider">
+                    <span class="adm-provider-current"><span class="adm-provider-logo"></span><span class="adm-provider-name">Provider</span></span>
                     <svg class="adm-provider-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                   </button>
                   <div class="adm-provider-menu hidden" id="adm-provider-menu"></div>
@@ -2011,7 +2036,7 @@
                 <select id="adm-epProvider" style="display:none">
                   <option value="">Custom URL</option>
                   <option value="https://api.anthropic.com" data-logo="anthropic">Anthropic</option>
-                  <option value="https://api.deepseek.com/v1" data-logo="deepseek">DeepSeek</option>
+                  <option value="https://api.deepseek.com/v1" data-logo="deepseek" selected>DeepSeek</option>
                   <option value="https://api.openai.com/v1" data-logo="openai">OpenAI</option>
                   <option value="https://openrouter.ai/api/v1" data-logo="openrouter">OpenRouter</option>
                   <option value="https://api.groq.com/openai/v1" data-logo="groq">Groq</option>
@@ -2023,20 +2048,18 @@
                   <option value="https://api.z.ai/api/paas/v4" data-logo="zhipu">Z.AI (Zhipu)</option>
                 </select>
                 <div class="admin-model-form-row">
-                  <input id="adm-epUrl" type="text" placeholder="Base URL (e.g. https://api.example.com/v1)" style="flex:1">
-                </div>
-                <div class="admin-model-form-row">
                   <input id="adm-epApiKey" type="password" placeholder="API key">
                   <select id="adm-epType" style="padding:5px;width:80px;">
                     <option value="llm">LLM</option>
                     <option value="image">Image</option>
                   </select>
+                  <button class="admin-btn-sm" id="adm-epApiTestBtn" style="width:55px;text-align:center;">Test</button>
+                  <button class="admin-btn-sm hidden" id="adm-epApiCancelTestBtn" style="width:62px;text-align:center;">Cancel</button>
                   <button class="admin-btn-add" id="adm-epAddBtn" style="width:55px;text-align:center;">Add</button>
                 </div>
+                <div id="adm-epApiMsg" class="adm-ep-inline-msg"></div>
               </div>
             </div>
-
-            <div id="adm-epMsg"></div>
           </div>
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Added Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoints)</span></h2>

@@ -1025,16 +1025,10 @@ function initializeEventListeners() {
     });
   }
 
-  // "Chats" sidebar section header:
-  //   • Click the auto-injected chevron (section-management.js adds it)
-  //     or the empty area of the title → toggle collapse of the list.
-  //   • Click the "Chats" text label → open the Chats tab of the library.
-  // We stop propagation on the label so section-management.js's
-  // section-title click handler (which toggles collapse) doesn't also
-  // fire when the user is trying to open the library.
-  const chatsSectionLabel = el('chats-section-label');
-  if (chatsSectionLabel) {
-    chatsSectionLabel.addEventListener('click', (e) => {
+  // Manage Chats — opens Full Library modal (decoupled from Chats accordion toggle)
+  const chatsLibraryBtn = el('chats-library-btn');
+  if (chatsLibraryBtn) {
+    chatsLibraryBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (sessionModule) sessionModule.openLibrary('chats');
     });

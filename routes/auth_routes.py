@@ -61,6 +61,10 @@ class DeleteUserRequest(BaseModel):
     username: str
 
 
+class RenameUserRequest(BaseModel):
+    username: str
+
+
 SESSION_COOKIE = "odysseus_session"
 
 
@@ -265,6 +269,64 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if not ok:
             raise HTTPException(404, "User not found or is admin")
         return {"ok": True, "privileges": auth_manager.get_privileges(username)}
+
+    @router.put("/users/{username}/rename")
+    async def rename_user(username: str, body: RenameUserRequest, request: Request):
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        old_username = (username or "").strip().lower()
+        new_username = (body.username or "").strip().lower()
+        if not new_username:
+            raise HTTPException(400, "Username required")
+        if old_username == new_username:
+            return {"ok": True, "username": new_username, "renamed_self": old_username == user}
+        if old_username not in auth_manager.users:
+            raise HTTPException(404, "User not found")
+        if new_username in auth_manager.users:
+            raise HTTPException(409, "Username already taken")
+
+        # Usernames are ownership keys for user data. Rename the common
+        # owner-scoped DB rows before changing auth so the account keeps
+        # access to its sessions, docs, email accounts, tasks, etc.
+        try:
+            from core.database import Base, SessionLocal
+            db = SessionLocal()
+            try:
+                for mapper in Base.registry.mappers:
+                    model = mapper.class_
+                    if not hasattr(model, "owner"):
+                        continue
+                    (
+                        db.query(model)
+                        .filter(model.owner == old_username)
+                        .update({"owner": new_username}, synchronize_session=False)
+                    )
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error("Failed to rename owner references %s -> %s: %s", old_username, new_username, e)
+            raise HTTPException(500, "Failed to rename user data")
+
+        # Per-user prefs are JSON-backed, not SQL-backed.
+        try:
+            from routes.prefs_routes import _load as _load_prefs, _save as _save_prefs
+            prefs = _load_prefs()
+            users = prefs.get("_users") if isinstance(prefs, dict) else None
+            if isinstance(users, dict) and old_username in users and new_username not in users:
+                users[new_username] = users.pop(old_username)
+                _save_prefs(prefs)
+        except Exception as e:
+            logger.warning("Failed to rename user prefs %s -> %s: %s", old_username, new_username, e)
+
+        ok = auth_manager.rename_user(old_username, new_username, user)
+        if not ok:
+            raise HTTPException(400, "Cannot rename user")
+        return {"ok": True, "username": new_username, "renamed_self": old_username == user}
 
     @router.post("/signup-toggle")
     async def toggle_signup(request: Request):
@@ -482,7 +544,10 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                     }
                 return {"ok": False, "message": f"ntfy returned HTTP {r.status_code} from {full_url}: {r.text[:200]}"}
             except Exception as e:
-                return {"ok": False, "message": f"ntfy publish to {full_url} failed: {e}"[:300]}
+                hint = ""
+                if parsed.hostname not in ("127.0.0.1", "localhost"):
+                    hint = " If this is Docker Compose ntfy, set NTFY_BIND to that host/Tailscale IP and NTFY_BASE_URL to the same server URL in .env, then recreate ntfy."
+                return {"ok": False, "message": f"ntfy publish to {full_url} failed: {e}.{hint}"[:500]}
 
         # All other presets: GET against a known health endpoint.
         # Fall back to detecting from name if preset is missing.

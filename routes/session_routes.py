@@ -284,11 +284,19 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db.close()
         # Switch model/endpoint mid-session
         if model is not None and endpoint_url is not None:
+            if endpoint_id:
+                from core.database import ModelEndpoint
+                _db = SessionLocal()
+                try:
+                    ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
+                    if not ep:
+                        raise HTTPException(400, "Model endpoint no longer exists")
+                finally:
+                    _db.close()
             session.model = model
             session.endpoint_url = endpoint_url
             # Update auth headers from the endpoint's stored API key
             if endpoint_id:
-                from core.database import ModelEndpoint
                 _db = SessionLocal()
                 try:
                     ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()

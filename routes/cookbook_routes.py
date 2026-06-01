@@ -122,6 +122,11 @@ def setup_cookbook_routes() -> APIRouter:
                 [{"label": "retry with --trust-remote-code", "op": "append", "arg": "--trust-remote-code"}],
             ),
             (
+                r"Either a revision or a version must be specified|transformers\.integrations\.hub_kernels|kernels/layer",
+                "vLLM/Transformers kernel package mismatch.",
+                [{"label": "update vLLM, Transformers, and kernels on this server", "op": "dependency", "package": "vllm transformers kernels"}],
+            ),
+            (
                 r"Address already in use|bind.*address.*in use",
                 "Port is already in use.",
                 [{"label": "retry on port 8001", "op": "replace", "flag": "--port", "value": "8001"}],
@@ -145,6 +150,11 @@ def setup_cookbook_routes() -> APIRouter:
                 r"llama-server.*command not found|llama\.cpp.*not found|No module named.*llama_cpp|No module named 'starlette_context'|git: command not found|cmake: command not found",
                 "llama.cpp / llama-cpp-python dependencies are missing.",
                 [{"label": "install llama.cpp dependencies or llama-cpp-python[server]", "op": "dependency", "package": "llama-cpp-python[server]"}],
+            ),
+            (
+                r"No module named 'torch'|No module named torch|No module named 'diffusers'|No module named diffusers",
+                "Diffusion serving requires PyTorch and diffusers.",
+                [{"label": "install diffusers[torch] in Cookbook Dependencies", "op": "dependency", "package": "diffusers[torch]"}],
             ),
             (
                 r"403 Forbidden|401 Unauthorized|Access to model.*is restricted|gated repo|not in the authorized list|awaiting a review",
@@ -889,6 +899,12 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! python3 -c "import sglang" 2>/dev/null; then')
                 runner_lines.append('  echo "ERROR: SGLang is not installed. Open Cookbook -> Dependencies and install sglang on this server, then launch again."')
+                runner_lines.append('  exit 127')
+                runner_lines.append('fi')
+            elif "scripts/diffusion_server.py" in req.cmd or ".diffusion_server.py" in req.cmd:
+                runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
+                runner_lines.append('if ! python3 -c "import torch, diffusers" 2>/dev/null; then')
+                runner_lines.append('  echo "ERROR: Diffusion serving requires PyTorch + diffusers. Open Cookbook -> Dependencies and install diffusers on this server, then launch again."')
                 runner_lines.append('  exit 127')
                 runner_lines.append('fi')
 
