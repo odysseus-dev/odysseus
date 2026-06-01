@@ -48,7 +48,7 @@ def create_default_admin():
     auth_path = os.path.join(DATA_DIR, "auth.json")
     if os.path.exists(auth_path):
         print("  [skip] auth.json already exists")
-        return
+        return "exists"
 
     try:
         import bcrypt
@@ -70,11 +70,11 @@ def create_default_admin():
         print(f"  [ok] Initial admin user created ({username})")
         print(f"        Temporary password: {password}")
         print(f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
-        return True
+        return "created"
     except ImportError:
         print("  [warn] bcrypt not installed — skipping admin user creation")
         print("         Run: pip install bcrypt")
-        return False
+        return "skipped" 
 
 
 def create_env():
@@ -139,21 +139,26 @@ def main():
 
     print("\n5. Creating initial admin...")
 
-    admin_created = False
+    admin_status = "failed" 
 
     try:
-        admin_created = create_default_admin()
+        admin_status = create_default_admin()
     except Exception as e:
         print(f"  [warn] Admin creation failed: {e}")
+        admin_status = "failed"
 
     print("\n=== Setup complete ===")
     print(f"\nStart the server with:")
     print(f"  python -m uvicorn app:app --host 0.0.0.0 --port 7000")
     print(f"\nThen open http://localhost:7000")
-    if admin_created:
+    if admin_status == "created":
         print(f"Login with the admin username and temporary password printed above.\n")
-    else:
+    elif admin_status == "exists":
         print(f"Login with your existing admin credentials.\n")
+    elif admin_status == "skipped":
+        print(f"WARNING: Admin user was NOT created because dependencies are missing. Please run 'pip install bcrypt' and execute this setup script again to generate your admin account.\n")
+    elif admin_status == "failed":
+        print(f"ERROR: Admin user creation failed due to a system or file error. Please check write permissions for the 'data' directory.\n")
 
 
 if __name__ == "__main__":
