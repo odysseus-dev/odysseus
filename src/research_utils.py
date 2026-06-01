@@ -39,9 +39,7 @@ LOW_QUALITY_MARKERS = [
     "unable to extract",
     "completely unrelated",
     "boilerplate",
-    "cookie",
     "footer text",
-    "copyright",
 ]
 
 
