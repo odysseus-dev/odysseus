@@ -196,6 +196,25 @@ docs/      landing page (index.html) + preview clips
 All user data lives in `data/` (gitignored): `app.db` (sessions, messages, documents),
 `memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/`, `settings.json`.
 
+## macOS app bundle (native window)
+This repo includes a Finder-launchable macOS `.app` wrapper (Swift + WKWebView)
+that starts ChromaDB + Odysseus and loads the UI inside its own native app window.
+
+```bash
+cd odysseus
+./scripts/build-macos-app-bundle.sh
+open ./dist/Odysseus.app
+```
+
+Stop background services:
+```bash
+./scripts/stop-odysseus-desktop.sh
+```
+
+Notes:
+- This is a local wrapper around your checkout (not a fully self-contained signed/notarized distributable).
+- If you move/rename the repo folder, rebuild the bundle so it points to the new path.
+
 ## License
 MIT -- see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
 

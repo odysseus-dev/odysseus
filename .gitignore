@@ -48,6 +48,7 @@ Thumbs.db
 # Build artifacts
 *.cache
 cache/
+.build/
 output.txt.txt
 
 # Media (uploaded/generated)
