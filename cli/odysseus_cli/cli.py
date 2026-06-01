@@ -150,10 +150,26 @@ async def _drive(cfg, approval_state: ApprovalState, one_shot: str | None,
                 or (os.environ.get("USER") or "").title())
     r.welcome_box(__version__, cfg.model, str(cfg.project_root),
                   approval_state.policy, username)
+
+    from . import promptline
+    ptk_session = promptline.make_session()
+
+    def _toolbar() -> str:
+        u = approval_state.last_usage or {}
+        used = u.get("total_tokens") or (
+            u.get("prompt_tokens", 0) + u.get("completion_tokens", 0))
+        ctx = cfg.context_length or 1
+        pct = int(round(100 * used / ctx))
+        return (f" {cfg.model}  ·  {used:,}/{ctx:,} tok · {pct}% ctx  "
+                f"·  approval: {approval_state.policy}  ·  Alt+Enter = newline ")
+
     last_models: List[str] = []  # most recent /models listing, for numeric pick
     while True:
         try:
-            line = input(r.user_prompt()).strip()
+            if ptk_session is not None:
+                line = (await promptline.ask(ptk_session, r.user_prompt(), _toolbar)).strip()
+            else:
+                line = input(r.user_prompt()).strip()
         except (EOFError, KeyboardInterrupt):
             r.write("\n" + r.c("  bye 👋", r.GREY))
             return

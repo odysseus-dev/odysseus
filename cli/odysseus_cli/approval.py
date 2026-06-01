@@ -84,15 +84,26 @@ async def _prompt(tool: str, command: str, diff_lines=None) -> str:
 
 async def _ask(tool: str, command: str, diff_lines=None) -> str:
     """Prompt the user via the terminal. Returns 'yes', 'always', or 'no'."""
+    target = (command or "").split("\n", 1)[0].strip()
     r.write()
-    r.write(r.c(f"  ⚠ allow {tool}?", r.BOLD + r.YELLOW))
+    head = f"  ╭─ approve  {tool}"
+    if target and tool != "bash":
+        head += f"  ·  {target}"
+    r.write(r.c(head, r.BOLD + r.YELLOW))
     if diff_lines is not None:
-        r.diff(diff_lines)
+        for line in diff_lines[:60]:
+            if line.startswith("+") and not line.startswith("+++"):
+                r.write(r.c("  │ " + line[:200], r.GREEN))
+            elif line.startswith("-") and not line.startswith("---"):
+                r.write(r.c("  │ " + line[:200], r.RED))
+            elif line.startswith("@@"):
+                r.write(r.c("  │ " + line[:200], r.CYAN))
+            else:
+                r.write(r.c("  │ " + line[:200], r.GREY))
     else:
-        preview = (command or "").strip()
-        for line in (preview.splitlines() or [preview])[:8]:
-            r.write(r.c("    " + line[:200], r.DIM))
-    prompt = r.c("    [y]es / [n]o / [a]lways  ❯ ", r.CYAN)
+        for line in ((command or "").splitlines() or [command])[:10]:
+            r.write(r.c("  │ " + line[:200], r.DIM))
+    prompt = r.c("  ╰─ [y]es  [n]o  [a]lways  ❯ ", r.BOLD + r.CYAN)
 
     loop = asyncio.get_event_loop()
     try:
