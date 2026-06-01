@@ -8,6 +8,7 @@ import os
 
 from core.auth import AuthManager
 from src.rate_limiter import RateLimiter
+from src.settings_scrub import scrub_settings
 from src.settings import (
     load_settings as _load_settings,
     save_settings as _save_settings,
@@ -370,29 +371,6 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
 
     # ---- App settings (admin-managed) ----
 
-    _SECRET_KEY_PATTERNS = ("_api_key", "_password", "_secret", "_token", "_key")
-
-    def _is_secret_key(name: str) -> bool:
-        n = (name or "").lower()
-        if n in ("google_pse_cx",):  # public identifier, not a secret
-            return False
-        return any(n.endswith(p) or n == p.lstrip("_") for p in _SECRET_KEY_PATTERNS)
-
-    def _scrub_settings(settings: dict) -> dict:
-        """Return a copy of settings with secret-shaped values masked.
-
-        Frontend reads /settings without auth for things like keybinds + TTS
-        prefs. Secrets (search-provider keys, IMAP/SMTP passwords) must NOT
-        be exposed to non-admin callers.
-        """
-        scrubbed = {}
-        for k, v in (settings or {}).items():
-            if _is_secret_key(k) and isinstance(v, str) and v:
-                scrubbed[k] = ""  # presence preserved, value blanked
-            else:
-                scrubbed[k] = v
-        return scrubbed
-
     @router.get("/settings")
     async def get_settings(request: Request):
         """Returns app settings. Admins get the full set; non-admins get
@@ -402,7 +380,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         settings = _load_settings()
         if user and auth_manager.is_admin(user):
             return settings
-        return _scrub_settings(settings)
+        return scrub_settings(settings)
 
     @router.post("/settings")
     async def set_settings(request: Request):
