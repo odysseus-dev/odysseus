@@ -265,6 +265,8 @@ def test_task_payload_exposes_crew_member_id_for_ui_category():
 
 
 def test_task_webhook_route_is_auth_exempt_but_regenerate_is_not():
+    from routes import task_routes
+
     app_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "app.py",
@@ -293,8 +295,28 @@ def test_task_webhook_route_is_auth_exempt_but_regenerate_is_not():
     ns = {}
     exec(compile(ast.Module(body=extracted, type_ignores=[]), app_path, "exec"), ns)
     is_auth_exempt = ns["_is_auth_exempt"]
+    assert ns["AUTH_EXEMPT_PREFIXES"] == ["/static"]
 
-    assert is_auth_exempt("/static/app.js") is True
-    assert is_auth_exempt("/api/tasks/task-123/webhook/token-456") is True
-    assert is_auth_exempt("/api/tasks/task-123/webhook-regenerate") is False
-    assert is_auth_exempt("/api/tasks/task-123/webhook") is False
+    task_routes_src = open(task_routes.__file__, encoding="utf-8").read()
+    assert 'APIRouter(prefix="/api/tasks"' in task_routes_src
+    assert '@router.post("/{task_id}/webhook/{token}")' in task_routes_src
+    assert '@router.post("/{task_id}/webhook-regenerate")' in task_routes_src
+
+    public_cases = [
+        "/static/app.js",
+        "/api/tasks/task-123/webhook/token-456",
+    ]
+    protected_cases = [
+        "/api/tasks/task-123/webhook-regenerate",
+        "/api/tasks/{task_id}/webhook-regenerate",
+        "/api/tasks/task-123/webhook",
+        "/api/tasks/task-123/webhook/",
+        "/api/tasks/task-123/webhook/token-456/extra",
+        "/api/tasks//webhook/token-456",
+        "/api/tasks/task-123/webhooks/token-456",
+    ]
+
+    for path in public_cases:
+        assert is_auth_exempt(path) is True, path
+    for path in protected_cases:
+        assert is_auth_exempt(path) is False, path
