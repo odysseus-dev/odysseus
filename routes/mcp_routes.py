@@ -141,7 +141,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                         }
                     }
                     filepath = os.path.join(oauth_dir, oauth_filename)
-                    with open(filepath, "w") as f:
+                    with open(filepath, "w", encoding="utf-8") as f:
                         json.dump(creds, f, indent=2)
                     logger.info(f"Wrote OAuth credentials to {filepath}")
                     parsed_env.pop("GOOGLE_CLIENT_ID", None)
@@ -354,7 +354,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             if not keys_file or not os.path.exists(keys_file):
                 raise HTTPException(400, "OAuth keys file not found")
 
-            with open(keys_file) as f:
+            with open(keys_file, encoding="utf-8") as f:
                 keys_data = json.load(f)
             keys = keys_data.get("installed") or keys_data.get("web")
             if not keys:
@@ -427,7 +427,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             keys_file = os.path.expanduser(oauth_cfg.get("keys_file", ""))
             token_file = os.path.expanduser(oauth_cfg.get("token_file", ""))
 
-            with open(keys_file) as f:
+            with open(keys_file, encoding="utf-8") as f:
                 keys_data = json.load(f)
             keys = keys_data.get("installed") or keys_data.get("web")
             client_id = keys["client_id"]
@@ -457,7 +457,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
 
             # Save tokens to the file the MCP package expects
             os.makedirs(os.path.dirname(token_file), exist_ok=True)
-            with open(token_file, "w") as f:
+            with open(token_file, "w", encoding="utf-8") as f:
                 json.dump(tokens, f, indent=2)
             logger.info(f"Saved OAuth tokens to {token_file}")
 
@@ -499,6 +499,11 @@ def setup_mcp_routes(mcp_manager: McpManager):
 
 def _oauth_authorize_page(auth_url: str, server_id: str, host: str) -> str:
     """Page with Google sign-in link and URL paste-back form for remote access."""
+    # Escape values interpolated into the page: `host` comes from the request
+    # Host header and `server_id` from the OAuth state — neither is trusted.
+    auth_url = html.escape(auth_url, quote=True)
+    server_id = html.escape(server_id, quote=True)
+    host = html.escape(host, quote=True)
     return f"""<!DOCTYPE html>
 <html><head>
 <meta charset="UTF-8"><title>Authorize — Odysseus</title>

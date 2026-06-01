@@ -171,6 +171,13 @@ export function _isWindows(hostOrTask) {
   return _getPlatform(hostOrTask) === 'windows';
 }
 
+/** Check if the detected (local) hardware is Apple Silicon / Metal. Keys off the
+ *  hardware probe's backend rather than a platform string, since a local Mac
+ *  reports no platform but does report backend: "metal". */
+export function _isMetal() {
+  return ['metal', 'mps', 'apple'].includes(String(_hwfitCache?.system?.backend || '').toLowerCase());
+}
+
 /** Detect model-specific vLLM optimizations */
 function _detectModelOptimizations(modelName) {
   const n = (modelName || '').toLowerCase();
@@ -249,6 +256,13 @@ export function _detectBackend(model) {
 
   // Windows → default to llama.cpp (no vLLM support on Windows)
   if (_isWindows()) {
+    return { backend: 'llamacpp', label: 'llama.cpp' };
+  }
+
+  // Apple Silicon (Metal) → llama.cpp (GGUF). vLLM/SGLang are CUDA/ROCm-only and
+  // don't run on macOS; AWQ/GPTQ/FP8 (vLLM-only) models are already filtered out
+  // of metal Cookbook results, so llama.cpp is always the right engine here.
+  if (['metal', 'mps', 'apple'].includes(sysBackend)) {
     return { backend: 'llamacpp', label: 'llama.cpp' };
   }
 
@@ -528,7 +542,11 @@ async function _fetchDependencies() {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
       if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
       if (pkg.installed) return `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn" title="Installed — click for actions"><span class="cookbook-dep-installed-label">Installed</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
-      if (isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-na" title="${esc(pkg.install_hint || 'Install this OS package on the selected server.')}">Missing</span>`;
+      if (isSystemDep) {
+        const depTip = esc(pkg.install_hint || 'Install this OS package on the selected server.');
+        const depLabel = pkg.applicable === false ? 'N/A ?' : 'Missing';
+        return `<span class="cookbook-dep-tag cookbook-dep-na" title="${depTip}">${depLabel}</span>`;
+      }
       return `<button class="cookbook-dep-tag cookbook-dep-install" data-dep-pip="${esc(pkg.pip)}" data-dep-target="${isLocal ? 'local' : 'remote'}">Install</button>`;
     };
 
@@ -536,10 +554,12 @@ async function _fetchDependencies() {
       const isLocal = pkg.target === 'local';
       const isSystemDep = pkg.kind === 'system';
       const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
+      const note = pkg.status_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.65;margin-top:3px;">${esc(pkg.status_note)}</div>` : '';
       return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
         + `<div class="cookbook-dep-info">`
         + `<div class="memory-item-title">${esc(pkg.name)}</div>`
         + `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`
+        + note
         + `</div>`
         + `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`
         + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
@@ -1764,6 +1784,7 @@ const shared = {
   _sshPrefix,
   _getPlatform,
   _isWindows,
+  _isMetal,
   _buildEnvPrefix,
   _buildServeCmd,
   _shellQuote,
@@ -1775,6 +1796,7 @@ const shared = {
   _savePresets,
   _copyText,
   _persistEnvState,
+  _refreshDependencies: _fetchDependencies,
   _getGpuToggleTotal: () => _gpuToggleTotal,
   modelLogo,
   esc,

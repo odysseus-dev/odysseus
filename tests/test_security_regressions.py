@@ -96,6 +96,11 @@ def test_secret_storage_corrupt_token_returns_empty(tmp_path, monkeypatch):
     assert ss.decrypt("enc:not-a-valid-fernet-token") == ""
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX mode bits (0o600) don't exist on Windows; the key file is "
+    "protected by the user-profile NTFS ACL instead, and safe_chmod no-ops there.",
+)
 def test_secret_storage_key_created_with_safe_mode(tmp_path, monkeypatch):
     """The auto-generated key file must be mode 0o600 — anyone who can
     read it can decrypt every stored secret."""
@@ -104,6 +109,77 @@ def test_secret_storage_key_created_with_safe_mode(tmp_path, monkeypatch):
     assert (tmp_path / ".app_key").exists()
     mode = (tmp_path / ".app_key").stat().st_mode & 0o777
     assert mode == 0o600, f"expected 0o600, got 0o{mode:o}"
+
+
+# ── secure-by-default deployment + integration storage ─────────
+
+def test_docker_compose_binds_web_ui_to_loopback_by_default():
+    compose = Path("docker-compose.yml").read_text(encoding="utf-8")
+    assert "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000" in compose
+    assert '"${APP_PORT:-7000}:7000"' not in compose
+
+
+def test_readme_native_quickstart_uses_loopback():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "python -m uvicorn app:app --host 127.0.0.1 --port 7000" in readme
+    assert "Use `--host 0.0.0.0` only when you intentionally want" in readme
+
+
+def _import_integrations(tmp_path, monkeypatch):
+    """Import src.integrations with data + encryption key redirected to tmp."""
+    _import_secret_storage(tmp_path, monkeypatch)
+    sys.modules.pop("src.integrations", None)
+    from src import integrations  # noqa: WPS433
+    monkeypatch.setattr(integrations, "DATA_FILE", str(tmp_path / "integrations.json"))
+    return integrations
+
+
+def test_integrations_api_keys_are_encrypted_at_rest(tmp_path, monkeypatch):
+    integrations = _import_integrations(tmp_path, monkeypatch)
+
+    integrations.save_integrations([
+        {
+            "id": "miniflux",
+            "name": "Miniflux",
+            "base_url": "https://rss.example",
+            "auth_type": "bearer",
+            "api_key": "secret-token",
+        }
+    ])
+
+    raw_text = (tmp_path / "integrations.json").read_text(encoding="utf-8")
+    raw = json.loads(raw_text)
+    assert raw[0]["api_key"].startswith("enc:")
+    assert "secret-token" not in raw_text
+
+    loaded = integrations.load_integrations()
+    assert loaded[0]["api_key"] == "secret-token"
+    assert integrations.mask_integration_secret(loaded[0])["api_key"] == "secr****"
+
+
+def test_integrations_plaintext_keys_migrate_on_load(tmp_path, monkeypatch):
+    integrations = _import_integrations(tmp_path, monkeypatch)
+    data_file = tmp_path / "integrations.json"
+    data_file.write_text(
+        json.dumps([
+            {
+                "id": "legacy",
+                "name": "Legacy API",
+                "base_url": "https://api.example",
+                "auth_type": "header",
+                "api_key": "legacy-secret",
+            }
+        ]),
+        encoding="utf-8",
+    )
+
+    loaded = integrations.load_integrations()
+
+    assert loaded[0]["api_key"] == "legacy-secret"
+    migrated_text = data_file.read_text(encoding="utf-8")
+    migrated = json.loads(migrated_text)
+    assert migrated[0]["api_key"].startswith("enc:")
+    assert "legacy-secret" not in migrated_text
 
 
 # ── _q IMAP mailbox quoter ─────────────────────────────────────
@@ -161,6 +237,215 @@ def test_path_name_strips_traversal(token, expected):
     rely on. Pin its behaviour so a future "let's just use the raw
     token" regression is caught by tests."""
     assert Path(token).name == expected
+
+
+# -- upload owner gates -------------------------------------------------------
+
+def _make_upload_store(tmp_path):
+    upload_dir = tmp_path / "uploads"
+    dated = upload_dir / "2026" / "06" / "01"
+    dated.mkdir(parents=True)
+
+    alice_id = "a" * 32 + ".txt"
+    bob_id = "b" * 32 + ".txt"
+    alice_path = dated / alice_id
+    bob_path = dated / bob_id
+    alice_path.write_text("alice private note", encoding="utf-8")
+    bob_path.write_text("bob private note", encoding="utf-8")
+
+    index = {
+        "alice:h1": {
+            "id": alice_id,
+            "path": str(alice_path),
+            "mime": "text/plain",
+            "size": alice_path.stat().st_size,
+            "name": "alice.txt",
+            "original_name": "alice.txt",
+            "owner": "alice",
+        },
+        "bob:h2": {
+            "id": bob_id,
+            "path": str(bob_path),
+            "mime": "text/plain",
+            "size": bob_path.stat().st_size,
+            "name": "bob.txt",
+            "original_name": "bob.txt",
+            "owner": "bob",
+        },
+    }
+    (upload_dir / "uploads.json").write_text(json.dumps(index), encoding="utf-8")
+    return upload_dir, alice_id, bob_id
+
+
+def _stub_core_database_for_route_imports(monkeypatch):
+    from unittest.mock import MagicMock
+
+    core_pkg = types.ModuleType("core")
+    core_pkg.__path__ = []
+    models = types.ModuleType("core.models")
+    models.ChatMessage = MagicMock()
+
+    db = types.ModuleType("core.database")
+    for name in (
+        "SessionLocal",
+        "Session",
+        "ChatMessage",
+        "Document",
+        "DocumentVersion",
+        "GalleryImage",
+        "ModelEndpoint",
+    ):
+        setattr(db, name, MagicMock())
+    monkeypatch.setitem(sys.modules, "core", core_pkg)
+    monkeypatch.setitem(sys.modules, "core.models", models)
+    monkeypatch.setitem(sys.modules, "core.database", db)
+
+
+def test_upload_resolver_rejects_cross_owner_upload_ids(tmp_path):
+    from src.upload_handler import UploadHandler
+
+    upload_dir, alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+
+    assert handler.resolve_upload(alice_id, owner="alice")["id"] == alice_id
+    assert handler.resolve_upload(bob_id, owner="alice") is None
+
+
+def test_build_user_content_skips_cross_owner_attachments(tmp_path):
+    from src.document_processor import build_user_content
+    from src.upload_handler import UploadHandler
+
+    upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+
+    content = build_user_content(
+        "hello",
+        [bob_id],
+        str(upload_dir),
+        handler,
+        owner="alice",
+    )
+
+    assert content == "hello"
+    assert "bob private note" not in content
+
+
+def test_chat_preprocess_does_not_surface_cross_owner_attachment(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    for mod_name in ("src.chat_handler", "routes.chat_helpers"):
+        sys.modules.pop(mod_name, None)
+    _stub_core_database_for_route_imports(monkeypatch)
+    from src.chat_handler import ChatHandler
+    from src.upload_handler import UploadHandler
+    from src import settings
+
+    upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+    monkeypatch.setattr("src.chat_handler.UPLOAD_DIR", str(upload_dir))
+    monkeypatch.setattr(
+        settings,
+        "get_setting",
+        lambda key, default=None: False if key == "vision_enabled" else default,
+    )
+
+    chat_handler = ChatHandler(None, None, None, None, None, handler)
+    sess = SimpleNamespace(id="s1", owner="alice", model="text-model")
+
+    _enhanced, user_content, _text_ctx, _yt, attachment_meta = asyncio.run(
+        chat_handler.preprocess_message(
+            "hello",
+            [bob_id],
+            sess,
+        )
+    )
+
+    assert attachment_meta == []
+    assert user_content == "hello"
+    for mod_name in ("src.chat_handler", "routes.chat_helpers"):
+        sys.modules.pop(mod_name, None)
+
+
+def test_document_upload_lookup_rejects_cross_owner_marker(tmp_path, monkeypatch):
+    from src.upload_handler import UploadHandler
+
+    sys.modules.pop("routes.document_helpers", None)
+    _stub_core_database_for_route_imports(monkeypatch)
+    from routes.document_helpers import _locate_upload
+
+    upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+
+    assert _locate_upload(str(upload_dir), bob_id, owner="alice", upload_handler=handler) is None
+    assert _locate_upload(str(upload_dir), bob_id, owner="bob", upload_handler=handler).endswith(bob_id)
+    sys.modules.pop("routes.document_helpers", None)
+
+
+def test_find_source_upload_id_rejects_path_traversal_marker():
+    from src.pdf_form_doc import find_source_upload_id
+
+    content = '<!-- pdf_source upload_id="../../etc/passwd" -->\n\n# x\n'
+    assert find_source_upload_id(content) is None
+
+
+def test_pdf_marker_write_rejects_cross_owner_upload(tmp_path, monkeypatch):
+    """Saving a doc whose front-matter points at another user's upload must 400."""
+    from src.upload_handler import UploadHandler
+
+    sys.modules.pop("routes.document_helpers", None)
+    _stub_core_database_for_route_imports(monkeypatch)
+    from fastapi import HTTPException
+    from routes.document_helpers import _assert_pdf_marker_upload_owned
+
+    upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+
+    class _AuthMgr:
+        is_configured = True
+
+        @staticmethod
+        def is_admin(_user):
+            return False
+
+    class _AppState:
+        auth_manager = _AuthMgr()
+
+    class _App:
+        state = _AppState()
+
+    class _Req:
+        app = _App()
+
+    marker = f'<!-- pdf_source upload_id="{bob_id}" -->\n\n# Notes\n'
+    with pytest.raises(HTTPException) as exc:
+        _assert_pdf_marker_upload_owned(_Req(), marker, "alice", handler)
+    assert exc.value.status_code == 400
+
+    # Own upload is allowed
+    own_marker = f'<!-- pdf_source upload_id="{_alice_id}" -->\n\n# Notes\n'
+    _assert_pdf_marker_upload_owned(_Req(), own_marker, "alice", handler)
+
+    sys.modules.pop("routes.document_helpers", None)
+
+
+def test_pdf_marker_render_lookup_denies_cross_owner_without_doc_leak(tmp_path):
+    """Read path: cross-owner marker resolves to None (404 at route layer)."""
+    from src.upload_handler import UploadHandler
+
+    upload_dir, alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+
+    class _AuthMgr:
+        is_configured = True
+
+        @staticmethod
+        def is_admin(_user):
+            return False
+
+    assert handler.resolve_upload(bob_id, owner="alice", auth_manager=_AuthMgr()) is None
+    resolved = handler.resolve_upload(alice_id, owner="alice", auth_manager=_AuthMgr())
+    assert resolved is not None
+    assert resolved["path"].endswith(alice_id)
 
 
 # ── require_user dependency rejects anon callers ────────────────
@@ -300,6 +585,26 @@ def test_require_admin_allows_when_auth_explicitly_disabled(monkeypatch):
     assert require_admin(_Req()) is None
 
 
+def test_internal_tool_owner_header_logic_requires_known_user():
+    """Pin the owner-attribution branch used by app.AuthMiddleware without
+    booting the full FastAPI app."""
+    users = {
+        "alice": {"is_admin": False},
+        "AdminUser": {"is_admin": True},
+    }
+
+    def resolve_owner(header_value):
+        impersonate = (header_value or "").strip()
+        if impersonate and impersonate in users:
+            return impersonate
+        return "internal-tool"
+
+    assert resolve_owner("alice") == "alice"
+    assert resolve_owner("AdminUser") == "AdminUser"
+    assert resolve_owner("doesnotexist") == "internal-tool"
+    assert resolve_owner("") == "internal-tool"
+
+
 def test_auth_manager_migrates_legacy_admin_role(tmp_path):
     """Old setup.py wrote role='admin'; startup must turn that into is_admin."""
     sys.modules.pop("core.auth", None)
@@ -382,3 +687,147 @@ def test_mcp_config_listing_is_admin_gated():
     assert "def list_servers(request: Request):" in src
     assert "def list_tools(request: Request):" in src
     assert "def list_server_tools(server_id: str, request: Request):" in src
+
+
+# ── web_fetch SSRF guard (PR #111 merge gate) ───────────────────────
+# web_fetch routes every request through src.search.content's
+# _public_http_url / _get_public_url, the same SSRF-safe fetcher used by
+# web_search and deep research. These pin that the guard blocks every
+# private/internal address class plus redirect-into-private and non-http
+# schemes, so the new tool can't be turned into an SSRF primitive.
+
+import ipaddress as _ipaddr
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("url", [
+    "http://127.0.0.1/",                  # IPv4 loopback
+    "http://localhost/",                  # loopback by name
+    "http://10.0.0.5/",                   # private LAN 10/8
+    "http://172.16.0.1/",                 # private LAN 172.16/12
+    "http://192.168.1.1/",                # private LAN 192.168/16
+    "http://169.254.169.254/latest/",     # link-local / cloud metadata
+    "http://metadata.google.internal/",   # metadata by name
+    "http://[::1]/",                      # IPv6 loopback
+    "http://[fc00::1]/",                  # IPv6 unique-local (ULA)
+    "http://[fe80::1]/",                  # IPv6 link-local
+    "file:///etc/passwd",                 # unsupported scheme
+    "ftp://example.com/",                 # unsupported scheme
+])
+def test_web_fetch_guard_blocks_private_and_bad_schemes(url):
+    from src.search.content import _public_http_url
+    assert _public_http_url(url) is False
+
+
+def test_web_fetch_guard_allows_public_ip():
+    from src.search.content import _public_http_url
+    assert _public_http_url("http://93.184.216.34/") is True
+
+
+def test_web_fetch_guard_blocks_dns_resolving_to_private(monkeypatch):
+    from src.search import content
+    monkeypatch.setattr(content, "_resolve_hostname_ips",
+                        lambda host: [_ipaddr.ip_address("10.0.0.5")])
+    assert content._public_http_url("https://innocent.example/") is False
+
+
+def test_web_fetch_guard_fails_closed_on_empty_resolution(monkeypatch):
+    # A hostname that resolves to nothing must be treated as non-public.
+    from src.search import content
+    monkeypatch.setattr(content, "_resolve_hostname_ips", lambda host: [])
+    assert content._public_http_url("https://innocent.example/") is False
+
+
+def test_web_fetch_guard_blocks_redirect_into_private(monkeypatch):
+    # A public URL that 302-redirects to an internal address must be blocked
+    # at the redirect hop, not followed.
+    import httpx
+    from src.search import content
+
+    monkeypatch.setattr(content, "_resolve_hostname_ips",
+                        lambda host: [_ipaddr.ip_address("93.184.216.34")])
+
+    class _Resp:
+        status_code = 302
+        headers = {"location": "http://169.254.169.254/latest/meta-data/"}
+
+    class _FakeClient:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def get(self, url): return _Resp()
+
+    monkeypatch.setattr(httpx, "Client", _FakeClient)
+
+    with _pytest.raises(httpx.RequestError) as exc:
+        content._get_public_url("http://public.example/start", headers={}, timeout=5)
+    assert "non-public" in str(exc.value)
+
+
+# ── audit fixes (2026-06-01): email XSS, attachment traversal, authz ──
+
+def _import_attachment_extract_dir():
+    sys.modules.pop("routes.email_helpers", None)
+    from routes.email_helpers import attachment_extract_dir, ATTACHMENTS_DIR
+    return attachment_extract_dir, ATTACHMENTS_DIR
+
+
+@pytest.mark.parametrize("folder,uid", [
+    ("../../../../tmp/evil", "1"),
+    ("INBOX", "../../etc/cron.d/x"),
+    ("a/../../b", "x"),
+    ("..", ".."),
+    ("/abs/path", "2"),
+])
+def test_attachment_extract_dir_stays_contained(folder, uid):
+    """User-controlled folder/uid must never escape ATTACHMENTS_DIR — pins the
+    fix for the attachment-extraction path traversal."""
+    aed, base = _import_attachment_extract_dir()
+    target = aed(folder, uid)
+    base_r = base.resolve()
+    assert target == base_r or base_r in target.parents
+    # exactly one extra path segment, and no `..` component survived
+    rel = target.relative_to(base_r)
+    assert ".." not in rel.parts
+
+
+def test_attachment_extract_dir_normal_inputs_unchanged():
+    aed, base = _import_attachment_extract_dir()
+    assert aed("INBOX", "123") == base.resolve() / "INBOX_123"
+
+
+def test_diagnostics_routes_are_admin_gated():
+    """db/rag stats + test endpoints must require admin (they relied only on
+    the global session check before)."""
+    src = Path(__file__).resolve().parents[1] / "routes" / "diagnostics_routes.py"
+    text = src.read_text()
+    for handler in ("get_database_stats", "get_rag_stats", "test_youtube", "test_research"):
+        assert f"def {handler}(request: Request" in text, handler
+    assert text.count("require_admin(request)") >= 4
+
+
+def test_email_thread_rendering_sanitizes_body_html():
+    """Both threaded render paths must run server-parsed body_html through the
+    allowlist sanitizer (the flat path already did)."""
+    src = Path(__file__).resolve().parents[1] / "static" / "js" / "emailLibrary.js"
+    text = src.read_text()
+    # every `t.body_html` reference is wrapped by _sanitizeHtml(...)
+    assert text.count("t.body_html") == text.count("_sanitizeHtml(t.body_html")
+    assert "t.body_html" in text  # guard against the file being refactored away
+
+
+def test_session_html_export_escapes_name():
+    src = Path(__file__).resolve().parents[1] / "routes" / "session_routes.py"
+    text = src.read_text()
+    assert "safe_title = html.escape(session.name" in text
+    assert "<title>{session.name}" not in text
+    assert "<h1>{session.name}</h1>" not in text
+
+
+def test_mcp_oauth_page_escapes_reflected_values():
+    src = Path(__file__).resolve().parents[1] / "routes" / "mcp_routes.py"
+    text = src.read_text()
+    body = text.split("def _oauth_authorize_page(", 1)[1].split("return f", 1)[0]
+    for var in ("auth_url", "server_id", "host"):
+        assert f"{var} = html.escape({var}" in body, var

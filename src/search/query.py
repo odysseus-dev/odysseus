@@ -29,7 +29,7 @@ def _extract_entities(query: str) -> Dict[str, List[str]]:
         cleaned = re.sub(rf"^{qtype}\b", "", cleaned, flags=re.I).strip()
     for token in re.findall(r"\b[A-Z][a-zA-Z]+\b", cleaned):
         entities["names"].append(token)
-    for year in re.findall(r"\b(19|20)\d{2}\b", cleaned):
+    for year in re.findall(r"\b(?:19|20)\d{2}\b", cleaned):
         entities["dates"].append(year)
     month_day_year = re.findall(
         r"\b(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+\d{1,2},?\s*\d{4}\b",

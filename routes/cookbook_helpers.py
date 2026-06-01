@@ -3,6 +3,7 @@ Extracted from cookbook_routes.py; the routes module imports the symbols it need
 
 import logging
 import os
+import posixpath
 import re
 import shlex
 
@@ -15,6 +16,11 @@ logger = logging.getLogger(__name__)
 # HuggingFace repo IDs are <org>/<name>, both alphanumerics plus ._-
 # Rejecting anything else up front closes off shell-interpolation vectors.
 _REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+# Cached models scanned from a custom/local model dir are keyed by their leaf
+# folder name (no slash), e.g. `DeepSeek-R1-UD-IQ4_XS`. The serve command uses
+# the real on-disk path separately; this identifier is only for UI/task
+# bookkeeping, so serving should accept the same safe glyph set as repo IDs.
+_LOCAL_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # Include pattern is a glob: allow typical safe glyphs only.
 _INCLUDE_RE = re.compile(r"^[A-Za-z0-9._\-*?/\[\]]+$")
 # Remote host: user@host (optionally with :port-free hostname parts).
@@ -37,6 +43,14 @@ def _validate_repo_id(v: str | None) -> str:
     if not v or not _REPO_ID_RE.match(v):
         raise HTTPException(400, "Invalid repo_id — must be <org>/<name> using [A-Za-z0-9._-]")
     return v
+
+
+def _validate_serve_model_id(v: str | None) -> str:
+    if not v:
+        raise HTTPException(400, "repo_id is required")
+    if _REPO_ID_RE.match(v) or _LOCAL_MODEL_ID_RE.match(v):
+        return v
+    raise HTTPException(400, "Invalid repo_id — must be <org>/<name> or a cached local model id using [A-Za-z0-9._-]")
 
 
 def _validate_include(v: str | None) -> str | None:
@@ -100,6 +114,107 @@ def _shell_path(p: str) -> str:
     if p.startswith("~/"):
         return '"$HOME/' + p[2:] + '"'
     return '"' + p + '"'
+
+
+def _local_tooling_path_export(executable: str) -> str:
+    """Bash line prepending the running interpreter's bin dir to PATH.
+
+    When Odysseus runs from a virtualenv, that bin dir holds the tools the
+    cookbook runners shell out to (`hf`, `python`). tmux runners start from a
+    fresh login shell with the venv NOT activated, so without this they can't
+    find `hf` and downloads fail with "hf: command not found" — notably on
+    macOS, where the `pip --user` self-heal also misses (`pip` isn't a command,
+    only `pip3`/`python3 -m pip`). Local runs only; meaningless over SSH.
+    """
+    # This builds a bash snippet, so an explicit POSIX absolute path should keep
+    # POSIX semantics even when the app/tests run on Windows. Otherwise
+    # os.path.abspath("/opt/...") would incorrectly turn it into "D:\\opt\\...".
+    if executable.startswith("/"):
+        bin_dir = posixpath.dirname(executable)
+    else:
+        bin_dir = os.path.dirname(os.path.abspath(executable))
+    # Escape for a double-quoted context: $PATH must still expand, but spaces
+    # and shell metacharacters in the path must be preserved literally.
+    esc = (
+        bin_dir.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("$", "\\$")
+        .replace("`", "\\`")
+    )
+    return f'export PATH="{esc}:$PATH"'
+
+
+def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
+    """Build the standalone Python scanner used by /api/model/cached."""
+    lines = [
+        "import json, os",
+        "models = []",
+        "seen = set()",
+        "BLOCKED_ROOTS = ('/sys', '/proc', '/dev', '/run', '/var/run')",
+        "def safe_path(p):",
+        "    try:",
+        "        rp = os.path.realpath(os.path.expanduser(p))",
+        "        return not any(rp == b or rp.startswith(b + os.sep) for b in BLOCKED_ROOTS)",
+        "    except Exception:",
+        "        return False",
+        "def safe_walk(top):",
+        "    if not safe_path(top): return",
+        "    for root, dirs, fns in os.walk(top, followlinks=False):",
+        "        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d)) and safe_path(os.path.join(root, d))]",
+        "        yield root, dirs, fns",
+        "def scan_hf(cache):",
+        "    if not os.path.isdir(cache): return",
+        "    for d in sorted(os.listdir(cache)):",
+        "        if not d.startswith('models--'): continue",
+        "        rid = d.replace('models--','').replace('--','/')",
+        "        if rid in seen: continue",
+        "        seen.add(rid)",
+        "        blobs = os.path.join(cache, d, 'blobs')",
+        "        sz, nf, ic = 0, 0, False",
+        "        if os.path.isdir(blobs):",
+        "            for f in os.scandir(blobs):",
+        "                if f.is_file(): nf += 1; sz += f.stat().st_size",
+        "                if f.name.endswith('.incomplete'): ic = True",
+        "        snap = os.path.join(cache, d, 'snapshots')",
+        "        is_diffusion = False; is_gguf = False",
+        "        if os.path.isdir(snap):",
+        "            for sd in os.listdir(snap):",
+        "                sf = os.path.join(snap, sd)",
+        "                if not os.path.isdir(sf): continue",
+        "                if os.path.exists(os.path.join(sf, 'model_index.json')): is_diffusion = True",
+        "                try:",
+        "                    if any(x.endswith('.gguf') for x in os.listdir(sf)): is_gguf = True",
+        "                except Exception: pass",
+        "        models.append({'repo_id':rid,'size_bytes':sz,'nb_files':nf,'has_incomplete':ic,'path':cache,'is_diffusion':is_diffusion,'is_gguf':is_gguf})",
+        "def scan_dir(p):",
+        "    if not os.path.isdir(p) or not safe_path(p): return",
+        "    for d in sorted(os.listdir(p)):",
+        "        if d.startswith('.'): continue",
+        "        if d.startswith('models--'): continue",
+        "        fp = os.path.join(p, d)",
+        "        if not os.path.isdir(fp) or os.path.islink(fp) or not safe_path(fp): continue",
+        "        if d in seen: continue",
+        "        is_model = False; is_gguf = False",
+        "        for root, dirs, fns in safe_walk(fp):",
+        "            for fn in fns:",
+        "                if fn.endswith('.gguf'): is_gguf = True; is_model = True",
+        "                elif fn == 'config.json' or fn.endswith('.safetensors') or fn.endswith('.bin'): is_model = True",
+        "            if is_model: break",
+        "        if not is_model: continue",
+        "        seen.add(d)",
+        "        sz, nf = 0, 0",
+        "        for dp, _, fns in safe_walk(fp):",
+        "            for fn in fns:",
+        "                try: nf += 1; sz += os.path.getsize(os.path.join(dp, fn))",
+        "                except Exception: pass",
+        "        is_diff = os.path.exists(os.path.join(fp, 'model_index.json'))",
+        "        models.append({'repo_id':d,'size_bytes':sz,'nb_files':nf,'has_incomplete':False,'path':p,'is_local_dir':True,'is_diffusion':is_diff,'is_gguf':is_gguf})",
+        "scan_hf(os.path.expanduser('~/.cache/huggingface/hub'))",
+    ]
+    for model_dir in model_dirs or []:
+        lines.append(f"scan_dir(os.path.expanduser({model_dir!r}))")
+    lines.append("print(json.dumps(models))")
+    return "\n".join(lines) + "\n"
 
 
 def _ps_squote(v: str) -> str:
@@ -190,6 +305,26 @@ def _validate_serve_cmd(v: str | None) -> str | None:
         raise HTTPException(400, "Invalid characters in cmd")
     _check_serve_binary(v)
     return v
+
+
+def _append_serve_preflight_exit_lines(runner_lines: list[str], *, keep_shell_open: bool) -> None:
+    """Append serve-runner lines that surface preflight failures before exit."""
+    runner_lines.append('if [ -n "$ODYSSEUS_PREFLIGHT_EXIT" ]; then')
+    runner_lines.append('  echo ""; echo "=== Process exited with code $ODYSSEUS_PREFLIGHT_EXIT ==="')
+    if keep_shell_open:
+        runner_lines.append('  exec "${SHELL:-/bin/bash}"')
+    else:
+        runner_lines.append('  exit "$ODYSSEUS_PREFLIGHT_EXIT"')
+    runner_lines.append('fi')
+
+
+def _append_serve_exit_code_lines(runner_lines: list[str], *, keep_shell_open: bool) -> None:
+    """Append serve-runner lines that preserve and report the command exit code."""
+    runner_lines.append('ODYSSEUS_CMD_EXIT=$?')
+    if keep_shell_open:
+        runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="; exec "${SHELL:-/bin/bash}"')
+    else:
+        runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="')
 
 
 class ModelDownloadRequest(BaseModel):

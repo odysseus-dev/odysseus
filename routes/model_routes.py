@@ -1382,6 +1382,7 @@ def setup_model_routes(model_discovery):
             if _session_uses_endpoint_url(row.endpoint_url or "", base_url):
                 row.endpoint_url = ""
                 row.model = ""
+                row.headers = {}
                 row.updated_at = datetime.utcnow()
                 cleared += 1
         return cleared

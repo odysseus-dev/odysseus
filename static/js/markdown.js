@@ -233,8 +233,13 @@ function _svgifyText(text) {
   }
   return out;
 }
+/** When "Text-only Emojis" is on, keep Unicode in HTML so deEmojify() can strip them. */
+function _useSvgEmoji() {
+  return typeof document === 'undefined' || !document.body?.classList.contains('text-emojis');
+}
+
 export function svgifyEmoji(html) {
-  if (!html || !_EMOJI_RE.test(html)) return html;
+  if (!_useSvgEmoji() || !html || !_EMOJI_RE.test(html)) return html;
   const parts = html.split(/(<[^>]*>)/);   // odd indices = tags
   let codeDepth = 0;
   for (let i = 0; i < parts.length; i++) {
@@ -282,7 +287,7 @@ export function processWithThinking(text) {
     html += mdToHtml(content);
   }
 
-  return svgifyEmoji(html);
+  return _useSvgEmoji() ? svgifyEmoji(html) : html;
 }
 
 /**
@@ -539,7 +544,7 @@ export function mdToHtml(src) {
     s = s.replace(`___CODE_BLOCK_${index}___`, block);
   });
 
-  return svgifyEmoji(s);
+  return _useSvgEmoji() ? svgifyEmoji(s) : s;
 }
 
 /**

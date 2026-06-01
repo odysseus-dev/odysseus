@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Tuple
 
 from src.auth_helpers import owner_filter
+from core.platform_compat import IS_WINDOWS, find_bash
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +267,11 @@ async def action_ssh_command(owner: str, command: str = "", host: str = "localho
     if not command:
         return "No command specified", False
     if host in ("localhost", "127.0.0.1", "local"):
+        if IS_WINDOWS:
+            bash = find_bash()
+            if bash:
+                return await _run_subprocess([bash, "-c", command], timeout=120, label="Command")
+            return await _run_subprocess(command, shell=True, timeout=120, label="Command")
         return await _run_subprocess(["bash", "-c", command], timeout=120, label="Command")
     return await _run_subprocess(
         ["ssh", "-o", "ConnectTimeout=10", host, command], timeout=120, label="Command",
@@ -278,6 +284,8 @@ async def action_run_script(owner: str, script: str = "", host: str = "", **kwar
         return "No script specified", False
     target_host = (host or os.getenv("ODYSSEUS_SCRIPT_HOST", "localhost")).strip()
     if target_host in ("", "localhost", "127.0.0.1", "local"):
+        if IS_WINDOWS and find_bash():
+            return await _run_subprocess([find_bash(), "-c", script], timeout=300, label="Script")
         return await _run_subprocess(script, shell=True, timeout=300, label="Script")
     return await _run_subprocess(["ssh", target_host, script], timeout=300, label="Script")
 
@@ -286,6 +294,8 @@ async def action_run_local(owner: str, script: str = "", **kwargs) -> Tuple[str,
     """Run a script locally (no SSH)."""
     if not script:
         return "No script specified", False
+    if IS_WINDOWS and find_bash():
+        return await _run_subprocess([find_bash(), "-c", script], timeout=300, label="Script")
     return await _run_subprocess(script, shell=True, timeout=300, label="Script")
 
 
@@ -459,7 +469,12 @@ async def action_draft_email_replies(owner: str, **kwargs) -> Tuple[str, bool]:
     """Run one pass of AI reply drafting."""
     try:
         from routes.email_pollers import _run_auto_summarize_once
-        result = await _run_auto_summarize_once(do_summary=False, do_reply=True)
+        result = await _run_auto_summarize_once(
+            do_summary=False,
+            do_reply=True,
+            days_back=7,
+            progress_cb=kwargs.get("progress_cb"),
+        )
         if not _result_has_work(result):
             raise TaskNoop(f"draft replies: {result or 'no new emails'}")
         return result, True

@@ -7,6 +7,8 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
+import sys
 import uuid
 from pathlib import Path
 
@@ -16,16 +18,26 @@ from src.auth_helpers import require_user
 from pydantic import BaseModel
 
 from core.middleware import require_admin
+from core.platform_compat import (
+    IS_WINDOWS,
+    detached_popen_kwargs,
+    find_bash,
+    kill_process_tree,
+    pid_alive,
+    safe_chmod,
+    which_tool,
+)
 from routes.shell_routes import TMUX_LOG_DIR
 
 logger = logging.getLogger(__name__)
 
 from routes.cookbook_helpers import (
     _SSH_PORT_RE, _REMOTE_HOST_RE, _SESSION_ID_RE,
-    _validate_repo_id, _validate_include, _validate_remote_host, _validate_token,
+    _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_remote_host, _validate_token,
     _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
-    _safe_env_prefix,
+    _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
+    _append_serve_exit_code_lines, _cached_model_scan_script,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -207,16 +219,20 @@ def setup_cookbook_routes() -> APIRouter:
         if not _cookbook_state_path.exists():
             return ""
         try:
-            state = json.loads(_cookbook_state_path.read_text())
+            state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
             env = state.get("env") if isinstance(state, dict) else {}
             return _decrypt_secret(env.get("hfToken") if isinstance(env, dict) else "")
         except Exception:
             return ""
 
     def _cookbook_ssh_dir() -> Path:
-        app_ssh = Path("/app/.ssh")
-        if Path("/app").exists():
-            return app_ssh
+        # The Docker image keeps cookbook keys under /app/.ssh; that path only
+        # exists inside the container. On Windows (and any non-container host)
+        # fall back to the user profile's ~/.ssh, which OpenSSH on Win10+ uses.
+        if not IS_WINDOWS:
+            app_ssh = Path("/app/.ssh")
+            if Path("/app").exists():
+                return app_ssh
         return Path.home() / ".ssh"
 
     def _cookbook_ssh_key_path() -> Path:
@@ -243,13 +259,15 @@ def setup_cookbook_routes() -> APIRouter:
         ssh_dir = _cookbook_ssh_dir()
         key_path = _cookbook_ssh_key_path()
         ssh_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            os.chmod(ssh_dir, 0o700)
-        except Exception:
-            pass
+        # safe_chmod no-ops on Windows (~/.ssh is already ACL-restricted to the
+        # user profile); applies 0o700 on POSIX.
+        safe_chmod(ssh_dir, 0o700)
         if not key_path.exists():
+            # ssh-keygen ships with the OpenSSH client on Win10+; resolve it via
+            # which_tool so the .exe is found even when PATHEXT is unusual.
+            ssh_keygen = which_tool("ssh-keygen") or "ssh-keygen"
             proc = await asyncio.create_subprocess_exec(
-                "ssh-keygen", "-t", "ed25519", "-N", "", "-C", "odysseus-cookbook", "-f", str(key_path),
+                ssh_keygen, "-t", "ed25519", "-N", "", "-C", "odysseus-cookbook", "-f", str(key_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -257,11 +275,8 @@ def setup_cookbook_routes() -> APIRouter:
             if proc.returncode != 0:
                 detail = (stderr or stdout).decode("utf-8", errors="replace").strip()[-500:]
                 return {"ok": False, "error": detail or "Failed to generate SSH key"}
-        try:
-            os.chmod(key_path, 0o600)
-            os.chmod(key_path.with_suffix(".pub"), 0o644)
-        except Exception:
-            pass
+        safe_chmod(key_path, 0o600)
+        safe_chmod(key_path.with_suffix(".pub"), 0o644)
         return {"ok": True, "public_key": _read_cookbook_public_key()}
 
     def _user_shell_path_bootstrap() -> list[str]:
@@ -313,6 +328,56 @@ def setup_cookbook_routes() -> APIRouter:
             return await _remote_binary_available(remote, ssh_port, binary, windows=windows)
         return shutil.which(binary) is not None
 
+    def _launch_local_detached(session_id: str, bash_lines: list[str]) -> dict:
+        """Windows-native stand-in for a LOCAL tmux session (tmux doesn't exist
+        on Windows). Mirrors shell_routes._generate_win_detached / bg_jobs.launch:
+        runs the wrapper detached so it survives a browser/SSE disconnect (the
+        whole point of the tmux feature for long downloads/serves), writing a
+        <session>.log the status poller tails and a <session>.pid for liveness.
+
+        `bash_lines` is the same bash wrapper used on POSIX. Prefers Git Bash
+        for full command-syntax parity; falls back to a cmd.exe wrapper that
+        runs the script through whatever bash is reachable, else best-effort
+        directly (simple commands only). Returns the launched job record."""
+        log_path = TMUX_LOG_DIR / f"{session_id}.log"
+        pid_path = TMUX_LOG_DIR / f"{session_id}.pid"
+        bash = find_bash()
+        if bash:
+            # Run the existing bash wrapper verbatim through Git Bash, redirecting
+            # all output to the log the poller reads. Paths handed to bash use
+            # POSIX form + shell-quoting so drive paths / spaces survive.
+            inner = TMUX_LOG_DIR / f"{session_id}_run.sh"
+            inner.write_text("\n".join(bash_lines) + "\n", encoding="utf-8")
+            lp = shlex.quote(log_path.as_posix())
+            ip = shlex.quote(inner.as_posix())
+            script_path = TMUX_LOG_DIR / f"{session_id}.sh"
+            script_path.write_text(
+                f"bash {ip} > {lp} 2>&1\n",
+                encoding="utf-8",
+            )
+            argv = [bash, str(script_path)]
+        else:
+            # No bash on this Windows host: the bash wrapper can't run. Fall back
+            # to a cmd.exe wrapper that just records a clear error to the log so
+            # the UI surfaces "install Git Bash" instead of silently hanging.
+            script_path = TMUX_LOG_DIR / f"{session_id}.cmd"
+            script_path.write_text(
+                "@echo off\r\n"
+                f'echo Cookbook LOCAL execution on Windows needs Git Bash ^(bash.exe^) on PATH. > "{log_path}" 2>&1\r\n'
+                f'echo Install Git for Windows, then retry. >> "{log_path}"\r\n',
+                encoding="utf-8",
+            )
+            argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
+        proc = subprocess.Popen(
+            argv,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            **detached_popen_kwargs(),
+        )
+        pid_path.write_text(str(proc.pid), encoding="utf-8")
+        return {"pid": proc.pid, "log_path": str(log_path)}
+
     @router.post("/api/model/download")
     async def model_download(request: Request, req: ModelDownloadRequest):
         """Download a HuggingFace model in a tmux session.
@@ -357,24 +422,33 @@ def setup_cookbook_routes() -> APIRouter:
             lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
         # Ensure pip-user scripts (e.g. hf CLI installed via --user) are on PATH
         lines.append('export PATH="$HOME/.local/bin:$PATH"')
+        # When Odysseus runs from a venv (e.g. native macOS install), put its bin
+        # on PATH so the tmux shell finds the bundled `hf`/`python3` without an
+        # activated venv. Local bash runs only — meaningless over SSH/Windows.
+        if not req.remote_host and req.platform != "windows":
+            lines.append(_local_tooling_path_export(sys.executable))
         # Best-effort install hf CLI (always). hf_transfer (Rust parallel downloader)
         # is fast but flaky on large files — it tends to crash near the end at high
         # throughput. Retries set disable_hf_transfer to fall back to the plain,
         # slower-but-reliable downloader (resumes cleanly from the .incomplete files).
-        lines.append("command -v hf >/dev/null 2>&1 || pip install --user --break-system-packages -q -U huggingface_hub 2>/dev/null || pip install -q -U huggingface_hub 2>/dev/null")
+        # Use `python3 -m pip` not `pip` — macOS has no bare `pip` command.
+        lines.append("command -v hf >/dev/null 2>&1 || python3 -m pip install --user --break-system-packages -q -U huggingface_hub 2>/dev/null || python3 -m pip install -q -U huggingface_hub 2>/dev/null")
         if req.disable_hf_transfer:
             lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
             lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
         else:
-            lines.append("python3 -c 'import hf_transfer' 2>/dev/null || pip install --user --break-system-packages -q hf_transfer 2>/dev/null || pip install -q hf_transfer 2>/dev/null")
+            lines.append("python3 -c 'import hf_transfer' 2>/dev/null || python3 -m pip install --user --break-system-packages -q hf_transfer 2>/dev/null || python3 -m pip install -q hf_transfer 2>/dev/null")
             lines.append("python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
             lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
 
         remote = req.remote_host  # None for local
         is_windows = req.platform == "windows"
+        # LOCAL execution on a native-Windows host never uses tmux (it uses the
+        # detached-process path below), regardless of the UI-supplied platform.
+        local_windows = IS_WINDOWS and not remote
         logger.info(f"Download request: repo={req.repo_id}, remote={remote}, ssh_port={req.ssh_port}, platform={req.platform}")
 
-        if not is_windows and not await _binary_available("tmux", remote, req.ssh_port):
+        if not is_windows and not local_windows and not await _binary_available("tmux", remote, req.ssh_port):
             return {
                 "ok": False,
                 "error": _missing_binary_message("tmux", remote or "local server"),
@@ -418,7 +492,7 @@ def setup_cookbook_routes() -> APIRouter:
             ps_lines.append('}}')
             ps_lines.append(f'Remove-Item -Force "$HOME\\{remote_runner}" -ErrorAction SilentlyContinue')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
-            runner_path.write_text("\r\n".join(ps_lines) + "\r\n")
+            runner_path.write_text("\r\n".join(ps_lines) + "\r\n", encoding="utf-8")
 
             # scp the .ps1 script, then launch it as a detached process with log + pid files
             _port = req.ssh_port
@@ -485,8 +559,10 @@ def setup_cookbook_routes() -> APIRouter:
             runner_lines.append(f"rm -f {remote_runner}")
             runner_lines.append('exec "${SHELL:-/bin/bash}"')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
-            runner_path.write_text("\n".join(runner_lines) + "\n")
-            runner_path.chmod(0o755)
+            runner_path.write_text("\n".join(runner_lines) + "\n", encoding="utf-8")
+            # Local temp file is scp'd then chmod'd on the remote; the local bit
+            # is irrelevant (no-op on Windows).
+            safe_chmod(runner_path, 0o755)
 
             # scp the runner script, then create tmux session on the remote
             _port = req.ssh_port
@@ -497,7 +573,8 @@ def setup_cookbook_routes() -> APIRouter:
                 f"ssh {_spf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
             )
         else:
-            # Local: run hf download in a local tmux session
+            # Local: run hf download in the background (tmux on POSIX, a detached
+            # process + logfile on Windows where tmux doesn't exist).
             if req.env_prefix:
                 lines.append(_safe_env_prefix(req.env_prefix))
             else:
@@ -505,29 +582,43 @@ def setup_cookbook_routes() -> APIRouter:
             # Show whether the HF token reached this run (masked) — tells a gated
             # "not authorized" failure apart from a missing token.
             lines.append(_HF_TOKEN_STATUS_SNIPPET)
-            # < /dev/null suppresses interactive "update available? [Y/n]" prompt
-            lines.append(f"{hf_cmd} < /dev/null")
-            lines.append('if [ $? -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $?)"; fi')
-            lines.append(f"rm -f '{wrapper_script}'")
-            lines.append('exec "${SHELL:-/bin/bash}"')
-            wrapper_script.write_text("\n".join(lines) + "\n")
-            wrapper_script.chmod(0o755)
-            setup_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
+            if IS_WINDOWS:
+                # Detached path: no controlling TTY, so skip `< /dev/null`
+                # (handled by Popen stdin=DEVNULL) and don't keep a shell open.
+                lines.append(hf_cmd)
+                lines.append('if [ $? -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $?)"; fi')
+            else:
+                # < /dev/null suppresses interactive "update available? [Y/n]" prompt
+                lines.append(f"{hf_cmd} < /dev/null")
+                lines.append('if [ $? -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $?)"; fi')
+                lines.append(f"rm -f '{wrapper_script}'")
+                lines.append('exec "${SHELL:-/bin/bash}"')
+                wrapper_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                wrapper_script.chmod(0o755)
+            setup_cmd = None if IS_WINDOWS else f"tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
 
         logger.info(f"Model download: {req.repo_id} (include={req.include}, session={session_id}, remote={remote})")
         logger.info(f"Download setup_cmd: {setup_cmd}")
 
-        proc = await asyncio.create_subprocess_shell(
-            setup_cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await proc.wait()
+        if setup_cmd is None:
+            # LOCAL Windows: launch the bash wrapper detached; no tmux setup_cmd.
+            try:
+                _launch_local_detached(session_id, lines)
+            except Exception as e:
+                logger.error(f"Local detached download launch failed: {e}")
+                return {"ok": False, "error": str(e), "session_id": session_id}
+        else:
+            proc = await asyncio.create_subprocess_shell(
+                setup_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.wait()
 
-        if proc.returncode != 0:
-            stderr = (await proc.stderr.read()).decode(errors="replace")
-            logger.error(f"Download failed (rc={proc.returncode}): {stderr}")
-            return {"ok": False, "error": stderr, "session_id": session_id}
+            if proc.returncode != 0:
+                stderr = (await proc.stderr.read()).decode(errors="replace")
+                logger.error(f"Download failed (rc={proc.returncode}): {stderr}")
+                return {"ok": False, "error": stderr, "session_id": session_id}
 
         # Log to assistant
         try:
@@ -556,87 +647,16 @@ def setup_cookbook_routes() -> APIRouter:
             raise HTTPException(400, "Invalid ssh_port")
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-        paths_code = "import json, os\n"
-        paths_code += "models = []\n"
-        paths_code += "seen = set()\n"
-        paths_code += "BLOCKED_ROOTS = ('/sys', '/proc', '/dev', '/run', '/var/run')\n"
-        paths_code += "def safe_path(p):\n"
-        paths_code += "    try:\n"
-        paths_code += "        rp = os.path.realpath(os.path.expanduser(p))\n"
-        paths_code += "        return not any(rp == b or rp.startswith(b + os.sep) for b in BLOCKED_ROOTS)\n"
-        paths_code += "    except Exception:\n"
-        paths_code += "        return False\n"
-        paths_code += "def safe_walk(top):\n"
-        paths_code += "    if not safe_path(top): return\n"
-        paths_code += "    for root, dirs, fns in os.walk(top, followlinks=False):\n"
-        paths_code += "        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d)) and safe_path(os.path.join(root, d))]\n"
-        paths_code += "        yield root, dirs, fns\n"
-        # Scan HF cache format (models-- directories with blobs/)
-        paths_code += "def scan_hf(cache):\n"
-        paths_code += "    if not os.path.isdir(cache): return\n"
-        paths_code += "    for d in sorted(os.listdir(cache)):\n"
-        paths_code += "        if not d.startswith('models--'): continue\n"
-        paths_code += "        rid = d.replace('models--','').replace('--','/')\n"
-        paths_code += "        if rid in seen: continue\n"
-        paths_code += "        seen.add(rid)\n"
-        paths_code += "        blobs = os.path.join(cache, d, 'blobs')\n"
-        paths_code += "        sz, nf, ic = 0, 0, False\n"
-        paths_code += "        if os.path.isdir(blobs):\n"
-        paths_code += "            for f in os.scandir(blobs):\n"
-        paths_code += "                if f.is_file(): nf += 1; sz += f.stat().st_size\n"
-        paths_code += "                if f.name.endswith('.incomplete'): ic = True\n"
-        paths_code += "        # Check if it's an LLM (has config.json with model_type) vs diffusion (has model_index.json)\n"
-        paths_code += "        snap = os.path.join(cache, d, 'snapshots')\n"
-        paths_code += "        is_diffusion = False; is_gguf = False\n"
-        paths_code += "        if os.path.isdir(snap):\n"
-        paths_code += "            for sd in os.listdir(snap):\n"
-        paths_code += "                sf = os.path.join(snap, sd)\n"
-        paths_code += "                if not os.path.isdir(sf): continue\n"
-        paths_code += "                if os.path.exists(os.path.join(sf, 'model_index.json')): is_diffusion = True\n"
-        paths_code += "                try:\n"
-        paths_code += "                    if any(x.endswith('.gguf') for x in os.listdir(sf)): is_gguf = True\n"
-        paths_code += "                except Exception: pass\n"
-        paths_code += "        models.append({'repo_id':rid,'size_bytes':sz,'nb_files':nf,'has_incomplete':ic,'path':cache,'is_diffusion':is_diffusion,'is_gguf':is_gguf})\n"
-        # Scan plain directory (each subdirectory = a model if it has model files)
-        paths_code += "def scan_dir(p):\n"
-        paths_code += "    if not os.path.isdir(p) or not safe_path(p): return\n"
-        paths_code += "    for d in sorted(os.listdir(p)):\n"
-        paths_code += "        if d.startswith('.'): continue\n"
-        paths_code += "        fp = os.path.join(p, d)\n"
-        paths_code += "        if not os.path.isdir(fp) or os.path.islink(fp) or not safe_path(fp): continue\n"
-        paths_code += "        if d in seen: continue\n"
-        paths_code += "        # Check if it looks like a model (has config.json, safetensors, bin, or gguf)\n"
-        paths_code += "        is_model = False; is_gguf = False\n"
-        paths_code += "        for root, dirs, fns in safe_walk(fp):\n"
-        paths_code += "            for fn in fns:\n"
-        paths_code += "                if fn.endswith('.gguf'): is_gguf = True; is_model = True\n"
-        paths_code += "                elif fn == 'config.json' or fn.endswith('.safetensors') or fn.endswith('.bin'): is_model = True\n"
-        paths_code += "            if is_model: break\n"
-        paths_code += "        if not is_model: continue\n"
-        paths_code += "        seen.add(d)\n"
-        paths_code += "        sz, nf = 0, 0\n"
-        paths_code += "        for dp, _, fns in safe_walk(fp):\n"
-        paths_code += "            for fn in fns:\n"
-        paths_code += "                try: nf += 1; sz += os.path.getsize(os.path.join(dp, fn))\n"
-        paths_code += "                except Exception: pass\n"
-        paths_code += "        is_diff = os.path.exists(os.path.join(fp, 'model_index.json'))\n"
-        paths_code += "        models.append({'repo_id':d,'size_bytes':sz,'nb_files':nf,'has_incomplete':False,'path':p,'is_local_dir':True,'is_diffusion':is_diff,'is_gguf':is_gguf})\n"
-        # Always scan HF cache
-        paths_code += "scan_hf(os.path.expanduser('~/.cache/huggingface/hub'))\n"
-        # Also scan custom model dirs (comma-separated) if specified
+        model_dirs = []
         if model_dir:
             for d in model_dir.split(','):
                 d = d.strip()
-                if d and d != '~/.cache/huggingface/hub':
-                    # repr() encodes the dir as a properly-escaped Python string
-                    # literal. The old f"...'{d}'..." broke out of the quotes on
-                    # any `'` in the value, injecting arbitrary Python that then
-                    # ran locally or over ssh.
-                    paths_code += f"scan_dir(os.path.expanduser({d!r}))\n"
-        paths_code += "print(json.dumps(models))\n"
+                if d:
+                    model_dirs.append(d)
+        paths_code = _cached_model_scan_script(model_dirs)
 
         scan_py = TMUX_LOG_DIR / "scan_cache.py"
-        scan_py.write_text(paths_code)
+        scan_py.write_text(paths_code, encoding="utf-8")
 
         if host:
             _pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
@@ -645,15 +665,27 @@ def setup_cookbook_routes() -> APIRouter:
                 cmd = f'ssh {_pf}{host} "python -" < \'{scan_py}\''
             else:
                 cmd = f"ssh {_pf}{host} 'python3 -' < '{scan_py}'"
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(Path.home()),
+            )
         else:
-            cmd = f"python3 '{scan_py}'"
-
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(Path.home()),
-        )
+            # LOCAL scan: run the interpreter directly. `python3` isn't a thing on
+            # Windows (it's `python`/`py`), and shell single-quoting of the path
+            # doesn't survive cmd.exe — so resolve the interpreter and exec it
+            # with the script path as an argv element (no shell quoting needed).
+            local_py = (
+                which_tool("python3") or which_tool("python")
+                or which_tool("py") or "python"
+            )
+            proc = await asyncio.create_subprocess_exec(
+                local_py, str(scan_py),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(Path.home()),
+            )
         stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=60)
 
         models = []
@@ -676,6 +708,8 @@ def setup_cookbook_routes() -> APIRouter:
                 }
                 if m.get("is_local_dir"):
                     entry["is_local_dir"] = True
+                if m.get("is_gguf"):
+                    entry["is_gguf"] = True
                 models.append(entry)
         except Exception as e:
             logger.warning(f"Failed to parse cached models: {e}")
@@ -742,9 +776,11 @@ def setup_cookbook_routes() -> APIRouter:
         """Launch a model server in a tmux session (or PowerShell background process on Windows).
 
         `repo_id` is dual-purpose: a HuggingFace repo (`<org>/<name>`) for
-        model-serve commands, OR a bare pip package name when the cmd is a
-        `python -m pip install …`. We only enforce the strict HF format on
-        the model paths.
+        model-serve commands, a cached local-model id (the folder name reported
+        by `/api/model/cached`) for models scanned from a custom model dir, OR a
+        bare pip package name when the cmd is a `python -m pip install …`. We
+        keep strict validation, but serving local cached models must not require
+        a fake org/name wrapper.
         """
         require_admin(request)
         # Defence-in-depth: reject values that could break out of shell contexts.
@@ -773,13 +809,16 @@ def setup_cookbook_routes() -> APIRouter:
             ):
                 raise HTTPException(400, "Invalid pip package name")
         else:
-            _validate_repo_id(req.repo_id)
+            _validate_serve_model_id(req.repo_id)
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
         session_id = f"serve-{uuid.uuid4().hex[:8]}"
         remote = req.remote_host
         is_windows = req.platform == "windows"
+        # LOCAL execution on a native-Windows host never uses tmux (detached
+        # process path below), regardless of the UI-supplied platform.
+        local_windows = IS_WINDOWS and not remote
 
-        if not is_windows and not await _binary_available("tmux", remote, req.ssh_port):
+        if not is_windows and not local_windows and not await _binary_available("tmux", remote, req.ssh_port):
             return {
                 "ok": False,
                 "error": _missing_binary_message("tmux", remote or "local server"),
@@ -825,7 +864,7 @@ def setup_cookbook_routes() -> APIRouter:
             ps_lines.append('Write-Host ""')
             ps_lines.append('Write-Host "=== Process exited with code $LASTEXITCODE ==="')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
-            runner_path.write_text("\r\n".join(ps_lines) + "\r\n")
+            runner_path.write_text("\r\n".join(ps_lines) + "\r\n", encoding="utf-8")
 
             _port = req.ssh_port
             _Pf = f"-P {_port} " if _port and _port != "22" else ""
@@ -845,6 +884,11 @@ def setup_cookbook_routes() -> APIRouter:
             # ── Linux/Termux: bash + tmux (existing flow) ──
             runner_lines = ["#!/bin/bash"]
             runner_lines.extend(_user_shell_path_bootstrap())
+            runner_lines.append('ODYSSEUS_PREFLIGHT_EXIT=""')
+            # Put Odysseus's own venv bin on PATH (local runs only) so the serve
+            # shell resolves the bundled python3/hf, mirroring the download flow.
+            if not remote:
+                runner_lines.append(_local_tooling_path_export(sys.executable))
             runner_lines.append("export FLASHINFER_DISABLE_VERSION_CHECK=1")
             if req.hf_token:
                 runner_lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
@@ -864,7 +908,10 @@ def setup_cookbook_routes() -> APIRouter:
                 # Jinja2 rejects (do_tojson ensure_ascii). Build it once from
                 # source if missing; keep llama-cpp-python only as a fallback.
                 runner_lines.append('# Ensure a llama.cpp server (prefer native llama-server)')
-                runner_lines.append('export PATH="$HOME/.local/bin:$HOME/bin:$HOME/llama.cpp/build/bin:$PATH"')
+                # Include the Homebrew bin dirs so a brew-installed llama-server /
+                # ollama is found (otherwise macOS falls back to a slow source build).
+                # /opt/homebrew = Apple Silicon, /usr/local = Intel; harmless on Linux.
+                runner_lines.append('export PATH="$HOME/.local/bin:$HOME/bin:$HOME/llama.cpp/build/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"')
                 runner_lines.append('if [ -d /data/data/com.termux ]; then')
                 runner_lines.append('  # Termux: no native build — use the Python bindings (CPU).')
                 runner_lines.append('  if ! python3 -c "import llama_cpp" 2>/dev/null; then')
@@ -876,47 +923,118 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  echo "Native llama-server not found — building from source (one-time, may take a few minutes)..."')
                 runner_lines.append('  mkdir -p ~/bin')
                 runner_lines.append('  cd ~ && [ -d llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp')
-                # GPU build if CUDA is present; fall back to a plain (CPU) build.
-                runner_lines.append('  cd ~/llama.cpp && { cmake -B build -DGGML_CUDA=ON 2>/dev/null || cmake -B build; } \\')
-                runner_lines.append('    && cmake --build build -j"$(nproc)" --target llama-server \\')
-                runner_lines.append('    && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                # Build with the right accelerator: Metal on macOS (llama.cpp
+                # enables it automatically, no flag), CUDA on Linux when present,
+                # else a plain CPU build. nproc is Linux-only — fall back to
+                # `sysctl hw.ncpu` on macOS. (Tip: `brew install llama.cpp` ships
+                # a prebuilt llama-server and skips this whole source build.)
+                runner_lines.append('  NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"')
+                runner_lines.append('  if [ "$(uname -s)" = "Darwin" ]; then')
+                runner_lines.append('    command -v cmake >/dev/null 2>&1 || echo "WARNING: cmake not found — install it with: brew install cmake (or: brew install llama.cpp for a prebuilt llama-server)."')
+                # Start from a clean cache: a prior failed configure (e.g. a CUDA
+                # attempt) poisons build/CMakeCache.txt, so a plain `cmake -B build`
+                # would reuse the bad settings and fail again. CMAKE_BUILD_TYPE is
+                # explicit so the binary is optimized (Metal auto-enables on macOS).
+                runner_lines.append('    cd ~/llama.cpp && rm -rf build && cmake -B build -DCMAKE_BUILD_TYPE=Release \\')
+                runner_lines.append('      && cmake --build build -j"$NPROC" --target llama-server \\')
+                runner_lines.append('      && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                runner_lines.append('  else')
+                # Detect pip-installed nvcc (from vLLM/nvidia CUDA wheels) and put
+                # it on PATH so cmake's CUDA configure can find it.  We check the
+                # same three layouts as entrypoint.sh:
+                #   nvidia/cu13       — nvidia-nvcc-cu13
+                #   nvidia/cu12       — nvidia-nvcc-cu12
+                #   nvidia/cuda_nvcc  — nvidia-cuda-nvcc-cu12 (sub-package style)
+                runner_lines.append('    for _cudir in ~/.local/lib/python*/site-packages/nvidia/cu13 ~/.local/lib/python*/site-packages/nvidia/cu12 ~/.local/lib/python*/site-packages/nvidia/cuda_nvcc; do')
+                runner_lines.append('      [ -x "$_cudir/bin/nvcc" ] && export CUDA_HOME="$_cudir" && export PATH="$_cudir/bin:$PATH" && break')
+                runner_lines.append('    done')
+                # rm -rf build so a prior poisoned CMakeCache.txt (e.g. from a
+                # failed CUDA attempt) doesn't cause the next configure to reuse
+                # stale settings and silently produce a CPU-only binary.
+                runner_lines.append('    cd ~/llama.cpp && rm -rf build')
+                runner_lines.append('    if command -v nvcc &>/dev/null; then')
+                runner_lines.append('      echo "[odysseus] CUDA nvcc found — building llama-server with CUDA (GPU) support..."')
+                runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON \\')
+                runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\')
+                runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                runner_lines.append('    else')
+                runner_lines.append('      echo "[odysseus] WARNING: nvcc not found — building llama-server for CPU only."')
+                runner_lines.append('      echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
+                runner_lines.append('      echo "[odysseus]   To get a GPU build, first install vLLM via Cookbook -> Dependencies"')
+                runner_lines.append('      echo "[odysseus]   (its CUDA wheels include nvcc), then re-launch this serve task."')
+                runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release \\')
+                runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\')
+                runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                runner_lines.append('    fi')
+                runner_lines.append('  fi')
                 runner_lines.append('  # If the native build failed, fall back to the Python bindings.')
                 runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
                 runner_lines.append('    echo "llama-server build failed — installing Python bindings as fallback..."')
                 runner_lines.append('    pip install --user --break-system-packages -q llama-cpp-python 2>/dev/null || pip install -q llama-cpp-python 2>/dev/null || true')
                 runner_lines.append('  fi')
                 runner_lines.append('fi')
+            elif "ollama" in req.cmd:
+                # Ollama manages its own model store and HTTP server. Just make
+                # sure the binary exists and the daemon is up before running the
+                # command (the natural serving engine on Apple Silicon / Metal).
+                runner_lines.append('if ! command -v ollama &>/dev/null; then')
+                runner_lines.append('  echo "ERROR: Ollama not found. Install it (macOS: brew install ollama, or https://ollama.com/download), then launch again."')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+                runner_lines.append('fi')
+                runner_lines.append('if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then')
+                runner_lines.append('  echo "Starting ollama server..."; (ollama serve >/dev/null 2>&1 &)')
+                runner_lines.append('  for _ in 1 2 3 4 5 6 7 8 9 10; do curl -sf http://localhost:11434/api/tags >/dev/null 2>&1 && break; sleep 1; done')
+                runner_lines.append('fi')
             elif "vllm serve" in req.cmd:
+                # vLLM is CUDA/ROCm-only and does not run on macOS at all.
+                runner_lines.append('if [ "$(uname -s)" = "Darwin" ]; then')
+                runner_lines.append('  echo "ERROR: vLLM does not run on macOS. Use Ollama or llama.cpp (Metal) instead."')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=1')
+                runner_lines.append('fi')
                 # Put ~/.local/bin on PATH first — without a venv, vllm installs
                 # there via --user and the non-login serve shell otherwise can't
                 # find the `vllm` CLI ("command not found"). Mirrors llama.cpp above.
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! command -v vllm &>/dev/null; then')
                 runner_lines.append('  echo "ERROR: vLLM is not installed. Open Cookbook -> Dependencies and install vllm on this server, then launch again."')
-                runner_lines.append('  exit 127')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
             elif "sglang.launch_server" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! python3 -c "import sglang" 2>/dev/null; then')
                 runner_lines.append('  echo "ERROR: SGLang is not installed. Open Cookbook -> Dependencies and install sglang on this server, then launch again."')
-                runner_lines.append('  exit 127')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
             elif "scripts/diffusion_server.py" in req.cmd or ".diffusion_server.py" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! python3 -c "import torch, diffusers" 2>/dev/null; then')
                 runner_lines.append('  echo "ERROR: Diffusion serving requires PyTorch + diffusers. Open Cookbook -> Dependencies and install diffusers on this server, then launch again."')
-                runner_lines.append('  exit 127')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
 
+            _append_serve_preflight_exit_lines(
+                runner_lines,
+                keep_shell_open=not local_windows,
+            )
             runner_lines.append(req.cmd)
-            # Keep shell open after exit so user can see errors
-            runner_lines.append('echo ""; echo "=== Process exited with code $? ==="; exec "${SHELL:-/bin/bash}"')
+            if local_windows:
+                # Detached background process — no interactive shell to keep open.
+                # Print the exit marker the status poller looks for, then stop.
+                _append_serve_exit_code_lines(runner_lines, keep_shell_open=False)
+            else:
+                # Keep shell open after exit so user can see errors
+                _append_serve_exit_code_lines(runner_lines, keep_shell_open=True)
 
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
-            runner_path.write_text("\n".join(runner_lines) + "\n")
-            runner_path.chmod(0o755)
+            runner_path.write_text("\n".join(runner_lines) + "\n", encoding="utf-8")
+            # chmod is a no-op on Windows; bash on Windows runs the script
+            # regardless of the executable bit.
+            safe_chmod(runner_path, 0o755)
 
-            if remote:
+            if local_windows:
+                # LOCAL Windows: launch the bash runner detached (tmux replacement).
+                setup_cmd = None
+            elif remote:
                 remote_runner = f".{session_id}_run.sh"
                 # If command references scripts/, scp those too
                 scp_extras = ""
@@ -929,9 +1047,10 @@ def setup_cookbook_routes() -> APIRouter:
                     if diff_script.exists():
                         scp_extras = f"scp -O {_Pf}-q '{diff_script}' {remote}:.diffusion_server.py && "
                         runner_path.write_text(
-                            runner_path.read_text().replace(
+                            runner_path.read_text(encoding="utf-8").replace(
                                 "scripts/diffusion_server.py", ".diffusion_server.py"
-                            )
+                            ),
+                            encoding="utf-8",
                         )
                 setup_cmd = (
                     f"{scp_extras}"
@@ -941,16 +1060,24 @@ def setup_cookbook_routes() -> APIRouter:
             else:
                 setup_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))}"
 
-        proc = await asyncio.create_subprocess_shell(
-            setup_cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await proc.wait()
+        if setup_cmd is None:
+            # LOCAL Windows: launch the bash runner detached; no tmux setup_cmd.
+            try:
+                _launch_local_detached(session_id, runner_lines)
+            except Exception as e:
+                logger.error(f"Local detached serve launch failed: {e}")
+                return {"ok": False, "error": str(e), "session_id": session_id}
+        else:
+            proc = await asyncio.create_subprocess_shell(
+                setup_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.wait()
 
-        if proc.returncode != 0:
-            stderr = (await proc.stderr.read()).decode(errors="replace")
-            return {"ok": False, "error": stderr, "session_id": session_id}
+            if proc.returncode != 0:
+                stderr = (await proc.stderr.read()).decode(errors="replace")
+                return {"ok": False, "error": stderr, "session_id": session_id}
 
         # Auto-register as model endpoint if serving a diffusion model
         endpoint_id = None
@@ -1357,6 +1484,16 @@ def setup_cookbook_routes() -> APIRouter:
                 proc = await asyncio.create_subprocess_shell(
                     cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
+            elif IS_WINDOWS:
+                # No `kill` binary / POSIX signals on Windows. taskkill /F /T tears
+                # down the PID and its children. There's no graceful-vs-force
+                # distinction, so TERM/KILL/INT all map to the same forced kill.
+                # NB: never use os.kill(pid, 0) to probe here — on Windows that
+                # routes to TerminateProcess and would kill the process.
+                if not pid_alive(req.pid):
+                    return {"ok": False, "error": f"PID {req.pid} is not running"}
+                await asyncio.to_thread(kill_process_tree, req.pid)
+                return {"ok": True, "pid": req.pid, "signal": sig}
             else:
                 proc = await asyncio.create_subprocess_exec(
                     "kill", f"-{sig}", str(req.pid),
@@ -1380,7 +1517,7 @@ def setup_cookbook_routes() -> APIRouter:
         require_admin(request)
         if _cookbook_state_path.exists():
             try:
-                return _state_for_client(json.loads(_cookbook_state_path.read_text()))
+                return _state_for_client(json.loads(_cookbook_state_path.read_text(encoding="utf-8")))
             except Exception:
                 return {}
         return {}
@@ -1409,7 +1546,7 @@ def setup_cookbook_routes() -> APIRouter:
                 data = {}
             try:
                 if _cookbook_state_path.exists():
-                    on_disk = json.loads(_cookbook_state_path.read_text())
+                    on_disk = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
                 else:
                     on_disk = {}
             except Exception:
@@ -1589,7 +1726,7 @@ def setup_cookbook_routes() -> APIRouter:
         tasks = []
         if _cookbook_state_path.exists():
             try:
-                state = json.loads(_cookbook_state_path.read_text())
+                state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
                 saved_tasks = state.get("tasks", [])
                 if isinstance(saved_tasks, list):
                     tasks = saved_tasks
@@ -1658,26 +1795,36 @@ def setup_cookbook_routes() -> APIRouter:
                     ssh_base.extend(["-p", str(_tport)])
                 check_cmd = ssh_base + [remote, "tmux", "has-session", "-t", session_id]
                 capture_cmd = ssh_base + [remote, "tmux", "capture-pane", "-t", session_id, "-p", "-S", "-50"]
+            elif IS_WINDOWS:
+                # LOCAL Windows task: launched as a detached process (no tmux).
+                # Liveness comes from the <session>.pid file, output from the
+                # <session>.log file the wrapper redirects into. No subprocess.
+                check_cmd = None
+                capture_cmd = None
             else:
                 check_cmd = ["tmux", "has-session", "-t", session_id]
                 capture_cmd = ["tmux", "capture-pane", "-t", session_id, "-p", "-S", "-50"]
 
-            try:
-                alive = subprocess.run(check_cmd, timeout=10, capture_output=True)
-                is_alive = alive.returncode == 0
-            except Exception:
-                is_alive = False
+            local_win_task = (not remote) and IS_WINDOWS
 
-            # Capture last lines for progress. Prefer the "Downloading" line
-            # (real aggregate bytes) over "Fetching N files" (whole-file count that
-            # lags with hf_transfer). Falls back to the true last line otherwise.
             progress_text = ""
             full_snapshot = ""
-            if is_alive:
+
+            if local_win_task:
+                # File-based liveness + output for the detached-process model.
+                pid_path = TMUX_LOG_DIR / f"{session_id}.pid"
+                log_path = TMUX_LOG_DIR / f"{session_id}.log"
+                task_pid = None
                 try:
-                    cap = subprocess.run(capture_cmd, timeout=10, capture_output=True, text=True)
-                    if cap.returncode == 0:
-                        full_snapshot = cap.stdout.strip()
+                    task_pid = int(pid_path.read_text(encoding="utf-8").strip())
+                except Exception:
+                    task_pid = None
+                is_alive = pid_alive(task_pid)
+                try:
+                    if log_path.exists():
+                        full_snapshot = log_path.read_text(
+                            encoding="utf-8", errors="replace"
+                        ).strip()[-12000:]
                         lines = [l.strip() for l in full_snapshot.split('\n') if l.strip()]
                         downloading_lines = [l for l in lines if l.startswith("Downloading")]
                         if downloading_lines:
@@ -1686,10 +1833,36 @@ def setup_cookbook_routes() -> APIRouter:
                             progress_text = lines[-1]
                 except Exception:
                     pass
+            else:
+                try:
+                    alive = subprocess.run(check_cmd, timeout=10, capture_output=True)
+                    is_alive = alive.returncode == 0
+                except Exception:
+                    is_alive = False
 
-            # Determine status
+                # Capture last lines for progress. Prefer the "Downloading" line
+                # (real aggregate bytes) over "Fetching N files" (whole-file count that
+                # lags with hf_transfer). Falls back to the true last line otherwise.
+                if is_alive:
+                    try:
+                        cap = subprocess.run(capture_cmd, timeout=10, capture_output=True, text=True)
+                        if cap.returncode == 0:
+                            full_snapshot = cap.stdout.strip()
+                            lines = [l.strip() for l in full_snapshot.split('\n') if l.strip()]
+                            downloading_lines = [l for l in lines if l.startswith("Downloading")]
+                            if downloading_lines:
+                                progress_text = downloading_lines[-1]
+                            elif lines:
+                                progress_text = lines[-1]
+                    except Exception:
+                        pass
+
+            # Determine status. For the local-Windows detached model the log file
+            # persists after the process exits, so a finished download still has a
+            # snapshot to classify (DOWNLOAD_OK / exit marker) — evaluate it even
+            # when the PID is gone instead of blindly reporting "stopped".
             status = "unknown"
-            if is_alive:
+            if is_alive or (local_win_task and full_snapshot):
                 lower = full_snapshot.lower()
                 has_exit = "=== process exited with code" in lower
                 has_error = "error" in lower or "failed" in lower or "traceback" in lower
@@ -1707,6 +1880,9 @@ def setup_cookbook_routes() -> APIRouter:
                     status = "completed"
                 elif "application startup complete" in lower:
                     status = "ready"
+                elif not is_alive:
+                    # local-Windows: process gone, log has no success/ready marker.
+                    status = "stopped"
                 else:
                     status = "running"
             else:

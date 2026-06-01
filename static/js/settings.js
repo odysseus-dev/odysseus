@@ -1365,6 +1365,8 @@ async function initResearchSettings() {
   var epSel = el('set-researchEndpoint');
   var modelSel = el('set-researchModel');
   var tokensInput = el('set-researchMaxTokens');
+  var extractTimeoutInput = el('set-researchExtractTimeout');
+  var extractConcurrencyInput = el('set-researchExtractConcurrency');
   var msg = el('set-researchMsg');
   var endpoints = [];
 
@@ -1385,6 +1387,8 @@ async function initResearchSettings() {
     if (settings.research_endpoint_id) epSel.value = settings.research_endpoint_id;
     refreshModels(settings.research_model || '');
     if (settings.research_max_tokens) tokensInput.value = settings.research_max_tokens;
+    if (settings.research_extraction_timeout_seconds) extractTimeoutInput.value = settings.research_extraction_timeout_seconds;
+    if (settings.research_extraction_concurrency) extractConcurrencyInput.value = settings.research_extraction_concurrency;
   } catch (e) { console.warn('Failed to load research settings', e); }
 
   function showStatus() {
@@ -1396,6 +1400,12 @@ async function initResearchSettings() {
     }
     if (tokensInput.value) {
       parts.push('Max tokens: ' + tokensInput.value);
+    }
+    if (extractTimeoutInput.value) {
+      parts.push('Extract: ' + extractTimeoutInput.value + 's');
+    }
+    if (extractConcurrencyInput.value) {
+      parts.push('Parallel: ' + extractConcurrencyInput.value);
     }
     if (parts.length) {
       msg.textContent = parts.join(' · ');
@@ -1414,6 +1424,10 @@ async function initResearchSettings() {
     };
     var tv = parseInt(tokensInput.value, 10);
     if (tv && tv >= 1024) payload.research_max_tokens = tv;
+    var et = parseInt(extractTimeoutInput.value, 10);
+    if (et && et >= 15 && et <= 600) payload.research_extraction_timeout_seconds = et;
+    var ec = parseInt(extractConcurrencyInput.value, 10);
+    if (ec && ec >= 1 && ec <= 12) payload.research_extraction_concurrency = ec;
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -1430,6 +1444,8 @@ async function initResearchSettings() {
   });
   modelSel.addEventListener('change', saveResearch);
   tokensInput.addEventListener('change', saveResearch);
+  extractTimeoutInput.addEventListener('change', saveResearch);
+  extractConcurrencyInput.addEventListener('change', saveResearch);
 
   _registerAiEndpointRefresh(function(nextEndpoints) {
     endpoints = nextEndpoints;
@@ -2440,6 +2456,20 @@ async function initEmailAccountsSettings() {
   if (manageBtn && manageBtn.dataset.bound !== '1') {
     manageBtn.dataset.bound = '1';
     manageBtn.addEventListener('click', () => open('integrations'));
+  }
+  const tasksBtn = el('set-email-open-tasks');
+  if (tasksBtn && tasksBtn.dataset.bound !== '1') {
+    tasksBtn.dataset.bound = '1';
+    tasksBtn.addEventListener('click', async () => {
+      try {
+        const mod = await import('./tasks.js');
+        const openTasks = mod.openTasks || (mod.default && mod.default.openTasks);
+        if (typeof openTasks === 'function') openTasks();
+        else document.getElementById('tool-tasks-btn')?.click();
+      } catch (_) {
+        document.getElementById('tool-tasks-btn')?.click();
+      }
+    });
   }
   const listEl = el('set-email-accounts-list');
   const msgEl = el('set-email-accounts-msg');

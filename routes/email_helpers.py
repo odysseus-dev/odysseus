@@ -17,6 +17,7 @@ import base64
 import time
 import imaplib
 import smtplib
+import ssl
 import email as email_mod
 import email.header
 import email.utils
@@ -163,15 +164,27 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
         elif user and password:
             smtp.login(user, password)
 
-    if port == 587:
-        with smtplib.SMTP(host, port, timeout=timeout) as smtp:
+    def _send_starttls(starttls_port: int = 587) -> None:
+        with smtplib.SMTP(host, starttls_port, timeout=timeout) as smtp:
             smtp.starttls()
             _auth_smtp(smtp)
             smtp.sendmail(from_addr, recipients, message)
+
+    if port == 587:
+        _send_starttls(587)
         return
-    with smtplib.SMTP_SSL(host, port, timeout=timeout) as smtp:
-        _auth_smtp(smtp)
-        smtp.sendmail(from_addr, recipients, message)
+
+    try:
+        with smtplib.SMTP_SSL(host, port, timeout=timeout) as smtp:
+            _auth_smtp(smtp)
+            smtp.sendmail(from_addr, recipients, message)
+        return
+    except (TimeoutError, ssl.SSLError) as e:
+        if port == 465:
+            logger.warning("SMTP implicit TLS on %s:465 failed (%s); retrying STARTTLS on 587", host, e)
+            _send_starttls(587)
+            return
+        raise
 
 
 def _strip_think(text: str) -> str:
@@ -193,8 +206,8 @@ def _strip_think(text: str) -> str:
 import re as _re_reply
 # Accept REPLY / SUMMARY / OUTPUT as the opening fence so the same extractor
 # serves replies and summaries (any fenced final-output block).
-_REPLY_OPEN_RE = _re_reply.compile(r"<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>>", _re_reply.I)
-_REPLY_CLOSE_RE = _re_reply.compile(r"<<<\s*END\s*>>>", _re_reply.I)
+_REPLY_OPEN_RE = _re_reply.compile(r"<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+", _re_reply.I)
+_REPLY_CLOSE_RE = _re_reply.compile(r"<<<\s*END\s*>>+", _re_reply.I)
 
 
 def _extract_reply(text: str) -> str:
@@ -365,6 +378,20 @@ ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 COMPOSE_UPLOADS_DIR = ATTACHMENTS_DIR / "_compose"
 COMPOSE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 SCHEDULED_DB = DATA_DIR / "scheduled_emails.db"
+
+
+def attachment_extract_dir(folder: str, uid: str) -> Path:
+    """Containment-safe extraction directory for an attachment.
+
+    `folder` and `uid` are user-controlled (query/path params). Flatten them to
+    a single safe path segment so a value like folder='../../tmp' can't escape
+    ATTACHMENTS_DIR, then assert containment as belt-and-suspenders."""
+    key = re.sub(r"[^A-Za-z0-9._-]", "_", f"{folder}_{uid}") or "_"
+    target = (ATTACHMENTS_DIR / key).resolve()
+    base = ATTACHMENTS_DIR.resolve()
+    if target != base and base not in target.parents:
+        raise HTTPException(400, "Invalid attachment location")
+    return target
 
 
 def _init_scheduled_db():
@@ -555,7 +582,7 @@ _init_scheduled_db()
 
 def _load_settings():
     if SETTINGS_FILE.exists():
-        return json.loads(SETTINGS_FILE.read_text())
+        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
     return {}
 
 

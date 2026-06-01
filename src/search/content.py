@@ -1,5 +1,6 @@
 """Webpage content fetching with caching, PDF extraction, and summarization helpers."""
 
+import copy
 import io
 import ipaddress
 import json
@@ -61,9 +62,12 @@ def _public_http_url(url: str) -> bool:
     except ValueError:
         pass
     try:
-        return all(not _is_private_address(ip) for ip in _resolve_hostname_ips(host))
+        ips = _resolve_hostname_ips(host)
     except OSError:
         return False
+    # Fail closed: a hostname that resolves to nothing is treated as
+    # non-public (an empty all(...) would otherwise return True).
+    return bool(ips) and all(not _is_private_address(ip) for ip in ips)
 
 
 def _get_public_url(url: str, *, headers: dict, timeout: int) -> httpx.Response:
@@ -297,7 +301,8 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
     js_rendered = _detect_js_frameworks(soup)
     js_message = "Page appears to be rendered by a JavaScript framework; content may be incomplete." if js_rendered else ""
 
-    # Main textual content (heuristic)
+    # Main textual content (heuristic): prefer semantic / "content"-classed
+    # containers to skip nav/footer/boilerplate; tuned for article pages.
     main_content = ""
     content_areas = soup.find_all(
         ["main", "article", "section", "div"],
@@ -306,12 +311,29 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
     if content_areas:
         for area in content_areas[:3]:
             main_content += area.get_text(separator=" ", strip=True) + " "
-    if not main_content:
+    main_content = re.sub(r"\s+", " ", main_content).strip()
+
+    # The class heuristic can latch onto a small wrapper and miss the real
+    # content (app/landing pages, or SSR sites whose body isn't in a
+    # "content"-classed div, so these came back nearly empty before). When the
+    # heuristic returns nothing OR suspiciously little, fall back to the full
+    # <body>, stripping scripts/styles (so JSON/JS doesn't leak into the text)
+    # plus nav/header/footer/aside (boilerplate), and keep whichever yields
+    # more readable text.
+    THIN_CONTENT_CHARS = 600  # below this the heuristic likely missed the page
+    if len(main_content) < THIN_CONTENT_CHARS:
         body = soup.find("body")
         if body:
-            main_content = body.get_text(separator=" ", strip=True)
-
-    main_content = re.sub(r"\s+", " ", main_content).strip()
+            # Strip from a copy so the later list/table/code extractors still
+            # see the original soup unmodified.
+            body_copy = copy.copy(body)
+            for _noise in body_copy.find_all(
+                ["script", "style", "noscript", "template", "nav", "header", "footer", "aside"]
+            ):
+                _noise.extract()
+            body_text = re.sub(r"\s+", " ", body_copy.get_text(separator=" ", strip=True)).strip()
+            if len(body_text) > len(main_content):
+                main_content = body_text
 
     result = {
         "url": url,

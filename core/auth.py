@@ -60,6 +60,9 @@ class AuthManager:
         # Guards mutations of self._sessions and the on-disk sessions.json.
         # Validate/create/revoke run concurrently from the FastAPI threadpool.
         self._sessions_lock = threading.RLock()
+        # Guards the first-run setup check-and-write so concurrent requests
+        # cannot both observe is_configured==False and both create admin accounts.
+        self._setup_lock = threading.Lock()
         self._load()
         self._load_sessions()
         self._migrate_single_user()
@@ -68,7 +71,7 @@ class AuthManager:
     def _load(self):
         try:
             if os.path.exists(self.auth_path):
-                with open(self.auth_path, "r") as f:
+                with open(self.auth_path, "r", encoding="utf-8") as f:
                     self._config = json.load(f)
                 logger.info("Auth config loaded")
             else:
@@ -82,7 +85,7 @@ class AuthManager:
         """Load persisted session tokens from disk, pruning expired ones."""
         try:
             if os.path.exists(self._sessions_path):
-                with open(self._sessions_path, "r") as f:
+                with open(self._sessions_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 now = time.time()
                 self._sessions = {k: v for k, v in data.items() if v.get("expiry", 0) > now}
@@ -157,9 +160,10 @@ class AuthManager:
 
     def setup(self, username: str, password: str) -> bool:
         """First-run admin setup. Only works if no users exist."""
-        if self.is_configured:
-            return False
-        return self.create_user(username, password, is_admin=True)
+        with self._setup_lock:
+            if self.is_configured:
+                return False
+            return self.create_user(username, password, is_admin=True)
 
     def create_user(self, username: str, password: str, is_admin: bool = False) -> bool:
         """Create a new user account."""

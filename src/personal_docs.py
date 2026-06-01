@@ -29,7 +29,7 @@ class PersonalDocsConfig:
     """Configuration for personal documents management."""
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
-    DEFAULT_EXTENSIONS: Tuple[str, ...] = (".txt", ".md", ".json")
+    DEFAULT_EXTENSIONS: Tuple[str, ...] = (".txt", ".md", ".json", ".pdf")
     DEFAULT_K: int = 5
     STOP_WORDS: Set[str] = None
     
@@ -85,7 +85,8 @@ def load_personal_index(
             if not any(name.lower().endswith(ext) for ext in extensions):
                 continue
             size = os.path.getsize(p)
-            text = read_text_file(p)
+            ext = os.path.splitext(name)[1].lower()
+            text = extract_pdf_text(p) if ext == ".pdf" else read_text_file(p)
             chunks = split_chunks(text)
             display = os.path.relpath(p, personal_dir)
             files.append({"name": display, "path": p, "size": size, "chunks": chunks})
@@ -178,7 +179,7 @@ class PersonalDocsManager:
         """Load the list of indexed directories from persistent storage."""
         try:
             if os.path.exists(self.directories_file):
-                with open(self.directories_file, 'r') as f:
+                with open(self.directories_file, 'r', encoding="utf-8") as f:
                     self.indexed_directories = json.load(f)
                 logger.info(f"Loaded {len(self.indexed_directories)} indexed directories")
             else:
@@ -190,7 +191,7 @@ class PersonalDocsManager:
     def save_directories(self):
         """Save the list of indexed directories to persistent storage."""
         try:
-            with open(self.directories_file, 'w') as f:
+            with open(self.directories_file, 'w', encoding="utf-8") as f:
                 json.dump(self.indexed_directories, f, indent=2)
             logger.info(f"Saved {len(self.indexed_directories)} indexed directories")
         except Exception as e:
@@ -200,7 +201,7 @@ class PersonalDocsManager:
         """Load the set of excluded file paths from persistent storage."""
         try:
             if os.path.exists(self._excluded_file):
-                with open(self._excluded_file, 'r') as f:
+                with open(self._excluded_file, 'r', encoding="utf-8") as f:
                     self.excluded_files = set(json.load(f))
             else:
                 self.excluded_files = set()
@@ -210,7 +211,7 @@ class PersonalDocsManager:
 
     def _save_excluded(self):
         try:
-            with open(self._excluded_file, 'w') as f:
+            with open(self._excluded_file, 'w', encoding="utf-8") as f:
                 json.dump(list(self.excluded_files), f)
         except Exception as e:
             logger.error(f"Error saving excluded files: {e}")
