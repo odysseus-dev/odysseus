@@ -111,6 +111,77 @@ def test_secret_storage_key_created_with_safe_mode(tmp_path, monkeypatch):
     assert mode == 0o600, f"expected 0o600, got 0o{mode:o}"
 
 
+# ── secure-by-default deployment + integration storage ─────────
+
+def test_docker_compose_binds_web_ui_to_loopback_by_default():
+    compose = Path("docker-compose.yml").read_text(encoding="utf-8")
+    assert "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000" in compose
+    assert '"${APP_PORT:-7000}:7000"' not in compose
+
+
+def test_readme_native_quickstart_uses_loopback():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "python -m uvicorn app:app --host 127.0.0.1 --port 7000" in readme
+    assert "Use `--host 0.0.0.0` only when you intentionally want" in readme
+
+
+def _import_integrations(tmp_path, monkeypatch):
+    """Import src.integrations with data + encryption key redirected to tmp."""
+    _import_secret_storage(tmp_path, monkeypatch)
+    sys.modules.pop("src.integrations", None)
+    from src import integrations  # noqa: WPS433
+    monkeypatch.setattr(integrations, "DATA_FILE", str(tmp_path / "integrations.json"))
+    return integrations
+
+
+def test_integrations_api_keys_are_encrypted_at_rest(tmp_path, monkeypatch):
+    integrations = _import_integrations(tmp_path, monkeypatch)
+
+    integrations.save_integrations([
+        {
+            "id": "miniflux",
+            "name": "Miniflux",
+            "base_url": "https://rss.example",
+            "auth_type": "bearer",
+            "api_key": "secret-token",
+        }
+    ])
+
+    raw_text = (tmp_path / "integrations.json").read_text(encoding="utf-8")
+    raw = json.loads(raw_text)
+    assert raw[0]["api_key"].startswith("enc:")
+    assert "secret-token" not in raw_text
+
+    loaded = integrations.load_integrations()
+    assert loaded[0]["api_key"] == "secret-token"
+    assert integrations.mask_integration_secret(loaded[0])["api_key"] == "secr****"
+
+
+def test_integrations_plaintext_keys_migrate_on_load(tmp_path, monkeypatch):
+    integrations = _import_integrations(tmp_path, monkeypatch)
+    data_file = tmp_path / "integrations.json"
+    data_file.write_text(
+        json.dumps([
+            {
+                "id": "legacy",
+                "name": "Legacy API",
+                "base_url": "https://api.example",
+                "auth_type": "header",
+                "api_key": "legacy-secret",
+            }
+        ]),
+        encoding="utf-8",
+    )
+
+    loaded = integrations.load_integrations()
+
+    assert loaded[0]["api_key"] == "legacy-secret"
+    migrated_text = data_file.read_text(encoding="utf-8")
+    migrated = json.loads(migrated_text)
+    assert migrated[0]["api_key"].startswith("enc:")
+    assert "legacy-secret" not in migrated_text
+
+
 # ── _q IMAP mailbox quoter ─────────────────────────────────────
 
 def _import_q():

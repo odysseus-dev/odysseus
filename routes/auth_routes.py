@@ -21,6 +21,7 @@ from src.integrations import (
     update_integration,
     delete_integration,
     get_integration,
+    mask_integration_secret,
     execute_api_call,
     INTEGRATION_PRESETS,
     migrate_from_settings,
@@ -431,12 +432,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(403, "Admin only")
         items = load_integrations()
         # Mask API keys for frontend display
-        safe = []
-        for item in items:
-            copy = dict(item)
-            if copy.get("api_key"):
-                copy["api_key"] = copy["api_key"][:4] + "****"
-            safe.append(copy)
+        safe = [mask_integration_secret(item) for item in items]
         return {"integrations": safe}
 
     @router.get("/integrations/presets")
@@ -452,7 +448,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(403, "Admin only")
         body = await request.json()
         item = add_integration(body)
-        return {"ok": True, "integration": item}
+        return {"ok": True, "integration": mask_integration_secret(item)}
 
     @router.put("/integrations/{integration_id}")
     async def update_integration_route(integration_id: str, request: Request):
@@ -464,7 +460,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         item = update_integration(integration_id, body)
         if not item:
             raise HTTPException(404, "Integration not found")
-        return {"ok": True, "integration": item}
+        return {"ok": True, "integration": mask_integration_secret(item)}
 
     @router.delete("/integrations/{integration_id}")
     async def delete_integration_route(integration_id: str, request: Request):
