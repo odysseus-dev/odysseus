@@ -581,11 +581,20 @@ def _build_system_prompt(
     # matches what the user sees.
     try:
         from datetime import datetime as _dt, timezone as _tz
+        import sys as _sys
         _now = _dt.now().astimezone()
         _utc = _dt.now(_tz.utc)
         _off = _now.strftime('%z')  # e.g. +0900
         _off_fmt = (f"{_off[:3]}:{_off[3:]}" if _off else "+00:00")
+        
+        _os_name = "Windows" if _sys.platform == "win32" else "Linux/macOS"
+        _os_hint = f"Running on {_os_name}."
+        if _sys.platform == "win32":
+            _os_hint += " Use PowerShell-compatible syntax for bash/shell commands (e.g., Get-ChildItem instead of ls, $env:VAR instead of $VAR)."
+
         agent_prompt = (
+            f"## Host Operating System\n"
+            f"{_os_hint}\n\n"
             f"## Current date and time\n"
             f"Today is {_now.strftime('%A, %B %-d, %Y')} ({_now.strftime('%Y-%m-%d')}). "
             f"Local time is {_now.strftime('%-I:%M %p')} ({_now.strftime('%Z')}, UTC{_off_fmt}); "

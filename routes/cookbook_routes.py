@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import shutil
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -436,6 +437,55 @@ def setup_cookbook_routes() -> APIRouter:
                 f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
                 f'ssh {_pf}{remote} "powershell -Command \\"{launch_ps}\\""'
             )
+
+        elif is_windows:
+            # ── Local Windows: generate .ps1 runner, use Start-Process for background ──
+            ps_lines = []
+            ps_lines.append('$sessionDir = "$env:TEMP\\odysseus-sessions"')
+            ps_lines.append('New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null')
+            if req.hf_token:
+                ps_lines.append(f"$env:HF_TOKEN = '{_ps_squote(req.hf_token)}'")
+            if req.env_prefix:
+                ps_lines.append(_safe_env_prefix(req.env_prefix))
+            
+            # Use sys.executable (or just python) instead of hardcoded python3
+            import sys as _sys
+            _py = "python"
+            ps_lines.append('try {')
+            ps_lines.append('  $hfPath = Get-Command hf -ErrorAction SilentlyContinue')
+            ps_lines.append('  if ($hfPath) {')
+            ps_lines.append(f'    $null | {hf_cmd}')
+            ps_lines.append('  } else {')
+            ps_lines.append(f'    & {_py} -c "import huggingface_hub" 2>$null')
+            ps_lines.append('    if ($LASTEXITCODE -eq 0) {')
+            ps_lines.append('      Write-Host "hf CLI not found, using Python huggingface_hub..."')
+            ps_lines.append(f'      & {_py} -m pip install -q hf_transfer 2>$null')
+            ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
+            ps_lines.append(f"      & {_py} -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
+            ps_lines.append('    } else {')
+            ps_lines.append('      Write-Host "Installing huggingface-hub..."')
+            ps_lines.append(f'      & {_py} -m pip install -q huggingface-hub hf_transfer')
+            ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
+            ps_lines.append(f"      & {_py} -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
+            ps_lines.append('    }')
+            ps_lines.append('  }')
+            ps_lines.append('  if ($LASTEXITCODE -eq 0) { Write-Host ""; Write-Host "DOWNLOAD_OK" }')
+            ps_lines.append('  else { Write-Host ""; Write-Host "DOWNLOAD_FAILED (exit $LASTEXITCODE)" }')
+            ps_lines.append('} catch {')
+            ps_lines.append('  Write-Host ""; Write-Host "DOWNLOAD_FAILED ($_)"')
+            ps_lines.append('}')
+            
+            runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
+            runner_path.write_text("\r\n".join(ps_lines) + "\r\n")
+            
+            launch_ps = (
+                "$sd = \"$env:TEMP\\odysseus-sessions\"; "
+                f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','{runner_path}' "
+                f"-RedirectStandardOutput \"$sd\\{session_id}.log\" "
+                f"-RedirectStandardError \"$sd\\{session_id}.err.log\" "
+                f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \"$sd\\{session_id}.pid\" }}"
+            )
+            setup_cmd = f'powershell -Command "{launch_ps}"'
 
         elif remote:
             # ── Linux/Termux remote: create tmux session ON the remote host ──
@@ -938,6 +988,53 @@ def setup_cookbook_routes() -> APIRouter:
                     f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
                     f"ssh {_pf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
                 )
+            elif is_windows:
+                # ── Local Windows: generate .ps1 serve runner ──
+                ps_lines = []
+                ps_lines.append('$sessionDir = "$env:TEMP\\odysseus-sessions"')
+                ps_lines.append('New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null')
+                if req.hf_token:
+                    ps_lines.append(f"$env:HF_TOKEN = '{_ps_squote(req.hf_token)}'")
+                if req.gpus:
+                    ps_lines.append(f"$env:CUDA_VISIBLE_DEVICES = '{req.gpus}'")
+                if req.env_prefix:
+                    ps_lines.append(_safe_env_prefix(req.env_prefix))
+                
+                import sys as _sys
+                _py = "python"
+                # Auto-install/check engines
+                if "ollama" in req.cmd:
+                    ps_lines.append('if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {')
+                    ps_lines.append('  Write-Host "Ollama not found. Please install from https://ollama.com/download/windows"')
+                    ps_lines.append('  exit 1')
+                    ps_lines.append('}')
+                elif "llama_cpp" in req.cmd or "llama-server" in req.cmd:
+                    ps_lines.append(f'try {{ & {_py} -c "import llama_cpp" 2>$null }} catch {{}}')
+                    ps_lines.append('if ($LASTEXITCODE -ne 0) {')
+                    ps_lines.append('  Write-Host "Installing llama-cpp-python..."')
+                    ps_lines.append(f'  & {_py} -m pip install llama-cpp-python[server]')
+                    ps_lines.append('}')
+                elif "vllm" in req.cmd:
+                    ps_lines.append('Write-Host "ERROR: vLLM is not supported on Windows. Use Ollama or llama.cpp instead."')
+                    ps_lines.append('exit 1')
+                
+                # Command cleanup: replace python3 with _py in the command itself
+                cmd = req.cmd.replace("python3", _py)
+                ps_lines.append(cmd)
+                ps_lines.append('Write-Host ""')
+                ps_lines.append('Write-Host "=== Process exited with code $LASTEXITCODE ==="')
+                
+                runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
+                runner_path.write_text("\r\n".join(ps_lines) + "\r\n")
+                
+                launch_ps = (
+                    "$sd = \"$env:TEMP\\odysseus-sessions\"; "
+                    f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','{runner_path}' "
+                    f"-RedirectStandardOutput \"$sd\\{session_id}.log\" "
+                    f"-RedirectStandardError \"$sd\\{session_id}.err.log\" "
+                    f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \"$sd\\{session_id}.pid\" }}"
+                )
+                setup_cmd = f'powershell -Command "{launch_ps}"'
             else:
                 setup_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))}"
 
@@ -1633,25 +1730,61 @@ def setup_cookbook_routes() -> APIRouter:
             if _tport and not _SSH_PORT_RE.match(str(_tport)):
                 logger.warning(f"Skipping task with unsafe sshPort: {_tport!r}")
                 continue
-            if task_platform == "windows" and remote:
+            if task_platform == "windows":
                 # Windows: check PID file + Get-Process, read log tail
-                sd = "$env:TEMP\\odysseus-sessions"
-                ssh_base = ["ssh"]
-                if _tport and _tport != "22":
-                    ssh_base.extend(["-p", str(_tport)])
-                check_cmd = ssh_base + [
-                    remote,
-                    "powershell",
-                    "-Command",
-                    f"$pid = Get-Content \"{sd}\\{session_id}.pid\" -ErrorAction SilentlyContinue; "
-                    "if ($pid) {{ Get-Process -Id $pid -ErrorAction SilentlyContinue | Out-Null; if ($?) {{ exit 0 }} else {{ exit 1 }} }} else {{ exit 1 }}"
-                ]
-                capture_cmd = ssh_base + [
-                    remote,
-                    "powershell",
-                    "-Command",
-                    f"Get-Content \"{sd}\\{session_id}.log\" -Tail 10 -ErrorAction SilentlyContinue",
-                ]
+                if remote:
+                    sd = "$env:TEMP\\odysseus-sessions"
+                    ssh_base = ["ssh"]
+                    if _tport and _tport != "22":
+                        ssh_base.extend(["-p", str(_tport)])
+                    check_cmd = ssh_base + [
+                        remote,
+                        "powershell",
+                        "-Command",
+                        f"$pid = Get-Content \"{sd}\\{session_id}.pid\" -ErrorAction SilentlyContinue; "
+                        "if ($pid) { Get-Process -Id $pid -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }"
+                    ]
+                    capture_cmd = ssh_base + [
+                        remote,
+                        "powershell",
+                        "-Command",
+                        f"Get-Content \"{sd}\\{session_id}.log\" -Tail 10 -ErrorAction SilentlyContinue",
+                    ]
+                else:
+                    # Local Windows
+                    import sys as _sys
+                    if _sys.platform == "win32":
+                        sd = Path(tempfile.gettempdir()) / "odysseus-sessions"
+                        pid_file = sd / f"{session_id}.pid"
+                        log_file = sd / f"{session_id}.log"
+                        is_alive = False
+                        if pid_file.exists():
+                            try:
+                                pid = int(pid_file.read_text().strip())
+                                # Check if process exists
+                                subprocess.run(["powershell", "-Command", f"Get-Process -Id {pid}"], 
+                                               capture_output=True, check=True)
+                                is_alive = True
+                            except (ValueError, subprocess.CalledProcessError):
+                                pass
+                        
+                        full_snapshot = ""
+                        if log_file.exists():
+                            try:
+                                # Read last 50 lines for status parsing
+                                lines = log_file.read_text(errors="replace").splitlines()
+                                full_snapshot = "\n".join(lines[-50:])
+                            except Exception:
+                                pass
+                        
+                        # Bypass the subprocess.run calls below by setting flags
+                        check_cmd = None
+                        capture_cmd = None
+                    else:
+                        # Mismatch
+                        is_alive = False
+                        check_cmd = ["false"]
+                        capture_cmd = ["false"]
             elif remote:
                 ssh_base = ["ssh"]
                 if _tport and _tport != "22":
@@ -1662,30 +1795,32 @@ def setup_cookbook_routes() -> APIRouter:
                 check_cmd = ["tmux", "has-session", "-t", session_id]
                 capture_cmd = ["tmux", "capture-pane", "-t", session_id, "-p", "-S", "-50"]
 
-            try:
-                alive = subprocess.run(check_cmd, timeout=10, capture_output=True)
-                is_alive = alive.returncode == 0
-            except Exception:
-                is_alive = False
+            if check_cmd:
+                try:
+                    alive = subprocess.run(check_cmd, timeout=10, capture_output=True)
+                    is_alive = alive.returncode == 0
+                except Exception:
+                    is_alive = False
 
             # Capture last lines for progress. Prefer the "Downloading" line
             # (real aggregate bytes) over "Fetching N files" (whole-file count that
             # lags with hf_transfer). Falls back to the true last line otherwise.
             progress_text = ""
-            full_snapshot = ""
-            if is_alive:
+            if not full_snapshot and is_alive and capture_cmd:
                 try:
                     cap = subprocess.run(capture_cmd, timeout=10, capture_output=True, text=True)
                     if cap.returncode == 0:
                         full_snapshot = cap.stdout.strip()
-                        lines = [l.strip() for l in full_snapshot.split('\n') if l.strip()]
-                        downloading_lines = [l for l in lines if l.startswith("Downloading")]
-                        if downloading_lines:
-                            progress_text = downloading_lines[-1]
-                        elif lines:
-                            progress_text = lines[-1]
                 except Exception:
                     pass
+            
+            if full_snapshot:
+                lines = [l.strip() for l in full_snapshot.split('\n') if l.strip()]
+                downloading_lines = [l for l in lines if l.startswith("Downloading")]
+                if downloading_lines:
+                    progress_text = downloading_lines[-1]
+                elif lines:
+                    progress_text = lines[-1]
 
             # Determine status
             status = "unknown"

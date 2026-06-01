@@ -6,6 +6,7 @@ import logging
 import os
 import shlex
 import shutil
+import sys
 import uuid
 import tempfile
 from pathlib import Path
@@ -238,33 +239,52 @@ def _pty_read(fd: int) -> bytes | None:
 
 
 async def _generate_tmux(cmd: str, request: Request):
-    """Run command in a tmux session. Streams output via a log file.
-    The tmux session survives browser disconnect — user can reconnect or
+    """Run command in a tmux session (or PowerShell background process on Windows).
+    Streams output via a log file.
+    The session survives browser disconnect — user can reconnect or
     `tmux attach -t <name>` to see it live."""
     TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
     session_id = f"cookbook-{uuid.uuid4().hex[:8]}"
     log_path = TMUX_LOG_DIR / f"{session_id}.log"
 
-    # Write a wrapper script that runs the command, tees output, and records exit code.
-    # Using a script avoids shell quoting issues with the tmux command.
-    script_path = TMUX_LOG_DIR / f"{session_id}.sh"
-    script_path.write_text(
-        f"#!/bin/bash\n"
-        f"ODYSSEUS_USER_SHELL=\"${{SHELL:-}}\"\n"
-        f"if [ -n \"$ODYSSEUS_USER_SHELL\" ] && [ -x \"$ODYSSEUS_USER_SHELL\" ]; then\n"
-        f"  ODYSSEUS_USER_PATH=\"$(\"$ODYSSEUS_USER_SHELL\" -ic 'printf \"__ODYSSEUS_PATH__%s\\n\" \"$PATH\"' 2>/dev/null | sed -n 's/^__ODYSSEUS_PATH__//p' | tail -n 1 || true)\"\n"
-        f"  if [ -n \"$ODYSSEUS_USER_PATH\" ]; then export PATH=\"$ODYSSEUS_USER_PATH:$PATH\"; fi\n"
-        f"fi\n"
-        f"{cmd} 2>&1 | tee '{log_path}'\n"
-        f"EC=${{PIPESTATUS[0]}}\n"
-        f"echo ':::EXIT_CODE:::'$EC >> '{log_path}'\n"
-        f"rm -f '{script_path}'\n"
-        f"exit $EC\n"
-    )
-    script_path.chmod(0o755)
-    logger.info("tmux wrapper script created: session=%s path=%s", session_id, script_path)
+    is_windows = sys.platform == "win32"
 
-    tmux_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(script_path))}"
+    if is_windows:
+        # ── Windows: generate .ps1 wrapper and launch via Start-Process ──
+        script_path = TMUX_LOG_DIR / f"{session_id}.ps1"
+        # Use simple cmd in ps1, redirection and exit code recording
+        script_path.write_text(
+            f"{cmd} 2>&1 | Tee-Object -FilePath '{log_path}'\r\n"
+            f"$ec = $LASTEXITCODE\r\n"
+            f"Add-Content -Path '{log_path}' -Value \":::EXIT_CODE:::$ec\"\r\n"
+            f"Remove-Item -Force '{script_path}' -ErrorAction SilentlyContinue\r\n"
+            f"exit $ec\r\n"
+        )
+        launch_cmd = (
+            f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','{script_path}' "
+            f"-NoNewWindow"
+        )
+        tmux_cmd = f"powershell -Command \"{launch_cmd}\""
+        logger.info("Windows background wrapper created: session=%s path=%s", session_id, script_path)
+    else:
+        # ── Linux/Mac: generate .sh wrapper and launch via tmux ──
+        script_path = TMUX_LOG_DIR / f"{session_id}.sh"
+        script_path.write_text(
+            f"#!/bin/bash\n"
+            f"ODYSSEUS_USER_SHELL=\"${{SHELL:-}}\"\n"
+            f"if [ -n \"$ODYSSEUS_USER_SHELL\" ] && [ -x \"$ODYSSEUS_USER_SHELL\" ]; then\n"
+            f"  ODYSSEUS_USER_PATH=\"$(\"$ODYSSEUS_USER_SHELL\" -ic 'printf \"__ODYSSEUS_PATH__%s\\n\" \"$PATH\"' 2>/dev/null | sed -n 's/^__ODYSSEUS_PATH__//p' | tail -n 1 || true)\"\n"
+            f"  if [ -n \"$ODYSSEUS_USER_PATH\" ]; then export PATH=\"$ODYSSEUS_USER_PATH:$PATH\"; fi\n"
+            f"fi\n"
+            f"{cmd} 2>&1 | tee '{log_path}'\n"
+            f"EC=${{PIPESTATUS[0]}}\n"
+            f"echo ':::EXIT_CODE:::'$EC >> '{log_path}'\n"
+            f"rm -f '{script_path}'\n"
+            f"exit $EC\n"
+        )
+        script_path.chmod(0o755)
+        logger.info("tmux wrapper script created: session=%s path=%s", session_id, script_path)
+        tmux_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(script_path))}"
 
     proc = await asyncio.create_subprocess_shell(
         tmux_cmd,
@@ -274,11 +294,12 @@ async def _generate_tmux(cmd: str, request: Request):
     await proc.wait()
     if proc.returncode != 0:
         stderr = (await proc.stderr.read()).decode(errors="replace")
-        yield f"data: {json.dumps({'stream': 'stderr', 'data': f'Failed to start tmux: {stderr}'})}\n\n"
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': f'Failed to start background process: {stderr}'})}\n\n"
         yield f"data: {json.dumps({'exit_code': -1})}\n\n"
         return
 
-    yield f"data: {json.dumps({'stream': 'stdout', 'data': f'Started tmux session: {session_id}'})}\n\n"
+    msg = f"Started background process: {session_id}" if is_windows else f"Started tmux session: {session_id}"
+    yield f"data: {json.dumps({'stream': 'stdout', 'data': msg})}\n\n"
 
     # Tail the log file, streaming new lines as SSE
     lines_sent = 0
@@ -287,8 +308,9 @@ async def _generate_tmux(cmd: str, request: Request):
     while True:
         # Check client disconnect
         if await request.is_disconnected():
-            # tmux keeps running — that's the whole point
-            yield f"data: {json.dumps({'stream': 'stdout', 'data': f'Disconnected. tmux session {session_id} continues in background.'})}\n\n"
+            # Background process keeps running — that's the whole point
+            msg = f"Disconnected. Process {session_id} continues in background."
+            yield f"data: {json.dumps({'stream': 'stdout', 'data': msg})}\n\n"
             return
 
         # Read new lines from log
@@ -306,34 +328,40 @@ async def _generate_tmux(cmd: str, request: Request):
                         yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
                 lines_sent = len(lines)
         except Exception as e:
-            logger.debug(f"tmux log read error: {e}")
+            logger.debug(f"background log read error: {e}")
 
         if exit_code is not None:
             break
 
-        # Check if tmux session is still alive
-        check = await asyncio.create_subprocess_shell(
-            f"tmux has-session -t {session_id} 2>/dev/null",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await check.wait()
-        if check.returncode != 0:
-            # Session ended — do one final read
-            await asyncio.sleep(0.5)
-            if log_path.exists():
-                lines = log_path.read_text(errors="replace").splitlines()
-                for line in lines[lines_sent:]:
-                    if line.startswith(":::EXIT_CODE:::"):
-                        try:
-                            exit_code = int(line.split(":::")[-1])
-                        except ValueError:
-                            exit_code = -1
-                    else:
-                        yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
-            if exit_code is None:
-                exit_code = 0
-            break
+        # Check if process is still alive
+        if is_windows:
+            # We don't have an easy "has-session" for local powershell Start-Process here
+            # without a PID file, but we can rely on the exit_code being written to the log.
+            # If the log hasn't changed for a while AND no exit code, we assume it's still running.
+            pass 
+        else:
+            check = await asyncio.create_subprocess_shell(
+                f"tmux has-session -t {session_id} 2>/dev/null",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await check.wait()
+            if check.returncode != 0:
+                # Session ended — do one final read
+                await asyncio.sleep(0.5)
+                if log_path.exists():
+                    lines = log_path.read_text(errors="replace").splitlines()
+                    for line in lines[lines_sent:]:
+                        if line.startswith(":::EXIT_CODE:::"):
+                            try:
+                                exit_code = int(line.split(":::")[-1])
+                            except ValueError:
+                                exit_code = -1
+                        else:
+                            yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
+                if exit_code is None:
+                    exit_code = 0
+                break
 
         await asyncio.sleep(1.0)
 

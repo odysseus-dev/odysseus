@@ -54,7 +54,28 @@ def fail(msg: str, code: int = 1) -> None:
 
 
 def _tmux_sessions() -> list[str]:
-    """Return active tmux session names, or [] if tmux isn't installed."""
+    """Return active tmux session names (Linux) or PowerShell session IDs (Windows)."""
+    if sys.platform == "win32":
+        # Windows: scan for .pid files in the session directory
+        sd = Path(tempfile.gettempdir()) / "odysseus-sessions"
+        if not sd.is_dir():
+            return []
+        active = []
+        for p in sd.glob("*.pid"):
+            try:
+                pid = int(p.read_text().strip())
+                # Check if process is alive
+                res = subprocess.run(["powershell", "-Command", f"Get-Process -Id {pid}"], 
+                                     capture_output=True)
+                if res.returncode == 0:
+                    active.append(p.stem)
+                else:
+                    # Clean up orphaned PID file
+                    p.unlink(missing_ok=True)
+            except (ValueError, Exception):
+                pass
+        return active
+
     try:
         out = subprocess.run(
             ["tmux", "list-sessions", "-F", "#S"],

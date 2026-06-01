@@ -24,13 +24,13 @@ from cli import quiet_logs, emit, fail, common_parser, run, REPO_ROOT as _REPO_R
 
 quiet_logs()
 
-import argparse, json, subprocess, time
+import argparse, json, subprocess, time, tempfile
 from datetime import datetime
 from pathlib import Path
 
 
 _APP_LOGS = _REPO_ROOT / "logs"
-_TMUX_LOGS = Path("/tmp/odysseus-tmux")
+_TMUX_LOGS = Path(tempfile.gettempdir()) / "odysseus-tmux"
 
 
 def _enumerate() -> list[dict]:
