@@ -32,6 +32,9 @@ services:
       # Find yours with:  id -u  /  id -g
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+    networks:
+      - internal
+      - public
     depends_on:
       searxng:
         condition: service_healthy
@@ -41,12 +44,12 @@ services:
 
   chromadb:
     image: chromadb/chroma:latest
-    ports:
-      - "${CHROMADB_BIND:-127.0.0.1}:8100:8000"
     volumes:
       - chromadb-data:/chroma/chroma
     environment:
       - ANONYMIZED_TELEMETRY=FALSE
+    networks:
+      - internal
     restart: unless-stopped
 
   searxng:
@@ -64,14 +67,14 @@ services:
           sed "s|__SEARXNG_SECRET__|$$secret|g" /tmp/searxng-settings.yml.template > /etc/searxng/settings.yml
         fi
         exec /usr/local/searxng/entrypoint.sh
-    ports:
-      - "127.0.0.1:8080:8080"
     volumes:
       - searxng-data:/etc/searxng
       - ./config/searxng/settings.yml:/tmp/searxng-settings.yml.template:ro
     environment:
       - SEARXNG_BASE_URL=http://localhost:8080/
       - SEARXNG_SECRET=${SEARXNG_SECRET:-}
+    networks:
+      - internal
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5).read(1)\""]
       interval: 5s
@@ -83,13 +86,18 @@ services:
   ntfy:
     image: binwiederhier/ntfy
     command: serve
-    ports:
-      - "${NTFY_BIND:-127.0.0.1}:8091:80"
     volumes:
       - ntfy-cache:/var/cache/ntfy
     environment:
       - NTFY_BASE_URL=${NTFY_BASE_URL:-http://localhost:8091}
+    networks:
+      - internal
     restart: unless-stopped
+
+networks:
+  internal:
+    internal: true
+  public:
 
 volumes:
   searxng-data:
