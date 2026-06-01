@@ -515,7 +515,9 @@ function _rerenderCachedModels() {
           // (-00001-of-NNNNN.gguf). Prefer it (sorted, so UD-IQ4_XS/001 comes
           // before Q4_K_M/001 etc); fall back to any single GGUF sorted.
           // Use $HOME (not ~) so tilde survives variable interpolation inside $(...).
-          const dir = `"$HOME/.cache/huggingface/hub/models--${repo.replace(/\//g, '--')}/snapshots"`;
+          const dir = repo.startsWith('models--')
+            ? `"$HOME/.cache/huggingface/hub/${repo}/snapshots"`
+            : `"$HOME/.cache/huggingface/hub/models--${repo.replace(/\//g, '--')}/snapshots"`;
           // GGUF needs the actual .gguf FILE, not the folder. For a custom-dir
           // model the file lives under "<path>/<repo>" — search there just like we
           // search the HF snapshots dir, so serving a GGUF from a custom dir works

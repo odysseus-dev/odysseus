@@ -4,6 +4,8 @@ services:
     ports:
       - "${APP_PORT:-7000}:7000"
     volumes:
+      - /opt/cuda:/usr/local/cuda:ro
+      - /opt/cuda/lib64:/usr/local/cuda/lib64:ro
       - ./data:/app/data
       - ./logs:/app/logs
       # Cookbook remote-server SSH identity. Odysseus can generate a key here;
@@ -36,6 +38,13 @@ services:
       # Find yours with:  id -u  /  id -g
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     depends_on:
       searxng:
         condition: service_healthy
