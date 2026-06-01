@@ -54,7 +54,7 @@ def create_default_admin():
         import bcrypt
         import json
 
-        username = os.getenv("ODYSSEUS_ADMIN_USER", "admin").strip() or "admin"
+        username = os.getenv("ODYSSEUS_ADMIN_USER", "admin").strip().lower() or "admin"
         password = os.getenv("ODYSSEUS_ADMIN_PASSWORD") or __import__("secrets").token_urlsafe(18)
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         auth_data = {

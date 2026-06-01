@@ -29,7 +29,7 @@ class PersonalDocsConfig:
     """Configuration for personal documents management."""
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
-    DEFAULT_EXTENSIONS: Tuple[str, ...] = (".txt", ".md", ".json")
+    DEFAULT_EXTENSIONS: Tuple[str, ...] = (".txt", ".md", ".json", ".pdf")
     DEFAULT_K: int = 5
     STOP_WORDS: Set[str] = None
     
@@ -85,7 +85,8 @@ def load_personal_index(
             if not any(name.lower().endswith(ext) for ext in extensions):
                 continue
             size = os.path.getsize(p)
-            text = read_text_file(p)
+            ext = os.path.splitext(name)[1].lower()
+            text = extract_pdf_text(p) if ext == ".pdf" else read_text_file(p)
             chunks = split_chunks(text)
             display = os.path.relpath(p, personal_dir)
             files.append({"name": display, "path": p, "size": size, "chunks": chunks})

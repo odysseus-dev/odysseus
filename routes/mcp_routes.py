@@ -499,6 +499,11 @@ def setup_mcp_routes(mcp_manager: McpManager):
 
 def _oauth_authorize_page(auth_url: str, server_id: str, host: str) -> str:
     """Page with Google sign-in link and URL paste-back form for remote access."""
+    # Escape values interpolated into the page: `host` comes from the request
+    # Host header and `server_id` from the OAuth state — neither is trusted.
+    auth_url = html.escape(auth_url, quote=True)
+    server_id = html.escape(server_id, quote=True)
+    host = html.escape(host, quote=True)
     return f"""<!DOCTYPE html>
 <html><head>
 <meta charset="UTF-8"><title>Authorize — Odysseus</title>

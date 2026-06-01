@@ -33,10 +33,11 @@ logger = logging.getLogger(__name__)
 
 from routes.cookbook_helpers import (
     _SSH_PORT_RE, _REMOTE_HOST_RE, _SESSION_ID_RE,
-    _validate_repo_id, _validate_include, _validate_remote_host, _validate_token,
+    _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_remote_host, _validate_token,
     _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
-    _safe_env_prefix, _local_tooling_path_export,
+    _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
+    _append_serve_exit_code_lines, _cached_model_scan_script,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -646,84 +647,13 @@ def setup_cookbook_routes() -> APIRouter:
             raise HTTPException(400, "Invalid ssh_port")
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-        paths_code = "import json, os\n"
-        paths_code += "models = []\n"
-        paths_code += "seen = set()\n"
-        paths_code += "BLOCKED_ROOTS = ('/sys', '/proc', '/dev', '/run', '/var/run')\n"
-        paths_code += "def safe_path(p):\n"
-        paths_code += "    try:\n"
-        paths_code += "        rp = os.path.realpath(os.path.expanduser(p))\n"
-        paths_code += "        return not any(rp == b or rp.startswith(b + os.sep) for b in BLOCKED_ROOTS)\n"
-        paths_code += "    except Exception:\n"
-        paths_code += "        return False\n"
-        paths_code += "def safe_walk(top):\n"
-        paths_code += "    if not safe_path(top): return\n"
-        paths_code += "    for root, dirs, fns in os.walk(top, followlinks=False):\n"
-        paths_code += "        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d)) and safe_path(os.path.join(root, d))]\n"
-        paths_code += "        yield root, dirs, fns\n"
-        # Scan HF cache format (models-- directories with blobs/)
-        paths_code += "def scan_hf(cache):\n"
-        paths_code += "    if not os.path.isdir(cache): return\n"
-        paths_code += "    for d in sorted(os.listdir(cache)):\n"
-        paths_code += "        if not d.startswith('models--'): continue\n"
-        paths_code += "        rid = d.replace('models--','').replace('--','/')\n"
-        paths_code += "        if rid in seen: continue\n"
-        paths_code += "        seen.add(rid)\n"
-        paths_code += "        blobs = os.path.join(cache, d, 'blobs')\n"
-        paths_code += "        sz, nf, ic = 0, 0, False\n"
-        paths_code += "        if os.path.isdir(blobs):\n"
-        paths_code += "            for f in os.scandir(blobs):\n"
-        paths_code += "                if f.is_file(): nf += 1; sz += f.stat().st_size\n"
-        paths_code += "                if f.name.endswith('.incomplete'): ic = True\n"
-        paths_code += "        # Check if it's an LLM (has config.json with model_type) vs diffusion (has model_index.json)\n"
-        paths_code += "        snap = os.path.join(cache, d, 'snapshots')\n"
-        paths_code += "        is_diffusion = False; is_gguf = False\n"
-        paths_code += "        if os.path.isdir(snap):\n"
-        paths_code += "            for sd in os.listdir(snap):\n"
-        paths_code += "                sf = os.path.join(snap, sd)\n"
-        paths_code += "                if not os.path.isdir(sf): continue\n"
-        paths_code += "                if os.path.exists(os.path.join(sf, 'model_index.json')): is_diffusion = True\n"
-        paths_code += "                try:\n"
-        paths_code += "                    if any(x.endswith('.gguf') for x in os.listdir(sf)): is_gguf = True\n"
-        paths_code += "                except Exception: pass\n"
-        paths_code += "        models.append({'repo_id':rid,'size_bytes':sz,'nb_files':nf,'has_incomplete':ic,'path':cache,'is_diffusion':is_diffusion,'is_gguf':is_gguf})\n"
-        # Scan plain directory (each subdirectory = a model if it has model files)
-        paths_code += "def scan_dir(p):\n"
-        paths_code += "    if not os.path.isdir(p) or not safe_path(p): return\n"
-        paths_code += "    for d in sorted(os.listdir(p)):\n"
-        paths_code += "        if d.startswith('.'): continue\n"
-        paths_code += "        fp = os.path.join(p, d)\n"
-        paths_code += "        if not os.path.isdir(fp) or os.path.islink(fp) or not safe_path(fp): continue\n"
-        paths_code += "        if d in seen: continue\n"
-        paths_code += "        # Check if it looks like a model (has config.json, safetensors, bin, or gguf)\n"
-        paths_code += "        is_model = False; is_gguf = False\n"
-        paths_code += "        for root, dirs, fns in safe_walk(fp):\n"
-        paths_code += "            for fn in fns:\n"
-        paths_code += "                if fn.endswith('.gguf'): is_gguf = True; is_model = True\n"
-        paths_code += "                elif fn == 'config.json' or fn.endswith('.safetensors') or fn.endswith('.bin'): is_model = True\n"
-        paths_code += "            if is_model: break\n"
-        paths_code += "        if not is_model: continue\n"
-        paths_code += "        seen.add(d)\n"
-        paths_code += "        sz, nf = 0, 0\n"
-        paths_code += "        for dp, _, fns in safe_walk(fp):\n"
-        paths_code += "            for fn in fns:\n"
-        paths_code += "                try: nf += 1; sz += os.path.getsize(os.path.join(dp, fn))\n"
-        paths_code += "                except Exception: pass\n"
-        paths_code += "        is_diff = os.path.exists(os.path.join(fp, 'model_index.json'))\n"
-        paths_code += "        models.append({'repo_id':d,'size_bytes':sz,'nb_files':nf,'has_incomplete':False,'path':p,'is_local_dir':True,'is_diffusion':is_diff,'is_gguf':is_gguf})\n"
-        # Always scan HF cache
-        paths_code += "scan_hf(os.path.expanduser('~/.cache/huggingface/hub'))\n"
-        # Also scan custom model dirs (comma-separated) if specified
+        model_dirs = []
         if model_dir:
             for d in model_dir.split(','):
                 d = d.strip()
-                if d and d != '~/.cache/huggingface/hub':
-                    # repr() encodes the dir as a properly-escaped Python string
-                    # literal. The old f"...'{d}'..." broke out of the quotes on
-                    # any `'` in the value, injecting arbitrary Python that then
-                    # ran locally or over ssh.
-                    paths_code += f"scan_dir(os.path.expanduser({d!r}))\n"
-        paths_code += "print(json.dumps(models))\n"
+                if d:
+                    model_dirs.append(d)
+        paths_code = _cached_model_scan_script(model_dirs)
 
         scan_py = TMUX_LOG_DIR / "scan_cache.py"
         scan_py.write_text(paths_code, encoding="utf-8")
@@ -778,6 +708,8 @@ def setup_cookbook_routes() -> APIRouter:
                 }
                 if m.get("is_local_dir"):
                     entry["is_local_dir"] = True
+                if m.get("is_gguf"):
+                    entry["is_gguf"] = True
                 models.append(entry)
         except Exception as e:
             logger.warning(f"Failed to parse cached models: {e}")
@@ -844,9 +776,11 @@ def setup_cookbook_routes() -> APIRouter:
         """Launch a model server in a tmux session (or PowerShell background process on Windows).
 
         `repo_id` is dual-purpose: a HuggingFace repo (`<org>/<name>`) for
-        model-serve commands, OR a bare pip package name when the cmd is a
-        `python -m pip install …`. We only enforce the strict HF format on
-        the model paths.
+        model-serve commands, a cached local-model id (the folder name reported
+        by `/api/model/cached`) for models scanned from a custom model dir, OR a
+        bare pip package name when the cmd is a `python -m pip install …`. We
+        keep strict validation, but serving local cached models must not require
+        a fake org/name wrapper.
         """
         require_admin(request)
         # Defence-in-depth: reject values that could break out of shell contexts.
@@ -875,7 +809,7 @@ def setup_cookbook_routes() -> APIRouter:
             ):
                 raise HTTPException(400, "Invalid pip package name")
         else:
-            _validate_repo_id(req.repo_id)
+            _validate_serve_model_id(req.repo_id)
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
         session_id = f"serve-{uuid.uuid4().hex[:8]}"
         remote = req.remote_host
@@ -950,6 +884,7 @@ def setup_cookbook_routes() -> APIRouter:
             # ── Linux/Termux: bash + tmux (existing flow) ──
             runner_lines = ["#!/bin/bash"]
             runner_lines.extend(_user_shell_path_bootstrap())
+            runner_lines.append('ODYSSEUS_PREFLIGHT_EXIT=""')
             # Put Odysseus's own venv bin on PATH (local runs only) so the serve
             # shell resolves the bundled python3/hf, mirroring the download flow.
             if not remote:
@@ -1004,9 +939,33 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('      && cmake --build build -j"$NPROC" --target llama-server \\')
                 runner_lines.append('      && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
                 runner_lines.append('  else')
-                runner_lines.append('    cd ~/llama.cpp && { cmake -B build -DGGML_CUDA=ON 2>/dev/null || cmake -B build; } \\')
-                runner_lines.append('      && cmake --build build -j"$NPROC" --target llama-server \\')
-                runner_lines.append('      && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                # Detect pip-installed nvcc (from vLLM/nvidia CUDA wheels) and put
+                # it on PATH so cmake's CUDA configure can find it.  We check the
+                # same three layouts as entrypoint.sh:
+                #   nvidia/cu13       — nvidia-nvcc-cu13
+                #   nvidia/cu12       — nvidia-nvcc-cu12
+                #   nvidia/cuda_nvcc  — nvidia-cuda-nvcc-cu12 (sub-package style)
+                runner_lines.append('    for _cudir in ~/.local/lib/python*/site-packages/nvidia/cu13 ~/.local/lib/python*/site-packages/nvidia/cu12 ~/.local/lib/python*/site-packages/nvidia/cuda_nvcc; do')
+                runner_lines.append('      [ -x "$_cudir/bin/nvcc" ] && export CUDA_HOME="$_cudir" && export PATH="$_cudir/bin:$PATH" && break')
+                runner_lines.append('    done')
+                # rm -rf build so a prior poisoned CMakeCache.txt (e.g. from a
+                # failed CUDA attempt) doesn't cause the next configure to reuse
+                # stale settings and silently produce a CPU-only binary.
+                runner_lines.append('    cd ~/llama.cpp && rm -rf build')
+                runner_lines.append('    if command -v nvcc &>/dev/null; then')
+                runner_lines.append('      echo "[odysseus] CUDA nvcc found — building llama-server with CUDA (GPU) support..."')
+                runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON \\')
+                runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\')
+                runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                runner_lines.append('    else')
+                runner_lines.append('      echo "[odysseus] WARNING: nvcc not found — building llama-server for CPU only."')
+                runner_lines.append('      echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
+                runner_lines.append('      echo "[odysseus]   To get a GPU build, first install vLLM via Cookbook -> Dependencies"')
+                runner_lines.append('      echo "[odysseus]   (its CUDA wheels include nvcc), then re-launch this serve task."')
+                runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release \\')
+                runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\')
+                runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                runner_lines.append('    fi')
                 runner_lines.append('  fi')
                 runner_lines.append('  # If the native build failed, fall back to the Python bindings.')
                 runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
@@ -1020,7 +979,7 @@ def setup_cookbook_routes() -> APIRouter:
                 # command (the natural serving engine on Apple Silicon / Metal).
                 runner_lines.append('if ! command -v ollama &>/dev/null; then')
                 runner_lines.append('  echo "ERROR: Ollama not found. Install it (macOS: brew install ollama, or https://ollama.com/download), then launch again."')
-                runner_lines.append('  exit 127')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
                 runner_lines.append('if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then')
                 runner_lines.append('  echo "Starting ollama server..."; (ollama serve >/dev/null 2>&1 &)')
@@ -1030,7 +989,7 @@ def setup_cookbook_routes() -> APIRouter:
                 # vLLM is CUDA/ROCm-only and does not run on macOS at all.
                 runner_lines.append('if [ "$(uname -s)" = "Darwin" ]; then')
                 runner_lines.append('  echo "ERROR: vLLM does not run on macOS. Use Ollama or llama.cpp (Metal) instead."')
-                runner_lines.append('  exit 1')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=1')
                 runner_lines.append('fi')
                 # Put ~/.local/bin on PATH first — without a venv, vllm installs
                 # there via --user and the non-login serve shell otherwise can't
@@ -1038,29 +997,33 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! command -v vllm &>/dev/null; then')
                 runner_lines.append('  echo "ERROR: vLLM is not installed. Open Cookbook -> Dependencies and install vllm on this server, then launch again."')
-                runner_lines.append('  exit 127')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
             elif "sglang.launch_server" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! python3 -c "import sglang" 2>/dev/null; then')
                 runner_lines.append('  echo "ERROR: SGLang is not installed. Open Cookbook -> Dependencies and install sglang on this server, then launch again."')
-                runner_lines.append('  exit 127')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
             elif "scripts/diffusion_server.py" in req.cmd or ".diffusion_server.py" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! python3 -c "import torch, diffusers" 2>/dev/null; then')
                 runner_lines.append('  echo "ERROR: Diffusion serving requires PyTorch + diffusers. Open Cookbook -> Dependencies and install diffusers on this server, then launch again."')
-                runner_lines.append('  exit 127')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
 
+            _append_serve_preflight_exit_lines(
+                runner_lines,
+                keep_shell_open=not local_windows,
+            )
             runner_lines.append(req.cmd)
             if local_windows:
                 # Detached background process — no interactive shell to keep open.
                 # Print the exit marker the status poller looks for, then stop.
-                runner_lines.append('echo ""; echo "=== Process exited with code $? ==="')
+                _append_serve_exit_code_lines(runner_lines, keep_shell_open=False)
             else:
                 # Keep shell open after exit so user can see errors
-                runner_lines.append('echo ""; echo "=== Process exited with code $? ==="; exec "${SHELL:-/bin/bash}"')
+                _append_serve_exit_code_lines(runner_lines, keep_shell_open=True)
 
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
             runner_path.write_text("\n".join(runner_lines) + "\n", encoding="utf-8")

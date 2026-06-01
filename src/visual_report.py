@@ -19,6 +19,8 @@ import re
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+from bs4 import BeautifulSoup
+
 from src.research_utils import strip_thinking
 from urllib.parse import urlparse
 
@@ -68,8 +70,20 @@ def _extract_headings(md_text: str) -> List[Dict[str, str]]:
     headings = []
     seen_slugs: Dict[str, int] = {}
 
+    def _plain_heading_text(text: str) -> str:
+        text = text.strip().rstrip("#").strip()
+        text = re.sub(r'!\[([^\]]*)\]\([^)]+\)', r'\1', text)
+        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+        text = re.sub(r'\[([^\]]+)\]\[[^\]]+\]', r'\1', text)
+        text = re.sub(r'<[^>]+>', '', text)
+        text = re.sub(r'[`*_~]+', '', text)
+        text = html.unescape(text)
+        return re.sub(r'\s+', ' ', text).strip()
+
     def _make_slug(text: str) -> str:
         slug = re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')
+        if not slug:
+            slug = "section"
         if slug in seen_slugs:
             seen_slugs[slug] += 1
             slug = f"{slug}-{seen_slugs[slug]}"
@@ -79,14 +93,41 @@ def _extract_headings(md_text: str) -> List[Dict[str, str]]:
 
     for m in re.finditer(r'^(#{2,3})\s+(.+)$', md_text, re.MULTILINE):
         level = len(m.group(1))
-        text = m.group(2).strip()
+        text = _plain_heading_text(m.group(2))
+        if not text:
+            continue
         headings.append({"level": level, "text": text, "slug": _make_slug(text)})
     if not headings:
         for m in re.finditer(r'^\*\*([^*]+)\*\*\s*$', md_text, re.MULTILINE):
-            text = m.group(1).strip().rstrip(':')
+            text = _plain_heading_text(m.group(1)).rstrip(':')
             if 3 < len(text) < 80:
                 headings.append({"level": 2, "text": text, "slug": _make_slug(text)})
     return headings
+
+
+def _apply_heading_ids(report_html: str, headings: List[Dict[str, str]]) -> str:
+    """Force rendered h2/h3 IDs to match the generated sidebar links."""
+    if not headings:
+        return report_html
+
+    soup = BeautifulSoup(report_html, "html.parser")
+    rendered_headings = soup.find_all(["h2", "h3"])
+    for element, heading in zip(rendered_headings, headings):
+        expected_name = f"h{heading['level']}"
+        if element.name != expected_name:
+            logger.debug(
+                "Visual report heading level mismatch: rendered %s for TOC %s",
+                element.name,
+                expected_name,
+            )
+        element["id"] = heading["slug"]
+    if len(rendered_headings) != len(headings):
+        logger.debug(
+            "Visual report heading count mismatch: rendered=%s toc=%s",
+            len(rendered_headings),
+            len(headings),
+        )
+    return str(soup)
 
 
 # Overlay buttons shown on each image: reroll (swap for the next unused
@@ -1650,13 +1691,8 @@ def generate_visual_report(
 
     report_html = _md_to_html(report_markdown)
 
-    # Add id anchors to h2/h3 for TOC linking
     headings = _extract_headings(report_markdown)
-    for h in headings:
-        tag = f"h{h['level']}"
-        pattern = rf'(<{tag}>)(.*?{re.escape(html.escape(h["text"]))}.*?</{tag}>)'
-        replacement = rf'<{tag} id="{h["slug"]}">\2'
-        report_html = re.sub(pattern, replacement, report_html, count=1)
+    report_html = _apply_heading_ids(report_html, headings)
 
     # Collect all OG images from sources (skip icons, tiny images, known junk)
     _IMAGE_BLOCKLIST = {
