@@ -50,6 +50,40 @@ def _xoauth2_bytes(user: str, access_token: str) -> bytes:
     return f"user={user}\x01auth=Bearer {access_token}\x01\x01".encode()
 
 
+def make_oauth_state(account_id: str, owner: str) -> str:
+    """Return an HMAC-signed, base64-encoded OAuth state token.
+
+    Encodes account_id + owner + a random nonce, signed with the app secret
+    so the callback can validate that the flow was initiated by an
+    authenticated, owning user (CSRF / state-forgery protection).
+    """
+    import hmac as _hmac, hashlib as _hl, secrets as _sec
+    from src.secret_storage import _load_or_create_key
+    nonce = _sec.token_hex(16)
+    payload = json.dumps({"a": account_id, "o": owner, "n": nonce}, separators=(",", ":"))
+    sig = _hmac.new(_load_or_create_key(), payload.encode(), _hl.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{payload}|{sig}".encode()).decode()
+
+
+def verify_oauth_state(state: str) -> dict | None:
+    """Verify an OAuth state token's HMAC signature.
+
+    Returns the decoded payload dict ({"a", "o", "n"}) on success, or None if
+    the token is malformed, tampered, or signed with a different key.
+    """
+    import hmac as _hmac, hashlib as _hl
+    from src.secret_storage import _load_or_create_key
+    try:
+        decoded = base64.urlsafe_b64decode(state.encode()).decode()
+        payload, sig = decoded.rsplit("|", 1)
+        expected = _hmac.new(_load_or_create_key(), payload.encode(), _hl.sha256).hexdigest()
+        if not _hmac.compare_digest(sig, expected):
+            return None
+        return json.loads(payload)
+    except Exception:
+        return None
+
+
 def _refresh_google_token(account_id: str) -> str | None:
     """Exchange the stored refresh token for a new access token and persist it."""
     import httpx

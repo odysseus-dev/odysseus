@@ -42,7 +42,7 @@ from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
     _q, _attach_compose_uploads, _cleanup_compose_uploads,
     _load_settings, _save_settings, _get_email_config,
-    _send_smtp_message,
+    _send_smtp_message, make_oauth_state, verify_oauth_state,
     _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
     _extract_attachment_text, _list_attachments_from_msg,
     _extract_attachment_to_disk, _extract_html, _extract_text,
@@ -3144,31 +3144,6 @@ def setup_email_routes():
 
     # ── Google OAuth2 routes ──
 
-    def _make_oauth_state(account_id: str, owner: str) -> str:
-        """Return a HMAC-signed, base64-encoded state token encoding account_id + owner."""
-        import hmac as _hmac, hashlib as _hl, secrets as _sec, json as _json, base64 as _b64
-        from src.secret_storage import _load_or_create_key
-        nonce = _sec.token_hex(16)
-        payload = _json.dumps({"a": account_id, "o": owner, "n": nonce}, separators=(",", ":"))
-        key = _load_or_create_key()
-        sig = _hmac.new(key, payload.encode(), _hl.sha256).hexdigest()
-        return _b64.urlsafe_b64encode(f"{payload}|{sig}".encode()).decode()
-
-    def _verify_oauth_state(state: str) -> dict | None:
-        """Verify HMAC signature and return payload dict, or None if invalid."""
-        import hmac as _hmac, hashlib as _hl, json as _json, base64 as _b64
-        from src.secret_storage import _load_or_create_key
-        try:
-            decoded = _b64.urlsafe_b64decode(state.encode()).decode()
-            payload, sig = decoded.rsplit("|", 1)
-            key = _load_or_create_key()
-            expected = _hmac.new(key, payload.encode(), _hl.sha256).hexdigest()
-            if not _hmac.compare_digest(sig, expected):
-                return None
-            return _json.loads(payload)
-        except Exception:
-            return None
-
     @router.get("/oauth/google/authorize")
     async def google_oauth_authorize(account_id: str = Query(...), request: Request = None, owner: str = Depends(require_user)):
         import urllib.parse
@@ -3180,7 +3155,7 @@ def setup_email_routes():
             os.environ.get("GOOGLE_OAUTH_REDIRECT_URI")
             or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
         )
-        state = _make_oauth_state(account_id, owner)
+        state = make_oauth_state(account_id, owner)
         params = urllib.parse.urlencode({
             "client_id": client_id,
             "redirect_uri": redirect_uri,
@@ -3206,7 +3181,7 @@ def setup_email_routes():
             return _RR("/?section=integrations&email_oauth_error=google_error")
         if not code or not state:
             return _RR("/?section=integrations&email_oauth_error=missing_code")
-        state_data = _verify_oauth_state(state)
+        state_data = verify_oauth_state(state)
         if not state_data:
             return _RR("/?section=integrations&email_oauth_error=invalid_state")
         account_id = state_data.get("a", "")
