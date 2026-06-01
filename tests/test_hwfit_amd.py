@@ -179,3 +179,25 @@ def test_sort_by_newest_orders_by_release_date():
             seen_blank = True
         elif seen_blank:
             assert False, "a dated model appeared after an undated one"
+
+
+def test_vision_detection_and_sort():
+    """Vision-capable models are flagged (is_vision) and the 'vision' sort puts
+    them first. Detection covers pipeline_tag, capabilities, and -VL/Omni names."""
+    from services.hwfit.fit import _is_vision, rank_models
+    assert _is_vision({"name": "Qwen/Qwen2.5-VL-7B", "pipeline_tag": "image-text-to-text"})
+    assert _is_vision({"name": "x", "capabilities": ["vision", "tool_use"]})
+    assert _is_vision({"name": "some-Omni-30B"})
+    assert not _is_vision({"name": "Qwen3-8B", "pipeline_tag": "text-generation", "capabilities": []})
+
+    sys = {"backend": "rocm", "gpu_name": "AMD Radeon RX 9060 XT", "gpu_vram_gb": 15.9,
+           "gpu_family": "rdna", "gpu_count": 1, "available_ram_gb": 22.0, "total_ram_gb": 31.0}
+    res = rank_models(sys, sort="vision", limit=60)
+    flags = [bool(r.get("is_vision")) for r in res]
+    # once we hit a non-vision model, no vision model may appear after it
+    seen_nonvision = False
+    for f in flags:
+        if not f:
+            seen_nonvision = True
+        elif seen_nonvision:
+            assert False, "a vision model appeared after a non-vision one"

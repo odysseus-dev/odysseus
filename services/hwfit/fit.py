@@ -239,6 +239,21 @@ def _quant_bits(q):
     return 0
 
 
+def _is_vision(model) -> bool:
+    """True if the model accepts image input (multimodal / vision). Detected from
+    the catalog's pipeline_tag ('image-text-to-text'), a 'vision' capability, or
+    a vision-y name (-VL, Omni, vision). Used for the Vision badge + sort."""
+    if model.get("is_multimodal") or model.get("vision") or model.get("mmproj"):
+        return True
+    if (model.get("pipeline_tag") or "").lower() in ("image-text-to-text", "image-to-text", "visual-question-answering"):
+        return True
+    caps = model.get("capabilities") or []
+    if any("vision" in str(c).lower() or "image" in str(c).lower() for c in caps):
+        return True
+    name = (model.get("name") or "").lower()
+    return any(tok in name for tok in ("-vl", "vl-", "omni", "vision", "-vision"))
+
+
 def analyze_model(model, system, target_quant=None):
     pb = params_b(model)
     if pb <= 0:
@@ -389,6 +404,7 @@ def analyze_model(model, system, target_quant=None):
         "gguf_sources": model.get("gguf_sources", []),
         "context_length": model.get("context_length", 4096),
         "release_date": model.get("release_date", ""),
+        "is_vision": _is_vision(model),
     }
 
 
@@ -402,6 +418,9 @@ SORT_KEYS = {
     # string sort is chronological. Missing dates sort last (empty < any date,
     # and we sort reverse=True for newest, so "" lands at the bottom).
     "newest": lambda r: r.get("release_date") or "",
+    # Vision-capable first (then by score within each group — see secondary sort
+    # in rank_models). Boolean True sorts above False under reverse=True.
+    "vision": lambda r: (1 if r.get("is_vision") else 0, r.get("score") or 0),
 }
 
 

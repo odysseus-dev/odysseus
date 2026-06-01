@@ -527,6 +527,13 @@ export async function _hwfitFetch(fresh = false) {
           if (!bd) return -1;       // b undated → after a
           return asc ? (ad < bd ? -1 : 1) : (ad < bd ? 1 : -1);
         });
+      } else if (sortKey === 'vision') {
+        // Vision-capable first, then by score within each group.
+        data.models.sort((a, b) => {
+          const av = (a.is_vision ? 1 : 0), bv = (b.is_vision ? 1 : 0);
+          if (av !== bv) return asc ? av - bv : bv - av;
+          return (Number(b.score) || 0) - (Number(a.score) || 0);
+        });
       } else {
         const field = { score: 'score', vram: 'required_gb', speed: 'speed_tps', params: 'params_b', context: 'context' }[sortKey] || 'score';
         data.models.sort((a, b) => {
@@ -790,11 +797,13 @@ export function _hwfitRenderList(el, models) {
     const vramLabel = m.required_gb ? m.required_gb.toFixed(1) + 'G' : '?';
     const moeBadge = m.is_moe ? '<span class="hwfit-badge hwfit-moe">MoE</span>' : '';
     const imgBadge = m.is_image_gen ? '<span class="hwfit-badge" style="background:color-mix(in srgb, var(--red) 20%, transparent);color:var(--red);font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px;">IMG</span>' : '';
+    // Vision (image-input) capable \u2014 accepts images, distinct from image *gen*.
+    const visBadge = m.is_vision ? '<span class="hwfit-badge" title="Accepts image input (vision)" style="background:color-mix(in srgb, var(--green, #50fa7b) 22%, transparent);color:var(--green, #50fa7b);font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px;">VISION</span>' : '';
     const dlDot = (_cachedModelIds && (_cachedModelIds.has(m.name) || [..._cachedModelIds].some(id => id === m.name?.split('/').pop()))) ? '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>' : '';
     html += `<div class="hwfit-row" data-model="${esc(m.name)}">`;
     html += `<span class="hwfit-col hwfit-fit" style="color:${fitColor}">${esc(fitLabel)}</span>`;
     const _relTitle = m.release_date ? ` title="Released ${esc(m.release_date)}"` : '';
-    html += `<span class="hwfit-col hwfit-name"${_relTitle}>${modelLogo(m.name)}${esc(m.name?.split('/').pop() || m.name)}${moeBadge}${imgBadge}${dlDot}</span>`;
+    html += `<span class="hwfit-col hwfit-name"${_relTitle}>${modelLogo(m.name)}${esc(m.name?.split('/').pop() || m.name)}${moeBadge}${visBadge}${imgBadge}${dlDot}</span>`;
     html += `<span class="hwfit-col hwfit-c-params">${esc(pcount)}</span>`;
     html += `<span class="hwfit-col hwfit-c-quant">${esc(m.quant || '?')}</span>`;
     html += `<span class="hwfit-col hwfit-c-vram">${vramLabel}</span>`;
