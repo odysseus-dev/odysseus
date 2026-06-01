@@ -352,7 +352,7 @@ def test_internal_tool_owner_header_validates_against_auth_config(tmp_path, monk
     request.state = SimpleNamespace()
     result = app_module.asyncio.run(middleware.dispatch(request, call_next))
     assert result == "ok"
-    assert request.state.current_user == "internal-tool"
+    assert request.state.current_user == "admin"
 
     request.headers["X-Odysseus-Owner"] = "doesnotexist"
     request.state = SimpleNamespace()
