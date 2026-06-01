@@ -18,11 +18,24 @@ A dangling symlink reproduces the exact ``lexists and not exists`` code path on
 any OS, so these tests pin the behavior portably without needing a real
 LX-symlink reparse point.
 """
+import importlib.util
 import os
 
 import pytest
 
-from core import platform_compat
+# Load the helper straight from its file rather than `from core import
+# platform_compat`. The latter executes core/__init__.py, which eagerly imports
+# src.llm_core, auth, database, ... and the SQLAlchemy stack — failing test
+# collection in checkouts where those heavy imports aren't available. The helper
+# under test is stdlib-only, so loading the module by path keeps this test pure.
+_PC_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "core",
+    "platform_compat.py",
+)
+_spec = importlib.util.spec_from_file_location("_odysseus_platform_compat_under_test", _PC_PATH)
+platform_compat = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(platform_compat)
 
 
 def _make_model_dir(cache_dir, repo="models--qdrant--all-MiniLM-L6-v2-onnx", rev="rev0"):
