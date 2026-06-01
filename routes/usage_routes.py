@@ -68,8 +68,6 @@ def _parse_message_metrics(meta_data: Any) -> Optional[dict]:
     return {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
-        "usage_source": meta.get("usage_source") or "unknown",
-        "model": meta.get("model") or "",
     }
 
 
@@ -81,8 +79,6 @@ def _empty_daily_buckets(start: date, end: date) -> dict[str, dict]:
             "output_tokens": 0,
             "total_tokens": 0,
             "message_count": 0,
-            "estimated_count": 0,
-            "real_count": 0,
         }
         for day in _date_range(start, end)
     }
@@ -114,15 +110,7 @@ def _aggregate_usage_rows(
         "output_tokens": 0,
         "total_tokens": 0,
         "message_count": 0,
-        "estimated_count": 0,
-        "real_count": 0,
     }
-    by_user: dict[str, dict[str, int]] = defaultdict(lambda: {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "message_count": 0,
-    })
     daily_by_user: dict[str, dict[str, dict]] = defaultdict(lambda: _empty_user_daily_buckets(start, end))
 
     for timestamp, meta_data, owner, role in rows:
@@ -135,7 +123,6 @@ def _aggregate_usage_rows(
         bucket = daily[day]
         bucket["message_count"] += 1
         totals["message_count"] += 1
-        by_user[owner_key]["message_count"] += 1
         daily_by_user[owner_key][day]["message_count"] += 1
 
         if role != "assistant":
@@ -155,29 +142,13 @@ def _aggregate_usage_rows(
         user_bucket["output_tokens"] += output_tokens
         user_bucket["total_tokens"] += total_tokens
 
-        source = metrics.get("usage_source")
-        if source == "estimated":
-            bucket["estimated_count"] += 1
-            totals["estimated_count"] += 1
-        elif source == "real":
-            bucket["real_count"] += 1
-            totals["real_count"] += 1
-
         totals["input_tokens"] += input_tokens
         totals["output_tokens"] += output_tokens
         totals["total_tokens"] += total_tokens
 
-        by_user[owner_key]["input_tokens"] += input_tokens
-        by_user[owner_key]["output_tokens"] += output_tokens
-        by_user[owner_key]["total_tokens"] += total_tokens
-
     return {
         "daily": [daily[day] for day in sorted(daily)],
         "totals": totals,
-        "by_user": [
-            {"user": user, **values}
-            for user, values in sorted(by_user.items(), key=lambda item: item[0])
-        ],
         "daily_by_user": [
             {"user": user, "daily": [values[day] for day in sorted(values)]}
             for user, values in sorted(daily_by_user.items(), key=lambda item: item[0])

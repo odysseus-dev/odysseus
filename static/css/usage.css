@@ -19,7 +19,6 @@
   isolation:isolate;
   display:flex;
   flex-direction:column;
-  container:usage-modal / inline-size;
 }
 
 .usage-modal-content::after {
@@ -468,8 +467,6 @@
   opacity:0.82;
 }
 
-.usage-bar:hover .usage-bar-input,
-.usage-bar:hover .usage-bar-output,
 .usage-bar.active .usage-bar-input,
 .usage-bar.active .usage-bar-output {
   opacity:1;

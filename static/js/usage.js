@@ -189,12 +189,7 @@ function ensureDefaults() {
 
 function saveRange() {
   try {
-    localStorage.setItem(RANGE_KEY, JSON.stringify({
-      range: state.range,
-      start: state.start,
-      end: state.end,
-      user: state.user,
-    }));
+    localStorage.setItem(RANGE_KEY, JSON.stringify({ user: state.user }));
   } catch (_) {}
 }
 
@@ -729,12 +724,6 @@ export function openUsage() {
   loadUsage();
 }
 
-export function isUsageOpen() {
-  return !!modalEl && !modalEl.classList.contains('hidden');
-}
-
 export default {
   openUsage,
-  closeUsage,
-  isUsageOpen,
 };
