@@ -355,15 +355,26 @@ async def serve_generated_image(filename: str, request: Request):
 from services.youtube import init_youtube
 init_youtube()
 
-# ========= RAG (vector document RAG — DISABLED) =========
-# VectorRAG (ChromaDB-backed personal-document semantic search) is unused
-# (0 directories ever indexed) and its chromadb 1.4.1 / pydantic 2.12 client
-# can't even instantiate — it threw at init and cost ~30s of startup waiting on
-# the embedding probe. Disabled. All callers already guard on rag_available /
-# `if rag_manager`, so personal-doc routes degrade cleanly.
-rag_manager = None
-rag_available = False
-logger.info("Vector document RAG disabled (unused)")
+# ========= RAG (vector document RAG) =========
+# VectorRAG (ChromaDB-backed personal-document semantic search). Initialized
+# lazily via get_rag_manager() — returns None if ChromaDB isn't reachable
+# (no server running on the configured host:port), in which case personal-doc
+# routes return a clean 503 instead of busy-retrying every request.
+#
+# Note: this was previously hardcoded off because chromadb 1.4.1 / pydantic
+# 2.12 were mutually incompatible at the time. With the current pins
+# (chromadb 1.5.x + pydantic 2.13.x) the init works and Personal Docs
+# (POST /api/personal/add_directory etc.) is functional again.
+from src.rag_singleton import get_rag_manager
+rag_manager = get_rag_manager()
+rag_available = rag_manager is not None
+if rag_available:
+    logger.info("Vector document RAG initialized")
+else:
+    logger.info(
+        "Vector document RAG not available at startup "
+        "(ChromaDB may not be reachable yet — routes will retry lazily)"
+    )
 
 # ========= IMPORT CONFIG =========
 from src.config import config
