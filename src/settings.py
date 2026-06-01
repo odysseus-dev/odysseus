@@ -9,6 +9,7 @@ import json
 import time
 import logging
 from typing import Any
+from fastapi import HTTPException
 
 from src.constants import SETTINGS_FILE, FEATURES_FILE
 
@@ -186,7 +187,9 @@ def get_user_setting(key: str, owner: str = "", default: Any = None) -> Any:
     Falls back gracefully if the prefs module can't be imported (cycle/early
     boot) — admin-global settings keep working.
     """
-    if owner and key in _PER_USER_KEYS:
+    if owner is None:
+        raise HTTPException(403, "Authentication required")
+    if key in _PER_USER_KEYS:
         try:
             from routes.prefs_routes import _load_for_user
             prefs = _load_for_user(owner) or {}

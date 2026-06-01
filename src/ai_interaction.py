@@ -765,9 +765,9 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
     # result so the user sees a single clickable line.
     def _session_query(db):
         query = db.query(DbSession).filter(DbSession.id == target_sid)
-        if owner is not None:
-            query = query.filter(DbSession.owner == owner)
-        return query
+        if owner is None:
+            return query.filter(DbSession.owner == "__impossible__")
+        return query.filter(DbSession.owner == owner)
 
     if action in ("switch", "open", "select", "view"):
         db = SessionLocal()
@@ -1003,7 +1003,7 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         for m in memories:
             if m.get("id", "").startswith(memory_id):
                 # Verify ownership
-                if owner and m.get("owner") != owner:
+                if owner is None or m.get("owner") != owner:
                     return {"error": f"Memory '{memory_id}' not found"}
                 m["text"] = new_text
                 m["timestamp"] = int(time.time())
@@ -1036,7 +1036,7 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         for m in memories:
             if m.get("id", "").startswith(memory_id):
                 # Verify ownership
-                if owner and m.get("owner") != owner:
+                if owner is None or m.get("owner") != owner:
                     return {"error": f"Memory '{memory_id}' not found"}
                 full_id = m["id"]
                 delete_id = m["id"]

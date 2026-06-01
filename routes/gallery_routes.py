@@ -47,8 +47,9 @@ def setup_gallery_routes() -> APIRouter:
                 GalleryImage.file_hash == file_hash,
                 GalleryImage.is_active == True,
             )
-            if user:
-                _dup_q = _dup_q.filter(GalleryImage.owner == user)
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            _dup_q = _dup_q.filter(GalleryImage.owner == user)
             existing = _dup_q.first()
             if existing:
                 return {"ok": False, "duplicate": True, "filename": existing.filename,
@@ -382,8 +383,9 @@ def setup_gallery_routes() -> APIRouter:
                 .outerjoin(DbSession, GalleryImage.session_id == DbSession.id)
                 .filter(GalleryImage.is_active == True)
             )
-            if user is not None:
-                q = q.filter(GalleryImage.owner == user)
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            q = q.filter(GalleryImage.owner == user)
 
             # Search filter (prompt + tags + ai_tags)
             if search:
@@ -485,8 +487,9 @@ def setup_gallery_routes() -> APIRouter:
         db = SessionLocal()
         try:
             q = db.query(GalleryAlbum)
-            if user:
-                q = q.filter(GalleryAlbum.owner == user)
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            q = q.filter(GalleryAlbum.owner == user)
             albums = q.order_by(GalleryAlbum.created_at.desc()).all()
             result = []
             for a in albums:
@@ -543,10 +546,11 @@ def setup_gallery_routes() -> APIRouter:
             base = db.query(GalleryImage).filter(GalleryImage.is_active == True)
             size_q = db.query(func.sum(GalleryImage.file_size)).filter(GalleryImage.is_active == True)
             album_q = db.query(GalleryAlbum)
-            if user:
-                base = base.filter(GalleryImage.owner == user)
-                size_q = size_q.filter(GalleryImage.owner == user)
-                album_q = album_q.filter(GalleryAlbum.owner == user)
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            base = base.filter(GalleryImage.owner == user)
+            size_q = size_q.filter(GalleryImage.owner == user)
+            album_q = album_q.filter(GalleryAlbum.owner == user)
             total = base.count()
             total_size = size_q.scalar() or 0
             fav_count = base.filter(GalleryImage.favorite == True).count()
@@ -574,8 +578,9 @@ def setup_gallery_routes() -> APIRouter:
                 GalleryImage.is_active == True,
                 (GalleryImage.ai_tags == None) | (GalleryImage.ai_tags == ""),
             )
-            if user:
-                q = q.filter(GalleryImage.owner == user)
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            q = q.filter(GalleryImage.owner == user)
             if album_id:
                 q = q.filter(GalleryImage.album_id == album_id)
             untagged = q.count()
@@ -1617,8 +1622,9 @@ def setup_gallery_routes() -> APIRouter:
             _get_or_404_album(db, album_id, user)
             # Only move images the caller owns
             q = db.query(GalleryImage).filter(GalleryImage.id.in_(ids))
-            if user:
-                q = q.filter(GalleryImage.owner == user)
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            q = q.filter(GalleryImage.owner == user)
             q.update({"album_id": album_id}, synchronize_session=False)
             db.commit()
             return {"ok": True, "count": len(ids)}
@@ -1636,8 +1642,9 @@ def setup_gallery_routes() -> APIRouter:
             q = db.query(GalleryImage).filter(
                 GalleryImage.id.in_(ids), GalleryImage.album_id == album_id
             )
-            if user:
-                q = q.filter(GalleryImage.owner == user)
+            if user is None:
+                raise HTTPException(403, "Authentication required")
+            q = q.filter(GalleryImage.owner == user)
             q.update({"album_id": None}, synchronize_session=False)
             db.commit()
             return {"ok": True}

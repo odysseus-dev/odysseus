@@ -308,7 +308,9 @@ class UploadHandler:
             except Exception:
                 is_admin = False
 
-        if owner and not is_admin:
+        if not owner:
+            raise HTTPException(403, "Authentication required")
+        if not is_admin:
             if info.get("owner") != owner:
                 logger.warning("Upload %s denied for owner %s", upload_id, owner)
                 return None

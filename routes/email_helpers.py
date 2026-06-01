@@ -504,7 +504,7 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
 
     def _owner_or_matching_legacy_account(query):
         if not owner:
-            return query
+            raise HTTPException(403, "Authentication required")
         from sqlalchemy import and_, or_
         unowned = or_(_EA.owner == None, _EA.owner == "")  # noqa: E711
         same_mailbox = or_(_EA.imap_user == owner, _EA.from_address == owner)

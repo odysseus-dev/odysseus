@@ -259,10 +259,11 @@ def _resolve_send_config(account_id: str | None = None, owner: str = "") -> dict
         db = _SL()
         try:
             q = db.query(_EA).filter(_EA.enabled == True)  # noqa: E712
-            if owner:
-                unowned = or_(_EA.owner == None, _EA.owner == "")  # noqa: E711
-                same_mailbox = or_(_EA.imap_user == owner, _EA.from_address == owner)
-                q = q.filter(or_(_EA.owner == owner, and_(unowned, same_mailbox)))
+            if not owner:
+                raise HTTPException(403, "Authentication required")
+            unowned = or_(_EA.owner == None, _EA.owner == "")  # noqa: E711
+            same_mailbox = or_(_EA.imap_user == owner, _EA.from_address == owner)
+            q = q.filter(or_(_EA.owner == owner, and_(unowned, same_mailbox)))
             for row in q.order_by(_EA.is_default.desc(), _EA.created_at.asc()).all():
                 trial = _get_email_config(account_id=row.id, owner=owner)
                 if _smtp_ready(trial):
@@ -2884,10 +2885,11 @@ def setup_email_routes():
             # the logged-in mailbox; _get_email_config already accepts those,
             # so Settings should not hide the active account.
             q = db.query(EmailAccount)
-            if owner:
-                unowned = or_(EmailAccount.owner == None, EmailAccount.owner == "")  # noqa: E711
-                same_mailbox = or_(EmailAccount.imap_user == owner, EmailAccount.from_address == owner)
-                q = q.filter(or_(EmailAccount.owner == owner, and_(unowned, same_mailbox)))
+            if not owner:
+                raise HTTPException(403, "Authentication required")
+            unowned = or_(EmailAccount.owner == None, EmailAccount.owner == "")  # noqa: E711
+            same_mailbox = or_(EmailAccount.imap_user == owner, EmailAccount.from_address == owner)
+            q = q.filter(or_(EmailAccount.owner == owner, and_(unowned, same_mailbox)))
             for r in q.order_by(
                 EmailAccount.is_default.desc(), EmailAccount.created_at.asc()
             ).all():
@@ -2947,8 +2949,9 @@ def setup_email_routes():
             # otherwise creating a default would clear every other user's
             # default flag too.
             scope_q = db.query(EmailAccount)
-            if owner:
-                scope_q = scope_q.filter(EmailAccount.owner == owner)
+            if not owner:
+                raise HTTPException(403, "Authentication required")
+            scope_q = scope_q.filter(EmailAccount.owner == owner)
             existing_count = scope_q.count()
             if row.is_default or existing_count == 0:
                 scope_q.update({EmailAccount.is_default: False})
@@ -3010,8 +3013,9 @@ def setup_email_routes():
             # it as their default.
             if was_default:
                 promote_q = db.query(EmailAccount).filter(EmailAccount.enabled == True)  # noqa: E712
-                if owner:
-                    promote_q = promote_q.filter(EmailAccount.owner == owner)
+                if not owner:
+                    raise HTTPException(403, "Authentication required")
+                promote_q = promote_q.filter(EmailAccount.owner == owner)
                 promote = promote_q.order_by(EmailAccount.created_at.asc()).first()
                 if promote:
                     promote.is_default = True
@@ -3147,8 +3151,9 @@ def setup_email_routes():
             # SECURITY: scope the "clear other defaults" sweep to this user's
             # accounts so we don't unset another user's default flag.
             clear_q = db.query(EmailAccount)
-            if owner:
-                clear_q = clear_q.filter(EmailAccount.owner == owner)
+            if not owner:
+                raise HTTPException(403, "Authentication required")
+            clear_q = clear_q.filter(EmailAccount.owner == owner)
             clear_q.update({EmailAccount.is_default: False})
             row.is_default = True
             db.commit()
