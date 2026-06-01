@@ -595,12 +595,21 @@ async function _fetchDependencies() {
       const targetHost = isLocalOnly ? 'this server' : (_envState.remoteHost || 'local');
       // Always go through `python -m pip` so the leading token is `python`
       // — matches the /api/model/serve allow-list (bare `pip` is blocked).
-      // Inside a venv/conda env, `--user` is invalid (pip refuses), so we
-      // only add `--user --break-system-packages` when there's no env —
-      // for PEP-668-locked system pythons (Arch, newer Debian).
-      const _inEnv = _envState.env === 'venv' || _envState.env === 'conda';
-      const _pipFlags = (!_isWindows() && !_inEnv) ? ' --user --break-system-packages' : '';
+      //
+      // `--user` is INVALID inside a venv/conda env (pip aborts with "Can not
+      // perform a '--user' install. User site-packages are not visible in this
+      // virtualenv" — see issue #702). We previously decided this from the
+      // UI-declared env (_envState.env), but that's a guess: a user who runs
+      // Odysseus from a venv without setting the venv field in the UI got
+      // `--user` added and the install hard-failed. Decide at RUNTIME instead,
+      // in the shell where the env is actually visible. The placeholder
+      // __ODYSSEUS_PIPFLAGS__ is replaced server-side with a one-liner that
+      // resolves to `--user --break-system-packages` ONLY when not in a venv/
+      // conda env (for PEP-668-locked system pythons: Arch, newer Debian).
       const _py = _isWindows() ? 'python' : 'python3';
+      // Windows pip has no PEP-668 lock and no meaningful --user story here;
+      // keep it flag-free. POSIX uses the runtime-resolved flag placeholder.
+      const _pipFlags = _isWindows() ? '' : ' __ODYSSEUS_PIPFLAGS__';
       const cmd = `${_py} -m pip install${upgrade ? ' -U' : ''}${_pipFlags} "${pipName}"`;
       let envPrefix = '';
       if (_isWindows()) {

@@ -1016,7 +1016,22 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines,
                 keep_shell_open=not local_windows,
             )
-            runner_lines.append(req.cmd)
+            # Issue #702: `python -m pip install --user` aborts inside a venv/
+            # conda env ("User site-packages are not visible in this virtualenv").
+            # The client can't reliably know the runtime env, so it emits the
+            # placeholder __ODYSSEUS_PIPFLAGS__ and we resolve it HERE, in the
+            # shell where the env is actually visible: add `--user
+            # --break-system-packages` only when NOT in a venv/conda (for
+            # PEP-668-locked system pythons); otherwise add nothing.
+            _exec_cmd = req.cmd
+            if "__ODYSSEUS_PIPFLAGS__" in _exec_cmd:
+                runner_lines.append(
+                    'if [ -n "$VIRTUAL_ENV" ] || [ -n "$CONDA_PREFIX" ] || '
+                    'python3 -c "import sys; sys.exit(0 if sys.prefix!=getattr(sys,\\"base_prefix\\",sys.prefix) else 1)" 2>/dev/null; then '
+                    '_ODY_PIPFLAGS=""; else _ODY_PIPFLAGS="--user --break-system-packages"; fi'
+                )
+                _exec_cmd = _exec_cmd.replace("__ODYSSEUS_PIPFLAGS__", "$_ODY_PIPFLAGS")
+            runner_lines.append(_exec_cmd)
             if local_windows:
                 # Detached background process — no interactive shell to keep open.
                 # Print the exit marker the status poller looks for, then stop.
