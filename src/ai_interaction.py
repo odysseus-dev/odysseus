@@ -36,6 +36,12 @@ CONTEXT_MESSAGE_TEXT_LIMIT = 2000       # Max chars per message in context
 SESSION_LIST_DISPLAY_LIMIT = 50         # Max sessions to show in list_sessions
 SESSION_TRUNCATE_DEFAULT_KEEP = 10      # Default messages to keep when truncating
 
+# ─ Reused Error / Event Strings ───────────────────────────────────────
+ERR_NO_SESSION_MANAGER = "Session manager not available"
+ERR_NO_ACTION = "No action specified"
+ENDPOINT_OFFLINE = "(endpoint offline)"
+EVENT_SESSION_CREATED = "session_created"
+
 # ─ ID & Display Limits ────────────────────────────────────────────────
 UUID_SHORT_ID_LENGTH = 8                # Length of short session/memory IDs
 MEMORY_LIST_DISPLAY_LIMIT = 100         # Max memories to show in list
@@ -417,7 +423,7 @@ def _image_auto_detect_model_spec() -> str:
         _idb = _ISL()
         try:
             eps = _idb.query(_IME).filter(
-                _IME.is_enabled == True,
+                _IME.is_enabled.is_(True),
                 _IME.model_type == "image",
             ).all()
             for ep in eps:
@@ -446,7 +452,7 @@ def _image_save_to_gallery(
 ) -> str:
     """Insert a GalleryImage row and return the new UUID (or '' on failure)."""
     try:
-        from src.database import SessionLocal as _GSL, GalleryImage
+        from src.database import GalleryImage
         new_id = str(uuid.uuid4())
         with get_db_session() as db:
             db.add(GalleryImage(
@@ -533,8 +539,7 @@ def _pipeline_parse_steps(content: str) -> Tuple[Optional[List[Dict]], Optional[
     steps = None
     if stripped.startswith(("{", "[")):
         try:
-            import json as _json
-            data = _json.loads(stripped)
+            data = json.loads(stripped)
             steps = data.get("steps") if isinstance(data, dict) else data
         except (ValueError, TypeError):
             pass
@@ -596,8 +601,7 @@ def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
 
     Raises ValueError if model not found.
     """
-    import httpx
-    from src.database import SessionLocal, ModelEndpoint
+    from src.database import ModelEndpoint
     from src.llm_core import _detect_provider, ANTHROPIC_MODELS
 
     spec = spec.strip()
@@ -611,7 +615,7 @@ def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
         model_name = spec
 
     with get_db_session() as db:
-        query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled.is_(True))
         if target_endpoint_name:
             query = query.filter(ModelEndpoint.name.ilike(f"%{target_endpoint_name}%"))
         endpoints = query.all()
@@ -628,7 +632,7 @@ def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
         headers = build_headers(ep.api_key, base)
 
         model_ids = _fetch_endpoint_model_ids(base, headers, provider, ANTHROPIC_MODELS)
-        model_ids = [m for m in model_ids if m != "(endpoint offline)"]
+        model_ids = [m for m in model_ids if m != ENDPOINT_OFFLINE]
 
         for mid in model_ids:
             if mid.lower() == model_name.lower():
@@ -838,7 +842,7 @@ async def do_create_session(content: str, session_id: Optional[str] = None, owne
       Line 2: model_name (or model_name@endpoint_name)
     """
     if not _session_manager:
-        return {"error": "Session manager not available"}
+        return {"error": ERR_NO_SESSION_MANAGER}
 
     lines = content.strip().split("\n")
     if len(lines) < 2:
@@ -871,7 +875,7 @@ async def do_create_session(content: str, session_id: Optional[str] = None, owne
             sess.headers = headers
         try:
             from src.event_bus import fire_event
-            fire_event("session_created", owner)
+            fire_event(EVENT_SESSION_CREATED, owner)
         except Exception:
             logger.debug("session_created event dispatch failed", exc_info=True)
 
@@ -890,7 +894,7 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
     Content = optional filter keyword (matches session name).
     """
     if not _session_manager:
-        return {"error": "Session manager not available"}
+        return {"error": ERR_NO_SESSION_MANAGER}
 
     keyword = content.strip().lower() if content.strip() else None
 
@@ -1006,7 +1010,7 @@ async def do_send_to_session(content: str, session_id: Optional[str] = None) -> 
     from core.models import ChatMessage
 
     if not _session_manager:
-        return {"error": "Session manager not available"}
+        return {"error": ERR_NO_SESSION_MANAGER}
 
     lines = content.strip().split("\n", 1)
     if len(lines) < 2:
@@ -1148,7 +1152,7 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
       Line 3+: action-specific value (new name for rename, keep_count for truncate)
     """
     if not _session_manager:
-        return {"error": "Session manager not available"}
+        return {"error": ERR_NO_SESSION_MANAGER}
 
     action, target_sid, value, list_filter = _parse_manage_session_input(content)
 
@@ -1257,12 +1261,22 @@ async def _dispatch_session_action(
         return {"error": f"Unknown action '{action}'. Use: {_VALID}"}
 
 
+def _session_not_found_error(sid: str) -> Dict:
+    """Standard error dict for an unknown session id."""
+    return {"error": f"Session '{sid}' not found. Use list_sessions and pass the exact id it returned."}
+
+
+def _memory_not_found_error(mid: str) -> Dict:
+    """Standard error dict for an unknown memory id."""
+    return {"error": f"Memory '{mid}' not found"}
+
+
 def _session_action_view(target_sid: str, query_fn, action: str) -> Dict:
     """Return a clickable link so the user can navigate to the session."""
     with get_db_session() as db:
         db_sess = query_fn(db).first()
         if not db_sess:
-            return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+            return _session_not_found_error(target_sid)
         name = db_sess.name or target_sid
     return {
         "action": action,
@@ -1277,7 +1291,7 @@ def _session_action_rename(db, db_sess, target_sid: str, value: Optional[str]) -
     if not value:
         return {"error": "rename needs a new name (the `value` arg, or line 3 in the legacy format)"}
     if not db_sess:
-        return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+        return _session_not_found_error(target_sid)
     db_sess.name = value
     db.commit()
     _session_manager.update_session_name(target_sid, value)
@@ -1289,7 +1303,7 @@ def _session_action_set_archived(db, db_sess, target_sid: str, archived: bool) -
     """Archive or unarchive a session."""
     action_word = "archive" if archived else "unarchive"
     if not db_sess:
-        return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+        return _session_not_found_error(target_sid)
     db_sess.archived = archived
     db.commit()
     past = "archived" if archived else "unarchived"
@@ -1318,7 +1332,7 @@ def _session_action_delete(db_sess, target_sid: str, current_session_id: Optiona
 def _session_action_set_important(db, db_sess, target_sid: str, is_important: bool) -> Dict:
     """Star or unstar a session."""
     if not db_sess:
-        return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+        return _session_not_found_error(target_sid)
     if not is_important and db_sess.is_important:
         return {"error": f"Session '{db_sess.name}' is starred by the user. Only the user can unstar sessions manually."}
     db_sess.is_important = is_important
@@ -1332,7 +1346,7 @@ def _session_action_set_important(db, db_sess, target_sid: str, is_important: bo
 def _session_action_truncate(db_sess, target_sid: str, value: Optional[str]) -> Dict:
     """Truncate a session to the last N messages."""
     if not db_sess:
-        return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+        return _session_not_found_error(target_sid)
     keep_count = SESSION_TRUNCATE_DEFAULT_KEEP
     if value:
         try:
@@ -1349,7 +1363,7 @@ def _session_action_truncate(db_sess, target_sid: str, value: Optional[str]) -> 
 async def _session_action_fork(db_sess, target_sid: str, value: Optional[str], owner: Optional[str]) -> Dict:
     """Fork a session, copying messages into a new session."""
     if not db_sess:
-        return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+        return _session_not_found_error(target_sid)
     keep_count = 0
     if value:
         try:
@@ -1381,7 +1395,7 @@ async def _session_action_fork(db_sess, target_sid: str, value: Optional[str], o
 
     try:
         from src.event_bus import fire_event
-        fire_event("session_created", owner)
+        fire_event(EVENT_SESSION_CREATED, owner)
     except Exception:
         logger.debug("session_created event dispatch failed", exc_info=True)
 
@@ -1491,14 +1505,14 @@ def _memory_action_edit(lines: list, owner: Optional[str]) -> Dict:
     for m in memories:
         if m.get("id", "").startswith(memory_id):
             if owner and m.get("owner") != owner:
-                return {"error": f"Memory '{memory_id}' not found"}
+                return _memory_not_found_error(memory_id)
             m["text"] = new_text
             m["timestamp"] = int(time.time())
             full_id = m["id"]
             break
 
     if not full_id:
-        return {"error": f"Memory '{memory_id}' not found"}
+        return _memory_not_found_error(memory_id)
 
     _memory_manager.save(memories)
     _memory_vector_add(full_id, new_text)
@@ -1519,13 +1533,13 @@ def _memory_action_delete(lines: list, owner: Optional[str]) -> Dict:
     for m in memories:
         if m.get("id", "").startswith(memory_id):
             if owner and m.get("owner") != owner:
-                return {"error": f"Memory '{memory_id}' not found"}
+                return _memory_not_found_error(memory_id)
             full_id = m["id"]
             break
 
     memories = [m for m in memories if m.get("id") != full_id]
     if len(memories) == original_len:
-        return {"error": f"Memory '{memory_id}' not found"}
+        return _memory_not_found_error(memory_id)
 
     _memory_manager.save(memories)
     _memory_vector_remove(full_id)
@@ -1596,7 +1610,6 @@ async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict
 
     Content = optional filter keyword.
     """
-    import httpx
     from src.database import ModelEndpoint
     from src.llm_core import _detect_provider, ANTHROPIC_MODELS
 
@@ -1604,7 +1617,7 @@ async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict
 
     try:
         with get_db_session() as db:
-            endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+            endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled.is_(True)).all()
 
         if not endpoints:
             return {"results": "No enabled model endpoints configured."}
@@ -1662,9 +1675,9 @@ def _fetch_endpoint_model_ids(base: str, headers: Dict, provider: str, anthropic
                 for m in (data.get("models") or [])
                 if m.get("name") or m.get("model")
             ]
-        return model_ids or ["(endpoint offline)"]
+        return model_ids or [ENDPOINT_OFFLINE]
     except Exception:
-        return ["(endpoint offline)"]
+        return [ENDPOINT_OFFLINE]
 
 
 # ---------------------------------------------------------------------------
@@ -1680,7 +1693,7 @@ async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
     """
     lines = content.strip().split("\n") if content.strip() else []
     if not lines:
-        return {"error": "No action specified"}
+        return {"error": ERR_NO_ACTION}
 
     action = lines[0].strip().lower()
 
@@ -1799,12 +1812,12 @@ async def do_ui_control(content: str, session_id: Optional[str] = None) -> Dict:
     """
     stripped = content.strip()
     if not stripped:
-        return {"error": "No action specified"}
+        return {"error": ERR_NO_ACTION}
 
     lines = stripped.split("\n")
     parts = lines[0].strip().split(None, 2)
     if not parts:
-        return {"error": "No action specified"}
+        return {"error": ERR_NO_ACTION}
 
     action = parts[0].lower()
 
@@ -1878,7 +1891,7 @@ async def _ui_handle_switch_model(parts: list, lines: list, session_id: Optional
         return {"error": str(e)}
 
     if session_id and _session_manager:
-        from src.database import SessionLocal as _SL, Session as _DbSess
+        from src.database import Session as _DbSess
         with get_db_session() as db:
             db_s = db.query(_DbSess).filter(_DbSess.id == session_id).first()
             if db_s:
