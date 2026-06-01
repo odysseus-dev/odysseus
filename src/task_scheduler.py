@@ -1408,6 +1408,12 @@ class TaskScheduler:
         from core.database import Session as DbSession, ChatMessage, CrewMember
 
         output = task.output_target or "session"
+        if (
+            output == "session"
+            and (task.task_type or "") == "action"
+            and (task.action or "") in self._SILENT_ACTIONS
+        ):
+            return
         if output.startswith("mcp__"):
             await self._deliver_via_mcp(output, task, result)
             return
@@ -2069,6 +2075,8 @@ class TaskScheduler:
                 # Built-in housekeeping/action jobs should not create browser
                 # task notifications; user AI/research tasks still can.
                 task.notifications_enabled = False
+                if (task.output_target or "session") == "session":
+                    task.output_target = defs.get("output_target", "none")
             seeded = []
             for action, defs in HOUSEKEEPING_DEFAULTS.items():
                 if action in existing_actions:
@@ -2099,7 +2107,7 @@ class TaskScheduler:
                     # AI/email/calendar tasks opt into a paused starting state
                     # via ship_paused so users can enable them deliberately.
                     status="paused" if ships_paused else "active",
-                    output_target="session",
+                    output_target=defs.get("output_target", "none"),
                     notifications_enabled=False,
                 )
                 db.add(task)

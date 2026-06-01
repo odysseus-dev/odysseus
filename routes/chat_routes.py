@@ -507,7 +507,24 @@ def setup_chat_routes(
                 _doc_q = _doc_db.query(DBDocument).filter(DBDocument.id == active_doc_id)
                 active_doc = _owner_session_filter(_doc_q, ctx.user).first()
                 if active_doc:
-                    logger.info(f"[doc-inject] found by ID: title={active_doc.title!r}, lang={active_doc.language!r}, is_active={active_doc.is_active}, content_len={len(active_doc.current_content or '')}")
+                    doc_session = active_doc.session_id
+                    doc_owner = getattr(active_doc, "owner", None)
+                    if doc_owner and ctx.user and doc_owner != ctx.user:
+                        logger.warning(
+                            "[doc-inject] ignoring active_doc_id %s owned by another user",
+                            active_doc_id,
+                        )
+                        active_doc = None
+                    elif doc_session and doc_session != session:
+                        logger.warning(
+                            "[doc-inject] ignoring stale active_doc_id %s from session %s while in session %s",
+                            active_doc_id,
+                            doc_session,
+                            session,
+                        )
+                        active_doc = None
+                    else:
+                        logger.info(f"[doc-inject] found by ID: title={active_doc.title!r}, lang={active_doc.language!r}, is_active={active_doc.is_active}, content_len={len(active_doc.current_content or '')}")
                 else:
                     logger.warning(f"[doc-inject] NOT FOUND by ID {active_doc_id}")
             if not active_doc:
