@@ -968,24 +968,18 @@ document.addEventListener('click', function(e) {
   }
 }, true);
 
-// Jump-to-entity anchors — the agent emits links like
-//   [New Chat](#session-89effa28)
-//   [Notes](#document-abc123)
-//   [Reminder](#note-42)
-// and the chat-history click delegate turns them into navigation
-// instead of default in-page anchor jumps. Each prefix routes to the
-// matching module via a dynamic import (avoids circular deps —
-// sessions.js itself imports chatRenderer.js).
-document.addEventListener('click', function(e) {
-  const a = e.target && e.target.closest && e.target.closest('a[href]');
-  if (!a) return;
-  const href = a.getAttribute('href') || '';
-  if (!href.startsWith('#')) return;
-  const m = href.match(/^#(session|document|note|image|email|event|task|skill|research)-(.+)$/);
-  if (!m) return;
-  e.preventDefault();
-  e.stopPropagation();
-  const [, kind, id] = m;
+export function parseEntityHash(hash) {
+  const m = String(hash || '').match(/^#(session|document|note|image|email|event|task|skill|research)-(.+)$/);
+  if (!m) return null;
+  let id = m[2];
+  try { id = decodeURIComponent(id); } catch (_) {}
+  return { kind: m[1], id };
+}
+
+export function openEntityFromHash(hash) {
+  const match = parseEntityHash(hash);
+  if (!match) return false;
+  const { kind, id } = match;
   if (kind === 'session') {
     import('./sessions.js').then(mod => {
       const fn = mod.selectSession || (mod.default && mod.default.selectSession);
@@ -1035,6 +1029,36 @@ document.addEventListener('click', function(e) {
       if (open) open(id);
     }).catch(() => {});
   }
+  return true;
+}
+
+function _openCurrentEntityHash() {
+  openEntityFromHash(window.location.hash);
+}
+
+window.addEventListener('hashchange', _openCurrentEntityHash);
+const _scheduleEntityHashOpen = typeof queueMicrotask === 'function'
+  ? queueMicrotask
+  : (fn) => setTimeout(fn, 0);
+_scheduleEntityHashOpen(_openCurrentEntityHash);
+
+// Jump-to-entity anchors — the agent emits links like
+//   [New Chat](#session-89effa28)
+//   [Notes](#document-abc123)
+//   [Reminder](#note-42)
+// and the chat-history click delegate turns them into navigation
+// instead of default in-page anchor jumps. Each prefix routes to the
+// matching module via a dynamic import (avoids circular deps —
+// sessions.js itself imports chatRenderer.js).
+document.addEventListener('click', function(e) {
+  const a = e.target && e.target.closest && e.target.closest('a[href]');
+  if (!a) return;
+  const href = a.getAttribute('href') || '';
+  if (!href.startsWith('#')) return;
+  if (!parseEntityHash(href)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  openEntityFromHash(href);
 });
 
 /**

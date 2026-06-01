@@ -108,6 +108,32 @@ def _owner_session_filter(q, user):
     return q.filter(Document.owner == user)
 
 
+def _document_ref_slug(value: str) -> str:
+    """Normalize document titles/refs the way agent markdown links often do."""
+    s = (value or "").strip().lower()
+    s = re.sub(r'\.pdf$', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'[^a-z0-9]+', '-', s)
+    return s.strip('-')
+
+
+def _resolve_document_ref(db, doc_ref: str, user: Optional[str]):
+    """Resolve either a document UUID or a title-like slug for the current user."""
+    doc = db.query(Document).filter(Document.id == doc_ref).first()
+    if doc:
+        return doc
+
+    ref_slug = _document_ref_slug(doc_ref)
+    if not ref_slug:
+        return None
+
+    q = db.query(Document).filter(Document.is_active == True)
+    q = _owner_session_filter(q, user)
+    for candidate in q.order_by(Document.updated_at.desc()).limit(200).all():
+        if _document_ref_slug(candidate.title) == ref_slug:
+            return candidate
+    return None
+
+
 
 def _slug(name: str) -> str:
     """Filesystem-friendly version of a document title.

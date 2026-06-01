@@ -5818,6 +5818,9 @@ import * as Modals from './modalManager.js';
       switchToDoc(doc.id);
     } catch (e) {
       console.error('Failed to load document:', e);
+      if (uiModule && uiModule.showToast) {
+        uiModule.showToast('Document not found — try opening it from the Documents tab.');
+      }
     }
   }
 

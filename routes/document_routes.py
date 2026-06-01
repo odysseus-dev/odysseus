@@ -20,6 +20,7 @@ from routes.document_helpers import (
     DocumentCreate, DocumentUpdate, DocumentPatch,
     _doc_to_dict, _version_to_dict,
     _verify_doc_owner, _owner_session_filter,
+    _resolve_document_ref,
     _slug, _resolve_user_upload_path, _assert_pdf_marker_upload_owned, _derive_title,
     _PDF_RENDER_SCALE,
 )
@@ -367,7 +368,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         user = get_current_user(request)
         db = SessionLocal()
         try:
-            doc = db.query(Document).filter(Document.id == doc_id).first()
+            doc = _resolve_document_ref(db, doc_id, user)
             if not doc:
                 raise HTTPException(404, "Document not found")
             _verify_doc_owner(db, doc, user)
