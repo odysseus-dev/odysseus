@@ -68,6 +68,7 @@ def _parse_message_metrics(meta_data: Any) -> Optional[dict]:
     return {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
+        "model": str(meta.get("model") or "").strip(),
     }
 
 
@@ -97,6 +98,18 @@ def _empty_user_daily_buckets(start: date, end: date) -> dict[str, dict]:
     }
 
 
+def _empty_model_daily_buckets(start: date, end: date) -> dict[str, dict]:
+    return {
+        day: {
+            "date": day,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        }
+        for day in _date_range(start, end)
+    }
+
+
 def _aggregate_usage_rows(
     rows: Iterable[tuple[datetime, Any, Optional[str], str]],
     *,
@@ -112,6 +125,8 @@ def _aggregate_usage_rows(
         "message_count": 0,
     }
     daily_by_user: dict[str, dict[str, dict]] = defaultdict(lambda: _empty_user_daily_buckets(start, end))
+    daily_by_model: dict[str, dict[str, dict]] = defaultdict(lambda: _empty_model_daily_buckets(start, end))
+    by_model: dict[str, int] = defaultdict(int)
 
     for timestamp, meta_data, owner, role in rows:
         if not timestamp:
@@ -134,6 +149,7 @@ def _aggregate_usage_rows(
         input_tokens = metrics["input_tokens"]
         output_tokens = metrics["output_tokens"]
         total_tokens = input_tokens + output_tokens
+        model_key = metrics.get("model") or "unknown"
         bucket["input_tokens"] += input_tokens
         bucket["output_tokens"] += output_tokens
         bucket["total_tokens"] += total_tokens
@@ -141,10 +157,15 @@ def _aggregate_usage_rows(
         user_bucket["input_tokens"] += input_tokens
         user_bucket["output_tokens"] += output_tokens
         user_bucket["total_tokens"] += total_tokens
+        model_bucket = daily_by_model[model_key][day]
+        model_bucket["input_tokens"] += input_tokens
+        model_bucket["output_tokens"] += output_tokens
+        model_bucket["total_tokens"] += total_tokens
 
         totals["input_tokens"] += input_tokens
         totals["output_tokens"] += output_tokens
         totals["total_tokens"] += total_tokens
+        by_model[model_key] += total_tokens
 
     return {
         "daily": [daily[day] for day in sorted(daily)],
@@ -152,6 +173,15 @@ def _aggregate_usage_rows(
         "daily_by_user": [
             {"user": user, "daily": [values[day] for day in sorted(values)]}
             for user, values in sorted(daily_by_user.items(), key=lambda item: item[0])
+        ],
+        "daily_by_model": [
+            {"model": model, "daily": [values[day] for day in sorted(values)]}
+            for model, values in sorted(daily_by_model.items(), key=lambda item: item[0])
+        ],
+        "models": [
+            {"model": model, "total_tokens": total}
+            for model, total in sorted(by_model.items(), key=lambda item: (-item[1], item[0]))
+            if total > 0
         ],
     }
 
