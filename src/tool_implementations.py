@@ -525,10 +525,9 @@ async def do_search_chats(query: str, limit: int = 20, owner: str | None = None)
                 DBChatMessage.role.in_(["user", "assistant"]),
             )
         )
-        if owner is not None:
-            # Restrict to this user's sessions plus legacy null-owner
-            # rows (so single-user upgrades keep seeing their own data).
-            q = q.filter((DBSession.owner == owner) | (DBSession.owner.is_(None)))
+        if owner is None:
+            return {"error": "owner is required", "exit_code": 1}
+        q = q.filter((DBSession.owner == owner) | (DBSession.owner.is_(None)))
         rows = q.order_by(DBChatMessage.timestamp.desc()).limit(limit).all()
 
         if not rows:
@@ -826,8 +825,9 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
     try:
         if action == "list":
             q = db.query(ScheduledTask)
-            if owner:
-                q = q.filter(ScheduledTask.owner == owner)
+            if not owner:
+                return {"error": "owner is required", "exit_code": 1}
+            q = q.filter(ScheduledTask.owner == owner)
             tasks = q.order_by(ScheduledTask.created_at.desc()).all()
             task_list = []
             for t in tasks:
@@ -895,7 +895,9 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 return {"error": f"Task {task_id} not found", "exit_code": 1}
-            if owner and task.owner and task.owner != owner:
+            if owner is None:
+                return {"error": "owner is required", "exit_code": 1}
+            if task.owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
 
             changed = []
@@ -941,7 +943,9 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 return {"error": f"Task {task_id} not found", "exit_code": 1}
-            if owner and task.owner and task.owner != owner:
+            if owner is None:
+                return {"error": "owner is required", "exit_code": 1}
+            if task.owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
             name = task.name
             db.delete(task)
@@ -955,7 +959,9 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 return {"error": f"Task {task_id} not found", "exit_code": 1}
-            if owner and task.owner and task.owner != owner:
+            if owner is None:
+                return {"error": "owner is required", "exit_code": 1}
+            if task.owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
 
             if action == "pause":
@@ -976,7 +982,9 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 return {"error": f"Task {task_id} not found", "exit_code": 1}
-            if owner and task.owner and task.owner != owner:
+            if owner is None:
+                return {"error": "owner is required", "exit_code": 1}
+            if task.owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
 
             from src.event_bus import get_task_scheduler
@@ -1787,8 +1795,9 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
     try:
         if action == "list":
             q = db.query(Note)
-            if owner is not None:
-                q = q.filter(Note.owner == owner)
+            if owner is None:
+                return {"error": "owner is required", "exit_code": 1}
+            q = q.filter(Note.owner == owner)
             if args.get("label"):
                 q = q.filter(Note.label == args["label"])
             show_archived = args.get("archived", False)
@@ -1854,8 +1863,9 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                     Note.archived == False,  # noqa: E712
                     Note.due_date == due_iso,
                 )
-                if owner is not None:
-                    existing_q = existing_q.filter(Note.owner == owner)
+                if owner is None:
+                    return {"error": "owner is required", "exit_code": 1}
+                existing_q = existing_q.filter(Note.owner == owner)
                 target_title = _norm_note_title(title)
                 for existing in existing_q.limit(25).all():
                     if _norm_note_title(existing.title or "") == target_title:
@@ -1888,7 +1898,9 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             note = db.query(Note).filter(Note.id.startswith(note_id)).first() if note_id else None
             if not note:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
-            if owner is not None and note.owner and note.owner != owner:
+            if owner is None:
+                return {"error": "owner is required", "exit_code": 1}
+            if note.owner and note.owner != owner:
                 return {"error": "Note not found", "exit_code": 1}
             for field in ("title", "content", "note_type", "color", "label", "due_date"):
                 if field in args and args[field] is not None:
@@ -1908,7 +1920,9 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             note = db.query(Note).filter(Note.id.startswith(note_id)).first() if note_id else None
             if not note:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
-            if owner is not None and note.owner and note.owner != owner:
+            if owner is None:
+                return {"error": "owner is required", "exit_code": 1}
+            if note.owner and note.owner != owner:
                 return {"error": "Note not found", "exit_code": 1}
             title = note.title
             db.delete(note)
@@ -1921,7 +1935,9 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             note = db.query(Note).filter(Note.id.startswith(note_id)).first() if note_id else None
             if not note:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
-            if owner is not None and note.owner and note.owner != owner:
+            if owner is None:
+                return {"error": "owner is required", "exit_code": 1}
+            if note.owner and note.owner != owner:
                 return {"error": "Note not found", "exit_code": 1}
             if not note.items:
                 return {"error": "Note has no checklist items", "exit_code": 1}
@@ -1977,14 +1993,16 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 
     def _calendar_query():
         q = db.query(CalendarCal)
-        if owner is not None:
-            q = q.filter(CalendarCal.owner == owner)
+        if owner is None:
+            return q.filter(CalendarCal.owner == "__impossible__")
+        q = q.filter(CalendarCal.owner == owner)
         return q
 
     def _event_query():
         q = db.query(CalendarEvent).join(CalendarCal)
-        if owner is not None:
-            q = q.filter(CalendarCal.owner == owner)
+        if owner is None:
+            return q.filter(CalendarCal.owner == "__impossible__")
+        q = q.filter(CalendarCal.owner == owner)
         return q
 
     def _reminder_minutes(raw_args) -> Optional[int]:
@@ -2054,8 +2072,9 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             Note.archived == False,  # noqa: E712
             Note.due_date == due_date,
         )
-        if owner is not None:
-            existing_q = existing_q.filter(Note.owner == owner)
+        if owner is None:
+            return None, "owner is required"
+        existing_q = existing_q.filter(Note.owner == owner)
         target_title = re.sub(r"^\s*reminder\s*:\s*", "", expected_title.strip().lower())
         for existing in existing_q.limit(25).all():
             existing_title = re.sub(r"^\s*reminder\s*:\s*", "", (existing.title or "").strip().lower())
