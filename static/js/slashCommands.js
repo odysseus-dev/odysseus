@@ -20,6 +20,7 @@ import documentModule from './document.js';
 import settingsModule from './settings.js';
 import cookbookModule from './cookbook.js';
 import { EVAL_PROMPTS } from './compare/index.js';
+import { Tour } from './tour-core.js';
 
 // ── Module state ──────────────────────────────────────────────────────
 
@@ -1766,45 +1767,11 @@ async function _cmdDemo(args, ctx) {
     return true;
   }
 
-  // ── Interactive guided tour ──
-  // Highlights elements with red outline, shows tooltip with pointer arrow.
-  // Navigation: ← back, skip tour, → next.
-
-  // _onTyped / _draftPoll / _draftObserver get bound below; declare so they
-  // can be cleaned up here.
-  let _onTyped = null;
-  let _msgEl = null;
-  let _draftObserver = null;
-  let _draftPoll = null;
-  const _clearTour = () => {
-    document.querySelectorAll('.odysseus-highlight, .odysseus-highlight-click').forEach(e => {
-      e.classList.remove('odysseus-highlight', 'odysseus-highlight-click');
-    });
-    document.querySelectorAll('.tour-halo').forEach(e => e.remove());
-    document.getElementById('tour-tooltip')?.remove();
-    document.body.classList.remove('tour-active');
-    // Keep the draft-restore mechanism alive for a few seconds AFTER the
-    // tour visually ends, because the closing `typewriterReply` and any
-    // async stragglers can clear #message in between resolve('next') and
-    // the user actually reading the text. Hand-off to a deferred cleanup.
-    setTimeout(() => {
-      if (_msgEl && _onTyped) _msgEl.removeEventListener('input', _onTyped);
-      if (_draftObserver) _draftObserver.disconnect();
-      if (_draftPoll) clearInterval(_draftPoll);
-    }, 3000);
-  };
-  // Body flag lets CSS lift overflow:hidden on parents (e.g. .sidebar) so
-  // the highlight halo isn't clipped while the tour is running.
-  document.body.classList.add('tour-active');
-
-  // Persist anything the user types during the tour. Several actions inside
-  // the flow (createDirectChat, slash-command handling) intentionally clear
-  // #message, which would also wipe what the user typed for the final step.
-  // We watch the textarea for non-tour-driven mutations and restore on the
-  // next tick.
+  const tour = new Tour();
   let _typedDraft = '';
-  _msgEl = document.getElementById('message');
-  _onTyped = () => { if (_msgEl) _typedDraft = _msgEl.value; };
+  const _msgEl = document.getElementById('message');
+  const _onTyped = () => { if (_msgEl) _typedDraft = _msgEl.value; };
+  if (_msgEl) _msgEl.addEventListener('input', _onTyped);
   const _restoreIfCleared = () => {
     if (!_msgEl || !_typedDraft) return;
     if (_msgEl.value === '' && _typedDraft) {
@@ -1812,350 +1779,18 @@ async function _cmdDemo(args, ctx) {
       _msgEl.dispatchEvent(new Event('input', { bubbles: true }));
     }
   };
-  if (_msgEl) _msgEl.addEventListener('input', _onTyped);
-  _draftObserver = new MutationObserver(() => _restoreIfCleared());
+  const _draftObserver = new MutationObserver(() => _restoreIfCleared());
   if (_msgEl) _draftObserver.observe(_msgEl, { attributes: true, attributeFilter: ['value'] });
-  // Polling fallback — MutationObserver doesn't catch assignment to `.value`.
-  _draftPoll = setInterval(_restoreIfCleared, 200);
+  const _draftPoll = setInterval(_restoreIfCleared, 200);
 
-  // Inject styles once
-  if (!document.getElementById('tour-styles')) {
-    const s = document.createElement('style');
-    s.id = 'tour-styles';
-    s.textContent = `
-      #tour-tooltip{position:fixed;z-index:10001;background:var(--bg);color:var(--fg);
-        border:1px solid var(--border);border-radius:8px;padding:12px 14px;max-width:280px;
-        font-family:inherit;font-size:0.8rem;line-height:1.5;
-        box-shadow:0 2px 12px rgba(0,0,0,0.3);pointer-events:auto;
-        opacity:0;transform:translateY(4px);transition:opacity 0.3s ease-out,transform 0.3s ease-out}
-      #tour-tooltip.tour-fade-in{opacity:1;transform:translateY(0)}
-      #tour-tooltip .tour-text{margin-bottom:8px;opacity:0.8}
-      .tour-arrow{position:absolute;width:10px;height:10px;background:var(--bg);
-        border:1px solid var(--border);transform:rotate(45deg);pointer-events:none}
-      .tour-nav{display:flex;align-items:center;justify-content:space-between}
-      .tour-nav button{background:none;border:1px solid var(--border);color:var(--fg);
-        cursor:pointer;font-family:inherit;border-radius:4px;transition:all .1s}
-      .tour-nav button:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}
-      .tour-nav button:active{background:color-mix(in srgb,var(--fg) 16%,transparent);transform:scale(0.95)}
-      .tour-btn-arrow{font-size:1rem;padding:4px 12px;opacity:0.6}
-      .tour-btn-arrow:hover{opacity:1}
-      .tour-btn-arrow.disabled{opacity:0.15;pointer-events:none}
-      .tour-btn-skip{font-size:0.72rem;padding:3px 10px;opacity:0.35;border-color:transparent!important}
-      .tour-btn-skip:hover{opacity:0.6}
-      .tour-btn-arrow-pulse{opacity:1;border-color:var(--accent,var(--red));color:var(--accent,var(--red));
-        animation:tour-arrow-pulse 1.2s ease-in-out infinite}
-      @keyframes tour-arrow-pulse{
-        0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent,var(--red)) 50%,transparent)}
-        50%    {box-shadow:0 0 0 6px color-mix(in srgb,var(--accent,var(--red)) 0%,transparent)}
-      }
-    `;
-    document.head.appendChild(s);
-  }
-
-  // Create tooltip
-  const tooltip = document.createElement('div');
-  tooltip.id = 'tour-tooltip';
-  document.body.appendChild(tooltip);
-
-  let cancelled = false;
-
-  function positionTooltip(target) {
-    // Remove old arrow
-    tooltip.querySelector('.tour-arrow')?.remove();
-    const r = target.getBoundingClientRect();
-    const ttW = 280;
-    tooltip.style.visibility = 'hidden';
-    tooltip.style.display = '';
-    const ttH = tooltip.offsetHeight || 100;
-
-    const arrow = document.createElement('div');
-    arrow.className = 'tour-arrow';
-
-    const gap = 12;
-    let top, left, arrowSide;
-
-    // Prefer below
-    if (r.bottom + gap + ttH < window.innerHeight - 10) {
-      top = r.bottom + gap;
-      left = r.left + r.width / 2 - ttW / 2;
-      arrowSide = 'top';
-    // Try above
-    } else if (r.top - gap - ttH > 10) {
-      top = r.top - gap - ttH;
-      left = r.left + r.width / 2 - ttW / 2;
-      arrowSide = 'bottom';
-    // Try right
-    } else {
-      top = r.top + r.height / 2 - ttH / 2;
-      left = r.right + gap;
-      arrowSide = 'left';
-    }
-
-    // Clamp to viewport
-    if (left + ttW > window.innerWidth - 10) left = window.innerWidth - ttW - 10;
-    if (left < 10) left = 10;
-    if (top < 10) top = 10;
-
-    tooltip.style.top = top + 'px';
-    tooltip.style.left = left + 'px';
-
-    // Position arrow pointing at target
-    if (arrowSide === 'top') {
-      arrow.style.cssText = `top:-6px;left:${Math.min(Math.max(r.left + r.width / 2 - left - 5, 10), ttW - 20)}px;border-right:none;border-bottom:none`;
-    } else if (arrowSide === 'bottom') {
-      arrow.style.cssText = `bottom:-6px;left:${Math.min(Math.max(r.left + r.width / 2 - left - 5, 10), ttW - 20)}px;border-left:none;border-top:none`;
-    } else {
-      arrow.style.cssText = `left:-6px;top:${Math.min(Math.max(r.top + r.height / 2 - top - 5, 10), ttH - 20)}px;border-right:none;border-top:none`;
-    }
-    tooltip.appendChild(arrow);
-    tooltip.style.visibility = '';
-  }
-
-  // Stream HTML into an element character by character, skipping tag
-  // boundaries instantly so <b>, <i> etc stay intact. Returns a handle so we
-  // can cancel if the step ends before the stream finishes.
-  function streamHTML(el, html, speedMs = 14) {
-    el.innerHTML = '';
-    let i = 0, out = '';
-    let timer = setInterval(() => {
-      if (i >= html.length) { clearInterval(timer); timer = null; return; }
-      if (html[i] === '<') {
-        const end = html.indexOf('>', i);
-        if (end === -1) { out += html.slice(i); i = html.length; }
-        else { out += html.slice(i, end + 1); i = end + 1; }
-      } else {
-        out += html[i];
-        i++;
-      }
-      el.innerHTML = out;
-    }, speedMs);
-    return { cancel: () => { if (timer) { clearInterval(timer); el.innerHTML = html; } } };
-  }
-
-  // Floating halo overlay — positioned over a target via getBoundingClientRect.
-  // Returns a handle with .update() and .destroy(). We use this instead of a
-  // CSS class on the target because per-target styles (outline, box-shadow)
-  // and clipping ancestors otherwise eat the glow.
-  function makeHalo(target) {
-    const halo = document.createElement('div');
-    halo.className = 'tour-halo';
-    document.body.appendChild(halo);
-    const update = () => {
-      const r = target.getBoundingClientRect();
-      halo.style.top    = (r.top - 4) + 'px';
-      halo.style.left   = (r.left - 4) + 'px';
-      halo.style.width  = (r.width + 8) + 'px';
-      halo.style.height = (r.height + 8) + 'px';
-    };
-    update();
-    window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
-    return {
-      el: halo,
-      update,
-      destroy() {
-        window.removeEventListener('resize', update);
-        window.removeEventListener('scroll', update, true);
-        halo.remove();
-      },
-    };
-  }
-
-  function showStep(sel, text, mode = 'next', isFirst = false, stepOpts = {}) {
-    return new Promise(resolve => {
-      if (cancelled) return resolve('cancel');
-      document.querySelectorAll('.odysseus-highlight').forEach(e => e.classList.remove('odysseus-highlight'));
-      document.querySelectorAll('.tour-halo').forEach(e => e.remove());
-
-      // Support multiple selectors (comma-separated)
-      const sels = sel.split(',').map(s => s.trim());
-      const targets = sels.map(s => document.querySelector(s)).filter(Boolean);
-      if (!targets.length) return resolve('skip');
-
-      const clickMode = mode === 'click';
-      // Steps that advance on a domain event (message submitted) also get the
-      // click-style "breathing" halo so they feel inviting. We intentionally
-      // exclude `#model-picker-btn` from this list — the model-picker step
-      // used to hide its arrows AND not click-advance, leaving the user with
-      // a halo that did nothing if they didn't actually pick a model. It now
-      // renders with normal arrows + `advanceOnClick`, see the steps array.
-      const waitsForEvent = sels.includes('#message');
-      const breathing = clickMode || waitsForEvent;
-      const advanceOnClick = !!stepOpts.advanceOnClick;
-      const pulseNext = !!stepOpts.pulseNext;
-
-      targets.forEach(t => t.classList.add('odysseus-highlight'));
-      const halos = breathing ? targets.map(makeHalo) : [];
-      // Reset tooltip into the "pre-fade" state so the new step phases in.
-      tooltip.classList.remove('tour-fade-in');
-      targets[0].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-      tooltip.innerHTML = `<div class="tour-text">${text}</div>
-        ${breathing ? '<div style="font-size:0.72rem;opacity:0.35;margin-bottom:6px">Click the highlighted element to continue</div>' : ''}
-        <div class="tour-nav" style="${breathing ? 'justify-content:center' : ''}">
-          ${breathing ? '' : `<button class="tour-btn-arrow${isFirst ? ' disabled' : ''}" data-act="back">\u2190</button>`}
-          <button class="tour-btn-skip" data-act="skip">${stepOpts.finishLabel ? 'finish tour' : 'skip tour'}</button>
-          ${breathing ? '' : `<button class="tour-btn-arrow${pulseNext ? ' tour-btn-arrow-pulse' : ''}" data-act="next">\u2192</button>`}
-        </div>`;
-
-      // Position based on the fully-rendered tooltip so it doesn't jump as
-      // text streams in, then stream the text into .tour-text and fade
-      // everything in so the transition between steps isn't jarring.
-      let streamHandle = null;
-      requestAnimationFrame(() => {
-        positionTooltip(targets[0]);
-        tooltip.classList.add('tour-fade-in');
-        halos.forEach(h => h.el.classList.add('tour-fade-in'));
-        const textEl = tooltip.querySelector('.tour-text');
-        if (textEl) streamHandle = streamHTML(textEl, text);
-      });
-
-      let messageInputListener = null;
-      let modelListener = null;
-
-      const onClick = (e) => {
-        const act = e.target.closest('[data-act]')?.dataset.act;
-        if (!act) return;
-        cleanup();
-        if (act === 'skip') { cancelled = true; resolve('cancel'); }
-        else resolve(act);
-      };
-      // Document-level capture so we hear the click before any inner handler
-      // that might preventDefault / stopPropagation. We walk up from e.target
-      // via .closest(selector) — more robust than t.contains(e.target) when
-      // the click lands on a SVG/path child or a textNode wrapper. Guarded so
-      // the multiple bound event types (click/pointerdown/mousedown) can't
-      // double-resolve.
-      let _advanced = false;
-      const onDocClickCapture = (e) => {
-        if (_advanced) return;
-        const t = e.target;
-        const matches = sels.some(s => {
-          try { return t.closest && t.closest(s); } catch { return false; }
-        });
-        if (!matches) return;
-        _advanced = true;
-        // resolve first — if anything in cleanup throws we still advance.
-        resolve('clicked');
-        try { cleanup(); } catch (err) { console.warn('tour cleanup:', err); }
-      };
-      // Advance on Enter so the user can hit "send" naturally to finish
-      // the tour. We deliberately do NOT advance on every input event —
-      // doing so used to tear down the tooltip's click handler the moment
-      // the user typed a single character, leaving the `→` button visible
-      // but unclickable, and the typed draft vulnerable to later clears.
-      // We also stopPropagation+preventDefault on the Enter so it can't
-      // ALSO submit the chat form — otherwise the message would get sent
-      // (and the input cleared) the moment the user finishes the tour.
-      const onMessageInput = (e) => {
-        if (e.type !== 'keydown') return;
-        if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
-        const ta = document.getElementById('message');
-        if (!ta || !ta.value.trim()) return;
-        // Snapshot what the user typed. If anything async clears the
-        // textarea between now and the next paint (typewriterReply, the
-        // submit-debounce reset, etc.), we explicitly put it back.
-        const saved = ta.value;
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        cleanup();
-        resolve('next');
-        const _restore = () => {
-          if (ta && !ta.value && saved) {
-            ta.value = saved;
-            ta.dispatchEvent(new Event('input', { bubbles: true }));
-          }
-        };
-        // Multiple ticks — synchronous, micro-task, and a couple frames
-        // out — to catch whatever is clearing it.
-        _restore();
-        Promise.resolve().then(_restore);
-        requestAnimationFrame(_restore);
-        setTimeout(_restore, 50);
-        setTimeout(_restore, 200);
-      };
-      const onModelPicked = () => { cleanup(); resolve('next'); };
-
-      const cleanup = () => {
-        tooltip.removeEventListener('click', onClick);
-        ['click', 'pointerdown', 'mousedown'].forEach(evt => {
-          document.removeEventListener(evt, onDocClickCapture, true);
-          targets.forEach(t => t.removeEventListener(evt, onDocClickCapture, true));
-        });
-        if (messageInputListener) document.removeEventListener('keydown', messageInputListener, true);
-        if (modelListener) document.removeEventListener('odysseus:model-picked', modelListener);
-        if (streamHandle) streamHandle.cancel();
-        halos.forEach(h => h.destroy());
-      };
-
-      if (sels.includes('#message')) {
-        const msg = document.getElementById('message');
-        if (msg) {
-          // Listen on `document` in CAPTURE phase so we fire BEFORE
-          // chat.js's bubble-phase Enter handler on #message (which sends
-          // the message and clears the input). Listeners on the same
-          // element fire in insertion order regardless of phase, so we
-          // have to attach a level up to win the race.
-          messageInputListener = (e) => {
-            if (e.target !== msg) return;
-            onMessageInput(e);
-          };
-          document.addEventListener('keydown', messageInputListener, true);
-        }
-      }
-      if (sels.includes('#model-picker-btn')) {
-        modelListener = onModelPicked;
-        document.addEventListener('odysseus:model-picked', modelListener, { once: true });
-      }
-
-      tooltip.addEventListener('click', onClick);
-      if (clickMode || advanceOnClick) {
-        // Listen on click + pointerdown + mousedown in capture phase, at both
-        // document and target, so we still catch even if any handler upstream
-        // calls preventDefault/stopPropagation. We resolve only once via the
-        // resolved guard inside cleanup().
-        ['click', 'pointerdown', 'mousedown'].forEach(evt => {
-          document.addEventListener(evt, onDocClickCapture, true);
-          targets.forEach(t => t.addEventListener(evt, onDocClickCapture, true));
-        });
-      }
-    });
-  }
-
-  const delay = ms => new Promise(r => setTimeout(r, ms));
-
-  // ── Welcome ──
-  await typewriterReply('Welcome to Odysseus! Lets begin the tour!');
-  // Beat between the welcome line and the first hint so it doesn't snap in.
-  await delay(900);
-
-  // Reset to a known starting state so the interactive steps (switch to Agent,
-  // turn Web on) actually have something to do.
-  try {
-    const _agentBtn = document.getElementById('mode-agent-btn');
-    const _chatBtn  = document.getElementById('mode-chat-btn');
-    if (_agentBtn && _chatBtn) {
-      _agentBtn.classList.remove('active');
-      _chatBtn.classList.add('active');
-      const _t = _agentBtn.closest('.mode-toggle');
-      if (_t) _t.classList.add('mode-chat');
-    }
-    // Web is persisted per-mode under web_chat / web_agent. Zero both so the
-    // toggle is genuinely off when the user reaches the "turn it on" step.
-    const _st = Storage.getJSON(Storage.KEYS.TOGGLES, {});
-    _st.mode = 'chat';
-    _st.web_chat = false;
-    _st.web_agent = false;
-    Storage.setJSON(Storage.KEYS.TOGGLES, _st);
-    // If the web button is currently on, click it to fully unwind it via the
-    // existing handler (covers any state the click handler tracks that we
-    // can't see from here).
-    const _wbtn = document.getElementById('web-toggle-btn');
-    if (_wbtn && _wbtn.classList.contains('active')) _wbtn.click();
-    _wbtn?.classList.remove('active');
-    const _webCb = document.getElementById('web-toggle');
-    if (_webCb) _webCb.checked = false;
-  } catch {}
+  const _clearTour = () => {
+    tour.clear();
+    setTimeout(() => {
+      if (_msgEl && _onTyped) _msgEl.removeEventListener('input', _onTyped);
+      if (_draftObserver) _draftObserver.disconnect();
+      if (_draftPoll) clearInterval(_draftPoll);
+    }, 3000);
+  };
 
   const sidebar = document.getElementById('sidebar');
 
@@ -2176,20 +1811,22 @@ async function _cmdDemo(args, ctx) {
   while (i < steps.length) {
     const step = steps[i];
     if (step.before) step.before();
-    const res = await showStep(step.sel, step.text, step.mode || 'next', i === 0, step);
-    if (res === 'cancel') { _clearTour(); return true; }
+    const res = await tour.showStep({
+      sel: step.sel, text: step.text, mode: step.mode || 'next', isFirst: i === 0, isLast: false, 
+      advanceOnClick: step.advanceOnClick, pulseNext: step.pulseNext, finishLabel: step.finishLabel
+    });
+    if (res === 'cancel' || res === 'skip') { _clearTour(); return true; }
     if (res === 'back') { if (i > 0) i--; continue; }
     i++;
-    // Breather between steps so the tour doesn't feel like it's racing ahead.
-    await delay(step.afterDelay || 750);
-    // After the message input step, wait for any active stream to finish
+    await new Promise(r => setTimeout(r, step.afterDelay || 750));
     if (step.sel === '#message' && _isStreamingFn()) {
+      tour.clearHalos();
       document.querySelectorAll('.odysseus-highlight').forEach(e => e.classList.remove('odysseus-highlight'));
-      tooltip.style.display = 'none';
+      if (tour.tooltip) tour.tooltip.style.display = 'none';
       await new Promise(r => {
         const check = setInterval(() => { if (!_isStreamingFn()) { clearInterval(check); r(); } }, 300);
       });
-      await delay(400);
+      await new Promise(r => setTimeout(r, 400));
     }
   }
 
@@ -2200,6 +1837,8 @@ async function _cmdDemo(args, ctx) {
 
 // ── Compare tour ──
 async function _cmdTourCompare(args, ctx) {
+  const tour = new Tour();
+
   // The slash dispatcher doesn't auto-clear the input, so explicitly
   // wipe it — otherwise "/tour-compare" stays parked in the textarea
   // and visually competes with the tour walkthrough.
@@ -2207,28 +1846,6 @@ async function _cmdTourCompare(args, ctx) {
   if (_msgEl) {
     _msgEl.value = '';
     _msgEl.dispatchEvent(new Event('input', { bubbles: true }));
-  }
-  if (!document.getElementById('tour-styles')) {
-    const s = document.createElement('style');
-    s.id = 'tour-styles';
-    s.textContent =
-      '#tour-tooltip{position:fixed;z-index:10001;background:var(--bg);color:var(--fg);' +
-      'border:1px solid var(--border);border-radius:8px;padding:12px 14px;max-width:280px;' +
-      'font-family:inherit;font-size:0.8rem;line-height:1.5;' +
-      'box-shadow:0 2px 12px rgba(0,0,0,0.3);pointer-events:auto;' +
-      'opacity:0;transform:translateY(4px);transition:opacity 0.3s ease-out,transform 0.3s ease-out}' +
-      '#tour-tooltip.tour-fade-in{opacity:1;transform:translateY(0)}' +
-      '#tour-tooltip .tour-text{margin-bottom:8px;opacity:0.8}' +
-      '.tour-nav{display:flex;align-items:center;justify-content:space-between}' +
-      '.tour-nav button{background:none;border:1px solid var(--border);color:var(--fg);' +
-      'cursor:pointer;font-family:inherit;border-radius:4px;transition:all .1s}' +
-      '.tour-nav button:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}' +
-      '.tour-btn-arrow{font-size:1rem;padding:4px 12px;opacity:0.6}' +
-      '.tour-btn-arrow:hover{opacity:1}' +
-      '.tour-btn-arrow.disabled{opacity:0.15;pointer-events:none}' +
-      '.tour-btn-skip{font-size:0.72rem;padding:3px 10px;opacity:0.35;border-color:transparent!important}' +
-      '.tour-btn-skip:hover{opacity:0.6}';
-    document.head.appendChild(s);
   }
 
   let overlay = document.getElementById('compare-model-overlay');
@@ -2246,133 +1863,13 @@ async function _cmdTourCompare(args, ctx) {
     return true;
   }
 
-  document.body.classList.add('tour-active');
-  const tooltip = document.createElement('div');
-  tooltip.id = 'tour-tooltip';
-  document.body.appendChild(tooltip);
 
   // Track halos so we can destroy them between steps. Halos sit on the
   // body (above modals) so the outline isn't clipped by modal-content's
   // overflow:auto — same pattern as _cmdDemo's makeHalo.
-  let _halos = [];
-  function _makeHalo(target) {
-    const halo = document.createElement('div');
-    halo.className = 'tour-halo';
-    document.body.appendChild(halo);
-    const update = () => {
-      const r = target.getBoundingClientRect();
-      halo.style.top    = (r.top - 4) + 'px';
-      halo.style.left   = (r.left - 4) + 'px';
-      halo.style.width  = (r.width + 8) + 'px';
-      halo.style.height = (r.height + 8) + 'px';
-    };
-    update();
-    window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
-    requestAnimationFrame(() => halo.classList.add('tour-fade-in'));
-    return {
-      destroy() {
-        window.removeEventListener('resize', update);
-        window.removeEventListener('scroll', update, true);
-        halo.remove();
-      },
-    };
-  }
-  function _clearHalos() {
-    _halos.forEach(h => h.destroy());
-    _halos = [];
-    document.querySelectorAll('.tour-halo').forEach(e => e.remove());
-  }
 
-  const _clear = () => {
-    document.querySelectorAll('.odysseus-highlight').forEach(e => e.classList.remove('odysseus-highlight'));
-    _clearHalos();
-    tooltip.remove();
-    document.body.classList.remove('tour-active');
-  };
 
-  function _positionTooltip(target) {
-    const r = target.getBoundingClientRect();
-    tooltip.style.visibility = 'hidden';
-    tooltip.style.display = '';
-    const tw = tooltip.offsetWidth || 260;
-    const th = tooltip.offsetHeight || 100;
-    const gap = 12;
-    let top, left;
-    if (r.bottom + gap + th < window.innerHeight - 10) {
-      top = r.bottom + gap;
-      left = r.left + r.width / 2 - tw / 2;
-    } else if (r.top - gap - th > 10) {
-      top = r.top - gap - th;
-      left = r.left + r.width / 2 - tw / 2;
-    } else {
-      top = r.top + r.height / 2 - th / 2;
-      left = r.right + gap;
-      if (left + tw > window.innerWidth - 10) left = r.left - tw - gap;
-    }
-    if (left + tw > window.innerWidth - 10) left = window.innerWidth - tw - 10;
-    if (left < 10) left = 10;
-    if (top < 10) top = 10;
-    tooltip.style.top = top + 'px';
-    tooltip.style.left = left + 'px';
-    tooltip.style.visibility = '';
-  }
 
-  function _showStep(sel, text, opts) {
-    opts = opts || {};
-    const isFirst = !!opts.isFirst;
-    const isLast = !!opts.isLast;
-    const advanceOnClick = !!opts.advanceOnClick;
-    return new Promise(resolve => {
-      _clearHalos();
-      const target = document.querySelector(sel);
-      if (!target) return resolve('skip');
-      _halos.push(_makeHalo(target));
-      target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-      tooltip.classList.remove('tour-fade-in');
-      const hint = advanceOnClick
-        ? '<div style="font-size:0.72rem;opacity:0.45;margin-bottom:6px;">Click the highlighted element to continue.</div>'
-        : '';
-      tooltip.innerHTML =
-        '<div class="tour-text">' + text + '</div>' + hint +
-        '<div class="tour-nav">' +
-          '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-          '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-          '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
-        '</div>';
-      requestAnimationFrame(() => {
-        _positionTooltip(target);
-        tooltip.classList.add('tour-fade-in');
-      });
-
-      let resolved = false;
-      const onClick = (e) => {
-        const hit = e.target.closest && e.target.closest('[data-act]');
-        const act = hit && hit.dataset.act;
-        if (!act) return;
-        if (resolved) return;
-        resolved = true;
-        tooltip.removeEventListener('click', onClick);
-        if (advanceOnClick) document.removeEventListener('click', onTargetClick, true);
-        resolve(act);
-      };
-      // Capture-phase listener so we hear the target click before any
-      // child handler that might stopPropagation.
-      const onTargetClick = (e) => {
-        if (resolved) return;
-        if (!target.contains(e.target) && e.target !== target) return;
-        resolved = true;
-        tooltip.removeEventListener('click', onClick);
-        document.removeEventListener('click', onTargetClick, true);
-        resolve('next');
-      };
-      tooltip.addEventListener('click', onClick);
-      if (advanceOnClick) {
-        document.addEventListener('click', onTargetClick, true);
-      }
-    });
-  }
 
   // ── Phase 1: model-selector modal ──
   // Scope every selector to #compare-model-overlay so we don't accidentally
@@ -2397,17 +1894,17 @@ async function _cmdTourCompare(args, ctx) {
 
   for (let i = 0; i < phase1.length; i++) {
     const step = phase1[i];
-    const res = await _showStep(step.sel, step.text, {
+    const res = await tour.showStep(step.sel, step.text, {
       isFirst: i === 0,
       isLast: false,
     });
-    if (res === 'skip') { _clear(); return true; }
+    if (res === 'skip') { tour.clear(); return true; }
     if (res === 'back') { if (i > 0) i -= 2; continue; }
   }
 
   // ── Wait for the modal to close and the compare panes to come up ──
-  _clearHalos();
-  tooltip.innerHTML =
+  tour.clearHalos();
+  tour.tooltip.innerHTML =
     '<div class="tour-text">Click <b>Start</b> when ready — it will probe the models before beginning.</div>' +
     '<div class="tour-nav">' +
       '<button class="tour-btn-skip" data-act="skip">skip</button>' +
@@ -2417,22 +1914,22 @@ async function _cmdTourCompare(args, ctx) {
   // glows the same way as the previous steps.
   const startBtn = document.querySelector('#compare-model-overlay .research-start-btn');
   if (startBtn) {
-    _halos.push(_makeHalo(startBtn));
-    requestAnimationFrame(() => _positionTooltip(startBtn));
+    tour.halos.push(tour.makeHalo(startBtn));
+    requestAnimationFrame(() => tour.positionTooltip(startBtn));
   } else {
     // Fallback: park near the top if the start button isn't around (yet).
-    tooltip.style.left = ((window.innerWidth / 2) - 140) + 'px';
-    tooltip.style.top  = '20px';
+    tour.tooltip.style.left = ((window.innerWidth / 2) - 140) + 'px';
+    tour.tooltip.style.top  = '20px';
   }
 
   const skipDuringWait = new Promise(resolve => {
     const onClick = (e) => {
       const hit = e.target.closest && e.target.closest('[data-act="skip"]');
       if (!hit) return;
-      tooltip.removeEventListener('click', onClick);
+      tour.tooltip.removeEventListener('click', onClick);
       resolve('skip');
     };
-    tooltip.addEventListener('click', onClick);
+    tour.tooltip.addEventListener('click', onClick);
   });
   const modalClosed = new Promise(resolve => {
     const tick = () => {
@@ -2446,7 +1943,7 @@ async function _cmdTourCompare(args, ctx) {
     tick();
   });
   const waitRes = await Promise.race([skipDuringWait, modalClosed]);
-  if (waitRes === 'skip') { _clear(); return true; }
+  if (waitRes === 'skip') { tour.clear(); return true; }
 
   // Small breather so any entry animation finishes before we measure.
   await new Promise(r => setTimeout(r, 300));
@@ -2467,22 +1964,24 @@ async function _cmdTourCompare(args, ctx) {
 
   for (let i = 0; i < phase2.length; i++) {
     const step = phase2[i];
-    const res = await _showStep(step.sel, step.text, {
+    const res = await tour.showStep(step.sel, step.text, {
       isFirst: i === 0,
       isLast: i === phase2.length - 1,
       advanceOnClick: !!step.advanceOnClick,
     });
-    if (res === 'skip') { _clear(); return true; }
+    if (res === 'skip') { tour.clear(); return true; }
     if (res === 'back') { if (i > 0) i -= 2; continue; }
   }
 
-  _clear();
+  tour.clear();
   await typewriterReply('That’s it, you’ll figure out the rest! Have fun!');
   return true;
 }
 
 // ── Cookbook tour ──
 async function _cmdTourCookbook(args, ctx) {
+  const tour = new Tour();
+
   // Clear the chat input so "/tour-cookbook" doesn't linger.
   const _msgEl = document.getElementById('message');
   if (_msgEl) {
@@ -2491,28 +1990,6 @@ async function _cmdTourCookbook(args, ctx) {
   }
 
   // Idempotent tour-styles injection (shared with /tour and /tour-compare).
-  if (!document.getElementById('tour-styles')) {
-    const s = document.createElement('style');
-    s.id = 'tour-styles';
-    s.textContent =
-      '#tour-tooltip{position:fixed;z-index:10001;background:var(--bg);color:var(--fg);' +
-      'border:1px solid var(--border);border-radius:8px;padding:12px 14px;max-width:280px;' +
-      'font-family:inherit;font-size:0.8rem;line-height:1.5;' +
-      'box-shadow:0 2px 12px rgba(0,0,0,0.3);pointer-events:auto;' +
-      'opacity:0;transform:translateY(4px);transition:opacity 0.3s ease-out,transform 0.3s ease-out}' +
-      '#tour-tooltip.tour-fade-in{opacity:1;transform:translateY(0)}' +
-      '#tour-tooltip .tour-text{margin-bottom:8px;opacity:0.8}' +
-      '.tour-nav{display:flex;align-items:center;justify-content:space-between}' +
-      '.tour-nav button{background:none;border:1px solid var(--border);color:var(--fg);' +
-      'cursor:pointer;font-family:inherit;border-radius:4px;transition:all .1s}' +
-      '.tour-nav button:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}' +
-      '.tour-btn-arrow{font-size:1rem;padding:4px 12px;opacity:0.6}' +
-      '.tour-btn-arrow:hover{opacity:1}' +
-      '.tour-btn-arrow.disabled{opacity:0.15;pointer-events:none}' +
-      '.tour-btn-skip{font-size:0.72rem;padding:3px 10px;opacity:0.35;border-color:transparent!important}' +
-      '.tour-btn-skip:hover{opacity:0.6}';
-    document.head.appendChild(s);
-  }
 
   // Open the cookbook modal if it's not already up.
   let modal = document.getElementById('cookbook-modal');
@@ -2530,118 +2007,9 @@ async function _cmdTourCookbook(args, ctx) {
     return true;
   }
 
-  document.body.classList.add('tour-active');
-  const tooltip = document.createElement('div');
-  tooltip.id = 'tour-tooltip';
-  document.body.appendChild(tooltip);
 
-  let _halos = [];
-  function _makeHalo(target) {
-    const halo = document.createElement('div');
-    halo.className = 'tour-halo';
-    document.body.appendChild(halo);
-    const update = () => {
-      const r = target.getBoundingClientRect();
-      halo.style.top    = (r.top - 4) + 'px';
-      halo.style.left   = (r.left - 4) + 'px';
-      halo.style.width  = (r.width + 8) + 'px';
-      halo.style.height = (r.height + 8) + 'px';
-    };
-    update();
-    window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
-    requestAnimationFrame(() => halo.classList.add('tour-fade-in'));
-    return { destroy() {
-      window.removeEventListener('resize', update);
-      window.removeEventListener('scroll', update, true);
-      halo.remove();
-    } };
-  }
-  function _clearHalos() {
-    _halos.forEach(h => h.destroy());
-    _halos = [];
-    document.querySelectorAll('.tour-halo').forEach(e => e.remove());
-  }
-  const _clear = () => {
-    document.querySelectorAll('.odysseus-highlight').forEach(e => e.classList.remove('odysseus-highlight'));
-    _clearHalos();
-    tooltip.remove();
-    document.body.classList.remove('tour-active');
-  };
 
-  function _positionTooltip(target, placement) {
-    tooltip.style.visibility = 'hidden';
-    tooltip.style.display = '';
-    const tw = tooltip.offsetWidth || 260;
-    const th = tooltip.offsetHeight || 100;
-    if (placement === 'center-above') {
-      // Centered horizontally, sitting in the upper third of the viewport.
-      const top = Math.max(10, window.innerHeight * 0.32 - th / 2);
-      const left = Math.max(10, window.innerWidth / 2 - tw / 2);
-      tooltip.style.top = top + 'px';
-      tooltip.style.left = left + 'px';
-      tooltip.style.visibility = '';
-      return;
-    }
-    const r = target.getBoundingClientRect();
-    const gap = 12;
-    let top, left;
-    if (r.bottom + gap + th < window.innerHeight - 10) {
-      top = r.bottom + gap;
-      left = r.left + r.width / 2 - tw / 2;
-    } else if (r.top - gap - th > 10) {
-      top = r.top - gap - th;
-      left = r.left + r.width / 2 - tw / 2;
-    } else {
-      top = r.top + r.height / 2 - th / 2;
-      left = r.right + gap;
-      if (left + tw > window.innerWidth - 10) left = r.left - tw - gap;
-    }
-    if (left + tw > window.innerWidth - 10) left = window.innerWidth - tw - 10;
-    if (left < 10) left = 10;
-    if (top < 10) top = 10;
-    tooltip.style.top = top + 'px';
-    tooltip.style.left = left + 'px';
-    tooltip.style.visibility = '';
-  }
 
-  function _showStep(sel, text, opts) {
-    opts = opts || {};
-    const isFirst = !!opts.isFirst;
-    const isLast = !!opts.isLast;
-    const before = opts.before;
-    const placement = opts.placement;
-    return new Promise(resolve => {
-      _clearHalos();
-      if (before) { try { before(); } catch (_) {} }
-      const target = document.querySelector(sel);
-      if (!target) return resolve('skip');
-      _halos.push(_makeHalo(target));
-      target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-      tooltip.classList.remove('tour-fade-in');
-      tooltip.innerHTML =
-        '<div class="tour-text">' + text + '</div>' +
-        '<div class="tour-nav">' +
-          '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-          '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-          '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
-        '</div>';
-      requestAnimationFrame(() => {
-        _positionTooltip(target, placement);
-        tooltip.classList.add('tour-fade-in');
-      });
-
-      const onClick = (e) => {
-        const hit = e.target.closest && e.target.closest('[data-act]');
-        const act = hit && hit.dataset.act;
-        if (!act) return;
-        tooltip.removeEventListener('click', onClick);
-        resolve(act);
-      };
-      tooltip.addEventListener('click', onClick);
-    });
-  }
 
   function _clickTab(name) {
     const tab = modal.querySelector('.cookbook-tab[data-backend="' + name + '"]');
@@ -2690,25 +2058,27 @@ async function _cmdTourCookbook(args, ctx) {
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
-    const res = await _showStep(step.sel, step.text, {
+    const res = await tour.showStep(step.sel, step.text, {
       isFirst: i === 0,
       isLast: i === steps.length - 1,
       before: step.before,
       placement: step.placement,
     });
-    if (res === 'skip') { _clear(); return true; }
+    if (res === 'skip') { tour.clear(); return true; }
     if (res === 'back') { if (i > 0) i -= 2; continue; }
   }
 
   // Leave Cookbook on the Download tab so the user can start downloading immediately.
   _clickTab('Search');
-  _clear();
+  tour.clear();
   await typewriterReply('That’s Cookbook. Pick a model that catches your eye and let it cook.');
   return true;
 }
 
 // ── Theme tour ──
 async function _cmdTourTheme(args, ctx) {
+  const tour = new Tour();
+
   // Clear the chat input so "/tour-theme" doesn't linger.
   const _msgEl = document.getElementById('message');
   if (_msgEl) {
@@ -2717,28 +2087,6 @@ async function _cmdTourTheme(args, ctx) {
   }
 
   // Idempotent tour-styles injection (shared with other tours).
-  if (!document.getElementById('tour-styles')) {
-    const s = document.createElement('style');
-    s.id = 'tour-styles';
-    s.textContent =
-      '#tour-tooltip{position:fixed;z-index:10001;background:var(--bg);color:var(--fg);' +
-      'border:1px solid var(--border);border-radius:8px;padding:12px 14px;max-width:280px;' +
-      'font-family:inherit;font-size:0.8rem;line-height:1.5;' +
-      'box-shadow:0 2px 12px rgba(0,0,0,0.3);pointer-events:auto;' +
-      'opacity:0;transform:translateY(4px);transition:opacity 0.3s ease-out,transform 0.3s ease-out}' +
-      '#tour-tooltip.tour-fade-in{opacity:1;transform:translateY(0)}' +
-      '#tour-tooltip .tour-text{margin-bottom:8px;opacity:0.8}' +
-      '.tour-nav{display:flex;align-items:center;justify-content:space-between}' +
-      '.tour-nav button{background:none;border:1px solid var(--border);color:var(--fg);' +
-      'cursor:pointer;font-family:inherit;border-radius:4px;transition:all .1s}' +
-      '.tour-nav button:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}' +
-      '.tour-btn-arrow{font-size:1rem;padding:4px 12px;opacity:0.6}' +
-      '.tour-btn-arrow:hover{opacity:1}' +
-      '.tour-btn-arrow.disabled{opacity:0.15;pointer-events:none}' +
-      '.tour-btn-skip{font-size:0.72rem;padding:3px 10px;opacity:0.35;border-color:transparent!important}' +
-      '.tour-btn-skip:hover{opacity:0.6}';
-    document.head.appendChild(s);
-  }
 
   // Open the theme modal if it isn't already up. Same hamburger / rail
   // opener pattern as the other tours.
@@ -2759,143 +2107,13 @@ async function _cmdTourTheme(args, ctx) {
     return true;
   }
 
-  document.body.classList.add('tour-active');
-  const tooltip = document.createElement('div');
-  tooltip.id = 'tour-tooltip';
-  document.body.appendChild(tooltip);
 
-  let _halos = [];
-  function _makeHalo(target) {
-    const halo = document.createElement('div');
-    halo.className = 'tour-halo';
-    document.body.appendChild(halo);
-    const update = () => {
-      const r = target.getBoundingClientRect();
-      halo.style.top    = (r.top - 4) + 'px';
-      halo.style.left   = (r.left - 4) + 'px';
-      halo.style.width  = (r.width + 8) + 'px';
-      halo.style.height = (r.height + 8) + 'px';
-    };
-    update();
-    window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
-    requestAnimationFrame(() => halo.classList.add('tour-fade-in'));
-    return { destroy() {
-      window.removeEventListener('resize', update);
-      window.removeEventListener('scroll', update, true);
-      halo.remove();
-    } };
-  }
-  function _clearHalos() {
-    _halos.forEach(h => h.destroy());
-    _halos = [];
-    document.querySelectorAll('.tour-halo').forEach(e => e.remove());
-  }
-  const _clear = () => {
-    document.querySelectorAll('.odysseus-highlight').forEach(e => e.classList.remove('odysseus-highlight'));
-    _clearHalos();
-    tooltip.remove();
-    document.body.classList.remove('tour-active');
-  };
 
-  function _positionTooltip(target, placement) {
-    tooltip.style.visibility = 'hidden';
-    tooltip.style.display = '';
-    const tw = tooltip.offsetWidth || 260;
-    const th = tooltip.offsetHeight || 100;
-    if (placement === 'center-above') {
-      const top = Math.max(10, window.innerHeight * 0.32 - th / 2);
-      const left = Math.max(10, window.innerWidth / 2 - tw / 2);
-      tooltip.style.top = top + 'px';
-      tooltip.style.left = left + 'px';
-      tooltip.style.visibility = '';
-      return;
-    }
-    const r = target.getBoundingClientRect();
-    const gap = 12;
-    let top, left;
-    if (r.bottom + gap + th < window.innerHeight - 10) {
-      top = r.bottom + gap;
-      left = r.left + r.width / 2 - tw / 2;
-    } else if (r.top - gap - th > 10) {
-      top = r.top - gap - th;
-      left = r.left + r.width / 2 - tw / 2;
-    } else {
-      top = r.top + r.height / 2 - th / 2;
-      left = r.right + gap;
-      if (left + tw > window.innerWidth - 10) left = r.left - tw - gap;
-    }
-    if (left + tw > window.innerWidth - 10) left = window.innerWidth - tw - 10;
-    if (left < 10) left = 10;
-    if (top < 10) top = 10;
-    tooltip.style.top = top + 'px';
-    tooltip.style.left = left + 'px';
-    tooltip.style.visibility = '';
-  }
 
   // Interactive step — show tooltip + halo over one or more targets and
   // resolve 'next' when the user actually clicks one of the highlighted
   // elements. Skip button still exits. `extraSel` (optional) adds a
   // second highlight target whose click also advances the step.
-  function _showStep(sel, text, opts) {
-    opts = opts || {};
-    const isFirst = !!opts.isFirst;
-    const isLast = !!opts.isLast;
-    const before = opts.before;
-    const placement = opts.placement;
-    const extraSel = opts.extraSel;
-    const interactive = !!opts.interactive;
-    return new Promise(resolve => {
-      _clearHalos();
-      if (before) { try { before(); } catch (_) {} }
-      setTimeout(() => {
-        const target = document.querySelector(sel);
-        if (!target) return resolve('skip');
-        _halos.push(_makeHalo(target));
-        const extra = extraSel ? document.querySelector(extraSel) : null;
-        if (extra) _halos.push(_makeHalo(extra));
-        target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-        tooltip.classList.remove('tour-fade-in');
-        tooltip.innerHTML =
-          '<div class="tour-text">' + text + '</div>' +
-          '<div class="tour-nav">' +
-            '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-            '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
-          '</div>';
-        requestAnimationFrame(() => {
-          _positionTooltip(target, placement);
-          tooltip.classList.add('tour-fade-in');
-        });
-
-        let _onTarget;
-        const cleanup = () => {
-          tooltip.removeEventListener('click', onClick);
-          if (_onTarget) {
-            target.removeEventListener('click', _onTarget, true);
-            if (extra) extra.removeEventListener('click', _onTarget, true);
-          }
-        };
-        const onClick = (e) => {
-          const hit = e.target.closest && e.target.closest('[data-act]');
-          const act = hit && hit.dataset.act;
-          if (!act) return;
-          cleanup();
-          resolve(act);
-        };
-        tooltip.addEventListener('click', onClick);
-        // Interactive: clicking the highlighted target advances. We let
-        // the original click propagate so the user's real action (apply
-        // theme, switch tab, etc.) actually happens.
-        if (interactive) {
-          _onTarget = () => { cleanup(); resolve('next'); };
-          target.addEventListener('click', _onTarget, true);
-          if (extra) extra.addEventListener('click', _onTarget, true);
-        }
-      }, before ? 160 : 0);
-    });
-  }
 
   // Clicks one of the theme modal's top-level tabs by data-tab id.
   function _clickTab(tabId) {
@@ -2936,7 +2154,7 @@ async function _cmdTourTheme(args, ctx) {
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
-    const res = await _showStep(step.sel, step.text, {
+    const res = await tour.showStep(step.sel, step.text, {
       isFirst: i === 0,
       isLast: i === steps.length - 1,
       before: step.before,
@@ -2944,17 +2162,19 @@ async function _cmdTourTheme(args, ctx) {
       extraSel: step.extraSel,
       interactive: step.interactive,
     });
-    if (res === 'skip') { _clear(); return true; }
+    if (res === 'skip') { tour.clear(); return true; }
     if (res === 'back') { if (i > 0) i -= 2; continue; }
   }
 
-  _clear();
+  tour.clear();
   await typewriterReply('That’s Theme. Make it yours.');
   return true;
 }
 
 // ── Settings tour ──
 async function _cmdTourSettings(args, ctx) {
+  const tour = new Tour();
+
   // Clear the chat input so "/tour-settings" doesn't linger.
   const _msgEl = document.getElementById('message');
   if (_msgEl) {
@@ -2963,28 +2183,6 @@ async function _cmdTourSettings(args, ctx) {
   }
 
   // Idempotent tour-styles injection.
-  if (!document.getElementById('tour-styles')) {
-    const s = document.createElement('style');
-    s.id = 'tour-styles';
-    s.textContent =
-      '#tour-tooltip{position:fixed;z-index:10001;background:var(--bg);color:var(--fg);' +
-      'border:1px solid var(--border);border-radius:8px;padding:12px 14px;max-width:280px;' +
-      'font-family:inherit;font-size:0.8rem;line-height:1.5;' +
-      'box-shadow:0 2px 12px rgba(0,0,0,0.3);pointer-events:auto;' +
-      'opacity:0;transform:translateY(4px);transition:opacity 0.3s ease-out,transform 0.3s ease-out}' +
-      '#tour-tooltip.tour-fade-in{opacity:1;transform:translateY(0)}' +
-      '#tour-tooltip .tour-text{margin-bottom:8px;opacity:0.8}' +
-      '.tour-nav{display:flex;align-items:center;justify-content:space-between}' +
-      '.tour-nav button{background:none;border:1px solid var(--border);color:var(--fg);' +
-      'cursor:pointer;font-family:inherit;border-radius:4px;transition:all .1s}' +
-      '.tour-nav button:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}' +
-      '.tour-btn-arrow{font-size:1rem;padding:4px 12px;opacity:0.6}' +
-      '.tour-btn-arrow:hover{opacity:1}' +
-      '.tour-btn-arrow.disabled{opacity:0.15;pointer-events:none}' +
-      '.tour-btn-skip{font-size:0.72rem;padding:3px 10px;opacity:0.35;border-color:transparent!important}' +
-      '.tour-btn-skip:hover{opacity:0.6}';
-    document.head.appendChild(s);
-  }
 
   // Open the settings modal.
   let modal = document.getElementById('settings-modal');
@@ -3003,127 +2201,9 @@ async function _cmdTourSettings(args, ctx) {
     return true;
   }
 
-  document.body.classList.add('tour-active');
-  const tooltip = document.createElement('div');
-  tooltip.id = 'tour-tooltip';
-  document.body.appendChild(tooltip);
 
-  let _halos = [];
-  function _makeHalo(target) {
-    const halo = document.createElement('div');
-    halo.className = 'tour-halo';
-    document.body.appendChild(halo);
-    const update = () => {
-      const r = target.getBoundingClientRect();
-      halo.style.top    = (r.top - 4) + 'px';
-      halo.style.left   = (r.left - 4) + 'px';
-      halo.style.width  = (r.width + 8) + 'px';
-      halo.style.height = (r.height + 8) + 'px';
-    };
-    update();
-    // Track the modal-enter scale animation (see task-tour notes).
-    const _tStart = performance.now();
-    let _rafId = 0;
-    const tick = () => {
-      update();
-      if (performance.now() - _tStart < 500) _rafId = requestAnimationFrame(tick);
-    };
-    _rafId = requestAnimationFrame(tick);
-    window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
-    requestAnimationFrame(() => halo.classList.add('tour-fade-in'));
-    return { destroy() {
-      if (_rafId) cancelAnimationFrame(_rafId);
-      window.removeEventListener('resize', update);
-      window.removeEventListener('scroll', update, true);
-      halo.remove();
-    } };
-  }
-  function _clearHalos() {
-    _halos.forEach(h => h.destroy());
-    _halos = [];
-    document.querySelectorAll('.tour-halo').forEach(e => e.remove());
-  }
-  const _clear = () => {
-    _clearHalos();
-    tooltip.remove();
-    document.body.classList.remove('tour-active');
-  };
 
-  function _positionTooltip(target, placement) {
-    tooltip.style.visibility = 'hidden';
-    tooltip.style.display = '';
-    const tw = tooltip.offsetWidth || 260;
-    const th = tooltip.offsetHeight || 100;
-    if (placement === 'center-above') {
-      const top = Math.max(10, window.innerHeight * 0.32 - th / 2);
-      const left = Math.max(10, window.innerWidth / 2 - tw / 2);
-      tooltip.style.top = top + 'px';
-      tooltip.style.left = left + 'px';
-      tooltip.style.visibility = '';
-      return;
-    }
-    const r = target.getBoundingClientRect();
-    const gap = 12;
-    let top, left;
-    if (r.bottom + gap + th < window.innerHeight - 10) {
-      top = r.bottom + gap;
-      left = r.left + r.width / 2 - tw / 2;
-    } else if (r.top - gap - th > 10) {
-      top = r.top - gap - th;
-      left = r.left + r.width / 2 - tw / 2;
-    } else {
-      top = r.top + r.height / 2 - th / 2;
-      left = r.right + gap;
-      if (left + tw > window.innerWidth - 10) left = r.left - tw - gap;
-    }
-    if (left + tw > window.innerWidth - 10) left = window.innerWidth - tw - 10;
-    if (left < 10) left = 10;
-    if (top < 10) top = 10;
-    tooltip.style.top = top + 'px';
-    tooltip.style.left = left + 'px';
-    tooltip.style.visibility = '';
-  }
 
-  function _showStep(sel, text, opts) {
-    opts = opts || {};
-    const isFirst = !!opts.isFirst;
-    const isLast = !!opts.isLast;
-    const before = opts.before;
-    const placement = opts.placement;
-    return new Promise(resolve => {
-      _clearHalos();
-      if (before) { try { before(); } catch (_) {} }
-      setTimeout(() => {
-        const target = document.querySelector(sel);
-        if (!target) return resolve('skip');
-        _halos.push(_makeHalo(target));
-        target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-        tooltip.classList.remove('tour-fade-in');
-        tooltip.innerHTML =
-          '<div class="tour-text">' + text + '</div>' +
-          '<div class="tour-nav">' +
-            '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-            '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
-          '</div>';
-        requestAnimationFrame(() => {
-          _positionTooltip(target, placement);
-          tooltip.classList.add('tour-fade-in');
-        });
-
-        const onClick = (e) => {
-          const hit = e.target.closest && e.target.closest('[data-act]');
-          const act = hit && hit.dataset.act;
-          if (!act) return;
-          tooltip.removeEventListener('click', onClick);
-          resolve(act);
-        };
-        tooltip.addEventListener('click', onClick);
-      }, before ? 160 : 0);
-    });
-  }
 
   function _clickNav(tab) {
     const btn = modal.querySelector('.settings-nav-item[data-settings-tab="' + tab + '"]');
@@ -3168,25 +2248,27 @@ async function _cmdTourSettings(args, ctx) {
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
-    const res = await _showStep(step.sel, step.text, {
+    const res = await tour.showStep(step.sel, step.text, {
       isFirst: i === 0,
       isLast: i === steps.length - 1,
       before: step.before,
       placement: step.placement,
     });
-    if (res === 'skip') { _clear(); return true; }
+    if (res === 'skip') { tour.clear(); return true; }
     if (res === 'back') { if (i > 0) i -= 2; continue; }
   }
 
   // Land on the first tab so the user has a familiar starting point.
   _clickNav('services');
-  _clear();
+  tour.clear();
   await typewriterReply('See? Not so bad. Tweak away.');
   return true;
 }
 
 // ── Gallery tour ──
 async function _cmdTourGallery(args, ctx) {
+  const tour = new Tour();
+
   // Clear the chat input so "/tour-gallery" doesn't linger.
   const _msgEl = document.getElementById('message');
   if (_msgEl) {
@@ -3196,28 +2278,6 @@ async function _cmdTourGallery(args, ctx) {
   try { localStorage.setItem('odysseus-notes-first-open-hint-v1', '1'); } catch (_) {}
   document.getElementById('notes-first-open-hint')?.remove();
 
-  if (!document.getElementById('tour-styles')) {
-    const s = document.createElement('style');
-    s.id = 'tour-styles';
-    s.textContent =
-      '#tour-tooltip{position:fixed;z-index:10001;background:var(--bg);color:var(--fg);' +
-      'border:1px solid var(--border);border-radius:8px;padding:12px 14px;max-width:280px;' +
-      'font-family:inherit;font-size:0.8rem;line-height:1.5;' +
-      'box-shadow:0 2px 12px rgba(0,0,0,0.3);pointer-events:auto;' +
-      'opacity:0;transform:translateY(4px);transition:opacity 0.3s ease-out,transform 0.3s ease-out}' +
-      '#tour-tooltip.tour-fade-in{opacity:1;transform:translateY(0)}' +
-      '#tour-tooltip .tour-text{margin-bottom:8px;opacity:0.8}' +
-      '.tour-nav{display:flex;align-items:center;justify-content:space-between}' +
-      '.tour-nav button{background:none;border:1px solid var(--border);color:var(--fg);' +
-      'cursor:pointer;font-family:inherit;border-radius:4px;transition:all .1s}' +
-      '.tour-nav button:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}' +
-      '.tour-btn-arrow{font-size:1rem;padding:4px 12px;opacity:0.6}' +
-      '.tour-btn-arrow:hover{opacity:1}' +
-      '.tour-btn-arrow.disabled{opacity:0.15;pointer-events:none}' +
-      '.tour-btn-skip{font-size:0.72rem;padding:3px 10px;opacity:0.35;border-color:transparent!important}' +
-      '.tour-btn-skip:hover{opacity:0.6}';
-    document.head.appendChild(s);
-  }
 
   // Open the gallery modal.
   let modal = document.getElementById('gallery-modal');
@@ -3236,126 +2296,9 @@ async function _cmdTourGallery(args, ctx) {
     return true;
   }
 
-  document.body.classList.add('tour-active');
-  const tooltip = document.createElement('div');
-  tooltip.id = 'tour-tooltip';
-  document.body.appendChild(tooltip);
 
-  let _halos = [];
-  function _makeHalo(target) {
-    const halo = document.createElement('div');
-    halo.className = 'tour-halo';
-    document.body.appendChild(halo);
-    const update = () => {
-      const r = target.getBoundingClientRect();
-      halo.style.top    = (r.top - 4) + 'px';
-      halo.style.left   = (r.left - 4) + 'px';
-      halo.style.width  = (r.width + 8) + 'px';
-      halo.style.height = (r.height + 8) + 'px';
-    };
-    update();
-    const _tStart = performance.now();
-    let _rafId = 0;
-    const tick = () => {
-      update();
-      if (performance.now() - _tStart < 500) _rafId = requestAnimationFrame(tick);
-    };
-    _rafId = requestAnimationFrame(tick);
-    window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
-    requestAnimationFrame(() => halo.classList.add('tour-fade-in'));
-    return { destroy() {
-      if (_rafId) cancelAnimationFrame(_rafId);
-      window.removeEventListener('resize', update);
-      window.removeEventListener('scroll', update, true);
-      halo.remove();
-    } };
-  }
-  function _clearHalos() {
-    _halos.forEach(h => h.destroy());
-    _halos = [];
-    document.querySelectorAll('.tour-halo').forEach(e => e.remove());
-  }
-  const _clear = () => {
-    _clearHalos();
-    tooltip.remove();
-    document.body.classList.remove('tour-active');
-  };
 
-  function _positionTooltip(target, placement) {
-    tooltip.style.visibility = 'hidden';
-    tooltip.style.display = '';
-    const tw = tooltip.offsetWidth || 260;
-    const th = tooltip.offsetHeight || 100;
-    if (placement === 'center-above') {
-      const top = Math.max(10, window.innerHeight * 0.32 - th / 2);
-      const left = Math.max(10, window.innerWidth / 2 - tw / 2);
-      tooltip.style.top = top + 'px';
-      tooltip.style.left = left + 'px';
-      tooltip.style.visibility = '';
-      return;
-    }
-    const r = target.getBoundingClientRect();
-    const gap = 12;
-    let top, left;
-    if (r.bottom + gap + th < window.innerHeight - 10) {
-      top = r.bottom + gap;
-      left = r.left + r.width / 2 - tw / 2;
-    } else if (r.top - gap - th > 10) {
-      top = r.top - gap - th;
-      left = r.left + r.width / 2 - tw / 2;
-    } else {
-      top = r.top + r.height / 2 - th / 2;
-      left = r.right + gap;
-      if (left + tw > window.innerWidth - 10) left = r.left - tw - gap;
-    }
-    if (left + tw > window.innerWidth - 10) left = window.innerWidth - tw - 10;
-    if (left < 10) left = 10;
-    if (top < 10) top = 10;
-    tooltip.style.top = top + 'px';
-    tooltip.style.left = left + 'px';
-    tooltip.style.visibility = '';
-  }
 
-  function _showStep(sel, text, opts) {
-    opts = opts || {};
-    const isFirst = !!opts.isFirst;
-    const isLast = !!opts.isLast;
-    const before = opts.before;
-    const placement = opts.placement;
-    return new Promise(resolve => {
-      _clearHalos();
-      if (before) { try { before(); } catch (_) {} }
-      setTimeout(() => {
-        const target = document.querySelector(sel);
-        if (!target) return resolve('skip');
-        _halos.push(_makeHalo(target));
-        target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-        tooltip.classList.remove('tour-fade-in');
-        tooltip.innerHTML =
-          '<div class="tour-text">' + text + '</div>' +
-          '<div class="tour-nav">' +
-            '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-            '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
-          '</div>';
-        requestAnimationFrame(() => {
-          _positionTooltip(target, placement);
-          tooltip.classList.add('tour-fade-in');
-        });
-
-        const onClick = (e) => {
-          const hit = e.target.closest && e.target.closest('[data-act]');
-          const act = hit && hit.dataset.act;
-          if (!act) return;
-          tooltip.removeEventListener('click', onClick);
-          resolve(act);
-        };
-        tooltip.addEventListener('click', onClick);
-      }, before ? 160 : 0);
-    });
-  }
 
   function _clickTab(tab) {
     const btn = modal.querySelector('.gallery-tab[data-tab="' + tab + '"]');
@@ -3383,25 +2326,27 @@ async function _cmdTourGallery(args, ctx) {
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
-    const res = await _showStep(step.sel, step.text, {
+    const res = await tour.showStep(step.sel, step.text, {
       isFirst: i === 0,
       isLast: i === steps.length - 1,
       before: step.before,
       placement: step.placement,
     });
-    if (res === 'skip') { _clear(); return true; }
+    if (res === 'skip') { tour.clear(); return true; }
     if (res === 'back') { if (i > 0) i -= 2; continue; }
   }
 
   // Land on Photos so the user has a familiar starting point.
   _clickTab('images');
-  _clear();
+  tour.clear();
   await typewriterReply('That\'s Gallery. Editor is rough — feedback welcome.');
   return true;
 }
 
 // ── Notes tour ──
 async function _cmdTourNotes(args, ctx) {
+  const tour = new Tour();
+
   // Clear the chat input so "/tour-notes" doesn't linger.
   const _msgEl = document.getElementById('message');
   if (_msgEl) {
@@ -3409,28 +2354,6 @@ async function _cmdTourNotes(args, ctx) {
     _msgEl.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
-  if (!document.getElementById('tour-styles')) {
-    const s = document.createElement('style');
-    s.id = 'tour-styles';
-    s.textContent =
-      '#tour-tooltip{position:fixed;z-index:10001;background:var(--bg);color:var(--fg);' +
-      'border:1px solid var(--border);border-radius:8px;padding:12px 14px;max-width:280px;' +
-      'font-family:inherit;font-size:0.8rem;line-height:1.5;' +
-      'box-shadow:0 2px 12px rgba(0,0,0,0.3);pointer-events:auto;' +
-      'opacity:0;transform:translateY(4px);transition:opacity 0.3s ease-out,transform 0.3s ease-out}' +
-      '#tour-tooltip.tour-fade-in{opacity:1;transform:translateY(0)}' +
-      '#tour-tooltip .tour-text{margin-bottom:8px;opacity:0.8}' +
-      '.tour-nav{display:flex;align-items:center;justify-content:space-between}' +
-      '.tour-nav button{background:none;border:1px solid var(--border);color:var(--fg);' +
-      'cursor:pointer;font-family:inherit;border-radius:4px;transition:all .1s}' +
-      '.tour-nav button:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}' +
-      '.tour-btn-arrow{font-size:1rem;padding:4px 12px;opacity:0.6}' +
-      '.tour-btn-arrow:hover{opacity:1}' +
-      '.tour-btn-arrow.disabled{opacity:0.15;pointer-events:none}' +
-      '.tour-btn-skip{font-size:0.72rem;padding:3px 10px;opacity:0.35;border-color:transparent!important}' +
-      '.tour-btn-skip:hover{opacity:0.6}';
-    document.head.appendChild(s);
-  }
 
   // Open the notes pane (it's a side sheet, not a .modal).
   let pane = document.getElementById('notes-pane');
@@ -3449,126 +2372,9 @@ async function _cmdTourNotes(args, ctx) {
     return true;
   }
 
-  document.body.classList.add('tour-active');
-  const tooltip = document.createElement('div');
-  tooltip.id = 'tour-tooltip';
-  document.body.appendChild(tooltip);
 
-  let _halos = [];
-  function _makeHalo(target) {
-    const halo = document.createElement('div');
-    halo.className = 'tour-halo';
-    document.body.appendChild(halo);
-    const update = () => {
-      const r = target.getBoundingClientRect();
-      halo.style.top    = (r.top - 4) + 'px';
-      halo.style.left   = (r.left - 4) + 'px';
-      halo.style.width  = (r.width + 8) + 'px';
-      halo.style.height = (r.height + 8) + 'px';
-    };
-    update();
-    const _tStart = performance.now();
-    let _rafId = 0;
-    const tick = () => {
-      update();
-      if (performance.now() - _tStart < 500) _rafId = requestAnimationFrame(tick);
-    };
-    _rafId = requestAnimationFrame(tick);
-    window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
-    requestAnimationFrame(() => halo.classList.add('tour-fade-in'));
-    return { destroy() {
-      if (_rafId) cancelAnimationFrame(_rafId);
-      window.removeEventListener('resize', update);
-      window.removeEventListener('scroll', update, true);
-      halo.remove();
-    } };
-  }
-  function _clearHalos() {
-    _halos.forEach(h => h.destroy());
-    _halos = [];
-    document.querySelectorAll('.tour-halo').forEach(e => e.remove());
-  }
-  const _clear = () => {
-    _clearHalos();
-    tooltip.remove();
-    document.body.classList.remove('tour-active');
-  };
 
-  function _positionTooltip(target, placement) {
-    tooltip.style.visibility = 'hidden';
-    tooltip.style.display = '';
-    const tw = tooltip.offsetWidth || 260;
-    const th = tooltip.offsetHeight || 100;
-    if (placement === 'center-above') {
-      const top = Math.max(10, window.innerHeight * 0.32 - th / 2);
-      const left = Math.max(10, window.innerWidth / 2 - tw / 2);
-      tooltip.style.top = top + 'px';
-      tooltip.style.left = left + 'px';
-      tooltip.style.visibility = '';
-      return;
-    }
-    const r = target.getBoundingClientRect();
-    const gap = 12;
-    let top, left;
-    if (r.bottom + gap + th < window.innerHeight - 10) {
-      top = r.bottom + gap;
-      left = r.left + r.width / 2 - tw / 2;
-    } else if (r.top - gap - th > 10) {
-      top = r.top - gap - th;
-      left = r.left + r.width / 2 - tw / 2;
-    } else {
-      top = r.top + r.height / 2 - th / 2;
-      left = r.right + gap;
-      if (left + tw > window.innerWidth - 10) left = r.left - tw - gap;
-    }
-    if (left + tw > window.innerWidth - 10) left = window.innerWidth - tw - 10;
-    if (left < 10) left = 10;
-    if (top < 10) top = 10;
-    tooltip.style.top = top + 'px';
-    tooltip.style.left = left + 'px';
-    tooltip.style.visibility = '';
-  }
 
-  function _showStep(sel, text, opts) {
-    opts = opts || {};
-    const isFirst = !!opts.isFirst;
-    const isLast = !!opts.isLast;
-    const before = opts.before;
-    const placement = opts.placement;
-    return new Promise(resolve => {
-      _clearHalos();
-      if (before) { try { before(); } catch (_) {} }
-      setTimeout(() => {
-        const target = document.querySelector(sel);
-        if (!target) return resolve('skip');
-        _halos.push(_makeHalo(target));
-        target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-        tooltip.classList.remove('tour-fade-in');
-        tooltip.innerHTML =
-          '<div class="tour-text">' + text + '</div>' +
-          '<div class="tour-nav">' +
-            '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-            '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
-          '</div>';
-        requestAnimationFrame(() => {
-          _positionTooltip(target, placement);
-          tooltip.classList.add('tour-fade-in');
-        });
-
-        const onClick = (e) => {
-          const hit = e.target.closest && e.target.closest('[data-act]');
-          const act = hit && hit.dataset.act;
-          if (!act) return;
-          tooltip.removeEventListener('click', onClick);
-          resolve(act);
-        };
-        tooltip.addEventListener('click', onClick);
-      }, before ? 160 : 0);
-    });
-  }
 
   const steps = [
     { sel: '#notes-pane',
@@ -3588,51 +2394,31 @@ async function _cmdTourNotes(args, ctx) {
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
-    const res = await _showStep(step.sel, step.text, {
+    const res = await tour.showStep(step.sel, step.text, {
       isFirst: i === 0,
       isLast: i === steps.length - 1,
       before: step.before,
       placement: step.placement,
     });
-    if (res === 'skip') { _clear(); return true; }
+    if (res === 'skip') { tour.clear(); return true; }
     if (res === 'back') { if (i > 0) i -= 2; continue; }
   }
 
-  _clear();
+  tour.clear();
   await typewriterReply('That\'s Notes. Write down whatever you want to remember.');
   return true;
 }
 
 // ── Tour: Brain ──
 async function _cmdTourBrain(args, ctx) {
+  const tour = new Tour();
+
   const _msgEl = document.getElementById('message');
   if (_msgEl) {
     _msgEl.value = '';
     _msgEl.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
-  if (!document.getElementById('tour-styles')) {
-    const s = document.createElement('style');
-    s.id = 'tour-styles';
-    s.textContent =
-      '#tour-tooltip{position:fixed;z-index:10001;background:var(--bg);color:var(--fg);' +
-      'border:1px solid var(--border);border-radius:8px;padding:12px 14px;max-width:280px;' +
-      'font-family:inherit;font-size:0.8rem;line-height:1.5;' +
-      'box-shadow:0 2px 12px rgba(0,0,0,0.3);pointer-events:auto;' +
-      'opacity:0;transform:translateY(4px);transition:opacity 0.3s ease-out,transform 0.3s ease-out}' +
-      '#tour-tooltip.tour-fade-in{opacity:1;transform:translateY(0)}' +
-      '#tour-tooltip .tour-text{margin-bottom:8px;opacity:0.8}' +
-      '.tour-nav{display:flex;align-items:center;justify-content:space-between}' +
-      '.tour-nav button{background:none;border:1px solid var(--border);color:var(--fg);' +
-      'cursor:pointer;font-family:inherit;border-radius:4px;transition:all .1s}' +
-      '.tour-nav button:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}' +
-      '.tour-btn-arrow{font-size:1rem;padding:4px 12px;opacity:0.6}' +
-      '.tour-btn-arrow:hover{opacity:1}' +
-      '.tour-btn-arrow.disabled{opacity:0.15;pointer-events:none}' +
-      '.tour-btn-skip{font-size:0.72rem;padding:3px 10px;opacity:0.35;border-color:transparent!important}' +
-      '.tour-btn-skip:hover{opacity:0.6}';
-    document.head.appendChild(s);
-  }
 
   let modal = document.getElementById('memory-modal');
   if (!modal || modal.classList.contains('hidden')) {
@@ -3649,126 +2435,9 @@ async function _cmdTourBrain(args, ctx) {
     return true;
   }
 
-  document.body.classList.add('tour-active');
-  const tooltip = document.createElement('div');
-  tooltip.id = 'tour-tooltip';
-  document.body.appendChild(tooltip);
 
-  let _halos = [];
-  function _makeHalo(target) {
-    const halo = document.createElement('div');
-    halo.className = 'tour-halo';
-    document.body.appendChild(halo);
-    const update = () => {
-      const r = target.getBoundingClientRect();
-      halo.style.top    = (r.top - 4) + 'px';
-      halo.style.left   = (r.left - 4) + 'px';
-      halo.style.width  = (r.width + 8) + 'px';
-      halo.style.height = (r.height + 8) + 'px';
-    };
-    update();
-    const _tStart = performance.now();
-    let _rafId = 0;
-    const tick = () => {
-      update();
-      if (performance.now() - _tStart < 500) _rafId = requestAnimationFrame(tick);
-    };
-    _rafId = requestAnimationFrame(tick);
-    window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
-    requestAnimationFrame(() => halo.classList.add('tour-fade-in'));
-    return { destroy() {
-      if (_rafId) cancelAnimationFrame(_rafId);
-      window.removeEventListener('resize', update);
-      window.removeEventListener('scroll', update, true);
-      halo.remove();
-    } };
-  }
-  function _clearHalos() {
-    _halos.forEach(h => h.destroy());
-    _halos = [];
-    document.querySelectorAll('.tour-halo').forEach(e => e.remove());
-  }
-  const _clear = () => {
-    _clearHalos();
-    tooltip.remove();
-    document.body.classList.remove('tour-active');
-  };
 
-  function _positionTooltip(target, placement) {
-    tooltip.style.visibility = 'hidden';
-    tooltip.style.display = '';
-    const tw = tooltip.offsetWidth || 260;
-    const th = tooltip.offsetHeight || 100;
-    if (placement === 'center-above') {
-      const top = Math.max(10, window.innerHeight * 0.32 - th / 2);
-      const left = Math.max(10, window.innerWidth / 2 - tw / 2);
-      tooltip.style.top = top + 'px';
-      tooltip.style.left = left + 'px';
-      tooltip.style.visibility = '';
-      return;
-    }
-    const r = target.getBoundingClientRect();
-    const gap = 12;
-    let top, left;
-    if (r.bottom + gap + th < window.innerHeight - 10) {
-      top = r.bottom + gap;
-      left = r.left + r.width / 2 - tw / 2;
-    } else if (r.top - gap - th > 10) {
-      top = r.top - gap - th;
-      left = r.left + r.width / 2 - tw / 2;
-    } else {
-      top = r.top + r.height / 2 - th / 2;
-      left = r.right + gap;
-      if (left + tw > window.innerWidth - 10) left = r.left - tw - gap;
-    }
-    if (left + tw > window.innerWidth - 10) left = window.innerWidth - tw - 10;
-    if (left < 10) left = 10;
-    if (top < 10) top = 10;
-    tooltip.style.top = top + 'px';
-    tooltip.style.left = left + 'px';
-    tooltip.style.visibility = '';
-  }
 
-  function _showStep(sel, text, opts) {
-    opts = opts || {};
-    const isFirst = !!opts.isFirst;
-    const isLast = !!opts.isLast;
-    const before = opts.before;
-    const placement = opts.placement;
-    return new Promise(resolve => {
-      _clearHalos();
-      if (before) { try { before(); } catch (_) {} }
-      setTimeout(() => {
-        const target = document.querySelector(sel);
-        if (!target) return resolve('skip');
-        _halos.push(_makeHalo(target));
-        target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-        tooltip.classList.remove('tour-fade-in');
-        tooltip.innerHTML =
-          '<div class="tour-text">' + text + '</div>' +
-          '<div class="tour-nav">' +
-            '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-            '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
-          '</div>';
-        requestAnimationFrame(() => {
-          _positionTooltip(target, placement);
-          tooltip.classList.add('tour-fade-in');
-        });
-
-        const onClick = (e) => {
-          const hit = e.target.closest && e.target.closest('[data-act]');
-          const act = hit && hit.dataset.act;
-          if (!act) return;
-          tooltip.removeEventListener('click', onClick);
-          resolve(act);
-        };
-        tooltip.addEventListener('click', onClick);
-      }, before ? 180 : 0);
-    });
-  }
 
   const _tab = (name) => document.querySelector(`.memory-tab[data-memory-tab="${name}"]`)?.click();
   const steps = [
@@ -3789,17 +2458,17 @@ async function _cmdTourBrain(args, ctx) {
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
-    const res = await _showStep(step.sel, step.text, {
+    const res = await tour.showStep(step.sel, step.text, {
       isFirst: i === 0,
       isLast: i === steps.length - 1,
       before: step.before,
       placement: step.placement,
     });
-    if (res === 'skip') { _clear(); return true; }
+    if (res === 'skip') { tour.clear(); return true; }
     if (res === 'back') { if (i > 0) i -= 2; continue; }
   }
 
-  _clear();
+  tour.clear();
   await typewriterReply('That’s Brain — memories, skills, tidy, and settings in one place.');
   return true;
 }
@@ -3829,28 +2498,6 @@ async function _runTaskTour(steps, doneText, opts) {
     _msgEl.value = '';
     _msgEl.dispatchEvent(new Event('input', { bubbles: true }));
   }
-  if (!document.getElementById('tour-styles')) {
-    const s = document.createElement('style');
-    s.id = 'tour-styles';
-    s.textContent =
-      '#tour-tooltip{position:fixed;z-index:10001;background:var(--bg);color:var(--fg);' +
-      'border:1px solid var(--border);border-radius:8px;padding:12px 14px;max-width:280px;' +
-      'font-family:inherit;font-size:0.8rem;line-height:1.5;' +
-      'box-shadow:0 2px 12px rgba(0,0,0,0.3);pointer-events:auto;' +
-      'opacity:0;transform:translateY(4px);transition:opacity 0.3s ease-out,transform 0.3s ease-out}' +
-      '#tour-tooltip.tour-fade-in{opacity:1;transform:translateY(0)}' +
-      '#tour-tooltip .tour-text{margin-bottom:8px;opacity:0.8}' +
-      '.tour-nav{display:flex;align-items:center;justify-content:space-between}' +
-      '.tour-nav button{background:none;border:1px solid var(--border);color:var(--fg);' +
-      'cursor:pointer;font-family:inherit;border-radius:4px;transition:all .1s}' +
-      '.tour-nav button:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}' +
-      '.tour-btn-arrow{font-size:1rem;padding:4px 12px;opacity:0.6}' +
-      '.tour-btn-arrow:hover{opacity:1}' +
-      '.tour-btn-arrow.disabled{opacity:0.15;pointer-events:none}' +
-      '.tour-btn-skip{font-size:0.72rem;padding:3px 10px;opacity:0.35;border-color:transparent!important}' +
-      '.tour-btn-skip:hover{opacity:0.6}';
-    document.head.appendChild(s);
-  }
 
   const modal = await _openTasksForTour();
   if (!modal) {
@@ -3858,10 +2505,6 @@ async function _runTaskTour(steps, doneText, opts) {
     return true;
   }
 
-  document.body.classList.add('tour-active');
-  const tooltip = document.createElement('div');
-  tooltip.id = 'tour-tooltip';
-  document.body.appendChild(tooltip);
   let halos = [];
 
   function clearHalos() {
@@ -3905,14 +2548,14 @@ async function _runTaskTour(steps, doneText, opts) {
   }
   function clear() {
     clearHalos();
-    tooltip.remove();
+    tour.tooltip.remove();
     document.body.classList.remove('tour-active');
   }
   function positionTooltip(target) {
-    tooltip.style.visibility = 'hidden';
-    tooltip.style.display = '';
-    const tw = tooltip.offsetWidth || 260;
-    const th = tooltip.offsetHeight || 100;
+    tour.tooltip.style.visibility = 'hidden';
+    tour.tooltip.style.display = '';
+    const tw = tour.tooltip.offsetWidth || 260;
+    const th = tour.tooltip.offsetHeight || 100;
     const r = target.getBoundingClientRect();
     const gap = 12;
     let top = r.bottom + gap;
@@ -3921,9 +2564,9 @@ async function _runTaskTour(steps, doneText, opts) {
     if (top < 10) top = 10;
     if (left + tw > window.innerWidth - 10) left = window.innerWidth - tw - 10;
     if (left < 10) left = 10;
-    tooltip.style.top = top + 'px';
-    tooltip.style.left = left + 'px';
-    tooltip.style.visibility = '';
+    tour.tooltip.style.top = top + 'px';
+    tour.tooltip.style.left = left + 'px';
+    tour.tooltip.style.visibility = '';
   }
   function showStep(step, i) {
     return new Promise(resolve => {
@@ -3934,8 +2577,8 @@ async function _runTaskTour(steps, doneText, opts) {
         if (!target) return resolve('skip');
         target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         halos.push(makeHalo(target));
-        tooltip.classList.remove('tour-fade-in');
-        tooltip.innerHTML =
+        tour.tooltip.classList.remove('tour-fade-in');
+        tour.tooltip.innerHTML =
           '<div class="tour-text">' + step.text + '</div>' +
           '<div class="tour-nav">' +
             '<button class="tour-btn-arrow' + (i === 0 ? ' disabled' : '') + '" data-act="back">←</button>' +
@@ -3944,12 +2587,12 @@ async function _runTaskTour(steps, doneText, opts) {
           '</div>';
         requestAnimationFrame(() => {
           positionTooltip(target);
-          tooltip.classList.add('tour-fade-in');
+          tour.tooltip.classList.add('tour-fade-in');
         });
         const onClick = (e) => {
           const hit = e.target.closest && e.target.closest('[data-act]');
           if (!hit) return;
-          tooltip.removeEventListener('click', onClick);
+          tour.tooltip.removeEventListener('click', onClick);
           // Always fire step.after when leaving the step, regardless of
           // direction — it's the symmetric pair to `before` (undo the
           // temporary state change), and a user clicking "back" on the
@@ -3957,7 +2600,7 @@ async function _runTaskTour(steps, doneText, opts) {
           if (step.after) { try { step.after(); } catch (_) {} }
           resolve(hit.dataset.act);
         };
-        tooltip.addEventListener('click', onClick);
+        tour.tooltip.addEventListener('click', onClick);
       }, step.before ? 160 : 0);
     });
   }
@@ -3971,31 +2614,31 @@ async function _runTaskTour(steps, doneText, opts) {
   // with two buttons before tearing down the tour overlay.
   if (opts.continueLabel) {
     clearHalos();
-    tooltip.classList.remove('tour-fade-in');
-    tooltip.innerHTML =
+    tour.tooltip.classList.remove('tour-fade-in');
+    tour.tooltip.innerHTML =
       '<div class="tour-text">' + (opts.continueText || 'Want to keep going?') + '</div>' +
       '<div class="tour-nav">' +
         '<button class="tour-btn-skip" data-act="stop">no thanks</button>' +
         '<button class="tour-btn-arrow" data-act="continue">' + opts.continueLabel + '</button>' +
       '</div>';
     // Centered in the upper third of the viewport.
-    tooltip.style.visibility = 'hidden';
+    tour.tooltip.style.visibility = 'hidden';
     requestAnimationFrame(() => {
-      const tw = tooltip.offsetWidth || 260;
-      const th = tooltip.offsetHeight || 100;
-      tooltip.style.top = Math.max(10, window.innerHeight * 0.32 - th / 2) + 'px';
-      tooltip.style.left = Math.max(10, window.innerWidth / 2 - tw / 2) + 'px';
-      tooltip.style.visibility = '';
-      tooltip.classList.add('tour-fade-in');
+      const tw = tour.tooltip.offsetWidth || 260;
+      const th = tour.tooltip.offsetHeight || 100;
+      tour.tooltip.style.top = Math.max(10, window.innerHeight * 0.32 - th / 2) + 'px';
+      tour.tooltip.style.left = Math.max(10, window.innerWidth / 2 - tw / 2) + 'px';
+      tour.tooltip.style.visibility = '';
+      tour.tooltip.classList.add('tour-fade-in');
     });
     const choice = await new Promise(resolve => {
       const onClick = (e) => {
         const hit = e.target.closest && e.target.closest('[data-act]');
         if (!hit) return;
-        tooltip.removeEventListener('click', onClick);
+        tour.tooltip.removeEventListener('click', onClick);
         resolve(hit.dataset.act);
       };
-      tooltip.addEventListener('click', onClick);
+      tour.tooltip.addEventListener('click', onClick);
     });
     clear();
     if (choice === 'continue') return 'continue';
@@ -4007,6 +2650,8 @@ async function _runTaskTour(steps, doneText, opts) {
 }
 
 async function _cmdTourTask1(args, ctx) {
+  const tour = new Tour();
+
   const result = await _runTaskTour([
     { sel: '#tasks-modal .modal-content',
       text: '<b>Welcome to Tasks.</b> Manage all your AI background work here.' },
@@ -4023,6 +2668,8 @@ async function _cmdTourTask1(args, ctx) {
 }
 
 async function _cmdTourTask2(args, ctx) {
+  const tour = new Tour();
+
   return _runTaskTour([
     { sel: '#tasks-modal .tasks-tab[data-tab="new"]',
       text: '<b>Add</b> creates scheduled prompts, research jobs, actions, event triggers, or webhooks.',
@@ -4047,6 +2694,8 @@ async function _cmdTourTask2(args, ctx) {
 // ── Tour: Deep Research ──
 
 async function _cmdTourResearch(args, ctx) {
+  const tour = new Tour();
+
   // Clear the chat input so "/tour-research" doesn't linger.
   const _msgEl = document.getElementById('message');
   if (_msgEl) {
@@ -4055,28 +2704,6 @@ async function _cmdTourResearch(args, ctx) {
   }
 
   // Shared tour-styles injection (same block as /tour, /tour-compare, /tour-cookbook).
-  if (!document.getElementById('tour-styles')) {
-    const s = document.createElement('style');
-    s.id = 'tour-styles';
-    s.textContent =
-      '#tour-tooltip{position:fixed;z-index:10001;background:var(--bg);color:var(--fg);' +
-      'border:1px solid var(--border);border-radius:8px;padding:12px 14px;max-width:280px;' +
-      'font-family:inherit;font-size:0.8rem;line-height:1.5;' +
-      'box-shadow:0 2px 12px rgba(0,0,0,0.3);pointer-events:auto;' +
-      'opacity:0;transform:translateY(4px);transition:opacity 0.3s ease-out,transform 0.3s ease-out}' +
-      '#tour-tooltip.tour-fade-in{opacity:1;transform:translateY(0)}' +
-      '#tour-tooltip .tour-text{margin-bottom:8px;opacity:0.8}' +
-      '.tour-nav{display:flex;align-items:center;justify-content:space-between}' +
-      '.tour-nav button{background:none;border:1px solid var(--border);color:var(--fg);' +
-      'cursor:pointer;font-family:inherit;border-radius:4px;transition:all .1s}' +
-      '.tour-nav button:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}' +
-      '.tour-btn-arrow{font-size:1rem;padding:4px 12px;opacity:0.6}' +
-      '.tour-btn-arrow:hover{opacity:1}' +
-      '.tour-btn-arrow.disabled{opacity:0.15;pointer-events:none}' +
-      '.tour-btn-skip{font-size:0.72rem;padding:3px 10px;opacity:0.35;border-color:transparent!important}' +
-      '.tour-btn-skip:hover{opacity:0.6}';
-    document.head.appendChild(s);
-  }
 
   // Open the research overlay if it's not already up.
   let overlay = document.getElementById('research-overlay');
@@ -4094,117 +2721,9 @@ async function _cmdTourResearch(args, ctx) {
     return true;
   }
 
-  document.body.classList.add('tour-active');
-  const tooltip = document.createElement('div');
-  tooltip.id = 'tour-tooltip';
-  document.body.appendChild(tooltip);
 
-  let _halos = [];
-  function _makeHalo(target) {
-    const halo = document.createElement('div');
-    halo.className = 'tour-halo';
-    document.body.appendChild(halo);
-    const update = () => {
-      const r = target.getBoundingClientRect();
-      halo.style.top    = (r.top - 4) + 'px';
-      halo.style.left   = (r.left - 4) + 'px';
-      halo.style.width  = (r.width + 8) + 'px';
-      halo.style.height = (r.height + 8) + 'px';
-    };
-    update();
-    window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
-    requestAnimationFrame(() => halo.classList.add('tour-fade-in'));
-    return { destroy() {
-      window.removeEventListener('resize', update);
-      window.removeEventListener('scroll', update, true);
-      halo.remove();
-    } };
-  }
-  function _clearHalos() {
-    _halos.forEach(h => h.destroy());
-    _halos = [];
-    document.querySelectorAll('.tour-halo').forEach(e => e.remove());
-  }
-  const _clear = () => {
-    document.querySelectorAll('.odysseus-highlight').forEach(e => e.classList.remove('odysseus-highlight'));
-    _clearHalos();
-    tooltip.remove();
-    document.body.classList.remove('tour-active');
-  };
 
-  function _positionTooltip(target, placement) {
-    tooltip.style.visibility = 'hidden';
-    tooltip.style.display = '';
-    const tw = tooltip.offsetWidth || 260;
-    const th = tooltip.offsetHeight || 100;
-    if (placement === 'center-above') {
-      const top = Math.max(10, window.innerHeight * 0.32 - th / 2);
-      const left = Math.max(10, window.innerWidth / 2 - tw / 2);
-      tooltip.style.top = top + 'px';
-      tooltip.style.left = left + 'px';
-      tooltip.style.visibility = '';
-      return;
-    }
-    const r = target.getBoundingClientRect();
-    const gap = 12;
-    let top, left;
-    if (r.bottom + gap + th < window.innerHeight - 10) {
-      top = r.bottom + gap;
-      left = r.left + r.width / 2 - tw / 2;
-    } else if (r.top - gap - th > 10) {
-      top = r.top - gap - th;
-      left = r.left + r.width / 2 - tw / 2;
-    } else {
-      top = r.top + r.height / 2 - th / 2;
-      left = r.right + gap;
-      if (left + tw > window.innerWidth - 10) left = r.left - tw - gap;
-    }
-    if (left + tw > window.innerWidth - 10) left = window.innerWidth - tw - 10;
-    if (left < 10) left = 10;
-    if (top < 10) top = 10;
-    tooltip.style.top = top + 'px';
-    tooltip.style.left = left + 'px';
-    tooltip.style.visibility = '';
-  }
 
-  function _showStep(sel, text, opts) {
-    opts = opts || {};
-    const isFirst = !!opts.isFirst;
-    const isLast = !!opts.isLast;
-    const before = opts.before;
-    const placement = opts.placement;
-    return new Promise(resolve => {
-      _clearHalos();
-      if (before) { try { before(); } catch (_) {} }
-      const target = document.querySelector(sel);
-      if (!target) return resolve('skip');
-      _halos.push(_makeHalo(target));
-      target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-      tooltip.classList.remove('tour-fade-in');
-      tooltip.innerHTML =
-        '<div class="tour-text">' + text + '</div>' +
-        '<div class="tour-nav">' +
-          '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-          '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-          '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
-        '</div>';
-      requestAnimationFrame(() => {
-        _positionTooltip(target, placement);
-        tooltip.classList.add('tour-fade-in');
-      });
-
-      const onClick = (e) => {
-        const hit = e.target.closest && e.target.closest('[data-act]');
-        const act = hit && hit.dataset.act;
-        if (!act) return;
-        tooltip.removeEventListener('click', onClick);
-        resolve(act);
-      };
-      tooltip.addEventListener('click', onClick);
-    });
-  }
 
   function _ensureSettingsOpen() {
     const body = document.getElementById('research-settings-body');
@@ -4228,17 +2747,17 @@ async function _cmdTourResearch(args, ctx) {
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
-    const res = await _showStep(step.sel, step.text, {
+    const res = await tour.showStep(step.sel, step.text, {
       isFirst: i === 0,
       isLast: i === steps.length - 1,
       before: step.before,
       placement: step.placement,
     });
-    if (res === 'skip') { _clear(); return true; }
+    if (res === 'skip') { tour.clear(); return true; }
     if (res === 'back') { if (i > 0) i -= 2; continue; }
   }
 
-  _clear();
+  tour.clear();
   {
     const _body = await typewriterReply('That’s Deep Research — hit Start or queue up many. You can also view past research in your ');
     const libLink = document.createElement('button');
@@ -4261,6 +2780,8 @@ async function _cmdTourResearch(args, ctx) {
 // ── Tour: Library + Document editor ──
 
 async function _cmdTourLibrary(args, ctx) {
+  const tour = new Tour();
+
   // Clear the chat input so "/tour-library" doesn't linger.
   const _msgEl = document.getElementById('message');
   if (_msgEl) {
@@ -4269,28 +2790,6 @@ async function _cmdTourLibrary(args, ctx) {
   }
 
   // Shared tour-styles injection.
-  if (!document.getElementById('tour-styles')) {
-    const s = document.createElement('style');
-    s.id = 'tour-styles';
-    s.textContent =
-      '#tour-tooltip{position:fixed;z-index:10001;background:var(--bg);color:var(--fg);' +
-      'border:1px solid var(--border);border-radius:8px;padding:12px 14px;max-width:280px;' +
-      'font-family:inherit;font-size:0.8rem;line-height:1.5;' +
-      'box-shadow:0 2px 12px rgba(0,0,0,0.3);pointer-events:auto;' +
-      'opacity:0;transform:translateY(4px);transition:opacity 0.3s ease-out,transform 0.3s ease-out}' +
-      '#tour-tooltip.tour-fade-in{opacity:1;transform:translateY(0)}' +
-      '#tour-tooltip .tour-text{margin-bottom:8px;opacity:0.8}' +
-      '.tour-nav{display:flex;align-items:center;justify-content:space-between}' +
-      '.tour-nav button{background:none;border:1px solid var(--border);color:var(--fg);' +
-      'cursor:pointer;font-family:inherit;border-radius:4px;transition:all .1s}' +
-      '.tour-nav button:hover{background:color-mix(in srgb,var(--fg) 8%,transparent)}' +
-      '.tour-btn-arrow{font-size:1rem;padding:4px 12px;opacity:0.6}' +
-      '.tour-btn-arrow:hover{opacity:1}' +
-      '.tour-btn-arrow.disabled{opacity:0.15;pointer-events:none}' +
-      '.tour-btn-skip{font-size:0.72rem;padding:3px 10px;opacity:0.35;border-color:transparent!important}' +
-      '.tour-btn-skip:hover{opacity:0.6}';
-    document.head.appendChild(s);
-  }
 
   // Open the library modal if it's not already up.
   let libModal = document.getElementById('doclib-modal');
@@ -4308,131 +2807,9 @@ async function _cmdTourLibrary(args, ctx) {
     return true;
   }
 
-  document.body.classList.add('tour-active');
-  const tooltip = document.createElement('div');
-  tooltip.id = 'tour-tooltip';
-  document.body.appendChild(tooltip);
 
-  let _halos = [];
-  function _makeHalo(target) {
-    const halo = document.createElement('div');
-    halo.className = 'tour-halo';
-    document.body.appendChild(halo);
-    const update = () => {
-      const r = target.getBoundingClientRect();
-      halo.style.top    = (r.top - 4) + 'px';
-      halo.style.left   = (r.left - 4) + 'px';
-      halo.style.width  = (r.width + 8) + 'px';
-      halo.style.height = (r.height + 8) + 'px';
-    };
-    update();
-    window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
-    requestAnimationFrame(() => halo.classList.add('tour-fade-in'));
-    return { destroy() {
-      window.removeEventListener('resize', update);
-      window.removeEventListener('scroll', update, true);
-      halo.remove();
-    } };
-  }
-  function _clearHalos() {
-    _halos.forEach(h => h.destroy());
-    _halos = [];
-    document.querySelectorAll('.tour-halo').forEach(e => e.remove());
-  }
-  const _clear = () => {
-    document.querySelectorAll('.odysseus-highlight').forEach(e => e.classList.remove('odysseus-highlight'));
-    _clearHalos();
-    tooltip.remove();
-    document.body.classList.remove('tour-active');
-  };
 
-  function _positionTooltip(target, placement) {
-    tooltip.style.visibility = 'hidden';
-    tooltip.style.display = '';
-    const tw = tooltip.offsetWidth || 260;
-    const th = tooltip.offsetHeight || 100;
-    if (placement === 'center-above') {
-      const top = Math.max(10, window.innerHeight * 0.32 - th / 2);
-      const left = Math.max(10, window.innerWidth / 2 - tw / 2);
-      tooltip.style.top = top + 'px';
-      tooltip.style.left = left + 'px';
-      tooltip.style.visibility = '';
-      return;
-    }
-    const r = target.getBoundingClientRect();
-    const gap = 12;
-    let top, left;
-    if (r.bottom + gap + th < window.innerHeight - 10) {
-      top = r.bottom + gap;
-      left = r.left + r.width / 2 - tw / 2;
-    } else if (r.top - gap - th > 10) {
-      top = r.top - gap - th;
-      left = r.left + r.width / 2 - tw / 2;
-    } else {
-      top = r.top + r.height / 2 - th / 2;
-      left = r.right + gap;
-      if (left + tw > window.innerWidth - 10) left = r.left - tw - gap;
-    }
-    if (left + tw > window.innerWidth - 10) left = window.innerWidth - tw - 10;
-    if (left < 10) left = 10;
-    if (top < 10) top = 10;
-    tooltip.style.top = top + 'px';
-    tooltip.style.left = left + 'px';
-    tooltip.style.visibility = '';
-  }
 
-  function _showStep(sel, text, opts) {
-    opts = opts || {};
-    const isFirst = !!opts.isFirst;
-    const isLast = !!opts.isLast;
-    const before = opts.before;
-    const placement = opts.placement;
-    const interactive = !!opts.interactive;
-    const optional = !!opts.optional;
-    return new Promise(resolve => {
-      _clearHalos();
-      if (before) { try { before(); } catch (_) {} }
-      const target = document.querySelector(sel);
-      if (!target) return resolve(optional ? 'next' : 'skip');
-      _halos.push(_makeHalo(target));
-      target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-      tooltip.classList.remove('tour-fade-in');
-      tooltip.innerHTML =
-        '<div class="tour-text">' + text + '</div>' +
-        '<div class="tour-nav">' +
-          '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-          '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-          '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
-        '</div>';
-      requestAnimationFrame(() => {
-        _positionTooltip(target, placement);
-        tooltip.classList.add('tour-fade-in');
-      });
-
-      let _onTarget;
-      const cleanup = () => {
-        tooltip.removeEventListener('click', onClick);
-        if (_onTarget) target.removeEventListener('click', _onTarget, true);
-      };
-      const onClick = (e) => {
-        const hit = e.target.closest && e.target.closest('[data-act]');
-        const act = hit && hit.dataset.act;
-        if (!act) return;
-        cleanup();
-        resolve(act);
-      };
-      tooltip.addEventListener('click', onClick);
-      // Interactive steps advance when the user clicks the highlighted
-      // element — letting the original click through so the real action
-      // (open the Create modal, in the Library case) actually fires.
-      if (interactive) {
-        _onTarget = () => { cleanup(); resolve('next'); };
-        target.addEventListener('click', _onTarget, true);
-      }
-    });
-  }
 
   // ── Phase 1: Library overview ──
   const libSteps = [
@@ -4458,7 +2835,7 @@ async function _cmdTourLibrary(args, ctx) {
 
   for (let i = 0; i < libSteps.length; i++) {
     const step = libSteps[i];
-    const res = await _showStep(step.sel, step.text, {
+    const res = await tour.showStep(step.sel, step.text, {
       isFirst: i === 0,
       isLast: false,
       before: step.before,
@@ -4466,7 +2843,7 @@ async function _cmdTourLibrary(args, ctx) {
       interactive: step.interactive,
       optional: step.optional,
     });
-    if (res === 'skip') { _clear(); return true; }
+    if (res === 'skip') { tour.clear(); return true; }
     if (res === 'back') { if (i > 0) i -= 2; continue; }
   }
 
@@ -4482,7 +2859,7 @@ async function _cmdTourLibrary(args, ctx) {
   } catch (_) {}
 
   if (!firstDocId || !window.documentModule || !window.documentModule.loadDocument) {
-    _clear();
+    tour.clear();
     await typewriterReply('All yours — create or import a doc, then run /tour-library again to see the editor.');
     return true;
   }
@@ -4496,7 +2873,7 @@ async function _cmdTourLibrary(args, ctx) {
     await new Promise(r => setTimeout(r, 80));
   }
   if (!document.getElementById('doc-editor-pane')) {
-    _clear();
+    tour.clear();
     await typewriterReply('All yours — open a doc and run /tour-library again for the editor walkthrough.');
     return true;
   }
@@ -4518,17 +2895,17 @@ async function _cmdTourLibrary(args, ctx) {
 
   for (let i = 0; i < editorSteps.length; i++) {
     const step = editorSteps[i];
-    const res = await _showStep(step.sel, step.text, {
+    const res = await tour.showStep(step.sel, step.text, {
       isFirst: false,
       isLast: i === editorSteps.length - 1,
       before: step.before,
       placement: step.placement,
     });
-    if (res === 'skip') { _clear(); return true; }
+    if (res === 'skip') { tour.clear(); return true; }
     if (res === 'back') { if (i > 0) i -= 2; continue; }
   }
 
-  _clear();
+  tour.clear();
   await typewriterReply('All yours — write away!');
   return true;
 }
