@@ -31,4 +31,6 @@ if "src.database" not in sys.modules:
     _db = types.ModuleType("src.database")
     _db.SessionLocal = MagicMock()
     _db.ModelEndpoint = MagicMock()
+    _db.Session = MagicMock()
+    _db.GalleryImage = MagicMock()
     sys.modules["src.database"] = _db

@@ -391,7 +391,7 @@ def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
             else:
                 # OpenAI-compatible and native Ollama: probe the provider's model list.
                 try:
-                    r = httpx.get(build_models_url(base), headers=headers, timeout=5)
+                    r = httpx.get(build_models_url(base), headers=headers, timeout=HTTP_TIMEOUT_MODEL_LIST)
                     r.raise_for_status()
                     data = r.json()
                     model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
@@ -453,23 +453,14 @@ async def do_chat_with_model(content: str, session_id: Optional[str] = None) -> 
             headers=headers,
             timeout=AI_CHAT_TIMEOUT,
         )
-        # Truncate very long responses
-        if len(response) > 10000:
-            response = response[:10000] + "\n... (truncated)"
-        return {"model": model, "response": response}
+        return {"model": model, "response": truncate_response(response)}
     except Exception as e:
         logger.error(f"chat_with_model failed: {e}")
         return {"error": f"Failed to get response from {model_spec}: {e}"}
 
 
-_TEACHER_SYSTEM_PROMPT = (
-    "You are a senior AI mentor. A less capable model is stuck on a problem and asking for help. "
-    "Provide clear, actionable guidance:\n"
-    "1. Brief analysis of the problem\n"
-    "2. Recommended approach (step by step)\n"
-    "3. Key things to watch out for\n\n"
-    "Be concise and practical. No preamble."
-)
+# Backward-compat alias for modules that import _TEACHER_SYSTEM_PROMPT directly
+_TEACHER_SYSTEM_PROMPT = TEACHER_SYSTEM_PROMPT
 
 
 async def do_ask_teacher(content: str, session_id: Optional[str] = None) -> Dict:
@@ -503,15 +494,13 @@ async def do_ask_teacher(content: str, session_id: Optional[str] = None) -> Dict
         response = await llm_call_async(
             url, model,
             [
-                {"role": "system", "content": _TEACHER_SYSTEM_PROMPT},
+                {"role": "system", "content": TEACHER_SYSTEM_PROMPT},
                 {"role": "user", "content": f"Problem:\n{problem}"},
             ],
             headers=headers,
             timeout=AI_CHAT_TIMEOUT,
         )
-        if len(response) > 8000:
-            response = response[:8000] + "\n... (truncated)"
-        return {"model": model, "response": response, "teacher": True}
+        return {"model": model, "response": truncate_for_teacher(response), "teacher": True}
     except Exception as e:
         logger.error(f"ask_teacher failed: {e}")
         return {"error": f"Teacher call failed ({model_spec}): {e}"}
@@ -552,7 +541,7 @@ async def do_second_opinion(content: str, session_id: Optional[str] = None) -> D
         sess = _session_manager.get_session(session_id)
         if sess:
             messages = sess.get_context_messages()
-            recent = messages[-15:] if len(messages) > 15 else messages
+            recent = messages[-SESSION_CONTEXT_WINDOW:] if len(messages) > SESSION_CONTEXT_WINDOW else messages
             parts = []
             for m in recent:
                 role = m.get("role", "unknown").upper()
@@ -562,26 +551,13 @@ async def do_second_opinion(content: str, session_id: Optional[str] = None) -> D
                         p.get("text", "") for p in text if isinstance(p, dict)
                     )
                 if text:
-                    parts.append(f"[{role}]: {text[:2000]}")
+                    parts.append(f"[{role}]: {text[:CONTEXT_MESSAGE_TEXT_LIMIT]}")
             context_text = "\n\n".join(parts)
 
     if not context_text:
         return {"error": "No conversation context found to review"}
 
     # ── Step 1: Get the reviewer's feedback ──
-    reviewer_system = (
-        "You are giving a second opinion on a conversation between a user and an AI assistant. "
-        "Your job is to be genuinely helpful and honest — not a yes-man, but not a contrarian either.\n\n"
-        "Guidelines:\n"
-        "- If the plan/idea is solid, say so clearly. Don't manufacture problems that aren't there.\n"
-        "- If you spot a real flaw, blind spot, or simpler approach — call it out directly.\n"
-        "- Be practical. Don't over-engineer or over-analyze. Real-world tradeoffs matter.\n"
-        "- If there's a meaningfully better way to do something, suggest it concretely.\n"
-        "- Give credit where it's due — highlight what's working well.\n"
-        "- Keep it concise and actionable. No fluff.\n"
-        "- You're a second pair of eyes, not a professor grading a paper."
-    )
-
     reviewer_message = f"Here's the conversation so far:\n\n{context_text}"
     if focus:
         reviewer_message += f"\n\n---\nSpecifically, I want your take on: {focus}"
@@ -592,14 +568,13 @@ async def do_second_opinion(content: str, session_id: Optional[str] = None) -> D
         review = await llm_call_async(
             reviewer_url, reviewer_model,
             [
-                {"role": "system", "content": reviewer_system},
+                {"role": "system", "content": SECOND_OPINION_REVIEWER_SYSTEM},
                 {"role": "user", "content": reviewer_message},
             ],
             headers=reviewer_headers,
             timeout=AI_CHAT_TIMEOUT,
         )
-        if len(review) > 8000:
-            review = review[:8000] + "\n... (truncated)"
+        review = truncate_for_teacher(review)
     except Exception as e:
         logger.error(f"second_opinion reviewer call failed: {e}")
         return {"error": f"Failed to get second opinion from {model_spec}: {e}"}
@@ -611,17 +586,6 @@ async def do_second_opinion(content: str, session_id: Optional[str] = None) -> D
         original_url = sess.endpoint_url
         original_model = sess.model
         original_headers = getattr(sess, "headers", None) or {}
-
-        unify_system = (
-            "Another AI model just reviewed the conversation you've been having with the user. "
-            "Read their feedback carefully, then respond with:\n\n"
-            "1. **What you agree with** — acknowledge valid points honestly.\n"
-            "2. **What you disagree with** — explain why, briefly.\n"
-            "3. **Unified version** — produce an updated/refined version of whatever was being discussed, "
-            "incorporating the feedback you found valid. Don't accept every note blindly — "
-            "use your judgment on what actually improves things vs what's unnecessary.\n\n"
-            "Be concise and practical. The user wants a better result, not a meta-discussion."
-        )
 
         unify_message = (
             f"Here's the conversation context:\n\n{context_text}\n\n"
@@ -635,14 +599,13 @@ async def do_second_opinion(content: str, session_id: Optional[str] = None) -> D
             unified = await llm_call_async(
                 original_url, original_model,
                 [
-                    {"role": "system", "content": unify_system},
+                    {"role": "system", "content": SECOND_OPINION_UNIFIER_SYSTEM},
                     {"role": "user", "content": unify_message},
                 ],
                 headers=original_headers,
                 timeout=AI_CHAT_TIMEOUT,
             )
-            if len(unified) > 10000:
-                unified = unified[:10000] + "\n... (truncated)"
+            unified = truncate_response(unified)
         except Exception as e:
             logger.error(f"second_opinion unify call failed: {e}")
             unified = f"(Failed to get unified response: {e})"
@@ -775,8 +738,8 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
 
         lines = []
         for i, (ts, sid, sess) in enumerate(rows):
-            if i >= 50:
-                lines.append(f"... and {len(rows) - 50} more (showing first 50)")
+            if i >= SESSION_LIST_DISPLAY_LIMIT:
+                lines.append(f"... and {len(rows) - SESSION_LIST_DISPLAY_LIMIT} more (showing first {SESSION_LIST_DISPLAY_LIMIT})")
                 break
             safe_name = (sess.name or "Untitled").replace("[", "\\[").replace("]", "\\]")
             msg_count = getattr(sess, "message_count", 0) or 0
@@ -842,13 +805,10 @@ async def do_send_to_session(content: str, session_id: Optional[str] = None) -> 
         sess.add_message(ChatMessage("assistant", response))
 
         # Truncate for tool output
-        if len(response) > 10000:
-            response = response[:10000] + "\n... (truncated)"
-
         return {
             "session_id": target_sid,
             "session_name": sess.name,
-            "response": response,
+            "response": truncate_response(response),
         }
     except Exception as e:
         logger.error(f"send_to_session failed: {e}")
@@ -948,7 +908,7 @@ async def do_pipeline(content: str, session_id: Optional[str] = None) -> Dict:
                 "step": i + 1,
                 "model": model,
                 "instruction": instruction,
-                "output": response[:5000] if len(response) > 5000 else response,
+                "output": truncate_for_pipeline(response),
             })
 
             previous_output = response
@@ -976,226 +936,262 @@ async def do_pipeline(content: str, session_id: Optional[str] = None) -> Dict:
 # ---------------------------------------------------------------------------
 
 async def do_manage_session(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
-    """Manage sessions: rename, archive, delete, important, truncate, fork.
+    """Manage sessions: list, switch, rename, archive, unarchive, delete, important, truncate, fork.
 
-    Content format:
-      Line 1: action (rename|archive|unarchive|delete|important|unimportant|truncate|fork)
-      Line 2: target session_id (or "current" to use the active session)
-      Line 3+: action-specific params (e.g. new name for rename, keep_count for truncate)
+    Accepts both JSON format ({action, session_id, value}) and line format:
+      Line 1: action
+      Line 2: target session_id  (or "current" for the active session)
+      Line 3+: action-specific value (new name for rename, keep_count for truncate)
     """
     if not _session_manager:
         return {"error": "Session manager not available"}
 
-    from src.database import SessionLocal, Session as DbSession
-
-    # Accept BOTH the structured JSON args the tool schema advertises
-    # ({action, session_id, value}) AND the legacy line-based format
-    # (line1=action, line2=session_id, line3=value). Native function-calling
-    # models send JSON; fenced-block callers send lines. Previously only the
-    # line format was parsed, so a model that followed the schema (JSON) got
-    # "Need at least 2 lines" / "Rename needs line 3" and couldn't drive it.
-    _raw = (content or "").strip()
-    action = ""
-    target_sid = ""
-    value = None      # the action param: new name (rename) / keep_count (truncate, fork)
-    _list_filter = ""
-    _parsed = None
-    if _raw.startswith("{"):
-        try:
-            _parsed = json.loads(_raw)
-        except Exception:
-            _parsed = None
-    if isinstance(_parsed, dict):
-        action = str(_parsed.get("action") or "").strip().lower()
-        target_sid = str(_parsed.get("session_id") or _parsed.get("session") or _parsed.get("id") or "").strip()
-        _v = _parsed.get("value")
-        if _v is None:
-            _v = (_parsed.get("name") or _parsed.get("new_name")
-                  or _parsed.get("title") or _parsed.get("keep_count"))
-        value = None if _v is None else str(_v).strip()
-        _list_filter = str(_parsed.get("filter") or "").strip()
-    else:
-        lines = _raw.split("\n")
-        if not lines or not lines[0].strip():
-            return {"error": "Missing action (rename|archive|delete|important|truncate|fork|list|switch)"}
-        action = lines[0].strip().lower()
-        target_sid = lines[1].strip() if len(lines) >= 2 else ""
-        value = lines[2].strip() if len(lines) >= 3 else None
-        _list_filter = "\n".join(lines[1:]).strip()
+    action, target_sid, value, list_filter = _parse_manage_session_input(content)
 
     if not action:
         return {"error": "Missing action (rename|archive|delete|important|truncate|fork|list|switch)"}
 
-    # `list` alias — dispatch to do_list_sessions so the agent's natural
-    # first guess (every other manage_* tool has a `list` action) works.
     if action == "list":
-        return await do_list_sessions(_list_filter, session_id, owner=owner)
+        return await do_list_sessions(list_filter, session_id, owner=owner)
 
     if not target_sid:
         return {"error": "Need a session_id (or 'current' for the active chat)"}
 
-    # Allow "current" to refer to the active session
     if target_sid.lower() == "current" and session_id:
         target_sid = session_id
 
-    # `switch` / `open` / `select` / `view` — the agent reaches for
-    # these when the user asks to "open" or "switch to" a session.
-    # There's no server-side way to make the browser navigate, so we
-    # just return a clickable anchor link the user can click. The
-    # frontend's chat-history click delegate routes `#session-<id>`
-    # to selectSession(). The agent's reply naturally embeds this
-    # result so the user sees a single clickable line.
-    def _session_query(db):
-        query = db.query(DbSession).filter(DbSession.id == target_sid)
-        if owner is not None:
-            query = query.filter(DbSession.owner == owner)
-        return query
-
-    if action in ("switch", "open", "select", "view"):
-        db = SessionLocal()
-        try:
-            db_sess = _session_query(db).first()
-            if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
-            name = db_sess.name or target_sid
-        finally:
-            db.close()
-        return {
-            "action": action,
-            "session_id": target_sid,
-            "name": name,
-            "results": f"[{name}](#session-{target_sid}) — click to open.",
-        }
-
-    db = SessionLocal()
     try:
-        if action == "rename":
-            if not value:
-                return {"error": "rename needs a new name (the `value` arg, or line 3 in the legacy format)"}
-            new_name = value
-            db_sess = _session_query(db).first()
-            if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
-            db_sess.name = new_name
-            db.commit()
-            _session_manager.update_session_name(target_sid, new_name)
-            return {"action": "rename", "session_id": target_sid, "name": new_name,
-                    "results": f"Session renamed to '{new_name}'"}
-
-        elif action == "archive":
-            db_sess = _session_query(db).first()
-            if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
-            db_sess.archived = True
-            db.commit()
-            return {"action": "archive", "session_id": target_sid,
-                    "results": f"Session '{db_sess.name}' archived"}
-
-        elif action == "unarchive":
-            db_sess = _session_query(db).first()
-            if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
-            db_sess.archived = False
-            db.commit()
-            return {"action": "unarchive", "session_id": target_sid,
-                    "results": f"Session '{db_sess.name}' unarchived"}
-
-        elif action == "delete":
-            if target_sid == session_id:
-                return {"error": "Cannot delete the current session while chatting in it. Delete other sessions first."}
-            db_sess = _session_query(db).first()
-            if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Refusing to delete an unknown chat id; use the exact id from list_sessions."}
-            if db_sess and db_sess.is_important:
-                return {"error": f"Session '{db_sess.name}' is starred/favorited. Unstar it first before deleting."}
-            try:
-                ok = _session_manager.delete_session(target_sid)
-                if not ok:
-                    return {"error": f"Session '{target_sid}' was not deleted because it no longer exists."}
-                return {"action": "delete", "session_id": target_sid,
-                        "results": f"Session '{db_sess.name or target_sid}' deleted"}
-            except Exception as e:
-                return {"error": f"Failed to delete session: {e}"}
-
-        elif action in ("important", "unimportant"):
-            is_important = action == "important"
-            db_sess = _session_query(db).first()
-            if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
-            # Prevent AI from unstarring sessions — only the user can do that manually
-            if not is_important and db_sess.is_important:
-                return {"error": f"Session '{db_sess.name}' is starred by the user. Only the user can unstar sessions manually."}
-            db_sess.is_important = is_important
-            db.commit()
-            status = "marked as important" if is_important else "unmarked as important"
-            return {"action": action, "session_id": target_sid,
-                    "results": f"Session '{db_sess.name}' {status}"}
-
-        elif action == "truncate":
-            db_sess = _session_query(db).first()
-            if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
-            keep_count = 10
-            if value:
-                try:
-                    keep_count = int(value)
-                except ValueError:
-                    pass
-            success = _session_manager.truncate_messages(target_sid, keep_count)
-            if success:
-                return {"action": "truncate", "session_id": target_sid,
-                        "results": f"Session truncated to last {keep_count} messages"}
-            return {"error": f"Failed to truncate session '{target_sid}'"}
-
-        elif action == "fork":
-            db_sess = _session_query(db).first()
-            if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
-            keep_count = 0  # 0 = all messages
-            if value:
-                try:
-                    keep_count = int(value)
-                except ValueError:
-                    pass
-
-            source = _session_manager.get_session(target_sid)
-            if not source:
-                return {"error": f"Session '{target_sid}' not found"}
-
-            new_sid = str(uuid.uuid4())[:8]
-            _session_manager.create_session(
-                session_id=new_sid,
-                name=f"Fork: {source.name}",
-                endpoint_url=source.endpoint_url,
-                model=source.model,
-                rag=False,
-                owner=owner,
-            )
-            # Copy messages
-            history = source.get_context_messages()
-            if keep_count > 0:
-                history = history[:keep_count]
-            from core.models import ChatMessage as InMemoryMsg
-            new_sess = _session_manager.get_session(new_sid)
-            for msg in history:
-                new_sess.add_message(InMemoryMsg(msg["role"], msg["content"]))
-            try:
-                from src.event_bus import fire_event
-                fire_event("session_created", owner)
-            except Exception:
-                logger.debug("session_created event dispatch failed", exc_info=True)
-
-            return {"action": "fork", "session_id": new_sid,
-                    "source_session": target_sid, "messages_copied": len(history),
-                    "results": f"Forked session '{source.name}' -> new session {new_sid} ({len(history)} messages)"}
-
-        else:
-            return {"error": f"Unknown action '{action}'. Use: list, switch, rename, archive, unarchive, delete, important, unimportant, truncate, fork"}
+        return await _dispatch_session_action(action, target_sid, value, session_id, owner)
     except Exception as e:
         logger.error(f"manage_session failed: {e}")
         return {"error": str(e)}
+
+
+def _parse_manage_session_input(content: str):
+    """Parse do_manage_session content from JSON or line format.
+
+    Returns:
+        Tuple of (action, target_sid, value, list_filter) — all str or None.
+    """
+    raw = (content or "").strip()
+
+    if raw.startswith("{"):
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            parsed = None
+
+        if isinstance(parsed, dict):
+            action = str(parsed.get("action") or "").strip().lower()
+            target_sid = str(
+                parsed.get("session_id") or parsed.get("session") or parsed.get("id") or ""
+            ).strip()
+            v = parsed.get("value")
+            if v is None:
+                v = (parsed.get("name") or parsed.get("new_name")
+                     or parsed.get("title") or parsed.get("keep_count"))
+            value = None if v is None else str(v).strip()
+            list_filter = str(parsed.get("filter") or "").strip()
+            return action, target_sid, value, list_filter
+
+    lines = raw.split("\n")
+    if not lines or not lines[0].strip():
+        return "", "", None, ""
+
+    action = lines[0].strip().lower()
+    target_sid = lines[1].strip() if len(lines) >= 2 else ""
+    value = lines[2].strip() if len(lines) >= 3 else None
+    list_filter = "\n".join(lines[1:]).strip()
+    return action, target_sid, value, list_filter
+
+
+async def _dispatch_session_action(
+    action: str,
+    target_sid: str,
+    value: Optional[str],
+    current_session_id: Optional[str],
+    owner: Optional[str],
+) -> Dict:
+    """Route a validated manage_session action to its handler.
+
+    Raises on unexpected errors; callers should catch Exception.
+    """
+    def _query(db):
+        from src.database import Session as DbSession
+        q = db.query(DbSession).filter(DbSession.id == target_sid)
+        if owner is not None:
+            q = q.filter(DbSession.owner == owner)
+        return q
+
+    VIEW_ACTIONS = ("switch", "open", "select", "view")
+    if action in VIEW_ACTIONS:
+        return _session_action_view(target_sid, _query, action)
+
+    _VALID = "list, switch, rename, archive, unarchive, delete, important, unimportant, truncate, fork"
+
+    with get_db_session() as db:
+        db_sess = _query(db).first()
+
+        if action == "rename":
+            return _session_action_rename(db, db_sess, target_sid, value)
+
+        if action in ("archive", "unarchive"):
+            return _session_action_set_archived(db, db_sess, target_sid, action == "archive")
+
+        if action == "delete":
+            return _session_action_delete(db_sess, target_sid, current_session_id)
+
+        if action in ("important", "unimportant"):
+            return _session_action_set_important(db, db_sess, target_sid, action == "important")
+
+        if action == "truncate":
+            return _session_action_truncate(db_sess, target_sid, value)
+
+        if action == "fork":
+            return await _session_action_fork(db_sess, target_sid, value, owner)
+
+        return {"error": f"Unknown action '{action}'. Use: {_VALID}"}
+
+
+def _session_action_view(target_sid: str, query_fn, action: str) -> Dict:
+    """Return a clickable link so the user can navigate to the session."""
+    from src.database import SessionLocal
+    db = SessionLocal()
+    try:
+        db_sess = query_fn(db).first()
+        if not db_sess:
+            return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+        name = db_sess.name or target_sid
     finally:
         db.close()
+    return {
+        "action": action,
+        "session_id": target_sid,
+        "name": name,
+        "results": f"[{name}](#session-{target_sid}) — click to open.",
+    }
+
+
+def _session_action_rename(db, db_sess, target_sid: str, value: Optional[str]) -> Dict:
+    """Rename a session and update the in-memory manager."""
+    if not value:
+        return {"error": "rename needs a new name (the `value` arg, or line 3 in the legacy format)"}
+    if not db_sess:
+        return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+    db_sess.name = value
+    db.commit()
+    _session_manager.update_session_name(target_sid, value)
+    return {"action": "rename", "session_id": target_sid, "name": value,
+            "results": f"Session renamed to '{value}'"}
+
+
+def _session_action_set_archived(db, db_sess, target_sid: str, archived: bool) -> Dict:
+    """Archive or unarchive a session."""
+    action_word = "archive" if archived else "unarchive"
+    if not db_sess:
+        return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+    db_sess.archived = archived
+    db.commit()
+    past = "archived" if archived else "unarchived"
+    return {"action": action_word, "session_id": target_sid,
+            "results": f"Session '{db_sess.name}' {past}"}
+
+
+def _session_action_delete(db_sess, target_sid: str, current_session_id: Optional[str]) -> Dict:
+    """Delete a session with safety guards."""
+    if target_sid == current_session_id:
+        return {"error": "Cannot delete the current session while chatting in it. Delete other sessions first."}
+    if not db_sess:
+        return {"error": f"Session '{target_sid}' not found. Refusing to delete an unknown chat id; use the exact id from list_sessions."}
+    if db_sess.is_important:
+        return {"error": f"Session '{db_sess.name}' is starred/favorited. Unstar it first before deleting."}
+    try:
+        ok = _session_manager.delete_session(target_sid)
+        if not ok:
+            return {"error": f"Session '{target_sid}' was not deleted because it no longer exists."}
+        return {"action": "delete", "session_id": target_sid,
+                "results": f"Session '{db_sess.name or target_sid}' deleted"}
+    except Exception as e:
+        return {"error": f"Failed to delete session: {e}"}
+
+
+def _session_action_set_important(db, db_sess, target_sid: str, is_important: bool) -> Dict:
+    """Star or unstar a session."""
+    if not db_sess:
+        return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+    if not is_important and db_sess.is_important:
+        return {"error": f"Session '{db_sess.name}' is starred by the user. Only the user can unstar sessions manually."}
+    db_sess.is_important = is_important
+    db.commit()
+    action_word = "important" if is_important else "unimportant"
+    status = "marked as important" if is_important else "unmarked as important"
+    return {"action": action_word, "session_id": target_sid,
+            "results": f"Session '{db_sess.name}' {status}"}
+
+
+def _session_action_truncate(db_sess, target_sid: str, value: Optional[str]) -> Dict:
+    """Truncate a session to the last N messages."""
+    if not db_sess:
+        return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+    keep_count = SESSION_TRUNCATE_DEFAULT_KEEP
+    if value:
+        try:
+            keep_count = int(value)
+        except ValueError:
+            pass
+    success = _session_manager.truncate_messages(target_sid, keep_count)
+    if success:
+        return {"action": "truncate", "session_id": target_sid,
+                "results": f"Session truncated to last {keep_count} messages"}
+    return {"error": f"Failed to truncate session '{target_sid}'"}
+
+
+async def _session_action_fork(db_sess, target_sid: str, value: Optional[str], owner: Optional[str]) -> Dict:
+    """Fork a session, copying messages into a new session."""
+    if not db_sess:
+        return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+    keep_count = 0
+    if value:
+        try:
+            keep_count = int(value)
+        except ValueError:
+            pass
+
+    source = _session_manager.get_session(target_sid)
+    if not source:
+        return {"error": f"Session '{target_sid}' not found"}
+
+    new_sid = str(uuid.uuid4())[:UUID_SHORT_ID_LENGTH]
+    _session_manager.create_session(
+        session_id=new_sid,
+        name=f"Fork: {source.name}",
+        endpoint_url=source.endpoint_url,
+        model=source.model,
+        rag=False,
+        owner=owner,
+    )
+    history = source.get_context_messages()
+    if keep_count > 0:
+        history = history[:keep_count]
+
+    from core.models import ChatMessage as InMemoryMsg
+    new_sess = _session_manager.get_session(new_sid)
+    for msg in history:
+        new_sess.add_message(InMemoryMsg(msg["role"], msg["content"]))
+
+    try:
+        from src.event_bus import fire_event
+        fire_event("session_created", owner)
+    except Exception:
+        logger.debug("session_created event dispatch failed", exc_info=True)
+
+    return {
+        "action": "fork",
+        "session_id": new_sid,
+        "source_session": target_sid,
+        "messages_copied": len(history),
+        "results": f"Forked session '{source.name}' -> new session {new_sid} ({len(history)} messages)",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1233,15 +1229,15 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         if not memories:
             return {"results": "No memories found" + (f" in category '{category_filter}'" if category_filter else "") + "."}
         result_lines = [f"Found {len(memories)} memory entries:\n"]
-        for m in memories[:100]:
+        for m in memories[:MEMORY_LIST_DISPLAY_LIMIT]:
             cat = m.get("category", "fact")
             mid = m.get("id", "?")[:8]
             text = m.get("text", "")
-            if len(text) > 150:
-                text = text[:150] + "..."
+            if len(text) > MEMORY_TEXT_PREVIEW_LIMIT:
+                text = text[:MEMORY_TEXT_PREVIEW_LIMIT] + "..."
             result_lines.append(f"- [{cat}] `{mid}` — {text}")
-        if len(memories) > 100:
-            result_lines.append(f"... and {len(memories) - 100} more")
+        if len(memories) > MEMORY_LIST_DISPLAY_LIMIT:
+            result_lines.append(f"... and {len(memories) - MEMORY_LIST_DISPLAY_LIMIT} more")  # noqa
         return {"results": "\n".join(result_lines)}
 
     elif action == "add":
@@ -1345,11 +1341,11 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         memories = _memory_manager.load(owner=owner)
 
         if hasattr(_memory_manager, 'get_relevant_memories'):
-            results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=20)
+            results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=MEMORY_SEARCH_RESULT_LIMIT)
         else:
             # Fallback: simple text search
             query_lower = query.lower()
-            results = [m for m in memories if query_lower in m.get("text", "").lower()][:20]
+            results = [m for m in memories if query_lower in m.get("text", "").lower()][:MEMORY_SEARCH_RESULT_LIMIT]
 
         if not results:
             return {"results": f"No memories found matching '{query}'."}
@@ -1399,7 +1395,7 @@ async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict
                 model_ids = list(ANTHROPIC_MODELS)
             else:
                 try:
-                    r = httpx.get(build_models_url(base), headers=headers, timeout=5)
+                    r = httpx.get(build_models_url(base), headers=headers, timeout=HTTP_TIMEOUT_MODEL_LIST)
                     r.raise_for_status()
                     data = r.json()
                     model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
@@ -1534,283 +1530,289 @@ async def do_ui_control(content: str, session_id: Optional[str] = None) -> Dict:
       Line 2+: action-specific params
 
     Actions:
-      toggle <name> <on|off>  — Toggle a setting (web, bash, rag, research, incognito, document_editor)
+      toggle <name> <on|off>  — Toggle a setting (web, bash, research, incognito, document_editor)
       set_mode <agent|chat>   — Switch between agent and chat mode
       switch_model <model>    — Change the model for the current session
-      set_theme <preset>      — Apply a theme preset (dark, light, paper, nord, dracula, gruvbox, gpt, claude, lavender, etc.)
-      create_theme <name> <bg> <fg> <panel> <border> <accent> [key=val ...] — Create custom theme. Optional key=val: advanced color overrides AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false
-      open_panel <name>       — Open a panel (documents, gallery, email, sessions, notes, memories, skills, settings, cookbook)
-      open_email_reply <uid> [folder] [reply|reply-all|ai-reply] — Open a reply draft document for an email; does not send
-      get_toggles             — Return current toggle states (server-side knowledge)
+      set_theme <preset>      — Apply a theme preset (dark, light, paper, cyberpunk, etc.)
+      create_theme <name> <bg> <fg> <panel> <border> <accent> [key=val ...]
+      open_panel <name>       — Open a panel (documents, gallery, email, sessions, notes, etc.)
+      open_email_reply <uid> [folder] [reply|reply-all|ai-reply]
+      highlight <selector> [label] — Highlight a UI element
+      clear_highlight         — Clear all highlights
+      get_toggles             — Return info about available toggles
     """
-    lines = content.strip().split("\n")
-    if not lines:
+    stripped = content.strip()
+    if not stripped:
         return {"error": "No action specified"}
 
+    lines = stripped.split("\n")
     parts = lines[0].strip().split(None, 2)
+    if not parts:
+        return {"error": "No action specified"}
+
     action = parts[0].lower()
 
-    if action == "toggle":
-        if len(parts) < 3:
-            return {"error": "toggle needs: toggle <name> <on|off>"}
-        toggle_name = parts[1].lower()
-        state = parts[2].lower() in ("on", "true", "1", "yes", "enable", "enabled")
-        # Friendly aliases — users say "shell" / "search" naturally.
-        _toggle_aliases = {
-            "shell": "bash",
-            "terminal": "bash",
-            "search": "web",
-            "websearch": "web",
-            "web_search": "web",
-            "deepresearch": "research",
-            "deep_research": "research",
-            "documents": "document_editor",
-            "doc": "document_editor",
-            "docs": "document_editor",
-            "private": "incognito",
-        }
-        toggle_name = _toggle_aliases.get(toggle_name, toggle_name)
-        valid_toggles = {"web", "bash", "research", "incognito", "document_editor"}
-        if toggle_name not in valid_toggles:
-            return {"error": f"Unknown toggle '{toggle_name}'. Valid: {', '.join(sorted(valid_toggles))}"}
-        return {
-            "ui_event": "toggle",
-            "toggle_name": toggle_name,
-            "state": state,
-            "results": f"Toggle '{toggle_name}' set to {'on' if state else 'off'}",
-        }
+    _HANDLERS = {
+        "toggle": _ui_handle_toggle,
+        "set_mode": _ui_handle_set_mode,
+        "set_theme": _ui_handle_set_theme,
+        "create_theme": _ui_handle_create_theme,
+        "highlight": _ui_handle_highlight,
+        "clear_highlight": _ui_handle_clear_highlight,
+        "open_panel": _ui_handle_open_panel,
+        "open_email_reply": _ui_handle_open_email_reply,
+        "get_toggles": _ui_handle_get_toggles,
+    }
 
-    elif action == "set_mode":
-        if len(parts) < 2:
-            return {"error": "set_mode needs: set_mode <agent|chat>"}
-        mode = parts[1].lower()
-        if mode not in ("agent", "chat"):
-            return {"error": f"Invalid mode '{mode}'. Use: agent, chat"}
-        return {
-            "ui_event": "set_mode",
-            "mode": mode,
-            "results": f"Mode changed to '{mode}'",
-        }
+    if action == "switch_model":
+        return await _ui_handle_switch_model(parts, lines, session_id)
 
-    elif action == "switch_model":
-        model_spec = " ".join(parts[1:]) if len(parts) > 1 else ""
-        if not model_spec:
-            model_spec = lines[1].strip() if len(lines) > 1 else ""
-        if not model_spec:
-            return {"error": "switch_model needs a model name"}
+    handler = _HANDLERS.get(action)
+    if handler:
+        return handler(parts, lines)
 
-        # Resolve the model to validate it exists
+    valid = sorted(_HANDLERS.keys()) + ["switch_model"]
+    return {"error": f"Unknown action '{action}'. Use: {', '.join(valid)}"}
+
+
+def _ui_handle_toggle(parts: list, lines: list) -> Dict:
+    """Handle the toggle action — enable/disable a UI feature."""
+    if len(parts) < 3:
+        return {"error": "toggle needs: toggle <name> <on|off>"}
+
+    raw_name = parts[1].lower()
+    toggle_name = resolve_toggle(raw_name)
+    if not toggle_name or toggle_name not in CANONICAL_TOGGLES:
+        return {"error": f"Unknown toggle '{raw_name}'. Valid: {', '.join(sorted(CANONICAL_TOGGLES))}"}
+
+    state = parts[2].lower() in ("on", "true", "1", "yes", "enable", "enabled")
+    return {
+        "ui_event": "toggle",
+        "toggle_name": toggle_name,
+        "state": state,
+        "results": f"Toggle '{toggle_name}' set to {'on' if state else 'off'}",
+    }
+
+
+def _ui_handle_set_mode(parts: list, lines: list) -> Dict:
+    """Handle the set_mode action — switch between agent and chat mode."""
+    if len(parts) < 2:
+        return {"error": "set_mode needs: set_mode <agent|chat>"}
+    mode = parts[1].lower()
+    if mode not in ("agent", "chat"):
+        return {"error": f"Invalid mode '{mode}'. Use: agent, chat"}
+    return {
+        "ui_event": "set_mode",
+        "mode": mode,
+        "results": f"Mode changed to '{mode}'",
+    }
+
+
+async def _ui_handle_switch_model(parts: list, lines: list, session_id: Optional[str]) -> Dict:
+    """Handle switch_model — validate and apply a model change to the current session."""
+    model_spec = " ".join(parts[1:]) if len(parts) > 1 else ""
+    if not model_spec:
+        model_spec = lines[1].strip() if len(lines) > 1 else ""
+    if not model_spec:
+        return {"error": "switch_model needs a model name"}
+
+    try:
+        url, model_id, headers = _resolve_model(model_spec)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    if session_id and _session_manager:
+        from src.database import SessionLocal as _SL, Session as _DbSess
+        with get_db_session() as db:
+            db_s = db.query(_DbSess).filter(_DbSess.id == session_id).first()
+            if db_s:
+                db_s.endpoint_url = url
+                db_s.model = model_id
+                db.commit()
+
+        sess = _session_manager.get_session(session_id)
+        if sess:
+            sess.endpoint_url = url
+            sess.model = model_id
+            if headers:
+                sess.headers = headers
+
+    return {
+        "ui_event": "switch_model",
+        "model": model_id,
+        "endpoint_url": url,
+        "results": f"Model switched to '{model_id}'",
+    }
+
+
+def _ui_handle_set_theme(parts: list, lines: list) -> Dict:
+    """Handle set_theme — apply a named theme preset or custom theme."""
+    theme_name = parts[1].lower() if len(parts) > 1 else ""
+    if not theme_name:
+        return {"error": "set_theme needs a theme name"}
+
+    custom_themes = {}
+    try:
+        from routes.prefs_routes import _load as _load_prefs
+        custom_themes = _load_prefs().get("custom-themes", {}) or {}
+    except Exception:
+        pass
+
+    all_known = THEME_PRESETS | set(custom_themes.keys())
+    if theme_name not in all_known:
+        custom_label = f" | Custom: {', '.join(sorted(custom_themes.keys()))}" if custom_themes else ""
+        return {"error": f"Unknown theme '{theme_name}'. Available: {', '.join(sorted(THEME_PRESETS))}{custom_label}"}
+
+    return {
+        "ui_event": "set_theme",
+        "theme_name": theme_name,
+        "results": f"Theme changed to '{theme_name}'",
+    }
+
+
+def _ui_handle_create_theme(parts: list, lines: list) -> Dict:
+    """Handle create_theme — create a custom named theme with colors and optional effects."""
+    all_parts = lines[0].strip().split()
+    if len(all_parts) < 7:
+        return {"error": (
+            "create_theme needs: create_theme <name> <bg> <fg> <panel> <border> <accent> "
+            "(all hex colors). Optional advanced color key=value pairs and background EFFECTS: "
+            f"bgPattern=<{'|'.join(sorted(BACKGROUND_PATTERNS))}>, "
+            "bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false"
+        )}
+
+    name = all_parts[1].lower().replace(" ", "-")
+    base_color_keys = ("bg", "fg", "panel", "border", "red")
+    colors = dict(zip(base_color_keys, all_parts[2:7]))
+
+    for key, val in colors.items():
+        if not is_valid_hex_color(val):
+            return {"error": f"Invalid hex color for {key}: '{val}'. Use format #RRGGBB"}
+
+    advanced, bg = {}, {}
+    for token in all_parts[7:]:
+        if "=" not in token:
+            continue
+        key, val = token.split("=", 1)
+        err = _ui_parse_theme_token(key, val, advanced, bg)
+        if err:
+            return err
+
+    if advanced:
+        colors["advanced"] = advanced
+
+    effect_label = bg.get("pattern", "frosted" if bg.get("frosted") else "custom") if bg else None
+    return {
+        "ui_event": "create_theme",
+        "theme_name": name,
+        "colors": colors,
+        "bg": bg or None,
+        "results": (
+            f"Custom theme '{name}' created and applied"
+            + (f" with {len(advanced)} advanced overrides" if advanced else "")
+            + (f" + background effect ({effect_label})" if bg else "")
+        ),
+    }
+
+
+def _ui_parse_theme_token(key: str, val: str, advanced: dict, bg: dict) -> Optional[Dict]:
+    """Parse one key=value token from create_theme. Mutates advanced/bg dicts.
+
+    Returns an error dict if invalid, or None if the token was consumed correctly.
+    """
+    if key in ADVANCED_COLOR_KEYS:
+        if not is_valid_hex_color(val):
+            return {"error": f"Invalid hex color for advanced key {key}: '{val}'. Use format #RRGGBB"}
+        advanced[key] = val
+
+    elif key == "bgPattern":
+        if val not in BACKGROUND_PATTERNS:
+            return {"error": f"Invalid bgPattern '{val}'. Use one of: {', '.join(sorted(BACKGROUND_PATTERNS))}"}
+        bg["pattern"] = val
+
+    elif key == "bgEffectColor":
+        if not is_valid_hex_color(val):
+            return {"error": f"Invalid hex color for bgEffectColor: '{val}'. Use format #RRGGBB"}
+        bg["effectColor"] = val
+
+    elif key in ("bgEffectIntensity", "bgEffectSize"):
         try:
-            url, model_id, headers = _resolve_model(model_spec)
-        except ValueError as e:
-            return {"error": str(e)}
+            dest = "effectIntensity" if key == "bgEffectIntensity" else "effectSize"
+            bg[dest] = float(val)
+        except ValueError:
+            return {"error": f"Invalid number for {key}: '{val}'"}
 
-        # Update current session's model if we have a session
-        if session_id and _session_manager:
-            from src.database import SessionLocal as SL2, Session as DbSess2
-            db2 = SL2()
-            try:
-                db_s = db2.query(DbSess2).filter(DbSess2.id == session_id).first()
-                if db_s:
-                    db_s.endpoint_url = url
-                    db_s.model = model_id
-                    db2.commit()
-            finally:
-                db2.close()
+    elif key == "frosted":
+        bg["frosted"] = val.lower() in ("true", "1", "yes", "on")
 
-            sess = _session_manager.get_session(session_id)
-            if sess:
-                sess.endpoint_url = url
-                sess.model = model_id
-                if headers:
-                    sess.headers = headers
+    return None
 
-        return {
-            "ui_event": "switch_model",
-            "model": model_id,
-            "endpoint_url": url,
-            "results": f"Model switched to '{model_id}'",
-        }
 
-    elif action == "set_theme":
-        theme_name = parts[1].lower() if len(parts) > 1 else ""
-        # Theme colors are defined in static/js/theme.js on the frontend.
-        # We pass the name; the frontend looks it up from presets + custom themes.
-        # Also check user's custom themes stored in prefs.
-        # Must match the THEMES keys in static/js/theme.js.
-        known_presets = [
-            "dark", "light", "midnight", "paper", "cyberpunk", "retrowave",
-            "forest", "ocean", "ume", "copper", "terminal", "organs",
-            "lavender", "gpt", "claude", "cute",
-        ]
-        custom_themes = {}
-        try:
-            from routes.prefs_routes import _load as _load_prefs
-            custom_themes = _load_prefs().get("custom-themes", {}) or {}
-        except Exception:
-            pass
-        all_known = set(known_presets) | set(custom_themes.keys())
-        if theme_name not in all_known:
-            custom_label = f" | Custom: {', '.join(sorted(custom_themes.keys()))}" if custom_themes else ""
-            return {"error": f"Unknown theme '{theme_name}'. Available: {', '.join(sorted(known_presets))}{custom_label}"}
-        return {
-            "ui_event": "set_theme",
-            "theme_name": theme_name,
-            "results": f"Theme changed to '{theme_name}'",
-        }
+def _ui_handle_highlight(parts: list, lines: list) -> Dict:
+    """Handle highlight — mark a CSS selector for visual emphasis."""
+    selector = parts[1] if len(parts) > 1 else ""
+    label = " ".join(parts[2:]) if len(parts) > 2 else ""
+    if not selector:
+        return {"error": "highlight needs: highlight <css-selector> [label]"}
+    return {
+        "ui_event": "highlight",
+        "selector": selector,
+        "label": label,
+        "results": f"Highlighting '{selector}'",
+    }
 
-    elif action == "create_theme":
-        # Re-split without limit to get all parts
-        parts = lines[0].strip().split()
-        # create_theme <name> <bg> <fg> <panel> <border> <accent> [key=value ...]
-        if len(parts) < 7:
-            return {"error": "create_theme needs: create_theme <name> <bg> <fg> <panel> <border> <accent> (all hex colors). Optional advanced color key=value pairs (userBubbleBg, aiBubbleBg, bubbleBorder, sidebarBg, sectionAccent, brandColor, inputBg, inputBorder, sendBtnBg, sendBtnHover, codeBg, codeFg, toggleBg, toggleActive, accentPrimary, accentError). Optional background EFFECTS: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num e.g. 1>, bgEffectSize=<num e.g. 1>, frosted=true|false"}
-        name = parts[1].lower().replace(" ", "-")
-        colors = {"bg": parts[2], "fg": parts[3], "panel": parts[4], "border": parts[5], "red": parts[6]}
-        # Validate base hex colors
-        import re as _re
-        for k, v in colors.items():
-            if not _re.match(r'^#[0-9a-fA-F]{6}$', v):
-                return {"error": f"Invalid hex color for {k}: '{v}'. Use format #RRGGBB"}
-        # Parse optional advanced key=value pairs
-        adv_keys = {
-            "userBubbleBg", "aiBubbleBg", "bubbleBorder", "sidebarBg",
-            "sectionAccent", "brandColor", "inputBg", "inputBorder",
-            "sendBtnBg", "sendBtnHover", "codeBg", "codeFg",
-            "toggleBg", "toggleActive", "accentPrimary", "accentError",
-        }
-        advanced = {}
-        # Background-effect fields (animated pattern + frosted glass). Different
-        # value types than the hex-only advanced keys, so parse separately.
-        _BG_PATTERNS = {"none", "dots", "synapse", "rain", "constellations",
-                        "perlin-flow", "petals", "sparkles", "embers"}
-        bg = {}
-        for part in parts[7:]:
-            if "=" not in part:
-                continue
-            ak, av = part.split("=", 1)
-            if ak in adv_keys:
-                if not _re.match(r'^#[0-9a-fA-F]{6}$', av):
-                    return {"error": f"Invalid hex color for advanced key {ak}: '{av}'. Use format #RRGGBB"}
-                advanced[ak] = av
-            elif ak == "bgPattern":
-                if av not in _BG_PATTERNS:
-                    return {"error": f"Invalid bgPattern '{av}'. Use one of: {', '.join(sorted(_BG_PATTERNS))}"}
-                bg["pattern"] = av
-            elif ak == "bgEffectColor":
-                if not _re.match(r'^#[0-9a-fA-F]{6}$', av):
-                    return {"error": f"Invalid hex color for bgEffectColor: '{av}'. Use format #RRGGBB"}
-                bg["effectColor"] = av
-            elif ak in ("bgEffectIntensity", "bgEffectSize"):
-                try:
-                    bg["effectIntensity" if ak == "bgEffectIntensity" else "effectSize"] = float(av)
-                except ValueError:
-                    return {"error": f"Invalid number for {ak}: '{av}'"}
-            elif ak == "frosted":
-                bg["frosted"] = av.lower() in ("true", "1", "yes", "on")
-        if advanced:
-            colors["advanced"] = advanced
-        return {
-            "ui_event": "create_theme",
-            "theme_name": name,
-            "colors": colors,
-            "bg": bg or None,
-            "results": f"Custom theme '{name}' created and applied"
-                       + (f" with {len(advanced)} advanced overrides" if advanced else "")
-                       + (f" + background effect ({bg.get('pattern', 'frosted' if bg.get('frosted') else 'custom')})" if bg else ""),
-        }
 
-    elif action == "highlight":
-        selector = parts[1] if len(parts) > 1 else ""
-        label = " ".join(parts[2:]) if len(parts) > 2 else ""
-        if not selector:
-            return {"error": "highlight needs: highlight <css-selector> [label]"}
-        return {
-            "ui_event": "highlight",
-            "selector": selector,
-            "label": label,
-            "results": f"Highlighting '{selector}'",
-        }
+def _ui_handle_clear_highlight(parts: list, lines: list) -> Dict:
+    """Handle clear_highlight — remove all visual highlights."""
+    return {
+        "ui_event": "clear_highlight",
+        "results": "Highlights cleared",
+    }
 
-    elif action == "clear_highlight":
-        return {
-            "ui_event": "clear_highlight",
-            "results": "Highlights cleared",
-        }
 
-    elif action == "open_panel":
-        # Open a top-level panel/modal: documents/library, gallery,
-        # email, sessions, notes, memories, skills, settings, cookbook.
-        panel = parts[1].lower() if len(parts) > 1 else ""
-        _panel_aliases = {
-            "documents": "documents",
-            "document": "documents",
-            "doc": "documents",
-            "docs": "documents",
-            "library": "documents",
-            "doclib": "documents",
-            "gallery": "gallery",
-            "images": "gallery",
-            "email": "email",
-            "emails": "email",
-            "inbox": "email",
-            "mail": "email",
-            "sessions": "sessions",
-            "chats": "sessions",
-            "history": "sessions",
-            "notes": "notes",
-            "note": "notes",
-            "todo": "notes",
-            "todos": "notes",
-            "memories": "memories",
-            "memory": "memories",
-            "brain": "memories",
-            "skills": "skills",
-            "settings": "settings",
-            "preferences": "settings",
-            "cookbook": "cookbook",
-            "models": "cookbook",
-            "llm": "cookbook",
-            "serve": "cookbook",
-            "serving": "cookbook",
-        }
-        target = _panel_aliases.get(panel)
-        if not target:
-            return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, email, sessions, notes, memories, skills, settings, cookbook."}
-        return {
-            "ui_event": "open_panel",
-            "panel": target,
-            "results": f"Opening {target} panel",
-        }
+def _ui_handle_open_panel(parts: list, lines: list) -> Dict:
+    """Handle open_panel — navigate to a top-level panel in the UI."""
+    raw = parts[1].lower() if len(parts) > 1 else ""
+    target = resolve_panel(raw)
+    if not target:
+        return {"error": f"Unknown panel '{raw}'. Valid: {', '.join(sorted(CANONICAL_PANELS))}."}
+    return {
+        "ui_event": "open_panel",
+        "panel": target,
+        "results": f"Opening {target} panel",
+    }
 
-    elif action == "open_email_reply":
-        reply_parts = lines[0].strip().split()
-        uid = reply_parts[1].strip() if len(reply_parts) > 1 else ""
-        folder = reply_parts[2].strip() if len(reply_parts) > 2 else "INBOX"
-        mode = reply_parts[3].strip().lower() if len(reply_parts) > 3 else "reply"
-        if not uid:
-            return {"error": "open_email_reply needs: open_email_reply <uid> [folder] [reply|reply-all|ai-reply]"}
-        if mode not in ("reply", "reply-all", "ai-reply"):
-            mode = "reply"
-        return {
-            "ui_event": "open_email_reply",
-            "uid": uid,
-            "folder": folder or "INBOX",
-            "mode": mode,
-            "results": f"Opening reply draft for email UID {uid}",
-        }
 
-    elif action == "get_toggles":
-        return {
-            "results": (
-                "Toggle states are managed client-side in localStorage. "
-                "Available toggles: web, bash, rag, research, incognito, document_editor. "
-                "Use 'toggle <name> <on|off>' to change them."
-            )
-        }
+def _ui_handle_open_email_reply(parts: list, lines: list) -> Dict:
+    """Handle open_email_reply — open a pre-populated reply draft for an email."""
+    tokens = lines[0].strip().split()
+    uid = tokens[1].strip() if len(tokens) > 1 else ""
+    folder = tokens[2].strip() if len(tokens) > 2 else "INBOX"
+    mode = tokens[3].strip().lower() if len(tokens) > 3 else "reply"
 
-    else:
-        return {"error": f"Unknown action '{action}'. Use: toggle, set_mode, switch_model, set_theme, highlight, clear_highlight, get_toggles"}
+    if not uid:
+        return {"error": "open_email_reply needs: open_email_reply <uid> [folder] [reply|reply-all|ai-reply]"}
+    if mode not in ("reply", "reply-all", "ai-reply"):
+        mode = "reply"
+
+    return {
+        "ui_event": "open_email_reply",
+        "uid": uid,
+        "folder": folder or "INBOX",
+        "mode": mode,
+        "results": f"Opening reply draft for email UID {uid}",
+    }
+
+
+def _ui_handle_get_toggles(parts: list, lines: list) -> Dict:
+    """Handle get_toggles — return info about available UI toggles."""
+    return {
+        "results": (
+            "Toggle states are managed client-side in localStorage. "
+            f"Available toggles: {', '.join(sorted(CANONICAL_TOGGLES))}. "
+            "Use 'toggle <name> <on|off>' to change them."
+        )
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1877,7 +1879,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                         if not _ibase.endswith("/v1"):
                             _ibase += "/v1"
                         try:
-                            _r = _req.get(_ibase + "/models", timeout=3)
+                            _r = _req.get(_ibase + "/models", timeout=HTTP_TIMEOUT_IMAGE_ENDPOINT)
                             _r.raise_for_status()
                             _mids = [m.get("id") for m in (_r.json().get("data") or []) if m.get("id")]
                             if _mids:
@@ -1930,7 +1932,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         else:
             payload["quality"] = "medium"
 
-    logger.info(f"Image generation: model={model_id}, size={size}, quality={quality}, prompt={prompt[:80]}")
+    logger.info(f"Image generation: model={model_id}, size={size}, quality={quality}, prompt={prompt[:IMAGE_PROMPT_LOG_LIMIT]}")
 
     try:
         # GPT image models can take 30-120s+ depending on quality
@@ -1938,7 +1940,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
             resp = await client.post(images_url, json=payload, headers=headers)
 
             if resp.status_code != 200:
-                error_text = resp.text[:500]
+                error_text = resp.text[:ERROR_TEXT_DISPLAY_LIMIT]
                 try:
                     err_json = resp.json()
                     error_text = err_json.get("error", {}).get("message", error_text) if isinstance(err_json.get("error"), dict) else str(err_json.get("error", error_text))
@@ -1991,7 +1993,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
             elif img.get("url"):
                 # Download external URL and save locally (DALL-E returns temp URLs)
                 try:
-                    dl_resp = httpx.get(img["url"], timeout=60)
+                    dl_resp = httpx.get(img["url"], timeout=HTTP_TIMEOUT_IMAGE_DOWNLOAD)
                     if dl_resp.status_code == 200:
                         img_dir = Path("data/generated_images")
                         img_dir.mkdir(parents=True, exist_ok=True)
