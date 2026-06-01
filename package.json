@@ -1,7 +1,49 @@
 {
+  "name": "odysseus",
+  "version": "1.1.0",
+  "description": "Self-hosted AI workspace — one command to run on any machine",
   "repository": {
     "type": "git",
     "url": "https://github.com/pewdiepie-archdaemon/odysseus.git"
+  },
+  "bin": {
+    "odysseus": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "app.py",
+    "core/",
+    "routes/",
+    "src/",
+    "config/",
+    "static/",
+    "docker/",
+    "docs/",
+    "tests/",
+    "scripts/",
+    "setup.py",
+    "requirements.txt",
+    "requirements-optional.txt",
+    "pyproject.toml",
+    "Dockerfile",
+    "docker-compose.yml",
+    "README.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "SECURITY.md",
+    "ACKNOWLEDGMENTS.md",
+    "ROADMAP.md",
+    ".env.example",
+    ".dockerignore",
+    ".gitattributes"
+  ],
+  "scripts": {
+    "start": "node bin/cli.js serve",
+    "serve": "node bin/cli.js serve",
+    "setup": "node bin/cli.js setup",
+    "status": "node bin/cli.js status",
+    "init": "node bin/cli.js init"
   },
   "devDependencies": {
     "@antithesishq/bombadil": "^0.3.2"

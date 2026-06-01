@@ -443,7 +443,8 @@
         sessionStorage.setItem('ody-prefetch-sessions', JSON.stringify(sess));
         sessionStorage.setItem('ody-prefetch-features', JSON.stringify(feat));
         sessionStorage.setItem('ody-prefetch-settings', JSON.stringify(sett));
-      }).catch(() => {}).finally(() => { window.location.replace('/'); });
+        setTimeout(() => window.location.replace('/'), 50);
+      }).catch(() => {});
     }
     async function doLogin(totpCode) {
       const loginBody = { username, password, remember };
