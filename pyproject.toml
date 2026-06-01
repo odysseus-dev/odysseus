@@ -1,3 +1,40 @@
+[project]
+name = "odysseus"
+version = "1.0.0"
+description = "Self-hosted AI Workspace."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "bcrypt>=5.0.0",
+    "beautifulsoup4>=4.14.3",
+    "caldav>=3.2.1",
+    "charset-normalizer>=3.4.7",
+    "chromadb-client>=1.5.9",
+    "croniter>=6.2.2",
+    "cryptography>=48.0.0",
+    "fastapi>=0.136.3",
+    "fastembed>=0.8.0",
+    "httpx>=0.28.1",
+    "icalendar>=7.1.2",
+    "markdown>=3.10.2",
+    "mcp>=1.27.2",
+    "numpy>=2.4.6",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "pyotp>=2.9.0",
+    "pypdf>=6.12.2",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.4.0",
+    "python-dateutil>=2.9.0.post0",
+    "python-dotenv>=1.2.2",
+    "python-multipart>=0.0.30",
+    "qrcode[pil]>=8.2",
+    "sqlalchemy>=2.0.50",
+    "uvicorn>=0.48.0",
+    "youtube-transcript-api>=1.2.4",
+]
+
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
