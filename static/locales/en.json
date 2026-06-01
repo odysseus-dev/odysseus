@@ -335,6 +335,7 @@
     "loading_providers": "Loading providers…",
     "local_offline": "Local server appears offline: {reason}. Click to try anyway, or relaunch in Cookbook.",
     "no_match": "No models match \"{query}\"",
+    "no_matching": "No matching models",
     "none_available": "No models available",
     "not_responding": "not responding",
     "offline": "offline",

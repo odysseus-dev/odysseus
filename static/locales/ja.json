@@ -324,6 +324,7 @@
     "loading_providers": "プロバイダーを読み込み中…",
     "local_offline": "ローカルサーバーがオフラインのようです: {reason}。クリックして続行するか、Cookbookで再起動してください。",
     "no_match": "「{query}」に一致するモデルがありません",
+    "no_matching": "一致するモデルがありません",
     "none_available": "利用可能なモデルがありません",
     "not_responding": "応答なし",
     "offline": "オフライン",
