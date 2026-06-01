@@ -3,6 +3,7 @@ Extracted from cookbook_routes.py; the routes module imports the symbols it need
 
 import logging
 import os
+import posixpath
 import re
 import shlex
 
@@ -112,7 +113,13 @@ def _local_tooling_path_export(executable: str) -> str:
     macOS, where the `pip --user` self-heal also misses (`pip` isn't a command,
     only `pip3`/`python3 -m pip`). Local runs only; meaningless over SSH.
     """
-    bin_dir = os.path.dirname(os.path.abspath(executable))
+    # This builds a bash snippet, so an explicit POSIX absolute path should keep
+    # POSIX semantics even when the app/tests run on Windows. Otherwise
+    # os.path.abspath("/opt/...") would incorrectly turn it into "D:\\opt\\...".
+    if executable.startswith("/"):
+        bin_dir = posixpath.dirname(executable)
+    else:
+        bin_dir = os.path.dirname(os.path.abspath(executable))
     # Escape for a double-quoted context: $PATH must still expand, but spaces
     # and shell metacharacters in the path must be preserved literally.
     esc = (
