@@ -1,8 +1,10 @@
 """Tests for model_context.py — local endpoint detection, token estimation, known model lookup."""
 
 import pytest
+import httpx
 
-from src.model_context import _is_local_endpoint, estimate_tokens, _lookup_known
+import src.model_context as model_context
+from src.model_context import _is_local_endpoint, estimate_tokens, _lookup_known, DEFAULT_CONTEXT
 
 
 class TestIsLocalEndpoint:
@@ -107,3 +109,138 @@ class TestLookupKnown:
         """Models with :free or :extended suffixes should still match."""
         result = _lookup_known("deepseek-r1:free")
         assert result == 64000
+
+
+class TestQueryContextLength:
+    """Tests for _query_context_length() HTTP probing logic."""
+
+    OLLAMA_URL = "http://localhost:11434/v1/chat/completions"
+    REMOTE_URL = "https://api.openai.com/v1/chat/completions"
+
+    def _make_response(self, status, json_body, url="http://localhost"):
+        req = httpx.Request("GET", url)
+        return httpx.Response(status, request=req, json=json_body)
+
+    def _make_post_response(self, status, json_body, url="http://localhost"):
+        req = httpx.Request("POST", url)
+        return httpx.Response(status, request=req, json=json_body)
+
+    def test_ollama_api_show_used_for_local(self, monkeypatch):
+        """/api/show context_length is trusted over known value for local endpoints."""
+        post_calls = []
+
+        def fake_post(url, json=None, timeout=None):
+            post_calls.append(url)
+            return self._make_post_response(200, {
+                "model_info": {"qwen3.context_length": 40960}
+            }, url)
+
+        def fake_get(url, timeout=None):
+            # /slots not available, /v1/models returns no context_length
+            req = httpx.Request("GET", url)
+            if url.endswith("/slots"):
+                raise httpx.ConnectError("no slots")
+            return httpx.Response(200, request=req, json={"data": [{"id": "qwen3:14b"}]})
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        monkeypatch.setattr(model_context.httpx, "post", fake_post)
+        model_context._context_cache.clear()
+
+        result = model_context._query_context_length(self.OLLAMA_URL, "qwen3:14b")
+
+        assert result == 40960
+        assert any("/api/show" in url for url in post_calls)
+
+    def test_api_show_404_falls_through_to_models(self, monkeypatch):
+        """/api/show 404 (non-Ollama server) falls through to /v1/models."""
+        def fake_post(url, json=None, timeout=None):
+            req = httpx.Request("POST", url)
+            return httpx.Response(404, request=req, json={})
+
+        def fake_get(url, timeout=None):
+            req = httpx.Request("GET", url)
+            if url.endswith("/slots"):
+                raise httpx.ConnectError("no slots")
+            return httpx.Response(200, request=req, json={
+                "data": [{"id": "llama3:8b", "context_length": 8192}]
+            })
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        monkeypatch.setattr(model_context.httpx, "post", fake_post)
+        model_context._context_cache.clear()
+
+        result = model_context._query_context_length(
+            "http://localhost:8080/v1/chat/completions", "llama3:8b"
+        )
+        assert result == 8192
+
+    def test_api_show_connection_error_falls_through(self, monkeypatch):
+        """/api/show connection error is silently ignored."""
+        def fake_post(url, json=None, timeout=None):
+            raise httpx.ConnectError("refused")
+
+        def fake_get(url, timeout=None):
+            req = httpx.Request("GET", url)
+            if url.endswith("/slots"):
+                raise httpx.ConnectError("no slots")
+            return httpx.Response(200, request=req, json={"data": []})
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        monkeypatch.setattr(model_context.httpx, "post", fake_post)
+        model_context._context_cache.clear()
+
+        # qwen3:14b known = 131072, api fails → returns known
+        result = model_context._query_context_length(self.OLLAMA_URL, "qwen3:14b")
+        assert result == 131072
+
+    def test_api_show_not_tried_for_remote(self, monkeypatch):
+        """/api/show is never queried for remote (cloud) endpoints."""
+        post_calls = []
+
+        def fake_post(url, json=None, timeout=None):
+            post_calls.append(url)
+            req = httpx.Request("POST", url)
+            return httpx.Response(200, request=req, json={})
+
+        def fake_get(url, timeout=None):
+            req = httpx.Request("GET", url)
+            return httpx.Response(200, request=req, json={
+                "data": [{"id": "gpt-4o", "context_length": 128000}]
+            })
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        monkeypatch.setattr(model_context.httpx, "post", fake_post)
+        model_context._context_cache.clear()
+
+        model_context._query_context_length(self.REMOTE_URL, "gpt-4o")
+        assert not any("/api/show" in url for url in post_calls)
+
+    def test_all_http_fails_known_model_returns_known(self, monkeypatch):
+        """All HTTP probes fail → returns known context window."""
+        def fake_get(url, timeout=None):
+            raise httpx.ConnectError("offline")
+
+        def fake_post(url, json=None, timeout=None):
+            raise httpx.ConnectError("offline")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        monkeypatch.setattr(model_context.httpx, "post", fake_post)
+        model_context._context_cache.clear()
+
+        result = model_context._query_context_length(self.OLLAMA_URL, "qwen3:14b")
+        assert result == 131072
+
+    def test_all_http_fails_unknown_model_returns_default(self, monkeypatch):
+        """All HTTP probes fail + unknown model → DEFAULT_CONTEXT."""
+        def fake_get(url, timeout=None):
+            raise httpx.ConnectError("offline")
+
+        def fake_post(url, json=None, timeout=None):
+            raise httpx.ConnectError("offline")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        monkeypatch.setattr(model_context.httpx, "post", fake_post)
+        model_context._context_cache.clear()
+
+        result = model_context._query_context_length(self.OLLAMA_URL, "totally-unknown-xyz")
+        assert result == DEFAULT_CONTEXT
