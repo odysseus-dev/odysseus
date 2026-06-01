@@ -16,6 +16,10 @@ services:
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
       - ./data/local:/app/.local
+      # Frontend assets are baked into the image at build time. Mount the host
+      # static/ over it so CSS/JS edits show up on a browser reload without a
+      # rebuild. The served files are then always the working-tree copy.
+      - ./static:/app/static
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.

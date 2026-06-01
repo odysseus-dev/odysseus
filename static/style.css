@@ -1690,6 +1690,10 @@ body.bg-pattern-sparkles {
       overflow: hidden;
       text-overflow: clip;
       white-space: nowrap;
+      /* .list-item sets line-height:1, which clips the tops of Fira Code's
+         tall ascenders under overflow:hidden. Give the label its own roomier
+         line box so glyph tops aren't sliced. */
+      line-height: 1.4;
     }
     input, textarea, button, select {
       background:var(--bg);
