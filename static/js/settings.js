@@ -1,5 +1,5 @@
 // static/js/settings.js — Settings panel module (ES6)
-// User-facing preferences: AI models, search, appearance
+// User-facing preferences: AI models, search, visibility
 
 import uiModule from './ui.js';
 import searchModule from './search.js';
@@ -16,6 +16,38 @@ function esc(s) { return uiModule.esc(s); }
 /* ── Tab switching ── */
 const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'users', 'system']);
 
+const SETTINGS_TAB_HINTS = {
+  services: 'Add LLM endpoints and discover models available on each host.',
+  ai: 'Default models for new chats, background tasks, vision, research, and images.',
+  search: 'Web search provider, API keys, and fallback order for agent web lookup.',
+  integrations: 'External accounts and APIs — email, calendars, vaults, and custom HTTP.',
+  email: 'Per-account options; add or edit mailboxes under Integrations.',
+  reminders: 'How fired note reminders reach you (browser, email, ntfy, and copy).',
+  visibility: 'Show or hide sidebar items, launchers, and chat controls.',
+  shortcuts: 'Keyboard shortcuts — click a row to rebind; reset restores defaults.',
+  account: 'Display name, password, two-factor authentication, and sign out.',
+  tools: 'Enable or disable individual tools the agent may call (admin).',
+  users: 'Accounts, admin flag, and per-user privileges (admin).',
+  system: 'Export or import your data, or wipe specific categories (admin).',
+};
+
+function syncSettingsTabHint(tab) {
+  const hintEl = el('settings-tab-hint');
+  if (!hintEl) return;
+  const text = SETTINGS_TAB_HINTS[tab] || '';
+  hintEl.textContent = text;
+  hintEl.classList.toggle('hidden', !text);
+}
+
+function applySettingsTab(tab) {
+  modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
+  modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
+  document.body.classList.toggle('settings-visibility-open', tab === 'visibility');
+  syncAppearanceOpacity(tab === 'visibility');
+  syncSettingsTabHint(tab);
+  if (tab === 'ai') refreshAiModelEndpoints();
+}
+
 function initTabs() {
   modalEl.querySelectorAll('[data-settings-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -25,14 +57,7 @@ function initTabs() {
         window.adminModule.open(tab);
         return;
       }
-      modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
-      modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
-      // Mark when the Appearance tab is open so the modal can go
-      // semi-transparent — lets the user see the rest of the UI react as
-      // they flip toggles instead of having to close + reopen the modal.
-      document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
-      syncAppearanceOpacity(tab === 'appearance');
-      if (tab === 'ai') refreshAiModelEndpoints();
+      applySettingsTab(tab);
     });
   });
 }
@@ -135,14 +160,14 @@ function _applySettingsOpacity(on) {
   }
 }
 
-// Show/hide the Peek toggle for the Appearance tab and apply or clear the fade.
+// Show/hide the Peek toggle for the Visibility tab and apply or clear the fade.
 function syncAppearanceOpacity(active) {
   const toggle = el('settings-opacity-wrap');
   if (toggle) toggle.classList.toggle('hidden', !active);
   if (active) {
     _applySettingsOpacity(toggle ? toggle.classList.contains('active') : false);
   } else {
-    _applySettingsOpacity(false); // clear the fade off the Appearance tab
+    _applySettingsOpacity(false); // clear the fade off the Visibility tab
   }
 }
 
@@ -1528,9 +1553,9 @@ async function initAgentSettings() {
 }
 
 /* ═══════════════════════════════════════════
-   APPEARANCE TAB
+   VISIBILITY TAB
    ═══════════════════════════════════════════ */
-function initAppearance() {
+function initVisibility() {
   syncAppearanceCheckboxes();
   syncPrivacyCheckboxes();
 
@@ -2108,7 +2133,7 @@ function initAll() {
   initResearchSettings();
   initResearchSearchSettings();
   initAgentSettings();
-  initAppearance();
+  initVisibility();
   initShortcuts();
   initAccount();
   initIntegrations();
@@ -4283,16 +4308,15 @@ export function open(tab) {
   resetWindowPlacement();
   modalEl.classList.remove('hidden');
   syncAdminVisibility();
-  const content = modalEl.querySelector('.settings-modal-content');
-  if (tab) {
-    modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
-    modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
-  }
-  // Auto-init admin data if showing an admin tab
   const activeTab = tab || (modalEl.querySelector('[data-settings-tab].active') || {}).dataset?.settingsTab || 'services';
-  document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
-  syncAppearanceOpacity(activeTab === 'appearance');
-  if (activeTab === 'ai') refreshAiModelEndpoints();
+  if (tab) applySettingsTab(tab);
+  else syncSettingsTabHint(activeTab);
+  // Auto-init admin data if showing an admin tab
+  if (!tab) {
+    document.body.classList.toggle('settings-visibility-open', activeTab === 'visibility');
+    syncAppearanceOpacity(activeTab === 'visibility');
+    if (activeTab === 'ai') refreshAiModelEndpoints();
+  }
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }
@@ -4300,9 +4324,9 @@ export function open(tab) {
 
 export function close() {
   if (!modalEl) return;
-  // Always clear the appearance-tab body class so the rest of the app
+  // Always clear the visibility-tab body class so the rest of the app
   // doesn't keep its dimmed state if the modal got closed mid-tab.
-  document.body.classList.remove('settings-appearance-open');
+  document.body.classList.remove('settings-visibility-open');
   syncAppearanceOpacity(false); // clear any opacity-slider fade
   const content = modalEl.querySelector('.modal-content, .settings-modal-content');
   if (content && !content.classList.contains('modal-closing')) {

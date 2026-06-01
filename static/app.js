@@ -1067,29 +1067,22 @@ function initializeEventListeners() {
     });
   }
 
-  // Sidebar user bar — settings, admin, profile
+  // Sidebar user bar — Settings (left) opens last non-Account tab; profile (right) → Account
   const userBarSettings = el('user-bar-settings');
   const userBarProfile = el('user-bar-profile');
-  const userBarAdmin = el('user-bar-admin');
 
   if (userBarSettings) {
     userBarSettings.addEventListener('click', () => settingsModule.open());
   }
   if (userBarProfile) {
-    // Clicking the user (avatar + name) jumps straight to the Account tab
-    // instead of landing on whatever was last selected.
     userBarProfile.addEventListener('click', () => settingsModule.open('account'));
   }
-  if (userBarAdmin) {
-    userBarAdmin.addEventListener('click', () => adminModule.open());
-  }
 
-  // Fetch auth status — populate user bar and show admin button if admin
+  // Fetch auth status — populate user bar
   fetch(`${API_BASE}/api/auth/status`, { credentials: 'same-origin' })
     .then(r => r.json())
     .then(d => {
       window._isAdmin = !!d.is_admin;
-      if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
       const userBarName = el('user-bar-name');
       const userBarAvatar = el('user-bar-avatar');
       if (userBarName && d.username) {

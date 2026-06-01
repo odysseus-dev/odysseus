@@ -8967,7 +8967,7 @@ import * as Modals from './modalManager.js';
 
     if (!isOpen) openPanel();
 
-    // Force doc button visible (overrides appearance settings & toolbar collapse)
+    // Force doc button visible (overrides visibility settings & toolbar collapse)
     const toggleBtn = document.getElementById('overflow-doc-btn');
     if (toggleBtn) {
       toggleBtn.style.display = '';
