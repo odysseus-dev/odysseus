@@ -683,8 +683,9 @@ def setup_note_routes(task_scheduler=None):
         Returns {synthesis, email_sent}.
         """
         # Gate against anonymous callers — LLM synthesis can burn tokens.
+        import os as _os
         from src.auth_helpers import get_current_user as _gcu
-        if not _gcu(request):
+        if _os.getenv("AUTH_ENABLED", "true").lower() != "false" and not _gcu(request):
             raise HTTPException(401, "Not authenticated")
         body = await request.json()
         note_id = body.get("note_id")

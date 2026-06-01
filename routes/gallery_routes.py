@@ -650,7 +650,7 @@ def setup_gallery_routes() -> APIRouter:
     # of a flood of individual downloads).
     @router.post("/api/gallery/download-zip")
     async def gallery_download_zip(request: Request):
-        user = get_current_user(request)
+        user = get_current_user(request) or (os.getenv("AUTH_ENABLED", "true").lower() == "false" and "guest") or None
         if not user:
             raise HTTPException(401, "Not authenticated")
         try:

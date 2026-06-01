@@ -190,7 +190,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     @router.post("/extract")
     async def extract_memory(request: Request, session: str = Form(...)) -> Dict[str, List[str]]:
         """Analyze a session's chat history and return memory suggestions."""
-        if not get_current_user(request):
+        if os.getenv("AUTH_ENABLED", "true").lower() != "false" and not get_current_user(request):
             raise HTTPException(401, "Not authenticated")
         try:
             sess = session_manager.get_session(session)

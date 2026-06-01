@@ -153,6 +153,16 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
 
     @router.get("/status")
     async def auth_status(request: Request):
+        import os
+        if os.getenv("AUTH_ENABLED", "true").lower() == "false":
+            return {
+                "configured": True,
+                "authenticated": True,
+                "username": "guest",
+                "is_admin": True,
+                "signup_enabled": False,
+                "privileges": {k: True for k in ["can_use_agent","can_use_browser","can_use_bash","can_use_documents","can_use_research","can_generate_images","can_manage_memory"]},
+            }
         token = request.cookies.get(SESSION_COOKIE)
         result = auth_manager.status(token)
         result["signup_enabled"] = auth_manager.signup_enabled

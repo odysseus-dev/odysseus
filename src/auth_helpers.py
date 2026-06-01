@@ -18,6 +18,8 @@ def require_user(request: Request) -> str:
     Use this on routes that touch user data so middleware misconfig can't
     open them up.
     """
+    if os.getenv("AUTH_ENABLED", "true").lower() == "false":
+        return "guest"
     u = get_current_user(request)
     if u:
         return u

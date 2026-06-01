@@ -53,6 +53,9 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         data isn't owner-scoped in the on-disk JSON yet, so we at least
         block anonymous access. Multi-tenant deploys should additionally
         verify the session belongs to this user."""
+        import os
+        if os.getenv("AUTH_ENABLED", "true").lower() == "false":
+            return "guest"
         user = get_current_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")

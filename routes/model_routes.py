@@ -599,8 +599,10 @@ def setup_model_routes(model_discovery):
         # Reject anonymous in configured deployments — no leaking the model
         # list to unauthenticated callers.
         try:
+            import os as _os
             auth_mgr = getattr(request.app.state, "auth_manager", None)
-            if not owner and auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
+            if (not owner and auth_mgr is not None and getattr(auth_mgr, "is_configured", False)
+                    and _os.getenv("AUTH_ENABLED", "true").lower() != "false"):
                 raise HTTPException(401, "Not authenticated")
         except HTTPException:
             raise
