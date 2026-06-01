@@ -3,6 +3,10 @@
     "type": "git",
     "url": "https://github.com/pewdiepie-archdaemon/odysseus.git"
   },
+  "scripts": {
+    "css:overrides": "node scripts/check-css-overrides.mjs",
+    "css:overrides:check": "node scripts/check-css-overrides.mjs --check"
+  },
   "devDependencies": {
     "@antithesishq/bombadil": "^0.3.2"
   },

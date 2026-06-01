@@ -2,6 +2,25 @@
 /* Odysseus UI — Consolidated Stylesheet        */
 /* ============================================ */
 
+/* ── Responsive / mobile overrides ──
+ *
+ * Many selectors are styled here at the base layer and then RE-styled inside a
+ * responsive `@media` block further down. If you change a base rule and nothing
+ * moves on mobile, a `@media` override is probably masking it.
+ *
+ * To see every selector that has a responsive override (and at which lines):
+ *     npm run css:overrides
+ *
+ * Canonical breakpoints — reuse these exact spellings so overrides group into
+ * one block (a CI check, `npm run css:overrides:check`, fails on drift):
+ *     @media (max-width: 768px)   phones / narrow (primary mobile breakpoint)
+ *     @media (max-width: 820px)   small tablets
+ *     @media (max-width: 600px)   very narrow
+ *     @media (min-width: 769px)   desktop-only counterpart to 768px
+ *     @media (hover: none)        touch (no hover) tweaks
+ *     @media (prefers-reduced-motion: reduce)
+ */
+
 
 /* ── Variables ──
  *
@@ -1884,7 +1903,7 @@ body.bg-pattern-sparkles {
       max-width: 800px;
       width: 100%;
     }
-    @media (max-width:768px) {
+    @media (max-width: 768px) {
       #welcome-screen .welcome-name { font-size:1.8rem; }
       #welcome-screen .welcome-sub { font-size:0.8rem; }
       .chat-container.welcome-active .chat-input-bar {
@@ -3863,7 +3882,7 @@ body.bg-pattern-sparkles {
       height: 24px;
       padding: 0 8px;
     }
-    @media (max-width:768px){
+    @media (max-width: 768px) {
       .box { max-height:none; }
       .chat-container { padding:10px; flex:1; margin-top:0; padding-top:42px; min-height:0; }
       .scroll-nav-btn { width:44px; height:44px; font-size:14px; margin-bottom:0; }
@@ -4951,7 +4970,7 @@ body.bg-pattern-sparkles {
       display:flex; justify-content:flex-end; gap:8px; padding-top:6px;
       border-top:1px solid var(--border); margin-top:4px;
     }
-    @media (max-width:768px) {
+    @media (max-width: 768px) {
       .styled-confirm-box {
         width: 85vw;
         padding: 12px 16px;
@@ -5026,7 +5045,7 @@ body.bg-pattern-sparkles {
       border-color: var(--accent-primary, var(--red, #4a9eff));
       box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary, var(--red, #4a9eff)) 25%, transparent);
     }
-    @media (max-width:768px) {
+    @media (max-width: 768px) {
       .styled-prompt-box { width: 85vw; }
       .styled-prompt-input { font-size: 0.9rem; padding: 10px 12px; }
     }

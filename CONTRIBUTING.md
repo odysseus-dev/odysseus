@@ -51,6 +51,22 @@ docker compose logs --tail=120 odysseus
 
 Mention what you ran in the pull request description. If you could not run a check, say so.
 
+### CSS: desktop/mobile paired rules
+
+`static/style.css` is one large consolidated stylesheet, and many "the CSS did
+not move" bugs are a selector that is styled at the base layer and then quietly
+re-styled inside a responsive `@media` block. Before changing a rule, check
+whether it has a responsive override:
+
+```bash
+npm run css:overrides          # report every selector overridden under @media
+npm run css:overrides:check    # CI check: fail if a breakpoint is spelled inconsistently
+```
+
+Reuse the canonical breakpoint spellings (`@media (max-width: 768px)`, etc.,
+listed at the top of `style.css`) so overrides group into one block instead of
+splitting a single breakpoint into two near-identical ones.
+
 ## Pull Requests
 
 Good pull requests usually include:
