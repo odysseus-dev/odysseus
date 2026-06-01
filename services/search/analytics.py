@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from collections import Counter
 from pathlib import Path
 from typing import Dict, Any
@@ -10,8 +11,11 @@ from .cache import cache_metrics
 
 logger = logging.getLogger(__name__)
 
+_DATA_DIR = Path(os.environ.get("ODYSSEUS_DATA_DIR", Path(__file__).resolve().parents[3] / "data"))
+
 # Dedicated error logger with file handler
-_error_log_path = Path(__file__).resolve().parent.parent / "search_engine_error.log"
+_error_log_path = _DATA_DIR / "logs" / "search_engine_error.log"
+_error_log_path.parent.mkdir(parents=True, exist_ok=True)
 _error_handler = logging.FileHandler(_error_log_path, encoding="utf-8")
 _error_handler.setLevel(logging.WARNING)
 _error_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
@@ -20,7 +24,7 @@ error_logger.addHandler(_error_handler)
 error_logger.propagate = False
 
 # Analytics file
-ANALYTICS_FILE = Path(__file__).resolve().parent.parent / "search_analytics.json"
+ANALYTICS_FILE = _DATA_DIR / "search_analytics.json"
 
 
 # ----------------------------------------------------------------------

@@ -137,9 +137,9 @@ class AppConfig(BaseSettings):
             base_dir = v["base_dir"]
         else:
             base_dir = Path(__file__).parent.parent
-        
-        # Convert string paths to Path objects relative to base_dir
-        data_dir = base_dir / "data"
+
+        # ODYSSEUS_DATA_DIR overrides the computed data_dir (Nix/container deploys)
+        data_dir = Path(os.environ["ODYSSEUS_DATA_DIR"]) if "ODYSSEUS_DATA_DIR" in os.environ else base_dir / "data"
         
         # Get values from the input dict or use defaults
         max_upload_size = v.get("max_upload_size", 10 * 1024 * 1024) if isinstance(v, dict) else 10 * 1024 * 1024

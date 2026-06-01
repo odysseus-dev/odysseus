@@ -556,7 +556,7 @@ async def _generate_tmux(cmd: str, request: Request):
     # Using a script avoids shell quoting issues with the tmux command.
     script_path = TMUX_LOG_DIR / f"{session_id}.sh"
     script_path.write_text(
-        f"#!/bin/bash\n"
+        f"#!/usr/bin/env bash\n"
         f"ODYSSEUS_USER_SHELL=\"${{SHELL:-}}\"\n"
         f"if [ -n \"$ODYSSEUS_USER_SHELL\" ] && [ -x \"$ODYSSEUS_USER_SHELL\" ]; then\n"
         f"  ODYSSEUS_USER_PATH=\"$(\"$ODYSSEUS_USER_SHELL\" -ic 'printf \"__ODYSSEUS_PATH__%s\\n\" \"$PATH\"' 2>/dev/null | sed -n 's/^__ODYSSEUS_PATH__//p' | tail -n 1 || true)\"\n"
@@ -975,6 +975,33 @@ def setup_shell_routes() -> APIRouter:
             except Exception:
                 pass
 
+        import sys, subprocess as _sp
+
+        def _pip_installed(name: str) -> bool:
+            """Check if a Python package is importable in the current venv OR
+            the system python3 (covers user/global installs outside the venv)."""
+            if name == "llama_cpp" and shutil.which("llama-server"):
+                return True
+            # Fast path: already importable in this process
+            try:
+                importlib.import_module(name)
+                return True
+            except Exception:
+                pass
+            # Slow path: ask the system python3 (different from venv python)
+            py = shutil.which("python3") or shutil.which("python")
+            if py and py != sys.executable:
+                try:
+                    r = _sp.run(
+                        [py, "-c", f"import {name}"],
+                        capture_output=True, timeout=5,
+                    )
+                    if r.returncode == 0:
+                        return True
+                except Exception:
+                    pass
+            return False
+
         for pkg in packages:
             on_remote = bool(host and pkg.get("target") == "remote")
             probe = None
@@ -988,6 +1015,19 @@ def setup_shell_routes() -> APIRouter:
                         pkg["status_note"] = note
             elif pkg.get("kind") == "system":
                 pkg["installed"] = shutil.which(pkg["name"]) is not None
+                if pkg["name"] == "docker":
+                    status = _docker_row_status(
+                        on_remote=on_remote,
+                        in_container=_running_in_container(),
+                        installed=pkg["installed"],
+                        default_hint=pkg.get("install_hint"),
+                    )
+                    pkg["applicable"] = status.applicable
+                    pkg["install_hint"] = status.install_hint
+                continue
+            elif pkg["name"] == "playwright":
+                # playwright here is the npm/npx package, not a Python module
+                pkg["installed"] = shutil.which("playwright") is not None or shutil.which("npx") is not None
             elif pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
                 pkg["installed"] = True
                 pkg["status_note"] = f"native llama-server: {shutil.which('llama-server')}"
@@ -1006,14 +1046,7 @@ def setup_shell_routes() -> APIRouter:
                     }
                     pkg["status_note"] = _package_status_note("vllm", probe)
             else:
-                try:
-                    importlib.import_module(pkg["name"])
-                    importlib_metadata.version(_pip_dist_name(pkg))
-                    pkg["installed"] = True
-                except ImportError:
-                    pkg["installed"] = False
-                except importlib_metadata.PackageNotFoundError:
-                    pkg["installed"] = False
+                pkg["installed"] = _pip_installed(pkg["name"])
 
             if pkg.get("installed"):
                 update_status = _package_pip_update_status(pkg, probe)

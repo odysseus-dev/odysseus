@@ -1504,7 +1504,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         # as email_routes (ODYSSEUS_MAIL_ATTACHMENTS_DIR).
         from pathlib import Path as _Path
         import os as _os
-        _DATA_DIR = _Path(__file__).resolve().parent.parent / "data"
+        _DATA_DIR = _Path(_os.environ.get("ODYSSEUS_DATA_DIR", str(_Path(__file__).resolve().parent.parent / "data")))
         _BASE = _os.environ.get("ODYSSEUS_MAIL_ATTACHMENTS_DIR", str(_DATA_DIR / "mail-attachments"))
         _COMPOSE_DIR = _Path(_BASE) / "_compose"
         _COMPOSE_DIR.mkdir(parents=True, exist_ok=True)

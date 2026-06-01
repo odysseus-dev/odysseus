@@ -11,6 +11,7 @@
 # Unknown/unreachable codepoints return a transparent SVG (not 404), so the CSS
 # mask shows nothing rather than a solid currentColor box.
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -20,7 +21,7 @@ from fastapi.responses import FileResponse, Response
 
 logger = logging.getLogger(__name__)
 
-_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "emoji_cache"
+_CACHE_DIR = Path(os.environ.get("ODYSSEUS_DATA_DIR", Path(__file__).resolve().parent.parent / "data")) / "emoji_cache"
 # OpenMoji "black" set = monochrome line-art SVGs. Filenames are the codepoints
 # in UPPERCASE (FE0F dropped, same as we compute), '-' joined.
 _OPENMOJI_BASE = "https://cdn.jsdelivr.net/npm/openmoji@15.0.0/black/svg"
