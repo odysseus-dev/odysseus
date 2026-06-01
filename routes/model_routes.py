@@ -303,7 +303,13 @@ def _classify_endpoint(base_url: str) -> str:
 
 def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
-    For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
+    For Anthropic, queries their /v1/models API, falling back to hardcoded list.
+
+    Uses `requests` (pure sync POSIX sockets) rather than `httpx` to avoid
+    EHOSTUNREACH errors when called from background threads under uvicorn on macOS.
+    """
+    import requests as _req
+    from requests.exceptions import HTTPError as _HTTPError
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
     if _detect_provider(base) == "anthropic":
@@ -313,13 +319,13 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         if api_key:
             headers["x-api-key"] = api_key
         try:
-            r = httpx.get(url, headers=headers, timeout=timeout)
+            r = _req.get(url, headers=headers, timeout=timeout)
             r.raise_for_status()
             data = r.json()
             models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
             if models:
                 return models
-        except httpx.HTTPStatusError as e:
+        except _HTTPError as e:
             if api_key:
                 status = e.response.status_code if e.response is not None else "unknown"
                 logger.warning(f"Anthropic /v1/models failed with API key: HTTP {status}")
@@ -334,7 +340,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     url = _models_url(base)
     headers = _provider_headers(api_key, base)
     try:
-        r = httpx.get(url, headers=headers, timeout=timeout)
+        r = _req.get(url, headers=headers, timeout=timeout)
         r.raise_for_status()
         data = r.json()
         # OpenAI format: {"data": [{"id": "model-name"}]}
@@ -344,7 +350,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
             models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
         if models:
             return models
-    except httpx.HTTPStatusError as e:
+    except _HTTPError as e:
         if api_key:
             status = e.response.status_code if e.response is not None else "unknown"
             logger.warning(f"Failed to probe {url} with API key: HTTP {status}")
@@ -362,7 +368,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         parsed = urlparse(base)
         if parsed.port == 11434 or "ollama" in (parsed.hostname or "").lower():
             root = base[:-3].rstrip("/") if base.endswith("/v1") else base
-            r = httpx.get(root + "/api/tags", timeout=timeout)
+            r = _req.get(root + "/api/tags", timeout=timeout)
             r.raise_for_status()
             data = r.json()
             models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
@@ -381,6 +387,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
 
 def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> Dict[str, Any]:
     """Reachability probe that does not require installed/listed models."""
+    import requests as _req
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
     headers = {}
@@ -389,7 +396,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
 
     url = base + "/models"
     try:
-        r = httpx.get(url, headers=headers, timeout=timeout)
+        r = _req.get(url, headers=headers, timeout=timeout)
         if 300 <= r.status_code < 400:
             loc = r.headers.get("location", "")
             if loc.startswith("/login") or "/login" in loc:
@@ -412,7 +419,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
             root = base[:-3].rstrip("/") if base.endswith("/v1") else base
             for path in ("/api/version", "/api/tags"):
                 try:
-                    r = httpx.get(root + path, timeout=timeout)
+                    r = _req.get(root + path, timeout=timeout)
                     if r.status_code < 400:
                         return {"reachable": True, "status_code": r.status_code, "error": None}
                     last_error = f"HTTP {r.status_code}"

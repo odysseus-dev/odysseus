@@ -284,13 +284,9 @@ body.bg-pattern-sparkles {
     .chat-meta-overlay:hover {
       color: color-mix(in srgb, var(--fg) 75%, transparent);
     }
-    /* Offline model rows */
+    /* Offline model rows — dimmed but still interactive */
     .models-row-offline {
-      opacity: 0.4;
-      pointer-events: none;
-    }
-    .models-row-offline .model-chat-btn {
-      pointer-events: auto;
+      opacity: 0.5;
     }
     /* Offline badge next to endpoint name */
     .endpoint-offline-badge {

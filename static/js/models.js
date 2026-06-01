@@ -130,19 +130,17 @@ function _buildModelRow(mid, url, displayName, endpointId, offline, modelType) {
 
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.textContent = offline ? 'Offline' : (modelType === 'image' ? '+ Image' : '+ Chat');
+  btn.textContent = offline ? 'Try' : (modelType === 'image' ? '+ Image' : '+ Chat');
   btn.className = 'model-chat-btn';
   btn.style.transition = 'all 0.2s ease';
   if (offline) {
-    btn.disabled = true;
-    btn.style.opacity = '0.4';
-    btn.style.cursor = 'not-allowed';
-  } else {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      _startChat(url, mid, endpointId);
-    });
+    btn.title = 'Endpoint may be offline — attempt anyway';
+    btn.style.opacity = '0.6';
   }
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _startChat(url, mid, endpointId);
+  });
 
   // Clicking anywhere on the row (except drag handle and fav) starts a chat
   if (!offline) {
