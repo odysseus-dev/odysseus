@@ -159,6 +159,96 @@ function _initModelPickerDropdown() {
     return result;
   }
 
+  // Track collapsed state per provider
+  const _collapsedProviders = new Set(JSON.parse(localStorage.getItem('odysseus-model-collapsed') || '[]'));
+  let _justExpandedProvider = null;
+  function _saveCollapsed() {
+    localStorage.setItem('odysseus-model-collapsed', JSON.stringify([..._collapsedProviders]));
+  }
+
+  // Display names for model provider prefixes
+  const _providerNames = {
+    '01-ai': 'Yi',
+    'abacusai': 'Abacus AI',
+    'adept': 'Adept',
+    'ai21': 'AI21 Labs',
+    'ai21labs': 'AI21 Labs',
+    'aion-labs': 'Aion Labs',
+    'aisingapore': 'AI Singapore',
+    'allenai': 'Allen AI',
+    'amazon': 'Amazon',
+    'anthracite-org': 'Anthracite',
+    'anthropic': 'Anthropic',
+    'arcee-ai': 'Arcee AI',
+    'baai': 'BAAI',
+    'baidu': 'Baidu',
+    'bigcode': 'BigCode',
+    'black-forest-labs': 'Black Forest Labs',
+    'bytedance': 'ByteDance',
+    'bytedance-seed': 'ByteDance Seed',
+    'cognitivecomputations': 'Cognitive Computations',
+    'cohere': 'Cohere',
+    'databricks': 'Databricks',
+    'deepcogito': 'DeepCogito',
+    'deepseek': 'DeepSeek',
+    'deepseek-ai': 'DeepSeek',
+    'essentialai': 'Essential AI',
+    'google': 'Google',
+    'gryphe': 'Gryphe',
+    'ibm': 'IBM',
+    'ibm-granite': 'IBM Granite',
+    'inception': 'Inception',
+    'inclusionai': 'Inclusion AI',
+    'inflection': 'Inflection',
+    'kwaipilot': 'KwaiPilot',
+    'liquid': 'Liquid AI',
+    'mancer': 'Mancer',
+    'meta': 'Llama',
+    'meta-llama': 'Llama',
+    'microsoft': 'Microsoft',
+    'minimax': 'MiniMax',
+    'minimaxai': 'MiniMax',
+    'mistralai': 'Mistral',
+    'moonshotai': 'Moonshot',
+    'morph': 'Morph',
+    'nex-agi': 'Nex AGI',
+    'nousresearch': 'Nous Research',
+    'nv-mistralai': 'NVIDIA x Mistral',
+    'nvidia': 'NVIDIA',
+    'openai': 'OpenAI',
+    'openrouter': 'OpenRouter',
+    'perceptron': 'Perceptron',
+    'perplexity': 'Perplexity',
+    'poolside': 'Poolside',
+    'prime-intellect': 'Prime Intellect',
+    'qwen': 'Qwen',
+    'rekaai': 'Reka',
+    'relace': 'Relace',
+    'sao10k': 'Sao10k',
+    'sarvamai': 'Sarvam AI',
+    'snowflake': 'Snowflake',
+    'stepfun': 'StepFun',
+    'stepfun-ai': 'StepFun',
+    'stockmark': 'Stockmark',
+    'switchpoint': 'SwitchPoint',
+    'tencent': 'Tencent',
+    'thedrummer': 'TheDrummer',
+    'undi95': 'Undi95',
+    'upstage': 'Upstage',
+    'writer': 'Writer',
+    'x-ai': 'xAI',
+    'xiaomi': 'Xiaomi',
+    'z-ai': 'Zhipu',
+    'zyphra': 'Zyphra',
+    '~anthropic': 'Anthropic',
+    '~google': 'Google',
+    '~moonshotai': 'Moonshot',
+    '~openai': 'OpenAI',
+  };
+  function _providerDisplayName(slug) {
+    return _providerNames[slug] || slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' ');
+  }
+
   function _populate(filter) {
     listEl.innerHTML = '';
     const all = _getAllModels();
@@ -167,7 +257,7 @@ function _initModelPickerDropdown() {
     listEl.classList.toggle('is-empty', !hasAnyModel);
     menu.classList.toggle('no-models', !hasAnyModel);
     if (search) {
-      search.placeholder = hasAnyModel ? 'Search models…' : 'No models connected';
+      search.placeholder = hasAnyModel ? 'Search models...' : 'No models connected';
     }
     if (searchRow) {
       searchRow.classList.toggle('searching', !!filter);
@@ -176,22 +266,18 @@ function _initModelPickerDropdown() {
     // Load favorites
     const favs = (function() { try { return JSON.parse(localStorage.getItem('odysseus-model-favorites') || '[]'); } catch { return []; } })();
 
-    // Partition: favorites first, then rest
-    const favModels = [];
-    const restModels = [];
+    // Filter by search
+    const filtered = [];
     all.forEach(m => {
-      if (q && !m.mid.toLowerCase().includes(q) && !m.display.toLowerCase().includes(q)) return;
-      if (favs.includes(m.mid)) favModels.push(m);
-      else restModels.push(m);
+      if (q && !m.mid.toLowerCase().includes(q) && !m.display.toLowerCase().includes(q) && !m.epName.toLowerCase().includes(q)) return;
+      filtered.push(m);
     });
 
-    function _addSection(label) {
-      const el = document.createElement('div');
-      el.className = 'mp-section-label';
-      el.textContent = label;
-      listEl.appendChild(el);
-    }
-    function _addRow(m) {
+    // Separate favorites
+    const favModels = filtered.filter(m => favs.includes(m.mid));
+    const restModels = filtered.filter(m => !favs.includes(m.mid));
+
+    function _addRow(m, container) {
       const row = document.createElement('div');
       row.className = 'model-switch-item';
       if (m.stale) {
@@ -219,22 +305,94 @@ function _initModelPickerDropdown() {
       }
       const epSpan = document.createElement('span');
       epSpan.className = 'model-switch-ep';
-      // Don't show endpoint name if it matches the model name (local self-hosted)
       const _epDisplay = m.epName && !m.display.toLowerCase().includes(m.epName.toLowerCase().split('/').pop()) ? m.epName : '';
       epSpan.textContent = _epDisplay;
       row.appendChild(epSpan);
       row.addEventListener('click', () => _pick(m));
-      listEl.appendChild(row);
+      container.appendChild(row);
     }
 
+    // Favorites section (flat, always expanded)
     if (favModels.length > 0) {
-      _addSection('Favorites');
-      favModels.forEach(_addRow);
+      const sec = document.createElement('div');
+      sec.className = 'mp-section-label';
+      sec.textContent = 'Favorites';
+      listEl.appendChild(sec);
+      favModels.forEach(m => _addRow(m, listEl));
     }
-    if (restModels.length > 0) {
-      if (favModels.length > 0) _addSection('All models');
-      restModels.forEach(_addRow);
+
+    // Group rest by provider (prefix before /)
+    const groups = new Map();
+    // Merge aliases into canonical provider slug
+    const _providerAlias = {
+      'meta-llama': 'meta',
+      'deepseek': 'deepseek-ai',
+      'minimaxai': 'minimax',
+      'stepfun-ai': 'stepfun',
+      'ai21labs': 'ai21',
+      'ibm-granite': 'ibm',
+      'bytedance-seed': 'bytedance',
+      '~anthropic': 'anthropic',
+      '~google': 'google',
+      '~moonshotai': 'moonshotai',
+      '~openai': 'openai',
+    };
+    restModels.forEach(m => {
+      const slash = m.mid.indexOf('/');
+      let provider = slash > 0 ? m.mid.substring(0, slash) : (m.epName || 'other');
+      provider = _providerAlias[provider] || provider;
+      if (!groups.has(provider)) groups.set(provider, []);
+      groups.get(provider).push(m);
+    });
+
+    // Sort providers alphabetically
+    const sortedProviders = [...groups.keys()].sort();
+
+    // When searching, show flat results (no grouping)
+    if (q) {
+      if (favModels.length > 0 && restModels.length > 0) {
+        const sec = document.createElement('div');
+        sec.className = 'mp-section-label';
+        sec.textContent = 'All models';
+        listEl.appendChild(sec);
+      }
+      restModels.forEach(m => _addRow(m, listEl));
+    } else {
+      // Grouped view with collapsible providers
+      sortedProviders.forEach(provider => {
+        const models = groups.get(provider);
+        const isCollapsed = _collapsedProviders.has(provider);
+
+        const header = document.createElement('div');
+        header.className = 'mp-provider-header';
+        const chevron = `<svg class="mp-provider-chevron${isCollapsed ? ' collapsed' : ''}" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+        header.innerHTML = `${chevron}<span class="mp-provider-name">${_providerDisplayName(provider)}</span><span class="mp-provider-count">${models.length}</span>`;
+        header.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (_collapsedProviders.has(provider)) {
+            _collapsedProviders.delete(provider);
+            _justExpandedProvider = provider;
+          } else {
+            _collapsedProviders.add(provider);
+            _justExpandedProvider = null;
+          }
+          _saveCollapsed();
+          _populate(filter);
+        });
+        listEl.appendChild(header);
+
+        if (!isCollapsed) {
+          const group = document.createElement('div');
+          group.className = 'mp-provider-group' + (_justExpandedProvider === provider ? ' mp-just-expanded' : '');
+          models.forEach(m => _addRow(m, group));
+          listEl.appendChild(group);
+          if (_justExpandedProvider === provider) {
+            _justExpandedProvider = null;
+          }
+        }
+      });
     }
+
     if (listEl.children.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'model-switch-empty';

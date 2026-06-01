@@ -2710,6 +2710,59 @@ body.bg-pattern-sparkles {
       opacity: 0.4;
       padding: 6px 8px 2px;
     }
+    .model-picker-list .mp-provider-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      cursor: pointer;
+      font-size: 0.78em;
+      font-weight: 500;
+      color: var(--fg);
+      border-radius: 4px;
+      user-select: none;
+    }
+    .model-picker-list .mp-provider-header:hover {
+      background: color-mix(in srgb, var(--fg) 6%, transparent);
+    }
+    .model-picker-list .mp-provider-chevron {
+      display: inline-flex;
+      opacity: 0.4;
+      transition: transform 0.2s, opacity 0.15s;
+      flex-shrink: 0;
+    }
+    .model-picker-list .mp-provider-header:hover .mp-provider-chevron {
+      opacity: 0.7;
+    }
+    .model-picker-list .mp-provider-chevron.collapsed {
+      transform: rotate(-90deg);
+    }
+    .model-picker-list .mp-provider-name {
+      flex: 1;
+    }
+    .model-picker-list .mp-provider-count {
+      font-size: 0.85em;
+      opacity: 0.4;
+    }
+    /* Domino expand for model picker groups (15% faster than sidebar) */
+    .mp-provider-group.mp-just-expanded .model-switch-item {
+      animation: mp-domino-in 0.31s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
+    }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(1)  { animation-delay: 0.035s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(2)  { animation-delay: 0.07s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(3)  { animation-delay: 0.105s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(4)  { animation-delay: 0.14s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(5)  { animation-delay: 0.175s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(6)  { animation-delay: 0.21s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(7)  { animation-delay: 0.245s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(8)  { animation-delay: 0.28s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(9)  { animation-delay: 0.315s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(10) { animation-delay: 0.35s; }
+    @keyframes mp-domino-in {
+      0%   { opacity: 0; transform: translateY(6px) scale(0.94); }
+      60%  { opacity: 1; }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
     /* Overflow "+" menu */
     .overflow-wrapper {
       position: relative;
