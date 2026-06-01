@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 # These are the most commonly needed and should never be missing.
 ALWAYS_AVAILABLE = frozenset({
     "bash", "python", "web_search", "read_file",
+    # File + document writes mirror read_file: when the tool index times out
+    # or returns nothing, the agent must still be able to ACT on files/docs,
+    # not just read them. Without these a RAG miss silently drops the agent's
+    # only way to write_file / create / edit / update a document.
+    "write_file", "create_document", "edit_document", "update_document",
     "api_call",  # For configured integrations (Miniflux, Gitea, Linkding, etc.)
     # The two genuinely AMBIENT cookbook tools — "what's running" and
     # "kill it" can be asked any time without prior cookbook context,

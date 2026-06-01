@@ -54,6 +54,22 @@ _TOOL_CODE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Pattern 0 (Hermes / qwen2.5 / ChatML function-calling): a JSON object inside
+# a <tool_call> wrapper, e.g.
+#   <tool_call>{"name": "bash", "arguments": {"command": "ls -la"}}</tool_call>
+# This is distinct from the <tool_call><invoke ...> XML form (Pattern 3): the
+# body is JSON, not nested <invoke> tags. We capture the inner object (the regex
+# below grabs everything between the wrapper tags, then we json.loads it) and
+# route name + arguments through the canonical function_call_to_tool_block
+# converter so every tool name + per-tool arg shape is handled in one place.
+# It is tried FIRST in parse_tool_blocks so a Hermes block isn't shadowed by
+# the generic <tool_call> XML matcher (which would find no <invoke> and yield
+# nothing).
+_HERMES_TOOL_CALL_RE = re.compile(
+    r"<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>",
+    re.IGNORECASE,
+)
+
 # Pattern 5: DeepSeek DSML markup leaking into content. When deepseek
 # models can't emit structured tool_calls (e.g. we sent no tool schemas
 # that round, or the API didn't parse them), they fall back to raw
@@ -318,10 +334,40 @@ def _parse_tool_code_block(raw: str) -> Optional[ToolBlock]:
     return None
 
 
+def _parse_hermes_tool_call(raw_json: str) -> Optional[ToolBlock]:
+    """Parse a Hermes-style ``{"name": ..., "arguments": {...}}`` object.
+
+    Local models (qwen2.5, Hermes, many ChatML fine-tunes) emit function
+    calls as a JSON object wrapped in ``<tool_call>...</tool_call>``. We parse
+    the JSON, then hand ``name`` + ``arguments`` to the SAME converter used
+    for native function calls and <invoke> blocks, so the full tool set and
+    per-tool arg shaping are handled in one place. ``arguments`` may itself be
+    a JSON string (some models double-encode it) — normalize both cases.
+    """
+    try:
+        obj = json.loads(raw_json)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    name = obj.get("name") or obj.get("tool") or obj.get("function")
+    if not name or not isinstance(name, str):
+        return None
+    args = obj.get("arguments", obj.get("parameters", {}))
+    # function_call_to_tool_block wants the arguments as a JSON string; if the
+    # model already gave us a string, pass it through unchanged.
+    arguments = args if isinstance(args, str) else json.dumps(args)
+    # Local import to avoid a circular import at module load.
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(name.lower(), arguments)
+
+
 def parse_tool_blocks(text: str) -> List[ToolBlock]:
     """Extract executable tool blocks from LLM response text.
 
     Supports multiple formats:
+    0. Hermes <tool_call>{"name":...,"arguments":{...}}</tool_call> JSON blocks
+       (qwen2.5 and other ChatML function-calling models)
     1. ```bash ... ``` fenced code blocks (standard)
     2. [TOOL_CALL] ... [/TOOL_CALL] blocks (some models)
     3. XML-style <tool_call>/<invoke> blocks
@@ -333,6 +379,16 @@ def parse_tool_blocks(text: str) -> List[ToolBlock]:
     # Normalize DeepSeek DSML markup into standard <invoke> form so the
     # XML patterns below catch it.
     text = _normalize_dsml(text)
+
+    # Pattern 0: Hermes JSON tool calls. Tried first so a JSON-bodied
+    # <tool_call> isn't shadowed by the generic <tool_call> XML matcher
+    # (Pattern 3), which expects nested <invoke> tags and would find none.
+    for m in _HERMES_TOOL_CALL_RE.finditer(text):
+        block = _parse_hermes_tool_call(m.group(1))
+        if block:
+            blocks.append(block)
+    if blocks:
+        return blocks
 
     # Pattern 1: fenced code blocks
     for m in _TOOL_BLOCK_RE.finditer(text):
@@ -392,6 +448,10 @@ def strip_tool_blocks(text: str) -> str:
     text = _normalize_dsml(text)
     cleaned = _TOOL_BLOCK_RE.sub('', text)
     cleaned = _TOOL_CALL_RE.sub('', cleaned)
+    # Strip Hermes JSON <tool_call> blocks before the XML matcher so the raw
+    # JSON never leaks to the user (the XML matcher also matches the wrapper,
+    # but doing it explicitly keeps the two formats' handling parallel).
+    cleaned = _HERMES_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _XML_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _TOOL_CODE_RE.sub('', cleaned)
     # Strip bare <invoke> blocks not wrapped in <tool_call>

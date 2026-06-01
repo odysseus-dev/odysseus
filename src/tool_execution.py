@@ -719,7 +719,15 @@ async def execute_tool_block(
         if mcp:
             try:
                 args = json.loads(content) if content.strip().startswith("{") else {}
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError) as e:
+                # Don't silently execute with empty args — that masks the
+                # real failure (a malformed tool-arg payload) and runs the
+                # tool with no parameters. Log the error + raw content so the
+                # bad call is diagnosable, then degrade to {}.
+                logger.warning(
+                    "Malformed JSON args for MCP tool %s, falling back to {}: %s | raw=%r",
+                    tool, e, content,
+                )
                 args = {}
             desc = f"mcp: {tool}"
             result = await mcp.call_tool(tool, args)

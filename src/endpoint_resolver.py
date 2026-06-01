@@ -117,29 +117,45 @@ def _anthropic_api_root(base: str) -> str:
 
 
 def _ollama_api_root(base: str) -> str:
-    """Return the native Ollama API root, adding /api for ollama.com hosts."""
+    """Return the native Ollama API root, adding /api for ollama.com hosts and
+    for bare local hosts (e.g. http://localhost:11434) that have no /api path.
+
+    Mirrors llm_core._ollama_api_root so both the agent and non-agent paths
+    resolve identical Ollama endpoints.
+    """
     base = (base or "").strip().rstrip("/")
     parsed = urlparse(base)
     host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
     if path.endswith("/api"):
         return base
+    root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else None
     if host.endswith("ollama.com"):
-        root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
+        return (root or "https://ollama.com").rstrip("/") + "/api"
+    # Bare local Ollama host: append /api so we build .../api/chat not .../chat.
+    if root and not path:
         return root.rstrip("/") + "/api"
     return base
 
 
 def build_chat_url(base: str) -> str:
-    """Return the correct chat endpoint URL for a given base."""
+    """Return the correct chat endpoint URL for a given base. Idempotent — a
+    base that already ends in the provider's chat path is returned unchanged
+    (no /chat/chat or /chat/completions/chat/completions)."""
     base = resolve_url(base)
     provider = _detect_provider(base)
     host = urlparse(base).hostname or ""
+    base_stripped = (base or "").rstrip("/")
     if provider == "anthropic" or host.endswith("anthropic.com"):
+        if base_stripped.endswith("/v1/messages"):
+            return base_stripped
         return _anthropic_api_root(base) + "/v1/messages"
     if provider == "ollama" or host.endswith("ollama.com"):
-        return _ollama_api_root(base) + "/chat"
-    return base + "/chat/completions"
+        root = _ollama_api_root(base).rstrip("/")
+        return root if root.endswith("/chat") else root + "/chat"
+    if base_stripped.endswith("/chat/completions"):
+        return base_stripped
+    return base_stripped + "/chat/completions"
 
 
 def build_models_url(base: str) -> str:

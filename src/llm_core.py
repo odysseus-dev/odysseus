@@ -152,12 +152,23 @@ def _is_ollama_native_url(url: str) -> bool:
     path = (parsed.path or "").rstrip("/")
     if host.endswith("ollama.com"):
         return True
-    local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or parsed.port == 11434
+    # Port 11434 is Ollama's dedicated default port: a bare host:11434 (no /api
+    # path) is native Ollama (U4) — _ollama_api_root then appends /api. Other
+    # local hosts only count as native Ollama when the path already says /api,
+    # since those ports could host any OpenAI-compatible server.
+    if parsed.port == 11434:
+        return True
+    local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
     return local_ollama_host and (path == "/api" or path.startswith("/api/"))
 
 
 def _ollama_api_root(url: str) -> str:
-    """Return a native Ollama API root such as https://ollama.com/api."""
+    """Return a native Ollama API root such as https://ollama.com/api.
+
+    Handles bare local hosts (e.g. http://localhost:11434) that have no /api
+    path yet — they need /api appended, not the raw host, otherwise
+    _normalize_ollama_url would build http://localhost:11434/chat (404).
+    """
     url = (url or "").strip().rstrip("/")
     parsed = urlparse(url)
     host = parsed.hostname or ""
@@ -170,16 +181,43 @@ def _ollama_api_root(url: str) -> str:
         return url[: -len("/generate")]
     if path.endswith("/api"):
         return url
+    root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else None
     if host.endswith("ollama.com"):
-        root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
+        return (root or "https://ollama.com").rstrip("/") + "/api"
+    # Bare local Ollama host (host:port with no /api path): append /api so the
+    # native endpoint resolves to .../api/chat rather than .../chat.
+    if root and not path:
         return root.rstrip("/") + "/api"
     return url
 
 
 def _normalize_ollama_url(url: str) -> str:
-    """Ensure a native Ollama URL points at /api/chat."""
-    base = _ollama_api_root(url)
-    return base.rstrip("/") + "/chat"
+    """Ensure a native Ollama URL points at /api/chat (idempotent — never
+    produces a double /chat/chat)."""
+    base = _ollama_api_root(url).rstrip("/")
+    if base.endswith("/chat"):
+        return base
+    return base + "/chat"
+
+
+def _normalize_openai_chat_url(url: str) -> str:
+    """Ensure an OpenAI-compatible base resolves to .../chat/completions.
+
+    Mirrors endpoint_resolver.build_chat_url for the openai branch so BOTH the
+    agent path (which POSTs a stored endpoint_url as-is) and the non-agent path
+    (which pre-builds the URL via build_chat_url) hit the same endpoint. A base
+    ending in /v1 with no /chat/completions appended silently 404s with an
+    empty response (output_tokens:0). Idempotent.
+    """
+    u = (url or "").strip().rstrip("/")
+    if not u:
+        return u
+    if u.endswith("/chat/completions"):
+        return u
+    if u.endswith("/completions"):
+        # .../completions (legacy) → keep as-is; caller asked for completions.
+        return u
+    return u + "/chat/completions"
 
 
 def _build_ollama_payload(
@@ -564,7 +602,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         target_url = _normalize_ollama_url(url)
         payload = _build_ollama_payload(model, messages_copy, temperature, max_tokens, stream=False)
     else:
-        target_url = url
+        target_url = _normalize_openai_chat_url(url)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -679,7 +717,7 @@ async def llm_call_async(
             h.update(headers)
         payload = _build_ollama_payload(model, messages_copy, temperature, max_tokens, stream=False)
     else:
-        target_url = url
+        target_url = _normalize_openai_chat_url(url)
         h = _provider_headers(provider, headers)
         payload = {
             "model": model,
@@ -777,7 +815,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             h.update(headers)
         payload = _build_ollama_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
     else:
-        target_url = url
+        target_url = _normalize_openai_chat_url(url)
         payload = {
             "model": model,
             "messages": messages_copy,
