@@ -46,13 +46,13 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-                let state = window.state::<BackendState>();
-                if let Some(mut child) = state
-                    .child
-                    .lock()
-                    .expect("backend child lock poisoned")
-                    .take()
-                {
+                let child = {
+                    let state = window.state::<BackendState>();
+                    let mut child = state.child.lock().expect("backend child lock poisoned");
+                    child.take()
+                };
+
+                if let Some(child) = child {
                     let _ = child.kill();
                 }
             }
