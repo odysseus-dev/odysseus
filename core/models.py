@@ -54,16 +54,15 @@ class ChatMessage:
 class Session:
     """A chat session — pure data container.
 
-    IMPORTANT: History immutability contract
-    ----------------------------------------
-    ``.history`` exposes a COPY of the internal message list. Callers that
-    mutate ``.history`` (e.g. via ``.append()``) are modifying a throwaway
-    list that will NOT affect the session or persist. Always use
-    ``.add_message()`` to append messages.
+    ``.history`` is the authoritative mutable message list. Callers may
+    read, append, pop, or reassign it directly — these changes take
+    effect immediately. ``_history`` is an alias kept for internal use
+    by ``get_context_messages()`` and ``message_count`` tracking.
 
-    ``.message_count`` always reflects the true internal count,
-    NOT ``len(.history)`` (which may be stale if you held a reference).
+    Each session gets its own unique history list at construction time
+    (the dataclass default is never shared between instances).
     """
+
     id: str
     name: str
     endpoint_url: str
@@ -79,26 +78,19 @@ class Session:
     def __post_init__(self):
         if self.headers is None:
             self.headers = {}
-        # Internal authoritative list
-        if self.history is None:
-            self._history: List[ChatMessage] = []
-        else:
-            self._history = list(self.history)
-        # Public copy (callers get a snapshot, not the internal list)
-        self.history = list(self._history)
+        # Ensure each session gets its OWN list (not the shared dataclass default)
+        self._history = self.history if self.history is not None else []
+        self.history = self._history
 
     def add_message(self, message: ChatMessage):
         """
         Add a message to this session.
 
-        Appends to the internal _history list, then exposes a fresh copy
-        via .history. The caller's pre-existing references to .history
-        are unaffected (they hold the previous snapshot).
-
-        Delegates to SessionManager for persistence if available.
+        Appends to the authoritative history list and increments
+        message_count. Delegates to SessionManager for persistence
+        if available.
         """
         self._history.append(message)
-        self.history = list(self._history)
         self.message_count = len(self._history)
 
         # Delegate to session manager for persistence
@@ -124,3 +116,7 @@ class Session:
     def get(self, key: str, default=None):
         """Dict-like access for compatibility."""
         return getattr(self, key, default)
+
+    def __getitem__(self, key: str):
+        """Allow session['field'] syntax."""
+        return getattr(self, key)

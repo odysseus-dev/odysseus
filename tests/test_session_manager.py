@@ -71,8 +71,8 @@ class TestSessionIsolation:
             f"Session B has {len(s2.history)} messages leaked from Session A"
         )
 
-    def test_history_reference_immutable_after_add_message(self, sm):
-        """Pre-existing references to .history must not see new messages."""
+    def test_history_reference_sees_new_messages(self, sm):
+        """Pre-existing references to .history must see new messages (it's the same list)."""
         s = Session(id="s1", name="Test", endpoint_url="http://ep", model="model")
         sm.sessions["s1"] = s
         s.add_message(ChatMessage("user", "hi"))
@@ -80,8 +80,9 @@ class TestSessionIsolation:
         old_history_ref = s.history
         s.add_message(ChatMessage("user", "second message"))
 
-        assert len(old_history_ref) == 1, (
-            f"Old history ref has {len(old_history_ref)} items, expected 1"
+        # .history is the authoritative mutable list — old ref sees the append
+        assert len(old_history_ref) == 2, (
+            f"Old history ref has {len(old_history_ref)} items, expected 2"
         )
         assert len(s.history) == 2
 

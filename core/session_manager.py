@@ -191,15 +191,15 @@ class SessionManager:
         """
         Add a message to a session and persist to database.
 
+        Delegates to ``session.add_message()`` which appends to the
+        authoritative history list and calls ``_persist_message``.
+
         Args:
             session_id: Session ID
             message: ChatMessage to add
         """
         session = self.get_session(session_id)
-        session.history.append(message)
-        session.message_count = len(session.history)
-
-        self._persist_message(session_id, message)
+        session.add_message(message)
 
     def _persist_message(self, session_id: str, message: ChatMessage):
         """Persist a single message to the database."""
