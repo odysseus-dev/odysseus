@@ -20,6 +20,138 @@ AI_CHAT_TIMEOUT = 120  # seconds for a single LLM call
 MAX_DEBATE_ROUNDS = 5
 MAX_PIPELINE_STEPS = 10
 
+# ─ Timeouts (seconds) ──────────────────────────────────────────────────
+HTTP_TIMEOUT_MODEL_LIST = 5        # Fetching model list from endpoint
+HTTP_TIMEOUT_IMAGE_ENDPOINT = 3    # Checking image endpoint availability
+HTTP_TIMEOUT_IMAGE_DOWNLOAD = 60   # Downloading DALL-E temp images
+
+# ─ Response Truncation Limits (characters) ────────────────────────────
+RESPONSE_TRUNCATE_LIMIT = 10000        # chat_with_model, send_to_session, second_opinion unified
+RESPONSE_TRUNCATE_TEACHER = 8000       # ask_teacher, second_opinion review
+RESPONSE_TRUNCATE_PIPELINE = 5000      # pipeline step output
+
+# ─ Session & Message Management ───────────────────────────────────────
+SESSION_CONTEXT_WINDOW = 15             # Recent messages to include in second_opinion
+CONTEXT_MESSAGE_TEXT_LIMIT = 2000       # Max chars per message in context
+SESSION_LIST_DISPLAY_LIMIT = 50         # Max sessions to show in list_sessions
+SESSION_TRUNCATE_DEFAULT_KEEP = 10      # Default messages to keep when truncating
+
+# ─ ID & Display Limits ────────────────────────────────────────────────
+UUID_SHORT_ID_LENGTH = 8                # Length of short session/memory IDs
+MEMORY_LIST_DISPLAY_LIMIT = 100         # Max memories to show in list
+MEMORY_TEXT_PREVIEW_LIMIT = 150         # Max chars for memory text preview
+MEMORY_SEARCH_RESULT_LIMIT = 20         # Max search results to return
+IMAGE_PROMPT_LOG_LIMIT = 80             # Max chars of image prompt in logs
+ERROR_TEXT_DISPLAY_LIMIT = 500          # Max chars of error details to show
+
+# ─ UI Panel Aliases ───────────────────────────────────────────────────
+PANEL_ALIASES = {
+    "documents": "documents",
+    "document": "documents",
+    "doc": "documents",
+    "docs": "documents",
+    "library": "documents",
+    "doclib": "documents",
+    "gallery": "gallery",
+    "images": "gallery",
+    "email": "email",
+    "emails": "email",
+    "inbox": "email",
+    "mail": "email",
+    "sessions": "sessions",
+    "chats": "sessions",
+    "history": "sessions",
+    "notes": "notes",
+    "note": "notes",
+    "todo": "notes",
+    "todos": "notes",
+    "memories": "memories",
+    "memory": "memories",
+    "brain": "memories",
+    "skills": "skills",
+    "settings": "settings",
+    "preferences": "settings",
+    "cookbook": "cookbook",
+    "models": "cookbook",
+    "llm": "cookbook",
+    "serve": "cookbook",
+    "serving": "cookbook",
+}
+
+CANONICAL_PANELS = set(PANEL_ALIASES.values())
+
+# ─ UI Toggle Aliases ──────────────────────────────────────────────────
+TOGGLE_ALIASES = {
+    "shell": "bash",
+    "terminal": "bash",
+    "search": "web",
+    "websearch": "web",
+    "web_search": "web",
+    "deepresearch": "research",
+    "deep_research": "research",
+    "documents": "document_editor",
+    "doc": "document_editor",
+    "docs": "document_editor",
+    "private": "incognito",
+}
+
+CANONICAL_TOGGLES = {"web", "bash", "research", "incognito", "document_editor"}
+
+# ─ Theme Presets ──────────────────────────────────────────────────────
+THEME_PRESETS = {
+    "dark", "light", "midnight", "paper", "cyberpunk", "retrowave",
+    "forest", "ocean", "ume", "copper", "terminal", "organs",
+    "lavender", "gpt", "claude", "cute",
+}
+
+# ─ Background Pattern Options ─────────────────────────────────────────
+BACKGROUND_PATTERNS = {
+    "none", "dots", "synapse", "rain", "constellations",
+    "perlin-flow", "petals", "sparkles", "embers"
+}
+
+# ─ Color Keys for Theme Customization ─────────────────────────────────
+ADVANCED_COLOR_KEYS = {
+    "userBubbleBg", "aiBubbleBg", "bubbleBorder", "sidebarBg",
+    "sectionAccent", "brandColor", "inputBg", "inputBorder",
+    "sendBtnBg", "sendBtnHover", "codeBg", "codeFg",
+    "toggleBg", "toggleActive", "accentPrimary", "accentError",
+}
+
+# ─ System Prompts ─────────────────────────────────────────────────────
+TEACHER_SYSTEM_PROMPT = (
+    "You are a senior AI mentor. A less capable model is stuck on a problem and asking for help. "
+    "Provide clear, actionable guidance:\n"
+    "1. Brief analysis of the problem\n"
+    "2. Recommended approach (step by step)\n"
+    "3. Key things to watch out for\n\n"
+    "Be concise and practical. No preamble."
+)
+
+SECOND_OPINION_REVIEWER_SYSTEM = (
+    "You are giving a second opinion on a conversation between a user and an AI assistant. "
+    "Your job is to be genuinely helpful and honest — not a yes-man, but not a contrarian either.\n\n"
+    "Guidelines:\n"
+    "- If the plan/idea is solid, say so clearly. Don't manufacture problems that aren't there.\n"
+    "- If you spot a real flaw, blind spot, or simpler approach — call it out directly.\n"
+    "- Be practical. Don't over-engineer or over-analyze. Real-world tradeoffs matter.\n"
+    "- If there's a meaningfully better way to do something, suggest it concretely.\n"
+    "- Give credit where it's due — highlight what's working well.\n"
+    "- Keep it concise and actionable. No fluff.\n"
+    "- You're a second pair of eyes, not a professor grading a paper."
+)
+
+SECOND_OPINION_UNIFIER_SYSTEM = (
+    "Another AI model just reviewed the conversation you've been having with the user. "
+    "Read their feedback carefully, then respond with:\n\n"
+    "1. **What you agree with** — acknowledge valid points honestly.\n"
+    "2. **What you disagree with** — explain why, briefly.\n"
+    "3. **Unified version** — produce an updated/refined version of whatever was being discussed, "
+    "incorporating the feedback you found valid. Don't accept every note blindly — "
+    "use your judgment on what actually improves things vs what's unnecessary.\n\n"
+    "Be concise and practical. The user wants a better result, not a meta-discussion."
+)
+
 # ---------------------------------------------------------------------------
 # Global managers (set from app.py, same pattern as _mcp_manager)
 # ---------------------------------------------------------------------------
@@ -49,6 +181,156 @@ def set_rag_manager(rag_mgr, personal_docs_mgr=None):
     global _rag_manager, _personal_docs_manager
     _rag_manager = rag_mgr
     _personal_docs_manager = personal_docs_mgr
+
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
+def truncate_response(text: str, limit: int = RESPONSE_TRUNCATE_LIMIT) -> str:
+    """Truncate text to limit, append '... (truncated)' if needed.
+
+    Args:
+        text: The text to potentially truncate
+        limit: Character limit (default: RESPONSE_TRUNCATE_LIMIT)
+
+    Returns:
+        Truncated text with notice, or original if under limit
+    """
+    if len(text) > limit:
+        return text[:limit] + "\n... (truncated)"
+    return text
+
+
+def truncate_for_teacher(text: str) -> str:
+    """Truncate response to teacher-specific limit (8000 chars)."""
+    return truncate_response(text, RESPONSE_TRUNCATE_TEACHER)
+
+
+def truncate_for_pipeline(text: str) -> str:
+    """Truncate response to pipeline-specific limit (5000 chars)."""
+    return truncate_response(text, RESPONSE_TRUNCATE_PIPELINE)
+
+
+def get_first_line(content: str, max_len: Optional[int] = None) -> str:
+    """Extract first line from content, optionally limit length.
+
+    Used for extracting model specs, action names, etc. from multi-line content.
+
+    Args:
+        content: The content to parse
+        max_len: Optional character limit for the result
+
+    Returns:
+        First line of content, stripped, optionally truncated
+    """
+    line = content.strip().split("\n")[0].strip() if content.strip() else ""
+    return line[:max_len] if max_len else line
+
+
+def get_action_from_content(content: str) -> str:
+    """Extract action name (first line) from content."""
+    return get_first_line(content, 40)
+
+
+def get_model_spec_from_content(content: str) -> str:
+    """Extract model spec (first line) from content."""
+    return get_first_line(content, 60)
+
+
+def resolve_panel(name: str) -> Optional[str]:
+    """Resolve panel alias to canonical name.
+
+    Args:
+        name: Panel name or alias (case-insensitive)
+
+    Returns:
+        Canonical panel name or None if not found
+    """
+    if not name:
+        return None
+    name_lower = name.lower()
+    # Check if it's an alias first
+    if name_lower in PANEL_ALIASES:
+        return PANEL_ALIASES[name_lower]
+    # Check if it's already canonical
+    if name_lower in CANONICAL_PANELS:
+        return name_lower
+    return None
+
+
+def resolve_toggle(name: str) -> Optional[str]:
+    """Resolve toggle alias to canonical name.
+
+    Args:
+        name: Toggle name or alias (case-insensitive)
+
+    Returns:
+        Canonical toggle name or None if not found
+    """
+    if not name:
+        return None
+    name_lower = name.lower()
+    # Check if it's an alias first
+    if name_lower in TOGGLE_ALIASES:
+        return TOGGLE_ALIASES[name_lower]
+    # Check if it's already canonical
+    if name_lower in CANONICAL_TOGGLES:
+        return name_lower
+    return None
+
+
+def is_valid_hex_color(value: str) -> bool:
+    """Validate hex color #RRGGBB format.
+
+    Args:
+        value: Color string to validate
+
+    Returns:
+        True if valid hex color, False otherwise
+    """
+    import re
+    return bool(re.match(r'^#[0-9a-fA-F]{6}$', value))
+
+
+async def resolve_model_safe(model_spec: str) -> Tuple[Optional[str], Optional[str], Optional[Dict], Optional[Dict]]:
+    """Resolve model spec or return error dict.
+
+    Wraps _resolve_model with error handling.
+
+    Args:
+        model_spec: Model name or "name@endpoint"
+
+    Returns:
+        Tuple of (url, model_id, headers, error_dict)
+        On success: (url, model, headers, None)
+        On error: (None, None, None, {"error": "message"})
+    """
+    try:
+        url, model, headers = _resolve_model(model_spec)
+        return url, model, headers, None
+    except ValueError as e:
+        return None, None, None, {"error": str(e)}
+
+
+from contextlib import contextmanager
+
+
+@contextmanager
+def get_db_session():
+    """Context manager for database session.
+
+    Usage:
+        with get_db_session() as db:
+            # use db
+            pass
+    """
+    from src.database import SessionLocal
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
