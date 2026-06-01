@@ -1,5 +1,6 @@
 """Calendar routes — local SQLite-backed calendar CRUD."""
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, date, timedelta
@@ -387,6 +388,31 @@ def _event_to_dict(ev: CalendarEvent) -> dict:
     }
 
 
+def _aggregate_sync_results(results) -> dict:
+    """Merge the per-source dicts returned by the calendar pulls into one
+    {calendars, events, deleted, errors} summary. `results` may contain
+    Exceptions when called via `asyncio.gather(..., return_exceptions=True)`;
+    those are folded into `errors` so one failing source never sinks the rest.
+    """
+    agg = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
+    for r in results:
+        if isinstance(r, Exception):
+            agg["errors"].append(str(r)[:200])
+            continue
+        if not isinstance(r, dict):
+            continue
+        agg["calendars"] += r.get("calendars", 0) or 0
+        agg["events"] += r.get("events", 0) or 0
+        agg["deleted"] += r.get("deleted", 0) or 0
+        # Drop the benign "not configured" no-op messages — they're expected
+        # for any source the user hasn't set up and would just be noise.
+        for e in (r.get("errors") or []):
+            if "not configured" in str(e).lower():
+                continue
+            agg["errors"].append(e)
+    return agg
+
+
 # ── Routes ──
 
 def setup_calendar_routes() -> APIRouter:
@@ -493,13 +519,178 @@ def setup_calendar_routes() -> APIRouter:
             return {"ok": False, "error": str(e)[:200]}
 
     @router.post("/sync")
-    async def sync_caldav_endpoint(request: Request):
-        """Pull events from the configured CalDAV server into local DB.
-        Returns counts + any per-calendar errors. Called by the frontend
-        on calendar open and by the periodic scheduler loop."""
+    async def sync_calendars_endpoint(request: Request):
+        """Pull events from every configured remote calendar (CalDAV, Google
+        iCal feed, Calendly) into local DB and return aggregated counts +
+        errors. Called by the frontend on calendar open. Sources that aren't
+        configured no-op silently, so this is safe to call regardless of which
+        integrations the user has set up."""
         owner = _require_user(request)
         from src.caldav_sync import sync_caldav
-        return await sync_caldav(owner)
+        from src.gcal_sync import sync_gcal
+        from src.calendly_sync import sync_calendly
+
+        # Run the three pulls concurrently — they hit different remotes and
+        # write disjoint calendars, so there's no ordering dependency.
+        results = await asyncio.gather(
+            sync_caldav(owner),
+            sync_gcal(owner),
+            sync_calendly(owner),
+            return_exceptions=True,
+        )
+        return _aggregate_sync_results(results)
+
+    @router.post("/sync/{source}")
+    async def sync_single_source(request: Request, source: str):
+        """Pull a single source on demand (used by the per-integration
+        "Sync now" buttons). `source` ∈ {caldav, gcal, calendly}."""
+        owner = _require_user(request)
+        if source == "caldav":
+            from src.caldav_sync import sync_caldav
+            return await sync_caldav(owner)
+        if source == "gcal":
+            from src.gcal_sync import sync_gcal
+            return await sync_gcal(owner)
+        if source == "calendly":
+            from src.calendly_sync import sync_calendly
+            return await sync_calendly(owner)
+        raise HTTPException(404, f"Unknown sync source: {source}")
+
+    # ── Google Calendar (secret iCal feed) config ──
+
+    @router.get("/gcal/config")
+    async def get_gcal_config(request: Request):
+        owner = _require_user(request)
+        from routes.prefs_routes import _load_for_user
+        cfg = (_load_for_user(owner) or {}).get("gcal", {}) or {}
+        return {
+            "ics_url": cfg.get("ics_url", "") or "",
+            "configured": bool(cfg.get("ics_url")),
+        }
+
+    @router.post("/gcal/config")
+    async def save_gcal_config(request: Request):
+        owner = _require_user(request)
+        from routes.prefs_routes import _load_for_user, _save_for_user
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        prefs = _load_for_user(owner) or {}
+        url = (body.get("ics_url") or "").strip()
+        # Empty url => remove the integration entirely.
+        if not url:
+            prefs.pop("gcal", None)
+            _save_for_user(owner, prefs)
+            return {"ok": True, "cleared": True}
+        prefs["gcal"] = {"ics_url": url}
+        _save_for_user(owner, prefs)
+        return {"ok": True}
+
+    @router.post("/gcal/test")
+    async def test_gcal(request: Request):
+        """Fetch the iCal feed and confirm it parses as a calendar. Accepts an
+        optional {ics_url} body to test before saving; falls back to the stored
+        URL otherwise."""
+        owner = _require_user(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        url = (body.get("ics_url") or "").strip()
+        if not url:
+            from routes.prefs_routes import _load_for_user
+            url = ((_load_for_user(owner) or {}).get("gcal", {}) or {}).get("ics_url", "")
+        if not url:
+            return {"ok": False, "error": "Missing iCal URL"}
+        from src.gcal_sync import fetch_feed
+        try:
+            content = await fetch_feed(url)
+        except Exception as e:
+            return {"ok": False, "error": f"Could not fetch feed: {str(e)[:180]}"}
+        try:
+            from icalendar import Calendar as iCal
+            cal = iCal.from_ical(content)
+            n = sum(1 for c in cal.walk() if c.name == "VEVENT")
+            return {"ok": True, "events": n}
+        except Exception as e:
+            return {"ok": False, "error": f"Not a valid calendar feed: {str(e)[:180]}"}
+
+    # ── Calendly (personal access token) config ──
+
+    @router.get("/calendly/config")
+    async def get_calendly_config(request: Request):
+        owner = _require_user(request)
+        from routes.prefs_routes import _load_for_user
+        cfg = (_load_for_user(owner) or {}).get("calendly", {}) or {}
+        # Never hand the token back to the client.
+        return {
+            "token": "",
+            "has_token": bool(cfg.get("token")),
+            "configured": bool(cfg.get("token")),
+        }
+
+    @router.post("/calendly/config")
+    async def save_calendly_config(request: Request):
+        owner = _require_user(request)
+        from routes.prefs_routes import _load_for_user, _save_for_user
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        prefs = _load_for_user(owner) or {}
+        token = (body.get("token") or "").strip()
+        cfg = dict(prefs.get("calendly") or {})
+        # Explicit clear flag (the "Remove" button) drops the integration even
+        # when a token is stored.
+        if body.get("clear"):
+            prefs.pop("calendly", None)
+            _save_for_user(owner, prefs)
+            return {"ok": True, "cleared": True}
+        # Empty token with no stored token => clear. An empty token when one is
+        # already stored means "keep existing" (edit form re-submitted blank).
+        if not token and not cfg.get("token"):
+            prefs.pop("calendly", None)
+            _save_for_user(owner, prefs)
+            return {"ok": True, "cleared": True}
+        if token:
+            cfg["token"] = token
+        prefs["calendly"] = cfg
+        _save_for_user(owner, prefs)
+        return {"ok": True}
+
+    @router.post("/calendly/test")
+    async def test_calendly(request: Request):
+        """Probe the Calendly API with the token (verifies it via /users/me).
+        Accepts an optional {token} body to test before saving."""
+        owner = _require_user(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        token = (body.get("token") or "").strip()
+        if not token:
+            from routes.prefs_routes import _load_for_user
+            token = ((_load_for_user(owner) or {}).get("calendly", {}) or {}).get("token", "")
+        if not token:
+            return {"ok": False, "error": "Missing access token"}
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as cx:
+                r = await cx.get(
+                    "https://api.calendly.com/users/me",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            if r.status_code == 200:
+                name = (r.json().get("resource", {}) or {}).get("name", "")
+                return {"ok": True, "name": name}
+            if r.status_code in (401, 403):
+                return {"ok": False, "error": "Invalid or unauthorized token"}
+            return {"ok": False, "error": f"HTTP {r.status_code}"}
+        except httpx.TimeoutException:
+            return {"ok": False, "error": "Connection timed out"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
 
     @router.get("/calendars")
     async def list_calendars(request: Request):

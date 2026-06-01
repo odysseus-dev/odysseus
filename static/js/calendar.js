@@ -189,9 +189,10 @@ async function _fetchCalendars() {
   }
 }
 
-// Trigger a CalDAV pull. `interactive=true` waits for the result and
-// refreshes the UI; false fires-and-forgets (used on first open). Both
-// no-op silently if CalDAV isn't configured.
+// Trigger a remote calendar pull (CalDAV + Google iCal feed + Calendly; the
+// /sync endpoint fans out to every configured source). `interactive=true`
+// waits for the result and refreshes the UI; false fires-and-forgets (used on
+// first open). No-ops silently for any source that isn't configured.
 async function _syncCaldav(interactive) {
   try {
     const res = await fetch(`${API_BASE}/api/calendar/sync`, {
