@@ -21,6 +21,8 @@ export const KEYS = {
   INCOGNITO: 'odysseus-incognito',
   RAG_ACTIVE: 'odysseus-rag-active',
   MCP_ACTIVE: 'odysseus-mcp-active',
+  LANGUAGE: 'odysseus-language',
+  LANGUAGE_TS: 'odysseus-language-ts',
   SECTION_ORDER: 'sidebar-section-order',
   ADMIN_LAST_TAB: 'admin-last-tab',
   DENSITY: 'odysseus-density'

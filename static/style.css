@@ -87,7 +87,7 @@ html, body { overflow-x: hidden; height: 100%; margin: 0; overscroll-behavior: n
 body {
   background-color: var(--bg);
   color: var(--fg);
-  font-family: var(--font-family, 'Fira Code', monospace);
+  font-family: var(--font-family, 'Fira Code', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR', monospace);
   display: flex;
   height: 100%;
   height: 100dvh; /* dynamic viewport height — adapts when mobile keyboard opens */
@@ -27802,6 +27802,11 @@ body.doc-find-active mark.doc-find-mark.current {
   content: "Write your email\2026";
   opacity: 0.4;
   pointer-events: none;
+}
+/* i18n: CSS-generated placeholder can't be reached by the runtime DOM
+   translator, so localize the compose-body hint per language here. */
+html[lang="ko"] .doc-email-richbody:empty::before {
+  content: "\C774\BA54\C77C\C744 \C791\C131\D558\C138\C694\2026"; /* 이메일을 작성하세요… */
 }
 .doc-email-richbody a { color: var(--accent, #4af); }
 .doc-email-richbody blockquote {

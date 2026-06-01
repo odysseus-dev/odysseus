@@ -3,6 +3,9 @@
     "type": "git",
     "url": "https://github.com/pewdiepie-archdaemon/odysseus.git"
   },
+  "scripts": {
+    "i18n:audit": "node scripts/i18n-audit.mjs"
+  },
   "devDependencies": {
     "@antithesishq/bombadil": "^0.3.2"
   },

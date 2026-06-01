@@ -7,6 +7,7 @@
 import themeModule from './theme.js';
 import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
+import i18n from './i18n.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -328,7 +329,7 @@ export function showToast(msg, durationOrOpts) {
     icon.style.cssText = 'width:14px;height:14px;margin:0 8px 0 0;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;';
     toastEl.appendChild(icon);
   }
-  textSpan.textContent = msg;
+  textSpan.textContent = i18n.translate(msg);
   toastEl.appendChild(textSpan);
 
   if (actionLabel && onAction) {
@@ -342,9 +343,9 @@ export function showToast(msg, durationOrOpts) {
     // (only set internally) — never accept caller-controlled HTML otherwise.
     if (actionIcon) {
       btn.innerHTML = `<span style="display:inline-flex;align-items:center;gap:5px;">${actionIcon}<span></span></span>`;
-      btn.querySelector('span span').textContent = actionLabel;
+      btn.querySelector('span span').textContent = i18n.translate(actionLabel);
     } else {
-      btn.textContent = actionLabel;
+      btn.textContent = i18n.translate(actionLabel);
     }
     // The toast itself is `pointer-events: none` so it doesn't block clicks
     // beneath it. With an action button we need to flip both the toast AND
@@ -364,7 +365,7 @@ export function showToast(msg, durationOrOpts) {
     // skip them on mobile so the toast just shows the Undo button.
     if (actionHint && window.innerWidth > 768) {
       const hint = document.createElement('span');
-      hint.textContent = actionHint;
+      hint.textContent = i18n.translate(actionHint);
       hint.style.cssText = 'font-size:9px;opacity:0.55;letter-spacing:0.4px;text-transform:uppercase;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin-top:1px;pointer-events:none;';
       stack.appendChild(hint);
     }
@@ -426,7 +427,7 @@ export function showError(msg) {
     toastEl = document.getElementById('toast');
   }
   _wireToastSwipe(toastEl);
-  toastEl.textContent = msg;
+  toastEl.textContent = i18n.translate(msg);
   toastEl.classList.add('error');
   toastEl.style.left = '';
   toastEl.style.transform = '';
@@ -593,9 +594,9 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
     const okBtn = document.getElementById('styled-confirm-ok');
     const cancelBtn = document.getElementById('styled-confirm-cancel');
 
-    msgEl.textContent = message;
-    okBtn.textContent = confirmText;
-    cancelBtn.textContent = cancelText;
+    msgEl.textContent = i18n.translate(message);
+    okBtn.textContent = i18n.translate(confirmText);
+    cancelBtn.textContent = i18n.translate(cancelText);
     okBtn.className = danger ? 'confirm-btn confirm-btn-danger' : 'confirm-btn confirm-btn-primary';
     cancelBtn.className = 'confirm-btn confirm-btn-secondary';
 
@@ -675,14 +676,14 @@ export function styledPrompt(message, {
     const okBtn = document.getElementById('styled-prompt-ok');
     const cancelBtn = document.getElementById('styled-prompt-cancel');
 
-    titleEl.textContent = title;
-    msgEl.textContent = message || '';
+    titleEl.textContent = i18n.translate(title);
+    msgEl.textContent = i18n.translate(message || '');
     msgEl.style.display = message ? '' : 'none';
     input.value = defaultValue || '';
-    input.placeholder = placeholder || '';
+    input.placeholder = i18n.translate(placeholder || '');
     input.maxLength = maxLength;
-    okBtn.textContent = confirmText;
-    cancelBtn.textContent = cancelText;
+    okBtn.textContent = i18n.translate(confirmText);
+    cancelBtn.textContent = i18n.translate(cancelText);
 
     overlay.classList.remove('hidden');
     overlay.style.display = '';

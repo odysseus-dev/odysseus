@@ -42,11 +42,13 @@ class LoginRequest(BaseModel):
 class SetupRequest(BaseModel):
     username: str
     password: str
+    language: Optional[str] = None
 
 
 class SignupRequest(BaseModel):
     username: str
     password: str
+    language: Optional[str] = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -69,6 +71,32 @@ class RenameUserRequest(BaseModel):
 
 
 SESSION_COOKIE = "odysseus_session"
+SUPPORTED_UI_LANGUAGES = {"en", "ko"}
+
+
+def _normalize_ui_language(language: Optional[str]) -> Optional[str]:
+    if not language:
+        return None
+    lang = str(language).strip().lower().split("-")[0]
+    return lang if lang in SUPPORTED_UI_LANGUAGES else None
+
+
+def _save_initial_language_pref(username: str, language: Optional[str]):
+    lang = _normalize_ui_language(language)
+    if not lang:
+        return
+    try:
+        from routes.prefs_routes import _load_for_user, _save_for_user
+        owner = username.strip().lower()
+        prefs = _load_for_user(owner) or {}
+        # Store the structured { lang, ts } form the client uses for
+        # last-write-wins reconciliation. The signup choice is the first known
+        # preference, so any later explicit choice (with a newer timestamp) wins.
+        import time
+        prefs["language"] = {"lang": lang, "ts": int(time.time() * 1000)}
+        _save_for_user(owner, prefs)
+    except Exception as exc:
+        logger.warning("Failed to save initial language preference for %s: %s", username, exc)
 
 
 def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
@@ -94,6 +122,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         ok = await asyncio.to_thread(auth_manager.setup, body.username, body.password)
         if not ok:
             raise HTTPException(500, "Setup failed")
+        _save_initial_language_pref(body.username, body.language)
         return {"ok": True, "message": "Admin account created"}
 
     @router.post("/signup")
@@ -112,6 +141,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         ok = await asyncio.to_thread(auth_manager.create_user, body.username, body.password, is_admin=False)
         if not ok:
             raise HTTPException(409, "Username already taken")
+        _save_initial_language_pref(body.username, body.language)
         return {"ok": True, "message": "Account created"}
 
     @router.post("/login")

@@ -92,6 +92,7 @@
     --bg: #282c34; --fg: #9cdef2; --panel: #111; --border: #355a66;
     --red: #e06c75; --green: #50fa7b;
     --bg-effect-intensity: 1;
+    --login-font: 'Fira Code', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR', monospace;
   }
   /* Background patterns — mirrors static/style.css "Background Patterns"
      block so the theme's chosen bgPattern renders on login too. The
@@ -112,7 +113,7 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: 'Fira Code', monospace;
+    font-family: var(--login-font);
     background: var(--bg); color: var(--fg);
     display: flex; justify-content: center; align-items: flex-start;
     min-height: 100vh; min-height: 100dvh;
@@ -131,7 +132,7 @@
     text-align: center; margin-bottom: 1.5rem;
   }
   .logo span {
-    font-family: 'Fira Code', monospace;
+    font-family: var(--login-font);
     font-size: 2rem; font-weight: 600;
     letter-spacing: 0.04em;
     /* Same gradient as the main app's welcome-screen "Odysseus" title
@@ -147,9 +148,50 @@
   input:not(.remember-check) {
     width: 100%; padding: 0.6rem 0.8rem; margin-bottom: 1rem;
     background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-    color: var(--fg); font-size: 0.95rem; font-family: 'Fira Code', monospace;
+    color: var(--fg); font-size: 0.95rem; font-family: var(--login-font);
   }
   input:focus { outline: none; border-color: var(--red); }
+  .login-language-shell {
+    position: fixed; top: 18px; right: 18px; z-index: 5;
+    display: flex; flex-direction: column; align-items: flex-end;
+  }
+  .login-lang-button {
+    width: auto; min-width: 58px; height: 38px;
+    padding: 0 10px; border: 1px solid var(--border); border-radius: 999px;
+    background: color-mix(in srgb, var(--panel) 86%, transparent);
+    color: var(--fg); display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    box-shadow: 0 8px 24px color-mix(in srgb, #000 24%, transparent);
+    backdrop-filter: blur(12px);
+  }
+  .login-lang-button:hover {
+    background: color-mix(in srgb, var(--panel) 92%, var(--red) 8%);
+    border-color: color-mix(in srgb, var(--border) 60%, var(--red));
+  }
+  .login-lang-button svg { width: 16px; height: 16px; flex: 0 0 auto; }
+  .login-lang-current { font-size: 0.76rem; font-weight: 600; line-height: 1; }
+  .login-language-menu {
+    position: absolute; top: 44px; right: 0; min-width: 138px;
+    padding: 6px; border: 1px solid var(--border); border-radius: 8px;
+    background: color-mix(in srgb, var(--panel) 96%, transparent);
+    box-shadow: 0 14px 42px color-mix(in srgb, #000 34%, transparent);
+    backdrop-filter: blur(14px);
+    display: none;
+  }
+  .login-language-shell.open .login-language-menu { display: block; }
+  .login-lang-option {
+    width: 100%; height: 34px; padding: 0 9px; border-radius: 6px;
+    background: transparent; color: var(--fg); font-size: 0.82rem; font-weight: 500;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  .login-lang-option:hover {
+    background: color-mix(in srgb, var(--fg) 8%, transparent);
+  }
+  .login-lang-option.is-active {
+    color: #fff;
+    background: color-mix(in srgb, var(--red) 88%, black);
+  }
+  .login-lang-mark { opacity: 0; font-size: 0.75rem; }
+  .login-lang-option.is-active .login-lang-mark { opacity: 1; }
   button {
     width: 100%;
     /* Asymmetric vertical padding nudges the label 1px down while keeping
@@ -157,7 +199,7 @@
     padding: calc(0.7rem + 1px) 0.7rem calc(0.7rem - 1px);
     border: none; border-radius: 6px;
     background: var(--red); color: #fff; font-size: 1rem; cursor: pointer;
-    font-weight: 600; font-family: 'Fira Code', monospace;
+    font-weight: 600; font-family: var(--login-font);
   }
   button:hover { background: color-mix(in srgb, var(--red) 85%, black); }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -204,7 +246,7 @@
   .version-label {
     position: fixed; bottom: 12px; right: 16px;
     font-size: 0.7rem; opacity: 0.25;
-    font-family: 'Fira Code', monospace;
+    font-family: var(--login-font);
     pointer-events: none; user-select: none;
   }
   /* Whirlpool-style spinner shown in the submit button while login /
@@ -223,6 +265,16 @@
 </style>
 </head>
 <body>
+<div class="login-language-shell" id="loginLanguageShell">
+  <button type="button" class="login-lang-button" id="loginLanguageButton" aria-haspopup="menu" aria-expanded="false" aria-label="Language" title="Language">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+    <span class="login-lang-current" id="loginLanguageCurrent">EN</span>
+  </button>
+  <div class="login-language-menu" id="loginLanguageMenu" role="menu" aria-label="Language">
+    <button type="button" class="login-lang-option" data-login-language="en" role="menuitemradio" aria-checked="false"><span>English</span><span class="login-lang-mark" aria-hidden="true">✓</span></button>
+    <button type="button" class="login-lang-option" data-login-language="ko" role="menuitemradio" aria-checked="false"><span>한국어</span><span class="login-lang-mark" aria-hidden="true">✓</span></button>
+  </div>
+</div>
 <div class="card">
   <div class="logo">
     <svg class="logo-boat" viewBox="0 0 32 32"><path d="M16 4L16 22L6 22Z" fill="currentColor"/><path d="M16 8L16 22L24 22Z" fill="currentColor" opacity="0.6"/><path d="M4 24Q10 20 16 24Q22 28 28 24" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg><span>Odysseus</span>
@@ -270,8 +322,60 @@
 
 <div class="version-label" id="version-label"></div>
 
-<script nonce="{{CSP_NONCE}}">
+<script type="module" nonce="{{CSP_NONCE}}">
+import i18n, { t } from '/static/js/i18n.js';
+
 (async () => {
+  const languageShell = document.getElementById('loginLanguageShell');
+  const languageButton = document.getElementById('loginLanguageButton');
+  const languageCurrent = document.getElementById('loginLanguageCurrent');
+  const languageOptions = [...document.querySelectorAll('[data-login-language]')];
+
+  function closeLanguageMenu() {
+    if (!languageShell || !languageButton) return;
+    languageShell.classList.remove('open');
+    languageButton.setAttribute('aria-expanded', 'false');
+  }
+
+  function renderLanguageMenu() {
+    const lang = i18n.getLanguage();
+    const meta = i18n.getLanguageMeta(lang);
+    if (languageCurrent) languageCurrent.textContent = meta.code.toUpperCase();
+    if (languageButton) {
+      languageButton.setAttribute('aria-label', t('Language'));
+      languageButton.title = t('Language');
+    }
+    languageOptions.forEach(btn => {
+      const selected = btn.dataset.loginLanguage === lang;
+      btn.classList.toggle('is-active', selected);
+      btn.setAttribute('aria-checked', selected ? 'true' : 'false');
+    });
+  }
+
+  if (languageButton && languageShell) {
+    renderLanguageMenu();
+    languageButton.addEventListener('click', (e) => {
+      e.preventDefault();
+      const open = !languageShell.classList.contains('open');
+      languageShell.classList.toggle('open', open);
+      languageButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    languageOptions.forEach(btn => {
+      btn.addEventListener('click', () => {
+        i18n.setLanguage(btn.dataset.loginLanguage, { persist: true });
+        renderLanguageMenu();
+        closeLanguageMenu();
+      });
+    });
+    document.addEventListener('click', (e) => {
+      if (!languageShell.contains(e.target)) closeLanguageMenu();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeLanguageMenu();
+    });
+    window.addEventListener('odysseus-language-change', renderLanguageMenu);
+  }
+
   // Load version
   try {
     const vr = await fetch('/api/version');
@@ -307,29 +411,30 @@
     mode = m;
     errEl.style.display = 'none';
     if (m === 'setup') {
-      setupNote.textContent = 'First-time setup — create your admin account';
+      setupNote.textContent = t('First-time setup — create your admin account');
       setupNote.style.display = 'block';
       confirmGroup.style.display = 'block';
-      submitBtn.textContent = 'Create Admin Account';
+      submitBtn.textContent = t('Create Admin Account');
       toggleArea.style.display = 'none';
       rememberToggle.style.display = 'none';
     } else if (m === 'signup') {
       setupNote.style.display = 'none';
       confirmGroup.style.display = 'block';
-      submitBtn.innerHTML = '<span style="position:relative;top:1px;">Create Account</span>';
+      submitBtn.innerHTML = '<span style="position:relative;top:1px;">' + t('Create Account') + '</span>';
       toggleArea.style.display = 'block';
-      toggleText.textContent = 'Already have an account? ';
-      toggleLink.textContent = 'Sign in';
+      toggleText.textContent = t('Already have an account? ');
+      toggleLink.textContent = t('Sign in');
       rememberToggle.style.display = 'none';
     } else {
       setupNote.style.display = 'none';
       confirmGroup.style.display = 'none';
-      submitBtn.textContent = 'Sign In';
+      submitBtn.textContent = t('Sign In');
       toggleArea.style.display = signupAllowed ? 'block' : 'none';
-      toggleText.textContent = "Don't have an account? ";
-      toggleLink.textContent = 'Sign up';
+      toggleText.textContent = t("Don't have an account? ");
+      toggleLink.textContent = t('Sign up');
       rememberToggle.style.display = '';
     }
+    i18n.applyTranslations(document);
   }
 
   // Check auth status
@@ -377,12 +482,12 @@
           body: JSON.stringify({ username, password, remember, totp_code: code })
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Invalid code');
-        if (!data.ok) throw new Error('Login failed');
+        if (!res.ok) throw new Error(data.detail || t('Invalid code'));
+        if (!data.ok) throw new Error(t('Login failed'));
         form._totpMode = false;
         finishLogin();
       } catch (err) {
-        errEl.textContent = err.message;
+        errEl.textContent = i18n.translate(err.message);
         errEl.style.display = 'block';
         submitBtn.disabled = false;
       }
@@ -393,13 +498,13 @@
     if (mode === 'setup' || mode === 'signup') {
       const confirm = document.getElementById('confirmPassword').value;
       if (password !== confirm) {
-        errEl.textContent = 'Passwords do not match';
+        errEl.textContent = t('Passwords do not match');
         errEl.style.display = 'block';
         submitBtn.disabled = false;
         return;
       }
       if (password.length < 8) {
-        errEl.textContent = 'Password must be at least 8 characters';
+        errEl.textContent = t('Password must be at least 8 characters');
         errEl.style.display = 'block';
         submitBtn.disabled = false;
         return;
@@ -414,12 +519,12 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
-          body: JSON.stringify({ username, password })
+          body: JSON.stringify({ username, password, language: i18n.getLanguage() })
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Account creation failed');
+        if (!res.ok) throw new Error(data.detail || t('Account creation failed'));
       } catch (err) {
-        errEl.textContent = err.message;
+        errEl.textContent = i18n.translate(err.message);
         errEl.style.display = 'block';
         submitBtn.disabled = false;
         return;
@@ -435,6 +540,7 @@
       sessionStorage.removeItem('ody-session-active');
       submitBtn.innerHTML = '<span class="login-spinner" aria-hidden="true"></span>';
       submitBtn.disabled = true;
+      i18n.saveUserLanguage(i18n.getLanguage()).catch(() => {});
       Promise.all([
         fetch('/api/sessions', { credentials: 'same-origin' }).then(r => r.json()),
         fetch('/api/auth/features', { credentials: 'same-origin' }).then(r => r.json()),
@@ -455,7 +561,7 @@
         body: JSON.stringify(loginBody)
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Login failed');
+      if (!res.ok) throw new Error(data.detail || t('Login failed'));
       return data;
     }
     try {
@@ -468,17 +574,17 @@
         form._totpMode = true;
         const totpWrap = document.createElement('div');
         totpWrap.style.cssText = 'margin-top:12px;';
-        totpWrap.innerHTML = '<label style="font-size:0.85em;opacity:0.7;display:block;margin-bottom:4px;">2FA Code</label><input type="text" id="totp-input" placeholder="Enter 6-digit code" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:10px 12px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:8px;font-size:14px;box-sizing:border-box;text-align:center;letter-spacing:4px;">';
+        totpWrap.innerHTML = '<label style="font-size:0.85em;opacity:0.7;display:block;margin-bottom:4px;">' + t('2FA Code') + '</label><input type="text" id="totp-input" placeholder="' + t('Enter 6-digit code') + '" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:10px 12px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:8px;font-size:14px;box-sizing:border-box;text-align:center;letter-spacing:4px;">';
         const formEl = submitBtn.parentElement;
         formEl.insertBefore(totpWrap, submitBtn);
         const totpInput = document.getElementById('totp-input');
         totpInput.focus();
-        submitBtn.textContent = 'Verify';
+        submitBtn.textContent = t('Verify');
         return;
       }
       finishLogin();
     } catch (err) {
-      errEl.textContent = err.message;
+      errEl.textContent = i18n.translate(err.message);
       errEl.style.display = 'block';
       submitBtn.disabled = false;
       return;
@@ -498,7 +604,7 @@
       const show = inp.type === 'password';
       inp.type = show ? 'text' : 'password';
       btn.innerHTML = show ? eyeOpen : eyeClosed;
-      btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+      btn.setAttribute('aria-label', show ? t('Hide password') : t('Show password'));
       inp.focus();
     });
   }

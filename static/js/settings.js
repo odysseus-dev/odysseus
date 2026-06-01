@@ -6,6 +6,7 @@ import searchModule from './search.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { clearDockSide } from './modalSnap.js';
 import { sortModelIds } from './modelSort.js';
+import i18n, { t } from './i18n.js';
 
 let initialized = false;
 let modalEl = null;
@@ -1530,7 +1531,49 @@ async function initAgentSettings() {
 /* ═══════════════════════════════════════════
    APPEARANCE TAB
    ═══════════════════════════════════════════ */
+function initLanguageSettings() {
+  const select = el('set-language-select');
+  const msg = el('set-language-msg');
+  if (!select || select.dataset.wired === '1') return;
+  select.dataset.wired = '1';
+
+  select.innerHTML = '';
+  Object.values(i18n.LANGUAGES).forEach(function(lang) {
+    const opt = document.createElement('option');
+    opt.value = lang.code;
+    opt.textContent = lang.nativeLabel;
+    select.appendChild(opt);
+  });
+  select.value = i18n.getLanguage();
+
+  i18n.syncLanguageFromServer().then(function(lang) {
+    select.value = lang || i18n.getLanguage();
+  }).catch(function() {
+    select.value = i18n.getLanguage();
+  });
+
+  select.addEventListener('change', async function() {
+    const lang = i18n.setLanguage(select.value, { persist: true });
+    select.value = lang;
+    if (msg) {
+      msg.textContent = t('common.saved');
+      msg.style.color = 'var(--green, #50fa7b)';
+      setTimeout(function() { msg.textContent = ''; }, 1800);
+    }
+    try {
+      await i18n.saveUserLanguage(lang);
+      if (uiModule && uiModule.showToast) uiModule.showToast(t('common.languageChanged'));
+    } catch (e) {
+      if (msg) {
+        msg.textContent = t('common.failedToSave');
+        msg.style.color = 'var(--red)';
+      }
+    }
+  });
+}
+
 function initAppearance() {
+  initLanguageSettings();
   syncAppearanceCheckboxes();
   syncPrivacyCheckboxes();
 
@@ -1541,7 +1584,7 @@ function initAppearance() {
       if (window.UI_VIS_ADMIN_ONLY && window.UI_VIS_ADMIN_ONLY.has(key) && !chk.checked && !window._isAdmin) {
         chk.checked = true;
         if (uiModule && uiModule.showToast) {
-          uiModule.showToast('Only admins can hide Settings.');
+          uiModule.showToast(t('Only admins can hide Settings.'));
         }
         return;
       }
@@ -1564,7 +1607,7 @@ function initAppearance() {
           return;
         }
         if (uiModule && uiModule.showToast) {
-          uiModule.showToast('Settings cog hidden — type /settings to bring it back.', 5000);
+          uiModule.showToast(t('Settings cog hidden — type /settings to bring it back.'), 5000);
         }
       }
 
@@ -2076,7 +2119,7 @@ function initAccount() {
       // the previous user's last model into a fresh session, which read as
       // cross-account leakage.
       try {
-        const _keepKeys = new Set(['odysseus-last-user']);
+        const _keepKeys = new Set(['odysseus-last-user', 'odysseus-language', 'odysseus-language-ts']);
         const _toRemove = [];
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
@@ -2116,6 +2159,7 @@ function initAll() {
   initEmailAccountsSettings();
   initReminderSettings();
   initUnifiedIntegrations();
+  i18n.applyTranslations(modalEl);
 }
 
 function notifyIntegrationsChanged() {
@@ -4296,6 +4340,7 @@ export function open(tab) {
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }
+  i18n.applyTranslations(modalEl);
 }
 
 export function close() {
