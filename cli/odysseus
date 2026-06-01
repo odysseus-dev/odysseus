@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Launcher for the Odysseus CLI.
+# Finds a Python 3.11+ interpreter, puts this package on PYTHONPATH, and runs it.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Pick the first available Python >= 3.11. Override with ODYSSEUS_CLI_PYTHON.
+pick_python() {
+  if [[ -n "${ODYSSEUS_CLI_PYTHON:-}" ]]; then echo "$ODYSSEUS_CLI_PYTHON"; return; fi
+  for c in python3.13 python3.12 python3.11 python3 python; do
+    if command -v "$c" >/dev/null 2>&1; then
+      if "$c" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3,11) else 1)' 2>/dev/null; then
+        command -v "$c"; return
+      fi
+    fi
+  done
+  # Common fallbacks on this machine.
+  for p in /Users/"$USER"/miniconda3/bin/python3.13 /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.14; do
+    [[ -x "$p" ]] && { echo "$p"; return; }
+  done
+  echo "ERROR: no Python 3.11+ found. Set ODYSSEUS_CLI_PYTHON=/path/to/python" >&2
+  exit 1
+}
+
+PY="$(pick_python)"
+export PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PY" -m odysseus_cli "$@"

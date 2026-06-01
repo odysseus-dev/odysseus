@@ -1,0 +1,18 @@
+[project]
+name = "odysseus-cli"
+version = "0.1.0"
+description = "Local-first terminal coding agent powered by the Odysseus agent loop"
+requires-python = ">=3.11"
+# Runtime deps are the Odysseus repo's own requirements (the CLI imports
+# src.agent_loop). Install them with: pip install -r ../requirements.txt
+dependencies = []
+
+[project.scripts]
+odysseus = "odysseus_cli.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["odysseus_cli"]
