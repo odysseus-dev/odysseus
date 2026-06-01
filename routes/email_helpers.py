@@ -40,14 +40,19 @@ from src.secret_storage import decrypt as _decrypt
 logger = logging.getLogger(__name__)
 
 
-def _xoauth2_string(user: str, access_token: str) -> str:
-    """Base64-encoded XOAUTH2 string — used for SMTP AUTH command."""
-    return base64.b64encode(f"user={user}\x01auth=Bearer {access_token}\x01\x01".encode()).decode()
+def _xoauth2_raw(user: str, access_token: str) -> str:
+    """The SASL XOAUTH2 initial-response string (unencoded).
+
+    Both smtplib.SMTP.auth() and imaplib.IMAP4.authenticate() base64-encode
+    the value their callback returns, so callers pass this raw form — never
+    pre-encoded — to avoid double base64.
+    """
+    return f"user={user}\x01auth=Bearer {access_token}\x01\x01"
 
 
 def _xoauth2_bytes(user: str, access_token: str) -> bytes:
-    """Raw (unencoded) XOAUTH2 bytes — used for IMAP authenticate() which does its own b64."""
-    return f"user={user}\x01auth=Bearer {access_token}\x01\x01".encode()
+    """Raw XOAUTH2 bytes for imaplib's authenticate() callback."""
+    return _xoauth2_raw(user, access_token).encode()
 
 
 def make_oauth_state(account_id: str, owner: str) -> str:
@@ -152,10 +157,9 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
         if cfg.get("oauth_provider") == "google":
             token = _get_valid_google_token(cfg.get("account_id"), cfg)
             if not token:
-                raise Exception("Google OAuth token unavailable — reconnect the account")
-            raw = f"user={user}\x01auth=Bearer {token}\x01\x01"
+                raise RuntimeError("Google OAuth token unavailable — reconnect the account")
             smtp.ehlo()
-            smtp.auth("XOAUTH2", lambda challenge=None: raw, initial_response_ok=True)
+            smtp.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(user, token), initial_response_ok=True)
         elif user and password:
             smtp.login(user, password)
 
@@ -720,7 +724,7 @@ def _imap_connect(account_id: str | None = None, owner: str = ""):
     if cfg.get("oauth_provider") == "google":
         token = _get_valid_google_token(cfg.get("account_id"), cfg)
         if not token:
-            raise Exception("Google OAuth token unavailable — reconnect the account in Settings → Integrations")
+            raise RuntimeError("Google OAuth token unavailable — reconnect the account in Settings → Integrations")
         conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(cfg["imap_user"], token))
     else:
         conn.login(cfg["imap_user"], cfg["imap_password"])

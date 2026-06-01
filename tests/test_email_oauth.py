@@ -7,7 +7,7 @@ IMAP/SMTP support:
   callback can't be CSRF'd or have its account_id/owner tampered with.
 - `_smtp_ready` — an OAuth account (no stored password) must still count as
   send-capable; a host+user-only account without password or OAuth must not.
-- `_xoauth2_string` / `_xoauth2_bytes` — SASL XOAUTH2 framing for SMTP/IMAP.
+- `_xoauth2_raw` / `_xoauth2_bytes` — SASL XOAUTH2 framing for SMTP/IMAP.
 
 These are pure-function tests — no FastAPI app boot, no live network.
 """
@@ -120,16 +120,13 @@ def test_smtp_ready_false_without_host():
 
 # ── XOAUTH2 SASL framing ─────────────────────────────────────────
 
-def test_xoauth2_string_is_base64_of_sasl_frame():
-    from routes.email_helpers import _xoauth2_string
+def test_xoauth2_raw_is_unencoded_sasl_frame():
+    from routes.email_helpers import _xoauth2_raw
 
-    encoded = _xoauth2_string("me@nyu.edu", "tok123")
-    decoded = base64.b64decode(encoded).decode()
-    assert decoded == "user=me@nyu.edu\x01auth=Bearer tok123\x01\x01"
+    assert _xoauth2_raw("me@nyu.edu", "tok123") == "user=me@nyu.edu\x01auth=Bearer tok123\x01\x01"
 
 
-def test_xoauth2_bytes_is_raw_unencoded_frame():
+def test_xoauth2_bytes_is_raw_frame_encoded():
     from routes.email_helpers import _xoauth2_bytes
 
-    raw = _xoauth2_bytes("me@nyu.edu", "tok123")
-    assert raw == b"user=me@nyu.edu\x01auth=Bearer tok123\x01\x01"
+    assert _xoauth2_bytes("me@nyu.edu", "tok123") == b"user=me@nyu.edu\x01auth=Bearer tok123\x01\x01"
