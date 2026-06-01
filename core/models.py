@@ -42,7 +42,18 @@ class ChatMessage:
 
 @dataclass
 class Session:
-    """A chat session — pure data container."""
+    """A chat session — pure data container.
+
+    IMPORTANT: History immutability contract
+    ----------------------------------------
+    ``.history`` exposes a COPY of the internal message list. Callers that
+    mutate ``.history`` (e.g. via ``.append()``) are modifying a throwaway
+    list that will NOT affect the session or persist. Always use
+    ``.add_message()`` to append messages.
+
+    ``.message_count`` always reflects the true internal count,
+    NOT ``len(.history)`` (which may be stale if you held a reference).
+    """
     id: str
     name: str
     endpoint_url: str
@@ -56,20 +67,29 @@ class Session:
     message_count: int = 0
 
     def __post_init__(self):
-        if self.history is None:
-            self.history = []
         if self.headers is None:
             self.headers = {}
+        # Internal authoritative list
+        if self.history is None:
+            self._history: List[ChatMessage] = []
+        else:
+            self._history = list(self.history)
+        # Public copy (callers get a snapshot, not the internal list)
+        self.history = list(self._history)
 
     def add_message(self, message: ChatMessage):
         """
         Add a message to this session.
 
-        Delegates to SessionManager for persistence if available,
-        otherwise just appends to history.
+        Appends to the internal _history list, then exposes a fresh copy
+        via .history. The caller's pre-existing references to .history
+        are unaffected (they hold the previous snapshot).
+
+        Delegates to SessionManager for persistence if available.
         """
-        self.history.append(message)
-        self.message_count = len(self.history)
+        self._history.append(message)
+        self.history = list(self._history)
+        self.message_count = len(self._history)
 
         # Delegate to session manager for persistence
         if _session_manager:
@@ -87,7 +107,7 @@ class Session:
         """
         return [
             msg.to_dict()
-            for msg in self.history
+            for msg in self._history
             if (msg.metadata or {}).get("source") != "slash"
         ]
 
