@@ -388,6 +388,22 @@ def _uses_max_completion_tokens(model: str) -> bool:
     m = model.lower()
     return any(m.startswith(p) or f"/{p}" in m for p in _MAX_COMPLETION_TOKENS_MODELS)
 
+# OpenAI reasoning models (o1, o3, o4, gpt-5 families) only accept the default
+# temperature. Sending any explicit value — even 0.0 — returns HTTP 400
+# ("Only the default (1) value is supported"). That otherwise breaks chat when a
+# preset sets a non-default temperature, and makes endpoint probing report a
+# perfectly good model as failing. For these models we omit the field and let
+# the API use its required default. (gpt-4.5 is intentionally excluded — it is
+# not a reasoning model and accepts temperature normally.)
+_FIXED_TEMPERATURE_MODELS = ("o1", "o3", "o4", "gpt-5")
+
+def _restricts_temperature(model: str) -> bool:
+    """Check if a model rejects any non-default temperature."""
+    if not model:
+        return False
+    m = model.lower()
+    return any(m.startswith(p) or f"/{p}" in m for p in _FIXED_TEMPERATURE_MODELS)
+
 # Models that support structured thinking — may output </think> without opening tag
 _THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax", "m2-reap")
 
@@ -683,6 +699,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             "messages": messages_copy,
             "temperature": temperature,
         }
+        if _restricts_temperature(model):
+            payload.pop("temperature", None)
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
@@ -799,6 +817,8 @@ async def llm_call_async(
             "messages": messages_copy,
             "temperature": temperature,
         }
+        if _restricts_temperature(model):
+            payload.pop("temperature", None)
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
@@ -897,6 +917,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             "temperature": temperature,
             "stream": True,
         }
+        if _restricts_temperature(model):
+            payload.pop("temperature", None)
         if provider not in {"openrouter", "groq"}:
             payload["stream_options"] = {"include_usage": True}
         if max_tokens and max_tokens > 0:

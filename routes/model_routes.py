@@ -203,9 +203,13 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
         target_url = build_chat_url(base)
         h = build_headers(api_key, base)
         h["Content-Type"] = "application/json"
-        from src.llm_core import _uses_max_completion_tokens
+        from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
         _max_key = "max_completion_tokens" if _uses_max_completion_tokens(model_id) else "max_tokens"
-        payload = {"model": model_id, "messages": messages, _max_key: 5, "temperature": 0.0}
+        payload = {"model": model_id, "messages": messages, _max_key: 5}
+        # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature, so a
+        # probe that hardcodes one falsely reports a working endpoint as failing.
+        if not _restricts_temperature(model_id):
+            payload["temperature"] = 0.0
         if _test_tools:
             payload["tools"] = _test_tools
 
