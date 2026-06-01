@@ -2094,6 +2094,29 @@
                 <div id="adm-epApiMsg" class="adm-ep-inline-msg"></div>
               </div>
             </div>
+
+            <!-- Subscription subsection (OAuth sign-in; owner-scoped self-connect,
+                 so deliberately NOT .admin-only — every user links their own account).
+                 Mirrors the API subsection: provider picker (own ids, shared
+                 .adm-provider-* classes) + one generic OAuth card rendered by
+                 codexConnect.js from the selected provider's descriptor. -->
+            <div class="adm-add-section collapsible collapsed" id="adm-add-sub" style="margin-top:14px">
+              <div class="adm-ep-section-head adm-section-toggle" role="button" tabindex="0" aria-expanded="false">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4L12 2z"/></svg>
+                <span>Subscription</span>
+                <svg class="adm-section-caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </div>
+              <div class="admin-model-form" id="codex-sub-providers">
+                <div class="adm-provider-picker" id="codex-provider-picker">
+                  <button type="button" class="adm-provider-btn" id="codex-provider-btn" title="Pick provider">
+                    <span class="adm-provider-current"><span class="adm-provider-logo"></span><span class="adm-provider-name">Select Provider</span></span>
+                    <svg class="adm-provider-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                  </button>
+                  <div class="adm-provider-menu hidden" id="codex-provider-menu"></div>
+                </div>
+                <div id="codex-oauth-card"></div>
+              </div>
+            </div>
           </div>
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Added Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoints)</span></h2>
@@ -2111,6 +2134,16 @@
                 <span>API</span>
               </div>
               <div id="adm-epList-api"></div>
+            </div>
+            <!-- Subscription (OAuth) endpoints — rendered by codexConnect.js from the
+                 provider's owner-scoped status endpoint (the generic list above is
+                 admin-only, so it can't serve regular users' own connections). -->
+            <div class="adm-ep-section" style="margin-top:14px">
+              <div class="adm-ep-section-head">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4L12 2z"/></svg>
+                <span>Subscription</span>
+              </div>
+              <div id="adm-epList-sub"><div class="admin-empty">None</div></div>
             </div>
           </div>
         </div>

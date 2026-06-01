@@ -628,6 +628,19 @@ export function applyModelColor(roleEl, modelName) {
       bindMenuDismiss(popup, () => popup.remove());
     });
   }
+  // Subscription "(sub)" marker, right after the model name. Folded in here
+  // because every role render (streaming, agent, group, history) calls
+  // applyModelColor — the one shared chokepoint. Idempotent; sits before any timestamp.
+  if (!roleEl.querySelector('.model-sub-inline')
+      && window.modelsModule && window.modelsModule.isSubscriptionModel
+      && window.modelsModule.isSubscriptionModel(modelName, '')) {
+    const tag = document.createElement('span');
+    tag.className = 'model-sub-inline';
+    tag.textContent = '(sub)';
+    const ts = roleEl.querySelector('.role-timestamp');
+    if (ts) roleEl.insertBefore(tag, ts);
+    else roleEl.appendChild(tag);
+  }
 }
 
 export function getModelCost(modelName, inputTokens, outputTokens) {

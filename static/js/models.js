@@ -631,11 +631,30 @@ export async function refreshProviders() {
 
 export function getCachedItems() { return _cachedItems; }
 
+/**
+ * True if `modelId` is served by a flat-rate subscription endpoint (e.g.
+ * ChatGPT-sub via codex), used to surface a "(sub)" marker in the UI. When
+ * `url` is given, the match is narrowed to that endpoint so the same model id
+ * offered by both a subscription and a metered API key isn't mis-tagged.
+ */
+export function isSubscriptionModel(modelId, url) {
+  if (!modelId || !_cachedItems) return false;
+  const targetUrl = (url || '').replace(/\/+$/, '');
+  return _cachedItems.some(item => {
+    if (item.offline || !item.is_subscription) return false;
+    const itemUrl = (item.url || '').replace(/\/+$/, '');
+    if (targetUrl && itemUrl !== targetUrl) return false;
+    const models = (item.models || []).concat(item.models_extra || []);
+    return models.includes(modelId);
+  });
+}
+
 const modelsModule = {
   init,
   refreshModels,
   refreshProviders,
   getCachedItems,
+  isSubscriptionModel,
 };
 
 export default modelsModule;

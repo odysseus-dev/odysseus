@@ -5,6 +5,7 @@ import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { providerLogo } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
+import { initCodexConnect, refreshCodexStatus, isSubscriptionEndpointUrl } from './codexConnect.js';
 
 let initialized = false;
 let modalEl = null;
@@ -390,6 +391,12 @@ async function loadEndpoints() {
     let data = [];
     if (res.ok) {
       try { data = await res.json(); } catch { data = []; }
+    }
+    if (Array.isArray(data)) {
+      // Subscription (OAuth) endpoints are managed in the Subscription section
+      // (codexConnect.js) — the generic Delete here would bypass the provider's
+      // disconnect/token-purge path, so keep them out of these lists entirely.
+      data = data.filter(ep => !isSubscriptionEndpointUrl(ep.base_url));
     }
     if (!Array.isArray(data) || data.length === 0) {
       const empty = '<div class="admin-empty">None</div>';
@@ -1069,10 +1076,10 @@ function initEndpointForm() {
     });
   }
 
-  // Collapsible Add-Models subsections (API / Local). Both start collapsed
-  // so the card is compact; the last-used state is remembered per section
-  // in localStorage so a frequent API-adder doesn't re-expand every time.
-  document.querySelectorAll('#adm-add-api, #adm-add-local').forEach((sec) => {
+  // Collapsible Add-Models subsections (API / Local / Subscription). All start
+  // collapsed so the card is compact; the last-used state is remembered per
+  // section in localStorage so a frequent API-adder doesn't re-expand every time.
+  document.querySelectorAll('#adm-add-api, #adm-add-local, #adm-add-sub').forEach((sec) => {
     const head = sec.querySelector('.adm-section-toggle');
     if (!head) return;
     const key = 'odysseus.addModels.' + sec.id + '.open';
@@ -2099,7 +2106,7 @@ function initDangerZone() {
    ═══════════════════════════════════════════ */
 function initAll() {
   modalEl = el('settings-modal');
-  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, () => settingsModule.initIntegrations()];
+  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, () => settingsModule.initIntegrations(), initCodexConnect];
   for (const fn of inits) {
     try { fn(); } catch (e) { console.error('Admin init error in', fn.name || 'anonymous', e); }
   }
@@ -2112,6 +2119,7 @@ function refreshAll() {
   loadEndpoints();
   loadBuiltinTools();
   loadMcpServers();
+  refreshCodexStatus();
 }
 
 /* ═══════════════════════════════════════════

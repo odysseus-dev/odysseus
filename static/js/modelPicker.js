@@ -201,6 +201,7 @@ function _initModelPickerDropdown() {
             item.host || '',
             item.url || '',
           ].filter(Boolean).join(' '),
+          subscription: !!item.is_subscription,
           stale: isLocalDead,
           staleReason: isLocalDead ? (probeResult.error || 'not responding') : '',
         });
@@ -318,6 +319,13 @@ function _initModelPickerDropdown() {
         badge.textContent = 'offline';
         badge.style.cssText = 'font-size:10px;opacity:0.7;padding:1px 6px;border:1px solid var(--border);border-radius:8px;margin-left:6px;';
         row.appendChild(badge);
+      }
+      if (m.subscription) {
+        const subBadge = document.createElement('span');
+        subBadge.className = 'model-switch-sub-badge';
+        subBadge.textContent = 'sub';
+        subBadge.title = 'Flat-rate subscription access (no per-token API billing)';
+        row.appendChild(subBadge);
       }
       const epSpan = document.createElement('span');
       epSpan.className = 'model-switch-ep';
@@ -687,9 +695,21 @@ export function updateModelPicker() {
 
   const displayName = modelId ? modelId.split('/').pop() : 'Select model';
   const logo = modelId ? providerLogo(modelId) : null;
+  // providerLogo() returns a trusted SVG string; the model name is appended as
+  // a text node so it can never be parsed as markup.
   if (logo) {
-    label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ' + displayName;
+    label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ';
+    label.appendChild(document.createTextNode(displayName));
   } else {
     label.textContent = displayName;
+  }
+  const endpointUrl = (s && s.endpoint_url) || (_pendingChat && _pendingChat.url) || '';
+  if (modelId && window.modelsModule && window.modelsModule.isSubscriptionModel
+      && window.modelsModule.isSubscriptionModel(modelId, endpointUrl)) {
+    label.appendChild(document.createTextNode(' '));
+    const subTag = document.createElement('span');
+    subTag.className = 'model-sub-inline';
+    subTag.textContent = '(sub)';
+    label.appendChild(subTag);
   }
 }

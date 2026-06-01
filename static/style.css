@@ -563,12 +563,11 @@ body.bg-pattern-sparkles {
     .sidebar-brand-title {
       font-size: 1rem;
       font-weight: 600;
-      line-height: 1.35;
       color: var(--brand-color, var(--red));
       white-space: nowrap;
       user-select: none;
       position: relative;
-      top: 0;
+      top: 1px;
       left: -10px;
     }
     .sidebar-sep {
@@ -14023,7 +14022,8 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
    left-aligned, accent-colored treatment so they read as "this row is your
    placeholder, click Add" rather than a centered "nothing here" grey blob. */
 #adm-epList-local .admin-empty,
-#adm-epList-api .admin-empty {
+#adm-epList-api .admin-empty,
+#adm-epList-sub .admin-empty {
   text-align: left;
   padding: 8px 4px;
   color: var(--accent-primary, var(--accent, var(--red)));
@@ -35730,4 +35730,108 @@ body.theme-frosted .modal {
   /* Email compose rich-body. Medium (15px) zooms, so bump it; large (17px)
      is already ≥16px and never zoomed — leave it so we don't shrink it. */
   .doc-email-richbody.doc-font-m { font-size: 16px !important; }
+}
+
+/* ─── Subscription (Codex / OAuth) connect — Add Models + Added Models ──── */
+.codex-provider {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 10px 12px;
+}
+.codex-provider-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.codex-provider-logo {
+  width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; color: var(--fg); opacity: 0.85;
+}
+.codex-provider-logo svg { width: 18px; height: 18px; }
+.codex-provider-titles {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.codex-provider-name { font-size: 12px; font-weight: 600; }
+.codex-provider-plan { opacity: 0.45; font-weight: normal; font-size: 0.85em; }
+.codex-provider-desc {
+  font-size: 10.5px;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+.codex-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 30%, transparent);
+  flex: 0 0 auto;
+}
+.codex-dot-on { background: #2ecc71; box-shadow: 0 0 5px #2ecc71; }
+.codex-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0 2px;
+}
+.codex-step {
+  font-size: 11.5px;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+  margin-top: 4px;
+}
+.codex-open-btn { align-self: flex-start; text-decoration: none; }
+.codex-code-row { display: flex; align-items: center; gap: 8px; }
+.codex-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  user-select: all;
+}
+.codex-wait {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  margin-top: 2px;
+}
+.codex-msg {
+  font-size: 11.5px;
+  margin-top: 8px;
+  min-height: 1px;
+}
+.codex-msg-ok { color: #2ecc71; }
+.codex-msg-warn { color: #e0a93b; }
+.codex-msg-err { color: var(--red); }
+
+
+/* Model-picker badge marking a flat-rate subscription (OAuth) endpoint */
+.model-switch-sub-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  color: #2ecc71;
+  border: 1px solid color-mix(in srgb, #2ecc71 45%, transparent);
+  background: color-mix(in srgb, #2ecc71 12%, transparent);
+}
+
+/* Lightweight "(sub)" marker — collapsed model picker label + inline chat role.
+   Same green subscription signal as .model-switch-sub-badge, minus the pill. */
+.model-sub-inline {
+  font-size: 0.82em;
+  font-weight: 500;
+  color: #2ecc71;
+  opacity: 0.9;
 }
