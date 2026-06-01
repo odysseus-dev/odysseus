@@ -339,7 +339,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         Toggle open registration on/off. Admin only.
 
         DEPRECATED: This endpoint uses toggle semantics which can lead to unsafe state changes.
-        Use PUT /open-registration instead.
+        Use PUT /open-signup instead.
 
         This endpoint is kept for backward compatibility and may be removed in future versions.
         """
@@ -349,9 +349,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         auth_manager.signup_enabled = not auth_manager.signup_enabled
         return {"ok": True, "signup_enabled": auth_manager.signup_enabled}
 
-    @router.put("/open-registration")
+    @router.put("/open-signup")
     async def set_signup_enabled(body: SetOpenRegistrationRequest, request: Request):
-        """Set open registration enabled state. Admin only."""
+        """Set open signup enabled state. Admin only."""
         user = _get_current_user(request)
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
