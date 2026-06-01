@@ -8,7 +8,7 @@
 A self-hosted AI workspace -- meant to be the self-hosted version of the UI experience you get from ChatGPT and Claude. But with more jank and fun. Running on your own hardware, with your own data -- local-first, privacy-first, and no trojan.
 
 ## Features
-  - **Chat** -- chat with any local model or API; adding them is super simple.<br>　<sub>vLLM · llama.cpp · Ollama · OpenRouter · OpenAI</sub>
+  - **Chat** -- chat with any local model or API; adding them is super simple.<br>　<sub>vLLM · llama.cpp · Ollama · LM Studio · OpenRouter · OpenAI</sub>
   - **Agent** -- hand it tools and let it run the whole task itself.<br>　<sub>built on [opencode](https://github.com/anomalyco/opencode) · MCP · web · files · shell · skills · memory</sub>
   - **Cookbook** -- Scans your hardware, recommends models, click to download and serve.. easy!<br>　<sub>built on [llmfit](https://github.com/AlexsJones/llmfit) · VRAM-aware · GGUF / FP8 / AWQ · fit scoring · vLLM / llama.cpp serving</sub>
   - **Deep Research** -- multi-step runs that gather, read, and synthesize sources into a nice visual report.<br>　<sub>adapted from [Tongyi DeepResearch](https://github.com/Alibaba-NLP/DeepResearch)</sub>
@@ -209,6 +209,7 @@ Docker Compose includes these by default. The bundled service ports bind to `127
 
 ### Optional external services
   - **Ollama** → local LLM server -- [ollama.ai](https://ollama.ai)
+  - **LM Studio** → local LLM server with a GUI -- [lmstudio.ai](https://lmstudio.ai)
 
 ### Ollama with Docker
 If Odysseus is running in Docker and Ollama is running on the host, add the endpoint in Settings as:
@@ -228,6 +229,29 @@ First-token latency is usually Ollama/model/hardware, not Odysseus. To compare, 
 ```bash
 curl http://127.0.0.1:11434/v1/models
 ```
+
+### LM Studio with Docker
+LM Studio exposes an OpenAI-compatible server (default port `1234`). Start it
+from **Developer → Start Server** (or the `lms server start` CLI) and load a
+model. If Odysseus is running in Docker and LM Studio is on the host, add the
+endpoint in Settings as:
+
+`http://host.docker.internal:1234/v1`
+
+Use `host.docker.internal`, **not** `localhost` — inside the container
+`localhost` is the container itself, not your host. The default Compose file
+already maps `host.docker.internal` on Linux. To confirm the container can
+reach it:
+
+```bash
+docker compose exec odysseus curl -s http://host.docker.internal:1234/v1/models
+```
+
+Notes:
+  - LM Studio loads the model on the first request ("just-in-time loading"), so
+    the first response can lag by a few seconds while it loads from disk.
+  - The API key is ignored by default — any placeholder works if Odysseus
+    prompts for one.
 
 ## Architecture
 ```
