@@ -1,34 +1,37 @@
-"""Shared test configuration — ensure project root is on sys.path and stub heavy deps."""
+"""Shared test configuration — ensure project root is on sys.path."""
 import sys
 import os
-import types
-import importlib.util
-from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-def _has_module(mod_name: str) -> bool:
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from core import database as db
+
+
+@pytest.fixture(scope="session")
+def engine():
+    test_engine = create_engine("sqlite:///:memory:")
+    db.Base.metadata.create_all(bind=test_engine)
+    yield test_engine
+    db.Base.metadata.drop_all(bind=test_engine)
+    test_engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _bind_core_db_to_test_engine(engine, monkeypatch):
+    TestSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    monkeypatch.setattr(db, "engine", engine, raising=False)
+    monkeypatch.setattr(db, "SessionLocal", TestSession, raising=False)
+    yield
+
+
+@pytest.fixture
+def db_session(engine):
+    Session = sessionmaker(bind=engine)
+    session = Session()
     try:
-        return importlib.util.find_spec(mod_name) is not None
-    except (ImportError, ValueError):
-        return False
-
-
-# Stub optional dependencies only when they are not installed. Do not replace
-# real FastAPI/Starlette/Pydantic modules: route tests import their subpackages.
-for mod_name in [
-    "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.types", "sqlalchemy.ext", "sqlalchemy.ext.declarative",
-    "sqlalchemy.ext.hybrid", "sqlalchemy.sql", "sqlalchemy.sql.expression",
-    "sqlalchemy.sql.sqltypes", "bcrypt", "pyotp",
-    "httpx", "fastapi", "fastapi.responses", "fastapi.routing",
-    "starlette", "starlette.responses", "starlette.middleware", "starlette.middleware.base",
-    "pydantic",
-]:
-    if mod_name not in sys.modules and not _has_module(mod_name):
-        sys.modules[mod_name] = MagicMock()
-
-if "src.database" not in sys.modules:
-    _db = types.ModuleType("src.database")
-    _db.SessionLocal = MagicMock()
-    _db.ModelEndpoint = MagicMock()
-    sys.modules["src.database"] = _db
+        yield session
+    finally:
+        session.close()
