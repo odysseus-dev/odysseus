@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from routes.shell_routes import (
     _find_line_break,
     _running_in_container,
-    _local_docker_status,
+    _docker_row_status,
     DOCKER_IN_CONTAINER_HINT,
 )
 
@@ -137,28 +137,42 @@ class TestRunningInContainer:
         ) is False
 
 
-class TestLocalDockerStatus:
-    """Status for a locally-checked docker row: applicability plus the hint."""
+class TestDockerRowStatus:
+    """Applicability plus install hint for the docker dependency row."""
 
     DEFAULT = "Install Docker on the selected server."
 
     def test_in_container_and_absent_is_not_applicable_with_safe_default_hint(self):
-        status = _local_docker_status(
-            installed=False, in_container=True, default_hint=self.DEFAULT,
+        status = _docker_row_status(
+            on_remote=False, in_container=True, installed=False, default_hint=self.DEFAULT,
         )
         assert status.applicable is False
         assert status.install_hint == DOCKER_IN_CONTAINER_HINT
 
     def test_in_container_but_present_is_applicable_with_default_hint(self):
-        status = _local_docker_status(
-            installed=True, in_container=True, default_hint=self.DEFAULT,
+        status = _docker_row_status(
+            on_remote=False, in_container=True, installed=True, default_hint=self.DEFAULT,
         )
         assert status.applicable is True
         assert status.install_hint == self.DEFAULT
 
     def test_on_host_and_absent_stays_applicable_with_default_hint(self):
-        status = _local_docker_status(
-            installed=False, in_container=False, default_hint=self.DEFAULT,
+        status = _docker_row_status(
+            on_remote=False, in_container=False, installed=False, default_hint=self.DEFAULT,
+        )
+        assert status.applicable is True
+        assert status.install_hint == self.DEFAULT
+
+    def test_remote_server_is_always_applicable_even_when_absent(self):
+        status = _docker_row_status(
+            on_remote=True, in_container=False, installed=False, default_hint=self.DEFAULT,
+        )
+        assert status.applicable is True
+        assert status.install_hint == self.DEFAULT
+
+    def test_remote_server_ignores_local_container_status(self):
+        status = _docker_row_status(
+            on_remote=True, in_container=True, installed=False, default_hint=self.DEFAULT,
         )
         assert status.applicable is True
         assert status.install_hint == self.DEFAULT

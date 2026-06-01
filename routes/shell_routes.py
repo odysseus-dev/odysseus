@@ -70,13 +70,14 @@ def _running_in_container(dockerenv_path="/.dockerenv", cgroup_path="/proc/1/cgr
     return any(token in contents for token in ("docker", "containerd", "kubepods"))
 
 
-DockerLocalStatus = namedtuple("DockerLocalStatus", ["applicable", "install_hint"])
+DockerRowStatus = namedtuple("DockerRowStatus", ["applicable", "install_hint"])
 
 
-def _local_docker_status(*, installed, in_container, default_hint):
-    if in_container and not installed:
-        return DockerLocalStatus(applicable=False, install_hint=DOCKER_IN_CONTAINER_HINT)
-    return DockerLocalStatus(applicable=True, install_hint=default_hint)
+def _docker_row_status(*, on_remote, in_container, installed, default_hint):
+    local_docker_unavailable = not on_remote and in_container and not installed
+    if local_docker_unavailable:
+        return DockerRowStatus(applicable=False, install_hint=DOCKER_IN_CONTAINER_HINT)
+    return DockerRowStatus(applicable=True, install_hint=default_hint)
 
 
 def _find_line_break(buf):
@@ -617,29 +618,29 @@ def setup_shell_routes() -> APIRouter:
                 pass
 
         for pkg in packages:
-            if host and pkg.get("target") == "remote":
+            on_remote = bool(host and pkg.get("target") == "remote")
+            if on_remote:
                 pkg["installed"] = bool(remote_status.get(pkg["name"], False))
-                continue
-            if pkg.get("kind") == "system":
-                installed = shutil.which(pkg["name"]) is not None
-                pkg["installed"] = installed
-                if pkg["name"] == "docker":
-                    status = _local_docker_status(
-                        installed=installed,
-                        in_container=_running_in_container(),
-                        default_hint=pkg.get("install_hint"),
-                    )
-                    pkg["applicable"] = status.applicable
-                    pkg["install_hint"] = status.install_hint
-                continue
-            try:
-                if pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
-                    pkg["installed"] = True
-                    continue
-                importlib.import_module(pkg["name"])
+            elif pkg.get("kind") == "system":
+                pkg["installed"] = shutil.which(pkg["name"]) is not None
+            elif pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
                 pkg["installed"] = True
-            except ImportError:
-                pkg["installed"] = False
+            else:
+                try:
+                    importlib.import_module(pkg["name"])
+                    pkg["installed"] = True
+                except ImportError:
+                    pkg["installed"] = False
+
+            if pkg["name"] == "docker":
+                status = _docker_row_status(
+                    on_remote=on_remote,
+                    in_container=_running_in_container() if not on_remote else False,
+                    installed=pkg["installed"],
+                    default_hint=pkg.get("install_hint"),
+                )
+                pkg["applicable"] = status.applicable
+                pkg["install_hint"] = status.install_hint
         return {"packages": packages}
 
     @router.post("/api/cookbook/packages/install")
