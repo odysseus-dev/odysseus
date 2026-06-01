@@ -13,6 +13,8 @@ and `email_pollers.py` (the background loops):
 """
 
 import os
+import base64
+import time
 import imaplib
 import smtplib
 import email as email_mod
@@ -38,6 +40,67 @@ from src.secret_storage import decrypt as _decrypt
 logger = logging.getLogger(__name__)
 
 
+def _xoauth2_string(user: str, access_token: str) -> str:
+    """Base64-encoded XOAUTH2 string — used for SMTP AUTH command."""
+    return base64.b64encode(f"user={user}\x01auth=Bearer {access_token}\x01\x01".encode()).decode()
+
+
+def _xoauth2_bytes(user: str, access_token: str) -> bytes:
+    """Raw (unencoded) XOAUTH2 bytes — used for IMAP authenticate() which does its own b64."""
+    return f"user={user}\x01auth=Bearer {access_token}\x01\x01".encode()
+
+
+def _refresh_google_token(account_id: str) -> str | None:
+    """Exchange the stored refresh token for a new access token and persist it."""
+    import httpx
+    from core.database import SessionLocal as _SL, EmailAccount as _EA
+    from src.secret_storage import encrypt as _enc, decrypt as _dec
+    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        return None
+    db = _SL()
+    try:
+        row = db.get(_EA, account_id)
+        if not row or not row.oauth_refresh_token:
+            return None
+        refresh_token = _dec(row.oauth_refresh_token or "")
+        if not refresh_token:
+            return None
+        resp = httpx.post("https://oauth2.googleapis.com/token", data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        }, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        access_token = data["access_token"]
+        row.oauth_access_token = _enc(access_token)
+        row.oauth_token_expiry = str(int(time.time()) + data.get("expires_in", 3600))
+        db.commit()
+        return access_token
+    except Exception as e:
+        logger.warning(f"Google token refresh failed: {e}")
+        return None
+    finally:
+        db.close()
+
+
+def _get_valid_google_token(account_id: str, cfg: dict) -> str | None:
+    """Return a valid Google access token, refreshing if expired or missing."""
+    from src.secret_storage import decrypt as _dec
+    access_token = _dec(cfg.get("oauth_access_token") or "")
+    expiry_str = cfg.get("oauth_token_expiry") or ""
+    if access_token and expiry_str:
+        try:
+            if int(expiry_str) - 60 > time.time():
+                return access_token
+        except (ValueError, TypeError):
+            pass
+    return _refresh_google_token(account_id)
+
+
 def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message: str | bytes, timeout: int = 30) -> None:
     """Send through SMTP using the conventional TLS mode for the configured port.
 
@@ -50,16 +113,26 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
     port = int(cfg.get("smtp_port") or 465)
     user = cfg.get("smtp_user") or ""
     password = cfg.get("smtp_password") or ""
+
+    def _auth_smtp(smtp):
+        if cfg.get("oauth_provider") == "google":
+            token = _get_valid_google_token(cfg.get("account_id"), cfg)
+            if not token:
+                raise Exception("Google OAuth token unavailable — reconnect the account")
+            raw = f"user={user}\x01auth=Bearer {token}\x01\x01"
+            smtp.ehlo()
+            smtp.auth("XOAUTH2", lambda challenge=None: raw, initial_response_ok=True)
+        elif user and password:
+            smtp.login(user, password)
+
     if port == 587:
         with smtplib.SMTP(host, port, timeout=timeout) as smtp:
             smtp.starttls()
-            if user and password:
-                smtp.login(user, password)
+            _auth_smtp(smtp)
             smtp.sendmail(from_addr, recipients, message)
         return
     with smtplib.SMTP_SSL(host, port, timeout=timeout) as smtp:
-        if user and password:
-            smtp.login(user, password)
+        _auth_smtp(smtp)
         smtp.sendmail(from_addr, recipients, message)
 
 
@@ -522,10 +595,16 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
                     "imap_password": _decrypt(row.imap_password or ""),
                     "imap_starttls": bool(row.imap_starttls),
                     "from_address": row.from_address or row.imap_user or "",
+                    "oauth_provider": row.oauth_provider or "",
+                    "oauth_access_token": row.oauth_access_token or "",
+                    "oauth_refresh_token": row.oauth_refresh_token or "",
+                    "oauth_token_expiry": row.oauth_token_expiry or "",
+                    "display_name": row.display_name or "",
                 }
-                if not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
+                is_oauth = bool(cfg.get("oauth_provider"))
+                if not is_oauth and not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
                     logger.warning(f"SMTP not configured for account {row.name!r}")
-                if not (cfg["imap_host"] and cfg["imap_user"] and cfg["imap_password"]):
+                if not is_oauth and not (cfg["imap_host"] and cfg["imap_user"] and cfg["imap_password"]):
                     logger.warning(f"IMAP not configured for account {row.name!r}")
                 return cfg
         finally:
@@ -604,7 +683,13 @@ def _imap_connect(account_id: str | None = None, owner: str = ""):
         conn.sock.settimeout(_IMAP_TIMEOUT_SECONDS)
     except Exception:
         pass
-    conn.login(cfg["imap_user"], cfg["imap_password"])
+    if cfg.get("oauth_provider") == "google":
+        token = _get_valid_google_token(cfg.get("account_id"), cfg)
+        if not token:
+            raise Exception("Google OAuth token unavailable — reconnect the account in Settings → Integrations")
+        conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(cfg["imap_user"], token))
+    else:
+        conn.login(cfg["imap_user"], cfg["imap_password"])
     return conn
 
 

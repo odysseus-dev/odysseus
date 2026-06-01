@@ -13,7 +13,9 @@ handlers need. The split is mechanical — no behavior change.
 """
 
 import asyncio
+import os
 import sqlite3 as _sql3
+import time
 import email as email_mod
 import email.header
 import email.utils
@@ -223,7 +225,9 @@ def _uid_exists(conn, uid: str) -> bool:
 
 
 def _smtp_ready(cfg: dict) -> bool:
-    return bool(cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password"))
+    if not cfg.get("smtp_host") or not cfg.get("smtp_user"):
+        return False
+    return bool(cfg.get("smtp_password") or cfg.get("oauth_provider"))
 
 
 def _resolve_send_config(account_id: str | None = None, owner: str = "") -> dict:
@@ -1809,7 +1813,7 @@ def setup_email_routes():
             outer = MIMEMultipart("alternative")
             body_container = outer
 
-        outer["From"] = cfg["from_address"]
+        outer["From"] = email.utils.formataddr((cfg.get("display_name") or "", cfg["from_address"]))
         outer["To"] = to
         if cc:
             outer["Cc"] = cc
@@ -1990,7 +1994,9 @@ def setup_email_routes():
 
         try:
             cfg = _resolve_send_config(req.account_id, owner=owner)
+            logger.info(f"Send config: account={cfg.get('account_name')!r}, smtp={cfg.get('smtp_host')}, user={cfg.get('smtp_user')}, oauth={cfg.get('oauth_provider')!r}")
         except Exception as e:
+            logger.error(f"_resolve_send_config failed: account_id={req.account_id!r}, owner={owner!r}, error={e}")
             return {"success": False, "error": str(e) or "No SMTP-capable email account configured"}
 
         # Use 'mixed' if we have attachments, 'alternative' otherwise
@@ -2003,7 +2009,7 @@ def setup_email_routes():
             outer = MIMEMultipart("alternative")
             body_container = outer
 
-        outer["From"] = cfg["from_address"]
+        outer["From"] = email.utils.formataddr((cfg.get("display_name") or "", cfg["from_address"]))
         outer["To"] = req.to
         if req.cc:
             outer["Cc"] = req.cc
@@ -2056,6 +2062,10 @@ def setup_email_routes():
 
         _account_id = cfg.get("account_id") or req.account_id  # capture for the IMAP append in the closure
         _in_reply_to = (req.in_reply_to or "").strip()
+        _oauth_provider = cfg.get("oauth_provider") or ""
+        _oauth_access_token = cfg.get("oauth_access_token") or ""
+        _oauth_refresh_token = cfg.get("oauth_refresh_token") or ""
+        _oauth_token_expiry = cfg.get("oauth_token_expiry") or ""
 
         def _deliver():
             try:
@@ -2065,6 +2075,11 @@ def setup_email_routes():
                         "smtp_port": _smtp_port,
                         "smtp_user": _smtp_user,
                         "smtp_password": _smtp_pw,
+                        "account_id": _account_id,
+                        "oauth_provider": _oauth_provider,
+                        "oauth_access_token": _oauth_access_token,
+                        "oauth_refresh_token": _oauth_refresh_token,
+                        "oauth_token_expiry": _oauth_token_expiry,
                     },
                     _from,
                     _recipients,
@@ -2177,7 +2192,7 @@ def setup_email_routes():
             msg.attach(MIMEText(_draft_html, "html", "utf-8"))
         else:
             msg = MIMEText(req.body, "plain", "utf-8")
-        msg["From"] = cfg["from_address"]
+        msg["From"] = email.utils.formataddr((cfg.get("display_name") or "", cfg["from_address"]))
         msg["To"] = req.to
         if req.cc:
             msg["Cc"] = req.cc
@@ -2785,6 +2800,8 @@ def setup_email_routes():
                     "from_address": r.from_address or "",
                     "has_imap_password": bool(r.imap_password),
                     "has_smtp_password": bool(r.smtp_password),
+                    "oauth_provider": r.oauth_provider or "",
+                    "display_name": r.display_name or "",
                 })
             return {"accounts": out}
         finally:
@@ -2816,6 +2833,7 @@ def setup_email_routes():
                 smtp_user=(data.get("smtp_user") or "").strip(),
                 smtp_password=_enc(data.get("smtp_password") or ""),
                 from_address=(data.get("from_address") or "").strip(),
+                display_name=(data.get("display_name") or "").strip(),
                 # SECURITY: stamp the creator so all subsequent reads / mutations
                 # can filter by user. Without this every new account leaks to
                 # every other user.
@@ -2850,7 +2868,7 @@ def setup_email_routes():
             if not row:
                 return {"ok": False, "error": "Account not found"}
             # Simple fields
-            for key in ("name", "imap_host", "imap_user", "smtp_host", "smtp_user", "from_address"):
+            for key in ("name", "imap_host", "imap_user", "smtp_host", "smtp_user", "from_address", "display_name"):
                 if key in data:
                     setattr(row, key, (data[key] or "").strip())
             for key in ("imap_port", "smtp_port"):
@@ -3034,5 +3052,116 @@ def setup_email_routes():
             return {"ok": True}
         finally:
             db.close()
+
+    # ── Google OAuth2 routes ──
+
+    @router.get("/oauth/google/authorize")
+    async def google_oauth_authorize(account_id: str = Query(...), request: Request = None, owner: str = Depends(require_user)):
+        import urllib.parse
+        _assert_owns_account(account_id, owner)
+        client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+        if not client_id:
+            raise HTTPException(400, "GOOGLE_OAUTH_CLIENT_ID not set — add it to .env")
+        redirect_uri = (
+            os.environ.get("GOOGLE_OAUTH_REDIRECT_URI")
+            or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
+        )
+        logger.info(f"Google OAuth authorize → redirect_uri={redirect_uri}")
+        params = urllib.parse.urlencode({
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": "https://mail.google.com/ email",
+            "access_type": "offline",
+            "prompt": "consent",
+            "state": account_id,
+        })
+        from fastapi.responses import RedirectResponse as _RR
+        return _RR(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
+
+    @router.get("/oauth/google/callback")
+    async def google_oauth_callback(
+        code: str = Query(None),
+        state: str = Query(None),
+        error: str = Query(None),
+        request: Request = None,
+    ):
+        import urllib.parse
+        from fastapi.responses import RedirectResponse as _RR
+        if error:
+            return _RR(f"/?section=integrations&email_oauth_error={urllib.parse.quote(error or '')}")
+        if not code or not state:
+            return _RR("/?section=integrations&email_oauth_error=missing_code")
+        account_id = state
+        client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+        client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+        redirect_uri = (
+            os.environ.get("GOOGLE_OAUTH_REDIRECT_URI")
+            or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
+        )
+        import httpx as _httpx
+        try:
+            resp = _httpx.post("https://oauth2.googleapis.com/token", data={
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            }, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            logger.error(f"Google token exchange failed: {e}")
+            return _RR(f"/?section=integrations&email_oauth_error={urllib.parse.quote(str(e))}")
+        access_token = data.get("access_token", "")
+        refresh_token = data.get("refresh_token", "")
+        expiry = str(int(time.time()) + data.get("expires_in", 3600))
+        # Fetch the email address from userinfo so we can auto-fill imap_user.
+        email_addr = ""
+        display_name = ""
+        try:
+            ui = _httpx.get("https://www.googleapis.com/oauth2/v1/userinfo",
+                            headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
+            if ui.is_success:
+                ui_data = ui.json()
+                email_addr = ui_data.get("email", "")
+                display_name = ui_data.get("name", "")
+        except Exception:
+            pass
+        from core.database import SessionLocal, EmailAccount
+        from src.secret_storage import encrypt as _enc
+        db = SessionLocal()
+        try:
+            row = db.get(EmailAccount, account_id)
+            if not row:
+                return _RR("/?section=integrations&email_oauth_error=account_not_found")
+            row.oauth_provider = "google"
+            row.oauth_access_token = _enc(access_token)
+            if refresh_token:
+                row.oauth_refresh_token = _enc(refresh_token)
+            row.oauth_token_expiry = expiry
+            # Auto-fill Google IMAP/SMTP settings if not already configured.
+            if not row.imap_host:
+                row.imap_host = "imap.gmail.com"
+                row.imap_port = 993
+                row.imap_starttls = False
+            if not row.smtp_host:
+                row.smtp_host = "smtp.gmail.com"
+                row.smtp_port = 587
+            if email_addr:
+                if not row.imap_user:
+                    row.imap_user = email_addr
+                if not row.smtp_user:
+                    row.smtp_user = email_addr
+                if not row.from_address:
+                    row.from_address = email_addr
+                if not row.name or row.name == row.id:
+                    row.name = email_addr
+            if display_name and not row.display_name:
+                row.display_name = display_name
+            db.commit()
+        finally:
+            db.close()
+        return _RR("/?section=integrations&email_oauth_success=1")
 
     return router
