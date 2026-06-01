@@ -310,6 +310,10 @@ body.bg-pattern-sparkles {
       margin-left: -4px;
       margin-right: -20px;
     }
+    [dir="rtl"] .export-dropdown-wrap {
+      margin-left: -20px;
+      margin-right: -4px;
+    }
     .export-dl-btn {
       background: none; border: none;
       color: inherit;
@@ -610,6 +614,14 @@ body.bg-pattern-sparkles {
     body.hamburger-right .hamburger-btn {
       left: auto;
       right: 9px;
+    }
+    [dir="rtl"] .hamburger-btn {
+      left: auto;
+      right: 9px;
+    }
+    [dir="rtl"] body.hamburger-right .hamburger-btn {
+      right: auto;
+      left: 9px;
     }
     .mobile-new-chat-btn {
       display: none;
@@ -1676,6 +1688,15 @@ body.bg-pattern-sparkles {
       .list-item-plus-btn .list-item-plus-label {
         transform: translateY(-50%) translateX(6px);
       }
+      [dir="rtl"] .list-item-plus-btn .list-item-plus-label {
+        transform: translateY(-50%) translateX(-6px);
+      }
+    }
+    [dir="rtl"] .list-item-plus-label {
+      right: auto;
+      left: 100%;
+      padding-right: 0;
+      padding-left: 5px;
     }
     .list-item-plus-btn:hover {
       background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
@@ -2123,6 +2144,11 @@ body.bg-pattern-sparkles {
       transform-origin: top right;
       transition: opacity 0.22s ease, transform 0.22s ease;
       will-change: opacity, transform;
+    }
+    [dir="rtl"] .chat-input-top > .model-picker-wrap {
+      right: auto;
+      left: 0;
+      transform-origin: top left;
     }
     .chat-input-top > .model-picker-wrap.model-picker-autohide {
       opacity: 0;
@@ -2592,6 +2618,11 @@ body.bg-pattern-sparkles {
       padding: 6px;
       animation: picker-roll-up 0.2s ease-out;
       transform-origin: bottom right;
+    }
+    [dir="rtl"] .model-picker-menu {
+      right: auto;
+      left: 0;
+      transform-origin: bottom left;
     }
     .model-picker-menu.closing {
       animation: picker-roll-down 0.15s ease-in forwards;

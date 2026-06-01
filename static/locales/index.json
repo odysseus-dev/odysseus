@@ -3,6 +3,7 @@
   "fallback": "en",
   "locales": [
     { "code": "en", "name": "English", "nativeName": "English", "dir": "ltr" },
-    { "code": "ja", "name": "Japanese", "nativeName": "日本語", "dir": "ltr" }
+    { "code": "ja", "name": "Japanese", "nativeName": "日本語", "dir": "ltr" },
+    { "code": "ar", "name": "Arabic", "nativeName": "العربية", "dir": "rtl" }
   ]
 }
