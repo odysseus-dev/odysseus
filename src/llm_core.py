@@ -1696,16 +1696,22 @@ def _summarize_stream_error(err_chunk: Optional[str]) -> str:
 async def stream_llm_with_fallback(candidates, messages, **kwargs):
     """Wrap stream_llm with an ordered fallback chain.
 
-    `candidates` is a list of (url, model, headers). Each is tried in order,
-    but only retried on a *pre-content* failure — i.e. an ``event: error``
-    that arrives before any assistant text / tool-call data has been yielded.
-    Once a candidate has emitted real output we never switch (that would
-    duplicate streamed tokens); a later error from that candidate passes
-    through unchanged. The dead-host cooldown in stream_llm makes repeat
-    attempts at an offline primary effectively instant.
+    Each candidate is ``(url, model, headers)`` or ``(url, model, headers, ref)``.
+    A 4th element carries an ``EndpointRef`` identity (needed for OAuth/codex);
+    3-tuples resolve as static creds. Only the primary candidate should carry a
+    ref — fallback candidates stay static-only (a ref is not threaded through them
+    by design, so codex never appears as a fallback target).
+
+    Each is tried in order, but only retried on a *pre-content* failure — i.e. an
+    ``event: error`` that arrives before any assistant text / tool-call data has
+    been yielded. Once a candidate has emitted real output we never switch (that
+    would duplicate streamed tokens); a later error from that candidate passes
+    through unchanged. The dead-host cooldown in stream_llm makes repeat attempts
+    at an offline primary effectively instant.
 
     Yields the same SSE chunk protocol as stream_llm.
     """
+    kwargs.pop("ref", None)  # refs travel per-candidate (the 4-tuple), never globally
     cands = _dedupe_candidates(candidates)
     if not cands:
         yield f'event: error\ndata: {json.dumps({"error": "No model endpoint configured", "status": 503})}\n\n'
@@ -1713,11 +1719,14 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
 
     primary_model = cands[0][1]
     last_error = None
-    for i, (url, model, headers) in enumerate(cands):
+    for i, cand in enumerate(cands):
+        url, model = cand[0], cand[1]
+        headers = cand[2] if len(cand) > 2 else None
+        ref = cand[3] if len(cand) > 3 else None
         is_last = (i == len(cands) - 1)
         emitted = False
         retried = False
-        async for chunk in stream_llm(url, model, messages, headers=headers, **kwargs):
+        async for chunk in stream_llm(url, model, messages, headers=headers, ref=ref, **kwargs):
             if chunk.startswith("event: error"):
                 if not emitted and not is_last:
                     # Pre-content failure with fallbacks left — swallow and

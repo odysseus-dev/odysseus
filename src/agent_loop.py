@@ -1267,7 +1267,7 @@ def _build_actions_snapshot(tool_events: list, limit: int = 8000) -> str:
 
 async def _run_verifier_subagent(
     instruction: str, actions_snapshot: str,
-    *, endpoint_url: str, model: str, headers: dict,
+    *, endpoint_url: str, model: str, headers: dict, ref=None,
 ) -> list:
     """Fresh-context completion verifier. A second model instance with NO
     shared history reads the user's request + a record of what the agent did
@@ -1300,6 +1300,7 @@ async def _run_verifier_subagent(
             url=endpoint_url, model=model,
             messages=[{"role": "user", "content": prompt}],
             headers=headers, temperature=0.0, max_tokens=600, timeout=60,
+            ref=ref,
         )
     except Exception as e:
         logger.warning(f"[agent] verifier subagent failed: {e}")
@@ -1356,6 +1357,7 @@ async def stream_agent_loop(
     owner: Optional[str] = None,
     relevant_tools: Optional[Set[str]] = None,
     fallbacks: Optional[List[tuple]] = None,
+    ref=None,  # EndpointRef identity for the PRIMARY target (OAuth/codex); fallbacks stay static
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -1665,7 +1667,7 @@ async def stream_agent_loop(
         # Primary target + any configured fallback models. stream_llm_with_fallback
         # only switches on a pre-content failure, so streamed output is never
         # duplicated; the dead-host cooldown keeps repeat primary attempts cheap.
-        _candidates = [(endpoint_url, model, headers)] + list(fallbacks or [])
+        _candidates = [(endpoint_url, model, headers, ref)] + list(fallbacks or [])
         # stream_llm enforces a per-read INACTIVITY timeout (httpx read=timeout),
         # which kills a wedged/silent endpoint. This wall-clock deadline is the
         # complementary cap for the rare stream that trickles bytes forever and
@@ -1853,6 +1855,7 @@ async def stream_agent_loop(
                     _raw = await llm_call_async(
                         url=endpoint_url, model=model, messages=_synth_messages,
                         headers=headers, temperature=0.3, max_tokens=max_tokens, timeout=60,
+                        ref=ref,
                     )
                     _synth = _THINK_RE.sub("", strip_tool_blocks(_raw or "")).strip()
                 except Exception as _e:
@@ -1925,7 +1928,7 @@ async def stream_agent_loop(
                 _vfail = await _run_verifier_subagent(
                     _verifier_instruction,
                     _build_actions_snapshot(tool_events),
-                    endpoint_url=endpoint_url, model=model, headers=headers,
+                    endpoint_url=endpoint_url, model=model, headers=headers, ref=ref,
                 )
                 if _vfail:
                     _verifier_rounds += 1

@@ -92,6 +92,12 @@ class Session(TimestampMixin, Base):
     # Session metadata
     name = Column(String, nullable=False)
     endpoint_url = Column(String, nullable=False)
+    # Identity of the ModelEndpoint this session is bound to. Carried so OAuth
+    # (codex) endpoints can resolve + refresh their token per request — static
+    # API-key endpoints bake the key into `headers`, but an OAuth endpoint has no
+    # static key, so without the id its identity is lost. NULL = legacy row /
+    # endpoint not recorded (resolution falls back to URL+owner lookup).
+    endpoint_id = Column(String, nullable=True)
     model = Column(String, nullable=False)
     owner = Column(String, nullable=True, index=True)  # username; null = legacy/shared
     
@@ -975,6 +981,29 @@ def _migrate_add_folder_column():
     except Exception as e:
         logging.getLogger(__name__).warning(f"Migration check for folder failed: {e}")
 
+def _migrate_add_endpoint_id_column():
+    """Add endpoint_id column to sessions table if it doesn't exist.
+
+    Carries the bound endpoint's identity so OAuth (codex) sessions can resolve +
+    refresh their token per request. Existing rows get NULL (resolution falls back
+    to URL+owner lookup), so the migration is behavior-preserving for them.
+    """
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "endpoint_id" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN endpoint_id TEXT")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'endpoint_id' column to sessions")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Migration check for endpoint_id failed: {e}")
+
 def _migrate_add_token_columns():
     """Add cumulative token tracking columns to sessions table."""
     import sqlite3
@@ -1578,6 +1607,7 @@ def init_db():
     _migrate_add_document_archived_column()
     _migrate_add_last_message_at_column()
     _migrate_add_folder_column()
+    _migrate_add_endpoint_id_column()
     _migrate_add_token_columns()
     _migrate_add_mode_column()
     _migrate_add_multiuser_owner_columns()

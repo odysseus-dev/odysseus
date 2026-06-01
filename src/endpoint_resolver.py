@@ -336,6 +336,104 @@ def resolve_endpoint_by_id(
         db.close()
 
 
+def _lookup_owned_endpoint(ep_id: Optional[str], owner: Optional[str]):
+    """Fetch an enabled ModelEndpoint by id, scoped to `owner` when one is set."""
+    if not ep_id:
+        return None
+    db = SessionLocal()
+    try:
+        q = db.query(ModelEndpoint).filter(
+            ModelEndpoint.id == ep_id,
+            ModelEndpoint.is_enabled == True,
+        )
+        if owner:
+            from src.auth_helpers import owner_filter
+            return owner_filter(q, ModelEndpoint, owner).first()
+        return q.first()
+    except Exception as e:
+        logger.debug(f"resolve_session_ref: endpoint lookup failed: {e}")
+        return None
+    finally:
+        db.close()
+
+
+def _match_single_oauth_endpoint(url: str, owner: Optional[str]):
+    """Backfill: the single enabled OAuth endpoint whose base URL matches `url`.
+
+    Returns the endpoint only when EXACTLY ONE owner-scoped candidate matches —
+    never guesses between several (a wrong identity would mis-auth).
+    """
+    from src.providers import registry
+    base = normalize_base(url)
+    if not base:
+        return None
+    db = SessionLocal()
+    try:
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if owner:
+            from src.auth_helpers import owner_filter
+            q = owner_filter(q, ModelEndpoint, owner)
+        matches = [
+            ep for ep in q.all()
+            if normalize_base(ep.base_url) == base
+            and registry.detect_spec(ep.base_url).auth_type == "oauth"
+        ]
+        return matches[0] if len(matches) == 1 else None
+    except Exception as e:
+        logger.debug(f"resolve_session_ref: oauth backfill match failed: {e}")
+        return None
+    finally:
+        db.close()
+
+
+def resolve_session_ref(session):
+    """Build an identity-bearing EndpointRef for a chat session's PRIMARY endpoint.
+
+    OAuth providers (e.g. openai-codex / ChatGPT-subscription) resolve and refresh
+    their credential per call from endpoint IDENTITY — a frozen header can't refresh.
+    This returns an EndpointRef carrying a validated ``endpoint_id`` (exists, enabled,
+    owned by the session owner) so the codex path in ``llm_core`` can resolve OAuth.
+
+    Returns ``None`` for everything the legacy ``(url, model, headers)`` path already
+    serves byte-identically — every api_key endpoint. Callers then use
+    ``EndpointRef.from_legacy`` / the existing dispatch unchanged. Only OAuth
+    endpoints need a ref, so only they get one.
+    """
+    try:
+        from src.providers import registry
+        from src.providers.endpoint_ref import EndpointRef
+    except Exception:
+        return None
+
+    url = getattr(session, "endpoint_url", None) or ""
+    spec = registry.detect_spec(url)
+    if spec.auth_type != "oauth":
+        return None  # static / api_key — legacy path is byte-identical
+
+    owner = getattr(session, "owner", None)
+    ep_id = (getattr(session, "endpoint_id", None) or "").strip() or None
+
+    # Path A — durable identity: trust the stored id only after validation.
+    ep = _lookup_owned_endpoint(ep_id, owner)
+    # Path B — backfill for sessions created before endpoint_id was persisted.
+    if ep is None:
+        ep = _match_single_oauth_endpoint(url, owner)
+    if ep is None:
+        # No safe identity → return None. The codex path builds from_legacy and the
+        # auth guard raises a clear (surfaced) error rather than silently mis-authing.
+        return None
+
+    return EndpointRef(
+        url=normalize_base(ep.base_url) or url,
+        model=getattr(session, "model", None),
+        headers=getattr(session, "headers", None),
+        endpoint_id=ep.id,
+        owner=owner,
+        provider_id=spec.id,
+        auth_type="oauth",
+    )
+
+
 def resolve_chat_fallback_candidates(owner: Optional[str] = None) -> list:
     """Build the configured default-chat fallback chain as a list of
     (chat_url, model, headers) tuples, skipping any that can't resolve.
@@ -365,6 +463,7 @@ def resolve_vision_fallback_candidates(owner: Optional[str] = None) -> list:
 
 
 def _resolve_fallback_candidates(setting_key: str, owner: Optional[str] = None) -> list:
+    from src.providers import registry
     out = []
     try:
         from src.settings import get_user_setting, load_settings
@@ -376,6 +475,13 @@ def _resolve_fallback_candidates(setting_key: str, owner: Optional[str] = None) 
         if not isinstance(entry, dict):
             continue
         resolved = resolve_endpoint_by_id(entry.get("endpoint_id", ""), entry.get("model", ""), owner=owner)
-        if resolved:
-            out.append(resolved)
+        if not resolved:
+            continue
+        # OAuth providers (e.g. codex / ChatGPT-subscription) cannot serve as
+        # fallback targets: a fallback candidate carries no endpoint identity, so
+        # its per-call OAuth token can't be resolved/refreshed. Keep fallbacks
+        # static-only (mirrors the primary-only ref threading in chat/agent paths).
+        if registry.detect_spec(resolved[0]).auth_type == "oauth":
+            continue
+        out.append(resolved)
     return out

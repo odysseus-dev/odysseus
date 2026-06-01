@@ -50,6 +50,7 @@ class Session:
     rag: bool = False
     archived: bool = False
     headers: Optional[Dict[str, str]] = None
+    endpoint_id: Optional[str] = None
     history: List[ChatMessage] = None
     owner: Optional[str] = None
     is_important: bool = False
