@@ -210,6 +210,35 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             first = prompt.split('\n')[0].split('.')[0].strip()
             return first[:50] if first else "Untitled Task"
 
+    @router.get("/scheduler-state")
+    async def get_scheduler_state(request: Request):
+        from core.middleware import require_admin
+        require_admin(request)
+        
+        executing = list(task_scheduler._executing) if hasattr(task_scheduler, "_executing") else []
+        defer_counts = task_scheduler._task_defer_counts if hasattr(task_scheduler, "_task_defer_counts") else {}
+        error_counts = task_scheduler._task_error_counts if hasattr(task_scheduler, "_task_error_counts") else {}
+        
+        # Get queued runs
+        db = SessionLocal()
+        try:
+            queued = db.query(TaskRun).filter(TaskRun.status == "queued").order_by(TaskRun.started_at.desc()).all()
+            queued_list = [_run_to_dict(r) for r in queued]
+            
+            recent_fails = db.query(TaskRun).filter(TaskRun.status == "error").order_by(TaskRun.finished_at.desc()).limit(10).all()
+            recent_fails_list = [_run_to_dict(r) for r in recent_fails]
+        finally:
+            db.close()
+            
+        return {
+            "running": getattr(task_scheduler, "_running", False),
+            "executing_task_ids": executing,
+            "defer_counts": defer_counts,
+            "error_counts": error_counts,
+            "queued_runs": queued_list,
+            "recent_failures": recent_fails_list,
+        }
+
     @router.get("")
     async def list_tasks(request: Request, status: Optional[str] = None,
                          include_last_run: bool = False):

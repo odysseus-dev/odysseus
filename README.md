@@ -207,6 +207,8 @@ Odysseus is a self-hosted workspace with powerful local tools: shell access, fil
 - Prefer binding manual development runs to `127.0.0.1`; bind to `0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
 - Before publishing a fork, run `git status --short` and confirm no private files from `.env`, `data/`, `logs/`, uploads, backups, or local databases are staged.
 
+See **[SECURITY.md](SECURITY.md)** for a detailed breakdown of the admin account's blast radius and a Hardening Guide for running Odysseus with least-privilege principles.
+
 ### Putting it behind HTTPS
 Odysseus serves plain HTTP on its port. That's fine for `localhost` and trusted LAN/VPN use, but browsers will warn ("Password fields present on an insecure page") and the login + API tokens travel in cleartext. For anything reachable outside your machine — including a Tailscale IP shared with other devices — put a TLS-terminating reverse proxy in front.
 

@@ -296,3 +296,128 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
 
         assert _probe_endpoint("https://api.anthropic.com/v1") == ANTHROPIC_MODELS
+
+
+# ── _probe_single_model ──
+
+from routes.model_routes import _probe_single_model, _ping_endpoint
+
+class TestProbeSingleModel:
+    def test_probe_openai_success(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        monkeypatch.setattr(model_routes, "build_chat_url", lambda url: url + "/chat/completions", raising=False)
+        
+        def fake_post(url, headers=None, json=None, timeout=None):
+            request = httpx.Request("POST", url)
+            return httpx.Response(200, request=request, json={"choices": [{"message": {"content": "OK"}}]})
+            
+        monkeypatch.setattr(model_routes.httpx, "post", fake_post)
+        
+        res = _probe_single_model("https://api.openai.com/v1", "sk-test", "gpt-4o")
+        assert res["status"] == "ok"
+        assert "latency_ms" in res
+
+    def test_probe_openai_fail_with_error(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        monkeypatch.setattr(model_routes, "build_chat_url", lambda url: url + "/chat/completions", raising=False)
+        
+        def fake_post(url, headers=None, json=None, timeout=None):
+            request = httpx.Request("POST", url)
+            return httpx.Response(401, request=request, json={"error": {"message": "Invalid API key"}})
+            
+        monkeypatch.setattr(model_routes.httpx, "post", fake_post)
+        
+        res = _probe_single_model("https://api.openai.com/v1", "sk-bad", "gpt-4o")
+        assert res["status"] == "fail"
+        assert res["error"] == "Invalid API key"
+
+    def test_probe_timeout(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        monkeypatch.setattr(model_routes, "build_chat_url", lambda url: url + "/chat/completions", raising=False)
+        
+        def fake_post(url, headers=None, json=None, timeout=None):
+            raise httpx.TimeoutException("timeout")
+            
+        monkeypatch.setattr(model_routes.httpx, "post", fake_post)
+        
+        res = _probe_single_model("https://api.openai.com/v1", "sk-test", "gpt-4o", timeout=2)
+        assert res["status"] == "timeout"
+        assert "Timed out" in res["error"]
+
+    def test_probe_anthropic_success(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_detect_provider", lambda url: "anthropic")
+        import src.llm_core
+        monkeypatch.setattr(src.llm_core, "_normalize_anthropic_url", lambda url: "https://api.anthropic.com/v1/messages", raising=False)
+        monkeypatch.setattr(src.llm_core, "_build_anthropic_headers", lambda auth: {"x-api-key": "test"}, raising=False)
+        monkeypatch.setattr(src.llm_core, "_build_anthropic_payload", lambda model, msgs, temp, mx: {"model": model}, raising=False)
+        
+        def fake_post(url, headers=None, json=None, timeout=None):
+            request = httpx.Request("POST", url)
+            return httpx.Response(200, request=request, json={"content": [{"text": "OK"}]})
+            
+        monkeypatch.setattr(model_routes.httpx, "post", fake_post)
+        
+        res = _probe_single_model("https://api.anthropic.com/v1", "sk-ant", "claude-3-opus")
+        assert res["status"] == "ok"
+
+
+# ── _ping_endpoint ──
+
+class TestPingEndpoint:
+    def test_ping_success(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+        
+        def fake_get(url, headers=None, timeout=None):
+            request = httpx.Request("GET", url)
+            return httpx.Response(200, request=request)
+            
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        
+        res = _ping_endpoint("https://api.openai.com/v1")
+        assert res["reachable"] is True
+        assert res["status_code"] == 200
+        assert res["error"] is None
+
+    def test_ping_redirect_to_login(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+        
+        def fake_get(url, headers=None, timeout=None):
+            request = httpx.Request("GET", url)
+            return httpx.Response(302, headers={"location": "/login"}, request=request)
+            
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        
+        res = _ping_endpoint("http://localhost:7000/v1")
+        assert res["reachable"] is False
+        assert res["status_code"] == 302
+        assert "Odysseus" in res["error"]
+
+    def test_ping_server_error(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+        
+        def fake_get(url, headers=None, timeout=None):
+            request = httpx.Request("GET", url)
+            return httpx.Response(500, request=request)
+            
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        
+        res = _ping_endpoint("https://api.openai.com/v1")
+        assert res["reachable"] is False
+        assert res["status_code"] == 500
+        assert res["error"] == "HTTP 500"
+
+    def test_ping_timeout(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+        
+        def fake_get(url, headers=None, timeout=None):
+            raise httpx.TimeoutException("timeout")
+            
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        
+        res = _ping_endpoint("https://api.openai.com/v1")
+        assert res["reachable"] is False
+        assert "timeout" in res["error"].lower()

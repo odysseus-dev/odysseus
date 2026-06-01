@@ -2522,7 +2522,7 @@ import createResearchSynapse from './researchSynapse.js';
         }
       } else {
         // Stop streaming TTS on any error/abort
-        if (streamingTTS && window.aiTTSManager) window.aiTTSManager.stop();
+        if (window.aiTTSManager) window.aiTTSManager.stop();
 
         if (currentAbort && currentAbort.signal.aborted) {
           const abortReason = currentAbort._reason || '';

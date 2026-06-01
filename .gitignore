@@ -34,6 +34,9 @@ services/data/
 .claude/
 .vscode/
 .idea/
+.gemini/
+.antigravity/
+.antigravity-cli/
 *.swp
 *.swo
 *~
@@ -83,3 +86,4 @@ docs/windows-port/
 compound.config.json
 *.error.log
 _scratch/
+_PLANNING/

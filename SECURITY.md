@@ -19,6 +19,20 @@ Security fixes are handled on the default branch until formal releases are cut.
 - Rotate API keys, webhook secrets, and Odysseus API tokens if they appear in logs, screenshots, demos, or shared chats.
 - Treat shell, model-serving, MCP, email, calendar, and vault features as privileged admin functionality.
 
+## Admin Blast Radius
+Odysseus's agent tools are powerful by design. If an admin account is compromised (or if a rogue/hallucinating model is given unrestricted access), the consequences include:
+- **Full Host Access**: The `bash` and `python` tools run code as the OS user executing the Odysseus process.
+- **Arbitrary File Access**: The agent can read, modify, or delete any file the OS user can access (e.g., SSH keys, other applications' data, `/etc`).
+- **Network Pivoting**: The agent can use shell tools (e.g., `curl`, `nmap`) to scan or attack other hosts on your internal network.
+
+## Hardening Guide
+To run Odysseus with least-privilege principles and mitigate the above risks:
+1. **Unprivileged Docker**: Always run Odysseus in a Docker container rather than bare metal.
+2. **Read-Only Mounts**: If you mount host directories for the agent to read, mount them as `ro` (read-only).
+3. **Drop Capabilities**: Use `cap_drop: - ALL` in your Docker Compose file to strip root capabilities from the container.
+4. **Disable High-Risk Tools**: If you only use Odysseus for chat or simple web research, go to Admin Settings -> Tools and disable `bash`, `python`, `write_file`, and MCP servers.
+5. **Network Isolation**: Put Odysseus on a separate VLAN or use Docker networks to prevent it from reaching sensitive internal services.
+
 ## Publishing A Fork
 
 Before pushing a public fork, run:
