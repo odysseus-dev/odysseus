@@ -5,10 +5,13 @@
  */
 
 import themeModule from './theme.js';
+import * as Modals from './modalManager.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
 let hoveredToggleCard = null;
+let hoveredToggleWindow = null;
+let hoveredDockChip = null;
 
 // Smooth scroll state
 let _scrollRafId = null;
@@ -19,25 +22,122 @@ function _isTextEditingTarget(target) {
   return !!(el && el.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]'));
 }
 
+function _targetEl(target) {
+  return target && target.nodeType === 1 ? target : target?.parentElement || null;
+}
+
+const SPACE_CARD_SELECTOR = [
+  '#email-lib-modal .doclib-card',
+  '#doclib-modal .doclib-card',
+  '#doclib-modal .doclib-chat-row',
+  '#memory-modal .doclib-card',
+  '#tasks-modal .task-card',
+  '#tasks-modal .task-log-row',
+  '#research-overlay [data-job-id]',
+  '#cookbook-modal .doclib-card',
+  '.email-reader-tab-modal .doclib-card',
+  '.email-window-modal .doclib-card',
+].join(', ');
+
+const SPACE_BLOCKED_SELECTOR = [
+  'button',
+  'a',
+  'input',
+  'textarea',
+  'select',
+  '[contenteditable="true"]',
+  '[contenteditable=""]',
+  '.recipient-chip',
+  '.doclib-card-dropdown',
+  '.email-card-dropdown',
+  '.task-log-row-actions',
+  '.modal-header',
+].join(', ');
+
+function _visibleModalForSpace(win) {
+  const modal = win?.closest?.('.modal[id]');
+  if (!modal || modal.classList.contains('hidden') || modal.classList.contains('modal-minimized')) return null;
+  return modal;
+}
+
+function _isSpaceVisible(el) {
+  if (!el || !document.contains(el)) return false;
+  if (el.closest?.('.modal.hidden, .modal.modal-minimized, [hidden]')) return false;
+  return true;
+}
+
+function _spaceWindowId(win) {
+  if (!win || !document.contains(win)) return null;
+  const modal = _visibleModalForSpace(win);
+  if (modal && Modals.isRegistered(modal.id)) return modal.id;
+  if (win.closest?.('.doc-editor-pane') && Modals.isRegistered('doc-panel') && !Modals.isMinimized('doc-panel')) return 'doc-panel';
+  return null;
+}
+
+function _spaceIsBlocked(e, surface) {
+  const target = _targetEl(e.target);
+  if (!target) return false;
+  if (_isTextEditingTarget(target)) return !surface || surface.contains(target);
+  const blocked = target.closest?.(SPACE_BLOCKED_SELECTOR);
+  return !!(blocked && (!surface || surface.contains(blocked)));
+}
+
+function _activateSpaceCard(card) {
+  if (!card || !document.contains(card)) return false;
+  if (card.matches('#tasks-modal .task-card')) {
+    const titleRow = card.querySelector('.memory-item-title')?.closest('div');
+    if (titleRow) {
+      titleRow.click();
+      return true;
+    }
+  }
+  card.dataset.spaceToggle = '1';
+  card.click();
+  setTimeout(() => {
+    try { delete card.dataset.spaceToggle; } catch {}
+  }, 0);
+  return true;
+}
+
 function _initHoverCardSpaceToggle() {
   if (document._odysseusHoverCardSpaceToggle) return;
   document._odysseusHoverCardSpaceToggle = true;
   document.addEventListener('pointerover', (e) => {
-    const card = e.target?.closest?.('#email-lib-modal .doclib-card, #doclib-modal .doclib-card, .email-reader-tab-modal .doclib-card, .email-window-modal .doclib-card');
+    const chip = e.target?.closest?.('.minimized-dock-chip[data-modal-id]');
+    if (chip) hoveredDockChip = chip;
+    const card = e.target?.closest?.(SPACE_CARD_SELECTOR);
     if (card) hoveredToggleCard = card;
+    const win = e.target?.closest?.('.modal:not(.hidden):not(.modal-minimized) .modal-content, .doc-editor-pane');
+    if (win) hoveredToggleWindow = win;
   }, true);
   document.addEventListener('pointerout', (e) => {
-    if (!hoveredToggleCard) return;
     const next = e.relatedTarget;
-    if (!next || !hoveredToggleCard.contains(next)) hoveredToggleCard = null;
+    if (hoveredDockChip && (!next || !hoveredDockChip.contains(next))) hoveredDockChip = null;
+    if (hoveredToggleCard && (!next || !hoveredToggleCard.contains(next))) hoveredToggleCard = null;
+    if (hoveredToggleWindow && (!next || !hoveredToggleWindow.contains(next))) hoveredToggleWindow = null;
   }, true);
   document.addEventListener('keydown', (e) => {
-    if (e.code !== 'Space' || e.repeat || !hoveredToggleCard || !document.contains(hoveredToggleCard)) return;
-    if (_isTextEditingTarget(e.target)) return;
-    const blocked = e.target?.closest?.('button, a, input, textarea, select, [contenteditable="true"], [contenteditable=""], .recipient-chip, .doclib-card-dropdown, .email-card-dropdown');
-    if (blocked) return;
+    if (e.code !== 'Space' || e.repeat) return;
+    if (hoveredToggleCard && _isSpaceVisible(hoveredToggleCard)) {
+      if (_spaceIsBlocked(e, hoveredToggleCard)) return;
+      e.preventDefault();
+      _activateSpaceCard(hoveredToggleCard);
+      return;
+    }
+    if (hoveredDockChip && document.contains(hoveredDockChip)) {
+      if (_spaceIsBlocked(e, hoveredDockChip)) return;
+      const id = hoveredDockChip.dataset.modalId;
+      if (id && Modals.isRegistered(id)) {
+        e.preventDefault();
+        Modals.restore(id);
+      }
+      return;
+    }
+    const id = _spaceWindowId(hoveredToggleWindow);
+    if (!id) return;
+    if (_spaceIsBlocked(e, hoveredToggleWindow)) return;
     e.preventDefault();
-    hoveredToggleCard.click();
+    Modals.minimize(id);
   }, true);
 }
 

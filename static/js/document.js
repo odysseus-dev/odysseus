@@ -2851,7 +2851,7 @@ import * as Modals from './modalManager.js';
         if (uiModule) uiModule.showToast('Send undone');
         return;
       }
-      if (uiModule) uiModule.showToast('Sending...', 15000);
+      if (uiModule) uiModule.showToast('Sending...', 2000);
 
       const activeAccountId = await _resolveComposeSendAccountId();
       const res = await fetch(`${API_BASE}/api/email/send`, {

@@ -76,6 +76,8 @@ research_data/
 
 # Internal dev/review notes — not for public repo
 dev-docs/
+# Windows-port working docs (local only, not for public repo)
+docs/windows-port/
 
 # Local config
 compound.config.json

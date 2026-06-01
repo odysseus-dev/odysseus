@@ -39,7 +39,7 @@ def migrate_memories():
         logger.info("No memory FAISS index found, skipping memory migration")
         return
 
-    ids = json.loads(open(ids_path).read())
+    ids = json.loads(open(ids_path, encoding="utf-8").read())
     if not ids:
         logger.info("Memory FAISS index is empty, skipping")
         return
@@ -47,7 +47,7 @@ def migrate_memories():
     # Load memory texts
     memories = {}
     if os.path.exists(memory_path):
-        for mem in json.loads(open(memory_path).read()):
+        for mem in json.loads(open(memory_path, encoding="utf-8").read()):
             memories[mem.get("id", "")] = mem
 
     embed = get_embedding_client()
@@ -97,7 +97,7 @@ def migrate_rag():
         logger.info("No RAG DocStore found, skipping RAG migration")
         return
 
-    data = json.loads(open(docs_path).read())
+    data = json.loads(open(docs_path, encoding="utf-8").read())
     ids = data.get("ids", [])
     documents = data.get("documents", [])
     metadatas = data.get("metadatas", [])

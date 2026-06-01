@@ -166,7 +166,7 @@ def get_models():
     if _models_cache is None:
         data_path = os.path.join(os.path.dirname(__file__), "data", "hf_models.json")
         try:
-            with open(data_path) as f:
+            with open(data_path, encoding="utf-8") as f:
                 _models_cache = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             _models_cache = []

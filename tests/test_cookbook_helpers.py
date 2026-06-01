@@ -1,7 +1,12 @@
 import pytest
 from fastapi import HTTPException
 
-from routes.cookbook_helpers import _safe_env_prefix, _validate_gpus, _validate_ssh_port
+from routes.cookbook_helpers import (
+    _local_tooling_path_export,
+    _safe_env_prefix,
+    _validate_gpus,
+    _validate_ssh_port,
+)
 
 
 def test_safe_env_prefix_accepts_quoted_venv_path():
@@ -38,3 +43,18 @@ def test_validate_gpus_accepts_indexes_only():
     assert _validate_gpus("0,1,2") == "0,1,2"
     with pytest.raises(HTTPException):
         _validate_gpus("0; rm -rf /")
+
+
+def test_local_tooling_path_export_prepends_interpreter_bin():
+    """The cookbook runners must see the venv's bin (where `hf`/`python` live)
+    so tmux shells can find them without an activated venv."""
+    assert (
+        _local_tooling_path_export("/opt/venv/bin/python")
+        == 'export PATH="/opt/venv/bin:$PATH"'
+    )
+
+
+def test_local_tooling_path_export_preserves_spaces_and_expands_path():
+    line = _local_tooling_path_export("/Users/John Smith/.venv/bin/python3")
+    assert line == 'export PATH="/Users/John Smith/.venv/bin:$PATH"'
+    assert line.endswith(':$PATH"')  # $PATH stays expandable in double quotes

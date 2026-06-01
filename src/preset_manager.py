@@ -75,7 +75,7 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
             return self.DEFAULT_PRESETS.copy()
         
         try:
-            with open(self.presets_file, 'r') as f:
+            with open(self.presets_file, 'r', encoding="utf-8") as f:
                 presets = json.load(f)
             custom = presets.get("custom") if isinstance(presets, dict) else None
             if isinstance(custom, dict) and "enabled" not in custom:
@@ -101,7 +101,7 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
         """Save presets to file"""
         try:
             os.makedirs(os.path.dirname(self.presets_file), exist_ok=True)
-            with open(self.presets_file, 'w') as f:
+            with open(self.presets_file, 'w', encoding="utf-8") as f:
                 json.dump(presets, f, indent=2)
             self.presets = presets
             return True

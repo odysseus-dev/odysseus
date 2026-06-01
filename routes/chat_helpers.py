@@ -188,7 +188,7 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
     Returns {"model": ..., "endpoint_url": ..., "endpoint_name": ...} or None.
     """
     import requests as _req
-    from src.endpoint_resolver import build_chat_url, build_headers, normalize_base
+    from src.endpoint_resolver import build_chat_url, build_headers, build_models_url, normalize_base
 
     current_url = sess.endpoint_url or ""
     db = SessionLocal()
@@ -205,15 +205,19 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
         if current_url and base in current_url:
             continue
         # Quick ping
-        ping_url = base + "/models"
-        headers = {}
-        if ep.api_key:
-            headers["Authorization"] = f"Bearer {ep.api_key}"
+        ping_url = build_models_url(base)
+        headers = build_headers(ep.api_key, base)
         try:
             r = _req.get(ping_url, headers=headers, timeout=5)
             r.raise_for_status()
             data = r.json()
             models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+            if not models:
+                models = [
+                    m.get("name") or m.get("model")
+                    for m in (data.get("models") or [])
+                    if m.get("name") or m.get("model")
+                ]
             if not models:
                 continue
             # Found a working endpoint — update session

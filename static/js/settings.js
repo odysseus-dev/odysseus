@@ -5,6 +5,7 @@ import uiModule from './ui.js';
 import searchModule from './search.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { clearDockSide } from './modalSnap.js';
+import { sortModelIds } from './modelSort.js';
 
 let initialized = false;
 let modalEl = null;
@@ -31,6 +32,7 @@ function initTabs() {
       // they flip toggles instead of having to close + reopen the modal.
       document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
       syncAppearanceOpacity(tab === 'appearance');
+      if (tab === 'ai') refreshAiModelEndpoints();
     });
   });
 }
@@ -160,6 +162,93 @@ function initOpacityToggle() {
    AI TAB
    ═══════════════════════════════════════════ */
 
+const _aiEndpointRefreshers = new Set();
+let _aiEndpointRefreshInFlight = null;
+
+async function _fetchModelEndpoints() {
+  const epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+  const endpoints = await epRes.json();
+  return Array.isArray(endpoints) ? endpoints : [];
+}
+
+function _endpointLabel(ep) {
+  return ep.name + (ep.online ? '' : ' (offline)');
+}
+
+function _fillEndpointSelect(selectEl, endpoints, selected, keepBlank) {
+  if (!selectEl) return;
+  const previous = selected !== undefined ? selected : selectEl.value;
+  const blankText = keepBlank && selectEl.options[0] && selectEl.options[0].value === ''
+    ? selectEl.options[0].textContent
+    : null;
+  while (selectEl.options.length) selectEl.remove(0);
+  if (blankText !== null) {
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = blankText;
+    selectEl.appendChild(blank);
+  }
+  (endpoints || []).forEach(function(ep) {
+    if (!ep.is_enabled) return;
+    const opt = document.createElement('option');
+    opt.value = ep.id;
+    opt.textContent = _endpointLabel(ep);
+    selectEl.appendChild(opt);
+  });
+  if (previous && Array.from(selectEl.options).some(function(o) { return o.value === previous; })) {
+    selectEl.value = previous;
+  } else if (blankText !== null) {
+    selectEl.value = '';
+  }
+}
+
+function _fillModelSelect(selectEl, models, selected, keepBlank) {
+  if (!selectEl) return;
+  const previous = selected !== undefined ? selected : selectEl.value;
+  const blankText = keepBlank && selectEl.options[0] && selectEl.options[0].value === ''
+    ? selectEl.options[0].textContent
+    : null;
+  while (selectEl.options.length) selectEl.remove(0);
+  if (blankText !== null) {
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = blankText;
+    selectEl.appendChild(blank);
+  }
+  sortModelIds(models).forEach(function(m) {
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = String(m).split('/').pop();
+    selectEl.appendChild(opt);
+  });
+  if (previous && Array.from(selectEl.options).some(function(o) { return o.value === previous; })) {
+    selectEl.value = previous;
+  } else if (blankText !== null) {
+    selectEl.value = '';
+  }
+}
+
+function _registerAiEndpointRefresh(fn) {
+  _aiEndpointRefreshers.add(fn);
+}
+
+export async function refreshAiModelEndpoints() {
+  if (_aiEndpointRefreshInFlight) return _aiEndpointRefreshInFlight;
+  _aiEndpointRefreshInFlight = (async function() {
+    try {
+      const endpoints = await _fetchModelEndpoints();
+      _aiEndpointRefreshers.forEach(function(fn) {
+        try { fn(endpoints); } catch (e) { console.warn('[settings] endpoint refresh handler failed', e); }
+      });
+    } catch (e) {
+      console.warn('[settings] failed to refresh model endpoints', e);
+    } finally {
+      _aiEndpointRefreshInFlight = null;
+    }
+  })();
+  return _aiEndpointRefreshInFlight;
+}
+
 /* Shared fallback-chain widget — mirrors the Default Chat Model fallback UI
  * for other model cards (Utility, Vision, …). Pass in the container/button
  * IDs, the endpoints list, the settings key to persist under, and the
@@ -181,7 +270,7 @@ function _bindFallbackWidget(opts) {
     while (selectEl.options.length) selectEl.remove(0);
     var ep = (endpointsRef() || []).find(function(e) { return e.id === epId; });
     if (ep && ep.models) {
-      ep.models.forEach(function(m) {
+      sortModelIds(ep.models).forEach(function(m) {
         if (!modelsFilter(m, ep)) return;
         var o = document.createElement('option');
         o.value = m;
@@ -270,6 +359,7 @@ function _bindFallbackWidget(opts) {
 
   return {
     setInitial: function(list) { current = (list || []).slice(); render(); },
+    refresh: render,
   };
 }
 
@@ -289,31 +379,21 @@ async function initDefaultChat() {
 
   // Fill any <select> with the models for a given endpoint id.
   function fillModels(selectEl, epId, selected) {
-    while (selectEl.options.length) selectEl.remove(0);
     var ep = _endpoints.find(function(e) { return e.id === epId; });
-    if (ep && ep.models) {
-      ep.models.forEach(function(m) {
-        var opt = document.createElement('option');
-        opt.value = m;
-        opt.textContent = m.split('/').pop();
-        selectEl.appendChild(opt);
-      });
-    }
-    if (selected) selectEl.value = selected;
+    _fillModelSelect(selectEl, ep ? ep.models : [], selected, false);
   }
 
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    _endpoints = await epRes.json();
-    enabledEndpoints().forEach(function(ep) {
-      var opt = document.createElement('option');
-      opt.value = ep.id;
-      opt.textContent = ep.name + (ep.online ? '' : ' (offline)');
-      epSel.appendChild(opt);
-    });
+    _endpoints = await _fetchModelEndpoints();
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, false);
   } catch (e) { console.warn('Failed to load endpoints for default chat', e); }
 
   function refreshModels(selectedModel) { fillModels(modelSel, epSel.value, selectedModel); }
+  function refreshEndpointOptions(selectedEndpoint, selectedModel) {
+    _fillEndpointSelect(epSel, _endpoints, selectedEndpoint !== undefined ? selectedEndpoint : epSel.value, false);
+    refreshModels(selectedModel !== undefined ? selectedModel : modelSel.value);
+    renderFallbacks();
+  }
 
   // Render the fallback chain. Each row is endpoint + model + remove.
   function renderFallbacks() {
@@ -409,6 +489,11 @@ async function initDefaultChat() {
     renderFallbacks();
     saveDefault();
   });
+
+  _registerAiEndpointRefresh(function(endpoints) {
+    _endpoints = endpoints;
+    refreshEndpointOptions(epSel.value, modelSel.value);
+  });
 }
 
 /* ── Utility Model ── */
@@ -417,35 +502,19 @@ async function initUtilityModel() {
   var modelSel = el('set-utilityModelSelect');
   var msg = el('set-utilityChatMsg');
   var _endpoints = [];
+  var fallbackWidget = null;
   if (epSel && epSel.options[0]) epSel.options[0].textContent = 'Same as chat';
   if (modelSel && modelSel.options[0]) modelSel.options[0].textContent = 'Same as chat';
 
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    _endpoints = await epRes.json();
-    _endpoints.forEach(function(ep) {
-      if (!ep.is_enabled) return;
-      var opt = document.createElement('option');
-      opt.value = ep.id;
-      opt.textContent = ep.name + (ep.online ? '' : ' (offline)');
-      epSel.appendChild(opt);
-    });
+    _endpoints = await _fetchModelEndpoints();
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
   } catch (e) { console.warn('Failed to load endpoints for utility model', e); }
 
   function refreshModels(selectedModel) {
-    while (modelSel.options.length > 1) modelSel.remove(1);
     var epId = epSel.value;
-    if (!epId) { modelSel.value = ''; return; }
     var ep = _endpoints.find(function(e) { return e.id === epId; });
-    if (ep && ep.models) {
-      ep.models.forEach(function(m) {
-        var opt = document.createElement('option');
-        opt.value = m;
-        opt.textContent = m.split('/').pop();
-        modelSel.appendChild(opt);
-      });
-    }
-    if (selectedModel) modelSel.value = selectedModel;
+    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
   }
 
   try {
@@ -453,7 +522,7 @@ async function initUtilityModel() {
     var settings = await res.json();
     if (settings.utility_endpoint_id) epSel.value = settings.utility_endpoint_id;
     refreshModels(settings.utility_model || '');
-    _bindFallbackWidget({
+    fallbackWidget = _bindFallbackWidget({
       containerId: 'set-utilityFallbacks',
       addBtnId: 'set-utilityAddFallback',
       endpoints: function() { return _endpoints; },
@@ -483,6 +552,13 @@ async function initUtilityModel() {
 
   epSel.addEventListener('change', function() { refreshModels(''); saveUtility(); });
   modelSel.addEventListener('change', saveUtility);
+
+  _registerAiEndpointRefresh(function(endpoints) {
+    _endpoints = endpoints;
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
+    refreshModels(modelSel.value);
+    if (fallbackWidget && fallbackWidget.refresh) fallbackWidget.refresh();
+  });
 }
 
 /* ── Teacher Model ── */
@@ -501,31 +577,14 @@ async function initTeacherModel() {
   var _endpoints = [];
 
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    _endpoints = await epRes.json();
-    _endpoints.forEach(function(ep) {
-      if (!ep.is_enabled) return;
-      var opt = document.createElement('option');
-      opt.value = ep.id;
-      opt.textContent = ep.name + (ep.online ? '' : ' (offline)');
-      epSel.appendChild(opt);
-    });
+    _endpoints = await _fetchModelEndpoints();
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
   } catch (e) { console.warn('Failed to load endpoints for teacher model', e); }
 
   function refreshModels(selectedModel) {
-    while (modelSel.options.length > 1) modelSel.remove(1);
     var epId = epSel.value;
-    if (!epId) { modelSel.value = ''; return; }
     var ep = _endpoints.find(function(e) { return e.id === epId; });
-    if (ep && ep.models) {
-      ep.models.forEach(function(m) {
-        var opt = document.createElement('option');
-        opt.value = m;
-        opt.textContent = m.split('/').pop();
-        modelSel.appendChild(opt);
-      });
-    }
-    if (selectedModel) modelSel.value = selectedModel;
+    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
   }
 
   // Disable / enable the endpoint+model dropdowns based on the
@@ -595,6 +654,12 @@ async function initTeacherModel() {
   }
   epSel.addEventListener('change', function() { refreshModels(''); saveTeacher(); });
   modelSel.addEventListener('change', saveTeacher);
+
+  _registerAiEndpointRefresh(function(endpoints) {
+    _endpoints = endpoints;
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
+    refreshModels(modelSel.value);
+  });
 }
 
 /* ── Image Generation ── */
@@ -624,7 +689,7 @@ async function initImageSettings() {
         if (_isInpaintModel(mid)) imageModels.push(mid);
       });
     });
-    imageModels.forEach(mid => { const opt = document.createElement('option'); opt.value = mid; opt.textContent = mid; modelSel.appendChild(opt); });
+    sortModelIds(imageModels).forEach(mid => { const opt = document.createElement('option'); opt.value = mid; opt.textContent = mid; modelSel.appendChild(opt); });
     // Hardcoded fallbacks shown as "(not detected)" so users know what to
     // download/serve to enable inpaint here.
     ['stable-diffusion-3.5-medium', 'stable-diffusion-inpainting'].forEach(mid => {
@@ -666,6 +731,7 @@ async function initVisionSettings() {
   const enabledToggle = el('set-visionEnabledToggle');
   const configWrap = vlSel ? vlSel.closest('div[style*="flex-direction"]') : null;
   var _visionEndpoints = [];
+  var visionFallbackWidget = null;
   var _vlExclude = ['audio', 'realtime', 'tts', 'dall-e', 'embedding', 'search', 'whisper'];
   function _isVisionModel(mid) {
     var lower = String(mid || '').toLowerCase();
@@ -674,27 +740,30 @@ async function initVisionSettings() {
   try {
     const modelsRes = await fetch('/api/models', { credentials: 'same-origin' });
     const modelsData = await modelsRes.json();
+    const visionModels = [];
     (modelsData.items || []).forEach(item => {
       if (item.offline) return;
       (item.models || []).forEach(mid => {
         if (_isVisionModel(mid)) {
-          var opt = document.createElement('option'); opt.value = mid; opt.textContent = mid; vlSel.appendChild(opt);
+          visionModels.push(mid);
         }
       });
+    });
+    sortModelIds(visionModels).forEach(mid => {
+      var opt = document.createElement('option'); opt.value = mid; opt.textContent = mid; vlSel.appendChild(opt);
     });
   } catch (e) { console.warn('Failed to load models for vision settings', e); }
   // Also pull the raw endpoint list so the fallback widget can resolve
   // endpoint-id → models the same way the other cards do.
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    _visionEndpoints = await epRes.json();
+    _visionEndpoints = await _fetchModelEndpoints();
   } catch (e) { console.warn('Failed to load endpoints for vision fallback', e); }
   try {
     const settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     const settings = await settingsRes.json();
     if (settings.vision_model) vlSel.value = settings.vision_model;
     if (enabledToggle) enabledToggle.checked = settings.vision_enabled !== false;
-    _bindFallbackWidget({
+    visionFallbackWidget = _bindFallbackWidget({
       containerId: 'set-visionFallbacks',
       addBtnId: 'set-visionAddFallback',
       endpoints: function() { return _visionEndpoints; },
@@ -725,6 +794,11 @@ async function initVisionSettings() {
   }
   vlSel.addEventListener('change', saveSettings);
   if (enabledToggle) enabledToggle.addEventListener('change', function() { syncVisionDisabled(); saveSettings(); });
+
+  _registerAiEndpointRefresh(function(endpoints) {
+    _visionEndpoints = endpoints;
+    if (visionFallbackWidget && visionFallbackWidget.refresh) visionFallbackWidget.refresh();
+  });
 }
 
 /* ── Face Recognition ── */
@@ -1291,46 +1365,30 @@ async function initResearchSettings() {
   var epSel = el('set-researchEndpoint');
   var modelSel = el('set-researchModel');
   var tokensInput = el('set-researchMaxTokens');
+  var extractTimeoutInput = el('set-researchExtractTimeout');
+  var extractConcurrencyInput = el('set-researchExtractConcurrency');
   var msg = el('set-researchMsg');
+  var endpoints = [];
 
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    var endpoints = await epRes.json();
-    endpoints.forEach(function(ep) {
-      if (!ep.is_enabled) return;
-      var opt = document.createElement('option');
-      opt.value = ep.id;
-      opt.textContent = ep.name + (ep.online ? '' : ' (offline)');
-      epSel.appendChild(opt);
-    });
+    endpoints = await _fetchModelEndpoints();
+    _fillEndpointSelect(epSel, endpoints, epSel.value, true);
   } catch (e) { console.warn('Failed to load endpoints for research', e); }
 
-  async function refreshModels(selectedModel) {
+  function refreshModels(selectedModel) {
     var epId = epSel.value;
-    while (modelSel.options.length > 1) modelSel.remove(1);
-    if (!epId) { modelSel.value = ''; return; }
-    try {
-      var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-      var endpoints = await epRes.json();
-      var ep = endpoints.find(function(e) { return e.id === epId; });
-      if (ep && ep.models) {
-        ep.models.forEach(function(m) {
-          var opt = document.createElement('option');
-          opt.value = m;
-          opt.textContent = m.split('/').pop();
-          modelSel.appendChild(opt);
-        });
-      }
-      if (selectedModel) modelSel.value = selectedModel;
-    } catch (e) { /* ignore */ }
+    var ep = endpoints.find(function(e) { return e.id === epId; });
+    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
   }
 
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
     if (settings.research_endpoint_id) epSel.value = settings.research_endpoint_id;
-    await refreshModels(settings.research_model || '');
+    refreshModels(settings.research_model || '');
     if (settings.research_max_tokens) tokensInput.value = settings.research_max_tokens;
+    if (settings.research_extraction_timeout_seconds) extractTimeoutInput.value = settings.research_extraction_timeout_seconds;
+    if (settings.research_extraction_concurrency) extractConcurrencyInput.value = settings.research_extraction_concurrency;
   } catch (e) { console.warn('Failed to load research settings', e); }
 
   function showStatus() {
@@ -1342,6 +1400,12 @@ async function initResearchSettings() {
     }
     if (tokensInput.value) {
       parts.push('Max tokens: ' + tokensInput.value);
+    }
+    if (extractTimeoutInput.value) {
+      parts.push('Extract: ' + extractTimeoutInput.value + 's');
+    }
+    if (extractConcurrencyInput.value) {
+      parts.push('Parallel: ' + extractConcurrencyInput.value);
     }
     if (parts.length) {
       msg.textContent = parts.join(' · ');
@@ -1360,6 +1424,10 @@ async function initResearchSettings() {
     };
     var tv = parseInt(tokensInput.value, 10);
     if (tv && tv >= 1024) payload.research_max_tokens = tv;
+    var et = parseInt(extractTimeoutInput.value, 10);
+    if (et && et >= 15 && et <= 600) payload.research_extraction_timeout_seconds = et;
+    var ec = parseInt(extractConcurrencyInput.value, 10);
+    if (ec && ec >= 1 && ec <= 12) payload.research_extraction_concurrency = ec;
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -1371,11 +1439,19 @@ async function initResearchSettings() {
   }
 
   epSel.addEventListener('change', async function() {
-    await refreshModels('');
+    refreshModels('');
     saveResearch();
   });
   modelSel.addEventListener('change', saveResearch);
   tokensInput.addEventListener('change', saveResearch);
+  extractTimeoutInput.addEventListener('change', saveResearch);
+  extractConcurrencyInput.addEventListener('change', saveResearch);
+
+  _registerAiEndpointRefresh(function(nextEndpoints) {
+    endpoints = nextEndpoints;
+    _fillEndpointSelect(epSel, endpoints, epSel.value, true);
+    refreshModels(modelSel.value);
+  });
 }
 
 /* ── Deep Research Search (Search tab) ── */
@@ -4202,6 +4278,7 @@ export function open(tab) {
   const activeTab = tab || (modalEl.querySelector('[data-settings-tab].active') || {}).dataset?.settingsTab || 'services';
   document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
   syncAppearanceOpacity(activeTab === 'appearance');
+  if (activeTab === 'ai') refreshAiModelEndpoints();
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }
@@ -4226,7 +4303,7 @@ export function close() {
   }
 }
 
-const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility };
+const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints };
 
 
 export default settingsModule;

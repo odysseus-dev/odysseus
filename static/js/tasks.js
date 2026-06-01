@@ -6,6 +6,7 @@ import uiModule from './ui.js';
 import markdownModule from './markdown.js';
 import * as spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import { sortModelIds } from './modelSort.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -622,17 +623,19 @@ function _renderList() {
     card.className = 'memory-item task-card' + (task.status === 'paused' ? ' task-paused' : '');
     card.dataset.id = task.id;
 
-    // Title row: icon + name (left); paused badge, chevron (expanded only) +
-    // status dot (right). Click to expand.
+    // Title row: icon + name (left); status pill + chevron/actions (right).
+    // The status pill replaces the old dot and doubles as pause/resume.
     const titleRow = document.createElement('div');
     titleRow.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;';
-    const pausedBadge = task.status === 'paused'
-      ? `<span class="task-paused-badge" title="Paused" style="position:relative;top:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg> paused</span>`
-      : '';
+    const statusBadge = task.status === 'paused'
+      ? `<span class="task-status-badge task-paused-badge" data-task-status-action="resume" title="Click to resume" style="position:relative;top:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg> paused</span>`
+      : task.status === 'active'
+        ? `<span class="task-status-badge task-active-badge" data-task-status-action="pause" title="Click to pause" style="position:relative;top:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="7 4 19 12 7 20 7 4"/></svg> active</span>`
+        : '';
     const builtinBadge = task.is_builtin
       ? `<span class="task-builtin-badge${task.is_modified ? ' modified' : ''}" title="${task.is_modified ? 'Built-in task — edited from its default' : 'Built-in task'}">built-in${task.is_modified ? ' · edited' : ''}</span>`
       : '';
-    titleRow.innerHTML = `${_taskIcon(task)}<span class="memory-item-title">${_esc(task.name)}</span>${builtinBadge}<span style="flex:1;"></span>${pausedBadge}${_statusDot(task.status)}`;
+    titleRow.innerHTML = `${_taskIcon(task)}<span class="memory-item-title">${_esc(task.name)}</span>${builtinBadge}<span style="flex:1;"></span>${statusBadge}`;
 
     // ... menu button (hover to show)
     const actionsWrap = document.createElement('div');
@@ -688,6 +691,15 @@ function _renderList() {
     meta.style.cssText = 'font-size:10px;opacity:0.4;margin-top:-1px;';
     meta.textContent = metaParts.join(' · ');
     content.appendChild(meta);
+
+    const statusPill = titleRow.querySelector('[data-task-status-action]');
+    if (statusPill) {
+      statusPill.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (statusPill.dataset.taskStatusAction === 'pause') await _doPause(task.id);
+        else await _doResume(task.id);
+      });
+    }
 
     // Expandable detail (revealed on click) — like the library doc/chat cards:
     // extra meta + last-run result + description.
@@ -1259,7 +1271,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         if (it.offline || !it.models || it.models.length === 0) continue;
         const group = document.createElement('optgroup');
         group.label = it.endpoint_name || it.host || 'endpoint';
-        const all = [...(it.models || []), ...(it.models_extra || [])];
+        const all = sortModelIds([...(it.models || []), ...(it.models_extra || [])]);
         for (const m of all) {
           const opt = document.createElement('option');
           opt.value = `${it.url}::${m}`;

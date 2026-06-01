@@ -9955,19 +9955,44 @@ textarea.memory-add-input {
   opacity: 0.85 !important;
   filter: saturate(0.9);
 }
-.task-paused-badge {
+.task-status-badge {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--orange, #ff9800);
-  background: color-mix(in srgb, var(--orange, #ff9800) 12%, transparent);
-  padding: 2px 6px;
-  border-radius: 10px;
+  letter-spacing: 0.3px;
+  padding: 1px 6px;
+  border-radius: 3px;
   flex-shrink: 0;
+  cursor: pointer;
+  border: 1px solid transparent;
+  line-height: 16px;
+  font-family: 'Fira Code', monospace;
+  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease, filter 0.12s ease;
+  user-select: none;
+}
+.task-paused-badge {
+  color: var(--orange, #ffb86c);
+  background: color-mix(in srgb, var(--orange, #ffb86c) 22%, transparent);
+  border-color: color-mix(in srgb, var(--orange, #ffb86c) 35%, transparent);
+}
+.task-active-badge {
+  color: var(--green, #50fa7b);
+  background: color-mix(in srgb, var(--green, #50fa7b) 20%, transparent);
+  border-color: color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
+}
+.task-status-badge:hover {
+  filter: brightness(1.08) saturate(1.15);
+}
+.task-paused-badge:hover {
+  background: color-mix(in srgb, var(--orange, #ffb86c) 30%, transparent);
+  border-color: color-mix(in srgb, var(--orange, #ffb86c) 55%, transparent);
+}
+.task-active-badge:hover {
+  background: color-mix(in srgb, var(--green, #50fa7b) 28%, transparent);
+  border-color: color-mix(in srgb, var(--green, #50fa7b) 55%, transparent);
 }
 
 .task-builtin-badge {
@@ -14396,6 +14421,9 @@ body.left-dock-active {
   display: flex !important;
   flex: 1 1 auto !important;
 }
+#email-lib-modal.email-reading .doclib-modal-content {
+  min-height: var(--email-reading-modal-min-h, auto);
+}
 #email-lib-modal .doclib-card.doclib-card-expanded {
   flex: 1 1 auto !important;
   height: 100% !important;
@@ -14403,6 +14431,7 @@ body.left-dock-active {
      overbearing on desktop; the size jump alone is enough signal. */
   border: 1px solid var(--border) !important;
   box-shadow: 0 6px 18px rgba(0,0,0,0.12) !important;
+  animation: none !important;
 }
 /* Desktop-only, ONLY on the currently-expanded email card. Nudges the title
    row down 6px / right 2px, bolds the subject, hides the timestamp from the
@@ -18124,7 +18153,10 @@ body.gallery-selecting .gallery-dl-btn,
   border: 1px solid color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
 }
 .cookbook-dep-na {
-  color: color-mix(in srgb, var(--fg) 35%, transparent);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  cursor: help;
 }
 .cookbook-dep-install {
   background: var(--accent, var(--red));
@@ -26071,6 +26103,13 @@ button .spinner-whirlpool {
   flex: 1;
   min-height: 0;
   font-size: 12px;
+}
+.email-card-reader-loading {
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+.email-card-reader-loading .spinner-whirlpool,
+.email-card-reader-loading .ai-spinner-whirlpool {
+  opacity: 0.85;
 }
 /* Per-email unread dot in the expanded reader's title row. Background color
    stays inline (per-sender hue from _senderColor), but the dot gets a soft
