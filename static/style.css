@@ -18153,7 +18153,10 @@ body.gallery-selecting .gallery-dl-btn,
   border: 1px solid color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
 }
 .cookbook-dep-na {
-  color: color-mix(in srgb, var(--fg) 35%, transparent);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  cursor: help;
 }
 .cookbook-dep-install {
   background: var(--accent, var(--red));

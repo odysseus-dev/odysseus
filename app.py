@@ -224,13 +224,15 @@ if AUTH_ENABLED:
                 _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
                 if _hdr and _hdr == _ITT and _is_trusted_loopback(request):
                     # Impersonation: when the agent's loopback call sets
-                    # X-Odysseus-Owner, attribute the request to that
-                    # user so notes/calendar/etc. land in their account
-                    # instead of being owned by "internal-tool" (which
-                    # made the agent's POSTs invisible to the user that
-                    # asked for them).
+                    # X-Odysseus-Owner, attribute the request to that user only
+                    # if they exist. Authorization checks remain separate; this
+                    # is just owner attribution for notes/calendar/etc.
                     _impersonate = (request.headers.get("X-Odysseus-Owner") or "").strip()
-                    request.state.current_user = _impersonate or "internal-tool"
+                    _auth_mgr = getattr(request.app.state, "auth_manager", None) or auth_manager
+                    if _impersonate and _impersonate in getattr(_auth_mgr, "users", {}):
+                        request.state.current_user = _impersonate
+                    else:
+                        request.state.current_user = "internal-tool"
                     request.state.api_token = False
                     return await call_next(request)
             except Exception:

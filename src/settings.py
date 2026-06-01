@@ -122,6 +122,7 @@ DEFAULT_SETTINGS = {
 
 DEFAULT_FEATURES = {
     "web_search": True,
+    "web_fetch": True,
     "deep_research": False,
     "memory": True,
     "document_editor": True,
