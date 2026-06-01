@@ -626,40 +626,18 @@ def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
             provider = _detect_provider(base)
             headers = build_headers(ep.api_key, base)
 
-            if provider == "anthropic":
-                # Anthropic: match against hardcoded model list
-                matched = None
-                for am in ANTHROPIC_MODELS:
-                    if model_name.lower() in am.lower() or am.lower() in model_name.lower():
-                        matched = am
-                        break
-                if matched:
-                    return build_chat_url(base), matched, headers
-            else:
-                # OpenAI-compatible and native Ollama: probe the provider's model list.
-                try:
-                    r = httpx.get(build_models_url(base), headers=headers, timeout=HTTP_TIMEOUT_MODEL_LIST)
-                    r.raise_for_status()
-                    data = r.json()
-                    model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-                    if not model_ids:
-                        model_ids = [
-                            m.get("name") or m.get("model")
-                            for m in (data.get("models") or [])
-                            if m.get("name") or m.get("model")
-                        ]
-                except Exception:
-                    model_ids = []
+            model_ids = _fetch_endpoint_model_ids(base, headers, provider, ANTHROPIC_MODELS)
 
-                # Exact match first
-                for mid in model_ids:
-                    if mid.lower() == model_name.lower():
-                        return build_chat_url(base), mid, headers
+            # Filter out the offline sentinel so we don't match it
+            model_ids = [m for m in model_ids if m != "(endpoint offline)"]
 
-                # Partial match
-                for mid in model_ids:
-                    if model_name.lower() in mid.lower() or mid.lower() in model_name.lower():
-                        return build_chat_url(base), mid, headers
+            # Exact match first, then partial match
+            for mid in model_ids:
+                if mid.lower() == model_name.lower():
+                    return build_chat_url(base), mid, headers
+            for mid in model_ids:
+                if model_name.lower() in mid.lower() or mid.lower() in model_name.lower():
+                    return build_chat_url(base), mid, headers
 
         raise ValueError(f"Model '{spec}' not found on any configured endpoint")
     finally:
@@ -1599,14 +1577,15 @@ async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict
     Content = optional filter keyword.
     """
     import httpx
-    from src.database import SessionLocal, ModelEndpoint
+    from src.database import ModelEndpoint
     from src.llm_core import _detect_provider, ANTHROPIC_MODELS
 
     keyword = content.strip().lower() if content.strip() else None
 
-    db = SessionLocal()
     try:
-        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        with get_db_session() as db:
+            endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+
         if not endpoints:
             return {"results": "No enabled model endpoints configured."}
 
@@ -1618,26 +1597,13 @@ async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict
             provider = _detect_provider(base)
             headers = build_headers(ep.api_key, base)
 
-            model_ids = []
-            if provider == "anthropic":
-                model_ids = list(ANTHROPIC_MODELS)
-            else:
-                try:
-                    r = httpx.get(build_models_url(base), headers=headers, timeout=HTTP_TIMEOUT_MODEL_LIST)
-                    r.raise_for_status()
-                    data = r.json()
-                    model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-                    if not model_ids:
-                        model_ids = [
-                            m.get("name") or m.get("model")
-                            for m in (data.get("models") or [])
-                            if m.get("name") or m.get("model")
-                        ]
-                except Exception:
-                    model_ids = ["(endpoint offline)"]
+            model_ids = _fetch_endpoint_model_ids(base, headers, provider, ANTHROPIC_MODELS)
 
             if keyword:
-                model_ids = [m for m in model_ids if keyword in m.lower() or keyword in (ep.name or "").lower()]
+                model_ids = [
+                    m for m in model_ids
+                    if keyword in m.lower() or keyword in (ep.name or "").lower()
+                ]
 
             if model_ids:
                 result_lines.append(f"\n**{ep.name or base}** ({provider}):")
@@ -1648,13 +1614,37 @@ async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict
         if not result_lines:
             return {"results": "No models found" + (f" matching '{keyword}'" if keyword else "") + "."}
 
-        header = f"Available models ({total_models} total):"
-        return {"results": header + "\n".join(result_lines)}
+        return {"results": f"Available models ({total_models} total):" + "\n".join(result_lines)}
+
     except Exception as e:
         logger.error(f"list_models failed: {e}")
         return {"error": str(e)}
-    finally:
-        db.close()
+
+
+def _fetch_endpoint_model_ids(base: str, headers: Dict, provider: str, anthropic_models) -> list:
+    """Probe an endpoint and return its model IDs.
+
+    Returns a list of model ID strings, or ["(endpoint offline)"] on failure.
+    """
+    import httpx
+
+    if provider == "anthropic":
+        return list(anthropic_models)
+
+    try:
+        r = httpx.get(build_models_url(base), headers=headers, timeout=HTTP_TIMEOUT_MODEL_LIST)
+        r.raise_for_status()
+        data = r.json()
+        model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+        if not model_ids:
+            model_ids = [
+                m.get("name") or m.get("model")
+                for m in (data.get("models") or [])
+                if m.get("name") or m.get("model")
+            ]
+        return model_ids or ["(endpoint offline)"]
+    except Exception:
+        return ["(endpoint offline)"]
 
 
 # ---------------------------------------------------------------------------
