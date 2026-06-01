@@ -129,7 +129,10 @@ def _get_http_client() -> httpx.AsyncClient:
     """Return process-wide AsyncClient. Per-request timeout is passed at call time."""
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(limits=_http_limits, http2=False)
+        from src.tls_overrides import llm_verify
+        _http_client = httpx.AsyncClient(
+            limits=_http_limits, http2=False, verify=llm_verify(),
+        )
     return _http_client
 
 def _get_cached_response(cache_key: str) -> Optional[str]:
