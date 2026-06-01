@@ -213,7 +213,8 @@ Stop background services:
 
 Notes:
 - This is a local wrapper around your checkout (not a fully self-contained signed/notarized distributable).
-- If you move/rename the repo folder, rebuild the bundle so it points to the new path.
+- The app remembers your repo path in `~/Library/Application Support/OdysseusDesktop/repo_path.txt`.
+- If the repo moves, use **Control -> Choose Repo Folder…** in the app (rebuild is not required).
 
 ## License
 MIT -- see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).

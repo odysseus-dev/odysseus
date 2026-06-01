@@ -11,6 +11,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var appHost: String { ProcessInfo.processInfo.environment["ODYSSEUS_APP_HOST"] ?? "127.0.0.1" }
     private var appPort: String { ProcessInfo.processInfo.environment["ODYSSEUS_APP_PORT"] ?? "7001" }
     private var appURL: URL { URL(string: "http://\(appHost):\(appPort)")! }
+    private var stateDirURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/OdysseusDesktop", isDirectory: true)
+    }
+    private var persistedRepoPathURL: URL { stateDirURL.appendingPathComponent("repo_path.txt") }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenu()
@@ -63,6 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         restartItem.target = self
         let stopItem = controlMenu.addItem(withTitle: "Stop Backend", action: #selector(stopBackend), keyEquivalent: "")
         stopItem.target = self
+        controlMenu.addItem(NSMenuItem.separator())
+        let chooseRepoItem = controlMenu.addItem(withTitle: "Choose Repo Folder…", action: #selector(chooseRepoFolder), keyEquivalent: "o")
+        chooseRepoItem.target = self
 
         NSApp.mainMenu = mainMenu
     }
@@ -100,17 +108,104 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func resolvePaths() {
-        guard
-            let resources = Bundle.main.resourceURL,
-            let repoPathRaw = try? String(contentsOf: resources.appendingPathComponent("repo_path.txt"), encoding: .utf8)
-        else {
-            showErrorPage("Missing app resources", details: "repo_path.txt was not found in the app bundle.")
+        var candidates: [String] = []
+
+        if let fromEnv = ProcessInfo.processInfo.environment["ODYSSEUS_REPO_PATH"], !fromEnv.isEmpty {
+            candidates.append(fromEnv)
+        }
+        if let persisted = loadTextFile(persistedRepoPathURL) {
+            candidates.append(persisted)
+        }
+        if let inferred = inferredRepoPathFromBundleLocation() {
+            candidates.append(inferred)
+        }
+        if let bundled = bundledRepoPath() {
+            candidates.append(bundled)
+        }
+
+        for candidate in candidates {
+            if isValidRepoPath(candidate) {
+                configureRepoPath(candidate)
+                return
+            }
+        }
+
+        if let selected = promptForRepoPath() {
+            configureRepoPath(selected)
             return
         }
 
-        let repoPath = repoPathRaw.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.repoPath = repoPath
-        self.controlScriptPath = "\(repoPath)/scripts/odysseus-desktop-control.sh"
+        showErrorPage(
+            "Odysseus repo not found",
+            details: "The app could not locate a valid Odysseus checkout. Use Control -> Choose Repo Folder… and select the repo root."
+        )
+    }
+
+    private func configureRepoPath(_ path: String) {
+        let normalized = (path as NSString).expandingTildeInPath
+        self.repoPath = normalized
+        self.controlScriptPath = "\(normalized)/scripts/odysseus-desktop-control.sh"
+        persistRepoPath(normalized)
+    }
+
+    private func bundledRepoPath() -> String? {
+        guard let resources = Bundle.main.resourceURL else { return nil }
+        return loadTextFile(resources.appendingPathComponent("repo_path.txt"))
+    }
+
+    private func inferredRepoPathFromBundleLocation() -> String? {
+        let bundleURL = Bundle.main.bundleURL
+        let distURL = bundleURL.deletingLastPathComponent()
+        let repoURL = distURL.deletingLastPathComponent()
+        let candidate = repoURL.path
+        return isValidRepoPath(candidate) ? candidate : nil
+    }
+
+    private func loadTextFile(_ url: URL) -> String? {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func persistRepoPath(_ path: String) {
+        do {
+            try FileManager.default.createDirectory(at: stateDirURL, withIntermediateDirectories: true)
+            try "\(path)\n".write(to: persistedRepoPathURL, atomically: true, encoding: .utf8)
+        } catch {
+            // Non-fatal: app can still run without persistence.
+        }
+    }
+
+    private func isValidRepoPath(_ path: String) -> Bool {
+        let expanded = (path as NSString).expandingTildeInPath
+        let scriptPath = "\(expanded)/scripts/odysseus-desktop-control.sh"
+        let appEntryPath = "\(expanded)/app.py"
+        return FileManager.default.isExecutableFile(atPath: scriptPath)
+            && FileManager.default.fileExists(atPath: appEntryPath)
+    }
+
+    private func promptForRepoPath() -> String? {
+        let panel = NSOpenPanel()
+        panel.title = "Select Odysseus Repository Folder"
+        panel.prompt = "Use Folder"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+
+        let result = panel.runModal()
+        guard result == .OK, let url = panel.url else { return nil }
+
+        let path = url.path
+        guard isValidRepoPath(path) else {
+            showErrorPage(
+                "Invalid folder selected",
+                details: "The selected folder does not look like an Odysseus repo (missing app.py or scripts/odysseus-desktop-control.sh)."
+            )
+            return nil
+        }
+        return path
     }
 
     private func startBackendAndLoad() {
@@ -234,6 +329,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let details = output.trimmingCharacters(in: .whitespacesAndNewlines)
             self?.showStatusPage("Backend stopped", details: details.isEmpty ? "Odysseus services stopped." : details)
         }
+    }
+
+    @objc private func chooseRepoFolder() {
+        guard let selected = promptForRepoPath() else { return }
+        configureRepoPath(selected)
+        showStatusPage("Repository updated", details: "Using repo at \(selected). Starting backend...")
+        startBackendAndLoad()
     }
 }
 
