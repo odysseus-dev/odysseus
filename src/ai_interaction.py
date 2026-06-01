@@ -925,15 +925,7 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
                     f"(showing first {SESSION_LIST_DISPLAY_LIMIT})"
                 )
                 break
-            safe_name = (sess.name or "Untitled").replace("[", "\\[").replace("]", "\\]")
-            msg_count = getattr(sess, "message_count", 0) or 0
-            model = getattr(sess, "model", "unknown")
-            marker = " ← most recent" if i == 0 else ""
-            lines.append(
-                f"- **[{safe_name}](#session-{sid})** "
-                f"(id: `{sid}`, model: {model}, {msg_count} msgs, "
-                f"last active {_session_relative_time(ts)}){marker}"
-            )
+            lines.append(_format_session_row(i, ts, sid, sess))
 
         if not lines:
             suffix = f" matching '{keyword}'" if keyword else ""
@@ -960,6 +952,19 @@ def _session_best_timestamp(db_row) -> Optional[object]:
         getattr(db_row, "last_accessed", None)
         or getattr(db_row, "updated_at", None)
         or getattr(db_row, "created_at", None)
+    )
+
+
+def _format_session_row(index: int, ts, sid: str, sess) -> str:
+    """Format a single session as a markdown list row for list_sessions."""
+    safe_name = (sess.name or "Untitled").replace("[", "\\[").replace("]", "\\]")
+    msg_count = getattr(sess, "message_count", 0) or 0
+    model = getattr(sess, "model", "unknown")
+    marker = " ← most recent" if index == 0 else ""
+    return (
+        f"- **[{safe_name}](#session-{sid})** "
+        f"(id: `{sid}`, model: {model}, {msg_count} msgs, "
+        f"last active {_session_relative_time(ts)}){marker}"
     )
 
 
@@ -1179,29 +1184,46 @@ def _parse_manage_session_input(content: str) -> Tuple[str, str, Optional[str], 
     """Parse do_manage_session content from JSON or line format.
 
     Returns:
-        Tuple of (action, target_sid, value, list_filter) — all str or None.
+        Tuple of (action, target_sid, value, list_filter).
     """
     raw = (content or "").strip()
 
     if raw.startswith("{"):
-        try:
-            parsed = json.loads(raw)
-        except Exception:
-            parsed = None
+        parsed = _parse_session_json(raw)
+        if parsed is not None:
+            return parsed
 
-        if isinstance(parsed, dict):
-            action = str(parsed.get("action") or "").strip().lower()
-            target_sid = str(
-                parsed.get("session_id") or parsed.get("session") or parsed.get("id") or ""
-            ).strip()
-            v = parsed.get("value")
-            if v is None:
-                v = (parsed.get("name") or parsed.get("new_name")
-                     or parsed.get("title") or parsed.get("keep_count"))
-            value = None if v is None else str(v).strip()
-            list_filter = str(parsed.get("filter") or "").strip()
-            return action, target_sid, value, list_filter
+    return _parse_session_lines(raw)
 
+
+def _parse_session_json(raw: str) -> Optional[Tuple[str, str, Optional[str], str]]:
+    """Parse the structured JSON form of a manage_session command.
+
+    Returns the parsed 4-tuple, or None if the text is not a JSON object.
+    """
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return None
+
+    if not isinstance(parsed, dict):
+        return None
+
+    action = str(parsed.get("action") or "").strip().lower()
+    target_sid = str(
+        parsed.get("session_id") or parsed.get("session") or parsed.get("id") or ""
+    ).strip()
+    v = parsed.get("value")
+    if v is None:
+        v = (parsed.get("name") or parsed.get("new_name")
+             or parsed.get("title") or parsed.get("keep_count"))
+    value = None if v is None else str(v).strip()
+    list_filter = str(parsed.get("filter") or "").strip()
+    return action, target_sid, value, list_filter
+
+
+def _parse_session_lines(raw: str) -> Tuple[str, str, Optional[str], str]:
+    """Parse the legacy line-based form of a manage_session command."""
     lines = raw.split("\n")
     if not lines or not lines[0].strip():
         return "", "", None, ""
@@ -1611,7 +1633,7 @@ async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict
     Content = optional filter keyword.
     """
     from src.database import ModelEndpoint
-    from src.llm_core import _detect_provider, ANTHROPIC_MODELS
+    from src.llm_core import ANTHROPIC_MODELS
 
     keyword = content.strip().lower() if content.strip() else None
 
@@ -1626,23 +1648,9 @@ async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict
         total_models = 0
 
         for ep in endpoints:
-            base = _normalize_base(ep.base_url)
-            provider = _detect_provider(base)
-            headers = build_headers(ep.api_key, base)
-
-            model_ids = _fetch_endpoint_model_ids(base, headers, provider, ANTHROPIC_MODELS)
-
-            if keyword:
-                model_ids = [
-                    m for m in model_ids
-                    if keyword in m.lower() or keyword in (ep.name or "").lower()
-                ]
-
-            if model_ids:
-                result_lines.append(f"\n**{ep.name or base}** ({provider}):")
-                for mid in model_ids:
-                    result_lines.append(f"  - `{mid}`")
-                    total_models += 1
+            ep_lines, count = _format_endpoint_models(ep, keyword, ANTHROPIC_MODELS)
+            result_lines.extend(ep_lines)
+            total_models += count
 
         if not result_lines:
             return {"results": "No models found" + (f" matching '{keyword}'" if keyword else "") + "."}
@@ -1652,6 +1660,34 @@ async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict
     except Exception as e:
         logger.error(f"list_models failed: {e}")
         return {"error": str(e)}
+
+
+def _format_endpoint_models(ep, keyword: Optional[str], anthropic_models) -> Tuple[List[str], int]:
+    """Build the markdown lines + model count for a single endpoint.
+
+    Returns:
+        (lines, count) — empty list and 0 when the endpoint has no matching models.
+    """
+    from src.llm_core import _detect_provider
+
+    base = _normalize_base(ep.base_url)
+    provider = _detect_provider(base)
+    headers = build_headers(ep.api_key, base)
+
+    model_ids = _fetch_endpoint_model_ids(base, headers, provider, anthropic_models)
+
+    if keyword:
+        model_ids = [
+            m for m in model_ids
+            if keyword in m.lower() or keyword in (ep.name or "").lower()
+        ]
+
+    if not model_ids:
+        return [], 0
+
+    lines = [f"\n**{ep.name or base}** ({provider}):"]
+    lines.extend(f"  - `{mid}`" for mid in model_ids)
+    return lines, len(model_ids)
 
 
 def _fetch_endpoint_model_ids(base: str, headers: Dict, provider: str, anthropic_models) -> list:
@@ -2088,18 +2124,16 @@ def _ui_handle_get_toggles(parts: list, lines: list) -> Dict:
 # Image generation
 # ---------------------------------------------------------------------------
 
-async def do_generate_image(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
-    """Generate an image using an image-capable model (e.g. gpt-image-1).
+def _image_parse_request(content: str):
+    """Parse a generate_image request: prompt, model, size, quality.
 
-    Content format:
-      Line 1: prompt describing the image
-      Line 2: model name (optional, auto-detects if omitted)
-      Line 3: size (optional, defaults to 1024x1024)
-      Line 4: quality (optional: low, medium, high, auto — defaults to medium)
+    Applies admin-configured defaults and auto-detects a model when omitted.
+
+    Returns:
+        (prompt, model_spec, size, quality) tuple on success,
+        or an error dict if the prompt is missing or no model is available.
     """
-    import httpx
-
-    lines = content.strip().split(chr(10)) if content.strip() else []
+    lines = content.strip().split("\n") if content.strip() else []
     prompt = lines[0].strip() if lines else ""
     if not prompt:
         return {"error": "Image prompt is required (line 1)"}
@@ -2108,7 +2142,6 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     size = lines[2].strip() if len(lines) > 2 and lines[2].strip() else _DEFAULT_IMAGE_SIZE
     quality = lines[3].strip() if len(lines) > 3 and lines[3].strip() else "medium"
 
-    # Apply admin-configured defaults when caller did not specify
     try:
         from src.settings import load_settings
         settings = load_settings()
@@ -2120,11 +2153,41 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     if quality == "medium" and settings.get("image_quality"):
         quality = settings["image_quality"]
 
-    # Auto-detect the best available image model
     if not model_spec:
         model_spec = _image_auto_detect_model_spec()
     if not model_spec:
         return {"error": "No image model found. Configure one in Admin → Image Generation."}
+
+    return prompt, model_spec, size, quality
+
+
+def _image_extract_api_error(resp) -> str:
+    """Extract a human-readable error message from a failed image API response."""
+    error_text = resp.text[:ERROR_TEXT_DISPLAY_LIMIT]
+    try:
+        err_obj = resp.json().get("error", error_text)
+        if isinstance(err_obj, dict):
+            return err_obj.get("message", error_text)
+        return str(err_obj)
+    except Exception:
+        return error_text
+
+
+async def do_generate_image(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+    """Generate an image using an image-capable model (e.g. gpt-image-1).
+
+    Content format:
+      Line 1: prompt describing the image
+      Line 2: model name (optional, auto-detects if omitted)
+      Line 3: size (optional, defaults to 1024x1024)
+      Line 4: quality (optional: low, medium, high, auto — defaults to medium)
+    """
+    import httpx
+
+    parsed = _image_parse_request(content)
+    if isinstance(parsed, dict):  # error
+        return parsed
+    prompt, model_spec, size, quality = parsed
 
     try:
         url, model_id, headers = _resolve_model(model_spec)
@@ -2151,45 +2214,47 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
             resp = await client.post(images_url, json=payload, headers=headers)
 
         if resp.status_code != 200:
-            error_text = resp.text[:ERROR_TEXT_DISPLAY_LIMIT]
-            try:
-                err_obj = resp.json().get("error", error_text)
-                error_text = err_obj.get("message", error_text) if isinstance(err_obj, dict) else str(err_obj)
-            except Exception:
-                pass
-            return {"error": f"Image generation failed ({resp.status_code}): {error_text}"}
+            return {"error": f"Image generation failed ({resp.status_code}): {_image_extract_api_error(resp)}"}
 
         images = resp.json().get("data", [])
         if not images:
             return {"error": "No images returned from API"}
 
-        img = images[0]
-
-        if img.get("b64_json"):
-            image_url, image_id = await _image_save_b64(
-                img["b64_json"], prompt, model_id, size, effective_quality, session_id, owner
-            )
-        elif img.get("url"):
-            image_url, image_id = await _image_download_and_save(
-                img["url"], prompt, model_id, size, effective_quality, session_id, owner
-            )
-        else:
-            return {"error": "Image API returned unexpected format (no b64_json or url)"}
-
-        return {
-            "results": f"Generated image for: {prompt[:100]}",
-            "image_url": image_url,
-            "image_id": image_id,
-            "image_prompt": prompt,
-            "image_model": model_id,
-            "image_size": size,
-            "image_quality": effective_quality,
-        }
+        return await _image_persist_result(
+            images[0], prompt, model_id, size, effective_quality, session_id, owner
+        )
 
     except httpx.TimeoutException:
         return {"error": "Image generation timed out (300s). The model may be overloaded — try again or use quality=low."}
     except Exception as e:
         return {"error": f"Image generation error: {str(e)}"}
+
+
+async def _image_persist_result(
+    img: Dict, prompt: str, model_id: str, size: str, quality: str,
+    session_id: Optional[str], owner: Optional[str],
+) -> Dict:
+    """Persist a returned image (b64 or url) and build the tool result dict."""
+    if img.get("b64_json"):
+        image_url, image_id = await _image_save_b64(
+            img["b64_json"], prompt, model_id, size, quality, session_id, owner
+        )
+    elif img.get("url"):
+        image_url, image_id = await _image_download_and_save(
+            img["url"], prompt, model_id, size, quality, session_id, owner
+        )
+    else:
+        return {"error": "Image API returned unexpected format (no b64_json or url)"}
+
+    return {
+        "results": f"Generated image for: {prompt[:100]}",
+        "image_url": image_url,
+        "image_id": image_id,
+        "image_prompt": prompt,
+        "image_model": model_id,
+        "image_size": size,
+        "image_quality": quality,
+    }
 
 
 

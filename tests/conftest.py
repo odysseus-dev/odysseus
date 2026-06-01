@@ -35,9 +35,13 @@ if "src.database" not in sys.modules:
     _db.GalleryImage = MagicMock()
     sys.modules["src.database"] = _db
 
-# Also stub core.database so tests don't try to open the real SQLite file.
-# do_list_sessions imports Session from core.database at call time.
-if "core.database" not in sys.modules:
+# Stub core.database ONLY when the real package can't be imported (e.g. deps
+# missing). When it is importable we must NOT shadow it: tests such as
+# test_session_mode_helpers monkeypatch the real module's SessionLocal and call
+# its get/set_session_mode helpers. do_list_sessions only imports the Session
+# model class (cheap) and patches get_db_session in its own tests, so the real
+# module is safe to use here.
+if "core.database" not in sys.modules and not _has_module("core.database"):
     _coredb = types.ModuleType("core.database")
     _coredb.SessionLocal = MagicMock()
     _coredb.Session = MagicMock()

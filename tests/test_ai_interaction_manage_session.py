@@ -315,3 +315,74 @@ class TestManageSessionUnknownAction:
         assert "error" in result
         error_msg = result["error"]
         assert any(action in error_msg for action in ("rename", "archive", "delete", "list"))
+
+
+# ---------------------------------------------------------------------------
+# Input parsing helpers (extracted from _parse_manage_session_input)
+# ---------------------------------------------------------------------------
+
+class TestParseSessionJson:
+    """Tests for _parse_session_json()."""
+
+    def test_basic_json(self) -> None:
+        from src.ai_interaction import _parse_session_json
+        result = _parse_session_json('{"action": "rename", "session_id": "abc", "value": "New"}')
+        assert result == ("rename", "abc", "New", "")
+
+    def test_session_alias_keys(self) -> None:
+        from src.ai_interaction import _parse_session_json
+        # 'session' and 'id' are accepted aliases for session_id
+        assert _parse_session_json('{"action": "delete", "session": "s1"}')[1] == "s1"
+        assert _parse_session_json('{"action": "delete", "id": "s2"}')[1] == "s2"
+
+    def test_value_alias_keys(self) -> None:
+        from src.ai_interaction import _parse_session_json
+        # name/new_name/title/keep_count are accepted aliases for value
+        assert _parse_session_json('{"action": "rename", "session_id": "s", "name": "N"}')[2] == "N"
+        assert _parse_session_json('{"action": "rename", "session_id": "s", "title": "T"}')[2] == "T"
+        assert _parse_session_json('{"action": "truncate", "session_id": "s", "keep_count": "5"}')[2] == "5"
+
+    def test_filter_key(self) -> None:
+        from src.ai_interaction import _parse_session_json
+        assert _parse_session_json('{"action": "list", "filter": "python"}')[3] == "python"
+
+    def test_invalid_json_returns_none(self) -> None:
+        from src.ai_interaction import _parse_session_json
+        assert _parse_session_json("{not valid json") is None
+
+    def test_non_dict_json_returns_none(self) -> None:
+        from src.ai_interaction import _parse_session_json
+        assert _parse_session_json("[1, 2, 3]") is None
+
+
+class TestParseSessionLines:
+    """Tests for _parse_session_lines()."""
+
+    def test_three_lines(self) -> None:
+        from src.ai_interaction import _parse_session_lines
+        action, sid, value, _ = _parse_session_lines("rename\nabc\nNew Name")
+        assert action == "rename"
+        assert sid == "abc"
+        assert value == "New Name"
+
+    def test_action_only(self) -> None:
+        from src.ai_interaction import _parse_session_lines
+        action, sid, value, _ = _parse_session_lines("list")
+        assert action == "list"
+        assert sid == ""
+        assert value is None
+
+    def test_empty_returns_blank_action(self) -> None:
+        from src.ai_interaction import _parse_session_lines
+        action, sid, value, lf = _parse_session_lines("")
+        assert action == ""
+
+    def test_list_filter_joins_remaining_lines(self) -> None:
+        from src.ai_interaction import _parse_session_lines
+        _, _, _, list_filter = _parse_session_lines("list\npython\nprojects")
+        assert "python" in list_filter
+
+    def test_action_lowercased(self) -> None:
+        from src.ai_interaction import _parse_session_lines
+        action, _, _, _ = _parse_session_lines("RENAME\nabc\nNew")
+        assert action == "rename"

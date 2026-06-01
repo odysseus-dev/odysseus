@@ -213,3 +213,96 @@ class TestGenerateImageEndToEnd:
 
             result = await _gen("A sunset")
         assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# _image_parse_request — input parsing + settings defaults + auto-detect
+# ---------------------------------------------------------------------------
+
+class TestImageParseRequest:
+
+    def test_missing_prompt_returns_error_dict(self) -> None:
+        from src.ai_interaction import _image_parse_request
+        result = _image_parse_request("")
+        assert isinstance(result, dict)
+        assert "error" in result
+
+    def test_returns_tuple_on_success(self) -> None:
+        from src.ai_interaction import _image_parse_request
+        with patch("src.ai_interaction._image_auto_detect_model_spec", return_value="gpt-image-1"):
+            result = _image_parse_request("A sunset")
+        assert isinstance(result, tuple)
+        prompt, model_spec, size, quality = result
+        assert prompt == "A sunset"
+
+    def test_defaults_size_and_quality(self) -> None:
+        from src.ai_interaction import _image_parse_request, _DEFAULT_IMAGE_SIZE
+        with patch("src.ai_interaction._image_auto_detect_model_spec", return_value="gpt-image-1"):
+            _, _, size, quality = _image_parse_request("A cat")
+        assert size == _DEFAULT_IMAGE_SIZE
+        assert quality == "medium"
+
+    def test_explicit_model_size_quality(self) -> None:
+        from src.ai_interaction import _image_parse_request
+        content = "A dog\ndall-e-3\n1024x1792\nhigh"
+        prompt, model_spec, size, quality = _image_parse_request(content)
+        assert prompt == "A dog"
+        assert model_spec == "dall-e-3"
+        assert size == "1024x1792"
+        assert quality == "high"
+
+    def test_admin_settings_model_fallback(self) -> None:
+        from src.ai_interaction import _image_parse_request
+        with patch("src.settings.load_settings", return_value={"image_model": "admin-model"}):
+            _, model_spec, _, _ = _image_parse_request("A bird")
+        assert model_spec == "admin-model"
+
+    def test_admin_settings_quality_fallback(self) -> None:
+        from src.ai_interaction import _image_parse_request
+        with patch("src.settings.load_settings", return_value={"image_model": "m", "image_quality": "high"}):
+            _, _, _, quality = _image_parse_request("A bird")
+        assert quality == "high"
+
+    def test_no_model_found_returns_error(self) -> None:
+        from src.ai_interaction import _image_parse_request
+        with patch("src.ai_interaction._image_auto_detect_model_spec", return_value=""), \
+             patch("src.settings.load_settings", return_value={}):
+            result = _image_parse_request("A bird")
+        assert isinstance(result, dict)
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# _image_extract_api_error — error-body parsing
+# ---------------------------------------------------------------------------
+
+class TestImageExtractApiError:
+
+    def test_dict_error_with_message(self) -> None:
+        from src.ai_interaction import _image_extract_api_error
+        resp = MagicMock()
+        resp.text = "raw body"
+        resp.json.return_value = {"error": {"message": "Bad prompt"}}
+        assert _image_extract_api_error(resp) == "Bad prompt"
+
+    def test_string_error(self) -> None:
+        from src.ai_interaction import _image_extract_api_error
+        resp = MagicMock()
+        resp.text = "raw body"
+        resp.json.return_value = {"error": "simple error"}
+        assert _image_extract_api_error(resp) == "simple error"
+
+    def test_non_json_body_falls_back_to_text(self) -> None:
+        from src.ai_interaction import _image_extract_api_error
+        resp = MagicMock()
+        resp.text = "plain text error body"
+        resp.json.side_effect = Exception("not json")
+        assert "plain text error body" in _image_extract_api_error(resp)
+
+    def test_truncates_long_body(self) -> None:
+        from src.ai_interaction import _image_extract_api_error, ERROR_TEXT_DISPLAY_LIMIT
+        resp = MagicMock()
+        resp.text = "x" * (ERROR_TEXT_DISPLAY_LIMIT + 100)
+        resp.json.side_effect = Exception("not json")
+        result = _image_extract_api_error(resp)
+        assert len(result) <= ERROR_TEXT_DISPLAY_LIMIT
