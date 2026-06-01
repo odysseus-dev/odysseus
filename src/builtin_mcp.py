@@ -108,24 +108,51 @@ async def register_builtin_servers(mcp_manager):
     async def _start_npx_servers():
         await asyncio.sleep(3)  # let Python servers finish first
         for server_id, cfg in _BUILTIN_NPX_SERVERS.items():
+            logger.info(f"Starting NPX server: {cfg['name']} ({npx_path} {' '.join(cfg['args'])})")
+
+            # The MCP stdio client (mcp.client.stdio.stdio_client) opens an
+            # anyio.create_task_group() internally for its stdin/stdout
+            # reader tasks. If the wrapped subprocess never speaks MCP
+            # (npx fails to install Playwright, network issue, missing
+            # system deps, etc.), the only way to give up is to cancel the
+            # connect_server() coroutine — but a cancellation crossing
+            # anyio's task group from an outer asyncio.wait_for raises:
+            #
+            #   RuntimeError: Attempted to exit cancel scope in a different
+            #   task than it was entered in
+            #
+            # The error fires in a background task ("Task exception was
+            # never retrieved") AND cascades cancellations into other
+            # tasks in the event loop, including ones the rest of the
+            # app depends on. The original try/except BaseException here
+            # didn't catch it because the exception is in a sibling task.
+            #
+            # Fix: wrap the connect task in asyncio.shield so wait_for's
+            # cancellation can't reach it. On timeout we stop waiting and
+            # move on; the shielded task continues to run (or quietly fail)
+            # in the background, and its subprocess is cleaned up by
+            # stdio_client's own shutdown path when the event loop exits.
+            connect_task = asyncio.create_task(
+                mcp_manager.connect_server(
+                    server_id=server_id,
+                    name=cfg["name"],
+                    transport="stdio",
+                    command=npx_path,
+                    args=cfg["args"],
+                ),
+                name=f"mcp-npx-connect-{server_id}",
+            )
             try:
-                logger.info(f"Starting NPX server: {cfg['name']} ({npx_path} {' '.join(cfg['args'])})")
-                ok = await asyncio.wait_for(
-                    mcp_manager.connect_server(
-                        server_id=server_id,
-                        name=cfg["name"],
-                        transport="stdio",
-                        command=npx_path,
-                        args=cfg["args"],
-                    ),
-                    timeout=30,
-                )
+                ok = await asyncio.wait_for(asyncio.shield(connect_task), timeout=30)
                 if ok:
                     logger.info(f"Built-in NPX server registered: {cfg['name']}")
                 else:
                     logger.warning(f"Built-in NPX server failed to connect: {cfg['name']}")
             except asyncio.TimeoutError:
-                logger.warning(f"Built-in NPX server timed out: {cfg['name']}")
+                logger.warning(
+                    f"Built-in NPX server '{cfg['name']}' didn't connect within 30s; "
+                    f"continuing without it"
+                )
             except asyncio.CancelledError:
                 raise
             except BaseException as e:
