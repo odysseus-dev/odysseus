@@ -41,6 +41,18 @@ def _run_markdown_case(markdown: str) -> str:
             return (row || '').replace(/^\\s*\\|/, '').replace(/\\|\\s*$/, '').split('|').map(c => c.trim());
           }`
         );
+        // markdown.js imports the emoji-shortcode helpers relatively (issue #345),
+        // which a data: URL module can't resolve. Inline the REAL helpers (minus
+        // their export keywords) so the renderer's shortcode pass behaves exactly
+        // as it does in the browser.
+        const emojiSource = fs.readFileSync('./static/js/emojiShortcodes.js', 'utf8')
+          .replace(/^export default .*$/m, '')
+          .replace(/export const /g, 'const ')
+          .replace(/export function /g, 'function ');
+        source = source.replace(
+          /import \{ replaceEmojiShortcodes, hasEmojiShortcode \} from ['"]\.\/emojiShortcodes\.js['"];/,
+          () => emojiSource
+        );
         source = source.replace(
           /var escapeHtml = uiModule\.esc;/,
           `var escapeHtml = (value) => String(value ?? '')
