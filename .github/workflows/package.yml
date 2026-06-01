@@ -401,7 +401,7 @@ jobs:
           Copy-Item dist/odysseus.exe "artifacts/odysseus-windows-$VERSION.exe"
 
       - name: Smoke test Windows package
-        run: .\scripts\ci\smoke-windows-package.ps1 -ExePath .\dist\odysseus.exe
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\smoke-windows-package.ps1 -ExePath .\dist\odysseus.exe
 
       - name: Finalize artifacts
         run: |

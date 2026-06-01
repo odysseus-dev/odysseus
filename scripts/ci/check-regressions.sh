@@ -53,6 +53,8 @@ require_pattern ".github/workflows/package.yml" "GitHub Release artifacts" "tagg
 require_pattern ".github/workflows/package.yml" "actions/upload-artifact" "package outputs must be retained as workflow artifacts"
 require_pattern ".github/workflows/package.yml" "actions/download-artifact" "release job must collect package artifacts"
 require_pattern ".github/workflows/package.yml" "refs/tags/v" "releases must be driven by v* tags"
+require_pattern ".github/workflows/package.yml" "smoke-windows-package\\.ps1" "Windows packaged binary must be smoke-tested in CI"
+require_pattern ".github/workflows/package.yml" "ExecutionPolicy Bypass" "Windows smoke tests must run under CI-friendly PowerShell execution policy"
 require_pattern "scripts/ci/finalize-artifacts.sh" "SHA256SUMS" "artifact checksums must be present in package outputs"
 require_pattern "pyproject.toml" "\\[project\\]" "PEP 621 project metadata must stay present"
 require_pattern "pyproject.toml" "odysseus-ai-workspace" "distribution name must stay explicit"
@@ -65,6 +67,8 @@ require_pattern "packaging/README.md" "SNAPCRAFT_STORE_CREDENTIALS" "Snap publis
 require_pattern "packaging/README.md" "No third-party store credentials" "PR package builds must not require personal publishing keys"
 require_pattern "packaging/README.md" 'Push a matching `vX.Y.Z` tag' "tag-driven release instructions must be documented"
 require_pattern "packaging/README.md" "website/GitHub Pages deployment is intentionally out of scope" "website deployment must stay out of this package pipeline"
+require_pattern "patches/windows/pyinstaller-static.patch" "_configure_windows_frozen_database_url" "Windows packaged app database path must stay in the Windows packaging patch"
+require_pattern "patches/windows/pyinstaller-static.patch" "_resolve_windows_static_dir" "Windows packaged app static asset resolution must stay in the Windows packaging patch"
 
 if [ -f ".github/workflows/pages.yml" ]; then
   echo "regression check failed: GitHub Pages deployment is out of scope for this CI/CD package PR" >&2

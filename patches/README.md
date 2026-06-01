@@ -1,7 +1,5 @@
 # Patches Directory
 
-This patch tree mirrors the structure used in `protondrive-linux`.
-
 Patches are organized by package family first, then by target inside each
 family. Base source stays clean. Build-specific fixes belong in patch files
 under the matching target directory.
