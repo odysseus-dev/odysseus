@@ -64,20 +64,45 @@
 }
 
 :root.light {
-  --bg: #f5f5f5;
-  --fg: #2b2b2b;
-  --panel: #fff;
-  --border: #bbb;
-  --hl-bg: #f9f9f9;
-  --hl-fg: #2b2b2b;
-  --hl-keyword: #7928a1;
-  --hl-string: #986801;
-  --hl-comment: #6a737d;
-  --hl-function: #005cc5;
-  --hl-number: #986801;
-  --hl-builtin: #0070a0;
-  --hl-variable: #383a42;
-  --hl-params: #4a4f5c;
+  /* Core palette */
+  --bg: #f8f9fa;
+  --fg: #1a1a2e;
+  --panel: #ffffff;
+  --border: #d1d5db;
+  --red: #dc2626;
+  --green: #16a34a;
+  --warn: #d97706;
+
+  /* Syntax highlighting */
+  --hl-bg: #f1f5f9;
+  --hl-fg: #1a1a2e;
+  --hl-keyword: #7c3aed;
+  --hl-string: #059669;
+  --hl-comment: #6b7280;
+  --hl-function: #2563eb;
+  --hl-number: #d97706;
+  --hl-builtin: #0891b2;
+  --hl-variable: #374151;
+  --hl-params: #4b5563;
+
+  /* Semantic colors */
+  --color-error: #dc2626;
+  --color-error-light: #fca5a5;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger: #b91c1c;
+  --color-recording: #dc2626;
+  --color-recording-hover: #b91c1c;
+  --color-muted: #6b7280;
+  --color-muted-alt: #9ca3af;
+  --color-accent: #2563eb;
+  --color-agent-active: #16a34a;
+  --color-brand-blue: #2563eb;
+  --color-blind-orange: #ea580c;
+  --color-save-green: #16a34a;
+  --color-link-hover: #1d4ed8;
+  --color-subheader: #6b7280;
+  --accent-warm: #d97706;
 }
 
 /* ── Reset & Base ── */
@@ -92,6 +117,49 @@ body {
   height: 100%;
   height: 100dvh; /* dynamic viewport height — adapts when mobile keyboard opens */
   overflow: hidden;
+}
+
+/* ── Premium Polish: Selection, Focus, Elevation ── */
+
+/* Text selection — uses brand accent for a premium feel */
+::selection {
+  background: color-mix(in srgb, var(--brand-color, var(--red)) 30%, transparent);
+  color: var(--fg);
+}
+
+/* Focus ring — visible only on keyboard focus, not mouse clicks.
+   Uses a subtle glow that respects the brand accent color. */
+:focus-visible {
+  outline: 2px solid var(--brand-color, var(--red));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* Suppress the default focus ring on mouse-driven interactions */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Card / panel elevation system.
+   Apply .elevation-1 through .elevation-3 for increasing depth.
+   Shadows use the background color's darker variant so they work
+   across every theme without hardcoding a shadow color. */
+.elevation-1 {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08);
+}
+.elevation-2 {
+  box-shadow: 0 4px 6px rgba(0,0,0,0.15), 0 2px 4px rgba(0,0,0,0.10);
+}
+.elevation-3 {
+  box-shadow: 0 10px 25px rgba(0,0,0,0.22), 0 4px 10px rgba(0,0,0,0.12);
+}
+
+/* Subtle hover lift — use on cards/panels that should feel tactile */
+.hover-lift {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.18);
 }
 
 /* Self-hosted Fira Code font */
@@ -136,11 +204,11 @@ html {
 
 :root.density-compact { font-size: 13px; }
 :root.density-compact .msg { padding: 6px 10px; margin-bottom: 4px; }
-:root.density-compact .list-item { padding: 4px 8px; }
+:root.density-compact .list-item { padding: 3px 8px; }
 :root.density-compact .sidebar .section { padding: 0; }
 :root.density-spacious { font-size: 16px; }
 :root.density-spacious .msg { padding: 14px 18px; margin-bottom: 12px; }
-:root.density-spacious .list-item { padding: 8px 12px; }
+:root.density-spacious .list-item { padding: 10px 12px; }
 :root.density-spacious .sidebar .section { padding: 0; }
 
 /* ── Background Patterns ── */
@@ -1594,7 +1662,7 @@ body.bg-pattern-sparkles {
       display: flex;
       gap: 6px;
       align-items: center;
-      padding: 3px 8px;
+      padding: 6px 8px;
       margin: 0;
       border-radius: 4px;
       border: none;
@@ -2107,8 +2175,7 @@ body.bg-pattern-sparkles {
       flex-direction: column;
       gap: 8px;
       max-width: 800px;
-      margin-left: auto;
-      margin-right: auto;
+      margin: 0 auto 12px auto;
       width: 100%;
     }
     .chat-input-top {
@@ -2159,7 +2226,9 @@ body.bg-pattern-sparkles {
       color: var(--fg);
       min-height: 24px;
       max-height: 200px;
-      padding: 0;
+      /* right padding clears the absolutely-positioned model picker button
+         so typed text never flows behind it */
+      padding: 0 110px 0 0;
       font-family: inherit;
       transition: height 0.12s ease-out;
     }
@@ -4513,6 +4582,185 @@ body.bg-pattern-sparkles {
         transform: scale(1);
       }
     }
+
+    /* ── Skeleton Loading ──
+     *
+     * Shimmer skeletons for perceived performance. Use .skeleton-text for
+     * inline text placeholders, .skeleton-block for card/panel placeholders,
+     * and .skeleton-avatar for circular avatar placeholders.
+     *
+     * The shimmer animation runs on ::after pseudo-elements with a
+     * translucent gradient that sweeps left-to-right across the skeleton.
+     */
+    .skeleton {
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+      border-radius: 6px;
+      position: relative;
+      overflow: hidden;
+      pointer-events: none;
+      user-select: none;
+    }
+    .skeleton::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        color-mix(in srgb, var(--fg) 6%, transparent) 30%,
+        color-mix(in srgb, var(--fg) 12%, transparent) 50%,
+        color-mix(in srgb, var(--fg) 6%, transparent) 70%,
+        transparent 100%
+      );
+      animation: skeleton-shimmer 1.8s ease-in-out infinite;
+    }
+    @keyframes skeleton-shimmer {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+    .skeleton-text {
+      height: 0.85em;
+      margin-bottom: 0.5em;
+      border-radius: 4px;
+    }
+    .skeleton-text:last-child { width: 60%; }
+    .skeleton-block {
+      height: 60px;
+      margin-bottom: 8px;
+    }
+    .skeleton-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .skeleton-message {
+      display: flex;
+      gap: 12px;
+      padding: 14px 18px;
+      margin-bottom: 8px;
+      align-items: flex-start;
+    }
+    .skeleton-message .skeleton-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    /* Chat skeleton — row of message placeholders */
+    .chat-skeleton {
+      padding: 16px 0;
+    }
+    /* Session list skeleton */
+    .session-skeleton {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 8px;
+    }
+    .session-skeleton .skeleton {
+      height: 32px;
+      border-radius: 6px;
+      margin-bottom: 2px;
+    }
+
+    /* ── Empty States ──
+     *
+     * Consistent empty-state pattern: icon → heading → description → action.
+     * Use .empty-state for full-container emptiness (centered, padded) and
+     * .empty-state-inline for inline/list emptiness.
+     */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 48px 24px;
+      gap: 12px;
+      min-height: 200px;
+    }
+    .empty-state-icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: color-mix(in srgb, var(--fg) 5%, transparent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      color: color-mix(in srgb, var(--fg) 25%, transparent);
+      margin-bottom: 4px;
+    }
+    .empty-state-heading {
+      font-size: 14px;
+      font-weight: 600;
+      color: color-mix(in srgb, var(--fg) 70%, transparent);
+      margin: 0;
+    }
+    .empty-state-description {
+      font-size: 12px;
+      color: color-mix(in srgb, var(--fg) 40%, transparent);
+      max-width: 280px;
+      line-height: 1.5;
+      margin: 0;
+    }
+    .empty-state-action {
+      margin-top: 8px;
+      padding: 8px 18px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--fg);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+    .empty-state-action:hover {
+      border-color: var(--accent, var(--red));
+      color: var(--accent, var(--red));
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px color-mix(in srgb, var(--accent, var(--red)) 15%, transparent);
+    }
+    /* Inline empty for lists (sessions, documents, etc.) */
+    .empty-state-inline {
+      padding: 24px 16px;
+      text-align: center;
+      font-size: 11px;
+      color: color-mix(in srgb, var(--fg) 35%, transparent);
+      font-style: italic;
+    }
+
+    /* ── Unified Close Button ──
+     *
+     * One consistent close button for modals, popups, toasts, and panels.
+     * Replace ad-hoc ✖/✕/× spans with <button class="close-btn">.
+     */
+    .close-btn {
+      background: none;
+      border: none;
+      color: color-mix(in srgb, var(--fg) 45%, transparent);
+      cursor: pointer;
+      padding: 6px;
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      line-height: 1;
+      transition: all 0.12s ease;
+      flex-shrink: 0;
+      font-family: inherit;
+    }
+    .close-btn:hover {
+      color: var(--fg);
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+    }
+    .close-btn:active {
+      transform: scale(0.92);
+    }
     /* Modal styling */
     .modal {
       position:fixed;
@@ -4618,7 +4866,7 @@ body.bg-pattern-sparkles {
       background:var(--bg);
       color:var(--fg);
       border:1px solid var(--fg);
-      font-size:12px;
+      font-size:14px;
       width:24px;
       height:24px;
       padding:0;
@@ -4629,7 +4877,6 @@ body.bg-pattern-sparkles {
       text-indent:0;
       cursor:pointer;
       border-radius:4px;
-      line-height:1;
       flex-shrink:0;
     }
     .close-btn:hover,
