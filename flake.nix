@@ -468,10 +468,13 @@
               nodes.machine = {
                 virtualisation.podman.enable = true;
                 virtualisation.diskSize = 8192;
+                virtualisation.memorySize = 4096;
                 users.users.test.isNormalUser = true;
               };
               testScript = ''
                 machine.wait_for_unit("sockets.target")
+                # Ensure podman storage is initialised before loading
+                machine.succeed("podman info")
                 machine.succeed("podman load -i ${image}")
                 machine.succeed("podman run -d --name odysseus -p 7000:7000 odysseus:latest")
                 machine.wait_for_open_port(7000)
