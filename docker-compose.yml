@@ -89,7 +89,7 @@ services:
     volumes:
       - ntfy-cache:/var/cache/ntfy
     environment:
-      - NTFY_BASE_URL=${NTFY_BASE_URL:-http://localhost:8091}
+      - NTFY_BASE_URL=${NTFY_BASE_URL:-http://ntfy}
     networks:
       - internal
     restart: unless-stopped
@@ -98,6 +98,7 @@ networks:
   internal:
     internal: true
   public:
+    driver: bridge
 
 volumes:
   searxng-data:
