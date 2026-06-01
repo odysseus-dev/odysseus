@@ -2439,7 +2439,7 @@ function _arcRefreshUI() {
   _arcRenderStats();
   _arcRenderChips();
   _arcRenderGrid();
-  _arcRenderLoadMore();
+  // _arcRenderLoadMore(); (Removed dead code)
   _arcUpdateBulkBar();
 }
 
@@ -2540,11 +2540,7 @@ function _arcRenderGrid() {
   for (const s of _arc.data) grid.appendChild(_arcRenderCard(s));
 }
 
-function _arcRenderLoadMore() {
-  const btn = document.getElementById('archive-load-more');
-  if (!btn) return;
-  btn.style.display = _arc.data.length < _arc.total ? '' : 'none';
-}
+
 
 
 // ── Unified Library Modal (Chats / Documents / Archive) ──
@@ -2958,7 +2954,7 @@ export function openArchive() {
           <button class="memory-toolbar-btn danger" id="archive-bulk-delete">Delete</button>
         </div>
         <div class="doclib-grid archive-list" id="archive-grid"></div>
-        <button class="doclib-load-more" id="archive-load-more" style="display:none">Load more</button>
+
       </div>
     </div>
   `;
@@ -2977,7 +2973,7 @@ export function openArchive() {
     clearTimeout(_arc.debounce);
     _arc.debounce = setTimeout(() => { _arc.search = e.target.value.trim(); _arcFetch(false); }, 300);
   });
-  document.getElementById('archive-load-more').addEventListener('click', () => { _arc.offset = _arc.data.length; _arcFetch(true); });
+
   document.getElementById('archive-select-btn').addEventListener('click', _arcToggleSelectMode);
   document.getElementById('archive-bulk-restore').addEventListener('click', _arcBulkRestore);
   document.getElementById('archive-bulk-delete').addEventListener('click', _arcBulkDelete);

@@ -926,14 +926,6 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     }
   }
 
-  function libraryRenderLoadMore() {
-    // Documents now reveal in 20-at-a-time chunks via the inline "Load more"
-    // rendered inside libraryRenderGrid (matching the Chats tab). The legacy
-    // server-pagination button + auto-fill are retired to avoid a double
-    // control and surprise auto-loading.
-    const legacy = document.getElementById('doclib-load-more');
-    if (legacy) legacy.style.display = 'none';
-  }
 
   async function libraryOpenDocument(doc) {
     closeLibrary();
@@ -1106,19 +1098,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     const actionsBtn = document.getElementById('doclib-bulk-actions');
     if (countEl) countEl.textContent = `${_librarySelectedIds.size} Selected`;
     if (actionsBtn) actionsBtn.style.color = _librarySelectedIds.size > 0 ? 'var(--fg)' : '';
-    // Legacy per-action buttons no longer rendered — guard so the rest of the
-    // function (if anything still references them) doesn't crash.
-    const deleteBtn = document.getElementById('doclib-bulk-delete');
-    const exportBtn = document.getElementById('doclib-bulk-export');
-    const archiveBtn = document.getElementById('doclib-bulk-archive');
-    const cloneBtn = document.getElementById('doclib-bulk-clone');
-    if (deleteBtn) deleteBtn.disabled = _librarySelectedIds.size === 0;
-    if (exportBtn) exportBtn.disabled = _librarySelectedIds.size === 0;
-    if (cloneBtn) cloneBtn.disabled = _librarySelectedIds.size === 0;
-    if (archiveBtn) {
-      archiveBtn.disabled = _librarySelectedIds.size === 0;
-      archiveBtn.textContent = _libraryArchivedView ? 'Restore' : 'Archive';
-    }
+
   }
 
   async function libraryDeleteSingle(docId, card) {
@@ -1663,7 +1643,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               <button id="doclib-bulk-cancel" class="memory-toolbar-btn" title="Cancel (Esc)" style="margin-left:4px;margin-right:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
             <div class="doclib-grid" id="doclib-grid"></div>
-            <button class="doclib-load-more" id="doclib-load-more" style="display:none">Load more</button>
+
           </div>
         </div>
       </div>
@@ -3077,22 +3057,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       libraryFetch(false);
     });
 
-    document.getElementById('doclib-load-more').addEventListener('click', () => {
-      _libraryOffset = _libraryDocs.length;
-      libraryFetch(true);
-    });
-
-    // Show "Load more" only when scrolled near bottom
-    const grid = document.getElementById('doclib-grid');
-    if (grid) {
-      grid.addEventListener('scroll', () => libraryRenderLoadMore());
-      // Auto-fill on resize (fullscreen toggle, window resize, sidebar
-      // toggle): re-run the load-more check so newly-revealed empty
-      // space below the last card pulls in the next page automatically.
-      if (typeof ResizeObserver !== 'undefined') {
-        new ResizeObserver(() => libraryRenderLoadMore()).observe(grid);
-      }
-    }
+    // (Load more event listeners removed)
 
     // Wire file import button
     const importFileBtn = document.getElementById('doclib-import-file-btn');

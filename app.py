@@ -534,10 +534,6 @@ app.include_router(setup_preset_routes(preset_manager))
 from routes.diagnostics_routes import setup_diagnostics_routes
 app.include_router(setup_diagnostics_routes(rag_manager, rag_available, research_handler))
 
-# Cleanup
-from routes.cleanup_routes import setup_cleanup_routes
-app.include_router(setup_cleanup_routes(session_manager))
-
 # Personal docs
 from routes.personal_routes import setup_personal_routes
 app.include_router(setup_personal_routes(personal_docs_mgr, rag_manager, rag_available))
