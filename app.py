@@ -151,10 +151,17 @@ if AUTH_ENABLED:
         "/api/version",
         "/login",
     }
-    AUTH_EXEMPT_PREFIXES = ["/static"]
+    AUTH_EXEMPT_PREFIXES = [
+        "/static",
+        "/api/tasks/",
+    ]
 
     def _is_auth_exempt(path: str) -> bool:
-        return path in AUTH_EXEMPT_EXACT or any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES)
+        if path in AUTH_EXEMPT_EXACT:
+            return True
+        if path.endswith("/webhook-regenerate"):
+            return False
+        return any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES) and "/webhook/" in path
 
     # In-memory token cache: prefix → list[(token_id, token_hash, owner, scopes)]. The DB
     # query was running on every API-bearer request and scanning bcrypt

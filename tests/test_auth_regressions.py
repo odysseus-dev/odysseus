@@ -261,3 +261,9 @@ def test_task_payload_exposes_crew_member_id_for_ui_category():
 
     src = open(task_routes.__file__, encoding="utf-8").read()
     assert '"crew_member_id"' in src
+
+
+def test_task_webhook_route_is_auth_exempt_but_regenerate_is_not():
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app.py"), encoding="utf-8").read()
+    assert 'if path.endswith("/webhook-regenerate"):' in src
+    assert 'return any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES) and "/webhook/" in path' in src
