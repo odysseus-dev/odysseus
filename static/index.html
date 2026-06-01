@@ -1979,6 +1979,18 @@
 
         <!-- ═══ SERVICES TAB ═══ -->
         <div data-settings-panel="services">
+          <!-- Health Status Panel -->
+          <div class="admin-card" id="services-health-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>System Health</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:10px">Status of core services. <button class="admin-btn-sm" id="health-refresh-btn" style="margin-left:8px;vertical-align:middle;">Refresh</button></div>
+            <div id="health-status-list" class="health-status-list">
+              <div class="health-status-item">
+                <span class="health-status-icon">⏳</span>
+                <span class="health-status-name">Loading...</span>
+              </div>
+            </div>
+          </div>
+
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>Add Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoints)</span></h2>
             <div class="admin-toggle-sub" style="margin-bottom:10px">Connect local models first, or add a cloud API.</div>

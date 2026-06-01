@@ -12880,6 +12880,60 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   border-color: color-mix(in srgb, var(--color-error) 27%, transparent);
 }
 
+/* Health Status Component */
+.health-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.health-status-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.health-status-icon {
+  font-size: 16px;
+  width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.health-status-name {
+  flex: 1;
+  font-weight: 500;
+}
+.health-status-details {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  text-align: right;
+}
+.health-status-healthy {
+  border-color: color-mix(in srgb, #22c55e 40%, transparent);
+  background: color-mix(in srgb, #22c55e 8%, transparent);
+}
+.health-status-healthy .health-status-icon {
+  color: #22c55e;
+}
+.health-status-degraded {
+  border-color: color-mix(in srgb, #f59e0b 40%, transparent);
+  background: color-mix(in srgb, #f59e0b 8%, transparent);
+}
+.health-status-degraded .health-status-icon {
+  color: #f59e0b;
+}
+.health-status-unavailable {
+  border-color: color-mix(in srgb, #ef4444 40%, transparent);
+  background: color-mix(in srgb, #ef4444 8%, transparent);
+}
+.health-status-unavailable .health-status-icon {
+  color: #ef4444;
+}
+
 /* Toggle switch */
 .admin-toggle-row {
   display: flex;

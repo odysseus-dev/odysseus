@@ -7,3 +7,24 @@ search:
   formats:
     - html
     - json
+  default_engines:
+    - bing
+    - mojeek
+    - presearch
+    - duckduckgo
+    - startpage
+    - qwant
+
+# Disable Google engine due to frequent HTML structure changes causing IndexError
+# See: https://github.com/pewdiepie-archdaemon/odysseus/issues/336
+engines:
+  - name: google
+    disabled: true
+  - name: google scholar
+    disabled: true
+  - name: google news
+    disabled: true
+  - name: google images
+    disabled: true
+  - name: google videos
+    disabled: true

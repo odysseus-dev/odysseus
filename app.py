@@ -22,7 +22,7 @@ import uuid
 import asyncio
 import logging
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Any
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
@@ -730,8 +730,158 @@ async def get_version():
     return {"version": APP_VERSION}
 
 @app.get("/api/health")
-async def health_check() -> Dict[str, str]:
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+async def health_check() -> Dict[str, Any]:
+    """Extended health check with service status."""
+    from services.memory.memory_vector import MemoryVectorStore
+    from src.chroma_client import get_chroma_client
+    from core.database import get_db_session
+    from sqlalchemy import text
+    
+    status: Dict[str, Any] = {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "services": {}
+    }
+    
+    # Check ChromaDB
+    try:
+        chroma_host = os.getenv("CHROMADB_HOST", "localhost")
+        chroma_port = os.getenv("CHROMADB_PORT", "8100" if not os.path.exists("/.dockerenv") else "8000")
+        try:
+            client = get_chroma_client()
+            count = client.count_collections() if hasattr(client, 'count_collections') else len(client.list_collections())
+            chroma_ok = count >= 0
+            status["services"]["chromadb"] = {
+                "status": "healthy" if chroma_ok else "degraded",
+                "host": chroma_host,
+                "port": int(chroma_port),
+                "collections": count
+            }
+            if not chroma_ok:
+                status["status"] = "degraded"
+        except Exception as chroma_err:
+            status["services"]["chromadb"] = {"status": "unavailable", "error": str(chroma_err)}
+            status["status"] = "degraded"
+    except Exception as e:
+        status["services"]["chromadb"] = {"status": "unavailable", "error": str(e)}
+        status["status"] = "degraded"
+    
+    # Check Memory Vector Store
+    try:
+        data_dir = os.path.join(os.getcwd(), "data")
+        memory = MemoryVectorStore(data_dir=data_dir)
+        memory_ok = memory.healthy
+        status["services"]["memory"] = {"status": "healthy" if memory_ok else "degraded"}
+        if not memory_ok:
+            status["status"] = "degraded"
+    except Exception as e:
+        status["services"]["memory"] = {"status": "unavailable", "error": str(e)}
+        status["status"] = "degraded"
+    
+    # Check SearXNG
+    try:
+        searxng_url = os.getenv("SEARXNG_INSTANCE", "http://localhost:8080")
+        import aiohttp
+        from aiohttp import ClientTimeout
+        timeout = ClientTimeout(total=3)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f"{searxng_url}/healthz") as resp:
+                searxng_ok = resp.status == 200
+        status["services"]["searxng"] = {
+            "status": "healthy" if searxng_ok else "degraded",
+            "url": searxng_url
+        }
+        if not searxng_ok:
+            status["status"] = "degraded"
+    except Exception as e:
+        status["services"]["searxng"] = {"status": "unavailable", "error": str(e)}
+        status["status"] = "degraded"
+    
+    # Check ntfy (from integrations)
+    try:
+        from src.integrations import load_integrations
+        from src.settings import load_settings
+        all_integrations = load_integrations()
+        ntfy_integrations = [i for i in all_integrations if (i.get("preset") or i.get("name", "")).lower() == "ntfy" and i.get("enabled", True)]
+        if ntfy_integrations:
+            ntfy_config = ntfy_integrations[0]
+            import httpx
+            from urllib.parse import urlparse
+            raw_base = (ntfy_config.get("base_url") or "").strip()
+            parsed = urlparse(raw_base)
+            base = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else raw_base.rstrip("/")
+            # Load topic from settings
+            settings = load_settings()
+            topic = (settings.get("reminder_ntfy_topic") or "reminders").strip() or "reminders"
+            
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                # Just GET the base URL to check connectivity (doesn't publish)
+                resp = await client.get(f"{base}/")
+                ntfy_ok = resp.status_code in (200, 404)  # 404 is OK - topic might not exist yet
+            status["services"]["ntfy"] = {
+                "status": "healthy" if ntfy_ok else "degraded",
+                "url": base,
+                "topic": topic
+            }
+            if not ntfy_ok:
+                status["status"] = "degraded"
+        else:
+            status["services"]["ntfy"] = {"status": "not_configured", "note": "No ntfy integration configured"}
+    except Exception as e:
+        status["services"]["ntfy"] = {"status": "unavailable", "error": str(e)}
+        status["status"] = "degraded"
+    
+    # Check Email (SMTP/IMAP from integrations)
+    try:
+        from src.integrations import load_integrations
+        all_integrations = load_integrations()
+        email_integrations = [i for i in all_integrations if (i.get("preset") or i.get("name", "")).lower() in ("smtp", "email") and i.get("enabled", True)]
+        if email_integrations:
+            email_config = email_integrations[0]
+            import smtplib
+            smtp_host = email_config.get("smtp_host", "localhost")
+            smtp_port = int(email_config.get("smtp_port", 587))
+            
+            # Try to connect and EHLO (don't actually login or send)
+            try:
+                server = smtplib.SMTP(smtp_host, smtp_port, timeout=5)
+                server.ehlo()
+                email_ok = True
+                server.quit()
+            except Exception as smtp_err:
+                email_ok = False
+                status["services"]["email"] = {
+                    "status": "unavailable",
+                    "host": smtp_host,
+                    "port": smtp_port,
+                    "error": str(smtp_err)
+                }
+                status["status"] = "degraded"
+            
+            if email_ok:
+                status["services"]["email"] = {
+                    "status": "healthy",
+                    "host": smtp_host,
+                    "port": smtp_port
+                }
+        else:
+            status["services"]["email"] = {"status": "not_configured", "note": "No SMTP integration configured"}
+    except Exception as e:
+        status["services"]["email"] = {"status": "unavailable", "error": str(e)}
+        status["status"] = "degraded"
+    
+    # Check Database
+    try:
+        from core.database import get_db_session
+        from sqlalchemy import text
+        with get_db_session() as db:
+            db.execute(text("SELECT 1"))
+        status["services"]["database"] = {"status": "healthy"}
+    except Exception as e:
+        status["services"]["database"] = {"status": "unavailable", "error": str(e)}
+        status["status"] = "degraded"
+    
+    return status
 
 @app.get("/api/runtime")
 async def runtime_info() -> Dict[str, object]:

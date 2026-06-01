@@ -16,6 +16,25 @@ function esc(s) { return uiModule.esc(s); }
 /* ── Tab switching ── */
 const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'users', 'system']);
 
+// Auto-refresh health status every 30s when Services tab is open
+let _healthRefreshInterval = null;
+
+function _startHealthAutoRefresh() {
+  if (_healthRefreshInterval) return; // already running
+  _healthRefreshInterval = setInterval(() => {
+    refreshHealthStatus();
+  }, 30000);
+  // Initial refresh when starting
+  refreshHealthStatus();
+}
+
+function _stopHealthAutoRefresh() {
+  if (_healthRefreshInterval) {
+    clearInterval(_healthRefreshInterval);
+    _healthRefreshInterval = null;
+  }
+}
+
 function initTabs() {
   modalEl.querySelectorAll('[data-settings-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -33,6 +52,8 @@ function initTabs() {
       document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
       syncAppearanceOpacity(tab === 'appearance');
       if (tab === 'ai') refreshAiModelEndpoints();
+      if (tab === 'services') _startHealthAutoRefresh();
+      else _stopHealthAutoRefresh();
     });
   });
 }
@@ -230,6 +251,116 @@ function _fillModelSelect(selectEl, models, selected, keepBlank) {
 
 function _registerAiEndpointRefresh(fn) {
   _aiEndpointRefreshers.add(fn);
+}
+
+// Health Status
+async function refreshHealthStatus() {
+  const listEl = document.getElementById('health-status-list');
+  const refreshBtn = document.getElementById('health-refresh-btn');
+  if (!listEl) return;
+
+  // Show loading state
+  listEl.innerHTML = `
+    <div class="health-status-item">
+      <span class="health-status-icon">⏳</span>
+      <span class="health-status-name">Loading...</span>
+    </div>
+  `;
+
+  if (refreshBtn) refreshBtn.disabled = true;
+
+  try {
+    const res = await fetch('/api/health', { credentials: 'same-origin' });
+    const data = await res.json();
+
+    const services = data.services || {};
+    const items = [];
+
+    // ChromaDB
+    if (services.chromadb) {
+      items.push({
+        name: 'ChromaDB',
+        status: services.chromadb.status,
+        details: services.chromadb.error || `${services.chromadb.host}:${services.chromadb.port}` + (services.chromadb.collections !== undefined ? ` (${services.chromadb.collections} collections)` : '')
+      });
+    }
+
+    // Memory
+    if (services.memory) {
+      items.push({
+        name: 'Memory Vector Store',
+        status: services.memory.status,
+        details: services.memory.error || ''
+      });
+    }
+
+    // SearXNG
+    if (services.searxng) {
+      items.push({
+        name: 'SearXNG',
+        status: services.searxng.status,
+        details: services.searxng.error || services.searxng.url || ''
+      });
+    }
+
+    // ntfy
+    if (services.ntfy) {
+      items.push({
+        name: 'ntfy',
+        status: services.ntfy.status,
+        details: services.ntfy.error || services.ntfy.note || `${services.ntfy.url} (topic: ${services.ntfy.topic || 'reminders'})`
+      });
+    }
+
+    // Email (SMTP)
+    if (services.email) {
+      items.push({
+        name: 'Email (SMTP)',
+        status: services.email.status,
+        details: services.email.error || services.email.note || `${services.email.host}:${services.email.port}`
+      });
+    }
+
+    // Database
+    if (services.database) {
+      items.push({
+        name: 'Database',
+        status: services.database.status,
+        details: services.database.error || ''
+      });
+    }
+
+    // Render
+    listEl.innerHTML = items.map(item => {
+      const icon = item.status === 'healthy' ? '✓' : item.status === 'degraded' ? '⚠' : '✗';
+      const statusClass = `health-status-${item.status}`;
+      return `
+        <div class="health-status-item ${statusClass}">
+          <span class="health-status-icon">${icon}</span>
+          <span class="health-status-name">${item.name}</span>
+          <span class="health-status-details">${item.details}</span>
+        </div>
+      `;
+    }).join('');
+
+    // Overall status indicator
+    if (data.status === 'degraded') {
+      const warningEl = document.createElement('div');
+      warningEl.style.cssText = 'font-size:11px;color:var(--color-warning);margin-top:8px;padding:6px 8px;background:color-mix(in srgb, var(--color-warning) 10%, transparent);border-radius:4px;';
+      warningEl.textContent = 'Some services are degraded or unavailable. Check logs for details.';
+      listEl.appendChild(warningEl);
+    }
+  } catch (e) {
+    listEl.innerHTML = `
+      <div class="health-status-item health-status-unavailable">
+        <span class="health-status-icon">✗</span>
+        <span class="health-status-name">Health check failed</span>
+        <span class="health-status-details">${e.message}</span>
+      </div>
+    `;
+  } finally {
+    if (refreshBtn) refreshBtn.disabled = false;
+  }
 }
 
 export async function refreshAiModelEndpoints() {
@@ -2116,6 +2247,12 @@ function initAll() {
   initEmailAccountsSettings();
   initReminderSettings();
   initUnifiedIntegrations();
+  
+  // Health status refresh button
+  const healthRefreshBtn = document.getElementById('health-refresh-btn');
+  if (healthRefreshBtn) {
+    healthRefreshBtn.addEventListener('click', () => refreshHealthStatus());
+  }
 }
 
 function notifyIntegrationsChanged() {
@@ -4279,6 +4416,8 @@ export function open(tab) {
   document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
   syncAppearanceOpacity(activeTab === 'appearance');
   if (activeTab === 'ai') refreshAiModelEndpoints();
+  if (activeTab === 'services') _startHealthAutoRefresh();
+  else _stopHealthAutoRefresh();
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }
@@ -4286,6 +4425,8 @@ export function open(tab) {
 
 export function close() {
   if (!modalEl) return;
+  // Stop health auto-refresh when closing
+  _stopHealthAutoRefresh();
   // Always clear the appearance-tab body class so the rest of the app
   // doesn't keep its dimmed state if the modal got closed mid-tab.
   document.body.classList.remove('settings-appearance-open');
@@ -4303,7 +4444,7 @@ export function close() {
   }
 }
 
-const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints };
+const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints, refreshHealthStatus };
 
 
 export default settingsModule;
