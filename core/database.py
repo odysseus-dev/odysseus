@@ -326,6 +326,11 @@ class ModelEndpoint(TimestampMixin, Base):
     # can be toggled per-endpoint in the UI. NULL = unknown, falls
     # back to the model-name keyword heuristic in agent_loop.py.
     supports_tools = Column(Boolean, nullable=True, default=None)
+    # Explicit provider override. NULL = auto-detect from URL, "openai" = force
+    # OpenAI chat/completions format, "anthropic" = force Anthropic messages format.
+    # Needed for multi-protocol endpoints like OpenCode Zen/Go that serve both
+    # OpenAI-compatible and Anthropic-compatible models from the same domain.
+    provider = Column(String, nullable=True, default=None)
     # Per-user ownership. NULL = legacy/shared (visible to every user) — this
     # is the historical default. When non-null, the model picker only shows
     # the endpoint to that user (admins always see everything).

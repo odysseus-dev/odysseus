@@ -133,15 +133,16 @@ def _ollama_api_root(base: str) -> str:
 def build_chat_url(base: str) -> str:
     """Return the correct chat endpoint URL for a given base."""
     base = resolve_url(base)
-    provider = _detect_provider(base)
+    detected = provider or _detect_provider(base)
     host = urlparse(base).hostname or ""
-    if provider == "anthropic" or host.endswith("anthropic.com"):
+    if detected == "anthropic" or host.endswith("anthropic.com"):
         return _anthropic_api_root(base) + "/v1/messages"
     if provider == "ollama" or host.endswith("ollama.com"):
         return _ollama_api_root(base) + "/chat"
     return base + "/chat/completions"
 
 
+<<<<<<< HEAD
 def build_models_url(base: str) -> str:
     """Return the provider-specific model-list endpoint URL for a base."""
     base = resolve_url(base)
@@ -169,6 +170,25 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
         headers.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
         headers.setdefault("X-OpenRouter-Title", "Odysseus")
     return headers
+=======
+def build_headers(api_key: Optional[str], base: str, provider: Optional[str] = None) -> Dict[str, str]:
+    """Build auth headers for an endpoint.
+
+    Args:
+        api_key:  API key (may be None for local endpoints).
+        base:     Base URL of the endpoint.
+        provider: Optional override — "openai" or "anthropic".
+    """
+    if not api_key:
+        return {}
+    detected = provider or _detect_provider(base)
+    if detected == "anthropic":
+        return {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        }
+    return {"Authorization": f"Bearer {api_key}"}
+>>>>>>> ddb4251 (Add OpenCode Zen and Go provider support)
 
 
 def resolve_endpoint(
@@ -233,8 +253,9 @@ def resolve_endpoint(
             return fallback_url, fallback_model, fallback_headers
 
         base = normalize_base(ep.base_url)
-        chat_url = build_chat_url(base)
-        headers = build_headers(ep.api_key, base)
+        ep_provider = getattr(ep, "provider", None) or None
+        chat_url = build_chat_url(base, provider=ep_provider)
+        headers = build_headers(ep.api_key, base, provider=ep_provider)
 
         # If no model specified, try to pick the first from endpoint's cached list
         if not model and hasattr(ep, 'models') and ep.models:
@@ -272,8 +293,9 @@ def resolve_endpoint_by_id(
         if not ep:
             return None
         base = normalize_base(ep.base_url)
-        chat_url = build_chat_url(base)
-        headers = build_headers(ep.api_key, base)
+        ep_provider = getattr(ep, "provider", None) or None
+        chat_url = build_chat_url(base, provider=ep_provider)
+        headers = build_headers(ep.api_key, base, provider=ep_provider)
         m = (model or "").strip()
         if not m and getattr(ep, "models", None):
             try:

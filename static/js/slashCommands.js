@@ -53,8 +53,12 @@ const SETUP_PROVIDER_URLS = {
   groq: { name: 'Groq', url: 'https://api.groq.com/openai/v1' },
   gemini: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
   google: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
+  'opencode-zen': { name: 'OpenCode Zen (GPT & Open)', url: 'https://opencode.ai/zen/v1', provider: 'openai' },
+  'opencode-zen-claude': { name: 'OpenCode Zen (Claude)', url: 'https://opencode.ai/zen/v1', provider: 'anthropic' },
+  'opencode-go': { name: 'OpenCode Go (Chat)', url: 'https://opencode.ai/zen/go/v1', provider: 'openai' },
+  'opencode-go-claude': { name: 'OpenCode Go (Claude/Qwen)', url: 'https://opencode.ai/zen/go/v1', provider: 'anthropic' },
 };
-const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini'];
+const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini', 'opencode-zen', 'opencode-go'];
 const SETUP_PROVIDER_HINT = SETUP_PROVIDER_NAMES.slice(0, -1).join(', ') + ', or ' + SETUP_PROVIDER_NAMES[SETUP_PROVIDER_NAMES.length - 1];
 const SETUP_LOCAL_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>';
 const SETUP_API_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
@@ -77,6 +81,14 @@ function _setupProviderFromInput(input) {
     google: 'gemini',
     xai: 'xai',
     grok: 'xai',
+    'opencode-zen': 'opencode-zen',
+    'opencode-zen-claude': 'opencode-zen-claude',
+    'opencode-go': 'opencode-go',
+    'opencode-go-claude': 'opencode-go-claude',
+    zen: 'opencode-zen',
+    'zen-claude': 'opencode-zen-claude',
+    go: 'opencode-go',
+    'go-claude': 'opencode-go-claude',
   };
   return SETUP_PROVIDER_URLS[aliases[raw] || raw] || null;
 }
@@ -93,6 +105,10 @@ function _extractSetupProviderCredential(input) {
     ['groq', 'groq'],
     ['google', 'gemini'], ['gemini', 'gemini'],
     ['x ai', 'xai'], ['xai', 'xai'], ['grok', 'xai'],
+    ['opencode zen', 'opencode-zen'], ['opencode-zen', 'opencode-zen'], ['zen', 'opencode-zen'],
+    ['opencode zen claude', 'opencode-zen-claude'], ['opencode-zen-claude', 'opencode-zen-claude'], ['zen claude', 'opencode-zen-claude'],
+    ['opencode go', 'opencode-go'], ['opencode-go', 'opencode-go'],
+    ['opencode go claude', 'opencode-go-claude'], ['opencode-go-claude', 'opencode-go-claude'], ['go claude', 'opencode-go-claude'],
   ];
   for (const [alias, key] of providerAliases) {
     const re = new RegExp('(^|\\s|[,;:])(' + alias.replace(/\s+/g, '\\s+') + ')(?=$|\\s|[,;:])', 'i');
@@ -548,6 +564,9 @@ async function connectDetectedSetupEndpoint(detected) {
     fd.append('base_url', detected.base_url);
     if (detected.api_key) fd.append('api_key', detected.api_key);
     if (detected.name) fd.append('name', detected.name);
+    // Pass explicit provider override for multi-protocol endpoints
+    // (e.g. OpenCode Zen/Go that serve both OpenAI and Anthropic formats)
+    if (detected.provider) fd.append('provider', detected.provider);
     fd.append('require_models', 'true');
     if (!isLocal) fd.append('skip_probe', 'true');
     const controller = new AbortController();
@@ -608,6 +627,7 @@ async function handleSetupInput(input) {
         base_url: paired.provider.url,
         api_key: paired.credential,
         name: paired.provider.name,
+        provider: paired.provider.provider || undefined,
       });
     } else {
       pendingSetupProvider = paired.provider;
@@ -660,7 +680,7 @@ async function handleSetupWizard(mode, input) {
     }
     if (paired?.credential) {
       _showSetupUserBubble(input, false);
-      await connectDetectedSetupEndpoint({ base_url: provider.url, api_key: paired.credential, name: provider.name });
+      await connectDetectedSetupEndpoint({ base_url: provider.url, api_key: paired.credential, name: provider.name, provider: provider.provider || undefined });
       return;
     }
     _addMessage('user', provider.name);
@@ -680,7 +700,7 @@ async function handleSetupWizard(mode, input) {
     _showSetupUserBubble(input, /^https?:\/\//i.test(input));
     const paired = _extractSetupProviderCredential(input);
     const credential = paired?.credential || input.trim();
-    await connectDetectedSetupEndpoint({ base_url: provider.url, api_key: credential, name: provider.name });
+    await connectDetectedSetupEndpoint({ base_url: provider.url, api_key: credential, name: provider.name, provider: provider.provider || undefined });
     return;
   }
 
@@ -701,7 +721,7 @@ async function handleSetupWizard(mode, input) {
         await typewriterReply('No API key found. Type /setup endpoint and paste the key again.');
         return;
       }
-      await connectDetectedSetupEndpoint({ base_url: paired.provider.url, api_key: credential, name: paired.provider.name });
+      await connectDetectedSetupEndpoint({ base_url: paired.provider.url, api_key: credential, name: paired.provider.name, provider: paired.provider.provider || undefined });
       return;
     }
 
@@ -719,7 +739,7 @@ async function handleSetupWizard(mode, input) {
       await typewriterReply('Provider not recognised. Try ' + SETUP_PROVIDER_HINT + '. Type /setup endpoint to try again.');
       return;
     }
-    await connectDetectedSetupEndpoint({ base_url: provider.url, api_key: key, name: provider.name });
+    await connectDetectedSetupEndpoint({ base_url: provider.url, api_key: key, name: provider.name, provider: provider.provider || undefined });
     return;
   }
 

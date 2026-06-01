@@ -242,6 +242,8 @@ def _provider_label(url: str) -> str:
     if "anthropic.com" in u: return "Anthropic"
     if "ollama.com" in u: return "Ollama Cloud"
     if "api.x.ai" in u or "x.ai/" in u: return "xAI"
+    if "opencode.ai/zen/go" in u: return "OpenCode Go"
+    if "opencode.ai/zen" in u: return "OpenCode Zen"
     if "openai.com" in u: return "OpenAI"
     if "openrouter.ai" in u: return "OpenRouter"
     if "groq.com" in u: return "Groq"

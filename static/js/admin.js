@@ -722,7 +722,7 @@ function initEndpointForm() {
       }
     } catch(e) {}
     // Ensure /v1 suffix for bare host:port URLs (not cloud providers)
-    if (!u.includes('api.') && !u.includes('openrouter') && !u.includes('ollama.com') && !u.endsWith('/v1')) {
+    if (!u.includes('api.') && !u.includes('openrouter') && !u.includes('ollama.com') && !u.includes('opencode.ai') && !u.endsWith('/v1')) {
       try {
         const parsed = new URL(u);
         if (!parsed.pathname || parsed.pathname === '/') {
@@ -829,9 +829,14 @@ function initEndpointForm() {
       const fd = new FormData();
       fd.append('base_url', url);
       if (apiKey) fd.append('api_key', apiKey);
-      if (provider.value && provider.selectedOptions && provider.selectedOptions[0]) {
-        fd.append('name', provider.selectedOptions[0].textContent.trim());
+      const selectedOpt = provider.selectedOptions[0] || provider.options[0];
+      if (provider.value && selectedOpt) {
+        fd.append('name', selectedOpt.textContent.trim());
       }
+      // Include explicit provider override for multi-protocol endpoints
+      // (e.g. OpenCode Zen/Go that serve both OpenAI and Anthropic models)
+      const forcedProvider = selectedOpt ? (selectedOpt.dataset.provider || '') : '';
+      if (forcedProvider) fd.append('provider', forcedProvider);
       const epType = el('adm-epType');
       if (epType) fd.append('model_type', epType.value);
       if (provider.value && /openrouter\.ai|ollama\.com/i.test(provider.value)) fd.append('require_models', 'true');

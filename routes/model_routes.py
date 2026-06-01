@@ -120,6 +120,33 @@ _PROVIDER_CURATED = {
     "xai": [
         "grok-4.3", "grok-4", "grok-4-fast", "grok-3", "grok-3-fast",
     ],
+    "opencode-zen": [
+        "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5", "claude-opus-4-1",
+        "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-sonnet-4",
+        "claude-haiku-4-5", "claude-haiku-3-5",
+        "gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.4-pro", "gpt-5.4-mini", "gpt-5.4-nano",
+        "gpt-5.3-codex", "gpt-5.3-codex-spark",
+        "gpt-5.2", "gpt-5.2-codex",
+        "gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini",
+        "gpt-5", "gpt-5-codex", "gpt-5-nano",
+        "gemini-3.5-flash", "gemini-3.1-pro", "gemini-3-flash",
+        "qwen3.7-max", "qwen3.6-plus", "qwen3.5-plus",
+        "deepseek-v4-flash",
+        "minimax-m2.7", "minimax-m2.5",
+        "glm-5.1", "glm-5",
+        "kimi-k2.5", "kimi-k2.6",
+        "grok-build-0.1",
+        "big-pickle",
+        "deepseek-v4-flash-free", "mimo-v2.5-free", "nemotron-3-super-free",
+    ],
+    "opencode-go": [
+        "glm-5.1", "glm-5",
+        "kimi-k2.5", "kimi-k2.6",
+        "mimo-v2.5", "mimo-v2.5-pro",
+        "minimax-m2.7", "minimax-m2.5",
+        "qwen3.7-max", "qwen3.6-plus",
+        "deepseek-v4-pro", "deepseek-v4-flash",
+    ],
 }
 
 # Map URL substrings → curated-list keys for providers whose _detect_provider()
@@ -136,6 +163,8 @@ _URL_TO_CURATED = {
     "api.x.ai": "xai",
     "openrouter.ai": "openrouter",
     "ollama.com": "ollama",
+    "opencode.ai/zen/go": "opencode-go",
+    "opencode.ai/zen": "opencode-zen",
 }
 
 
@@ -289,6 +318,16 @@ def _classify_endpoint(base_url: str) -> str:
     """Return 'local' if the endpoint URL points to a private/local address, else 'api'.
     Includes the Tailscale CGNAT range (100.64.0.0/10) so tailnet-hosted
     servers (e.g. Cookbook serve endpoints) get reachability-probed too."""
+
+    # OpenCode Zen/Go are always API (cloud) endpoints regardless of the
+    # domain-level check below — skip them from the local probe path.
+    try:
+        host = urlparse(base_url).hostname or ""
+        if "opencode.ai" in host:
+            return "api"
+    except Exception:
+        pass
+
     try:
         host = urlparse(base_url).hostname or ""
         if host in _LOCAL_HOSTS or host.startswith(_PRIVATE_PREFIXES):
@@ -529,7 +568,8 @@ def setup_model_routes(model_discovery):
 
         for ep in endpoints:
             base = _normalize_base(ep.base_url)
-            provider = _detect_provider(base)
+            ep_provider = getattr(ep, "provider", None) or None
+            provider = ep_provider or _detect_provider(base)
             # Use cached models — background refresh keeps them updated
             model_ids = []
             if ep.cached_models:
@@ -547,7 +587,11 @@ def setup_model_routes(model_discovery):
                     pass
             model_ids = [m for m in model_ids if m not in hidden]
             # Build correct URL based on provider
+<<<<<<< HEAD
             chat_url = build_chat_url(base)
+=======
+            chat_url = build_chat_url(base, provider=ep_provider)
+>>>>>>> ddb4251 (Add OpenCode Zen and Go provider support)
             category = _classify_endpoint(base)
 
             if model_ids:
@@ -924,6 +968,7 @@ def setup_model_routes(model_discovery):
                     "ping_error": (ping or {}).get("error") if ping else None,
                     "model_type": getattr(r, "model_type", None) or "llm",
                     "supports_tools": getattr(r, "supports_tools", None),
+                    "provider": getattr(r, "provider", None),
                 })
             return results
         finally:
@@ -939,6 +984,7 @@ def setup_model_routes(model_discovery):
         require_models: str = Form("false"),
         model_type: str = Form("llm"),
         supports_tools: str = Form(""),  # "true"/"false"/"" (unknown)
+        provider: str = Form(""),  # "openai", "anthropic", or "" (auto-detect)
         # Default `shared=true` → endpoints are visible to all users (the
         # app's historical behaviour). Admins can pass `shared=false` to
         # scope a new endpoint to their own account only.
@@ -1013,6 +1059,8 @@ def setup_model_routes(model_discovery):
             from src.auth_helpers import get_current_user as _gcu
             _shared_flag = (shared or "").strip().lower() in ("true", "1", "yes")
             _owner_val = None if _shared_flag else (_gcu(request) or None)
+            _provider_raw = (provider or "").strip().lower()
+            _provider_val = _provider_raw if _provider_raw in ("openai", "anthropic") else None
             ep = ModelEndpoint(
                 id=ep_id,
                 name=name.strip(),
@@ -1022,6 +1070,7 @@ def setup_model_routes(model_discovery):
                 model_type=model_type.strip() if model_type else "llm",
                 cached_models=json.dumps(model_ids) if model_ids else None,
                 supports_tools=_st,
+                provider=_provider_val,
                 owner=_owner_val,
             )
             db.add(ep)
@@ -1311,6 +1360,9 @@ def setup_model_routes(model_discovery):
                     ep.name = body["name"].strip() or ep.name
                 if "model_type" in body and isinstance(body["model_type"], str):
                     ep.model_type = body["model_type"].strip() or ep.model_type
+                if "provider" in body:
+                    pv = (body["provider"] or "").strip().lower()
+                    ep.provider = pv if pv in ("openai", "anthropic") else None
             else:
                 ep.is_enabled = not ep.is_enabled
             db.commit()
@@ -1321,6 +1373,7 @@ def setup_model_routes(model_discovery):
                 "supports_tools": ep.supports_tools,
                 "name": ep.name,
                 "model_type": ep.model_type,
+                "provider": getattr(ep, "provider", None),
             }
         finally:
             db.close()
@@ -1436,6 +1489,216 @@ def setup_model_routes(model_discovery):
             }
         finally:
             db.close()
+
+    # ── Quick-connect presets (OpenCode Zen, OpenCode Go, etc.) ──
+
+    _QUICK_CONNECT_PRESETS = {
+        "opencode-zen": {
+            "name": "OpenCode Zen",
+            "base_url": "https://opencode.ai/zen/v1",
+            "description": "Curated AI models for coding agents — pay-as-you-go",
+            "models": _PROVIDER_CURATED["opencode-zen"],
+            "url": "https://opencode.ai/zen",
+            "provider": None,  # auto-detect (models use mixed formats)
+        },
+        "opencode-zen-claude": {
+            "name": "OpenCode Zen (Claude)",
+            "base_url": "https://opencode.ai/zen/v1",
+            "description": "OpenCode Zen — Anthropic/Claude models",
+            "models": [m for m in _PROVIDER_CURATED["opencode-zen"] if m.startswith("claude-") or m.startswith("gemini-") or m.startswith("qwen")],
+            "url": "https://opencode.ai/zen",
+            "provider": "anthropic",  # force Anthropic format for Claude/Gemini/Qwen
+        },
+        "opencode-zen-openai": {
+            "name": "OpenCode Zen (GPT & Open)",
+            "base_url": "https://opencode.ai/zen/v1",
+            "description": "OpenCode Zen — GPT models and open models (OpenAI format)",
+            "models": [m for m in _PROVIDER_CURATED["opencode-zen"] if m.startswith("gpt-") or m.startswith("deepseek-") or m.startswith("minimax-") or m.startswith("glm-") or m.startswith("kimi-") or m.startswith("grok-") or m == "big-pickle" or m.endswith("-free")],
+            "url": "https://opencode.ai/zen",
+            "provider": "openai",
+        },
+        "opencode-go": {
+            "name": "OpenCode Go",
+            "base_url": "https://opencode.ai/zen/go/v1",
+            "description": "Low-cost subscription for open coding models — $5/mo then $10/mo",
+            "models": _PROVIDER_CURATED["opencode-go"],
+            "url": "https://opencode.ai/go",
+            "provider": None,
+        },
+        "opencode-go-claude": {
+            "name": "OpenCode Go (Claude/Qwen)",
+            "base_url": "https://opencode.ai/zen/go/v1",
+            "description": "OpenCode Go — Anthropic-format models (MiniMax, Qwen)",
+            "models": [m for m in _PROVIDER_CURATED["opencode-go"] if m.startswith("minimax-") or m.startswith("qwen")],
+            "url": "https://opencode.ai/go",
+            "provider": "anthropic",
+        },
+        "opencode-go-openai": {
+            "name": "OpenCode Go (Chat)",
+            "base_url": "https://opencode.ai/zen/go/v1",
+            "description": "OpenCode Go — OpenAI-format models (GLM, Kimi, DeepSeek, MiMo)",
+            "models": [m for m in _PROVIDER_CURATED["opencode-go"] if m.startswith("glm-") or m.startswith("kimi-") or m.startswith("deepseek-") or m.startswith("mimo-")],
+            "url": "https://opencode.ai/go",
+            "provider": "openai",
+        },
+    }
+
+    @router.get("/quick-connect-presets")
+    def list_quick_connect_presets():
+        """List available quick-connect provider presets."""
+        return {"presets": {k: {kk: vv for kk, vv in v.items() if kk != "models"} for k, v in _QUICK_CONNECT_PRESETS.items()}}
+
+    @router.post("/quick-connect")
+    async def quick_connect_endpoint(request: Request):
+        """Create model endpoints from a quick-connect preset.
+        Body: {"preset": "opencode-zen", "api_key": "sk-xxx"}
+        Creates one or more ModelEndpoint rows and returns their IDs."""
+        require_admin(request)
+        body = await request.json()
+        preset_key = body.get("preset", "").strip()
+        api_key = body.get("api_key", "").strip()
+        shared = body.get("shared", True)
+
+        if preset_key not in _QUICK_CONNECT_PRESETS:
+            raise HTTPException(400, f"Unknown preset: {preset_key}")
+
+        preset = _QUICK_CONNECT_PRESETS[preset_key]
+        base_url = preset["base_url"]
+        models = preset.get("models", [])
+        force_provider = preset.get("provider")
+
+        # Check if an endpoint with this base_url already exists
+        db = SessionLocal()
+        try:
+            existing = db.query(ModelEndpoint).filter(
+                ModelEndpoint.base_url.like(f"{base_url}%")
+            ).first()
+            if existing:
+                return {
+                    "status": "exists",
+                    "endpoint_id": existing.id,
+                    "name": existing.name,
+                    "message": f"Endpoint '{existing.name}' already exists with this base URL",
+                }
+
+            # Probe for models if we have an API key
+            model_ids = []
+            if api_key:
+                model_ids = _probe_endpoint(base_url, api_key, timeout=5)
+            if not model_ids:
+                model_ids = models  # fall back to curated list
+
+            from src.auth_helpers import get_current_user as _gcu
+            _owner_val = None if shared else (_gcu(request) or None)
+            _st_raw = (body.get("supports_tools", "") or "").strip().lower()
+            _st = True if _st_raw in ("true", "1", "yes") else (False if _st_raw in ("false", "0", "no") else None)
+
+            ep_id = str(uuid.uuid4())[:8]
+            ep = ModelEndpoint(
+                id=ep_id,
+                name=preset["name"],
+                base_url=base_url,
+                api_key=api_key or None,
+                is_enabled=True,
+                model_type="llm",
+                cached_models=json.dumps(model_ids) if model_ids else None,
+                supports_tools=_st,
+                provider=force_provider,
+                owner=_owner_val,
+            )
+            db.add(ep)
+            db.commit()
+            _invalidate_models_cache()
+
+            # Auto-set as default if no endpoint configured
+            settings = _load_settings()
+            if not settings.get("default_endpoint_id"):
+                settings["default_endpoint_id"] = ep.id
+                settings["default_model"] = model_ids[0] if model_ids else ""
+                _save_settings(settings)
+
+            return {
+                "status": "created",
+                "endpoint_id": ep_id,
+                "name": preset["name"],
+                "models": model_ids[:10],
+                "total_models": len(model_ids),
+                "message": f"Connected to {preset['name']} — {len(model_ids)} models available",
+            }
+        finally:
+            db.close()
+
+    @router.post("/quick-connect-bulk")
+    async def quick_connect_bulk(request: Request):
+        """Create all relevant endpoints for a provider (e.g. both OpenAI-format
+        and Anthropic-format endpoints for OpenCode Zen).
+        Body: {"provider": "opencode-zen", "api_key": "sk-xxx"}
+        """
+        require_admin(request)
+        body = await request.json()
+        provider_group = body.get("provider", "").strip()
+        api_key = body.get("api_key", "").strip()
+
+        created = []
+        skipped = []
+
+        if provider_group == "opencode-zen":
+            preset_keys = ["opencode-zen-openai", "opencode-zen-claude"]
+        elif provider_group == "opencode-go":
+            preset_keys = ["opencode-go-openai", "opencode-go-claude"]
+        else:
+            raise HTTPException(400, f"Unknown provider group: {provider_group}. Use 'opencode-zen' or 'opencode-go'.")
+
+        db = SessionLocal()
+        try:
+            for key in preset_keys:
+                preset = _QUICK_CONNECT_PRESETS[key]
+                base_url = preset["base_url"]
+                force_provider = preset.get("provider")
+
+                existing = db.query(ModelEndpoint).filter(
+                    ModelEndpoint.name == preset["name"]
+                ).first()
+                if existing:
+                    skipped.append({"endpoint_id": existing.id, "name": existing.name})
+                    continue
+
+                models = preset.get("models", [])
+                model_ids = []
+                if api_key:
+                    from src.endpoint_resolver import build_headers as _bh
+                    headers = _bh(api_key, base_url, provider=force_provider)
+                    model_ids = _probe_endpoint(base_url, api_key, timeout=5)
+                if not model_ids:
+                    model_ids = models
+
+                ep_id = str(uuid.uuid4())[:8]
+                ep = ModelEndpoint(
+                    id=ep_id,
+                    name=preset["name"],
+                    base_url=base_url,
+                    api_key=api_key or None,
+                    is_enabled=True,
+                    model_type="llm",
+                    cached_models=json.dumps(model_ids) if model_ids else None,
+                    provider=force_provider,
+                )
+                db.add(ep)
+                created.append({"endpoint_id": ep_id, "name": preset["name"], "models_count": len(model_ids)})
+
+            db.commit()
+            _invalidate_models_cache()
+
+            # Set first created as default if none configured
+            settings = _load_settings()
+            if not settings.get("default_endpoint_id") and created:
+                settings["default_endpoint_id"] = created[0]["endpoint_id"]
+                _save_settings(settings)
+
+        finally:
+            db.close()
+
+        return {"created": created, "skipped": skipped}
 
     # ── Tool management ──
 

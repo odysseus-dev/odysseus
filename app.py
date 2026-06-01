@@ -979,6 +979,77 @@ async def startup_event():
                 logger.warning(f"Nightly skill audit failed: {e}")
 
     _startup_tasks.append(asyncio.create_task(_skill_audit_nightly_loop()))
+    # Auto-detect local Ollama instance — run in background to avoid blocking startup
+    async def _detect_ollama():
+        try:
+            import shutil
+            if not shutil.which("ollama"):
+                return
+            import httpx
+            async with httpx.AsyncClient() as client:
+                r = await client.get("http://localhost:11434/v1/models", timeout=3)
+                if r.status_code != 200:
+                    return
+            from core.database import SessionLocal, ModelEndpoint
+            db = SessionLocal()
+            try:
+                existing = db.query(ModelEndpoint).filter(
+                    ModelEndpoint.base_url == "http://localhost:11434/v1"
+                ).first()
+                if not existing:
+                    ep = ModelEndpoint(
+                        id=str(uuid.uuid4())[:8],
+                        name="Ollama (local)",
+                        base_url="http://localhost:11434/v1",
+                        is_enabled=True,
+                    )
+                    db.add(ep)
+                    db.commit()
+                    logger.info("Auto-added Ollama endpoint (localhost:11434)")
+            finally:
+                db.close()
+        except Exception as e:
+            logger.debug(f"Ollama auto-detect: {e}")
+    _startup_tasks.append(asyncio.create_task(_detect_ollama()))
+
+    # Auto-add OpenCode Zen/Go endpoints if API keys are configured via env vars.
+    # Creates the endpoint rows on first boot so the user just needs to paste
+    # a key in Settings (or set OPENCODE_ZEN_API_KEY / OPENCODE_GO_API_KEY).
+    async def _auto_add_provider_presets():
+        _PROVIDER_PRESETS = [
+            ("OPENCODE_ZEN_API_KEY", "OpenCode Zen (GPT & Open)", "https://opencode.ai/zen/v1", "openai"),
+            ("OPENCODE_ZEN_API_KEY", "OpenCode Zen (Claude)", "https://opencode.ai/zen/v1", "anthropic"),
+            ("OPENCODE_GO_API_KEY", "OpenCode Go (Chat)", "https://opencode.ai/zen/go/v1", "openai"),
+            ("OPENCODE_GO_API_KEY", "OpenCode Go (Claude/Qwen)", "https://opencode.ai/zen/go/v1", "anthropic"),
+        ]
+        from core.database import SessionLocal as _SL2, ModelEndpoint as _ME2
+        _db2 = _SL2()
+        try:
+            for env_key, name, base_url, force_provider in _PROVIDER_PRESETS:
+                api_key = os.environ.get(env_key, "").strip()
+                if not api_key:
+                    continue
+                existing = _db2.query(_ME2).filter(_ME2.name == name).first()
+                if existing:
+                    continue
+                ep = _ME2(
+                    id=str(uuid.uuid4())[:8],
+                    name=name,
+                    base_url=base_url,
+                    api_key=api_key or None,
+                    is_enabled=True,
+                    model_type="llm",
+                    provider=force_provider,
+                )
+                _db2.add(ep)
+                logger.info(f"Auto-added {name} endpoint (from {env_key})")
+            _db2.commit()
+        except Exception as e:
+            logger.warning(f"Auto-add provider presets failed: {e}")
+        finally:
+            _db2.close()
+
+    _startup_tasks.append(asyncio.create_task(_auto_add_provider_presets()))
     logger.info("Application startup complete")
 
 @app.on_event("shutdown")
