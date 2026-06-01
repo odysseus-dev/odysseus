@@ -1013,7 +1013,7 @@ class TaskScheduler:
             from pathlib import Path as _P
             integrations_file = _P("data/integrations.json")
             if integrations_file.exists():
-                integrations = json.loads(integrations_file.read_text())
+                integrations = json.loads(integrations_file.read_text(encoding="utf-8"))
                 for integ in integrations:
                     if not integ.get("enabled"):
                         continue
@@ -1616,7 +1616,7 @@ class TaskScheduler:
                 "task_id": task.id,
                 "task_name": task.name,
             }
-            (RESEARCH_DATA_DIR / f"{session_id}.json").write_text(json.dumps(payload))
+            (RESEARCH_DATA_DIR / f"{session_id}.json").write_text(json.dumps(payload), encoding="utf-8")
             try:
                 from src.event_bus import fire_event
                 fire_event("research_completed", task.owner or None)

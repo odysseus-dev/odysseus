@@ -269,7 +269,7 @@ class UploadHandler:
             
             uploads_db_path = os.path.join(self.upload_dir, "uploads.json")
             if os.path.exists(uploads_db_path):
-                with open(uploads_db_path, "r") as f:
+                with open(uploads_db_path, "r", encoding="utf-8") as f:
                     files = json.load(f)
                 
                 total_files = len(files)
@@ -352,7 +352,7 @@ class UploadHandler:
         
         if os.path.exists(uploads_db_path):
             try:
-                with open(uploads_db_path, "r") as f:
+                with open(uploads_db_path, "r", encoding="utf-8") as f:
                     existing_files = json.load(f)
             except Exception as e:
                 logger.warning(f"Failed to read uploads database: {e}")
@@ -374,7 +374,7 @@ class UploadHandler:
             existing_files[existing_key] = existing_file
             
             try:
-                with open(uploads_db_path, "w") as f:
+                with open(uploads_db_path, "w", encoding="utf-8") as f:
                     json.dump(existing_files, f, indent=2)
             except Exception as e:
                 logger.warning(f"Failed to update uploads database: {e}")
@@ -439,7 +439,7 @@ class UploadHandler:
         try:
             if os.path.exists(uploads_db_path):
                 try:
-                    with open(uploads_db_path, "r") as f:
+                    with open(uploads_db_path, "r", encoding="utf-8") as f:
                         all_files = json.load(f)
                 except Exception:
                     all_files = {}
@@ -449,7 +449,7 @@ class UploadHandler:
             storage_key = f"{owner}:{file_hash}" if owner else file_hash
             all_files[storage_key] = file_metadata
             
-            with open(uploads_db_path, "w") as f:
+            with open(uploads_db_path, "w", encoding="utf-8") as f:
                 json.dump(all_files, f, indent=2)
                 
         except Exception as e:

@@ -65,7 +65,7 @@ def create_default_admin():
                 }
             }
         }
-        with open(auth_path, "w") as f:
+        with open(auth_path, "w", encoding="utf-8") as f:
             json.dump(auth_data, f, indent=2)
         print(f"  [ok] Initial admin user created ({username})")
         print(f"        Temporary password: {password}")

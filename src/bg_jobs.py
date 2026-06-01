@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import os
-import signal
+import shlex
 import subprocess
 import time
 import uuid
@@ -30,6 +30,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.atomic_io import atomic_write_json
+from core.platform_compat import (
+    detached_popen_kwargs,
+    find_bash,
+    kill_process_tree,
+    pid_alive,
+)
 
 _DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
 _JOBS_DIR = _DATA_DIR / "bg_jobs"
@@ -49,7 +55,7 @@ _RETENTION_S = 3600  # 1 hour after follow-up
 def _load() -> Dict[str, Dict[str, Any]]:
     try:
         if _STORE.exists():
-            return json.loads(_STORE.read_text()) or {}
+            return json.loads(_STORE.read_text(encoding="utf-8")) or {}
     except Exception:
         pass
     return {}
@@ -60,13 +66,11 @@ def _save(jobs: Dict[str, Dict[str, Any]]) -> None:
 
 
 def _pid_alive(pid: Optional[int]) -> bool:
-    if not pid:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ProcessLookupError):
-        return False
+    # Delegates to the platform-safe probe. NB: a bare os.kill(pid, 0) is unsafe
+    # on Windows — CPython routes it to TerminateProcess, which would KILL the
+    # job we're only trying to check. core.platform_compat.pid_alive handles
+    # both OSes correctly.
+    return pid_alive(pid)
 
 
 def launch(command: str, session_id: str, cwd: Optional[str] = None,
@@ -88,22 +92,46 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
     # command in `( … )` — the wrapper can't be broken by an unbalanced paren or
     # a trailing line-continuation in the command. `$?` is the child's real
     # exit status.
-    cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
-    cmd_path.write_text(command + "\n")
-    wrapper = (
-        f"bash {cmd_path} > {log_path} 2>&1\n"
-        f"echo $? > {exit_path}\n"
-    )
-    script_path = _JOBS_DIR / f"{job_id}.sh"
-    script_path.write_text(wrapper)
+    bash = find_bash()
+    if bash:
+        # POSIX, or Windows with Git Bash/WSL. The user command goes in its OWN
+        # script file, run as a child `bash` — an `exit` inside it only ends
+        # that child (so the wrapper still records the exit code), and an
+        # unbalanced paren / trailing line-continuation in the command can't
+        # break the wrapper. `$?` is the child's real exit status. Paths are
+        # emitted as POSIX (forward-slash) + shell-quoted so Git Bash on Windows
+        # handles drive paths and spaces correctly.
+        cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
+        cmd_path.write_text(command + "\n", encoding="utf-8")
+        lp, xp, cp = (shlex.quote(p.as_posix()) for p in (log_path, exit_path, cmd_path))
+        script_path = _JOBS_DIR / f"{job_id}.sh"
+        script_path.write_text(
+            f"bash {cp} > {lp} 2>&1\n"
+            f"echo $? > {xp}\n",
+            encoding="utf-8",
+        )
+        argv = [bash, str(script_path)]
+    else:
+        # Windows without any bash installed: cmd.exe wrapper. The command runs
+        # in its own child .cmd so %ERRORLEVEL% is the command's real exit code.
+        child_path = _JOBS_DIR / f"{job_id}.child.cmd"
+        child_path.write_text("@echo off\r\n" + command + "\r\n", encoding="utf-8")
+        script_path = _JOBS_DIR / f"{job_id}.cmd"
+        script_path.write_text(
+            "@echo off\r\n"
+            f'call "{child_path}" > "{log_path}" 2>&1\r\n'
+            f'echo %ERRORLEVEL%> "{exit_path}"\r\n',
+            encoding="utf-8",
+        )
+        argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
 
     proc = subprocess.Popen(
-        ["bash", str(script_path)],
+        argv,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
         cwd=cwd or None,
-        start_new_session=True,  # setsid — detach from the request lifecycle
+        **detached_popen_kwargs(),  # detach from the request lifecycle (setsid / DETACHED_PROCESS)
     )
 
     rec = {
@@ -128,7 +156,7 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
 
 def _read_output(rec: Dict[str, Any]) -> str:
     try:
-        txt = Path(rec["log_path"]).read_text(errors="replace")
+        txt = Path(rec["log_path"]).read_text(encoding="utf-8", errors="replace")
     except Exception:
         return ""
     if len(txt) > _MAX_OUTPUT_CHARS:
@@ -198,15 +226,8 @@ def refresh() -> Dict[str, Dict[str, Any]]:
 
 
 def _kill(pid: Optional[int]) -> None:
-    if not pid:
-        return
-    try:
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
-    except Exception:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except Exception:
-            pass
+    # Cross-platform process-tree teardown (POSIX killpg / Windows taskkill /T).
+    kill_process_tree(pid)
 
 
 def pending_followups() -> List[Dict[str, Any]]:

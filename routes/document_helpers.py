@@ -148,7 +148,7 @@ def _locate_upload(upload_dir: str, file_id: str):
     try:
         idx_path = os.path.join(upload_dir, "uploads.json")
         if os.path.exists(idx_path):
-            with open(idx_path, "r") as f:
+            with open(idx_path, "r", encoding="utf-8") as f:
                 idx = _json.load(f)
             for meta in (idx.values() if isinstance(idx, dict) else []):
                 if meta.get("id") == file_id:

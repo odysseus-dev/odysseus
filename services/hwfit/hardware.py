@@ -1,5 +1,6 @@
 import os
 import platform
+import shutil
 import subprocess
 import time
 
@@ -138,7 +139,7 @@ def _detect_amd():
             val = _run(["cat", path])
             return val.strip() if val else None
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 return f.read().strip()
         except Exception:
             return None
@@ -285,7 +286,7 @@ def _read_file(path):
     if _remote_host:
         return _run(["cat", path])
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             return f.read()
     except Exception:
         return None
@@ -314,7 +315,9 @@ def _get_ram_gb():
     if "MemTotal" in meminfo:
         return meminfo["MemTotal"] / (1024**2)
 
-    if not _remote_host:
+    # os.sysconf only exists on Unix; on Windows it's absent (AttributeError)
+    # and these constants aren't defined — guard so this never raises there.
+    if not _remote_host and hasattr(os, "sysconf") and "SC_PHYS_PAGES" in getattr(os, "sysconf_names", {}):
         try:
             pages = os.sysconf("SC_PHYS_PAGES")
             page_size = os.sysconf("SC_PAGE_SIZE")
@@ -375,8 +378,20 @@ def _get_cpu_count():
     return os.cpu_count() or 1
 
 
+def _powershell_exe():
+    """Pick the best PowerShell executable for LOCAL execution: prefer pwsh
+    (PowerShell 7+), fall back to Windows PowerShell 5.1. Returns an absolute
+    path so we don't depend on a particular PATH ordering."""
+    return shutil.which("pwsh") or shutil.which("powershell") or "powershell"
+
+
 def _detect_windows():
-    """Detect Windows hardware in a single SSH call using PowerShell."""
+    """Detect Windows hardware via PowerShell/WMI.
+
+    Works for BOTH local (host="") and remote (SSH) detection:
+      * remote  -> `_run` ships the string to the host over SSH.
+      * local   -> `_run` executes a list argv directly (no shell quoting hell).
+    """
     # Single PowerShell command that gathers all hardware info at once
     ps_cmd = (
         "$r = @{}; "
@@ -413,22 +428,43 @@ def _detect_windows():
         "}; "
         "$r | ConvertTo-Json -Compress"
     )
-    out = _run(f'powershell -Command "{ps_cmd}"')
+    if _remote_host:
+        # Remote: ship a single command string over SSH. The remote shell parses
+        # the quoting; PowerShell on the far side runs the -Command payload.
+        out = _run(f'powershell -Command "{ps_cmd}"')
+    else:
+        # Local: pass a LIST argv straight to subprocess so the OS hands ps_cmd
+        # to PowerShell verbatim — no fragile string-level quote escaping. Prefer
+        # pwsh (PS7), else Windows PowerShell 5.1.
+        out = _run([_powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", ps_cmd])
     if not out:
         return None
     import json as _json
     try:
         d = _json.loads(out)
+        # PowerShell's Measure-Object .Sum / .Count come back as JSON numbers and
+        # decode to float; the Linux path returns plain ints for these — coerce
+        # so the dict shape (and downstream int math) matches across platforms.
+        def _as_int(v, default):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return default
+        _cpu_name = (d.get("cpu_name") or "unknown")
+        if isinstance(_cpu_name, str):
+            _cpu_name = _cpu_name.strip() or "unknown"
         result = {
             "total_ram_gb": d.get("ram_gb", 0),
             "available_ram_gb": d.get("avail_gb", 0),
-            "cpu_cores": d.get("cpu_cores", 1),
-            "cpu_name": d.get("cpu_name", "unknown"),
+            "cpu_cores": _as_int(d.get("cpu_cores"), 1),
+            "cpu_name": _cpu_name,
             "has_gpu": bool(d.get("gpu_name")),
             "gpu_name": d.get("gpu_name"),
             "gpu_vram_gb": d.get("gpu_vram_gb"),
-            "gpu_count": d.get("gpu_count", 0),
+            "gpu_count": _as_int(d.get("gpu_count"), 0),
             "backend": d.get("gpu_backend", "cpu_x86"),
+            "homogeneous": True,
+            "gpu_error": None,
         }
         # PowerShell only reports aggregate GPU info, not per-card detail, so we
         # can't tell a mixed box from a uniform one here — assume one homogeneous
@@ -489,6 +525,18 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
         _remote_platform = None
         _cache_by_host[cache_key] = (now, result)
         return result
+
+    # Local Windows: the Linux /proc + /sys + os.sysconf path returns 0 GB RAM,
+    # "unknown" CPU and no GPU on Windows (and os.sysconf doesn't even exist),
+    # so detect locally via PowerShell/WMI instead. _detect_windows() runs the
+    # same probe used for remote Windows, but _run() executes it locally.
+    if not _remote_host and os.name == "nt":
+        result = _detect_windows()
+        if result:
+            _cache_by_host[cache_key] = (now, result)
+            return result
+        # PowerShell probe failed entirely — fall through to the generic path
+        # below so we at least return a well-shaped dict rather than crashing.
 
     # Linux/Termux: existing multi-command detection
     total_ram = round(_get_ram_gb(), 1)
