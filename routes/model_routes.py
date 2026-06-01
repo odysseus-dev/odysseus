@@ -20,7 +20,7 @@ from src.endpoint_resolver import (
     normalize_base as _normalize_base,
     build_chat_url,
     build_models_url,
-    build_headers as _provider_headers,
+    build_headers,
 )
 from src.auth_helpers import owner_filter
 
@@ -196,12 +196,12 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
     elif provider == "ollama":
         from src.llm_core import _build_ollama_payload
         target_url = build_chat_url(base)
-        h = _provider_headers(api_key, base)
+        h = build_headers(api_key, base)
         h["Content-Type"] = "application/json"
         payload = _build_ollama_payload(model_id, messages, 0.0, 5, stream=False, tools=_test_tools)
     else:
         target_url = build_chat_url(base)
-        h = _provider_headers(api_key, base)
+        h = build_headers(api_key, base)
         h["Content-Type"] = "application/json"
         from src.llm_core import _uses_max_completion_tokens
         _max_key = "max_completion_tokens" if _uses_max_completion_tokens(model_id) else "max_tokens"
@@ -293,7 +293,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
             logger.warning(f"Anthropic /v1/models failed, using hardcoded list: {e}")
         return list(ANTHROPIC_MODELS)
     url = build_models_url(base)
-    headers = _provider_headers(api_key, base)
+    headers = build_headers(api_key, base)
     try:
         r = httpx.get(url, headers=headers, timeout=timeout)
         r.raise_for_status()
@@ -708,7 +708,7 @@ def setup_model_routes(model_discovery):
                     entry["model_count"] = 0
             else:
                 url = build_models_url(base)
-                headers = _provider_headers(ep.api_key, base)
+                headers = build_headers(ep.api_key, base)
                 try:
                     t0 = _time.time()
                     r = httpx.get(url, headers=headers, timeout=5)
