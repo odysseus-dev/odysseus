@@ -96,6 +96,11 @@ def test_secret_storage_corrupt_token_returns_empty(tmp_path, monkeypatch):
     assert ss.decrypt("enc:not-a-valid-fernet-token") == ""
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX mode bits (0o600) don't exist on Windows; the key file is "
+    "protected by the user-profile NTFS ACL instead, and safe_chmod no-ops there.",
+)
 def test_secret_storage_key_created_with_safe_mode(tmp_path, monkeypatch):
     """The auto-generated key file must be mode 0o600 — anyone who can
     read it can decrypt every stored secret."""
