@@ -1353,6 +1353,8 @@ export function _renderRunningTab() {
 
   const tasks = _loadTasks();
   const hasContent = tasks.length > 0;
+  const activeCount = tasks.filter(t => t.status === 'running' || t.status === 'queued').length;
+  const activeCountHtml = activeCount ? ` <span class="cookbook-tab-count">${activeCount}</span>` : '';
 
   let tabBar = body.querySelector('.cookbook-tabs');
   if (!tabBar) return;
@@ -1362,7 +1364,7 @@ export function _renderRunningTab() {
     runTab.className = 'cookbook-tab';
     runTab.dataset.backend = 'Running';
     const _errCount = tasks.filter(t => t.status === 'error' || t.status === 'crashed').length;
-    runTab.innerHTML = `Running <span class="cookbook-tab-count">${tasks.length}</span>${_errCount ? `<span class="cookbook-tab-error-dot"></span>` : ''}`;
+    runTab.innerHTML = `Running${activeCountHtml}${_errCount ? `<span class="cookbook-tab-error-dot"></span>` : ''}`;
     tabBar.insertBefore(runTab, tabBar.firstChild);
     runTab.addEventListener('click', () => {
       tabBar.querySelectorAll('.cookbook-tab').forEach(t => t.classList.remove('active'));
@@ -1373,7 +1375,7 @@ export function _renderRunningTab() {
     });
   } else if (runTab) {
     const _errCount2 = tasks.filter(t => t.status === 'error' || t.status === 'crashed').length;
-    runTab.innerHTML = tasks.length ? `Running <span class="cookbook-tab-count">${tasks.length}</span>${_errCount2 ? '<span class="cookbook-tab-error-dot"></span>' : ''}` : 'Running';
+    runTab.innerHTML = tasks.length ? `Running${activeCountHtml}${_errCount2 ? '<span class="cookbook-tab-error-dot"></span>' : ''}` : 'Running';
     if (!hasContent) {
       if (runTab.classList.contains('active')) {
         const wfTab = tabBar.querySelector('.cookbook-tab[data-backend="Search"]');
@@ -1390,7 +1392,7 @@ export function _renderRunningTab() {
     group.dataset.backendGroup = 'Running';
     group.innerHTML = '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">' +
       '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">' +
-      '<h2 style="margin:0;padding:0;line-height:1;">Running <span id="running-count" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal">' + tasks.length + '</span></h2>' +
+      '<h2 style="margin:0;padding:0;line-height:1;">Running <span id="running-count" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal">' + activeCount + '</span></h2>' +
       '</div>' +
       '<p class="memory-desc doclib-desc" style="margin-top:6px;">Active downloads and serving processes.</p>' +
       '</div>';
@@ -1402,7 +1404,7 @@ export function _renderRunningTab() {
   if (!group) return;
 
   const countEl = group.querySelector('#running-count');
-  if (countEl) countEl.textContent = tasks.length;
+  if (countEl) countEl.textContent = activeCount;
 
   if (!hasContent) {
     group.remove();
@@ -2771,6 +2773,41 @@ async function _pollBackgroundStatus() {
     if (!res.ok) return;
     const data = await res.json();
     const tasks = data.tasks || [];
+
+    // Reconcile the authoritative tmux/process status back into the persisted
+    // client task list. The Running-tab reconnect loop also does this, but it
+    // only exists while cards are rendered; after a page refresh or closed modal
+    // dependency installs could finish server-side while localStorage stayed
+    // stuck at "running".
+    try {
+      const statusById = new Map(tasks.map(t => [t.session_id, t]));
+      const localTasks = _loadTasks();
+      let changed = false;
+      const completedDeps = [];
+      for (const task of localTasks) {
+        const live = statusById.get(task.sessionId);
+        if (!live) continue;
+        const updates = {};
+        const nextStatus = live.status === 'completed'
+          ? 'done'
+          : (live.status === 'error' ? 'error' : null);
+        if (nextStatus && task.status !== nextStatus) {
+          updates.status = nextStatus;
+          if (nextStatus === 'done' && task.payload?._dep) completedDeps.push(task);
+        }
+        if (live.progress && live.progress !== task.progress) updates.progress = live.progress;
+        if (live.output_tail && live.output_tail !== task.output) updates.output = live.output_tail;
+        if (Object.keys(updates).length) {
+          Object.assign(task, updates);
+          changed = true;
+        }
+      }
+      if (changed) {
+        _saveTasks(localTasks);
+        _renderRunningTab();
+        completedDeps.forEach(t => _refreshDepsAfterInstall(t));
+      }
+    } catch (_) { /* non-fatal: background status should never break polling */ }
 
     const statusEl = document.getElementById('cookbook-bg-status');
     const activeTasks = tasks.filter(t => t.status === 'running' || t.status === 'ready');

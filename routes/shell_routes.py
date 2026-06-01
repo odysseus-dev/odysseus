@@ -838,8 +838,15 @@ def setup_shell_routes() -> APIRouter:
         """
         _require_admin(request)
         _reject_cross_site(request)
-        import importlib, importlib.metadata as importlib_metadata, shlex, json as _json
+        import importlib, importlib.metadata as importlib_metadata, shlex, json as _json, site, sys
         _prepend_user_install_bins_to_path()
+        importlib.invalidate_caches()
+        try:
+            user_site = site.getusersitepackages()
+            if user_site and os.path.isdir(user_site) and user_site not in sys.path:
+                sys.path.append(user_site)
+        except Exception:
+            pass
         if ssh_port and str(ssh_port).strip() not in ("", "22"):
             _port = str(ssh_port).strip()
             if not _SSH_PORT_RE.match(_port) or not (1 <= int(_port) <= 65535):

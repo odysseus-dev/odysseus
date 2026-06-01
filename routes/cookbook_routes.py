@@ -1972,11 +1972,17 @@ def setup_cookbook_routes() -> APIRouter:
             status = "unknown"
             if is_alive or (local_win_task and full_snapshot):
                 lower = full_snapshot.lower()
-                has_exit = "=== process exited with code" in lower
+                exit_match = re.search(r"=== process exited with code\s+(-?\d+)", full_snapshot, re.I)
+                has_exit = exit_match is not None
+                exit_code = int(exit_match.group(1)) if exit_match else None
                 has_error = "error" in lower or "failed" in lower or "traceback" in lower
                 if has_exit and task_type == "serve":
                     # Serve tasks that exit are always errors — they should run indefinitely
                     status = "error"
+                elif has_exit and task_type == "download":
+                    # Dependency installs are tracked as download tasks but only
+                    # emit the generic runner exit marker, not HF download markers.
+                    status = "completed" if exit_code == 0 else "error"
                 elif has_exit and "unrecognized arguments" in lower:
                     status = "error"
                 elif has_error and not ("application startup complete" in lower):
