@@ -65,6 +65,66 @@ def delta(text: str) -> None:
     sys.stdout.flush()
 
 
+# Odysseus brand color — a coral/salmon (256-color), distinct from Claude's orange.
+SALMON = "\033[38;5;210m"
+
+
+def _cell(text: str, width: int) -> str:
+    """Left-justify to an exact visible width (text must be plain, no ANSI)."""
+    return text[:width].ljust(width)
+
+
+def welcome_box(version: str, model: str, root: str, approval: str,
+                username: str = "") -> None:
+    """A Claude-Code-style welcome panel, branded for Odysseus (salmon)."""
+    inner = 70           # inner width between the side borders
+    lw = 30              # left column width
+    rw = inner - lw - 3  # right column width (3 = " │ ")
+
+    def border(left_ch, fill, right_ch, title=""):
+        if title:
+            t = f" {title} "
+            pad = inner - len(t) - 1
+            line = (c(left_ch + "─", SALMON) + c(t, BOLD + SALMON)
+                    + c(fill * pad + right_ch, SALMON))
+            write(line)
+        else:
+            write(c(left_ch + fill * inner + right_ch, SALMON))
+
+    def row(left: str, right: str, left_color: str = "", right_color: str = ""):
+        lc = _cell(left, lw)
+        rc = _cell(right, rw)
+        if left_color:
+            lc = c(lc, left_color)
+        if right_color:
+            rc = c(rc, right_color)
+        write(c("│", SALMON) + " " + lc + c("│", SALMON) + " " + rc + " " + c("│", SALMON))
+
+    hi = f"Welcome back, {username}!" if username else "Welcome aboard!"
+    write()
+    border("╭", "─", "╮", title=f"Odysseus CLI v{version}")
+    row("", "")
+    row(hi, "Getting started", left_color=BOLD, right_color=BOLD + SALMON)
+    row("⊹ ૮( ˶ᵔ ᵕ ᵔ˶ )っ", "• ask me to read, edit, or fix code", left_color=SALMON, right_color=GREY)
+    row("", "• /models   switch model", right_color=GREY)
+    row(model, "• /new      start a fresh chat", left_color=CYAN, right_color=GREY)
+    row(_short_path(root), "• /compact  free up context", left_color=GREY, right_color=GREY)
+    row(f"approval: {approval}", "• /help     all commands · /exit", left_color=GREY, right_color=GREY)
+    row("", "")
+    border("╰", "─", "╯")
+    write(c("  /help for commands · Ctrl-C to interrupt", GREY))
+    write()
+
+
+def _short_path(path: str) -> str:
+    """Abbreviate a path with ~ for the home directory."""
+    import os
+    home = os.path.expanduser("~")
+    if path.startswith(home):
+        path = "~" + path[len(home):]
+    return path
+
+
 def banner(model: str, endpoint: str, root: str, approval: str) -> None:
     write()
     write(c("  ⊹ Odysseus CLI", BOLD + MAGENTA))

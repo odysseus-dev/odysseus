@@ -55,6 +55,15 @@ def test_parse_sse_skips_garbage():
 
 
 # ── Approval gate ──────────────────────────────────────────────────────────
+def test_welcome_box_renders(capsys):
+    from odysseus_cli import renderer
+    renderer.welcome_box("0.1.0", "qwen2.5-coder:14b", "/tmp/proj", "ask", "Rohit")
+    out = capsys.readouterr().out
+    assert "Odysseus CLI v0.1.0" in out
+    assert "Welcome back, Rohit!" in out
+    assert "/models" in out and "/new" in out
+
+
 def test_denied_result_shape():
     from odysseus_cli.approval import _denied_result
     desc, result = _denied_result("bash")

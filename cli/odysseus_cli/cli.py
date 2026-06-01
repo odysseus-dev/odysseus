@@ -146,7 +146,10 @@ async def _drive(cfg, approval_state: ApprovalState, one_shot: str | None,
         await handle(one_shot)
         return
 
-    r.banner(cfg.model, cfg.endpoint, str(cfg.project_root), approval_state.policy)
+    username = (os.environ.get("ODYSSEUS_CLI_NAME")
+                or (os.environ.get("USER") or "").title())
+    r.welcome_box(__version__, cfg.model, str(cfg.project_root),
+                  approval_state.policy, username)
     last_models: List[str] = []  # most recent /models listing, for numeric pick
     while True:
         try:
@@ -165,10 +168,11 @@ async def _drive(cfg, approval_state: ApprovalState, one_shot: str | None,
             if cmd == "help":
                 r.write(HELP)
                 continue
-            if cmd == "clear":
+            if cmd in ("clear", "new"):
                 del messages[1:]
                 approval_state.last_usage = {}
-                r.info("history cleared.")
+                approval_state.reset_calls()
+                r.info("started a new chat." if cmd == "new" else "history cleared.")
                 continue
             if cmd == "compact":
                 if legacy:
@@ -194,16 +198,24 @@ async def _drive(cfg, approval_state: ApprovalState, one_shot: str | None,
                 for s in rows:
                     r.info(f"{s['id']}  {s['messages']}msg  {s['model']}  {s['root']}")
                 continue
-            if cmd == "models":
+            if cmd in ("models", "model") and not rest:
                 last_models = models_mod.list_models(cfg.endpoint, cfg.api_key)
                 if not last_models:
                     r.info(f"no models found at {cfg.endpoint} "
-                           "(is the server running?)")
+                           "(is Ollama running?)")
+                    continue
                 for i, name in enumerate(last_models, 1):
-                    mark = "  (current)" if name == cfg.model else ""
+                    mark = r.c("  ← current", r.GREEN) if name == cfg.model else ""
                     r.info(f"  {i}. {name}{mark}")
-                if last_models:
-                    r.info("switch with /model <number> or /model <name>")
+                try:
+                    sel = input(r.c("  switch to #  (Enter to cancel): ", r.CYAN)).strip()
+                except (EOFError, KeyboardInterrupt):
+                    sel = ""
+                if sel.isdigit() and 1 <= int(sel) <= len(last_models):
+                    cfg = cfg.with_overrides(model=last_models[int(sel) - 1])
+                    r.info(f"model → {cfg.model}")
+                elif sel:
+                    r.info("cancelled — unknown selection.")
                 continue
             if cmd == "model" and rest:
                 target = rest
