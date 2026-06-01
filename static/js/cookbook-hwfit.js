@@ -580,6 +580,28 @@ export function _hwfitRenderHw(el, sys) {
     + chip('cores', cores)
     + chip('backend', esc(sys.backend || ''))
     + manualChip;
+  // Docker Desktop runs containers in a Linux VM that can't see the host GPU
+  // and reports the VM's RAM/CPU — so on macOS the row looks like "No GPU /
+  // tiny RAM" on a capable Mac. The backend flags this (host_gpu_hidden); show
+  // a one-line explanation under the row so it reads as expected, not broken.
+  if (hwRow) {
+    let hint = document.getElementById('hwfit-host-gpu-hint');
+    if (sys.host_gpu_hidden && sys.host_gpu_hint) {
+      if (!hint) {
+        hint = document.createElement('div');
+        hint.id = 'hwfit-host-gpu-hint';
+        hint.style.cssText = 'margin-top:6px;padding:6px 10px;border-radius:8px;'
+          + 'font-size:11px;line-height:1.45;white-space:normal;'
+          + 'background:color-mix(in srgb, var(--fg) 8%, transparent);'
+          + 'color:var(--fg);opacity:0.85;';
+        hwRow.insertAdjacentElement('afterend', hint);
+      }
+      hint.textContent = sys.host_gpu_hint;
+      hint.style.display = '';
+    } else if (hint) {
+      hint.style.display = 'none';
+    }
+  }
   // Body click → toggle "off" (dimmed, still visible). Membership of
   // _dismissedHwChips is what the ranker reads, so both add+remove
   // here also flips the model list. The manual chip is excluded —

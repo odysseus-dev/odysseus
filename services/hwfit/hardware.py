@@ -281,6 +281,41 @@ def _detect_apple_silicon():
     }
 
 
+def _docker_desktop_gpu_note():
+    """When running inside Docker Desktop's Linux VM, the host GPU isn't visible
+    to the container and the RAM/CPU we probe belong to the VM, not the host.
+    On Apple Silicon this surfaces as a confusing "No GPU / tiny RAM" readout on
+    a machine that actually has a capable Metal GPU, which looks like a bug.
+
+    Detect that case (local only) so the UI can explain it instead of looking
+    broken. Signals: /.dockerenv exists AND a *-linuxkit kernel (unique to
+    Docker Desktop's VM on macOS/Windows). Returns a short hint string, else None.
+    """
+    try:
+        if not os.path.exists("/.dockerenv"):
+            return None
+    except Exception:
+        return None
+    if "linuxkit" not in platform.release().lower():
+        return None
+    # aarch64 + linuxkit ⇒ almost certainly an Apple Silicon macOS host, where
+    # the native path (start-macos.sh) gives Metal acceleration. Other arches
+    # fall back to a host-agnostic message (Docker Desktop also runs on Windows).
+    arch = platform.machine().lower()
+    if "aarch64" in arch or "arm" in arch:
+        return (
+            "Running inside Docker, which can't access the macOS Metal GPU. "
+            "For GPU-accelerated local models, run Odysseus natively with "
+            "./start-macos.sh, or point Chat at a host model runner like "
+            "Ollama (http://host.docker.internal:11434/v1)."
+        )
+    return (
+        "Running inside Docker Desktop, which can't access the host GPU. For "
+        "GPU acceleration, run Odysseus natively on the host, or point Chat at "
+        "a host model runner like Ollama (http://host.docker.internal:11434/v1)."
+    )
+
+
 def _read_file(path):
     """Read a file, locally or via SSH."""
     if _remote_host:
@@ -593,6 +628,14 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             # of the misleading "No GPU".
             "gpu_error": _last_gpu_error,
         }
+
+    # Local container-on-host case: explain why the GPU is missing and the
+    # RAM/CPU look small, rather than leaving a confusing "No GPU" readout.
+    if not _remote_host and not result.get("has_gpu"):
+        _note = _docker_desktop_gpu_note()
+        if _note:
+            result["host_gpu_hidden"] = True
+            result["host_gpu_hint"] = _note
 
     _remote_host = None
     _remote_platform = None
