@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import anyio
 import asyncio
 import inspect
 import json
@@ -157,7 +158,12 @@ async def _run_surface_inner(
         if inspect.iscoroutinefunction(searcher):
             value = await searcher(query, limit, owner, request)
         else:
-            value = await asyncio.to_thread(searcher, query, limit, owner, request)
+            # Run blocking searchers on anyio's portal-managed worker pool rather
+            # than asyncio.to_thread. anyio's workers are daemon threads tied to
+            # the running event loop, so they are torn down with the loop and
+            # never block interpreter/TestClient shutdown the way the default
+            # asyncio executor can.
+            value = await anyio.to_thread.run_sync(searcher, query, limit, owner, request)
             if inspect.isawaitable(value):
                 value = await value
         return [r for r in (value or []) if r]
