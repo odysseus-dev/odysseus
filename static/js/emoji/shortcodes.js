@@ -24,11 +24,29 @@ export const EMOJI_SHORTCODES = {
 
 const _SHORTCODE_RE = /:([a-z0-9_+-]+):/gi;
 
-export function replaceEmojiShortcodes(text) {
-  if (!text) return text;
+function _replaceInText(text) {
   return text.replace(_SHORTCODE_RE, (match, name) =>
     Object.prototype.hasOwnProperty.call(EMOJI_SHORTCODES, name.toLowerCase())
       ? EMOJI_SHORTCODES[name.toLowerCase()]
       : match,
   );
+}
+
+// Operates on rendered HTML: only rewrites text outside tags and skips the
+// contents of <code>/<pre> so shortcodes shown inside code samples stay
+// literal (e.g. a `:rocket:` in a snippet must not turn into 🚀).
+export function replaceEmojiShortcodes(html) {
+  if (!html || html.indexOf(':') === -1) return html;
+  const parts = html.split(/(<[^>]*>)/); // odd indices = tags
+  let codeDepth = 0;
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 1) {
+      const t = parts[i].toLowerCase();
+      if (/^<(pre|code)[\s>]/.test(t)) codeDepth++;
+      else if (/^<\/(pre|code)\s*>/.test(t)) codeDepth = Math.max(0, codeDepth - 1);
+      continue;
+    }
+    if (codeDepth === 0) parts[i] = _replaceInText(parts[i]);
+  }
+  return parts.join('');
 }
