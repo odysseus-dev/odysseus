@@ -110,6 +110,7 @@ import * as Modals from './modalManager.js';
   // Multi-document state
   let activeDocId = null;           // currently visible doc
   let _lastSessionId = '';          // session context for "+" button
+  let _docHashRouteBound = false;
   const docs = new Map();           // docId -> { id, title, language, content, version, sessionId }
 
   const _docOpenKey = (sessionId) => 'odysseus-doc-open-' + sessionId;
@@ -152,6 +153,20 @@ import * as Modals from './modalManager.js';
       addDocToTabs,
       syncDocIndicator: _syncDocIndicator,
     });
+    if (!_docHashRouteBound) {
+      _docHashRouteBound = true;
+      window.addEventListener('hashchange', _maybeOpenDocumentFromHash);
+      _maybeOpenDocumentFromHash();
+    }
+  }
+
+  function _maybeOpenDocumentFromHash() {
+    const hash = window.location.hash || '';
+    const match = hash.match(/^#document-(.+)$/);
+    if (!match) return;
+    const docId = decodeURIComponent(match[1] || '').trim();
+    if (!docId) return;
+    void loadDocument(docId);
   }
 
   /** Update overflow-doc-btn accent indicator, toolbar indicator, and session list icon */
@@ -5818,6 +5833,12 @@ import * as Modals from './modalManager.js';
       switchToDoc(doc.id);
     } catch (e) {
       console.error('Failed to load document:', e);
+      if (uiModule) {
+        const isMissing = e && typeof e.message === 'string' && e.message === 'Not found';
+        uiModule.showError(isMissing
+          ? 'Document not found. Try opening it from the Documents tab.'
+          : 'Failed to load document.');
+      }
     }
   }
 
