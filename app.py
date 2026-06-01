@@ -21,6 +21,7 @@ import uuid
 
 import asyncio
 import logging
+import secrets
 from datetime import datetime
 from typing import Dict
 
@@ -222,7 +223,7 @@ if AUTH_ENABLED:
             try:
                 from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN as _ITT
                 _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
-                if _hdr and _hdr == _ITT and _is_trusted_loopback(request):
+                if _hdr and secrets.compare_digest(_hdr, _ITT) and _is_trusted_loopback(request):
                     # Impersonation: when the agent's loopback call sets
                     # X-Odysseus-Owner, attribute the request to that user only
                     # if they exist. Authorization checks remain separate; this

@@ -2429,7 +2429,7 @@ function _renderTurnsAsBubbles(turns, data) {
       + (isMine ? '' : avatar)
       + `<div class="email-bubble">`
       +   head
-      +   `<div class="email-bubble-body">${t.body_html || ''}</div>`
+      +   `<div class="email-bubble-body">${_sanitizeHtml(t.body_html || '')}</div>`
       + `</div>`
       + (isMine ? avatar : '')
       + `</div>`
@@ -2459,7 +2459,7 @@ function _renderTurnsFromServer(turns) {
         const w = wrap(top);
         if (stack.length) stack[stack.length - 1].html += w; else out += w;
       }
-      out += t.body_html || '';
+      out += _sanitizeHtml(t.body_html || '');
     } else {
       while (stack.length && stack[stack.length - 1].level > t.level) {
         const top = stack.pop();
@@ -2467,9 +2467,9 @@ function _renderTurnsFromServer(turns) {
         if (stack.length) stack[stack.length - 1].html += w; else out += w;
       }
       if (!stack.length || stack[stack.length - 1].level < t.level) {
-        stack.push({ level: t.level, meta: t.meta, html: t.body_html || '' });
+        stack.push({ level: t.level, meta: t.meta, html: _sanitizeHtml(t.body_html || '') });
       } else {
-        stack[stack.length - 1].html += t.body_html || '';
+        stack[stack.length - 1].html += _sanitizeHtml(t.body_html || '');
         if (t.meta && !stack[stack.length - 1].meta) {
           stack[stack.length - 1].meta = t.meta;
         }
