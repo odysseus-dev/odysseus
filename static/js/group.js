@@ -7,6 +7,7 @@ import chatRenderer from './chatRenderer.js';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { PROMPT_TEMPLATES, getAllPresets } from './presets.js';
+import { sortModelObjects } from './modelSort.js';
 
 let API_BASE = '';
 let _active = false;
@@ -55,7 +56,7 @@ function _initGroupTab() {
         result.push({ mid, display: display.split('/').pop(), url: item.url, endpointId: item.endpoint_id });
       });
     });
-    _modelsCache = result;
+    _modelsCache = sortModelObjects(result);
     return result;
   }
 
@@ -412,7 +413,7 @@ export async function showModelPicker() {
           result.push({ mid, display: display.split('/').pop(), url: item.url, endpointId: item.endpoint_id, epName: item.endpoint_name || '' });
         });
       });
-      _cachedModels = result;
+      _cachedModels = sortModelObjects(result);
       return result;
     }
 

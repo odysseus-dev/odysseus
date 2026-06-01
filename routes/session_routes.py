@@ -227,6 +227,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         )
         # Set auth headers for custom API-key endpoints
         resolved_key = api_key.strip() if api_key else ""
+        resolved_base = endpoint_url
         if not resolved_key and endpoint_id and endpoint_id.strip():
             from core.database import ModelEndpoint
             _db = SessionLocal()
@@ -234,10 +235,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id.strip()).first()
                 if ep and ep.api_key:
                     resolved_key = ep.api_key
+                    resolved_base = ep.base_url
             finally:
                 _db.close()
         if resolved_key:
-            session.headers = {"Authorization": f"Bearer {resolved_key}"}
+            from src.endpoint_resolver import build_headers
+            session.headers = build_headers(resolved_key, resolved_base)
             session_manager.save_sessions()
         # Fire webhook (sync-safe)
         if webhook_manager:

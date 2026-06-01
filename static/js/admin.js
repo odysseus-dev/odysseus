@@ -4,6 +4,7 @@
 import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { providerLogo } from './providers.js';
+import { sortModelObjects } from './modelSort.js';
 
 let initialized = false;
 let modalEl = null;
@@ -179,7 +180,7 @@ async function _loadModelsForUser(username, allowedSet, privPanel) {
       return;
     }
     const allEmpty = allowedSet.size === 0;
-    listEl.innerHTML = allModels.map(m => {
+    listEl.innerHTML = sortModelObjects(allModels).map(m => {
       const checked = allEmpty || allowedSet.has(m.mid) ? 'checked' : '';
       return `<label>
         <input type="checkbox" class="priv-model-cb" data-mid="${esc(m.mid)}" ${checked}>
@@ -339,6 +340,9 @@ async function loadEndpoints() {
         window.sessionModule.updateModelPicker();
       }
     }, 1500);
+  }
+  if (settingsModule && typeof settingsModule.refreshAiModelEndpoints === 'function') {
+    settingsModule.refreshAiModelEndpoints();
   }
   try {
     const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
@@ -515,17 +519,18 @@ async function loadEndpoints() {
             const res = await fetch(`/api/model-endpoints/${epId}/models`, { credentials: 'same-origin' });
             const models = await res.json();
             _stopSpin();
-            if (!models.length) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px;">No models</span>'; return; }
-            const hiddenSet = new Set(models.filter(m => m.is_hidden).map(m => m.id));
-            const showSearch = models.length >= 8;
+            const sortedModels = sortModelObjects(models);
+            if (!sortedModels.length) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px;">No models</span>'; return; }
+            const hiddenSet = new Set(sortedModels.filter(m => m.is_hidden).map(m => m.id));
+            const showSearch = sortedModels.length >= 8;
             panel.innerHTML = `<div class="mcp-tools-header">
               <span>Models</span>
               <span style="display:flex;gap:8px;align-items:center;">
-                <span class="mcp-tools-count">${models.length - hiddenSet.size}/${models.length} enabled</span>
+                <span class="mcp-tools-count">${sortedModels.length - hiddenSet.size}/${sortedModels.length} enabled</span>
                 <a href="#" data-ep-select-all="${epId}">All</a>
                 <a href="#" data-ep-select-none="${epId}">None</a>
               </span>
-            </div>${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${models.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + models.map(m =>
+            </div>${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map(m =>
               `<label title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row">
                 <input type="checkbox" class="adm-cb-hidden" data-ep-model-id="${esc(m.id)}" ${!m.is_hidden ? 'checked' : ''}>
                 <span class="adm-check-dot" aria-hidden="true"></span>
@@ -585,6 +590,9 @@ async function _saveEpModelState(epId, panel) {
     if (row) {
       const badge = row.querySelector('.admin-badge');
       if (badge && !badge.classList.contains('admin-badge-off')) badge.textContent = `${total - hidden.length}/${total} models enabled`;
+    }
+    if (settingsModule && typeof settingsModule.refreshAiModelEndpoints === 'function') {
+      settingsModule.refreshAiModelEndpoints();
     }
   } catch (e) { /* silent */ }
 }
@@ -665,12 +673,19 @@ function initEndpointForm() {
     // Strip trailing paths that shouldn't be in a base URL
     u = u.replace(/\/v1\/(models|chat\/completions|completions|messages)\/?$/i, '/v1');
     u = u.replace(/\/(models|chat\/completions|completions|v1\/messages)\/?$/i, '');
+    u = u.replace(/\/api\/(chat|tags|generate)\/?$/i, '/api');
     // Fix double /v1/v1
     u = u.replace(/\/v1\/v1$/, '/v1');
     // Strip query params and fragments
     u = u.split('?')[0].split('#')[0];
+    try {
+      const parsed = new URL(u);
+      if (parsed.hostname.endsWith('ollama.com')) {
+        u = 'https://ollama.com/api';
+      }
+    } catch(e) {}
     // Ensure /v1 suffix for bare host:port URLs (not cloud providers)
-    if (!u.includes('api.') && !u.includes('openrouter') && !u.endsWith('/v1')) {
+    if (!u.includes('api.') && !u.includes('openrouter') && !u.includes('ollama.com') && !u.endsWith('/v1')) {
       try {
         const parsed = new URL(u);
         if (!parsed.pathname || parsed.pathname === '/') {
@@ -777,9 +792,13 @@ function initEndpointForm() {
       const fd = new FormData();
       fd.append('base_url', url);
       if (apiKey) fd.append('api_key', apiKey);
+      if (provider.value && provider.selectedOptions && provider.selectedOptions[0]) {
+        fd.append('name', provider.selectedOptions[0].textContent.trim());
+      }
       const epType = el('adm-epType');
       if (epType) fd.append('model_type', epType.value);
-      fd.append('skip_probe', 'false');
+      if (provider.value && /openrouter\.ai|ollama\.com/i.test(provider.value)) fd.append('require_models', 'true');
+      else fd.append('skip_probe', 'false');
       const res = await fetch('/api/model-endpoints', { method: 'POST', body: fd, credentials: 'same-origin' });
       const d = await res.json();
       if (res.ok) {

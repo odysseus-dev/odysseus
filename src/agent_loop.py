@@ -450,6 +450,7 @@ _API_HOSTS = frozenset([
     "api.deepseek.com", "deepseek.com",
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
+    "ollama.com",
 ])
 _MCP_KEYWORDS = frozenset(["browse", "browser", "website", "calendar", "event", "email",
                            "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])

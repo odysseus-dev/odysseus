@@ -6,6 +6,7 @@ import uiModule from './ui.js';
 import markdownModule from './markdown.js';
 import * as spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import { sortModelIds } from './modelSort.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -1259,7 +1260,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         if (it.offline || !it.models || it.models.length === 0) continue;
         const group = document.createElement('optgroup');
         group.label = it.endpoint_name || it.host || 'endpoint';
-        const all = [...(it.models || []), ...(it.models_extra || [])];
+        const all = sortModelIds([...(it.models || []), ...(it.models_extra || [])]);
         for (const m of all) {
           const opt = document.createElement('option');
           opt.value = `${it.url}::${m}`;
