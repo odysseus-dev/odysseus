@@ -1,6 +1,30 @@
 /* ============================================ */
 /* Odysseus UI — Consolidated Stylesheet        */
 /* ============================================ */
+/*
+ * ⚠️ CSS CLEANUP TODO (ROADMAP):
+ * 
+ * This file is ~34K lines with extensive mobile @media overrides.
+ * Common issues to address in future cleanup:
+ * 
+ * 1. MOBILE OVERRIDE PATTERN: Many selectors have paired desktop/mobile rules.
+ *    Example: `.modal-content` at line 4559 has a @media (max-width: 768px) override
+ *    at line 4668. When debugging "CSS didn't move" bugs, check BOTH locations.
+ * 
+ * 2. DEAD CODE: Old routes, feature flags, and UI states may have orphaned styles.
+ *    Safe deletion requires visual regression testing across all tool modals.
+ * 
+ * 3. DUPLICATE RULES: Some selectors appear multiple times (e.g., `.admin-card`,
+ *    `.modal-header`). Consolidate after confirming no intentional cascade.
+ * 
+ * 4. MAGIC NUMBERS: Hardcoded widths/heights that should use CSS variables.
+ *    Example: `width: 520px` should be `var(--modal-width, 520px)`.
+ * 
+ * Tools for cleanup:
+ *   - PostCSS with unused CSS detection (PurgeCSS)
+ *   - Chrome DevTools Coverage tab
+ *   - Visual regression tests before/after changes
+ */
 
 
 /* ── Variables ──
@@ -4570,6 +4594,10 @@ body.bg-pattern-sparkles {
       box-shadow:0 8px 32px rgba(0,0,0,0.45);
       pointer-events:auto;
       animation: modal-enter 0.25s ease-out both;
+      /* Allow manual resizing — Issue #392 */
+      resize: both;
+      min-width: 320px;
+      min-height: 200px;
     }
     .modal-header {
       display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;

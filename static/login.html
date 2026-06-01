@@ -162,6 +162,21 @@
   button:hover { background: color-mix(in srgb, var(--red) 85%, black); }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   .error { color: #e55; font-size: 0.85rem; margin-bottom: 0.75rem; display: none; }
+  .info {
+    background: color-mix(in srgb, var(--panel) 70%, transparent);
+    border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent);
+    border-radius: 6px; padding: 0.6rem 0.75rem;
+    font-size: 0.8rem; color: color-mix(in srgb, var(--fg) 70%, transparent);
+    display: none; align-items: center; gap: 0.5rem;
+    margin-bottom: 1rem; position: relative;
+  }
+  .info svg { flex-shrink: 0; opacity: 0.7; }
+  .info span { flex: 1; line-height: 1.3; }
+  .close-help {
+    background: none; border: none; color: color-mix(in srgb, var(--fg) 40%, transparent);
+    font-size: 1.2rem; cursor: pointer; padding: 0; width: auto; line-height: 1;
+  }
+  .close-help:hover { color: var(--fg); background: none; }
   .toggle { text-align: center; margin-top: calc(1rem + 4px); font-size: 0.85rem; color: color-mix(in srgb, var(--fg) 50%, transparent); }
   .toggle a { color: var(--red); cursor: pointer; text-decoration: none; }
   .toggle a:hover { text-decoration: underline; }
@@ -231,6 +246,12 @@
 
   <div class="error" id="error"></div>
 
+  <div class="info" id="passwordHelp" style="display:none">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    <span>First time? Your temporary password was printed in the terminal during setup. Check your Docker logs or terminal output.</span>
+    <button type="button" class="close-help" id="closePasswordHelp" aria-label="Dismiss">×</button>
+  </div>
+
   <form id="authForm" autocomplete="on">
     <label for="username">Username</label>
     <div class="pw-wrapper">
@@ -297,6 +318,19 @@
   const toggleArea = document.getElementById('toggleArea');
   const toggleLink = document.getElementById('toggleLink');
   const toggleText = document.getElementById('toggleText');
+  const passwordHelp = document.getElementById('passwordHelp');
+  const closePasswordHelp = document.getElementById('closePasswordHelp');
+
+  // Show password help on login mode (first-time users)
+  function showPasswordHelp() {
+    if (passwordHelp) passwordHelp.style.display = 'flex';
+  }
+  function hidePasswordHelp() {
+    if (passwordHelp) passwordHelp.style.display = 'none';
+  }
+  if (closePasswordHelp) {
+    closePasswordHelp.addEventListener('click', hidePasswordHelp);
+  }
 
   let mode = 'login'; // 'login' | 'signup' | 'setup'
   let signupAllowed = false;
@@ -313,6 +347,7 @@
       submitBtn.textContent = 'Create Admin Account';
       toggleArea.style.display = 'none';
       rememberToggle.style.display = 'none';
+      hidePasswordHelp();
     } else if (m === 'signup') {
       setupNote.style.display = 'none';
       confirmGroup.style.display = 'block';
@@ -321,6 +356,7 @@
       toggleText.textContent = 'Already have an account? ';
       toggleLink.textContent = 'Sign in';
       rememberToggle.style.display = 'none';
+      hidePasswordHelp();
     } else {
       setupNote.style.display = 'none';
       confirmGroup.style.display = 'none';
@@ -329,6 +365,7 @@
       toggleText.textContent = "Don't have an account? ";
       toggleLink.textContent = 'Sign up';
       rememberToggle.style.display = '';
+      showPasswordHelp();
     }
   }
 
