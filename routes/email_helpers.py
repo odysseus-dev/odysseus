@@ -15,6 +15,7 @@ and `email_pollers.py` (the background loops):
 import os
 import imaplib
 import smtplib
+import ssl
 import email as email_mod
 import email.header
 import email.utils
@@ -50,17 +51,29 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
     port = int(cfg.get("smtp_port") or 465)
     user = cfg.get("smtp_user") or ""
     password = cfg.get("smtp_password") or ""
-    if port == 587:
-        with smtplib.SMTP(host, port, timeout=timeout) as smtp:
+    def _send_starttls(starttls_port: int = 587) -> None:
+        with smtplib.SMTP(host, starttls_port, timeout=timeout) as smtp:
             smtp.starttls()
             if user and password:
                 smtp.login(user, password)
             smtp.sendmail(from_addr, recipients, message)
+
+    if port == 587:
+        _send_starttls(587)
         return
-    with smtplib.SMTP_SSL(host, port, timeout=timeout) as smtp:
-        if user and password:
-            smtp.login(user, password)
-        smtp.sendmail(from_addr, recipients, message)
+
+    try:
+        with smtplib.SMTP_SSL(host, port, timeout=timeout) as smtp:
+            if user and password:
+                smtp.login(user, password)
+            smtp.sendmail(from_addr, recipients, message)
+        return
+    except (TimeoutError, ssl.SSLError) as e:
+        if port == 465:
+            logger.warning("SMTP implicit TLS on %s:465 failed (%s); retrying STARTTLS on 587", host, e)
+            _send_starttls(587)
+            return
+        raise
 
 
 def _strip_think(text: str) -> str:
@@ -82,8 +95,8 @@ def _strip_think(text: str) -> str:
 import re as _re_reply
 # Accept REPLY / SUMMARY / OUTPUT as the opening fence so the same extractor
 # serves replies and summaries (any fenced final-output block).
-_REPLY_OPEN_RE = _re_reply.compile(r"<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>>", _re_reply.I)
-_REPLY_CLOSE_RE = _re_reply.compile(r"<<<\s*END\s*>>>", _re_reply.I)
+_REPLY_OPEN_RE = _re_reply.compile(r"<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+", _re_reply.I)
+_REPLY_CLOSE_RE = _re_reply.compile(r"<<<\s*END\s*>>+", _re_reply.I)
 
 
 def _extract_reply(text: str) -> str:

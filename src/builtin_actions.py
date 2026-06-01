@@ -469,7 +469,12 @@ async def action_draft_email_replies(owner: str, **kwargs) -> Tuple[str, bool]:
     """Run one pass of AI reply drafting."""
     try:
         from routes.email_pollers import _run_auto_summarize_once
-        result = await _run_auto_summarize_once(do_summary=False, do_reply=True)
+        result = await _run_auto_summarize_once(
+            do_summary=False,
+            do_reply=True,
+            days_back=7,
+            progress_cb=kwargs.get("progress_cb"),
+        )
         if not _result_has_work(result):
             raise TaskNoop(f"draft replies: {result or 'no new emails'}")
         return result, True

@@ -1198,7 +1198,7 @@ def setup_email_routes():
                     (message_id.strip(),),
                 ).fetchone()
                 if _row2:
-                    cached_ai_reply = _row2[0]
+                    cached_ai_reply = _apply_email_style_mechanics(_extract_reply(_row2[0] or ""))
                 _row3 = _c.execute(
                     "SELECT sig_start, quote_start, turns_json FROM email_boundaries WHERE message_id = ?",
                     (message_id.strip(),),
@@ -1254,6 +1254,7 @@ def setup_email_routes():
 
             return {
                 "uid": uid,
+                "folder": folder,
                 "message_id": message_id.strip(),
                 "subject": subject,
                 "from_name": sender_name or sender_addr,
@@ -2539,9 +2540,30 @@ def setup_email_routes():
             message_id = (data.get("message_id") or "").strip()
             source_uid = (data.get("uid") or "").strip()
             source_folder = (data.get("folder") or "INBOX").strip()
+            fast_reply = bool(data.get("fast", False))
 
             if not original_body:
                 return {"success": False, "error": "No email body provided"}
+
+            if message_id:
+                try:
+                    _c = _sql3.connect(SCHEDULED_DB)
+                    _row = _c.execute(
+                        "SELECT reply, model_used FROM email_ai_replies WHERE message_id = ?",
+                        (message_id,),
+                    ).fetchone()
+                    _c.close()
+                    if _row and _row[0]:
+                        cached_reply = _apply_email_style_mechanics(_extract_reply(_row[0] or ""))
+                        if cached_reply:
+                            return {
+                                "success": True,
+                                "reply": cached_reply,
+                                "model_used": _row[1] or "cached",
+                                "cached": True,
+                            }
+                except Exception as e:
+                    logger.warning(f"AI reply cache lookup failed: {e}")
 
             settings = _load_settings()
             style = settings.get("email_writing_style", "")
@@ -2618,8 +2640,12 @@ def setup_email_routes():
 
             logger.info(f"AI reply using model={model} url={url}")
 
-            # Pre-retrieval: mine names/topics from the original email, search past mail + contacts
-            context_snippets, _terms = _pre_retrieve_context(original_body, to)
+            # Manual AI Reply should feel immediate. The heavier context mining
+            # can involve multiple IMAP folder searches and attachment parsing;
+            # reserve that for callers that explicitly opt out of fast mode.
+            context_snippets, _terms = ([], [])
+            if not fast_reply:
+                context_snippets, _terms = _pre_retrieve_context(original_body, to)
 
             # NEW: also pull the last few emails from the original sender +
             # their attachments. The "to" field on this endpoint is the
@@ -2627,16 +2653,17 @@ def setup_email_routes():
             # sender we're answering. So `to` doubles as the address we want
             # the thread context for.
             referenced = ""
-            try:
-                from_addr_for_ctx = email.utils.parseaddr(to or "")[1]
-                referenced = _fetch_sender_thread_context(
-                    sender_addr=from_addr_for_ctx,
-                    exclude_uid=source_uid,
-                    exclude_folder=source_folder,
-                    limit=3,
-                )
-            except Exception as _e:
-                logger.warning(f"sender-thread-context failed: {_e}")
+            if not fast_reply:
+                try:
+                    from_addr_for_ctx = email.utils.parseaddr(to or "")[1]
+                    referenced = _fetch_sender_thread_context(
+                        sender_addr=from_addr_for_ctx,
+                        exclude_uid=source_uid,
+                        exclude_folder=source_folder,
+                        limit=3,
+                    )
+                except Exception as _e:
+                    logger.warning(f"sender-thread-context failed: {_e}")
 
             system_prompt = _EMAIL_REPLY_SYS_PROMPT_BASE
             if style:
@@ -2705,12 +2732,8 @@ def setup_email_routes():
                         {"role": "user", "content": user_msg},
                     ],
                     temperature=0.7,
-                    # Match the background poller's reply budget (16384). The old
-                    # 4096 cap let a local reasoning model (Qwen3 / R1) spend the
-                    # whole budget inside <think>, so _strip_think left nothing —
-                    # surfacing as "LLM returned empty response".
-                    max_tokens=16384,
-                    timeout=300,
+                    max_tokens=1024 if fast_reply else 6144,
+                    timeout=60 if fast_reply else 180,
                 )
             except Exception as e:
                 detail = getattr(e, "detail", None) or str(e)
@@ -2724,7 +2747,6 @@ def setup_email_routes():
             # Cache so next click is instant
             if message_id:
                 try:
-                    import sqlite3 as _sql3
                     _c = _sql3.connect(SCHEDULED_DB)
                     _c.execute("""
                         INSERT OR REPLACE INTO email_ai_replies

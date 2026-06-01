@@ -84,8 +84,6 @@ window.addEventListener('email-answered', (e) => {
 function _toggleUnreadEmails() {
   if (state._libFolder === '__scheduled__') state._libFolder = 'INBOX';
   state._libFilter = state._libFilter === 'unread' ? 'all' : 'unread';
-  state._libOffset = 0;
-  state._libEmails = [];
   _syncUnreadWindowGlow();
   const folderEl = document.getElementById('email-lib-folder');
   const filterEl = document.getElementById('email-lib-filter');
@@ -93,7 +91,7 @@ function _toggleUnreadEmails() {
   if (filterEl) filterEl.value = state._libFilter;
   document.getElementById('email-undone-btn')?.classList.remove('active');
   document.getElementById('email-reminder-btn')?.classList.remove('active');
-  _loadEmails();
+  _loadEmailsFresh();
 }
 
 function _syncUnreadTabBadge(count) {
@@ -433,6 +431,22 @@ function _libCachePut(key, value) {
   }
 }
 
+function _resetEmailListForFreshLoad() {
+  state._libOffset = 0;
+  state._libEmails = [];
+  state._libTotal = 0;
+  _libLoadSeq += 1;
+  const grid = document.getElementById('email-lib-grid');
+  if (grid) grid.innerHTML = '';
+  const stats = document.getElementById('email-lib-stats');
+  if (stats) stats.textContent = 'Loading...';
+}
+
+function _loadEmailsFresh() {
+  _resetEmailListForFreshLoad();
+  return _loadEmails({ force: true, useCache: false });
+}
+
 export function prewarmEmailLibrary({ delay = 2500 } = {}) {
   if (_libPrewarmTimer || _libPrewarmPromise) return;
   const elapsed = Date.now() - _libLastPrewarmAt;
@@ -742,17 +756,13 @@ export function openEmailLibrary(opts = {}) {
 
   document.getElementById('email-lib-folder').addEventListener('change', (e) => {
     state._libFolder = e.target.value;
-    state._libOffset = 0;
-    state._libEmails = [];
-    _loadEmails();
+    _loadEmailsFresh();
   });
   document.getElementById('email-lib-filter').addEventListener('change', (e) => {
     state._libFilter = e.target.value;
-    state._libOffset = 0;
-    state._libEmails = [];
     _syncUnreadWindowGlow();
     _syncReminderClearButton();
-    _loadEmails();
+    _loadEmailsFresh();
     // Sync quick-toggle active states so they mirror the dropdown.
     document.getElementById('email-undone-btn')?.classList.toggle('active', state._libFilter === 'undone');
     document.getElementById('email-reminder-btn')?.classList.toggle('active', state._libFilter === 'reminders');
@@ -761,10 +771,8 @@ export function openEmailLibrary(opts = {}) {
     const btn = document.getElementById('email-attach-btn');
     state._libHasAttachments = !state._libHasAttachments;
     btn?.classList.toggle('active', state._libHasAttachments);
-    state._libOffset = 0;
-    state._libEmails = [];
     _syncReminderClearButton();
-    _loadEmails();
+    _loadEmailsFresh();
   });
   document.getElementById('email-reminders-clear-btn')?.addEventListener('click', async () => {
     const ok = await styledConfirm('Permanently delete all Odysseus reminder emails?', {
@@ -790,10 +798,8 @@ export function openEmailLibrary(opts = {}) {
       const filterEl = document.getElementById('email-lib-filter');
       if (filterEl) filterEl.value = 'all';
       document.getElementById('email-reminder-btn')?.classList.remove('active');
-      state._libOffset = 0;
-      state._libEmails = [];
       _syncReminderClearButton();
-      _loadEmails();
+      _loadEmailsFresh();
     } catch (err) {
       console.error(err);
       showToast('Failed to clear reminder emails');
@@ -812,11 +818,9 @@ export function openEmailLibrary(opts = {}) {
       btn.classList.add('active');
       document.getElementById('email-reminder-btn')?.classList.remove('active');
     }
-    state._libOffset = 0;
-    state._libEmails = [];
     _syncUnreadWindowGlow();
     _syncReminderClearButton();
-    _loadEmails();
+    _loadEmailsFresh();
   });
   document.getElementById('email-reminder-btn')?.addEventListener('click', () => {
     const btn = document.getElementById('email-reminder-btn');
@@ -831,11 +835,9 @@ export function openEmailLibrary(opts = {}) {
       btn.classList.add('active');
       document.getElementById('email-undone-btn')?.classList.remove('active');
     }
-    state._libOffset = 0;
-    state._libEmails = [];
     _syncUnreadWindowGlow();
     _syncReminderClearButton();
-    _loadEmails();
+    _loadEmailsFresh();
   });
   // The old "sort" dropdown (Latest / Unread first / Favorites first) was merged
   // into the filter dropdown above — "Favorites" is now a filter (server-side
@@ -1081,8 +1083,6 @@ function _renderAccountsStrip() {
   const strip = document.getElementById('email-lib-accounts');
   if (!strip) return;
   strip.style.display = 'flex';
-  // No accounts loaded yet — leave the row empty (New button still shows alongside).
-  if (!state._libAccounts.length) { strip.innerHTML = ''; return; }
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const allActive = !state._libAccountId ? ' active' : '';
   let html = `<button class="memory-toolbar-btn gallery-chip${allActive}" data-acc-id="">All (default)</button>`;
@@ -1096,11 +1096,10 @@ function _renderAccountsStrip() {
     btn.addEventListener('click', async () => {
       state._libAccountId = btn.dataset.accId || null;
       _publishActiveAccount();
-      state._libOffset = 0;
-      state._libEmails = [];
+      _resetEmailListForFreshLoad();
       _renderAccountsStrip();
       await _loadFolders({ resetMissing: true });
-      _loadEmails({ force: true });
+      _loadEmails({ force: true, useCache: false });
     });
   });
   _publishActiveAccount();
@@ -1358,7 +1357,7 @@ async function _refreshUnreadBadge() {
   } catch (_) { _syncUnreadTabBadge(0); }
 }
 
-async function _loadEmails({ force = false } = {}) {
+async function _loadEmails({ force = false, useCache = true } = {}) {
   const seq = ++_libLoadSeq;
   state._libLoading = true;
   const accountAtStart = state._libAccountId || '';
@@ -1375,15 +1374,16 @@ async function _loadEmails({ force = false } = {}) {
   // paint the cached list immediately (no spinner, no blank grid) and
   // then quietly refetch behind it. Pagination, search, and the
   // scheduled virtual folder skip the cache and use the old spinner
-  // path. `force` (Refresh button) still consults the cache for
+  // path. `force` (Refresh button) can still consult the cache for
   // perceptual continuity, but adds a cache-buster so the server's 8s
-  // list cache is bypassed too.
+  // list cache is bypassed too. Account/folder/filter changes pass
+  // `useCache: false` so stale rows from the previous view never flash.
   const cacheable =
     offsetAtStart === 0 &&
     !searchAtStart &&
     folderAtStart !== '__scheduled__';
   const ck = cacheable ? _libCacheKey() : null;
-  const cached = cacheable ? _libCacheGet(ck) : null;
+  const cached = (useCache && cacheable) ? _libCacheGet(ck) : null;
 
   let sp = null;
   if (cached) {
@@ -1881,6 +1881,9 @@ function _prefetchAdjacentEmails(card, count = 3) {
 }
 
 async function _toggleCardPreview(card, em) {
+  const accountAtStart = state._libAccountId || '';
+  const folderAtStart = state._libFolder || 'INBOX';
+  const uidAtStart = String(em?.uid || card?.dataset?.uid || '');
   const grid = card.closest('.doclib-grid');
   const gridRect = grid?.getBoundingClientRect?.();
   const modal = document.getElementById('email-lib-modal');
@@ -1921,7 +1924,7 @@ async function _toggleCardPreview(card, em) {
   card.style.minHeight = `${Math.round(stableOpenHeight)}px`;
   if (!em.is_read) {
     _syncEmailReadState(em.uid, true);
-    fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' })
+    fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(folderAtStart)}${_acct()}`, { method: 'POST' })
       .catch(err => console.error('Failed to mark email read:', err));
   }
   // Class hook on the modal so the header-hide / padding rules work on
@@ -1944,8 +1947,17 @@ async function _toggleCardPreview(card, em) {
   card.appendChild(reader);
 
   try {
-    const res = await fetch(`${API_BASE}/api/email/read/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`);
+    const res = await fetch(`${API_BASE}/api/email/read/${em.uid}?folder=${encodeURIComponent(folderAtStart)}${_acct()}`);
     const data = await res.json();
+    if (
+      accountAtStart !== (state._libAccountId || '') ||
+      folderAtStart !== (state._libFolder || 'INBOX') ||
+      uidAtStart !== String(card?.dataset?.uid || '') ||
+      !card.isConnected ||
+      !card.classList.contains('email-card-expanded')
+    ) {
+      return;
+    }
     if (data.error) {
       reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">Error: ${_esc(data.error)}</div>`;
       return;
@@ -2013,7 +2025,7 @@ async function _toggleCardPreview(card, em) {
         </div>
       </div>
       ${attsHtml}
-      <div class="email-reader-body${data.body_html ? ' html-body' : ''}">${_renderEmailBody(data)}</div>
+      <div class="email-reader-body${data.body_html ? ' html-body' : ''}">${_safeRenderEmailBody(data)}</div>
     `;
     reader.classList.remove('email-card-reader-loading');
     reader.style.minHeight = '';
@@ -2252,6 +2264,23 @@ function _setBubblesDisabled(v) {
 }
 
 function _renderEmailBody(data) {
+  const plain = (typeof data?.body === 'string' && data.body.length) ? data.body : '';
+  const folder = String(data?.folder || '').toLowerCase();
+  const isSentFolder = folder.includes('sent');
+  const fromAddr = String(data?.from_address || '').toLowerCase().trim();
+  const isMine = !!fromAddr && _meEmailAddrs().has(fromAddr);
+
+  // Messages authored by the user (Sent folder or self-sent copies in INBOX)
+  // are current authored text. Do not let cached boundaries or HTML
+  // blockquote parsing hide the whole thing behind "Earlier reply".
+  if ((isSentFolder || isMine) && plain) {
+    const plainTurns = _renderPlaintextThread(plain);
+    if (plainTurns && !/^\s*<details\b/i.test(plainTurns.trim())) {
+      return _foldSignature(plainTurns, null);
+    }
+    return _foldSignature(_escLinkify(plain).replace(/\n/g, '<br>'), null);
+  }
+
   // Prefer the server-cached thread parse — that's the richest structure
   // and the one the chat-bubble layout is built around. Skip when the user
   // has manually disabled bubble rendering.
@@ -2263,7 +2292,6 @@ function _renderEmailBody(data) {
   }
   const b = data && data.boundaries;
   // Use cached boundaries when present AND we have plain-text body to slice
-  const plain = (typeof data.body === 'string' && data.body.length) ? data.body : '';
   if (b && plain && (b.sig_start >= 0 || b.quote_start >= 0)) {
     // Pick the EARLIER of the two as the cut for "everything below this is
     // foldable", but render sig and quote with their own labels.
@@ -2325,6 +2353,18 @@ function _renderEmailBody(data) {
   const threaded = _renderThreadStructure(rendered);
   if (threaded) return _foldSignature(threaded, hintSig);
   return _foldSignature(_foldQuotedReplies(rendered), hintSig);
+}
+
+function _safeRenderEmailBody(data) {
+  try {
+    return _renderEmailBody(data);
+  } catch (e) {
+    console.error('email body render failed:', e);
+    const plain = (typeof data?.body === 'string') ? data.body : '';
+    if (plain) return _escLinkify(plain).replace(/\n/g, '<br>');
+    if (data?.body_html) return _sanitizeHtml(data.body_html);
+    return '<span style="opacity:.65">No body</span>';
+  }
 }
 
 // ── Chat-bubble rendering for email threads ──
@@ -2636,12 +2676,13 @@ function _renderPlaintextThread(text) {
     const lvl = levels[i];
     const raw = lines[i];
     const stripped = lvl > 0 ? raw.replace(/^(?:>\s?)+/, '') : raw;
+    const isSeparatorLine = lvl === 0 && /^-{5,}\s*Previous message\s*-{5,}$/i.test(raw.trim());
     const isAttribLine = lvl === 0
       && (new RegExp(`^\\s*On\\s.+?\\s${_TALON_WROTE}\\s*:\\s*$`, 'i').test(raw)
           || _TALON_ORIG_RE.test('\n' + raw));
-    if (isAttribLine) {
+    if (isSeparatorLine || isAttribLine) {
       flush();
-      pendingMeta = _extractQuoteMeta(raw) || raw.trim();
+      pendingMeta = isSeparatorLine ? null : (_extractQuoteMeta(raw) || raw.trim());
       curLevel = 1;
       continue;
     }
@@ -3699,7 +3740,7 @@ async function _openEmailAsTab(em, folder) {
         </div>
       </div>
       ${attsHtml}
-      <div class="email-reader-body${data.body_html ? ' html-body' : ''}">${_renderEmailBody(data)}</div>
+      <div class="email-reader-body${data.body_html ? ' html-body' : ''}">${_safeRenderEmailBody(data)}</div>
     `;
     try { _wireAttachmentHandlers(reader, useFolder); } catch {}
     const attsWrap = reader.querySelector('.email-reader-atts-wrap');
@@ -3854,7 +3895,7 @@ async function _openEmailWindow(em, folder) {
         </div>
       </div>
       ${attsHtml}
-      <div class="email-reader-body${data.body_html ? ' html-body' : ''}">${_renderEmailBody(data)}</div>
+      <div class="email-reader-body${data.body_html ? ' html-body' : ''}">${_safeRenderEmailBody(data)}</div>
     `;
     // Wire all the same action handlers the inline reader has.
     try { _wireAttachmentHandlers(bodyEl, useFolder); } catch {}
@@ -3971,7 +4012,7 @@ async function _swapReaderToUid(reader, uid, folder) {
     } else if (oldAtts) {
       oldAtts.remove();
     }
-    body.innerHTML = _renderEmailBody(data);
+    body.innerHTML = _safeRenderEmailBody(data);
     body.classList.toggle('html-body', !!data.body_html);
     // Wire click handlers for the newly-rendered attachment chips. Without
     // this, after swapping to a different email via the sidebar, clicking

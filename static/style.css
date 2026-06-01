@@ -3533,6 +3533,11 @@ body.bg-pattern-sparkles {
       box-shadow: 0 4px 12px rgba(0,0,0,0.2);
       backdrop-filter: blur(12px);
       max-width: min(360px, calc(100vw - 32px));
+      min-width: min(220px, calc(100vw - 32px));
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      box-sizing: border-box;
     }
     .toast.show { opacity:1; transform: translateX(0); }
     .toast .toast-checkmark {
@@ -9984,6 +9989,17 @@ textarea.memory-add-input {
   background: color-mix(in srgb, var(--green, #50fa7b) 20%, transparent);
   border-color: color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
 }
+.task-run-now-badge {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 34%, transparent);
+}
+.task-card-run-btn {
+  appearance: none;
+  height: 20px;
+  min-height: 0;
+  box-sizing: border-box;
+}
 .task-status-badge:hover {
   filter: brightness(1.08) saturate(1.15);
 }
@@ -9994,6 +10010,10 @@ textarea.memory-add-input {
 .task-active-badge:hover {
   background: color-mix(in srgb, var(--green, #50fa7b) 28%, transparent);
   border-color: color-mix(in srgb, var(--green, #50fa7b) 55%, transparent);
+}
+.task-run-now-badge:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 24%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 52%, transparent);
 }
 
 .task-builtin-badge {
@@ -20518,11 +20538,10 @@ body:not(.welcome-ready) #welcome-screen {
   margin-bottom: 0;
 }
 .task-log-row.expanded .task-log-row-head { margin-bottom: 4px; }
-/* Collapsed: body + footer hidden. Expanded: visible. Running/skipped rows
-   don't expand at all (no body to show). */
-.task-log-row:not(.expanded):not(.is-running):not(.is-skipped) .task-log-row-body,
-.task-log-row:not(.expanded):not(.is-running):not(.is-skipped) .task-log-row-actions,
-.task-log-row:not(.expanded):not(.is-running):not(.is-skipped) .task-log-prompt {
+/* Collapsed: body + footer hidden. Expanded: visible. */
+.task-log-row:not(.expanded):not(.is-skipped) .task-log-row-body,
+.task-log-row:not(.expanded):not(.is-skipped) .task-log-row-actions,
+.task-log-row:not(.expanded):not(.is-skipped) .task-log-prompt {
   display: none;
 }
 .task-log-name {
@@ -20570,6 +20589,26 @@ body:not(.welcome-ready) #welcome-screen {
   margin-left: 6px;
   opacity: 0.6;
   font-variant-numeric: tabular-nums;
+}
+.task-log-stop {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: .72;
+  padding: 0;
+  margin-left: 6px;
+  width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  top: -2px;
+}
+.task-log-stop:hover {
+  opacity: 1;
+  color: var(--red, #f87171);
 }
 
 /* Slim single-line row for skipped (noop) runs — body/actions stripped, font
@@ -20718,7 +20757,10 @@ body:not(.welcome-ready) #welcome-screen {
   margin-top: 4px;
 }
 .task-log-open-chat,
-.task-log-copy {
+.task-log-open-report,
+.task-log-copy,
+.task-log-clear-cache,
+.task-log-run-again {
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -20734,10 +20776,21 @@ body:not(.welcome-ready) #welcome-screen {
   line-height: 1.4;
 }
 .task-log-open-chat:hover,
-.task-log-copy:hover {
+.task-log-open-report:hover,
+.task-log-copy:hover,
+.task-log-clear-cache:hover,
+.task-log-run-again:hover {
   color: var(--fg);
   border-color: color-mix(in srgb, var(--fg) 30%, transparent);
   background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.task-log-row-actions > .task-log-open-chat,
+.task-log-row-actions > .task-log-copy {
+  margin-left: auto;
+}
+.task-log-clear-cache svg {
+  position: relative;
+  top: 2px;
 }
 /* Activity filter chips — toggle-out model: ON by default (solid),
    click to toggle OFF (dimmed + strikethrough) to hide that group. */
@@ -27694,7 +27747,7 @@ body.doc-find-active mark.doc-find-mark.current {
 }
 /* Cc toggle and attach button are absolute so they don't steal width from the To input */
 .email-field .email-cc-toggle {
-  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  position: absolute; right: 6px; top: calc(50% + 4px); transform: translateY(-50%);
   z-index: 2;
 }
 .email-field input { padding-right: 60px; }
