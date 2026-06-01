@@ -613,6 +613,21 @@ class SessionManager:
     def save_sessions(self):
         """No-op for DB compatibility."""
 
+    def ensure_task_session(self, session_id: str, name: str, endpoint_url: str, model: str, owner: str = None, task: object = None) -> Session:
+        """Create a task session if it doesn't exist, or return the existing one.
+
+        Unlike create_session, this checks the cache first and does NOT
+        overwrite an existing in-memory session. The task scheduler must
+        use this instead of direct dict assignment.
+        """
+        if session_id in self.sessions:
+            return self.sessions[session_id]
+
+        session = self.create_session(session_id, name, endpoint_url, model, owner=owner)
+        if task is not None:
+            task.session_id = session_id
+        return session
+
     # ------------------------------------------------------------------
     # Cleanup
     # ------------------------------------------------------------------
