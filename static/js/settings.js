@@ -1563,6 +1563,7 @@ function initAgentPickerUI() {
   let _closeAnimListener = null;
 
   function _closeAgentMenu() {
+    if (!agentPickerMenu) return;
     if (agentPickerMenu.classList.contains('hidden')) return;
     agentPickerMenu.classList.add('closing');
     if (_closeAnimListener) {
