@@ -1,0 +1,124 @@
+"""AMD ROCm support for Cookbook hardware-fit.
+
+Consumer AMD Radeon (RDNA: gfx10/11/12) can realistically only serve GGUF via
+llama.cpp — vLLM/SGLang on ROCm are validated for datacenter Instinct (CDNA,
+gfx9xx), not consumer cards, where AWQ kernels are largely unsupported and FP8
+needs out-of-tree patches. These tests lock in that consumer RDNA is treated
+like Apple Silicon (GGUF-only recommendations) while datacenter CDNA and
+unknown-family AMD are left untouched, and that CUDA is unchanged.
+"""
+
+from services.hwfit import hardware
+from services.hwfit.fit import rank_models
+from services.hwfit.models import get_models
+
+
+def _rocm_system(family="rdna", ram_gb=32.0, vram_gb=16.0):
+    return {
+        "has_gpu": True,
+        "backend": "rocm",
+        "gpu_name": "AMD Radeon RX 9060 XT" if family == "rdna" else "AMD Instinct MI300X",
+        "gpu_vram_gb": vram_gb,
+        "gpu_count": 1,
+        "available_ram_gb": ram_gb * 0.7,
+        "total_ram_gb": ram_gb,
+        "gpu_arch": "gfx1200" if family == "rdna" else "gfx942",
+        "gpu_family": family,
+    }
+
+
+def _cuda_system():
+    return {
+        "has_gpu": True, "backend": "cuda", "gpu_name": "NVIDIA RTX 4090",
+        "gpu_vram_gb": 24.0, "gpu_count": 1, "available_ram_gb": 32.0, "total_ram_gb": 64.0,
+    }
+
+
+def test_only_gguf_models_recommended_on_consumer_rdna():
+    """llama.cpp (GGUF) is the servable path on consumer Radeon, so every model
+    recommended on RDNA must ship a real GGUF — no vLLM-only AWQ/GPTQ/FP8."""
+    catalog = {m["name"]: m for m in get_models()}
+    unservable = [
+        r["name"] for r in rank_models(_rocm_system(family="rdna"), limit=900)
+        if not (catalog.get(r["name"], {}).get("is_gguf")
+                or catalog.get(r["name"], {}).get("gguf_sources"))
+    ]
+    assert unservable == [], f"{len(unservable)} non-GGUF models on RDNA, e.g. {unservable[:3]}"
+
+
+def test_safetensors_models_still_recommended_on_cdna():
+    """Datacenter Instinct (CDNA) runs vLLM/SGLang on ROCm fine, so non-GGUF
+    repos must NOT be filtered there — the GGUF-only rule is consumer-RDNA only."""
+    names = {r["name"] for r in rank_models(_rocm_system(family="cdna"), limit=900)}
+    assert "microsoft/Phi-mini-MoE-instruct" in names
+
+
+def test_unknown_amd_family_not_filtered():
+    """When rocminfo is unavailable (family 'unknown'), don't hide non-GGUF
+    models — a possibly-capable Instinct box shouldn't lose models on misdetect."""
+    names = {r["name"] for r in rank_models(_rocm_system(family="unknown"), limit=900)}
+    assert "microsoft/Phi-mini-MoE-instruct" in names
+
+
+def test_safetensors_models_still_recommended_on_cuda():
+    """Regression guard: the GGUF-only rule must not leak onto CUDA."""
+    names = {r["name"] for r in rank_models(_cuda_system(), limit=900)}
+    assert "microsoft/Phi-mini-MoE-instruct" in names
+
+
+def test_classify_amd_gfx_rdna_vs_cdna():
+    """classify_amd_gfx maps gfx targets to the right family: consumer RDNA
+    (gfx10/11/12) vs datacenter CDNA (gfx9xx Instinct) vs older GCN."""
+    cases = {
+        "gfx1200": "rdna",   # RX 9060 XT (RDNA4)
+        "gfx1201": "rdna",   # RX 9070 (RDNA4)
+        "gfx1100": "rdna",   # RX 7900 (RDNA3)
+        "gfx1030": "rdna",   # RX 6800 (RDNA2)
+        "gfx942": "cdna",    # MI300 (CDNA3)
+        "gfx950": "cdna",    # MI350 (CDNA4)
+        "gfx90a": "cdna",    # MI200 (CDNA2)
+        "gfx908": "cdna",    # MI100 (CDNA1)
+        "gfx906": "gcn",     # Radeon VII / MI50 (GCN5/Vega)
+        "": "unknown",
+        "gfx": "unknown",
+    }
+    for gfx, expected_family in cases.items():
+        out_gfx, family = hardware.classify_amd_gfx(gfx)
+        assert family == expected_family, f"{gfx} -> {family}, expected {expected_family}"
+        if expected_family != "unknown":
+            assert out_gfx == gfx
+
+
+def test_detect_amd_reports_family(monkeypatch):
+    """_detect_amd surfaces gpu_family from rocminfo so fit/serve can branch on
+    consumer-RDNA vs datacenter-CDNA. rocminfo lists the CPU agent first, then
+    the GPU's gfx target. Drive it through the remote-read path (no real sysfs)."""
+    rocminfo_out = "  Name:  AMD Ryzen 7 3700X\n  Name:  gfx1200\n  Marketing Name: AMD Radeon RX 9060 XT\n"
+
+    def fake_run(cmd):
+        if not cmd:
+            return None
+        if "rocminfo" in cmd[0]:
+            return rocminfo_out
+        if cmd[0] == "ls":
+            return "card1\ncard1-DP-1\nrenderD128"
+        if cmd[0] == "cat":
+            path = cmd[1]
+            if path.endswith("/vendor"):
+                return "0x1002"
+            if path.endswith("/mem_info_vram_total"):
+                return str(16 * 1024**3)
+            if path.endswith("/product_name"):
+                return "AMD Radeon RX 9060 XT"
+            return None
+        return None
+
+    # _remote_host truthy routes _read/_list_drm_cards through _run (no real sysfs).
+    monkeypatch.setattr(hardware, "_remote_host", "fake-host")
+    monkeypatch.setattr(hardware, "_run", fake_run)
+
+    info = hardware._detect_amd()
+    assert info is not None
+    assert info["backend"] == "rocm"
+    assert info["gpu_family"] == "rdna"
+    assert info["gpu_arch"] == "gfx1200"

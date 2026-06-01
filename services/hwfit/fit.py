@@ -424,6 +424,16 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     system_backend = (system.get("backend") or "").lower()
     apple_silicon = system_backend in ("mps", "metal", "apple")
 
+    # Consumer AMD Radeon (RDNA, gfx10/11/12): the practical local serving path
+    # is GGUF via llama.cpp. vLLM/SGLang on ROCm are validated for datacenter
+    # Instinct (CDNA, gfx9xx) but are unreliable on consumer RDNA — AWQ kernels
+    # are largely unsupported there and FP8 needs out-of-tree patches. So treat
+    # consumer RDNA like Apple Silicon (GGUF-only) and leave CDNA untouched.
+    # Unknown family (no rocminfo) is left untouched to avoid hiding models from
+    # a possibly-capable Instinct box on a misdetect.
+    gpu_family = (system.get("gpu_family") or "").lower()
+    consumer_amd = system_backend == "rocm" and gpu_family == "rdna"
+
     for m in models:
         native_q = m.get("quantization", "")
 
@@ -442,7 +452,12 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         # default GGUF quant) and vLLM-only AWQ/GPTQ/FP8 builds alike. Without
         # this the Cookbook recommends models the Mac can't run; on CUDA these
         # stay visible because vLLM serves safetensors directly.
-        if apple_silicon and not (m.get("is_gguf") or m.get("gguf_sources")):
+        #
+        # Consumer AMD (RDNA) is the same story: GGUF via llama.cpp is the
+        # servable path, so a model needs a real GGUF to be recommended.
+        # Otherwise the Cookbook rates vLLM-only AWQ/GPTQ builds "GOOD" on a
+        # Radeon that can't actually serve them.
+        if (apple_silicon or consumer_amd) and not (m.get("is_gguf") or m.get("gguf_sources")):
             continue
 
         # Format filter: AWQ tab → only AWQ models, FP8 tab → only FP8 models

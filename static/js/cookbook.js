@@ -248,6 +248,12 @@ export function _detectBackend(model) {
   const q = (model.quant || '').toUpperCase();
   const sysBackend = String(_hwfitCache?.system?.backend || '').toLowerCase();
   const isRocm = sysBackend === 'rocm';
+  // Consumer AMD Radeon (RDNA, gfx10/11/12): vLLM/SGLang on ROCm are validated
+  // for datacenter Instinct (CDNA), not consumer cards — AWQ kernels are largely
+  // unsupported and FP8 needs out-of-tree patches. The working local path is
+  // GGUF via llama.cpp. So on consumer RDNA, never auto-route to CUDA-style vLLM.
+  const gpuFamily = String(_hwfitCache?.system?.gpu_family || '').toLowerCase();
+  const consumerAmd = isRocm && gpuFamily === 'rdna';
 
   // Image gen models → diffusers
   if (model.is_image_gen || model.is_diffusion || model._tag === 'image') {
@@ -263,6 +269,14 @@ export function _detectBackend(model) {
   // don't run on macOS; AWQ/GPTQ/FP8 (vLLM-only) models are already filtered out
   // of metal Cookbook results, so llama.cpp is always the right engine here.
   if (['metal', 'mps', 'apple'].includes(sysBackend)) {
+    return { backend: 'llamacpp', label: 'llama.cpp' };
+  }
+
+  // Consumer AMD Radeon → llama.cpp (GGUF), same as Apple Silicon. AWQ/GPTQ/FP8
+  // are filtered out of consumer-RDNA Cookbook results (see fit.py), so a real
+  // GGUF is the only servable artifact here. This must come before the AWQ→vLLM
+  // rule below, otherwise a stray AWQ model would route to a vLLM that can't run.
+  if (consumerAmd) {
     return { backend: 'llamacpp', label: 'llama.cpp' };
   }
 
