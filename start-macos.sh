@@ -16,7 +16,23 @@ set -e
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
-PORT="${ODYSSEUS_PORT:-7860}"   # 7860, not 7000 — macOS AirPlay Receiver holds 7000.
+# Load .env so APP_PORT, APP_BIND, and other settings are available to this
+# script — consistent with how the app itself reads them via python-dotenv.
+# Variables already set in the shell environment take priority over .env.
+if [ -f .env ]; then
+  while IFS='=' read -r key value; do
+    [[ "$key" =~ ^[[:space:]]*# ]] && continue   # skip comment lines
+    [[ -z "${key// }" ]] && continue              # skip blank lines
+    value="${value%%#*}"                           # strip inline comments
+    value="${value#"${value%%[![:space:]]*}"}"     # strip leading whitespace
+    value="${value%"${value##*[![:space:]]}"}"     # strip trailing whitespace
+    # Only set if not already in the environment (shell takes priority over .env).
+    [ -n "$key" ] && [ -z "${!key+x}" ] && export "$key=$value"
+  done < .env
+fi
+
+# APP_PORT: port to listen on. Default 7860 — not 7000, which macOS AirPlay holds.
+PORT="${APP_PORT:-7860}"
 
 # Friendly message on any failure — re-running is safe (every step is idempotent).
 trap 'echo; echo "✗ Setup failed above. It is safe to re-run ./start-macos.sh."; exit 1' ERR
@@ -26,7 +42,8 @@ echo "▶ Odysseus quick start for macOS"
 # Fail fast if the port is already taken (e.g. a previous run still running).
 if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
   echo "✗ Port $PORT is already in use. Stop what's using it, or pick another port:"
-  echo "    ODYSSEUS_PORT=7900 ./start-macos.sh"
+  echo "    APP_PORT=7900 ./start-macos.sh   # one-shot"
+  echo "    APP_PORT=7900 in .env            # persistent"
   exit 1
 fi
 
@@ -100,10 +117,21 @@ echo "▶ Installing Python packages (first run downloads a few — can take a f
 echo "▶ Preparing Odysseus…"
 ODYSSEUS_SKIP_RUN_HINT=1 ./venv/bin/python setup.py
 
-# 5. Launch. Bind to all interfaces so other machines on the LAN can reach it.
+# 5. Launch.
+# APP_BIND: address to bind. Default 127.0.0.1 (loopback, safe).
+# Set APP_BIND=0.0.0.0 in .env to expose on the LAN — anyone on your network
+# will then be able to reach the app, so make sure AUTH_ENABLED=true.
+BIND_HOST="${APP_BIND:-127.0.0.1}"
 LOCAL_URL="http://127.0.0.1:$PORT"
-LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "<your-mac-ip>")"
-LAN_URL="http://${LAN_IP}:$PORT"
+
+if [ "$BIND_HOST" = "0.0.0.0" ]; then
+  LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "<your-mac-ip>")"
+  DISPLAY_URL="http://${LAN_IP}:$PORT"
+  DISPLAY_EXTRA="  Network: $DISPLAY_URL"
+else
+  DISPLAY_URL="$LOCAL_URL"
+  DISPLAY_EXTRA=""
+fi
 
 # Open the browser automatically once the server is accepting connections — so
 # the URL isn't lost in the startup logs that keep scrolling. Runs in the
@@ -117,8 +145,7 @@ if [ -z "$ODYSSEUS_NO_OPEN" ] && command -v open >/dev/null 2>&1; then
         printf '\n'
         printf '  ┌──────────────────────────────────────────────────┐\n'
         printf '  │  ✓ Odysseus is ready — opening your browser       │\n'
-        printf '  │     Local:   %-36s │\n' "$LOCAL_URL"
-        printf '  │     Network: %-36s │\n' "$LAN_URL"
+        printf '  │     %-46s │\n' "$DISPLAY_URL"
         printf '  │     (Press Ctrl+C in this window to stop)         │\n'
         printf '  └──────────────────────────────────────────────────┘\n\n'
         open "$LOCAL_URL"
@@ -136,9 +163,9 @@ trap - ERR
 trap '[ -n "$POLLER_PID" ] && kill "$POLLER_PID" 2>/dev/null' EXIT INT TERM
 
 echo
-echo "▶ Starting Odysseus on all interfaces (port $PORT)"
+echo "▶ Starting Odysseus (host $BIND_HOST, port $PORT)"
 echo "  Local:   $LOCAL_URL"
-echo "  Network: $LAN_URL"
+[ -n "$DISPLAY_EXTRA" ] && echo "$DISPLAY_EXTRA"
 echo "  (this takes a few seconds; press Ctrl+C here to stop)"
 echo
-"$PY" -m uvicorn app:app --host 127.0.0.1 --port "$PORT"
+"$PY" -m uvicorn app:app --host "$BIND_HOST" --port "$PORT"

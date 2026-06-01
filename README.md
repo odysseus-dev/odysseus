@@ -158,6 +158,18 @@ runs setup, and starts uvicorn on port `7860` because AirPlay often holds
 `7000`. It uses llama.cpp/Ollama for Metal. vLLM/SGLang are CUDA/ROCm-only and
 do not run on macOS. MLX-only models are not served by Odysseus.
 
+By default the server binds to `127.0.0.1` (loopback only). To allow access
+from other devices on your LAN, set `APP_BIND=0.0.0.0` in `.env` — or pass it
+as a one-shot override:
+
+```bash
+APP_BIND=0.0.0.0 ./start-macos.sh
+```
+
+Keep `AUTH_ENABLED=true` (the default) before exposing to the network. The
+ready banner will print both the local and network URLs when LAN mode is active.
+The port can likewise be changed via `APP_PORT` in `.env` or on the command line.
+
 </details>
 
 ### Native Windows
