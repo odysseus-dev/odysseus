@@ -13,7 +13,15 @@ _remote_platform = None  # set by detect_system(platform=...): "windows", "linux
 _last_gpu_error = None  # set by _detect_nvidia() when nvidia-smi errors (driver mismatch, etc.)
 
 
-def _run(cmd):
+def _run(cmd, want_stderr_on_fail=False):
+    """Run a command (locally or over SSH) and return its stdout on success.
+
+    Returns None on failure or error. When want_stderr_on_fail=True, a non-zero
+    exit returns the combined stderr+stdout instead of None — needed for tools
+    like nvidia-smi that report actionable errors (driver/library version
+    mismatch) on stderr WITH a non-zero exit code. Default callers are
+    unaffected: they still get stdout-or-None as before.
+    """
     try:
         if _remote_host:
             # Run command on remote host via SSH
@@ -33,6 +41,15 @@ def _run(cmd):
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         if r.returncode == 0:
             return r.stdout.strip()
+        if want_stderr_on_fail:
+            # nvidia-smi and friends print the real reason (e.g. "Failed to
+            # initialize NVML: Driver/library version mismatch") to stderr and
+            # exit non-zero. Surface that so the caller can distinguish a driver
+            # fault from a genuinely GPU-less box. SSH connection failures also
+            # exit non-zero, but their stderr won't match the NVML error strings
+            # the caller looks for, so they stay classified as "no GPU".
+            err = (r.stderr or "").strip() or (r.stdout or "").strip()
+            return err or None
     except Exception:
         pass
     return None
@@ -72,7 +89,10 @@ def _group_gpus(gpus):
 def _detect_nvidia():
     global _last_gpu_error
     _last_gpu_error = None
-    out = _run(["nvidia-smi", "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
+    out = _run(
+        ["nvidia-smi", "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"],
+        want_stderr_on_fail=True,
+    )
     # Remote fallback: a non-interactive SSH shell often has a minimal PATH
     # that omits where nvidia-smi lives (/usr/bin, /usr/local/cuda/bin), so the
     # first call silently returns nothing → "No GPU" on hosts that DO have GPUs.

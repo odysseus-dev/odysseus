@@ -64,6 +64,33 @@ for cu in /app/.local/lib/python*/site-packages/nvidia/cu13; do
     fi
 done
 
+# Ollama reachability pre-flight (the #1 Docker self-host footgun).
+#
+# Host Ollama is only reachable from inside the container if it listens
+# on all interfaces — `OLLAMA_HOST=0.0.0.0:11434 ollama serve` — AND the
+# container can route to the host via host.docker.internal (provided by
+# the compose `extra_hosts: host-gateway` line). When either is missing
+# the symptom is an empty model list in the UI with no obvious cause, so
+# probe once at startup and print the exact fix. Non-fatal: OpenAI /
+# remote / LAN-only deployments legitimately have no host Ollama, and a
+# user may start `ollama serve` after the container — discovery re-probes
+# at request time regardless.
+#
+# Resolution mirrors app.py /api/runtime: OLLAMA_BASE_URL, then
+# OLLAMA_URL, then the in-Docker default. Strip any /v1 suffix and hit
+# Ollama's native /api/tags liveness endpoint.
+ollama_base="${OLLAMA_BASE_URL:-${OLLAMA_URL:-http://host.docker.internal:11434/v1}}"
+ollama_root="${ollama_base%/}"
+ollama_root="${ollama_root%/v1}"
+if command -v curl >/dev/null 2>&1; then
+    if ! curl -sf -m 3 "$ollama_root/api/tags" >/dev/null 2>&1; then
+        echo "odysseus: WARNING — host Ollama not reachable at $ollama_root/api/tags" >&2
+        echo "odysseus: if you use a local Ollama, start it on all interfaces so the" >&2
+        echo "odysseus: container can reach it:  OLLAMA_HOST=0.0.0.0:11434 ollama serve" >&2
+        echo "odysseus: (ignore this if you use OpenAI / a remote / LAN model endpoint)" >&2
+    fi
+fi
+
 # Drop root and run the actual app. `gosu` is preferred over `su` /
 # `sudo` because it cleans up the process tree (no extra shell layer)
 # so signals (SIGTERM from `docker stop`) reach uvicorn directly.
