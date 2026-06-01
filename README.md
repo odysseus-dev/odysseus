@@ -220,6 +220,11 @@ bugs, mobile/editor polish, docs, and small focused refactors. See
 ## Configuration
 Most setup is done inside the app with `/setup` or **Settings**. Use `.env`
 for deployment-level defaults and secrets you want present before first boot.
+
+Hitting a snag? The [Troubleshooting guide](docs/troubleshooting.md) collects the
+common self-host gotchas (email TLS, ntfy on Android, CalDAV/Radicale URLs,
+HTTPS-only clipboard, port 7000) and their 30-second fixes.
+
 Key settings:
 
 | Variable | Default | Description |
