@@ -77,6 +77,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     _login_limiter = RateLimiter(max_requests=15, window_seconds=60)
     _signup_limiter = RateLimiter(max_requests=3, window_seconds=300)
     _setup_limiter = RateLimiter(max_requests=3, window_seconds=300)
+    _change_pw_limiter = RateLimiter(max_requests=5, window_seconds=300)
+    _2fa_limiter = RateLimiter(max_requests=5, window_seconds=300)
 
     def _get_current_user(request: Request) -> Optional[str]:
         token = request.cookies.get(SESSION_COOKIE)
@@ -138,7 +140,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             value=token,
             httponly=True,
             samesite="lax",
-            secure=os.getenv("SECURE_COOKIES", "false").lower() == "true",
+            secure=os.getenv("SECURE_COOKIES", "true").lower() == "true",
             path="/",
         )
         if body.remember:
@@ -173,6 +175,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
 
     @router.post("/change-password")
     async def change_password(body: ChangePasswordRequest, request: Request):
+        if not _change_pw_limiter.check(request.client.host):
+            raise HTTPException(429, "Too many requests")
         user = _get_current_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
@@ -213,6 +217,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.post("/2fa/confirm")
     async def totp_confirm(body: TotpVerifyRequest, request: Request):
         """Verify a TOTP code to confirm 2FA setup. Returns backup codes."""
+        if not _2fa_limiter.check(request.client.host):
+            raise HTTPException(429, "Too many requests")
         user = _get_current_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
@@ -227,6 +233,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.post("/2fa/disable")
     async def totp_disable(body: TotpDisableRequest, request: Request):
         """Disable 2FA. Requires password confirmation."""
+        if not _2fa_limiter.check(request.client.host):
+            raise HTTPException(429, "Too many requests")
         user = _get_current_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")

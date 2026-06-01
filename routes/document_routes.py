@@ -600,7 +600,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             raise
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            logger.error("Internal error: %s", e, exc_info=True)
+            raise HTTPException(500, "Internal server error")
         finally:
             db.close()
 
@@ -621,7 +622,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             raise
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            logger.error("Internal error: %s", e, exc_info=True)
+            raise HTTPException(500, "Internal server error")
         finally:
             db.close()
 
@@ -706,7 +708,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             raise
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            logger.error("Internal error: %s", e, exc_info=True)
+            raise HTTPException(500, "Internal server error")
         finally:
             db.close()
 

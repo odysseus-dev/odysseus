@@ -163,7 +163,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     @router.post("/session", response_model=SessionResponse)
     def create_session(
         request: Request,
-        name: str = Form(""),
+        name: str = Form(default="", max_length=200),
         endpoint_url: str = Form(""),
         model: str = Form(""),
         rag: str = Form(None),

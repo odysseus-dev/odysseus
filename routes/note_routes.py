@@ -7,7 +7,7 @@ import logging
 from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.database import SessionLocal, Note
 from src.auth_helpers import get_current_user
@@ -21,12 +21,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 class NoteCreate(BaseModel):
-    title: str = ""
-    content: Optional[str] = None
-    items: Optional[list] = None
-    note_type: str = "note"
-    color: Optional[str] = None
-    label: Optional[str] = None
+    title: str = Field(default="", max_length=500)
+    content: Optional[str] = Field(default=None, max_length=50000)
+    items: Optional[list] = Field(default=None, max_length=200)
+    note_type: str = Field(default="note", max_length=50)
+    color: Optional[str] = Field(default=None, max_length=20)
+    label: Optional[str] = Field(default=None, max_length=100)
     pinned: bool = False
     due_date: Optional[str] = None
     source: str = "user"

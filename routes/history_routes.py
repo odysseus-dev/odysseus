@@ -101,7 +101,8 @@ def setup_history_routes(session_manager) -> APIRouter:
             raise HTTPException(404, "Session not found")
         except Exception as e:
             logger.error(f"Truncate error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            logger.error("Internal error: %s", e, exc_info=True)
+            raise HTTPException(500, "Internal server error")
 
     @router.post("/api/session/{session_id}/message")
     async def add_message(request: Request, session_id: str):
@@ -180,7 +181,8 @@ def setup_history_routes(session_manager) -> APIRouter:
             raise HTTPException(404, "Session not found")
         except Exception as e:
             logger.error(f"Delete messages error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            logger.error("Internal error: %s", e, exc_info=True)
+            raise HTTPException(500, "Internal server error")
 
     @router.post("/api/session/{session_id}/edit-message")
     async def edit_message(request: Request, session_id: str):
@@ -233,7 +235,8 @@ def setup_history_routes(session_manager) -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Edit message error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            logger.error("Internal error: %s", e, exc_info=True)
+            raise HTTPException(500, "Internal server error")
 
     @router.post("/api/session/{session_id}/mark-stopped")
     async def mark_stopped(request: Request, session_id: str):
@@ -288,7 +291,8 @@ def setup_history_routes(session_manager) -> APIRouter:
             raise HTTPException(404, "Session not found")
         except Exception as e:
             logger.error(f"Mark stopped error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            logger.error("Internal error: %s", e, exc_info=True)
+            raise HTTPException(500, "Internal server error")
 
     @router.post("/api/session/{session_id}/update-last-meta")
     async def update_last_meta(request: Request, session_id: str):
@@ -339,7 +343,8 @@ def setup_history_routes(session_manager) -> APIRouter:
             raise HTTPException(404, "Session not found")
         except Exception as e:
             logger.error(f"Update last meta error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            logger.error("Internal error: %s", e, exc_info=True)
+            raise HTTPException(500, "Internal server error")
 
     @router.post("/api/session/{session_id}/merge-last-assistant")
     async def merge_last_assistant(request: Request, session_id: str):
@@ -426,7 +431,8 @@ def setup_history_routes(session_manager) -> APIRouter:
             raise HTTPException(404, "Session not found")
         except Exception as e:
             logger.error(f"Merge assistant error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            logger.error("Internal error: %s", e, exc_info=True)
+            raise HTTPException(500, "Internal server error")
 
     @router.post("/api/session/{session_id}/fork")
     async def fork_session(request: Request, session_id: str):
@@ -473,7 +479,8 @@ def setup_history_routes(session_manager) -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Fork error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            logger.error("Internal error: %s", e, exc_info=True)
+            raise HTTPException(500, "Internal server error")
 
     @router.get("/api/conversations/topics")
     async def get_conversation_topics(request: Request) -> Dict[str, Any]:
@@ -614,6 +621,7 @@ def setup_history_routes(session_manager) -> APIRouter:
 
         except Exception as e:
             logger.error(f"Manual compact error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            logger.error("Internal error: %s", e, exc_info=True)
+            raise HTTPException(500, "Internal server error")
 
     return router
