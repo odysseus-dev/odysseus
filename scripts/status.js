@@ -11,33 +11,33 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const CHECK = '\x1b[32m✓\x1b[0m';
-const CROSS = '\x1b[31m✗\x1b[0m';
+const CHECK = '\x1b[32m\u2713\x1b[0m';
+const CROSS = '\x1b[31m\u2717\x1b[0m';
 
 module.exports = function status(ROOT) {
   const port = 7000;
   let running = false;
 
   const req = http.get(`http://127.0.0.1:${port}/`, () => {
-    printStatus(port, true);
+    printStatus(ROOT, port, true);
   });
 
   req.on('error', () => {
-    printStatus(port, false);
+    printStatus(ROOT, port, false);
   });
 
   req.setTimeout(3000, () => {
     req.destroy();
-    printStatus(port, false);
+    printStatus(ROOT, port, false);
   });
 };
 
-function printStatus(port, running) {
+function printStatus(ROOT, port, running) {
   console.log(`\n  Odysseus Status\n`);
   console.log(`  ${running ? CHECK : CROSS} Server:     ${running ? `running on port ${port}` : 'not running'}`);
 
-  // DB check
-  const db = path.join(process.cwd(), 'data', 'app.db');
+  // DB check (relative to package root, not cwd)
+  const db = path.join(ROOT, 'data', 'app.db');
   if (fs.existsSync(db)) {
     const size = fs.statSync(db).size;
     console.log(`  ${CHECK} Database:   present (${(size / 1024).toFixed(0)} KB)`);
@@ -62,6 +62,6 @@ function printStatus(port, running) {
     }
   }
 
-  console.log(`  ${CHECK} Data dir:   ${path.join(process.cwd(), 'data')}`);
+  console.log(`  ${CHECK} Data dir:   ${path.join(ROOT, 'data')}`);
   console.log();
 }
