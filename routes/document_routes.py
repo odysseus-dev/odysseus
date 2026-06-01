@@ -30,6 +30,15 @@ def _locate_current_user_upload(request: Request, upload_dir: str, upload_id: st
     return _locate_upload(upload_dir, upload_id, owner=user, auth_manager=auth_manager)
 
 
+def _load_pdf_viewer_fitz():
+    from src.pdf_runtime import load_pymupdf_for_pdf_viewer
+
+    try:
+        return load_pymupdf_for_pdf_viewer()
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
 def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     router = APIRouter(tags=["documents"])
 
@@ -137,7 +146,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from src.document_processor import _process_pdf
         import os
 
-        user = get_current_user(request)
+        from src.auth_helpers import require_privilege
+        user = require_privilege(request, "can_use_documents")
 
         # session_id is optional — a library import isn't tied to a chat. When
         # given, validate it; otherwise the PDF becomes a session-less library
@@ -972,7 +982,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         """
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar
         from src.constants import UPLOAD_DIR
-        import fitz
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -988,6 +997,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if not pdf_path:
                 raise HTTPException(404, f"Source PDF {upload_id} not found")
 
+            fitz = _load_pdf_viewer_fitz()
             schema = load_field_sidecar(pdf_path) or []
             values = parse_markdown_to_values(doc.current_content or "")
 
@@ -1040,7 +1050,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from fastapi.responses import Response
         from src.pdf_form_doc import find_source_upload_id
         from src.constants import UPLOAD_DIR
-        import fitz
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -1058,6 +1067,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         finally:
             db.close()
 
+        fitz = _load_pdf_viewer_fitz()
         pdf_doc = fitz.open(pdf_path)
         try:
             if page_no < 1 or page_no > pdf_doc.page_count:

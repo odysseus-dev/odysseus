@@ -546,11 +546,12 @@ body.bg-pattern-sparkles {
     .sidebar-brand-title {
       font-size: 1rem;
       font-weight: 600;
+      line-height: 1.35;
       color: var(--brand-color, var(--red));
       white-space: nowrap;
       user-select: none;
       position: relative;
-      top: 1px;
+      top: 0;
       left: -10px;
     }
     .sidebar-sep {

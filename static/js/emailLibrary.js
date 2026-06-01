@@ -492,6 +492,15 @@ function _libCacheWriteBack() {
 // Simple global rather than cross-module import to keep coupling minimal.
 function _publishActiveAccount() {
   try { window.__odysseusActiveEmailAccount = state._libAccountId || null; } catch (_) {}
+  // Publish the active account's own address so reply-all can exclude us from
+  // the recipient list. This global was read in emailInbox.js but never set.
+  try {
+    const accts = state._libAccounts || [];
+    const active = accts.find(a => a && a.id === state._libAccountId)
+      || accts.find(a => a && a.is_default)
+      || accts[0];
+    window._myEmailAddress = (active && (active.from_address || active.imap_user)) || '';
+  } catch (_) {}
 }
 
 export function initEmailLibrary(config) {

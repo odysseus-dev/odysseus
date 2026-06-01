@@ -1106,6 +1106,16 @@ import * as Modals from './modalManager.js';
     });
   }
 
+  async function _pdfResponseErrorMessage(res) {
+    const text = await res.text().catch(() => '');
+    try {
+      const data = JSON.parse(text);
+      if (typeof data?.detail === 'string') return data.detail;
+      if (data?.detail) return JSON.stringify(data.detail);
+    } catch (_) {}
+    return text || res.statusText || `HTTP ${res.status}`;
+  }
+
   async function _renderPdfPane() {
     const pane = document.getElementById('doc-pdf-view');
     if (!pane || !activeDocId) return;
@@ -1118,7 +1128,7 @@ import * as Modals from './modalManager.js';
     let data;
     try {
       const res = await fetch(`${API_BASE}/api/document/${docId}/render-pages`);
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw new Error(await _pdfResponseErrorMessage(res));
       data = await res.json();
     } catch (e) {
       pane.innerHTML = `<div style="color:#fbb;padding:40px;text-align:center;">Failed to load PDF view: ${_escHtml(e.message || String(e))}</div>`;

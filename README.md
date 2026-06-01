@@ -46,6 +46,11 @@ Defaults work out of the box: clone, run, then configure models/search/email
 inside **Settings**. Only edit `.env` for deployment-level overrides like
 `APP_PORT`, `AUTH_ENABLED`, `DATABASE_URL`, or a pre-seeded admin password.
 
+On first setup, Odysseus creates an admin account (`admin` unless
+`ODYSSEUS_ADMIN_USER` is set) and prints a temporary password in the terminal.
+For Docker installs, the same line is in `docker compose logs odysseus`.
+Use that for the first login, then change it in **Settings**.
+
 Contributing? See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and
 pull request guidelines.
 

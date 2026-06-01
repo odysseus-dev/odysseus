@@ -8,6 +8,7 @@ import sessionModule from './sessions.js';
 import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibOpen, prewarmEmailLibrary } from './emailLibrary.js';
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
+import { buildReplyAllCc } from './emailLibrary/replyRecipients.js';
 
 const API_BASE = window.location.origin;
 const _acct = () => window.__odysseusActiveEmailAccount
@@ -696,17 +697,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
 
     if (mode === 'reply-all') {
       // Build reply-all: TO = original sender, CC = everyone else (To + Cc minus me)
-      const origTo = (data.to || '').split(',').map(s => s.trim()).filter(Boolean);
-      const origCc = (data.cc || '').split(',').map(s => s.trim()).filter(Boolean);
-      const allOthers = [...origTo, ...origCc]
-        .filter(addr => {
-          // Extract email from "Name <email@x>" or "email@x"
-          const match = addr.match(/<([^>]+)>/) || [null, addr];
-          return !match[1].toLowerCase().includes(myAddress);
-        });
-      if (allOthers.length > 0) {
-        ccAddresses = allOthers.join(', ');
-      }
+      ccAddresses = buildReplyAllCc(data, myAddress);
     } else if (mode === 'forward') {
       toAddress = '';
       subjectPrefix = 'Fwd: ';
