@@ -388,10 +388,28 @@ def _section_text(name: str, default: str) -> str:
     return val if isinstance(val, str) and val.strip() else default
 
 
-def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool = False) -> str:
+def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool = False, prompt_style: str = "opencode") -> str:
     """Build the system prompt with only the specified tools included."""
     disabled = disabled_tools or set()
     included = tool_names - disabled
+
+    if prompt_style == "hermes":
+        parts = [_AGENT_PREAMBLE]
+        parts.append("You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions.")
+        
+        from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+        import json
+        hermes_tools = []
+        for schema in FUNCTION_TOOL_SCHEMAS:
+            if schema["function"]["name"] in included:
+                hermes_tools.append(schema)
+                
+        # MCP schemas will be appended later in _build_system_prompt if needed, 
+        # but for native tools this is sufficient.
+        parts.append("<tools>\n" + json.dumps(hermes_tools, indent=2) + "\n</tools>")
+        parts.append("For each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:\n<tool_call>\n{\"name\": \"<function-name>\", \"arguments\": <args-dict>}\n</tool_call>")
+        parts.append(_AGENT_RULES)
+        return "\n\n".join(parts)
 
     if compact:
         tool_list = ", ".join(sorted(included)) if included else "none"
@@ -1005,16 +1023,18 @@ def _build_base_prompt(
     disabled = set(disabled_tools or [])
     if not get_setting("image_gen_enabled", True):
         disabled.add("generate_image")
+        
+    prompt_style = get_setting("agent_prompt_style", "opencode")
 
     if relevant_tools is not None:
         # RAG mode: include always-available + retrieved + admin (if needed)
         tool_names = set(ALWAYS_AVAILABLE) | set(relevant_tools)
         if needs_admin:
             tool_names |= _ADMIN_TOOLS
-        agent_prompt = _assemble_prompt(tool_names, disabled, compact=compact)
+        agent_prompt = _assemble_prompt(tool_names, disabled, compact=compact, prompt_style=prompt_style)
     else:
         # Fallback: full prompt (RAG unavailable)
-        agent_prompt = AGENT_SYSTEM_PROMPT
+        agent_prompt = _assemble_prompt(set(TOOL_SECTIONS.keys()), disabled, compact=compact, prompt_style=prompt_style)
         if not needs_admin:
             # At least strip the management section
             mgmt_tools = set(TOOL_SECTIONS.keys()) - set(ALWAYS_AVAILABLE) - {
@@ -1022,10 +1042,10 @@ def _build_base_prompt(
                 "chat_with_model", "ask_teacher", "list_models",
             }
             agent_prompt = _assemble_prompt(
-                set(TOOL_SECTIONS.keys()) - mgmt_tools, disabled, compact=compact
+                set(TOOL_SECTIONS.keys()) - mgmt_tools, disabled, compact=compact, prompt_style=prompt_style
             )
         elif compact:
-            agent_prompt = _assemble_prompt(set(TOOL_SECTIONS.keys()), disabled, compact=True)
+            agent_prompt = _assemble_prompt(set(TOOL_SECTIONS.keys()), disabled, compact=True, prompt_style=prompt_style)
 
     # Inject the Level-0 skill index — one line per skill so the agent
     # knows what canonical procedures exist. Includes published skills

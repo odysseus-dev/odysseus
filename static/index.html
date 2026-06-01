@@ -988,8 +988,7 @@
       <div class="chat-input-top">
         <div id="message-ghost" class="ghost-text-overlay" aria-hidden="true"></div>
         <textarea id="message" placeholder="Message Odysseus..." required autocomplete="off" aria-label="Message input" rows="1" autofocus></textarea>
-        <!-- Model picker (inside chatbox, top-right) -->
-        <div class="model-picker-wrap" id="model-picker-wrap">
+        <div class="model-picker-wrap" id="model-picker-wrap" style="display: flex; gap: 4px; align-items: flex-end; flex-direction: column; flex-wrap: nowrap;">
           <button type="button" class="model-picker-btn" id="model-picker-btn" title="Switch model"><span id="model-picker-label">Select model</span> <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg></button>
           <div class="model-picker-menu hidden" id="model-picker-menu">
             <div class="model-picker-search-row">
@@ -999,6 +998,15 @@
               </button>
             </div>
             <div class="model-picker-list" id="model-picker-list"></div>
+          </div>
+          <div id="agent-picker-container" style="display: flex; align-items: center;">
+            <button type="button" class="model-picker-btn" id="agent-picker-btn" title="Switch agent style"><span id="agent-picker-label">OpenAgent</span> <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+            <div class="model-picker-menu hidden" id="agent-picker-menu" style="min-width: 140px; right: 0;">
+              <div class="model-picker-list">
+                <div class="model-switch-item" data-value="opencode">OpenAgent</div>
+                <div class="model-switch-item" data-value="hermes">Hermes Agent</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

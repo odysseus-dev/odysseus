@@ -1611,6 +1611,12 @@ function initializeEventListeners() {
       // Slide the pill to the active button
       const toggle = agentBtn.closest('.mode-toggle');
       if (toggle) toggle.classList.toggle('mode-chat', mode === 'chat');
+      
+      const agentPickerContainer = document.getElementById('agent-picker-container');
+      if (agentPickerContainer) {
+        agentPickerContainer.style.display = mode === 'agent' ? 'flex' : 'none';
+      }
+      
       // Delay tool glow-up for a staggered effect
       setTimeout(() => applyModeToToggles(mode), 500);
     }

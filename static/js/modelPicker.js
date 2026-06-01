@@ -114,20 +114,30 @@ function _initModelPickerDropdown() {
   const searchRow = menu ? menu.querySelector('.model-picker-search-row') : null;
   if (!wrap || !btn || !menu || !search || !listEl) return;
 
+  let _closeTimeout = null;
+  let _closeAnimListener = null;
+
   function _close() {
     if (menu.classList.contains('hidden')) return;
     // Restore scroll button
     const _scrollBtn = document.getElementById('scroll-bottom-btn');
     if (_scrollBtn) _scrollBtn.style.display = '';
     menu.classList.add('closing');
-    menu.addEventListener('animationend', function _onDone() {
-      menu.removeEventListener('animationend', _onDone);
+    if (_closeAnimListener) {
+      menu.removeEventListener('animationend', _closeAnimListener);
+    }
+    _closeAnimListener = function _onDone() {
+      menu.removeEventListener('animationend', _closeAnimListener);
+      _closeAnimListener = null;
       menu.classList.remove('closing');
       menu.classList.add('hidden');
       search.value = '';
-    }, { once: true });
-    // Fallback if animationend doesn't fire
-    setTimeout(() => {
+    };
+    menu.addEventListener('animationend', _closeAnimListener, { once: true });
+    
+    if (_closeTimeout) clearTimeout(_closeTimeout);
+    _closeTimeout = setTimeout(() => {
+      _closeTimeout = null;
       if (!menu.classList.contains('hidden')) {
         menu.classList.remove('closing');
         menu.classList.add('hidden');
@@ -555,8 +565,9 @@ function _initModelPickerDropdown() {
   });
 
   btn.addEventListener('click', (e) => {
-    e.stopPropagation();
     if (menu.classList.contains('hidden') || menu.classList.contains('closing')) {
+      if (_closeTimeout) { clearTimeout(_closeTimeout); _closeTimeout = null; }
+      if (_closeAnimListener) { menu.removeEventListener('animationend', _closeAnimListener); _closeAnimListener = null; }
       // Force-clear any in-progress close animation
       menu.classList.remove('closing', 'hidden');
       _populate('');
@@ -594,7 +605,7 @@ function _initModelPickerDropdown() {
     });
   }
   document.addEventListener('click', (e) => {
-    if (!menu.classList.contains('hidden') && !menu.contains(e.target) && e.target !== btn) {
+    if (!menu.classList.contains('hidden') && !menu.contains(e.target) && !btn.contains(e.target)) {
       _close();
     }
   });

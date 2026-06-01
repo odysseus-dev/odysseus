@@ -373,9 +373,27 @@ def parse_tool_blocks(text: str) -> List[ToolBlock]:
 
     # Pattern 3: XML-style <tool_call>/<invoke> blocks
     if not blocks:
-        # Try wrapped: <tool_call><invoke ...>...</invoke></tool_call>
+        # Try wrapped: <tool_call><invoke ...>...</invoke></tool_call> or <tool_call>{...}</tool_call>
         for m in _XML_TOOL_CALL_RE.finditer(text):
-            for inv in _XML_INVOKE_RE.finditer(m.group(1)):
+            content = m.group(1).strip()
+            parsed_json = False
+            # Try parsing as raw JSON first (Hermes format)
+            if content.startswith('{') and content.endswith('}'):
+                try:
+                    import json
+                    data = json.loads(content)
+                    if "name" in data and "arguments" in data:
+                        from src.tool_schemas import function_call_to_tool_block
+                        args_str = data["arguments"] if isinstance(data["arguments"], str) else json.dumps(data["arguments"])
+                        block = function_call_to_tool_block(data["name"].lower(), args_str)
+                        if block:
+                            blocks.append(block)
+                            parsed_json = True
+                except Exception:
+                    pass
+            if parsed_json:
+                continue
+            for inv in _XML_INVOKE_RE.finditer(content):
                 block = _parse_xml_invoke(inv)
                 if block:
                     blocks.append(block)

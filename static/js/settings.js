@@ -1552,32 +1552,135 @@ async function initResearchSearchSettings() {
 }
 
 /* ── Agent Settings (AI tab) ── */
+var globalAgentStyle = 'opencode';
+
+function initAgentPickerUI() {
+  var agentPickerBtn = el('agent-picker-btn');
+  var agentPickerMenu = el('agent-picker-menu');
+  var agentPickerLabel = el('agent-picker-label');
+
+  let _closeTimeout = null;
+  let _closeAnimListener = null;
+
+  function _closeAgentMenu() {
+    if (agentPickerMenu.classList.contains('hidden')) return;
+    agentPickerMenu.classList.add('closing');
+    if (_closeAnimListener) {
+      agentPickerMenu.removeEventListener('animationend', _closeAnimListener);
+    }
+    _closeAnimListener = function _onDone() {
+      agentPickerMenu.removeEventListener('animationend', _closeAnimListener);
+      _closeAnimListener = null;
+      agentPickerMenu.classList.remove('closing');
+      agentPickerMenu.classList.add('hidden');
+    };
+    agentPickerMenu.addEventListener('animationend', _closeAnimListener, { once: true });
+    
+    if (_closeTimeout) clearTimeout(_closeTimeout);
+    _closeTimeout = setTimeout(() => {
+      _closeTimeout = null;
+      if (!agentPickerMenu.classList.contains('hidden')) {
+        agentPickerMenu.classList.remove('closing');
+        agentPickerMenu.classList.add('hidden');
+      }
+    }, 200);
+  }
+
+  if (agentPickerBtn && agentPickerMenu) {
+    agentPickerBtn.addEventListener('click', function(e) {
+      if (agentPickerMenu.classList.contains('hidden') || agentPickerMenu.classList.contains('closing')) {
+        if (_closeTimeout) { clearTimeout(_closeTimeout); _closeTimeout = null; }
+        if (_closeAnimListener) { agentPickerMenu.removeEventListener('animationend', _closeAnimListener); _closeAnimListener = null; }
+        agentPickerMenu.classList.remove('closing', 'hidden');
+      } else {
+        _closeAgentMenu();
+      }
+    });
+    
+    document.addEventListener('click', function(e) {
+      if (!agentPickerMenu.classList.contains('hidden') && !agentPickerMenu.contains(e.target) && !agentPickerBtn.contains(e.target)) {
+        _closeAgentMenu();
+      }
+    });
+
+    var items = agentPickerMenu.querySelectorAll('.model-switch-item');
+    items.forEach(function(item) {
+      item.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var val = this.getAttribute('data-value');
+        var text = this.textContent;
+        if (agentPickerLabel) agentPickerLabel.textContent = text;
+        globalAgentStyle = val;
+        _closeAgentMenu();
+        
+        // Save using fetch
+        fetch('/api/auth/settings', { 
+          method: 'POST', 
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agent_prompt_style: globalAgentStyle })
+        }).catch(err => console.error(err));
+      });
+    });
+  }
+
+  // Fetch initial setting
+  fetch('/api/auth/settings', { credentials: 'same-origin' })
+    .then(res => res.json())
+    .then(settings => {
+      if (settings.agent_prompt_style) {
+        globalAgentStyle = settings.agent_prompt_style;
+        if (agentPickerLabel) {
+          agentPickerLabel.textContent = globalAgentStyle === 'hermes' ? 'Hermes Agent' : 'OpenAgent';
+        }
+      }
+    }).catch(e => {});
+}
+
+// Initialize the dropdown immediately
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initAgentPickerUI);
+} else {
+  initAgentPickerUI();
+}
+
 async function initAgentSettings() {
   var toolsInput = el('set-agentMaxTools');
   var msg = el('set-agentMsg');
+
   if (!toolsInput) return;
 
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
     if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
-  } catch (e) {}
+  } catch (e) {
+  }
 
   async function save() {
     var val = parseInt(toolsInput.value, 10) || 0;
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_max_tool_calls: val })
+        body: JSON.stringify({ agent_max_tool_calls: val, agent_prompt_style: currentStyle })
       });
-      msg.textContent = val > 0 ? 'Limit: ' + val + ' tool calls per message' : 'Unlimited';
-      msg.style.color = 'var(--fg)';
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+      if (msg) {
+        msg.textContent = val > 0 ? 'Limit: ' + val + ' tool calls per message' : 'Unlimited';
+        msg.style.color = 'var(--fg)';
+      }
+    } catch (e) { 
+      if (msg) {
+        msg.textContent = 'Failed to save'; 
+        msg.style.color = 'var(--red)'; 
+      }
+    }
   }
 
   toolsInput.addEventListener('change', save);
   var cur = parseInt(toolsInput.value, 10) || 0;
-  msg.textContent = cur > 0 ? 'Limit: ' + cur + ' tool calls per message' : 'Unlimited';
+  if (msg) {
+    msg.textContent = cur > 0 ? 'Limit: ' + cur + ' tool calls per message' : 'Unlimited';
+  }
 }
 
 /* ═══════════════════════════════════════════

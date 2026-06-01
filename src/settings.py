@@ -110,6 +110,7 @@ DEFAULT_SETTINGS = {
     # entry is an absolute path. Sensitive subpaths (.ssh, .gnupg, shell
     # rc files, SSH key files) are always blocked regardless of roots.
     "tool_path_extra_roots": [],
+    "agent_prompt_style": "opencode",
     "task_endpoint_id": "",
     "task_model": "",
     "default_endpoint_id": "",
@@ -234,6 +235,7 @@ _PER_USER_KEYS = {
     "default_endpoint_id", "default_model", "default_model_fallbacks",
     "utility_endpoint_id", "utility_model", "utility_model_fallbacks",
     "research_endpoint_id", "research_model",
+    "agent_prompt_style",
 }
 
 
