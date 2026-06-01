@@ -55,6 +55,26 @@ DEFAULT_SETTINGS = {
     "search_fallback_chain": ["duckduckgo"],
     "search_url": "",
     "search_result_count": 5,
+    # SafeSearch level applied to every provider that exposes one.
+    # "strict"   — block adult / explicit results (default; matches what users
+    #              expect from a research tool and avoids unrelated NSFW URLs
+    #              bleeding in via provider "related" / spam recommendations)
+    # "moderate" — provider-default behavior (filter explicit but allow
+    #              suggestive content)
+    # "off"      — disable filtering entirely (advanced users only)
+    #
+    # Providers that honor this setting (translated to each provider's native
+    # param in src/search/providers.py:_safesearch_for):
+    #     SearXNG       safesearch=0/1/2 (JSON API, HTML scrape, news fallback)
+    #     Brave Search  safesearch=off/moderate/strict
+    #     DuckDuckGo    safesearch=off/moderate/on (library + HTML kp param)
+    #     Google PSE    safe=active (omitted for "off"; PSE has no middle tier)
+    #     Serper.dev    safe=active (omitted for "off"; proxies Google's `safe`)
+    # Providers NOT touched: Tavily (no SafeSearch knob; filters at index time)
+    # and any custom backend reached via search_url — they keep whatever the
+    # backend itself decides, so operators stay in control of self-hosted /
+    # niche search instances.
+    "search_safesearch": "strict",
     "brave_api_key": "",
     "google_pse_key": "",
     "google_pse_cx": "",
