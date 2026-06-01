@@ -2553,14 +2553,23 @@ function initializeEventListeners() {
     });
   }
 
+  const _DEOJ_SKIP = '.sources-section, .thinking-toggle, .memory-used-pill';
+
   /** Walk all text nodes inside an element and replace emojis with text descriptions */
   function deEmojify(root) {
+    if (!root || !root.querySelectorAll) return;
+    // Monochrome SVG spans from svgifyEmoji — Unicode lives in aria-label only
+    root.querySelectorAll('.emoji[aria-label]').forEach((span) => {
+      if (span.closest(_DEOJ_SKIP)) return;
+      const label = span.getAttribute('aria-label') || '';
+      span.replaceWith(document.createTextNode(emojiToText(label)));
+    });
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const nodes = [];
     while (walker.nextNode()) nodes.push(walker.currentNode);
     for (const node of nodes) {
       // Skip UI elements that use unicode symbols as functional icons
-      if (node.parentElement && node.parentElement.closest('.sources-section, .thinking-toggle, .memory-used-pill')) continue;
+      if (node.parentElement && node.parentElement.closest(_DEOJ_SKIP)) continue;
       if (EMOJI_RE.test(node.textContent)) {
         EMOJI_RE.lastIndex = 0; // reset regex state
         node.textContent = emojiToText(node.textContent);
