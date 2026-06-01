@@ -1988,7 +1988,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (!filtered.length) {
         // Sad-mouth smiley (downturn curve) for "nothing here yet".
         const _sadIco = '<span style="vertical-align:-3px;margin-left:6px;">' + uiModule.emptyStateIcon('sad') + '</span>';
-        grid.innerHTML = '<div class="doclib-empty">No chats' + _sadIco + '</div>';
+        grid.innerHTML = '<div class="doclib-empty">No chats yet' + _sadIco + '<span style="display:block;opacity:0.7;font-size:11px;margin-top:4px;">Your chats will show up here.</span></div>';
         _appendInlineLoadMore(grid, 0, _chatsVisibleLimit, () => {});
         return;
       }

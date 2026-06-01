@@ -594,8 +594,9 @@ export function renderMemoryList() {
     } else {
       memoryList.innerHTML = `<div class="memory-empty" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;">
         <span>No memories yet${_smiley}</span>
-        <span style="opacity:0.7;font-size:11px;display:block;">
-          <a href="#" data-mem-goto-add style="color:var(--accent,var(--red));text-decoration:underline;">Import in Add tab</a>
+        <span style="opacity:0.7;font-size:11px;display:block;max-width:240px;text-align:center;">
+          They build up automatically as you chat — or
+          <a href="#" data-mem-goto-add style="color:var(--accent,var(--red));text-decoration:underline;">import in the Add tab</a>.
         </span>
       </div>`;
       memoryList.querySelector('[data-mem-goto-add]')?.addEventListener('click', (e) => {
