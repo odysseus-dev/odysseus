@@ -12,6 +12,9 @@ services:
       # Cookbook local model cache. Inside Docker, "Local" means the Odysseus
       # container, so persist its HuggingFace cache under ./data/huggingface.
       - ./data/huggingface:/app/.cache/huggingface
+      # Persist `pip install --user` packages (vllm, llama-cpp-python,
+      # sglang, etc.) so Cookbook deps survive `docker compose down`.
+      - ./data/dot-local:/app/.local
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
