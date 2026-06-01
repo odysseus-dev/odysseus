@@ -9,6 +9,64 @@ logger = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------------
+# LLM-assisted query rewrite (optional, additive)
+# ----------------------------------------------------------------------
+# A conversational question ("is humberto maturana dead?") makes a poor search
+# query — engines do far better with keywords ("Humberto Maturana death date").
+# When a utility LLM is available we ask it to reformulate; on ANY failure we
+# return the original query unchanged, so search is never worse than before.
+
+_REWRITE_SYSTEM = (
+    "You turn a user's question into the best possible web-search query. "
+    "Output ONLY the search query — no quotes, no explanation, no punctuation "
+    "beyond what helps the search. Use keywords a search engine matches well: "
+    "drop filler words (is/are/the/a/do), keep proper nouns, and add the term "
+    "that surfaces the answer (e.g. a 'is X dead?' question -> 'X death date'; "
+    "'how do I Y' -> 'Y tutorial'). Keep it under 12 words."
+)
+
+
+async def rewrite_search_query(question: str, owner: Optional[str] = None,
+                               max_chars: int = 200) -> str:
+    """Reformulate a natural-language question into a good keyword search query
+    using the utility LLM. Returns the rewritten query, or the original on any
+    failure (no LLM configured, timeout, empty/over-long output, etc.).
+
+    Safe by construction: the worst case is the unchanged query, i.e. today's
+    behaviour. Best case turns "is humberto maturana dead?" into
+    "Humberto Maturana death date".
+    """
+    q = (question or "").strip()
+    if not q or len(q) > 400:
+        return q
+    try:
+        from src.endpoint_resolver import resolve_endpoint
+        from src.llm_core import llm_call_async
+        url, model, headers = resolve_endpoint("utility", owner=owner)
+        if not url or not model:
+            return q
+        messages = [
+            {"role": "system", "content": _REWRITE_SYSTEM},
+            {"role": "user", "content": q},
+        ]
+        out = await llm_call_async(url, model, messages, temperature=0.0,
+                                   max_tokens=40, headers=headers)
+        # Take the first line only, THEN strip wrapping quotes/space — so a
+        # quoted query followed by an explanation line ('"foo"\n(why)') yields
+        # the clean 'foo', not 'foo"'. Reject empties, refusals, or junk that's
+        # longer than the original (model explained instead of rewriting).
+        out = (out or "").strip()
+        out = out.splitlines()[0].strip() if out else ""
+        out = out.strip('"').strip("'").strip()
+        if not out or len(out) > max_chars or len(out) > len(q) + 60:
+            return q
+        return out
+    except Exception as exc:
+        logger.debug("query rewrite failed, using original: %s", exc)
+        return q
+
+
+# ----------------------------------------------------------------------
 # Query processing helpers
 # ----------------------------------------------------------------------
 def _detect_question_type(query: str) -> Optional[str]:
