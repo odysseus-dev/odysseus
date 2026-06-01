@@ -111,10 +111,9 @@ expose this port directly to the public internet. To build a clickable app wrapp
 ./build-macos-app.sh
 ```
 ### Nix Flake (Recommended for Local installation/development)
-This is the most robust and recommended way to run Odysseus locally without Docker. It provides a 100% reproducible, blazingly fast development environment that works univerally across all systems (Linux, macOS, and Windows via WSL2).
-
+This is the most robust and recommended way to run Odysseus locally without Docker. It provides a 100% reproducible, blazingly fast development environment that works universally across all systems (Linux, macOS, and Windows via WSL2).
 **Prerequisites:**
-1. **Installation Nix:** Open your terminal and run the official multi-user installer (windows needs to have WSL2 installed):
+1. **Installation Nix:** Open your terminal and run the official multi-user installer (Windows needs to have WSL2 installed):
     ```bash
     sh <(curl -L [https://nixos.org/nix/install](https://nixos.org/nix/install)) --daemon
     ```
