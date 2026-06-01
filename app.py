@@ -108,6 +108,7 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/cookbook/setup",  # remote pacman/apt installs
     "/api/upload",          # large files
     "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
+    "/api/admin/update",    # git fetch + pull can take >45s on slow connections
 )
 
 
@@ -595,6 +596,10 @@ app.include_router(setup_calendar_routes())
 # Shell (user-facing command execution)
 from routes.shell_routes import setup_shell_routes
 app.include_router(setup_shell_routes())
+
+# Software update (admin-only git pull with SSE stream)
+from routes.update_routes import setup_update_routes
+app.include_router(setup_update_routes())
 
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes
