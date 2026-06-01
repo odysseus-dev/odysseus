@@ -20,6 +20,9 @@ services:
       # static/ over it so CSS/JS edits show up on a browser reload without a
       # rebuild. The served files are then always the working-tree copy.
       - ./static:/app/static
+      # Likewise mount the Python source so backend edits take effect on a
+      # container restart instead of an image rebuild.
+      - ./src:/app/src
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.

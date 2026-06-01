@@ -385,6 +385,47 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
             cleaned.append(item)
     return cleaned
 
+
+def _normalize_conversation(messages: List[Dict]) -> List[Dict]:
+    """Coerce a message list into the user-first, alternating shape that strict
+    chat templates (e.g. Qwen's jinja, which raises "No user query found in
+    messages") require — without changing meaning.
+
+    The chat UI seeds a greeting as an ``assistant`` message and, when a turn
+    fails, can leave two ``user`` turns back-to-back. Both produce a sequence
+    these templates reject. This:
+      - keeps a single leading ``system`` message untouched,
+      - drops any assistant/tool turns that precede the first ``user`` turn,
+      - merges consecutive same-role text turns into one (joined by a blank
+        line), leaving tool-call/non-string turns alone.
+    """
+    if not messages:
+        return messages
+    out: List[Dict] = []
+    body = messages
+    if body[0].get("role") == "system":
+        out.append(body[0])
+        body = body[1:]
+    # Drop leading non-user turns (the seeded assistant greeting, stray tools).
+    start = 0
+    while start < len(body) and body[start].get("role") != "user":
+        start += 1
+    for msg in body[start:]:
+        prev = out[-1] if out else None
+        mergeable = (
+            prev is not None
+            and prev.get("role") == msg.get("role")
+            and isinstance(prev.get("content"), str)
+            and isinstance(msg.get("content"), str)
+            and "tool_calls" not in prev and "tool_calls" not in msg
+            and "tool_call_id" not in prev and "tool_call_id" not in msg
+        )
+        if mergeable:
+            out[-1] = {**prev, "content": f"{prev['content']}\n\n{msg['content']}".strip()}
+        else:
+            out.append(msg)
+    return out
+
 def _normalize_anthropic_url(url: str) -> str:
     """Ensure Anthropic URL points to /v1/messages."""
     url = url.rstrip("/")
@@ -464,6 +505,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         messages_copy = [{"role": "system", "content": "\n\n".join(sys_parts)}] + non_sys
     else:
         messages_copy = non_sys
+    messages_copy = _normalize_conversation(messages_copy)
 
     provider = _detect_provider(url)
     cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens)
@@ -572,6 +614,7 @@ async def llm_call_async(
         messages_copy = [{"role": "system", "content": "\n\n".join(sys_parts)}] + non_sys
     else:
         messages_copy = non_sys
+    messages_copy = _normalize_conversation(messages_copy)
 
     cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens)
     cached_response = _get_cached_response(cache_key)
@@ -668,6 +711,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         messages_copy = [{"role": "system", "content": "\n\n".join(sys_parts)}] + non_sys
     else:
         messages_copy = non_sys
+    messages_copy = _normalize_conversation(messages_copy)
 
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
