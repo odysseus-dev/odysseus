@@ -18,6 +18,10 @@ build/
 .vscode/
 .idea/
 dev-docs/
+# Demo media + repo docs — landing page is GitHub Pages only, never served
+# at runtime (app mounts /static only), so keep ~18MB out of the image.
+docs/
+*.md
 *.db
 *.sqlite
 *.sqlite3
