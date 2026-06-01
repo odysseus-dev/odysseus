@@ -21147,6 +21147,14 @@ select.task-form-input { text-overflow: ellipsis; }
   font-size: 12px;
   min-width: 70px;
 }
+/* Cards with mixed short/long labels (e.g. Research: "Endpoint" vs
+   "Library docs (max)") use this on their .settings-col so every label
+   shares one fixed column and the inputs line up cleanly. */
+.settings-col--aligned .settings-label {
+  width: 132px;
+  min-width: 132px;
+  flex-shrink: 0;
+}
 .settings-select {
   flex: 1;
   /* Allow the select to shrink below its longest option's width inside a flex
