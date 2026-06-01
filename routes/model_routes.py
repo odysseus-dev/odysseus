@@ -865,8 +865,9 @@ def setup_model_routes(model_discovery):
     _PROVIDERS_CACHE_TTL = 30  # seconds
 
     @router.get("/providers")
-    def providers(refresh: bool = False):
+    def providers(request: Request, refresh: bool = False):
         """Get all available providers (cached for 30s)."""
+        require_admin(request)
         now = _time.time()
         if not refresh and _providers_cache["data"] is not None and (now - _providers_cache["time"]) < _PROVIDERS_CACHE_TTL:
             return _providers_cache["data"]
