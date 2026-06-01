@@ -94,6 +94,29 @@ def _md_to_html(md_text: str) -> str:
         )
 
     result = re.sub(r'<a href="(https?://[^"]+)">(.*?)</a>', _citation_chip, result, flags=re.S)
+
+    # De-clutter: within each paragraph, keep only the first chip per source
+    # URL and drop later repeats (the model often re-cites the same source
+    # several times in one paragraph). Per-paragraph, so a source cited in
+    # different sections still shows in each.
+    def _dedupe_paragraph(pm):
+        seen = set()
+
+        def _drop_repeat(cm):
+            href = cm.group(1)
+            if href in seen:
+                return ""  # already cited in this paragraph
+            seen.add(href)
+            return cm.group(0)
+
+        return re.sub(
+            r'<a class="cite-chip"[^>]*?href="([^"]+)"[^>]*>.*?</a>',
+            _drop_repeat,
+            pm.group(0),
+            flags=re.S,
+        )
+
+    result = re.sub(r"<p>.*?</p>", _dedupe_paragraph, result, flags=re.S)
     return result
 
 
