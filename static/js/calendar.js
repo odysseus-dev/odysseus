@@ -116,7 +116,10 @@ async function _fetchEvents(start, end, force) {
   const hasCache = Object.keys(_allEvents).length > 0;
   if (hasCache) _events = _filterPool(start, end);
   const fetchPromise = fetch(`${API_BASE}/api/calendar/events?start=${start}&end=${end}`, { credentials: 'same-origin' })
-    .then(r => r.json())
+    .then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
     .then(data => {
       // On first fetch after cache load, replace pool entirely to avoid
       // stale/duplicate UIDs from a previous backend (e.g. CalDAV → SQLite)
@@ -154,7 +157,10 @@ function _prefetchAdjacent() {
   for (const [s, e] of ranges) {
     if (_rangeIsCached(s, e)) continue;
     fetch(`${API_BASE}/api/calendar/events?start=${s}&end=${e}`, { credentials: 'same-origin' })
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
       .then(d => {
         (d.events || []).forEach(ev => { _allEvents[ev.uid] = ev; });
         _fetchedRanges.push([s, e]);
