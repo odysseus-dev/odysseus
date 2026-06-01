@@ -3,7 +3,7 @@
 
   # Defines the source of our packages. Pinned to the 25.05 branch for stability.
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.05";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
   };
 
   outputs = { self, nixpkgs }:
