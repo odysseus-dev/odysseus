@@ -303,41 +303,19 @@ def test_require_admin_allows_when_auth_explicitly_disabled(monkeypatch):
 def test_internal_tool_owner_header_validates_against_auth_config():
     """Test that X-Odysseus-Owner impersonation validates against the live user
     list, accepting both admin and non-admin users but rejecting invalid names."""
-    from types import SimpleNamespace
-    from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
+    from src.utils.owner_resolver import resolve_owner
 
-    # Minimal stub auth manager with hardcoded users
-    class StubAuthMgr:
-        users = {
-            "alice": {"is_admin": False},
-            "admin": {"is_admin": True},
-        }
+    auth_users = ["alice", "admin"]
 
-    auth_mgr = StubAuthMgr()
-
-    # Test cases: (owner_header_value, expected_current_user)
     test_cases = [
-        ("alice", "alice"),
-        ("admin", "admin"),
-        ("doesnotexist", "internal-tool"),
+        ("alice", None, "alice"),
+        ("doesnotexist", "admin", "admin"),
+        ("doesnotexist", "nobody", "internal-tool"),
     ]
 
-    for owner_value, expected_user in test_cases:
-        # Inline the impersonation logic from AuthMiddleware.dispatch
-        headers = {
-            INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN,
-            "X-Odysseus-Owner": owner_value,
-        }
-        state = SimpleNamespace()
-
-        _impersonate = (headers.get("X-Odysseus-Owner") or "").strip()
-        if _impersonate and _impersonate in auth_mgr.users:
-            state.current_user = _impersonate
-        else:
-            state.current_user = "internal-tool"
-
-        assert state.current_user == expected_user, \
-            f"Expected {expected_user} for owner '{owner_value}', got {state.current_user}"
+    for owner_value, current_user, expected_user in test_cases:
+        assert resolve_owner(owner_value, current_user, auth_users) == expected_user, \
+            f"Expected {expected_user} for header={owner_value!r} user={current_user!r}"
 
 
 def test_auth_manager_migrates_legacy_admin_role(tmp_path):

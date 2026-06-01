@@ -28,6 +28,8 @@ from core.exceptions import (
     LLMServiceError, WebSearchError,
 )
 
+from src.utils.owner_resolver import resolve_owner
+
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
@@ -188,12 +190,13 @@ if AUTH_ENABLED:
                     # X-Odysseus-Owner, attribute the request to that user
                     # if they exist in the user list. Authorization checks
                     # elsewhere will enforce what the user is allowed to do.
-                    _impersonate = (request.headers.get("X-Odysseus-Owner") or "").strip()
+                    _impersonate = request.headers.get("X-Odysseus-Owner")
                     _auth_mgr = getattr(request.app.state, "auth_manager", None) or auth_manager
-                    if _impersonate and _impersonate in _auth_mgr.users:
-                        request.state.current_user = _impersonate
-                    else:
-                        request.state.current_user = "internal-tool"
+                    request.state.current_user = resolve_owner(
+                        _impersonate,
+                        None,
+                        list(_auth_mgr.users),
+                    )
                     request.state.api_token = False
                     return await call_next(request)
             except Exception:
