@@ -4041,3 +4041,200 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
         pass
 
     return {"output": "Vault unlocked. Session saved.", "exit_code": 0}
+
+
+# ---------------------------------------------------------------------------
+# generate_speech / transcribe_audio / manage_gallery
+# ---------------------------------------------------------------------------
+
+
+async def do_generate_speech(content: str, owner: Optional[str] = None) -> Dict:
+    """Synthesize text to speech using the configured TTS service."""
+    try:
+        args = _parse_tool_args(content)
+    except ValueError:
+        return {"error": "Invalid JSON arguments", "exit_code": 1}
+
+    text = args.get("text", "")
+    if not text:
+        return {"error": "text is required", "exit_code": 1}
+
+    try:
+        from services.tts.tts_service import get_tts_service
+        svc = get_tts_service()
+        if not svc.available():
+            return {"error": "TTS service not available. Configure a TTS provider in Settings.", "exit_code": 1}
+
+        # Override voice/speed if provided
+        if args.get("voice"):
+            svc.set_voice(args["voice"])
+
+        audio_b64 = svc.synthesize_to_base64(text)
+        if not audio_b64:
+            return {"error": "TTS synthesis returned no audio", "exit_code": 1}
+
+        return {
+            "output": f"Audio generated ({len(audio_b64)} bytes base64). Format: wav",
+            "audio_base64": audio_b64,
+            "exit_code": 0,
+        }
+    except ImportError:
+        return {"error": "TTS service module not found", "exit_code": 1}
+    except Exception as e:
+        return {"error": f"TTS error: {type(e).__name__}: {e}", "exit_code": 1}
+
+
+async def do_transcribe_audio(content: str, owner: Optional[str] = None) -> Dict:
+    """Transcribe audio to text using faster-whisper."""
+    try:
+        args = _parse_tool_args(content)
+    except ValueError:
+        return {"error": "Invalid JSON arguments", "exit_code": 1}
+
+    audio_path = args.get("audio_path", "")
+    audio_b64 = args.get("audio_base64", "")
+    language = args.get("language", "")
+
+    if not audio_path and not audio_b64:
+        return {"error": "audio_path or audio_base64 is required", "exit_code": 1}
+
+    try:
+        from services.stt.stt_service import get_stt_service
+        svc = get_stt_service()
+        if not svc.available():
+            return {"error": "STT service not available. Install faster-whisper and enable STT in Settings.", "exit_code": 1}
+
+        # If base64 provided, write to temp file
+        if audio_b64 and not audio_path:
+            import base64, tempfile
+            audio_bytes = base64.b64decode(audio_b64)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp.write(audio_bytes)
+                audio_path = tmp.name
+
+        if not audio_path or not os.path.isfile(audio_path):
+            return {"error": f"Audio file not found: {audio_path}", "exit_code": 1}
+
+        # Use faster-whisper directly
+        try:
+            from faster_whisper import WhisperModel
+            settings = svc._load_settings()
+            model_size = settings.get("stt_model", "base")
+            model = WhisperModel(model_size, device="cpu", compute_type="int8")
+            segments, info = model.transcribe(audio_path, language=language or None)
+            transcript_parts = []
+            for segment in segments:
+                transcript_parts.append(segment.text.strip())
+            transcript = " ".join(transcript_parts)
+            if not transcript:
+                return {"output": "(no speech detected)", "exit_code": 0}
+            return {"output": transcript, "exit_code": 0}
+        except ImportError:
+            return {"error": "faster-whisper not installed. Run: pip install faster-whisper", "exit_code": 1}
+
+    except Exception as e:
+        return {"error": f"STT error: {type(e).__name__}: {e}", "exit_code": 1}
+
+
+async def do_manage_gallery(content: str, owner: Optional[str] = None) -> Dict:
+    """Manage the image gallery: list, search, delete, get_info."""
+    try:
+        args = _parse_tool_args(content)
+    except ValueError:
+        return {"error": "Invalid JSON arguments", "exit_code": 1}
+
+    action = args.get("action", "")
+    if not action:
+        return {"error": "action is required", "exit_code": 1}
+
+    try:
+        from core.database import get_db_session
+        from sqlalchemy import text as sql_text
+
+        if action == "list":
+            limit = min(args.get("limit", 20), 100)
+            async with get_db_session() as session:
+                result = await session.execute(
+                    sql_text("SELECT id, filename, prompt, model, file_size, created_at FROM gallery_images WHERE is_active = 1 ORDER BY created_at DESC LIMIT :limit"),
+                    {"limit": limit},
+                )
+                rows = result.fetchall()
+            if not rows:
+                return {"output": "No images in gallery.", "exit_code": 0}
+            lines = [f"Gallery images ({len(rows)}):\n"]
+            for row in rows:
+                size_kb = (row[4] or 0) / 1024
+                name = row[2] or row[1]
+                if len(name) > 60:
+                    name = name[:57] + "..."
+                lines.append(f"- `{row[0][:8]}` {name} [{row[3] or '?'}] ({size_kb:.0f}KB) — {row[5]}")
+            return {"output": "\n".join(lines), "exit_code": 0}
+
+        elif action == "search":
+            query = args.get("query", "")
+            if not query:
+                return {"error": "query is required for search", "exit_code": 1}
+            limit = min(args.get("limit", 20), 100)
+            async with get_db_session() as session:
+                result = await session.execute(
+                    sql_text("SELECT id, filename, prompt, model, file_size, created_at FROM gallery_images WHERE is_active = 1 AND (prompt LIKE :q OR filename LIKE :q OR tags LIKE :q) ORDER BY created_at DESC LIMIT :limit"),
+                    {"q": f"%{query}%", "limit": limit},
+                )
+                rows = result.fetchall()
+            if not rows:
+                return {"output": f"No images matching '{query}'.", "exit_code": 0}
+            lines = [f"Gallery search for '{query}' ({len(rows)} results):\n"]
+            for row in rows:
+                size_kb = (row[4] or 0) / 1024
+                name = row[2] or row[1]
+                if len(name) > 60:
+                    name = name[:57] + "..."
+                lines.append(f"- `{row[0][:8]}` {name} [{row[3] or '?'}] ({size_kb:.0f}KB)")
+            return {"output": "\n".join(lines), "exit_code": 0}
+
+        elif action == "delete":
+            image_id = args.get("image_id", "")
+            if not image_id:
+                return {"error": "image_id is required for delete", "exit_code": 1}
+            async with get_db_session() as session:
+                result = await session.execute(
+                    sql_text("SELECT id, filename, prompt FROM gallery_images WHERE id LIKE :id"),
+                    {"id": f"{image_id}%"},
+                )
+                row = result.fetchone()
+                if not row:
+                    return {"error": f"Image not found: {image_id}", "exit_code": 1}
+                # Soft-delete (set is_active = 0) rather than removing from disk
+                await session.execute(
+                    sql_text("UPDATE gallery_images SET is_active = 0 WHERE id = :id"),
+                    {"id": row[0]},
+                )
+                await session.commit()
+            return {"output": f"Deleted image: {row[2] or row[1]} ({row[0][:8]})", "exit_code": 0}
+
+        elif action == "get_info":
+            image_id = args.get("image_id", "")
+            if not image_id:
+                return {"error": "image_id is required for get_info", "exit_code": 1}
+            async with get_db_session() as session:
+                result = await session.execute(
+                    sql_text("SELECT * FROM gallery_images WHERE id LIKE :id"),
+                    {"id": f"{image_id}%"},
+                )
+                row = result.fetchone()
+                if not row:
+                    return {"error": f"Image not found: {image_id}", "exit_code": 1}
+                cols = result.keys()
+                info_lines = []
+                for col, val in zip(cols, row):
+                    if val is not None and val != "":
+                        info_lines.append(f"{col}: {val}")
+            return {"output": "\n".join(info_lines), "exit_code": 0}
+
+        else:
+            return {"error": f"Unknown action '{action}'. Use: list, search, delete, get_info", "exit_code": 1}
+
+    except ImportError:
+        return {"error": "Database module not available", "exit_code": 1}
+    except Exception as e:
+        return {"error": f"Gallery error: {type(e).__name__}: {e}", "exit_code": 1}

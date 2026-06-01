@@ -15,3 +15,12 @@ duckduckgo-search
 # network-served app — see ACKNOWLEDGMENTS.md. The MIT core (PDF *text*
 # extraction via pypdf) works without it; this only unlocks form-filling.
 PyMuPDF
+
+# Local speech-to-text via faster-whisper (Whisper ONNX/CPU/GPU).
+# Enables the transcribe_audio agent tool and the STT service.
+faster-whisper
+
+# Local text-to-speech via Kokoro TTS.
+# Enables the generate_speech agent tool and the TTS service.
+# Install manually: pip install kokoro onnxruntime
+# kokoro

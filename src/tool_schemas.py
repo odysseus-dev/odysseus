@@ -1020,6 +1020,59 @@ FUNCTION_TOOL_SCHEMAS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_speech",
+            "description": "Convert text to speech audio. Returns a base64-encoded audio file. Uses the configured TTS provider (Kokoro local or external API).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Text to synthesize into speech"},
+                    "voice": {"type": "string", "description": "Voice name (optional, uses configured default)"},
+                    "speed": {"type": "number", "description": "Playback speed multiplier (default 1.0)"},
+                },
+                "required": ["text"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "transcribe_audio",
+            "description": "Transcribe audio/speech to text. Pass a file path or base64-encoded audio. Uses faster-whisper local model.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "audio_path": {"type": "string", "description": "Path to audio file on disk"},
+                    "audio_base64": {"type": "string", "description": "Base64-encoded audio data (alternative to file path)"},
+                    "language": {"type": "string", "description": "Language code (e.g. 'en', 'es'). Auto-detected if omitted."},
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_gallery",
+            "description": "Manage the image gallery: list, search, delete, or get info about images. The gallery stores uploaded and generated images.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "search", "delete", "get_info"],
+                        "description": "The action to perform",
+                    },
+                    "query": {"type": "string", "description": "Search query (for search action)"},
+                    "image_id": {"type": "string", "description": "Image ID (for delete/get_info actions)"},
+                    "limit": {"type": "integer", "description": "Max results (default 20)"},
+                },
+                "required": ["action"]
+            }
+        }
+    },
 ]
 
 

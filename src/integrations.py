@@ -132,6 +132,228 @@ INTEGRATION_PRESETS: Dict[str, Dict[str, Any]] = {
             "  GET /api/greader.php/reader/api/0/unread-count?output=json — unread counts"
         ),
     },
+    "nextcloud": {
+        "name": "Nextcloud",
+        "auth_type": "header",
+        "auth_header": "Authorization",
+        "description": (
+            "Nextcloud self-hosted platform. Auth header value format: 'Bearer YOUR_TOKEN' (or use App Password).\n"
+            "Key endpoints:\n"
+            "  Files (WebDAV): PROPFIND /remote.php/dav/files/{user}/ — list files\n"
+            "  GET /remote.php/dav/files/{user}/{path} — download file\n"
+            "  PUT /remote.php/dav/files/{user}/{path} — upload file\n"
+            "  DELETE /remote.php/dav/files/{user}/{path} — delete file\n"
+            "  Calendar (CalDAV): PROPFIND /remote.php/dav/calendars/{user}/ — list calendars\n"
+            "  Contacts (CardDAV): PROPFIND /remote.php/dav/addressbooks/users/{user}/ — list address books\n"
+            "  Deck: GET /index.php/deck/cards — list cards\n"
+            "  Talk: GET /ocs/v2.php/apps/spreed/api/v4/rooms — list conversations\n"
+            "  OCS API: GET /ocs/v2.php/cloud/user — current user info"
+        ),
+    },
+    "paperless": {
+        "name": "Paperless-ngx",
+        "auth_type": "header",
+        "auth_header": "Authorization",
+        "description": (
+            "Paperless-ngx document management. Auth header value format: 'Token YOUR_TOKEN'. Key endpoints:\n"
+            "  GET /api/documents/ — list documents (params: query, tags__id, correspondent__id, document_type__id, ordering, page)\n"
+            "  GET /api/documents/{id}/ — get document detail\n"
+            "  GET /api/documents/{id}/download/ — download original file\n"
+            "  GET /api/documents/{id}/preview/ — preview thumbnail\n"
+            "  POST /api/documents/post_document/ — upload document (multipart: document, title, tags, correspondent, document_type)\n"
+            "  PUT /api/documents/{id}/ — update document metadata\n"
+            "  DELETE /api/documents/{id}/ — delete document\n"
+            "  GET /api/tags/ — list tags\n"
+            "  GET /api/correspondents/ — list correspondents\n"
+            "  GET /api/document_types/ — list document types\n"
+            "  GET /api/saved_views/ — list saved views\n"
+            "  POST /api/search/ — full-text search {\"query\": \"...\"}"
+        ),
+    },
+    "grafana": {
+        "name": "Grafana",
+        "auth_type": "header",
+        "auth_header": "Authorization",
+        "description": (
+            "Grafana monitoring dashboards. Auth header value format: 'Bearer YOUR_API_KEY' (or 'Basic base64(user:pass)'). Key endpoints:\n"
+            "  GET /api/search — search dashboards (params: query, tag)\n"
+            "  GET /api/dashboards/uid/{uid} — get dashboard by uid\n"
+            "  GET /api/datasources — list datasources\n"
+            "  GET /api/alert-rules — list alert rules\n"
+            "  GET /api/annotations — list annotations (params: from, to, tags)\n"
+            "  POST /api/annotations — create annotation {\"text\": \"...\", \"tags\": [...], \"time\": ms}\n"
+            "  GET /api/folders — list folders\n"
+            "  GET /api/org — current org info\n"
+            "  GET /api/health — health check"
+        ),
+    },
+    "pihole": {
+        "name": "Pi-hole",
+        "auth_type": "param",
+        "auth_param": "auth",
+        "description": (
+            "Pi-hole DNS ad blocker. Auth via session password or API token.\n"
+            "For API token: append ?auth=TOKEN to requests. For password: POST /admin/api.php with pw=PASSWORD first.\n"
+            "Key endpoints:\n"
+            "  GET /admin/api.php?summaryRaw — dashboard summary stats\n"
+            "  GET /admin/api.php?topItems — top blocked domains\n"
+            "  GET /admin/api.php?getQueryTypes — query type breakdown\n"
+            "  GET /admin/api.php?getForwardDestinations — upstream DNS servers\n"
+            "  GET /admin/api.php?recentBlocked — most recently blocked domain\n"
+            "  GET /admin/api.php?enable — enable Pi-hole\n"
+            "  GET /admin/api.php?disable — disable Pi-hole (params: disable=300 for timed)\n"
+            "  GET /admin/api.php?getAllQueries — recent DNS queries\n"
+            "  GET /admin/api.php?blacklist — list blacklisted domains\n"
+            "  GET /admin/api.php?whitelist — list whitelisted domains\n"
+            "  POST /admin/api.php — add to list (params: add=domain, list=black|white)"
+        ),
+    },
+    "immich": {
+        "name": "Immich",
+        "auth_type": "header",
+        "auth_header": "x-api-key",
+        "description": (
+            "Immich photo/video management. Auth via API key header. Key endpoints:\n"
+            "  GET /api/albums — list albums\n"
+            "  GET /api/albums/{id} — get album with assets\n"
+            "  POST /api/albums — create album {\"albumName\": \"...\", \"assetIds\": [...]}\n"
+            "  GET /api/assets — list assets (params: limit, page)\n"
+            "  GET /api/assets/{id} — get asset info\n"
+            "  POST /api/search/metadata — search assets {\"originalFileName\": \"...\", \"tagIds\": [...]}\n"
+            "  POST /api/search/smart — AI-powered smart search {\"query\": \"...\"}\n"
+            "  GET /api/people — list recognized people\n"
+            "  GET /api/people/{id} — get person with assets\n"
+            "  GET /api/tags — list tags\n"
+            "  GET /api/server/info — server version info"
+        ),
+    },
+    "jellyfin": {
+        "name": "Jellyfin",
+        "auth_type": "header",
+        "auth_header": "X-Emby-Token",
+        "description": (
+            "Jellyfin media server. Auth via API key or user token. Key endpoints:\n"
+            "  GET /Users/Me — current user info\n"
+            "  GET /Library/VirtualFolders — list media libraries\n"
+            "  GET /Items — list items (params: ParentId, SearchTerm, IncludeItemTypes, Limit, StartIndex, SortBy)\n"
+            "  GET /Items/{Id} — get item detail\n"
+            "  GET /Items/{Id}/Images/Primary — get item poster\n"
+            "  GET /Search/Hints — search (params: SearchTerm, IncludeItemTypes)\n"
+            "  GET /Shows — list TV shows\n"
+            "  GET /Shows/{Id}/Episodes — list episodes for a show\n"
+            "  GET /Movies — list movies\n"
+            "  GET /Artists — list music artists\n"
+            "  GET /Genres — list genres\n"
+            "  POST /Sessions/{Id}/Playing — start playback\n"
+            "  GET /Sessions — list active sessions"
+        ),
+    },
+    "kagi": {
+        "name": "Kagi",
+        "auth_type": "header",
+        "auth_header": "Authorization",
+        "description": (
+            "Kagi search API. Auth header value format: 'Bot YOUR_API_KEY'. Key endpoints:\n"
+            "  GET /v0/search — web search (params: q, limit, offset)\n"
+            "  GET /v0/search/news — news search (params: q, limit)\n"
+            "  GET /v0/search/images — image search (params: q, limit)\n"
+            "  GET /v0/search/videos — video search (params: q, limit)\n"
+            "  POST /v0/summarizer — summarize URL {\"url\": \"...\", \"engine\": \"cecil|agnes|daphne|muriel\"}\n"
+            "  GET /v0/enrich/news — enriched news results (params: q)\n"
+            "  Note: Kagi is a paid service. API key required from kagi.com/settings/api"
+        ),
+    },
+    "spotify": {
+        "name": "Spotify",
+        "auth_type": "bearer",
+        "description": (
+            "Spotify music streaming. Auth via OAuth Bearer token (get from developer.spotify.com).\n"
+            "Key endpoints:\n"
+            "  GET /v1/me — current user profile\n"
+            "  GET /v1/me/player — current playback state\n"
+            "  PUT /v1/me/player/play — resume playback (body: context_uri, uris, offset)\n"
+            "  PUT /v1/me/player/pause — pause playback\n"
+            "  POST /v1/me/player/next — skip to next track\n"
+            "  POST /v1/me/player/previous — skip to previous track\n"
+            "  PUT /v1/me/player/volume — set volume (params: volume_percent)\n"
+            "  GET /v1/me/playlists — list user playlists\n"
+            "  GET /v1/playlists/{id}/tracks — list playlist tracks\n"
+            "  GET /v1/search — search (params: q, type=track|artist|album|playlist, limit)\n"
+            "  GET /v1/me/tracks — list saved tracks\n"
+            "  GET /v1/me/player/devices — list available devices\n"
+            "  Note: Requires OAuth2 flow. Use 'Manage Tokens' in settings to store the access token."
+        ),
+    },
+    "engram": {
+        "name": "Engram",
+        "auth_type": "none",
+        "description": (
+            "Engram persistent memory for AI agents. Single Go binary with SQLite + FTS5.\n"
+            "When running as MCP server (default), use the MCP server management in Settings.\n"
+            "When running as HTTP API, set base_url to http://host:port.\n"
+            "Key endpoints (HTTP mode):\n"
+            "  POST /api/memory — store memory {\"key\": \"...\", \"value\": \"...\", \"tags\": [...]}\n"
+            "  GET /api/memory?key=... — retrieve memory\n"
+            "  GET /api/memory/search?q=... — full-text search\n"
+            "  DELETE /api/memory/{id} — delete memory\n"
+            "  GET /api/sessions — list sessions\n"
+            "  GET /api/sessions/{id}/messages — session messages\n"
+            "  POST /api/compact — trigger compaction\n"
+            "MCP mode: connect via stdio with command 'engram serve'"
+        ),
+    },
+    "nexus_swarm": {
+        "name": "Nexus Swarm",
+        "auth_type": "header",
+        "auth_header": "Authorization",
+        "description": (
+            "Nexus Swarm multi-agent orchestration (9 agents across 4 K3s nodes).\n"
+            "Auth header value format: 'Bearer YOUR_TOKEN'. Key endpoints:\n"
+            "  GET /api/agents — list all swarm agents and their status\n"
+            "  GET /api/agents/{id} — get agent detail\n"
+            "  POST /api/agents/{id}/task — assign task to agent\n"
+            "  GET /api/tasks — list swarm tasks\n"
+            "  GET /api/tasks/{id} — get task status\n"
+            "  GET /api/health — cluster health\n"
+            "  GET /api/events — recent swarm events\n"
+            "  GET /api/graph — knowledge graph query\n"
+            "  Agents: Donn (orchestrator), Brigid (media), Morrígan (security), Lugh (ops),\n"
+            "  Ogma (research), Danu (infra), Amergin (coding), Manannán (IoT), Goibniu (ML)"
+        ),
+    },
+    "nexus_monitor": {
+        "name": "Nexus Monitor",
+        "auth_type": "header",
+        "auth_header": "Authorization",
+        "description": (
+            "Nexus Monitor health monitoring system with web dashboard and MQTT alerts.\n"
+            "Auth header value format: 'Bearer YOUR_TOKEN'. Key endpoints:\n"
+            "  GET /api/nodes — list monitored nodes\n"
+            "  GET /api/nodes/{id} — node detail (CPU, RAM, disk, network)\n"
+            "  GET /api/nodes/{id}/metrics — historical metrics (params: from, to, interval)\n"
+            "  GET /api/alerts — list active alerts\n"
+            "  GET /api/alerts/history — alert history\n"
+            "  POST /api/alerts/rules — create alert rule\n"
+            "  GET /api/services — list monitored services\n"
+            "  GET /api/health — overall system health"
+        ),
+    },
+    "aura_daemon": {
+        "name": "Aura Daemon",
+        "auth_type": "header",
+        "auth_header": "Authorization",
+        "description": (
+            "Aura Daemon — smart LLM model router with 13+ free provider fallback chain.\n"
+            "Auth header value format: 'Bearer YOUR_TOKEN'. Key endpoints:\n"
+            "  POST /v1/chat/completions — OpenAI-compatible chat endpoint (auto-routes to best available provider)\n"
+            "  POST /v1/embeddings — embedding endpoint\n"
+            "  GET /v1/models — list available models\n"
+            "  GET /api/providers — list configured providers and their status\n"
+            "  GET /api/stats — usage statistics and cost tracking\n"
+            "  GET /api/health — provider health check\n"
+            "  Note: Aura auto-routes requests through a fallback chain of free LLM providers."
+        ),
+    },
 }
 
 # ---------------------------------------------------------------------------

@@ -560,6 +560,7 @@ async def execute_tool_block(
         do_manage_contact,
         do_vault_search, do_vault_get, do_vault_unlock,
         do_app_api,
+        do_generate_speech, do_transcribe_audio, do_manage_gallery,
     )
 
     tool = block.tool_type
@@ -768,6 +769,15 @@ async def execute_tool_block(
     elif tool == "vault_unlock":
         desc = "vault_unlock"
         result = await do_vault_unlock(content, owner=owner)
+    elif tool == "generate_speech":
+        desc = "generate_speech"
+        result = await do_generate_speech(content, owner=owner)
+    elif tool == "transcribe_audio":
+        desc = "transcribe_audio"
+        result = await do_transcribe_audio(content, owner=owner)
+    elif tool == "manage_gallery":
+        desc = "manage_gallery"
+        result = await do_manage_gallery(content, owner=owner)
     elif tool.startswith("mcp__"):
         # MCP tool dispatch
         mcp = get_mcp_manager()
