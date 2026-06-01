@@ -54,15 +54,19 @@ class ChatMessage:
 class Session:
     """A chat session — pure data container.
 
-    IMPORTANT: History immutability contract
-    ----------------------------------------
-    ``.history`` exposes a COPY of the internal message list. Callers that
-    mutate ``.history`` (e.g. via ``.append()``) are modifying a throwaway
-    list that will NOT affect the session or persist. Always use
-    ``.add_message()`` to append messages.
+    History snapshot contract
+    ------------------------
+    ``.history`` is a snapshot of the internal message list, replaced
+    on each ``add_message()`` call. Callers that hold a reference to an
+    old snapshot will NOT see future messages — re-read ``.history``.
 
-    ``.message_count`` always reflects the true internal count,
-    NOT ``len(.history)`` (which may be stale if you held a reference).
+    Mutating ``.history`` (e.g. ``.append()``) will NOT affect the
+    authoritative ``_history`` list or persist — always use
+    ``add_message()`` to append.
+
+    ``.message_count`` always reflects the true internal count.
+    ``len(.history)`` may be stale if you held a reference from before
+    the last ``add_message()``.
     """
     id: str
     name: str
@@ -112,3 +116,7 @@ class Session:
     def get(self, key: str, default=None):
         """Dict-like access for compatibility."""
         return getattr(self, key, default)
+
+    def __getitem__(self, key: str):
+        """Allow session['field'] syntax."""
+        return getattr(self, key)
