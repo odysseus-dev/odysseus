@@ -1176,6 +1176,8 @@ def _compute_final_metrics(
     model: str = "",
     last_round_input_tokens: int = 0,
     prep_timings: Optional[Dict[str, float]] = None,
+    backend_gen_tps: float = 0,
+    backend_prefill_tps: float = 0,
 ) -> dict:
     """Compute token counts, TPS, and build the final metrics dict."""
     if has_real_usage:
@@ -1188,7 +1190,15 @@ def _compute_final_metrics(
                 input_content += msg["content"] + "\n"
         input_tokens = len(input_content) // 4
         output_tokens = len(full_response) // 4
-    tps = output_tokens / total_duration if total_duration > 0 else 0
+    # Prefer the backend's true generation speed (llama.cpp
+    # timings.predicted_per_second) — pure decode, no prefill/tool/network time.
+    # Fall back to tokens/wall-clock only when the backend didn't report it
+    # (e.g. cloud APIs without timings); that figure reads low because
+    # total_duration includes prefill + agent overhead.
+    if backend_gen_tps and backend_gen_tps > 0:
+        tps = backend_gen_tps
+    else:
+        tps = output_tokens / total_duration if total_duration > 0 else 0
     # Use last round's input tokens for context % (peak usage) when available
     ctx_tokens = last_round_input_tokens if last_round_input_tokens > 0 else input_tokens
     ctx_pct = min(round((ctx_tokens / context_length) * 100, 1), 100.0) if context_length else 0
@@ -1199,12 +1209,17 @@ def _compute_final_metrics(
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "tokens_per_second": round(tps, 2),
+        # True decode speed when the backend reported it; "computed" = the
+        # tokens/wall-clock fallback (reads low — includes prefill/overhead).
+        "tps_source": "backend" if (backend_gen_tps and backend_gen_tps > 0) else "computed",
         "total_tokens": input_tokens + output_tokens,
         "context_length": context_length,
         "context_percent": ctx_pct,
         "usage_source": "real" if has_real_usage else "estimated",
         "model": model,
     }
+    if backend_prefill_tps and backend_prefill_tps > 0:
+        metrics["prefill_tps"] = round(backend_prefill_tps, 2)
     if prep_timings:
         prep_total = round(sum(prep_timings.values()), 3)
         metrics["agent_prep_time"] = prep_total
@@ -1506,6 +1521,8 @@ async def stream_agent_loop(
     real_output_tokens = 0
     last_round_input_tokens = 0  # Last round's input tokens (for context % peak)
     has_real_usage = False
+    backend_gen_tps = 0      # backend-reported true gen speed (llama.cpp timings)
+    backend_prefill_tps = 0  # backend-reported prefill speed
     total_tool_calls = 0  # for budget enforcement
 
     # Loop-breaker state. Small models (e.g. deepseek-v4-flash) can get
@@ -1655,6 +1672,14 @@ async def stream_agent_loop(
                         real_output_tokens += u.get("output_tokens", 0)
                         last_round_input_tokens = round_input
                         has_real_usage = True
+                        # Backend-reported TRUE generation speed (llama.cpp
+                        # timings.predicted_per_second) — pure decode, excludes
+                        # prefill/network. Preferred over tokens/wall-clock, which
+                        # reads low. Keep the last round's value (the gen phase).
+                        if u.get("gen_tps"):
+                            backend_gen_tps = u["gen_tps"]
+                        if u.get("prefill_tps"):
+                            backend_prefill_tps = u["prefill_tps"]
                     elif data.get("type") == "fallback":
                         # The selected model failed and another answered; surface
                         # the notice so a misconfigured provider isn't masked.
@@ -2181,6 +2206,8 @@ async def stream_agent_loop(
         has_real_usage, tool_events, round_texts, model=model,
         last_round_input_tokens=last_round_input_tokens,
         prep_timings=prep_timings,
+        backend_gen_tps=backend_gen_tps,
+        backend_prefill_tps=backend_prefill_tps,
     )
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 

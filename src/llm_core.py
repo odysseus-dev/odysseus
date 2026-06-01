@@ -1122,7 +1122,19 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                 _delta0 = _choices[0].get("delta") if _choices else None
                                 if "usage" in j and _delta0 in (None, {}, {"content": None}):
                                     u = j["usage"]
-                                    yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": u.get("prompt_tokens", 0), "output_tokens": u.get("completion_tokens", 0)}})}\n\n'
+                                    _usage_data = {"input_tokens": u.get("prompt_tokens", 0), "output_tokens": u.get("completion_tokens", 0)}
+                                    # llama.cpp puts a `timings` block alongside `usage` with the
+                                    # TRUE generation speed (predicted_per_second) — pure decode,
+                                    # excluding prefill/network. Pass it through so the UI shows the
+                                    # real gen t/s instead of recomputing tokens/wall-clock (which
+                                    # includes prefill and reads ~20-40% low). Prefill speed too.
+                                    _tm = j.get("timings")
+                                    if isinstance(_tm, dict):
+                                        if _tm.get("predicted_per_second"):
+                                            _usage_data["gen_tps"] = round(_tm["predicted_per_second"], 2)
+                                        if _tm.get("prompt_per_second"):
+                                            _usage_data["prefill_tps"] = round(_tm["prompt_per_second"], 2)
+                                    yield f'data: {json.dumps({"type": "usage", "data": _usage_data})}\n\n'
                                 elif "choices" in j:
                                     delta = j["choices"][0].get("delta") or {}
                                     if isinstance(delta, dict):
