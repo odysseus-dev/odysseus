@@ -39,6 +39,7 @@ LANG_META = {
     "en": ("English", "English", "ltr"),
     "ja": ("Japanese", "日本語", "ltr"),
     "es": ("Spanish", "Español", "ltr"),
+    "pt-BR": ("Portuguese (Brazil)", "Português (Brasil)", "ltr"),
     "fr": ("French", "Français", "ltr"),
     "de": ("German", "Deutsch", "ltr"),
     "zh": ("Chinese", "中文", "ltr"),

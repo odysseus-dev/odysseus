@@ -13,6 +13,12 @@
       "name": "Japanese",
       "nativeName": "日本語",
       "dir": "ltr"
+    },
+    {
+      "code": "pt-BR",
+      "name": "Portuguese (Brazil)",
+      "nativeName": "Português (Brasil)",
+      "dir": "ltr"
     }
   ]
 }

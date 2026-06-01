@@ -241,8 +241,14 @@ function pickInitial(registry) {
   try { saved = localStorage.getItem(LS_KEY); } catch {}
   const codes = (registry.locales || []).map((l) => l.code);
   if (saved && codes.includes(saved)) return saved;
-  const nav = (navigator.language || "").slice(0, 2).toLowerCase();
-  if (codes.includes(nav)) return nav;
+  // Match the browser language: exact tag (e.g. pt-BR) first, then the primary
+  // subtag (pt-BR / pt -> pt).
+  const nav = (navigator.language || "").toLowerCase();
+  const exact = codes.find((c) => c.toLowerCase() === nav);
+  if (exact) return exact;
+  const primary = nav.split("-")[0];
+  const byPrimary = codes.find((c) => c.toLowerCase().split("-")[0] === primary);
+  if (byPrimary) return byPrimary;
   return registry.default || BASE;
 }
 
