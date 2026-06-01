@@ -365,6 +365,7 @@
     "unfavorited": "Unfavorited",
     "using": "Using {model}",
     "welcome": {
+      "setup_html": "Type <span style=\"color:var(--accent,var(--red));font-weight:600\">/setup</span> to get started.",
       "setup_tip": "Type /setup, then choose Local models or API."
     }
   },
@@ -1238,6 +1239,11 @@
     "default_themes": "Default Themes",
     "delete_confirm": "Delete theme \"{name}\"?",
     "delete_title": "Delete theme",
+    "densities": {
+      "comfortable": "Comfortable",
+      "compact": "Compact",
+      "spacious": "Spacious"
+    },
     "density": "Density",
     "density.comfortable": "Comfortable",
     "density.compact": "Compact",
@@ -1259,6 +1265,11 @@
     "font.sans": "Sans-serif",
     "font.serif": "Serif",
     "font_layout": "Font & Layout",
+    "fonts": {
+      "monospace": "Monospace",
+      "sans": "Sans-serif",
+      "serif": "Serif"
+    },
     "frosted": "Frosted",
     "group": {
       "chat_bubbles": "Chat Bubbles",

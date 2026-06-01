@@ -29,14 +29,16 @@ export function getCurrentProvider() {
   return _provider;
 }
 
-const _labels = {
-  searxng: 'SearXNG', brave: 'Brave', duckduckgo: 'DuckDuckGo',
-  google_pse: 'Google', tavily: 'Tavily', serper: 'Serper',
+const _labelKeys = {
+  searxng: 'search.provider.searxng', brave: 'search.provider.brave',
+  duckduckgo: 'search.provider.duckduckgo', google_pse: 'search.provider.google',
+  tavily: 'search.provider.tavily', serper: 'search.provider.serper',
 };
 
 export function getProviderLabel() {
   if (_provider === 'disabled') return i18n.t('search.provider.disabled');
-  return _labels[_provider] || _provider;
+  const key = _labelKeys[_provider];
+  return key ? i18n.t(key) : _provider;
 }
 
 /** Re-fetch after admin saves new settings */

@@ -554,7 +554,7 @@ export async function refreshModels(force = false) {
       box.appendChild(noModels);
       // No endpoints yet: keep the welcome screen focused on first setup.
       const welcomeSub = document.getElementById('welcome-sub');
-      if (welcomeSub) welcomeSub.innerHTML = 'Type <span style="color:var(--accent,var(--red));font-weight:600">/setup</span> to get started.';
+      if (welcomeSub) welcomeSub.innerHTML = i18n.t('models.welcome.setup_html');
       const welcomeTip = document.getElementById('welcome-tip');
       if (welcomeTip) welcomeTip.textContent = i18n.t('models.welcome.setup_tip');
     } else {

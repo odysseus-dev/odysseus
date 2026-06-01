@@ -354,6 +354,7 @@
     "unfavorited": "お気に入りから削除しました",
     "using": "{model} を使用中",
     "welcome": {
+      "setup_html": "<span style=\"color:var(--accent,var(--red));font-weight:600\">/setup</span> と入力して始めましょう。",
       "setup_tip": "/setup と入力し、ローカルモデルまたはAPIを選択してください。"
     }
   },
@@ -1238,6 +1239,11 @@
     "default_themes": "デフォルトテーマ",
     "delete_confirm": "テーマ「{name}」を削除しますか？",
     "delete_title": "テーマを削除",
+    "densities": {
+      "comfortable": "快適",
+      "compact": "コンパクト",
+      "spacious": "ゆったり"
+    },
     "density": "密度",
     "density.comfortable": "標準",
     "density.compact": "コンパクト",
@@ -1259,6 +1265,11 @@
     "font.sans": "ゴシック体",
     "font.serif": "明朝体",
     "font_layout": "フォントとレイアウト",
+    "fonts": {
+      "monospace": "等幅",
+      "sans": "サンセリフ",
+      "serif": "セリフ"
+    },
     "frosted": "すりガラス",
     "group": {
       "chat_bubbles": "チャットバブル",
