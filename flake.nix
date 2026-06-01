@@ -507,7 +507,7 @@
 
           checks = {
             x86_64-linux.nixos-module =
-              pkgs.nixosTest {
+              pkgs.testers.nixosTest {
                 name = "odysseus-nixos-module";
                 nodes.machine = {
                   imports = [ self.nixosModules.default ];
@@ -528,7 +528,7 @@
               let
                 image = self.packages.${system}.container;
               in
-              pkgs.nixosTest {
+              pkgs.testers.nixosTest {
                 name = "odysseus-container";
                 nodes.machine = {
                   virtualisation.podman.enable = true;
