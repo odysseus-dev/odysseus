@@ -302,6 +302,9 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         extraction_timeout: Optional[int] = Field(default=None, ge=15, le=600)
         extraction_concurrency: Optional[int] = Field(default=None, ge=1, le=12)
         category: Optional[str] = None
+        # Pull in relevant Library documents as a research source. None → fall
+        # back to the global "research_use_library" setting.
+        use_library: Optional[bool] = None
 
     @router.post("/api/research/start")
     async def research_start(body: ResearchStartRequest, request: Request):
@@ -406,6 +409,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             extraction_timeout=body.extraction_timeout,
             extraction_concurrency=body.extraction_concurrency,
             owner=user,
+            use_library=body.use_library,
         )
         return {"session_id": session_id, "status": "running", "query": body.query}
 

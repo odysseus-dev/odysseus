@@ -1458,6 +1458,15 @@
                 <label class="settings-label">Extract Parallel</label>
                 <input id="set-researchExtractConcurrency" type="text" inputmode="numeric" placeholder="3" class="settings-select" style="width:120px;">
               </div>
+              <div class="settings-row" style="align-items:flex-start;">
+                <label class="settings-label">Use Library docs</label>
+                <label class="admin-switch" style="margin-top:2px;"><input type="checkbox" id="set-researchUseLibrary"><span class="admin-slider"></span></label>
+              </div>
+              <div class="admin-toggle-sub" style="margin:-2px 0 6px 0;">Pull your most relevant Library documents into research as a local source. Documents are picked by semantic relevance — only the top matches are read, not the whole library.</div>
+              <div class="settings-row">
+                <label class="settings-label">Library docs (max)</label>
+                <input id="set-researchLibraryMaxDocs" type="text" inputmode="numeric" placeholder="5" class="settings-select" style="width:120px;">
+              </div>
               <div id="set-researchMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>

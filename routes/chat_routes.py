@@ -159,7 +159,8 @@ def setup_chat_routes(
             try:
                 _r_ep, _r_model, _r_headers = _resolve_research_endpoint(sess)
                 research_ctx = await research_handler.call_research_service(
-                    message, _r_ep, _r_model, llm_headers=_r_headers
+                    message, _r_ep, _r_model, llm_headers=_r_headers,
+                    owner=ctx.user or "",
                 )
                 ctx.messages.insert(
                     len(ctx.preface),
@@ -563,6 +564,7 @@ def setup_chat_routes(
                         prior_findings=_prior_findings,
                         prior_urls=_prior_urls,
                         on_complete=_on_research_done,
+                        owner=ctx.user or "",
                     )
 
                     _heartbeat_counter = 0

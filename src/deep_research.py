@@ -188,12 +188,22 @@ class DeepResearcher:
         progress_callback: Optional[Callable] = None,
         search_provider: Optional[str] = None,
         category: Optional[str] = None,
+        owner: str = "",
+        use_library: bool = False,
+        library_max_docs: int = 5,
     ):
         self.llm_endpoint = llm_endpoint
         self.llm_model = llm_model
         self.llm_headers = llm_headers
         self.search_provider_override = search_provider
         self.category = category
+        # Library-document retrieval: when enabled, the most relevant of the
+        # owner's Library documents are pulled in (semantically) and seeded as
+        # findings so they inform the report alongside web sources.
+        self.owner = owner or ""
+        self.use_library = bool(use_library)
+        self.library_max_docs = library_max_docs
+        self.library_docs_used: int = 0
         self.max_rounds = max_rounds
         self.max_time = max_time
         self.max_urls_per_round = max_urls_per_round
@@ -261,6 +271,22 @@ class DeepResearcher:
 
         if prior_urls:
             self.urls_fetched.update(prior_urls)
+
+        # LIBRARY: seed findings with the most relevant of the user's own
+        # Library documents (semantic retrieval). Done once up front so they
+        # inform every synthesis round, not just the final report. Additive and
+        # defensive — any failure leaves the web-only flow untouched.
+        if self.use_library and self.owner and not prior_report:
+            lib_findings = await self._retrieve_library_findings(question)
+            if lib_findings:
+                findings.extend(lib_findings)
+                for lf in lib_findings:
+                    self.urls_fetched.add(lf.get("url", ""))
+                self.library_docs_used = len(lib_findings)
+                # Build an initial report from the library docs so a useful
+                # result exists even if web search later returns nothing.
+                report = await self._synthesize(question, findings, report)
+
         self.findings = findings  # expose for handler
         consecutive_empty_rounds = 0
 
@@ -344,6 +370,28 @@ class DeepResearcher:
     # ------------------------------------------------------------------
     # LLM helper
     # ------------------------------------------------------------------
+    async def _retrieve_library_findings(self, question: str) -> List[Dict]:
+        """Pull the most relevant of the owner's Library documents and adapt
+        them into research findings. Runs the (blocking) embedding/DB work off
+        the event loop. Never raises into the research loop."""
+        self._emit(phase="reading", title="Searching your Library…",
+                   total_sources=len(self.urls_fetched))
+        try:
+            from src.research_library import retrieve_library_findings
+            lib = await asyncio.to_thread(
+                retrieve_library_findings, question, self.owner, self.library_max_docs,
+            )
+        except Exception as e:
+            logger.warning(f"Library retrieval failed: {e}")
+            return []
+        if lib:
+            logger.info(f"Library retrieval seeded {len(lib)} document(s)")
+            self._emit(phase="reading",
+                       title=f"Library: {len(lib)} relevant document(s)",
+                       new_sources=len(lib),
+                       total_sources=len(self.urls_fetched) + len(lib))
+        return lib
+
     async def _llm(self, messages: List[Dict], temperature: float = 0.3,
                    max_tokens: int = 4096, timeout: int = 60) -> str:
         """Call the LLM asynchronously and strip thinking tags."""
@@ -824,6 +872,8 @@ class DeepResearcher:
         }
         if self.providers_used:
             stats["Search"] = ", ".join(self.providers_used)
+        if self.library_docs_used:
+            stats["Library docs"] = self.library_docs_used
         if self.category:
             stats["Category"] = self.category.capitalize()
         return stats

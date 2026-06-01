@@ -66,6 +66,10 @@ DEFAULT_SETTINGS = {
     "research_max_tokens": 16384,
     "research_extraction_timeout_seconds": 90,
     "research_extraction_concurrency": 3,
+    # Pull relevant Library documents into Deep Research as a local source.
+    # Off by default; documents are selected by semantic relevance (top-K).
+    "research_use_library": False,
+    "research_library_max_docs": 5,
     "agent_max_tool_calls": 0,
     "agent_input_token_budget": 6000,
     "agent_stream_timeout_seconds": 300,

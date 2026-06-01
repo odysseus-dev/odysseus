@@ -176,6 +176,8 @@ class ResearchHandler:
         extraction_timeout: int = None,
         extraction_concurrency: int = None,
         owner: str = "",
+        use_library: bool = None,
+        library_max_docs: int = None,
     ) -> dict:
         """Start research as a background task. Returns task info dict.
 
@@ -234,6 +236,9 @@ class ResearchHandler:
                         category=category,
                         extraction_timeout=extraction_timeout,
                         extraction_concurrency=extraction_concurrency,
+                        owner=owner,
+                        use_library=use_library,
+                        library_max_docs=library_max_docs,
                     ),
                     timeout=hard_timeout,
                 )
@@ -606,6 +611,9 @@ class ResearchHandler:
         category: str = None,
         extraction_timeout: int = None,
         extraction_concurrency: int = None,
+        owner: str = "",
+        use_library: bool = None,
+        library_max_docs: int = None,
     ) -> str:
         """
         Run iterative deep research using the LLM-in-the-loop DeepResearcher.
@@ -654,6 +662,20 @@ class ResearchHandler:
                 maximum=12,
             )
 
+            # Library-document source: per-run override falls back to the
+            # global "research_use_library" setting (configured in Settings →
+            # Research). library_max_docs likewise falls back to its setting.
+            _use_library = (
+                use_library if use_library is not None
+                else bool(get_setting("research_use_library", False))
+            )
+            _library_max_docs = _bounded_int(
+                library_max_docs if library_max_docs is not None else get_setting("research_library_max_docs", 5),
+                default=5,
+                minimum=1,
+                maximum=25,
+            )
+
             researcher = DeepResearcher(
                 llm_endpoint=llm_endpoint,
                 llm_model=llm_model,
@@ -667,6 +689,9 @@ class ResearchHandler:
                 progress_callback=progress_callback,
                 search_provider=search_provider,
                 category=category,
+                owner=owner,
+                use_library=_use_library,
+                library_max_docs=_library_max_docs,
             )
             if _task_entry is not None:
                 _task_entry["researcher"] = researcher
