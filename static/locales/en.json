@@ -4,36 +4,689 @@
     "name": "English",
     "note": "Source catalog — the canonical key set. Other locales fall back to these strings for any key they omit. Keep keys sorted within each namespace."
   },
+  "auth": {
+    "confirm_password": "Confirm Password",
+    "password": "Password",
+    "remember_me": "Remember me",
+    "show_password": "Show password",
+    "username": "Username"
+  },
+  "chat": {
+    "area_aria": "Chat area",
+    "export": {
+      "copy_chat": "Copy Chat",
+      "pdf": "PDF",
+      "rename": "Rename",
+      "save_documents": "Save to Documents"
+    },
+    "nobody_active": "Nobody mode active — click to deactivate",
+    "scroll_bottom": "Scroll to bottom",
+    "title_default": "Odysseus Chat"
+  },
   "common": {
-    "save": "Save",
+    "all": "All",
+    "apply": "Apply",
     "cancel": "Cancel",
+    "cancel_esc": "Cancel (Esc)",
     "close": "Close",
+    "confirm": "Confirm",
     "delete": "Delete",
     "edit": "Edit",
+    "export": "Export",
+    "import": "Import",
     "loading": "Loading…",
+    "loading_ellipsis": "Loading...",
+    "more": "More",
+    "new": "new",
+    "new_caps": "New",
+    "reset": "Reset",
+    "save": "Save",
     "search": "Search",
-    "confirm": "Confirm"
-  },
-  "settings": {
-    "title": "Settings",
-    "nav": {
-      "services": "Add Models",
-      "ai": "AI Defaults",
-      "search": "Search",
-      "integrations": "Integrations",
-      "email": "Email",
-      "reminders": "Reminders",
-      "appearance": "Appearance",
-      "shortcuts": "Shortcuts",
-      "account": "Account",
-      "tools": "Agent Tools"
+    "select": "Select",
+    "sort": {
+      "alpha": "A-Z",
+      "most_used": "Most used"
     },
-    "appearance": {
-      "language": {
-        "title": "Language",
-        "label": "Interface language",
-        "hint": "Changes the language of the Odysseus interface. Untranslated text falls back to English."
+    "tidy": "Tidy"
+  },
+  "composer": {
+    "aria_label": "Message input",
+    "attach_files": "Attach files",
+    "character_active": "Character active — click to deactivate",
+    "compare": "Compare",
+    "compare_active": "Compare active — click to deactivate",
+    "group": "Group",
+    "group_active": "Group Chat active — click to deactivate",
+    "mode_agent": "Agent",
+    "mode_chat": "Chat",
+    "more_tools": "More Tools",
+    "new": "+ New",
+    "placeholder": "Message Odysseus...",
+    "prompt": "Prompt",
+    "rag": "RAG",
+    "rag_active": "RAG active — click to deactivate",
+    "research": "Research",
+    "research_active": "Deep Research active — click to deactivate",
+    "search_models": "Search models...",
+    "select_model": "Select model",
+    "shell_access": "Shell Access",
+    "switch_model": "Switch model",
+    "tts_mode": "TTS Mode",
+    "web_search": "Web Search"
+  },
+  "email": {
+    "compose": "Compose email",
+    "open_inbox": "Open email inbox"
+  },
+  "landing": {
+    "cta": {
+      "view_github": "View on GitHub"
+    },
+    "features": {
+      "chat": {
+        "desc": "Multi-turn chat plus autonomous agents that plan, call tools, and work through tasks.",
+        "title": "Chat & Agents"
+      },
+      "compare": {
+        "desc": "Send one prompt to several models at once and compare their answers side-by-side.",
+        "title": "Compare"
+      },
+      "cookbook": {
+        "desc": "Hardware-aware model recommendations and one-click serving across 270+ catalogued models.",
+        "title": "Cookbook"
+      },
+      "email": {
+        "desc": "AI summaries, style-matched draft replies, auto-tagging and spam triage over IMAP/SMTP.",
+        "title": "Email Assistant"
+      },
+      "eyebrow": "Everything, self-hosted",
+      "heading": "One app, a lot of capabilities",
+      "memory": {
+        "desc": "Persistent memory the assistant builds up and recalls across all your conversations.",
+        "title": "Memory"
+      },
+      "private": {
+        "desc": "Runs on your machine against your own endpoints. No telemetry, with optional external integrations when you choose them.",
+        "title": "Private by default"
+      },
+      "research": {
+        "desc": "Multi-step research runs that gather, read, and synthesize sources into a written report.",
+        "title": "Deep Research"
+      },
+      "skills": {
+        "badge": "self-evolving",
+        "desc": "The assistant writes, refines, and reuses its own skills — getting more capable over time.",
+        "title": "Skills"
+      },
+      "sub": "Started as an AI chat. Became a workspace. Each piece runs locally against whatever endpoints you point it at.",
+      "tools": {
+        "desc": "Built-in tools (bash, files, web, memory) plus any MCP server you connect. Toggle per tool.",
+        "title": "Tools & MCP"
+      }
+    },
+    "footer": {
+      "copyright": "© 2026 Odysseus · Built from one prompt that refused to stop.",
+      "disclaimer": "No cyclopes were harmed in production."
+    },
+    "hero": {
+      "api_aside": "(if you want to add an API that's cool too — I'm not here to tell you how to live your life…)",
+      "headline": "Your own <span class=\"grad\">AI workspace</span>,<br>running on your hardware.",
+      "lede": "Odysseus is a self-hosted interface for talking to language models — chat, autonomous agents, tools, model serving, email, research, and more. Local-first, privacy-first, and no telemetry. Just you and your models.",
+      "slogan": "Yours for the voyage."
+    },
+    "how": {
+      "eyebrow": "How it actually started",
+      "heading": "Odysseus is everything I hate, just making it tolerable.",
+      "p1": "I started working on the Odysseus project because running local AI felt fun — a step into the future. But the options to actually engage with LLMs felt like taking steps back. Where were features like Memory, Deep Research, Agents, and just basic integrations?!",
+      "p2": "So I started building my own, for fun — and eventually figured it might be fun to share what I built for myself with others. Doesn't work for you? Well… it runs great on my hardware."
+    },
+    "meta": {
+      "description": "Odysseus — a self-hosted AI workspace: chat, agents, tools, model serving, email, research, and more. Your models, your hardware, your data.",
+      "title": "Odysseus — A Self-Hosted AI Workspace"
+    },
+    "nav": {
+      "features": "Features",
+      "get_started": "Get started",
+      "github": "GitHub",
+      "how": "How it started",
+      "testimonials": "Testimonials"
+    },
+    "origin": {
+      "intro": "Odysseus was created by a carefully crafted one-shot AI prompt:",
+      "minimize": "Minimize",
+      "reopen": "reopen terminal"
+    },
+    "previews": {
+      "chat": {
+        "placeholder": "[ Chat & Agents ]"
+      },
+      "cookbook": {
+        "placeholder": "[ Cookbook ]"
+      },
+      "email": {
+        "placeholder": "[ Email Assistant ]"
+      },
+      "eyebrow": "See it in action",
+      "heading": "Hover to take a closer look",
+      "sub": "Each panel expands and plays its preview when you hover it."
+    },
+    "start": {
+      "heading": "Clone it and run",
+      "pill_byo_models": "Bring your own models",
+      "pill_local_first": "Local-first",
+      "pill_mcp_ready": "MCP-ready",
+      "pill_no_telemetry": "No telemetry",
+      "pill_self_hosted": "Self-hosted",
+      "sub": "It's open source and free. No sales team, no demo request — just clone the repo."
+    },
+    "testimonials": {
+      "coder": {
+        "name": "Generic Coder Guy",
+        "quote": "\"Odysseus helped us ship more ships while shipping ships. Truly best-in-class shipping.\"",
+        "role": "Sr. Engineer, ShipShip Inc."
+      },
+      "corporate": {
+        "name": "Chad Corporate",
+        "quote": "\"Anyway, as I was saying — best-in-class.\"",
+        "role": "Chief Executive Officer"
+      },
+      "cyclops": {
+        "name": "Polyphemus",
+        "quote": "\"AHHHHHHHHHHHHHHHHHHHHHHHHHHHHH\"",
+        "role": "Cyclops, Cave Solutions (on leave)"
+      },
+      "eyebrow": "Loved by enterprises",
+      "heading": "What our customers are saying",
+      "next": "Next testimonial",
+      "prev": "Previous testimonial",
+      "woman": {
+        "alt": "A real woman",
+        "name": "Generic Corporate Woman",
+        "quote": "\"I'm a real person. This is a real testimonial. By a real woman.\"",
+        "role": "VP of Verticals, Things LLC"
       }
     }
+  },
+  "memory": {
+    "add": {
+      "import_desc": "Import a <code>.txt</code>, <code>.md</code>, <code>.pdf</code>, <code>.csv</code>, <code>.log</code>, <code>.json</code>, <code>.py</code>, <code>.js</code>, or <code>.html</code> file &mdash; the AI reads it and suggests candidate memories you can approve. Needs an open chat session (it uses that session's model).",
+      "ph_key": "Add a memory",
+      "ph_rest": "&mdash; e.g. 'I prefer concise replies'",
+      "title": "Add Memory"
+    },
+    "browse_desc": "Long-term facts the AI remembers across chats — recall, edit, or curate.",
+    "close_aria": "Close memory modal",
+    "export_title": "Export all memories as JSON",
+    "import_title": "Import memories from a file",
+    "include_title": "Include memories in chat context",
+    "search_placeholder": "Search memories…",
+    "select_title": "Select multiple memories",
+    "settings": {
+      "auto_approve": "Auto-approve skills",
+      "auto_approve_sub": "Audit all publishes passing, necessary skills at or above this confidence. Off = keep audit results as drafts unless manually approved.",
+      "auto_extract_mem": "Auto-extract memories",
+      "auto_extract_mem_sub": "Automatically extract memories from conversations.",
+      "auto_extract_skills": "Auto-extract skills",
+      "auto_extract_skills_sub": "Automatically draft reusable skills from your workflows. Audit all can publish passing skills using the threshold below.",
+      "auto_extract_skills_sub2": "The library can grow; cleanup retires weak/duplicate skills only after review.",
+      "inject_skills": "Inject Skills",
+      "inject_skills_hint": "Set to 0 to disable skill injection.",
+      "inject_skills_sub": "Controls how many relevant published or approved skills are added to each agent request.",
+      "max_skills": "Max skills per request",
+      "min_confidence": "Minimum confidence"
+    },
+    "skill": {
+      "add_desc": "Create a skill by hand — title, what it solves, and an approach.",
+      "add_title": "Add Skill",
+      "approve": "Approve",
+      "audit": "Audit",
+      "audit_all": "Audit all",
+      "audit_all_title": "Test every skill, auto-fix the weak ones, flag what still fails",
+      "audit_title": "Audit selected draft skills",
+      "delete_nonpassing": "Delete non passing",
+      "delete_nonpassing_title": "Delete selected duplicates, generic/irrelevant skills, failed audits, and skills below threshold",
+      "filter_all": "All skills",
+      "filter_drafts": "Drafts only",
+      "filter_published": "Published only",
+      "how_hint": "— the approach, steps, commands, or rules to follow",
+      "how_key": "How",
+      "inject_title": "Inject relevant skills into chat context",
+      "list_desc": "Reusable procedures the AI can call via /skill — sort by confidence to surface the proven ones.",
+      "optgroup_filter": "Filter",
+      "optgroup_sort": "Sort",
+      "publish_title": "Publish selected drafts",
+      "search_placeholder": "Search skills…",
+      "select_title": "Select multiple skills",
+      "sort_confidence": "Confidence",
+      "sort_recent": "Recent",
+      "tags_hint": "— comma-separated, e.g. python, build, vllm",
+      "tags_key": "Tags",
+      "title_hint": "— short name, e.g. “build-vllm-wheel”",
+      "title_key": "Title",
+      "when_hint": "— what problem does this skill solve?",
+      "when_key": "When to use"
+    },
+    "sort": {
+      "newest": "Newest",
+      "oldest": "Oldest"
+    },
+    "tab": {
+      "add": "Add",
+      "memories": "Memories",
+      "settings": "Settings",
+      "skills": "Skills"
+    },
+    "tidy_title": "AI tidy: deduplicate and clean up memories",
+    "title": "Brain"
+  },
+  "preset": {
+    "character": {
+      "delete_title": "Delete this character and its memories",
+      "expand": "Expand",
+      "expand_title": "AI expand — turn your notes into a full character prompt",
+      "name": "Name",
+      "name_ph": "Give your character a name...",
+      "new_title": "Create a new character",
+      "reset_title": "Reset to default",
+      "select": "Select character...",
+      "style": "Style of response",
+      "style_ph": "Write rough notes and click Expand, or leave empty"
+    },
+    "group": {
+      "add_participant": "+ Add participant",
+      "sequential": "Sequential"
+    },
+    "inject": {
+      "max_tokens": "Max Tokens",
+      "max_tokens_hint": "Maximum length of the AI response. 'No limit' lets the model decide when to stop.",
+      "no_limit": "No limit",
+      "prefix": "Prefix",
+      "prefix_ph": "Added before your message",
+      "suffix": "Suffix",
+      "suffix_ph": "Added after your message",
+      "temp_balanced": "Balanced",
+      "temp_creative": "Creative",
+      "temp_precise": "Precise / Code",
+      "temperature": "Temperature",
+      "temperature_hint": "Controls randomness. Lower values give focused, deterministic answers (good for code). Higher values give more creative, varied responses."
+    },
+    "start": "Start",
+    "tab": {
+      "character": "Character",
+      "group": "Group",
+      "inject": "Inject"
+    }
+  },
+  "rename_session": {
+    "close_aria": "Close rename session modal",
+    "label": "Session Name",
+    "placeholder": "Enter session name",
+    "title": "Rename Session"
+  },
+  "search": {
+    "placeholder": "Search conversations..."
+  },
+  "settings": {
+    "account": {
+      "change_password": "Change Password",
+      "confirm_password": "Confirm new password",
+      "current_password": "Current password",
+      "logout": "Logout",
+      "new_password": "New password (min 8)",
+      "two_factor": "Two-Factor Authentication",
+      "update_password": "Update Password"
+    },
+    "ai": {
+      "add_fallback": "+ Add fallback",
+      "add_fallback_title": "Add a model to try if the one above fails",
+      "add_fallback_utility_title": "Add a model to try if the utility model fails",
+      "add_fallback_vision_title": "Add a vision model to try if the one above fails",
+      "agent": "Agent",
+      "agent_sub": "Controls for the agent tool loop.",
+      "auto_detect": "Auto-detect",
+      "default_chat_model": "Default Chat Model",
+      "default_chat_model_sub": "The model used when creating a new chat session.",
+      "endpoint": "Endpoint",
+      "experimental": "(Experimental)",
+      "image_gen": "Image Generation",
+      "image_gen_sub": "Configure which model to use for image generation.",
+      "max_tokens": "Max Tokens",
+      "max_tokens_ph": "8192 (default)",
+      "model": "Model",
+      "preview": "Preview",
+      "provider": "Provider",
+      "quality": "Quality",
+      "quality_high": "High (best quality)",
+      "quality_low": "Low (fastest, cheapest)",
+      "quality_medium": "Medium (default)",
+      "research_model": "Research Model",
+      "research_model_sub": "Model used for Deep Research. Falls back to the default chat model if not set.",
+      "same_as_chat": "Same as chat",
+      "same_as_web_search": "Same as web search",
+      "speed": "Speed",
+      "speed_normal": "1x (normal)",
+      "teacher_model": "Teacher Model",
+      "teacher_model_sub": "When a self-hosted student fails an agent-mode task, escalate to a SOTA teacher that writes a SKILL.md procedure so the student can do it next time. Off by default.",
+      "tool_call_limit": "Tool call limit",
+      "tts": "Text to Speech",
+      "tts_browser": "Browser (built-in)",
+      "tts_disabled": "Disabled",
+      "tts_local": "Local (Kokoro-82M)",
+      "tts_model_name_ph": "model name",
+      "tts_sub": "Configure TTS provider for assistant message read-aloud.",
+      "unlimited_ph": "0 = unlimited",
+      "utility_model": "Utility Model",
+      "utility_model_sub": "Runs background tasks (compaction, cleanup, auto-naming) on a small/local model instead of your chat model. Leave blank to use the chat model.",
+      "utility_recommended": "(Recommended: Local Endpoint)",
+      "vision": "Vision",
+      "vision_sub": "Analyze images with a vision-capable model.",
+      "voice": "Voice"
+    },
+    "appearance": {
+      "chat_area": "Chat Area",
+      "chat_bar": "Chat Bar",
+      "language": {
+        "hint": "Changes the language of the Odysseus interface. Untranslated text falls back to English.",
+        "label": "Interface language",
+        "title": "Language"
+      },
+      "reset_all": "Reset All",
+      "sidebar": "Sidebar",
+      "vis": {
+        "agent_chat": "Agent / Chat",
+        "agent_chat_hint": "Mode switcher",
+        "attach_files": "Attach Files",
+        "brand_hint": "Brand name",
+        "characters": "Characters",
+        "characters_hint": "Persona picker & system prompt",
+        "chats_hint": "Chat history list",
+        "doc_editor": "Document Editor",
+        "incognito": "Incognito Mode",
+        "incognito_hint": "No memory, no history saved",
+        "models_hint": "Model selector & quick-chat",
+        "more_tools_hint": "Overflow menu",
+        "sensitive_blur": "Sensitive Blur",
+        "sensitive_blur_hint": "Blur emails, tokens, and secrets in AI output",
+        "session_header": "Session Header",
+        "session_header_hint": "Model name & export above chat",
+        "settings_btn": "Settings Button",
+        "settings_btn_hint": "Cog next to user — re-open with <code>/settings</code>",
+        "shell": "Shell",
+        "text_emojis": "Text-only Emojis",
+        "text_emojis_hint": "Strip emojis from AI replies",
+        "thinking": "Thinking Process",
+        "thinking_hint": "Show &lt;think&gt; collapsible bars",
+        "tools_hint": "Whole section (header + all tools)",
+        "user_hint": "Avatar & name",
+        "welcome_msg": "Welcome Message",
+        "welcome_msg_hint": "Logo & tips on empty chat"
+      }
+    },
+    "email": {
+      "accounts": "Email Accounts",
+      "accounts_sub": "Configure one or more IMAP/SMTP accounts. The default account is used when nothing else is selected.",
+      "add_account": "+ Add Account",
+      "extract_sent": "Extract from Sent (15 emails)",
+      "writing_style": "Writing Style",
+      "writing_style_ph": "e.g. I write emails in this style. I don't use exclamation marks. I sign emails with: ...",
+      "writing_style_sub": "AI-extracted from your sent emails. Used when AI drafts replies."
+    },
+    "integrations": {
+      "add": "+ Add Integration",
+      "connections": "Connections",
+      "connections_sub": "All external service connections in one place."
+    },
+    "nav": {
+      "account": "Account",
+      "admin": "Admin",
+      "ai": "AI Defaults",
+      "appearance": "Appearance",
+      "email": "Email",
+      "integrations": "Integrations",
+      "reminders": "Reminders",
+      "search": "Search",
+      "services": "Add Models",
+      "shortcuts": "Shortcuts",
+      "system": "System",
+      "tools": "Agent Tools",
+      "users": "Users"
+    },
+    "reminders": {
+      "ai_synthesis": "AI Synthesis",
+      "ai_synthesis_sub": "When on, the utility model writes a short, warm one-line reminder for browser, email, AND ntfy reminders instead of just the raw note content.",
+      "ai_synthesis_title": "Use the utility model to write reminder messages",
+      "channel": "Channel",
+      "channel_browser": "Browser notification (default)",
+      "how": "How you're reminded",
+      "how_sub": "Controls how fired note reminders are delivered.",
+      "ntfy_topic": "ntfy topic",
+      "public_url": "Public App URL",
+      "public_url_sub": "Used to build clickable links back to Odysseus inside outgoing reminder / urgent-email emails (e.g. <code>https://chat.yourdomain.com</code>). Leave blank to omit links.",
+      "send_from": "Send from",
+      "send_test": "Send Test Reminder",
+      "send_to": "Send to",
+      "test_sub": "Fire a test reminder using your current settings to verify everything works."
+    },
+    "search": {
+      "api_key": "API Key",
+      "api_key_ph": "API key",
+      "cx_id": "CX ID",
+      "cx_ph": "Google PSE engine ID",
+      "fallbacks": "Fallbacks",
+      "fallbacks_title": "Providers tried in order when the primary fails or hits a rate limit",
+      "results": "Results",
+      "test": "Test",
+      "test_title": "Run a test query against the configured provider",
+      "url": "URL",
+      "web_search": "Web Search",
+      "web_search_sub": "Search API used for web search and deep research."
+    },
+    "services": {
+      "add": "Add",
+      "add_models_sub": "Connect to a cloud API or scan your network for a local model server.",
+      "added_models": "Added Models",
+      "added_models_sub": "Manage the endpoints you've added.",
+      "api": "API",
+      "base_url_ph": "Base URL (e.g. https://api.example.com/v1)",
+      "custom_url": "Custom URL",
+      "endpoints": "(Endpoints)",
+      "local": "Local",
+      "local_url_ph": "Paste an endpoint URL, e.g. http://localhost:8000/v1",
+      "scan": "Scan for Servers",
+      "scan_title": "Scan your network for running model servers",
+      "type_image": "Image"
+    },
+    "shortcuts": {
+      "hint": "Click a shortcut to rebind. Press Escape to cancel.",
+      "reset_title": "Reset Shortcuts",
+      "title": "Keyboard Shortcuts"
+    },
+    "system": {
+      "danger_zone": "Danger Zone",
+      "danger_zone_sub": "Irreversible. Each wipe targets one category — pick exactly what you want gone.",
+      "data_backup": "Data Backup",
+      "data_backup_sub": "Export or import your user data (memories, presets, settings, skills, preferences) as a JSON file.",
+      "export_data": "Export Data",
+      "import_data": "Import Data",
+      "wipe": "Wipe",
+      "wipe_calendar": "Wipe all calendar",
+      "wipe_calendar_sub": "Every event and every calendar (incl. CalDAV-synced ones; resync to restore).",
+      "wipe_chats": "Wipe all chats",
+      "wipe_chats_sub": "Every session, message, and chat history. Documents/notes/etc. stay.",
+      "wipe_documents": "Wipe all documents",
+      "wipe_documents_sub": "Every document and version. Drafts, exports, library — all gone.",
+      "wipe_gallery": "Wipe all gallery",
+      "wipe_gallery_sub": "Every image record and the upload directory on disk.",
+      "wipe_memory": "Wipe all memory",
+      "wipe_memory_sub": "Clears `memory.json`, the Memory table, and the vector store. Skills not affected.",
+      "wipe_notes": "Wipe all notes",
+      "wipe_notes_sub": "Every note, todo, and checklist.",
+      "wipe_skills": "Wipe all skills",
+      "wipe_skills_sub": "Drops `data/skills/` (all SKILL.md files). Memory not affected.",
+      "wipe_tasks": "Wipe all tasks",
+      "wipe_tasks_sub": "Every scheduled task and its run history (Tasks tool)."
+    },
+    "title": "Settings",
+    "tools": {
+      "builtin": "Built-in Tools",
+      "builtin_sub": "Enable or disable tools available to the AI agent."
+    },
+    "users": {
+      "add_user": "Add User",
+      "grant_admin_title": "Grant full admin access",
+      "open_signup": "Open signup",
+      "open_signup_sub": "Allow anyone to create an account from the login page",
+      "password_ph": "Password (min 8)",
+      "registration": "Registration",
+      "username_ph": "Username (email)"
+    },
+    "visibility_hint": "Toggle on/off visibility of tools and modules across the interface."
+  },
+  "sidebar": {
+    "add_model_chat": "Add model chat",
+    "archive_selected": "Archive selected",
+    "aria_label": "Sidebar",
+    "chat_ready": "Chat ready",
+    "chats": "Chats",
+    "cleaning": "Cleaning...",
+    "delete_selected": "Delete selected",
+    "delete_session": "Delete session",
+    "models": "Models",
+    "new_chat": "New Chat",
+    "open_library": "Open Library",
+    "plus_chat": "+ Chat",
+    "rearrange": "Rearrange",
+    "search_conversations": "Search conversations (Ctrl+K)",
+    "select_model": "Select model",
+    "session": {
+      "delete_desc": "Remove this session permanently",
+      "memory": "Memory",
+      "memory_desc": "Extract memories from this session",
+      "rename": "Rename",
+      "rename_desc": "Change the session name"
+    },
+    "show": "Show sidebar",
+    "sort": {
+      "by_folder": "By Folder",
+      "last_active": "Last Active",
+      "last_used": "Last used",
+      "newest_first": "Newest First"
+    },
+    "sort_models": "Sort models",
+    "sort_sessions": "Sort sessions",
+    "sorting": "Sorting...",
+    "tidy_options": "Tidy options",
+    "toggle": "Toggle sidebar",
+    "user": "User"
+  },
+  "theme": {
+    "bg": {
+      "constellations": "Constellations",
+      "dots": "Dots",
+      "embers": "Embers",
+      "perlin_flow": "Perlin Flow",
+      "petals": "Petals",
+      "rain": "Rain",
+      "solid": "Solid",
+      "sparkles": "Sparkles",
+      "synapse": "Synapse"
+    },
+    "bg_effect": "Background / Effect",
+    "clear_overrides": "Clear Advanced Overrides",
+    "color": {
+      "accent": "Accent",
+      "ai_bubble": "AI Chat Bubble",
+      "background": "Background",
+      "border": "Border",
+      "bubble_border": "Border Chat Bubble",
+      "code_bg": "Code Bg",
+      "code_text": "Code Text",
+      "hamburger": "Hamburger menu",
+      "input_bg": "Input Bg",
+      "input_border": "Input Border",
+      "odysseus_logo": "Odysseus Logo",
+      "panel": "Panel",
+      "send_btn": "Send Btn",
+      "send_hover": "Send Hover",
+      "sidebar": "Sidebar",
+      "text": "Text",
+      "toggle_on": "Toggle On",
+      "user_bubble": "User Chat Bubble"
+    },
+    "colors": "Colors",
+    "custom_fonts_hint": "Drop <code>.woff2</code>, <code>.ttf</code>, or <code>.otf</code> files into <code>static/fonts/custom/</code> and reload — they'll appear in the Font dropdown above.",
+    "default_themes": "Default Themes",
+    "density": "Density",
+    "density.comfortable": "Comfortable",
+    "density.compact": "Compact",
+    "density.spacious": "Spacious",
+    "effect_color": "Effect color",
+    "export_title": "Export current colors as JSON",
+    "font": "Font",
+    "font.monospace": "Monospace",
+    "font.sans": "Sans-serif",
+    "font.serif": "Serif",
+    "font_layout": "Font & Layout",
+    "frosted": "Frosted",
+    "group": {
+      "chat_bubbles": "Chat Bubbles",
+      "chat_input": "Chat Input / Prompt Area",
+      "code_blocks": "Code Blocks",
+      "controls": "Controls",
+      "custom_fonts": "Custom Fonts",
+      "sidebar": "Sidebar"
+    },
+    "harmony": {
+      "accent_color": "Accent Color",
+      "analogous": "Analogous",
+      "complementary": "Complementary",
+      "dark": "Dark",
+      "generate": "Generate",
+      "harmony": "Harmony",
+      "light": "Light",
+      "mode": "Mode",
+      "monochromatic": "Monochromatic",
+      "title": "Color Harmony",
+      "triadic": "Triadic"
+    },
+    "import_placeholder": "Paste theme JSON here...",
+    "import_title": "Import a theme from JSON",
+    "intensity": "Intensity",
+    "more_colors": "More Colors",
+    "name_placeholder": "Theme name...",
+    "peek": "Peek",
+    "peek_title": "Fade this window to preview the page behind it",
+    "reset_color": "Reset this color",
+    "reset_default": "Reset to Default",
+    "reset_to_text": "Reset to text color",
+    "save_share": "Save / Share",
+    "size": "Size",
+    "tab": {
+      "customize": "Customize",
+      "themes": "Themes"
+    },
+    "title": "Theme",
+    "your_themes": "Your Themes"
+  },
+  "tools": {
+    "brain": "Brain",
+    "calendar": "Calendar",
+    "compare": "Compare",
+    "cookbook": "Cookbook",
+    "deep_research": "Deep Research",
+    "documents": "Documents",
+    "email": "Email",
+    "gallery": "Gallery",
+    "library": "Library",
+    "new_document": "New document",
+    "notes": "Notes",
+    "section_title": "Tools",
+    "tasks": "Tasks",
+    "theme": "Theme"
+  },
+  "welcome": {
+    "nobody": "Nobody",
+    "nobody_title": "Enable Nobody mode — no memory, no history saved",
+    "subtitle": "Welcome, type /setup to get started."
   }
 }

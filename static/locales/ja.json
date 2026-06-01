@@ -4,36 +4,689 @@
     "name": "Japanese",
     "note": "日本語カタログ。en.json のキー集合をミラーします。欠けているキーは en.json にフォールバックします。"
   },
+  "auth": {
+    "confirm_password": "パスワードの確認",
+    "password": "パスワード",
+    "remember_me": "ログイン状態を保持",
+    "show_password": "パスワードを表示",
+    "username": "ユーザー名"
+  },
+  "chat": {
+    "area_aria": "チャットエリア",
+    "export": {
+      "copy_chat": "チャットをコピー",
+      "pdf": "PDF",
+      "rename": "名前を変更",
+      "save_documents": "ドキュメントに保存"
+    },
+    "nobody_active": "匿名モードが有効です — クリックして無効化",
+    "scroll_bottom": "最下部へスクロール",
+    "title_default": "Odysseus チャット"
+  },
   "common": {
-    "save": "保存",
+    "all": "すべて",
+    "apply": "適用",
     "cancel": "キャンセル",
+    "cancel_esc": "キャンセル (Esc)",
     "close": "閉じる",
+    "confirm": "確認",
     "delete": "削除",
     "edit": "編集",
+    "export": "エクスポート",
+    "import": "インポート",
     "loading": "読み込み中…",
+    "loading_ellipsis": "読み込み中...",
+    "more": "その他",
+    "new": "新規",
+    "new_caps": "新規",
+    "reset": "リセット",
+    "save": "保存",
     "search": "検索",
-    "confirm": "確認"
-  },
-  "settings": {
-    "title": "設定",
-    "nav": {
-      "services": "モデルを追加",
-      "ai": "AI の既定値",
-      "search": "検索",
-      "integrations": "連携",
-      "email": "メール",
-      "reminders": "リマインダー",
-      "appearance": "外観",
-      "shortcuts": "ショートカット",
-      "account": "アカウント",
-      "tools": "エージェントツール"
+    "select": "選択",
+    "sort": {
+      "alpha": "A-Z",
+      "most_used": "使用頻度順"
     },
-    "appearance": {
-      "language": {
-        "title": "言語",
-        "label": "インターフェース言語",
-        "hint": "Odysseus インターフェースの言語を変更します。未翻訳のテキストは英語で表示されます。"
+    "tidy": "整理"
+  },
+  "composer": {
+    "aria_label": "メッセージ入力",
+    "attach_files": "ファイルを添付",
+    "character_active": "キャラクター有効 — クリックで無効化",
+    "compare": "比較",
+    "compare_active": "比較有効 — クリックで無効化",
+    "group": "グループ",
+    "group_active": "グループチャット有効 — クリックで無効化",
+    "mode_agent": "エージェント",
+    "mode_chat": "チャット",
+    "more_tools": "その他のツール",
+    "new": "+ 新規",
+    "placeholder": "Odysseusにメッセージを送信...",
+    "prompt": "プロンプト",
+    "rag": "RAG",
+    "rag_active": "RAG有効 — クリックで無効化",
+    "research": "リサーチ",
+    "research_active": "ディープリサーチ有効 — クリックで無効化",
+    "search_models": "モデルを検索...",
+    "select_model": "モデルを選択",
+    "shell_access": "シェルアクセス",
+    "switch_model": "モデルを切り替え",
+    "tts_mode": "TTSモード",
+    "web_search": "ウェブ検索"
+  },
+  "email": {
+    "compose": "メールを作成",
+    "open_inbox": "受信トレイを開く"
+  },
+  "landing": {
+    "cta": {
+      "view_github": "GitHubで見る"
+    },
+    "features": {
+      "chat": {
+        "desc": "マルチターンチャットに加え、計画を立て、ツールを呼び出し、タスクを遂行する自律エージェント。",
+        "title": "チャットとエージェント"
+      },
+      "compare": {
+        "desc": "1つのプロンプトを複数のモデルに同時に送信し、回答を並べて比較。",
+        "title": "比較"
+      },
+      "cookbook": {
+        "desc": "ハードウェアに応じたモデル推奨と、270以上のカタログ化されたモデルをワンクリックで起動。",
+        "title": "クックブック"
+      },
+      "email": {
+        "desc": "IMAP/SMTP上でのAI要約、文体に合わせた返信下書き、自動タグ付け、スパム振り分け。",
+        "title": "メールアシスタント"
+      },
+      "eyebrow": "すべて、セルフホスト",
+      "heading": "1つのアプリに、多彩な機能",
+      "memory": {
+        "desc": "アシスタントが蓄積し、すべての会話を通じて呼び出す永続的なメモリ。",
+        "title": "メモリ"
+      },
+      "private": {
+        "desc": "あなたのマシン上で、あなた自身のエンドポイントに対して動作。テレメトリなし、必要に応じて外部連携も選択可能。",
+        "title": "デフォルトでプライベート"
+      },
+      "research": {
+        "desc": "情報源を収集・読解・統合し、文書化されたレポートにまとめる多段階のリサーチ実行。",
+        "title": "ディープリサーチ"
+      },
+      "skills": {
+        "badge": "自己進化",
+        "desc": "アシスタントが自らのスキルを記述・改善・再利用し、時間とともに能力を高めていく。",
+        "title": "スキル"
+      },
+      "sub": "AIチャットとして始まり、ワークスペースになりました。各機能は、指定したエンドポイントに対してローカルで動作します。",
+      "tools": {
+        "desc": "組み込みツール（bash、ファイル、ウェブ、メモリ）に加え、接続した任意のMCPサーバー。ツールごとに切り替え可能。",
+        "title": "ツールとMCP"
+      }
+    },
+    "footer": {
+      "copyright": "© 2026 Odysseus · 止まることを拒んだ1つのプロンプトから生まれた。",
+      "disclaimer": "制作中にサイクロプスは傷つけられていません。"
+    },
+    "hero": {
+      "api_aside": "(APIを追加したいならそれもいいよ — 君の人生をどう生きるか指図するつもりはないから…)",
+      "headline": "あなた自身の<span class=\"grad\">AIワークスペース</span>を、<br>あなたのハードウェアで。",
+      "lede": "Odysseusは、言語モデルと対話するためのセルフホスト型インターフェースです。チャット、自律エージェント、ツール、モデル起動、メール、リサーチなど。ローカルファースト、プライバシーファースト、テレメトリなし。あなたとあなたのモデルだけ。",
+      "slogan": "あなたの航海のために。"
+    },
+    "how": {
+      "eyebrow": "実際の始まり",
+      "heading": "Odysseusは、私が嫌いなものすべて。それをただ我慢できるものにしただけ。",
+      "p1": "ローカルAIを動かすのが楽しそうに感じて、Odysseusプロジェクトを始めました。未来への一歩です。でも実際にLLMと向き合うための選択肢は、後退しているように感じました。メモリ、ディープリサーチ、エージェント、そして基本的な連携機能はどこに?!",
+      "p2": "そこで自分用に、楽しみのために自分で作り始めました。そして最終的に、自分のために作ったものを他の人と共有するのも楽しいかもと思ったのです。うまく動かない? まあ… 私のハードウェアでは快調に動いています。"
+    },
+    "meta": {
+      "description": "Odysseus — セルフホスト型AIワークスペース：チャット、エージェント、ツール、モデル起動、メール、リサーチなど。あなたのモデル、あなたのハードウェア、あなたのデータ。",
+      "title": "Odysseus — セルフホスト型AIワークスペース"
+    },
+    "nav": {
+      "features": "機能",
+      "get_started": "始める",
+      "github": "GitHub",
+      "how": "始まり",
+      "testimonials": "お客様の声"
+    },
+    "origin": {
+      "intro": "Odysseusは、入念に作り込まれた1回限りのAIプロンプトによって生み出されました：",
+      "minimize": "最小化",
+      "reopen": "ターミナルを再度開く"
+    },
+    "previews": {
+      "chat": {
+        "placeholder": "[ チャットとエージェント ]"
+      },
+      "cookbook": {
+        "placeholder": "[ クックブック ]"
+      },
+      "email": {
+        "placeholder": "[ メールアシスタント ]"
+      },
+      "eyebrow": "実際の動作を見る",
+      "heading": "ホバーして詳しく見る",
+      "sub": "各パネルにホバーすると展開し、プレビューが再生されます。"
+    },
+    "start": {
+      "heading": "クローンして実行",
+      "pill_byo_models": "自分のモデルを持ち込む",
+      "pill_local_first": "ローカルファースト",
+      "pill_mcp_ready": "MCP対応",
+      "pill_no_telemetry": "テレメトリなし",
+      "pill_self_hosted": "セルフホスト",
+      "sub": "オープンソースで無料です。営業担当もデモ申請も不要 — リポジトリをクローンするだけ。"
+    },
+    "testimonials": {
+      "coder": {
+        "name": "Generic Coder Guy",
+        "quote": "「Odysseusのおかげで、船を出荷しながらもっと多くの船を出荷できました。まさに業界最高の出荷です。」",
+        "role": "シニアエンジニア、ShipShip Inc."
+      },
+      "corporate": {
+        "name": "Chad Corporate",
+        "quote": "「ともかく、さっき言ったように — 業界最高です。」",
+        "role": "最高経営責任者"
+      },
+      "cyclops": {
+        "name": "Polyphemus",
+        "quote": "「アアアアアアアアアアアアアアアアアアアアアアアアアアアアア」",
+        "role": "サイクロプス、Cave Solutions（休職中）"
+      },
+      "eyebrow": "企業に愛されています",
+      "heading": "お客様の声",
+      "next": "次のお客様の声",
+      "prev": "前のお客様の声",
+      "woman": {
+        "alt": "本物の女性",
+        "name": "Generic Corporate Woman",
+        "quote": "「私は本物の人間です。これは本物のお客様の声です。本物の女性による。」",
+        "role": "バーティカル担当VP、Things LLC"
       }
     }
+  },
+  "memory": {
+    "add": {
+      "import_desc": "<code>.txt</code>、<code>.md</code>、<code>.pdf</code>、<code>.csv</code>、<code>.log</code>、<code>.json</code>、<code>.py</code>、<code>.js</code>、<code>.html</code> ファイルをインポート &mdash; AI が内容を読み取り、承認できる記憶の候補を提案します。チャットセッションを開いておく必要があります（そのセッションのモデルを使用します）。",
+      "ph_key": "記憶を追加",
+      "ph_rest": "&mdash; 例: 「簡潔な返信を希望」",
+      "title": "記憶を追加"
+    },
+    "browse_desc": "AI がチャット間で覚えている長期的な事実 — 呼び出し、編集、整理できます。",
+    "close_aria": "記憶モーダルを閉じる",
+    "export_title": "すべての記憶を JSON でエクスポート",
+    "import_title": "ファイルから記憶をインポート",
+    "include_title": "チャットのコンテキストに記憶を含める",
+    "search_placeholder": "記憶を検索…",
+    "select_title": "複数の記憶を選択",
+    "settings": {
+      "auto_approve": "スキルを自動承認",
+      "auto_approve_sub": "この信頼度以上で合格・必要なスキルの公開をすべて監査します。オフ = 手動で承認しない限り監査結果を下書きのまま保持します。",
+      "auto_extract_mem": "記憶を自動抽出",
+      "auto_extract_mem_sub": "会話から記憶を自動的に抽出します。",
+      "auto_extract_skills": "スキルを自動抽出",
+      "auto_extract_skills_sub": "ワークフローから再利用可能なスキルを自動的に下書きします。「すべて監査」では以下のしきい値を使って合格したスキルを公開できます。",
+      "auto_extract_skills_sub2": "ライブラリは拡張できます。クリーンアップはレビュー後にのみ、弱い／重複したスキルを廃止します。",
+      "inject_skills": "スキルを注入",
+      "inject_skills_hint": "0 に設定するとスキルの注入を無効にします。",
+      "inject_skills_sub": "各エージェントリクエストに追加する、関連する公開済みまたは承認済みスキルの数を制御します。",
+      "max_skills": "リクエストごとの最大スキル数",
+      "min_confidence": "最小信頼度"
+    },
+    "skill": {
+      "add_desc": "手動でスキルを作成 — タイトル、解決する課題、アプローチ。",
+      "add_title": "スキルを追加",
+      "approve": "承認",
+      "audit": "監査",
+      "audit_all": "すべて監査",
+      "audit_all_title": "すべてのスキルをテストし、弱いものを自動修正し、まだ失敗するものにフラグを立てます",
+      "audit_title": "選択した下書きスキルを監査",
+      "delete_nonpassing": "不合格を削除",
+      "delete_nonpassing_title": "選択した重複、汎用的／無関係なスキル、監査失敗、しきい値未満のスキルを削除",
+      "filter_all": "すべてのスキル",
+      "filter_drafts": "下書きのみ",
+      "filter_published": "公開済みのみ",
+      "how_hint": "— 従うべきアプローチ、手順、コマンド、ルール",
+      "how_key": "方法",
+      "inject_title": "関連するスキルをチャットのコンテキストに注入",
+      "list_desc": "AI が /skill で呼び出せる再利用可能な手順 — 信頼度で並べ替えて実証済みのものを表示。",
+      "optgroup_filter": "フィルター",
+      "optgroup_sort": "並べ替え",
+      "publish_title": "選択した下書きを公開",
+      "search_placeholder": "スキルを検索…",
+      "select_title": "複数のスキルを選択",
+      "sort_confidence": "信頼度",
+      "sort_recent": "最近",
+      "tags_hint": "— カンマ区切り、例: python, build, vllm",
+      "tags_key": "タグ",
+      "title_hint": "— 短い名前、例: “build-vllm-wheel”",
+      "title_key": "タイトル",
+      "when_hint": "— このスキルはどんな問題を解決しますか？",
+      "when_key": "使用するタイミング"
+    },
+    "sort": {
+      "newest": "新しい順",
+      "oldest": "古い順"
+    },
+    "tab": {
+      "add": "追加",
+      "memories": "記憶",
+      "settings": "設定",
+      "skills": "スキル"
+    },
+    "tidy_title": "AI 整理: 記憶を重複排除してクリーンアップ",
+    "title": "ブレイン"
+  },
+  "preset": {
+    "character": {
+      "delete_title": "このキャラクターとその記憶を削除",
+      "expand": "展開",
+      "expand_title": "AI展開 — メモを完全なキャラクタープロンプトに変換",
+      "name": "名前",
+      "name_ph": "キャラクターに名前を付けてください...",
+      "new_title": "新しいキャラクターを作成",
+      "reset_title": "デフォルトにリセット",
+      "select": "キャラクターを選択...",
+      "style": "応答のスタイル",
+      "style_ph": "大まかなメモを書いて「展開」をクリック、または空欄のままに"
+    },
+    "group": {
+      "add_participant": "+ 参加者を追加",
+      "sequential": "順次"
+    },
+    "inject": {
+      "max_tokens": "最大トークン数",
+      "max_tokens_hint": "AI応答の最大の長さ。「制限なし」にすると、モデルが停止のタイミングを決定します。",
+      "no_limit": "制限なし",
+      "prefix": "接頭辞",
+      "prefix_ph": "メッセージの前に追加",
+      "suffix": "接尾辞",
+      "suffix_ph": "メッセージの後に追加",
+      "temp_balanced": "バランス",
+      "temp_creative": "クリエイティブ",
+      "temp_precise": "精密／コード",
+      "temperature": "温度",
+      "temperature_hint": "ランダム性を制御します。値が低いほど焦点が定まった決定論的な回答になります（コード向き）。値が高いほどよりクリエイティブで多様な応答になります。"
+    },
+    "start": "開始",
+    "tab": {
+      "character": "キャラクター",
+      "group": "グループ",
+      "inject": "インジェクト"
+    }
+  },
+  "rename_session": {
+    "close_aria": "セッション名変更モーダルを閉じる",
+    "label": "セッション名",
+    "placeholder": "セッション名を入力",
+    "title": "セッション名を変更"
+  },
+  "search": {
+    "placeholder": "会話を検索…"
+  },
+  "settings": {
+    "account": {
+      "change_password": "パスワード変更",
+      "confirm_password": "新しいパスワードを再入力",
+      "current_password": "現在のパスワード",
+      "logout": "ログアウト",
+      "new_password": "新しいパスワード（8文字以上）",
+      "two_factor": "2段階認証",
+      "update_password": "パスワードを更新"
+    },
+    "ai": {
+      "add_fallback": "+ フォールバックを追加",
+      "add_fallback_title": "上記が失敗した場合に試すモデルを追加",
+      "add_fallback_utility_title": "ユーティリティモデルが失敗した場合に試すモデルを追加",
+      "add_fallback_vision_title": "上記が失敗した場合に試すビジョンモデルを追加",
+      "agent": "エージェント",
+      "agent_sub": "エージェントツールループの制御。",
+      "auto_detect": "自動検出",
+      "default_chat_model": "既定のチャットモデル",
+      "default_chat_model_sub": "新しいチャットセッション作成時に使用されるモデル。",
+      "endpoint": "エンドポイント",
+      "experimental": "（実験的）",
+      "image_gen": "画像生成",
+      "image_gen_sub": "画像生成に使用するモデルを設定します。",
+      "max_tokens": "最大トークン数",
+      "max_tokens_ph": "8192（既定）",
+      "model": "モデル",
+      "preview": "プレビュー",
+      "provider": "プロバイダー",
+      "quality": "品質",
+      "quality_high": "高（最高品質）",
+      "quality_low": "低（最速・最安）",
+      "quality_medium": "中（既定）",
+      "research_model": "リサーチモデル",
+      "research_model_sub": "ディープリサーチに使用するモデル。未設定の場合は既定のチャットモデルを使用します。",
+      "same_as_chat": "チャットと同じ",
+      "same_as_web_search": "Web検索と同じ",
+      "speed": "速度",
+      "speed_normal": "1倍（通常）",
+      "teacher_model": "教師モデル",
+      "teacher_model_sub": "セルフホストの生徒モデルがエージェントモードのタスクに失敗した場合、SOTAの教師モデルにエスカレーションし、次回から生徒が実行できるようSKILL.md手順を作成します。既定ではオフ。",
+      "tool_call_limit": "ツール呼び出し上限",
+      "tts": "テキスト読み上げ",
+      "tts_browser": "ブラウザ（内蔵）",
+      "tts_disabled": "無効",
+      "tts_local": "ローカル（Kokoro-82M）",
+      "tts_model_name_ph": "モデル名",
+      "tts_sub": "アシスタントメッセージの読み上げに使うTTSプロバイダーを設定します。",
+      "unlimited_ph": "0 = 無制限",
+      "utility_model": "ユーティリティモデル",
+      "utility_model_sub": "バックグラウンドタスク（圧縮、クリーンアップ、自動命名）をチャットモデルではなく小型/ローカルモデルで実行します。空欄の場合はチャットモデルを使用します。",
+      "utility_recommended": "（推奨：ローカルエンドポイント）",
+      "vision": "ビジョン",
+      "vision_sub": "ビジョン対応モデルで画像を解析します。",
+      "voice": "音声"
+    },
+    "appearance": {
+      "chat_area": "チャットエリア",
+      "chat_bar": "チャットバー",
+      "language": {
+        "hint": "Odysseusインターフェースの言語を変更します。未翻訳のテキストは英語で表示されます。",
+        "label": "インターフェース言語",
+        "title": "言語"
+      },
+      "reset_all": "すべてリセット",
+      "sidebar": "サイドバー",
+      "vis": {
+        "agent_chat": "エージェント / チャット",
+        "agent_chat_hint": "モード切り替え",
+        "attach_files": "ファイルを添付",
+        "brand_hint": "ブランド名",
+        "characters": "キャラクター",
+        "characters_hint": "ペルソナ選択とシステムプロンプト",
+        "chats_hint": "チャット履歴リスト",
+        "doc_editor": "ドキュメントエディター",
+        "incognito": "シークレットモード",
+        "incognito_hint": "メモリなし、履歴を保存しない",
+        "models_hint": "モデル選択とクイックチャット",
+        "more_tools_hint": "オーバーフローメニュー",
+        "sensitive_blur": "機密情報をぼかす",
+        "sensitive_blur_hint": "AI出力内のメール、トークン、シークレットをぼかします",
+        "session_header": "セッションヘッダー",
+        "session_header_hint": "チャット上部のモデル名とエクスポート",
+        "settings_btn": "設定ボタン",
+        "settings_btn_hint": "ユーザー横の歯車 — <code>/settings</code> で再表示",
+        "shell": "シェル",
+        "text_emojis": "テキストのみの絵文字",
+        "text_emojis_hint": "AIの返信から絵文字を除去します",
+        "thinking": "思考プロセス",
+        "thinking_hint": "&lt;think&gt; 折りたたみバーを表示",
+        "tools_hint": "セクション全体（ヘッダー + 全ツール）",
+        "user_hint": "アバターと名前",
+        "welcome_msg": "ウェルカムメッセージ",
+        "welcome_msg_hint": "空のチャットにロゴとヒントを表示"
+      }
+    },
+    "email": {
+      "accounts": "メールアカウント",
+      "accounts_sub": "1つ以上のIMAP/SMTPアカウントを設定します。他に選択がない場合は既定のアカウントが使用されます。",
+      "add_account": "+ アカウントを追加",
+      "extract_sent": "送信済みから抽出（15件）",
+      "writing_style": "文体",
+      "writing_style_ph": "例：私はこの文体でメールを書きます。感嘆符は使いません。署名は次のようにします：...",
+      "writing_style_sub": "送信済みメールからAIが抽出します。AIが返信を作成する際に使用されます。"
+    },
+    "integrations": {
+      "add": "+ 連携を追加",
+      "connections": "接続",
+      "connections_sub": "すべての外部サービス接続を一元管理。"
+    },
+    "nav": {
+      "account": "アカウント",
+      "admin": "管理",
+      "ai": "AI既定",
+      "appearance": "外観",
+      "email": "メール",
+      "integrations": "連携",
+      "reminders": "リマインダー",
+      "search": "検索",
+      "services": "モデルを追加",
+      "shortcuts": "ショートカット",
+      "system": "システム",
+      "tools": "エージェントツール",
+      "users": "ユーザー"
+    },
+    "reminders": {
+      "ai_synthesis": "AI合成",
+      "ai_synthesis_sub": "オンの場合、ユーティリティモデルがブラウザ、メール、ntfyのリマインダーに対して、生のメモ内容ではなく短く温かみのある1行のリマインダーを作成します。",
+      "ai_synthesis_title": "ユーティリティモデルでリマインダーメッセージを作成",
+      "channel": "チャンネル",
+      "channel_browser": "ブラウザ通知（既定）",
+      "how": "通知方法",
+      "how_sub": "発火したメモリマインダーの配信方法を制御します。",
+      "ntfy_topic": "ntfyトピック",
+      "public_url": "公開アプリURL",
+      "public_url_sub": "送信されるリマインダー / 緊急メール内にOdysseusへのクリック可能なリンクを作成するために使用します（例：<code>https://chat.yourdomain.com</code>）。空欄の場合はリンクを省略します。",
+      "send_from": "送信元",
+      "send_test": "テストリマインダーを送信",
+      "send_to": "送信先",
+      "test_sub": "現在の設定でテストリマインダーを発火し、すべて正常に動作することを確認します。"
+    },
+    "search": {
+      "api_key": "APIキー",
+      "api_key_ph": "APIキー",
+      "cx_id": "CX ID",
+      "cx_ph": "Google PSEエンジンID",
+      "fallbacks": "フォールバック",
+      "fallbacks_title": "プライマリが失敗またはレート制限に達した際に順に試すプロバイダー",
+      "results": "結果",
+      "test": "テスト",
+      "test_title": "設定済みプロバイダーに対してテストクエリを実行",
+      "url": "URL",
+      "web_search": "Web検索",
+      "web_search_sub": "Web検索とディープリサーチに使用する検索API。"
+    },
+    "services": {
+      "add": "追加",
+      "add_models_sub": "クラウドAPIに接続するか、ネットワークをスキャンしてローカルモデルサーバーを探します。",
+      "added_models": "追加済みモデル",
+      "added_models_sub": "追加したエンドポイントを管理します。",
+      "api": "API",
+      "base_url_ph": "ベースURL（例：https://api.example.com/v1）",
+      "custom_url": "カスタムURL",
+      "endpoints": "（エンドポイント）",
+      "local": "ローカル",
+      "local_url_ph": "エンドポイントURLを貼り付け（例：http://localhost:8000/v1）",
+      "scan": "サーバーをスキャン",
+      "scan_title": "ネットワークをスキャンして稼働中のモデルサーバーを探します",
+      "type_image": "画像"
+    },
+    "shortcuts": {
+      "hint": "ショートカットをクリックして再割り当て。Escで取り消し。",
+      "reset_title": "ショートカットをリセット",
+      "title": "キーボードショートカット"
+    },
+    "system": {
+      "danger_zone": "危険ゾーン",
+      "danger_zone_sub": "取り消し不可。各消去は1つのカテゴリーを対象とします — 削除したいものだけを選んでください。",
+      "data_backup": "データバックアップ",
+      "data_backup_sub": "ユーザーデータ（メモリ、プリセット、設定、スキル、環境設定）をJSONファイルとしてエクスポートまたはインポートします。",
+      "export_data": "データをエクスポート",
+      "import_data": "データをインポート",
+      "wipe": "消去",
+      "wipe_calendar": "すべてのカレンダーを消去",
+      "wipe_calendar_sub": "すべてのイベントとすべてのカレンダー（CalDAV同期分を含む。復元するには再同期）。",
+      "wipe_chats": "すべてのチャットを消去",
+      "wipe_chats_sub": "すべてのセッション、メッセージ、チャット履歴。ドキュメント/メモなどは残ります。",
+      "wipe_documents": "すべてのドキュメントを消去",
+      "wipe_documents_sub": "すべてのドキュメントとバージョン。下書き、エクスポート、ライブラリ — すべて削除されます。",
+      "wipe_gallery": "すべてのギャラリーを消去",
+      "wipe_gallery_sub": "すべての画像レコードとディスク上のアップロードディレクトリ。",
+      "wipe_memory": "すべてのメモリを消去",
+      "wipe_memory_sub": "`memory.json`、メモリテーブル、ベクトルストアをクリアします。スキルには影響しません。",
+      "wipe_notes": "すべてのメモを消去",
+      "wipe_notes_sub": "すべてのメモ、To Do、チェックリスト。",
+      "wipe_skills": "すべてのスキルを消去",
+      "wipe_skills_sub": "`data/skills/`（すべてのSKILL.mdファイル）を削除します。メモリには影響しません。",
+      "wipe_tasks": "すべてのタスクを消去",
+      "wipe_tasks_sub": "すべてのスケジュール済みタスクとその実行履歴（タスクツール）。"
+    },
+    "title": "設定",
+    "tools": {
+      "builtin": "内蔵ツール",
+      "builtin_sub": "AIエージェントが利用できるツールを有効または無効にします。"
+    },
+    "users": {
+      "add_user": "ユーザーを追加",
+      "grant_admin_title": "完全な管理者アクセスを付与",
+      "open_signup": "サインアップを開放",
+      "open_signup_sub": "ログインページから誰でもアカウントを作成できるようにします",
+      "password_ph": "パスワード（8文字以上）",
+      "registration": "登録",
+      "username_ph": "ユーザー名（メール）"
+    },
+    "visibility_hint": "インターフェース全体でツールとモジュールの表示/非表示を切り替えます。"
+  },
+  "sidebar": {
+    "add_model_chat": "モデルチャットを追加",
+    "archive_selected": "選択項目をアーカイブ",
+    "aria_label": "サイドバー",
+    "chat_ready": "チャット準備完了",
+    "chats": "チャット",
+    "cleaning": "クリーニング中…",
+    "delete_selected": "選択項目を削除",
+    "delete_session": "セッションを削除",
+    "models": "モデル",
+    "new_chat": "新規チャット",
+    "open_library": "ライブラリを開く",
+    "plus_chat": "+ チャット",
+    "rearrange": "並べ替え",
+    "search_conversations": "会話を検索 (Ctrl+K)",
+    "select_model": "モデルを選択",
+    "session": {
+      "delete_desc": "このセッションを完全に削除します",
+      "memory": "メモリ",
+      "memory_desc": "このセッションからメモリを抽出します",
+      "rename": "名前を変更",
+      "rename_desc": "セッション名を変更します"
+    },
+    "show": "サイドバーを表示",
+    "sort": {
+      "by_folder": "フォルダ別",
+      "last_active": "最終アクティブ",
+      "last_used": "最終使用",
+      "newest_first": "新しい順"
+    },
+    "sort_models": "モデルを並べ替え",
+    "sort_sessions": "セッションを並べ替え",
+    "sorting": "並べ替え中…",
+    "tidy_options": "整理オプション",
+    "toggle": "サイドバーを切り替え",
+    "user": "ユーザー"
+  },
+  "theme": {
+    "bg": {
+      "constellations": "星座",
+      "dots": "ドット",
+      "embers": "残り火",
+      "perlin_flow": "パーリンフロー",
+      "petals": "花びら",
+      "rain": "雨",
+      "solid": "単色",
+      "sparkles": "きらめき",
+      "synapse": "シナプス"
+    },
+    "bg_effect": "背景 / エフェクト",
+    "clear_overrides": "詳細オーバーライドをクリア",
+    "color": {
+      "accent": "アクセント",
+      "ai_bubble": "AIチャットバブル",
+      "background": "背景",
+      "border": "境界線",
+      "bubble_border": "バブルの境界線",
+      "code_bg": "コード背景",
+      "code_text": "コード文字",
+      "hamburger": "ハンバーガーメニュー",
+      "input_bg": "入力背景",
+      "input_border": "入力境界線",
+      "odysseus_logo": "Odysseusロゴ",
+      "panel": "パネル",
+      "send_btn": "送信ボタン",
+      "send_hover": "送信ホバー",
+      "sidebar": "サイドバー",
+      "text": "文字",
+      "toggle_on": "トグルオン",
+      "user_bubble": "ユーザーチャットバブル"
+    },
+    "colors": "カラー",
+    "custom_fonts_hint": "<code>.woff2</code>、<code>.ttf</code>、<code>.otf</code> ファイルを <code>static/fonts/custom/</code> にドロップして再読み込みすると、上のフォントドロップダウンに表示されます。",
+    "default_themes": "デフォルトテーマ",
+    "density": "密度",
+    "density.comfortable": "標準",
+    "density.compact": "コンパクト",
+    "density.spacious": "ゆったり",
+    "effect_color": "エフェクトの色",
+    "export_title": "現在のカラーをJSONとしてエクスポート",
+    "font": "フォント",
+    "font.monospace": "等幅",
+    "font.sans": "ゴシック体",
+    "font.serif": "明朝体",
+    "font_layout": "フォントとレイアウト",
+    "frosted": "すりガラス",
+    "group": {
+      "chat_bubbles": "チャットバブル",
+      "chat_input": "チャット入力 / プロンプト欄",
+      "code_blocks": "コードブロック",
+      "controls": "コントロール",
+      "custom_fonts": "カスタムフォント",
+      "sidebar": "サイドバー"
+    },
+    "harmony": {
+      "accent_color": "アクセントカラー",
+      "analogous": "類似色",
+      "complementary": "補色",
+      "dark": "ダーク",
+      "generate": "生成",
+      "harmony": "ハーモニー",
+      "light": "ライト",
+      "mode": "モード",
+      "monochromatic": "モノクロ",
+      "title": "カラーハーモニー",
+      "triadic": "トライアド"
+    },
+    "import_placeholder": "テーマJSONをここに貼り付け...",
+    "import_title": "JSONからテーマをインポート",
+    "intensity": "強度",
+    "more_colors": "その他のカラー",
+    "name_placeholder": "テーマ名...",
+    "peek": "のぞき見",
+    "peek_title": "このウィンドウをフェードして背後のページをプレビュー",
+    "reset_color": "このカラーをリセット",
+    "reset_default": "デフォルトにリセット",
+    "reset_to_text": "文字色にリセット",
+    "save_share": "保存 / 共有",
+    "size": "サイズ",
+    "tab": {
+      "customize": "カスタマイズ",
+      "themes": "テーマ"
+    },
+    "title": "テーマ",
+    "your_themes": "マイテーマ"
+  },
+  "tools": {
+    "brain": "ブレイン",
+    "calendar": "カレンダー",
+    "compare": "比較",
+    "cookbook": "クックブック",
+    "deep_research": "ディープリサーチ",
+    "documents": "ドキュメント",
+    "email": "メール",
+    "gallery": "ギャラリー",
+    "library": "ライブラリ",
+    "new_document": "新規ドキュメント",
+    "notes": "ノート",
+    "section_title": "ツール",
+    "tasks": "タスク",
+    "theme": "テーマ"
+  },
+  "welcome": {
+    "nobody": "匿名",
+    "nobody_title": "匿名モードを有効化 — メモリも履歴も保存しません",
+    "subtitle": "ようこそ。開始するには /setup と入力してください。"
   }
 }

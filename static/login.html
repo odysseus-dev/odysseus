@@ -232,28 +232,28 @@
   <div class="error" id="error"></div>
 
   <form id="authForm" autocomplete="on">
-    <label for="username">Username</label>
+    <label for="username" data-i18n="auth.username">Username</label>
     <div class="pw-wrapper">
       <input id="username" name="username" type="text" required autofocus autocomplete="username">
-      <label class="remember-toggle" id="rememberToggle" title="Remember me">
+      <label class="remember-toggle" id="rememberToggle" title="Remember me" data-i18n-attr="title:auth.remember_me">
         <input type="checkbox" class="remember-check" id="remember" checked>
         <span class="remember-dot"></span>
       </label>
     </div>
 
-    <label for="password">Password</label>
+    <label for="password" data-i18n="auth.password">Password</label>
     <div class="pw-wrapper">
       <input id="password" name="password" type="password" required autocomplete="current-password">
-      <button type="button" class="pw-toggle" id="pwToggle" tabindex="-1" aria-label="Show password">
+      <button type="button" class="pw-toggle" id="pwToggle" tabindex="-1" aria-label="Show password" data-i18n-attr="aria-label:auth.show_password">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>
       </button>
     </div>
 
     <div id="confirmGroup" style="display:none">
-      <label for="confirmPassword">Confirm Password</label>
+      <label for="confirmPassword" data-i18n="auth.confirm_password">Confirm Password</label>
       <div class="pw-wrapper">
         <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password">
-        <button type="button" class="pw-toggle" id="pwToggleConfirm" tabindex="-1" aria-label="Show password">
+        <button type="button" class="pw-toggle" id="pwToggleConfirm" tabindex="-1" aria-label="Show password" data-i18n-attr="aria-label:auth.show_password">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>
         </button>
       </div>
