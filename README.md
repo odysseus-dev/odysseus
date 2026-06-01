@@ -198,27 +198,38 @@ and configure everything else inside **Settings**.
 Odysseus is a self-hosted workspace with powerful local tools: shell access, file uploads, model downloads, web research, email/calendar integrations, and API tokens. Treat it like an admin console.
 
 - Keep `AUTH_ENABLED=true` for any network-accessible deployment.
-- Do not expose it directly to the public internet without HTTPS and a trusted reverse proxy.
-- Keep `data/`, `.env`, logs, databases, and uploaded/generated media out of Git. They are ignored by default.
+- Keep `LOCALHOST_BYPASS=false` outside local development.
+- Use `SECURE_COOKIES=true` when Odysseus is served through HTTPS by a trusted reverse proxy or private access gateway.
+- Do not expose it directly to the public internet without HTTPS and a trusted reverse proxy or private access layer.
+- Keep `.env`, `data/`, `logs/`, databases, uploads, generated media, backups, auth/session files, API keys, and model/provider tokens out of Git and private shares. They are ignored by default.
 - Review `data/auth.json` after first boot: disable open signup unless you intentionally want it, make only your own account admin, and keep demo/test accounts non-admin.
 - Non-admin users do not get shell/Python/file read/write by default, and admin-only routes/tools such as MCP management, API tokens, webhooks, model/cookbook serving, backup/vault, and app settings are admin-gated. Other features are controlled by per-user privileges, so review each user's privileges before exposing a deployment.
 - Rotate any API keys or tokens that were ever pasted into a shared chat, demo, screenshot, or log.
 - If you enable API tokens or webhooks, create separate tokens per integration and delete unused ones.
 - Prefer binding manual development runs to `127.0.0.1`; bind to `0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
+- Keep ChromaDB, SearXNG, ntfy, Ollama, vLLM, llama.cpp, databases, and raw model/provider APIs internal-only. Expose only the authenticated Odysseus web/API entrypoint through your trusted proxy or private access layer.
 - Before publishing a fork, run `git status --short` and confirm no private files from `.env`, `data/`, `logs/`, uploads, backups, or local databases are staged.
 
-### Putting it behind HTTPS
-Odysseus serves plain HTTP on its port. That's fine for `localhost` and trusted LAN/VPN use, but browsers will warn ("Password fields present on an insecure page") and the login + API tokens travel in cleartext. For anything reachable outside your machine — including a Tailscale IP shared with other devices — put a TLS-terminating reverse proxy in front.
+### Private or proxied deployments
+Odysseus serves plain HTTP on its app port. Docker Compose binds Odysseus and the bundled services to `127.0.0.1` by default, so a typical production/private setup is:
 
-Shortest path with [Caddy](https://caddyserver.com/) (auto-renews Let's Encrypt certs):
+1. Keep Odysseus on localhost, for example `127.0.0.1:7000`.
+2. Terminate HTTPS at a trusted reverse proxy or private access gateway.
+3. Put the authenticated Odysseus web/API entrypoint behind that layer.
+4. Keep raw service and model ports internal-only.
 
-```caddy
-odysseus.example.com {
-  reverse_proxy localhost:7000
-}
-```
+Cloudflare Access, Tailscale, Caddy, nginx, and Traefik can all fit this pattern; none are required by Odysseus. If your access layer reaches Odysseus on the same host, proxy to `http://127.0.0.1:7000` and keep `AUTH_ENABLED=true`, `LOCALHOST_BYPASS=false`, and `SECURE_COOKIES=true`.
 
-For a LAN-only Tailscale deployment, Caddy + [tailscale-cert](https://caddyserver.com/docs/caddyfile/options#auto-https) or the built-in MagicDNS HTTPS feature both work. nginx/Traefik configs are similar — proxy `localhost:7000`, terminate TLS at the proxy. Once that's in place, the browser warning goes away and your login is encrypted.
+Common internal-only ports from the default docs/compose setup:
+
+| Port | Service |
+|---|---|
+| `7000` | Odysseus raw app port |
+| `8080` | SearXNG |
+| `8091` | ntfy |
+| `8100` | ChromaDB host port for manual/compose access |
+| `11434` | Ollama |
+| `8000-8020` | Common local model/provider APIs |
 
 ## Contributing
 Help is welcome. The best entry points are fresh-install testing, provider setup
@@ -241,6 +252,7 @@ Key settings:
 | `APP_PORT` | `7000` | Docker Compose host port for the web UI. |
 | `AUTH_ENABLED` | `true` | Enable/disable login |
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
+| `SECURE_COOKIES` | `false` | Set true when serving Odysseus through HTTPS at a trusted proxy or private access gateway. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | Database connection string |
 | `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
