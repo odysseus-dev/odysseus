@@ -49,7 +49,7 @@ def analyze_topics(session_manager, owner: str = None) -> Dict[str, Any]:
 
             for topic, keywords in TOPIC_KEYWORDS.items():
                 for kw in keywords:
-                    if kw in content:
+                    if re.search(rf"\b{re.escape(kw)}\b", content):
                         topic_counts[topic] += 1
                         sentences = re.split(r'[.!?]', str(content_raw))
                         for sentence in sentences:
