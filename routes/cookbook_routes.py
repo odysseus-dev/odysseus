@@ -952,16 +952,35 @@ def setup_cookbook_routes() -> APIRouter:
                 # failed CUDA attempt) doesn't cause the next configure to reuse
                 # stale settings and silently produce a CPU-only binary.
                 runner_lines.append('    cd ~/llama.cpp && rm -rf build')
+                # GPU backend auto-detection, in preference order:
+                #   NVIDIA  -> CUDA (nvcc)
+                #   AMD     -> Vulkan if the Vulkan SDK is present (best on consumer
+                #              RDNA — what works without a full ROCm toolchain), else
+                #              ROCm/HIP (hipcc) for datacenter/Instinct setups.
+                #   none    -> CPU (with a clear message)
+                # Vulkan is the pragmatic AMD path: it needs only the Vulkan headers +
+                # a driver (mesa/RADV), runs on virtually any GPU, and avoids the heavy
+                # ROCm install — matching how most AMD llama.cpp users actually serve.
+                runner_lines.append('    _have_vulkan() { command -v glslc &>/dev/null || pkg-config --exists vulkan 2>/dev/null || [ -e /usr/include/vulkan/vulkan.h ]; }')
                 runner_lines.append('    if command -v nvcc &>/dev/null; then')
                 runner_lines.append('      echo "[odysseus] CUDA nvcc found — building llama-server with CUDA (GPU) support..."')
                 runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON \\')
                 runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\')
                 runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                runner_lines.append('    elif _have_vulkan; then')
+                runner_lines.append('      echo "[odysseus] Vulkan SDK found — building llama-server with Vulkan (GPU) support (works on AMD/Intel/NVIDIA)..."')
+                runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON \\')
+                runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\')
+                runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                runner_lines.append('    elif command -v hipcc &>/dev/null || [ -d /opt/rocm ]; then')
+                runner_lines.append('      echo "[odysseus] ROCm/HIP found — building llama-server with ROCm (GPU) support..."')
+                runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON \\')
+                runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\')
+                runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
                 runner_lines.append('    else')
-                runner_lines.append('      echo "[odysseus] WARNING: nvcc not found — building llama-server for CPU only."')
-                runner_lines.append('      echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
-                runner_lines.append('      echo "[odysseus]   To get a GPU build, first install vLLM via Cookbook -> Dependencies"')
-                runner_lines.append('      echo "[odysseus]   (its CUDA wheels include nvcc), then re-launch this serve task."')
+                runner_lines.append('      echo "[odysseus] WARNING: no GPU toolchain found (no nvcc / Vulkan SDK / ROCm) — building llama-server for CPU only."')
+                runner_lines.append('      echo "[odysseus]   For a GPU build on AMD: install the Vulkan SDK (e.g. vulkan-headers + glslang, or your distro\\047s vulkan-devel) and re-launch."')
+                runner_lines.append('      echo "[odysseus]   On NVIDIA: install CUDA (nvcc), or install vLLM via Cookbook -> Dependencies (its CUDA wheels include nvcc), then re-launch."')
                 runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release \\')
                 runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\')
                 runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
