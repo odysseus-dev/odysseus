@@ -41,6 +41,61 @@ def safe_chmod(path, mode: int) -> bool:
         return False
 
 
+# ── HuggingFace model-cache repair ───────────────────────────────────────────
+def _hf_model_root(path: str) -> Optional[str]:
+    """Walk up from a cached file to its enclosing ``models--*`` repo dir."""
+    root = path
+    while os.path.basename(root) and not os.path.basename(root).startswith("models--"):
+        parent = os.path.dirname(root)
+        if parent == root:
+            return None
+        root = parent
+    return root if os.path.basename(root).startswith("models--") else None
+
+
+def purge_unreadable_hf_cache(cache_dir, logger=None) -> List[str]:
+    """Drop HuggingFace ``models--*`` dirs whose model file is unreadable, so the
+    next download re-fetches real files. Returns the dirs removed.
+
+    The HF hub stores ``snapshots/<rev>/<file>`` as links into ``blobs/``. When
+    the cache was populated by a *different* OS — e.g. the Linux Docker container
+    writing into a bind-mounted ``data/`` dir that a native Windows run later
+    reads — those links are POSIX symlinks. Windows surfaces them as reparse
+    points carrying the WSL/Linux symlink tag (0xA000001D) that it cannot
+    follow: ``open()`` raises ``WinError 1920`` / ``OSError(22)`` and fastembed
+    loads a zero-byte model and dies. Crucially ``os.path.islink()`` returns
+    **False** for these, so a plain broken-symlink check misses them.
+
+    The reliable signal is *unresolvable*: present on disk (``lexists``) but not
+    resolvable (``not exists``). That covers both a dangling Windows symlink and
+    a foreign reparse point, while real files and working native symlinks (which
+    resolve fine) are left untouched. Best-effort: removal never raises.
+    """
+    import glob
+
+    removed: List[str] = []
+    if not cache_dir or not os.path.isdir(cache_dir):
+        return removed
+    for onnx in glob.glob(os.path.join(cache_dir, "**", "*.onnx"), recursive=True):
+        # os.path.exists() swallows the underlying OSError and returns False —
+        # exactly the "can't resolve this entry" signal we want.
+        if not (os.path.lexists(onnx) and not os.path.exists(onnx)):
+            continue
+        root = _hf_model_root(onnx)
+        if root and root not in removed:
+            removed.append(root)
+    for root in removed:
+        if logger is not None:
+            logger.warning(
+                "Embedding cache entry is unreadable on this OS (likely a "
+                "Linux/Docker-written symlink); clearing %s so fastembed "
+                "re-downloads real files",
+                root,
+            )
+        shutil.rmtree(root, ignore_errors=True)
+    return removed
+
+
 # ── Process detach / liveness / teardown ────────────────────────────────────
 def detached_popen_kwargs() -> dict:
     """Keyword args for :class:`subprocess.Popen` that fully detach a child so

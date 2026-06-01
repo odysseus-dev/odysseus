@@ -121,34 +121,20 @@ class FastEmbedClient:
         )
         os.makedirs(cache_dir, exist_ok=True)
         # Windows self-heal: the HuggingFace-hub cache stores model files as
-        # symlinks (snapshots/<rev>/model.onnx -> ../../blobs/<hash>). On a
-        # network-share / UNC data dir Windows refuses to follow them
-        # ([WinError 1463] "symbolic link cannot be followed because its type is
-        # disabled"), and a cache copied between machines can carry dead symlinks
-        # too. Either way fastembed tries to load a broken symlink and fails
-        # *without* re-downloading, leaving semantic memory degraded. Detect a
-        # broken-symlink model in the cache and drop the contaminated hub dir so
-        # fastembed re-fetches (it falls back to its CDN tarball of real files,
-        # which load fine). Best-effort; only ever removes a verifiably dead link.
+        # symlinks (snapshots/<rev>/model.onnx -> ../../blobs/<hash>). A cache
+        # populated by another OS — e.g. the Linux Docker container writing into
+        # a bind-mounted data/ dir that a native Windows run then reads — leaves
+        # those as reparse points Windows can't follow ([WinError 1920]), and
+        # os.path.islink() does NOT report them, so fastembed would load a
+        # zero-byte model and die *without* re-downloading. Drop any such
+        # contaminated model dir so fastembed re-fetches real files. Centralized
+        # in platform_compat (see purge_unreadable_hf_cache's docstring).
         if os.name == "nt":
             try:
-                import glob, shutil
-                for _onnx in glob.glob(os.path.join(cache_dir, "**", "*.onnx"), recursive=True):
-                    if os.path.islink(_onnx) and not os.path.exists(_onnx):
-                        _root = _onnx
-                        while os.path.basename(_root) and not os.path.basename(_root).startswith("models--"):
-                            _parent = os.path.dirname(_root)
-                            if _parent == _root:
-                                break
-                            _root = _parent
-                        if os.path.basename(_root).startswith("models--"):
-                            logger.warning(
-                                "Embedding cache has a broken symlink (%s); clearing %s "
-                                "so fastembed re-downloads real files", _onnx, _root,
-                            )
-                            shutil.rmtree(_root, ignore_errors=True)
+                from core.platform_compat import purge_unreadable_hf_cache
+                purge_unreadable_hf_cache(cache_dir, logger=logger)
             except Exception as _e:
-                logger.debug("embedding cache symlink-heal skipped: %s", _e)
+                logger.debug("embedding cache self-heal skipped: %s", _e)
         kwargs = {"model_name": self.model, "cache_dir": cache_dir}
         self._embedding = TextEmbedding(**kwargs)
         self._dim: Optional[int] = None
