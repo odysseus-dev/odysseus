@@ -5,6 +5,7 @@ CardDAV contacts integration. Reads from local Radicale, supports
 search and adding new contacts.
 """
 
+import os
 import re
 import logging
 import uuid
@@ -25,7 +26,7 @@ from src.url_safety import check_outbound_url
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = Path(os.environ.get("ODYSSEUS_DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
 SETTINGS_FILE = DATA_DIR / "settings.json"
 LOCAL_CONTACTS_FILE = DATA_DIR / "contacts.json"
 

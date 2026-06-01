@@ -41,8 +41,7 @@ def get_rag_manager():
     try:
         from src.rag_vector import VectorRAG
 
-        base_dir = Path(__file__).parent.parent
-        persist_dir = os.path.join(base_dir, "data", "rag")
+        persist_dir = os.path.join(os.environ.get("ODYSSEUS_DATA_DIR", os.path.join(Path(__file__).parent.parent, "data")), "rag")
 
         rag_instance = VectorRAG(persist_directory=persist_dir)
         if not rag_instance.healthy:
