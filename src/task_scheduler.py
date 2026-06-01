@@ -1300,7 +1300,7 @@ class TaskScheduler:
             sess = DbSession(
                 id=session_id,
                 name=f"[Task] {task.name}",
-                endpoint_url=endpoint_url,
+                endpoint_url=endpoint_url or "",
                 model=model_name,
                 owner=task.owner,
                 created_at=datetime.utcnow(),
