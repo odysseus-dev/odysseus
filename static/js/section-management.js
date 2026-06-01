@@ -2,12 +2,14 @@
 // Section Management — collapse/expand + drag reorder
 // ============================================
 
+import i18n from './i18n.js';
+
 /**
  * Initialize section collapse/expand with chevron buttons.
  * @param {Object} Storage - Storage module
  */
 export function initSectionCollapse(Storage) {
-  const _chevronHtml = '<button type="button" class="section-collapse-btn" title="Collapse section"><svg class="section-collapse-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>';
+  const _chevronHtml = `<button type="button" class="section-collapse-btn" title="${i18n.t('sidebar.collapse_section')}"><svg class="section-collapse-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>`;
   const savedState = Storage.getJSON('section-collapsed') || {};
 
   document.querySelectorAll('.section .section-header-flex').forEach(header => {

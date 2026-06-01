@@ -2,6 +2,7 @@
 
 import uiModule from './ui.js';
 import sessionModule from './sessions.js';
+import i18n from './i18n.js';
 
 let API_BASE = '';
 let debounceTimer = null;
@@ -69,7 +70,7 @@ function renderResults(data, query) {
 
   if (!data || data.length === 0) {
     container.innerHTML = query
-      ? '<div class="search-empty">No results found</div>'
+      ? `<div class="search-empty">${escapeHtml(i18n.t('search.no_results'))}</div>`
       : '';
     return;
   }
@@ -88,7 +89,7 @@ function renderResults(data, query) {
   for (const [sessionId, group] of Object.entries(grouped)) {
     html += `<div class="search-group-header">${escapeHtml(group.name)}</div>`;
     for (const item of group.items) {
-      const roleLabel = item.role === 'user' ? 'You' : 'AI';
+      const roleLabel = item.role === 'user' ? i18n.t('search.role_you') : i18n.t('search.role_ai');
       html += `<div class="search-result-item" data-index="${idx}" data-session="${escapeHtml(sessionId)}">
         <div class="search-result-role">${roleLabel}</div>
         <div class="search-result-snippet">${highlightMatch(item.content_snippet, query)}</div>

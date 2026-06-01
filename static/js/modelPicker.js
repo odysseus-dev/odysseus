@@ -4,6 +4,7 @@
 import { providerLogo } from './providers.js';
 import uiModule from './ui.js';
 import settingsModule from './settings.js';
+import i18n from './i18n.js';
 
 const API_BASE = window.location.origin;
 
@@ -152,7 +153,7 @@ function _initModelPickerDropdown() {
           endpointId: item.endpoint_id,
           epName: item.endpoint_name || '',
           stale: isLocalDead,
-          staleReason: isLocalDead ? (probeResult.error || 'not responding') : '',
+          staleReason: isLocalDead ? (probeResult.error || i18n.t('models.not_responding')) : '',
         });
       });
     });
@@ -197,7 +198,7 @@ function _initModelPickerDropdown() {
       if (m.stale) {
         row.classList.add('model-switch-stale');
         row.style.opacity = '0.45';
-        row.title = `Local server appears offline: ${m.staleReason}. Click to try anyway, or relaunch in Cookbook.`;
+        row.title = i18n.t('models.local_offline', { reason: m.staleReason });
       }
       const _mlogo = providerLogo(m.mid);
       if (_mlogo) {
@@ -213,7 +214,7 @@ function _initModelPickerDropdown() {
       if (m.stale) {
         const badge = document.createElement('span');
         badge.className = 'model-switch-stale-badge';
-        badge.textContent = 'offline';
+        badge.textContent = i18n.t('models.offline');
         badge.style.cssText = 'font-size:10px;opacity:0.7;padding:1px 6px;border:1px solid var(--border);border-radius:8px;margin-left:6px;';
         row.appendChild(badge);
       }
@@ -228,18 +229,18 @@ function _initModelPickerDropdown() {
     }
 
     if (favModels.length > 0) {
-      _addSection('Favorites');
+      _addSection(i18n.t('models.favorites'));
       favModels.forEach(_addRow);
     }
     if (restModels.length > 0) {
-      if (favModels.length > 0) _addSection('All models');
+      if (favModels.length > 0) _addSection(i18n.t('models.all_models'));
       restModels.forEach(_addRow);
     }
     if (listEl.children.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'model-switch-empty';
       if (hasAnyModel) {
-        empty.textContent = 'No matching models';
+        empty.textContent = i18n.t('models.no_matching');
       } else {
         return;
       }
@@ -268,7 +269,7 @@ function _initModelPickerDropdown() {
       _deps.setPendingChat({ url: m.url, modelId: m.mid, endpointId: m.endpointId });
       // Header stays as session name — model switch only updates picker
       updateModelPicker();
-      uiModule.showToast(`Using ${m.display}`);
+      uiModule.showToast(i18n.t('models.using', { model: m.display }));
       return;
     } else if (!currentSessionId) {
       // No session yet — create one with this model
@@ -282,7 +283,7 @@ function _initModelPickerDropdown() {
       try {
         const res = await fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd });
         if (!res.ok) {
-          uiModule.showError('Failed to set model');
+          uiModule.showError(i18n.t('models.set_failed'));
           return;
         }
         const sessions = _deps.getSessions();
@@ -290,13 +291,13 @@ function _initModelPickerDropdown() {
         if (s) { s.model = m.mid; s.endpoint_url = m.url; }
         // Header stays as session name — model info shown in picker only
       } catch (e) {
-        uiModule.showError('Failed to set model: ' + e);
+        uiModule.showError(i18n.t('models.set_failed_detail', { error: e }));
         return;
       }
     }
     // Update picker visibility — model is now set
     updateModelPicker();
-    uiModule.showToast(`Using ${m.display}`);
+    uiModule.showToast(i18n.t('models.using', { model: m.display }));
   }
 
   document.addEventListener('odysseus:auto-select-model', async (e) => {
@@ -474,7 +475,7 @@ export function updateModelPicker() {
     }
   }
 
-  const displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  const displayName = modelId ? modelId.split('/').pop() : i18n.t('composer.select_model');
   const logo = modelId ? providerLogo(modelId) : null;
   if (logo) {
     label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ' + displayName;

@@ -1,5 +1,7 @@
 // static/js/search.js
 
+import i18n from './i18n.js';
+
 /**
  * Search settings management — reads active provider from admin settings.
  */
@@ -30,10 +32,10 @@ export function getCurrentProvider() {
 const _labels = {
   searxng: 'SearXNG', brave: 'Brave', duckduckgo: 'DuckDuckGo',
   google_pse: 'Google', tavily: 'Tavily', serper: 'Serper',
-  disabled: 'search (disabled)',
 };
 
 export function getProviderLabel() {
+  if (_provider === 'disabled') return i18n.t('search.provider.disabled');
   return _labels[_provider] || _provider;
 }
 

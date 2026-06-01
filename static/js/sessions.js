@@ -9,6 +9,7 @@ import { providerLogo } from './providers.js';
 import { initModelPicker, updateModelPicker } from './modelPicker.js';
 import themeModule from './theme.js';
 import spinnerModule from './spinner.js';
+import i18n from './i18n.js';
 
 const API_BASE = window.location.origin;
 
@@ -62,7 +63,7 @@ function _deselectCurrentSession(sid) {
   if (currentSessionId !== sid) return;
   currentSessionId = null;
   uiModule.el('chat-history').innerHTML = '';
-  uiModule.el('current-meta').textContent = 'Odysseus Chat';
+  uiModule.el('current-meta').textContent = i18n.t('chat.title_default');
   Storage.remove('lastSessionId');
   history.replaceState(null, '', window.location.pathname);
   if (window.chatModule && window.chatModule.showWelcomeScreen) {
@@ -124,7 +125,7 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
   moveItem.className = 'dropdown-item-compact';
   moveItem.style.position = 'relative';
   const _folderIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
-  moveItem.innerHTML = '<span class="dropdown-icon">' + _folderIcon + '</span><span>Move to folder</span>';
+  moveItem.innerHTML = '<span class="dropdown-icon">' + _folderIcon + '</span><span>' + i18n.t('sessions.folder.move_to') + '</span>';
 
   const sub = document.createElement('div');
   sub.className = 'dropdown session-folder-submenu';
@@ -133,7 +134,7 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
   const noneOpt = document.createElement('div');
   noneOpt.className = 'dropdown-item-compact';
   if (!currentFolder) noneOpt.style.opacity = '0.5';
-  noneOpt.textContent = '(No folder)';
+  noneOpt.textContent = i18n.t('sessions.folder.none');
   noneOpt.addEventListener('click', async (e) => {
     e.stopPropagation();
     await moveToFolder(sessionId, '');
@@ -164,13 +165,13 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
   const newOpt = document.createElement('div');
   newOpt.className = 'dropdown-item-compact';
   newOpt.style.color = 'var(--accent-primary)';
-  newOpt.textContent = '+ New Folder';
+  newOpt.textContent = i18n.t('sessions.folder.new');
   newOpt.addEventListener('click', async (e) => {
     e.stopPropagation();
-    const name = await styledPrompt('Name this folder:', {
-      title: 'New folder',
-      placeholder: 'e.g. Work, Research, Drafts',
-      confirmText: 'Create',
+    const name = await styledPrompt(i18n.t('sessions.folder.name_prompt'), {
+      title: i18n.t('sessions.folder.new_title'),
+      placeholder: i18n.t('sessions.folder.name_placeholder'),
+      confirmText: i18n.t('sessions.folder.create'),
     });
     if (!name || !name.trim()) return;
     await moveToFolder(sessionId, name.trim());
@@ -247,7 +248,7 @@ function createSessionItem(s) {
   const handle = document.createElement('span');
   handle.className = 'item-drag-handle';
   handle.textContent = '\u22EE\u22EE';
-  handle.title = 'Drag to reorder';
+  handle.title = i18n.t('sessions.drag_reorder');
   div.appendChild(handle);
 
   // Provider dot indicator
@@ -288,7 +289,7 @@ function createSessionItem(s) {
   // Favorite bookmark replaces session-icon when important
   if (s.is_important && !isOpenClaw) {
     icon.className = 'session-icon session-fav';
-    icon.title = 'Unfavorite';
+    icon.title = i18n.t('sessions.unfavorite');
     icon.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
     icon.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -296,7 +297,7 @@ function createSessionItem(s) {
       fd.append('important', false);
       await fetch(`${API_BASE}/api/session/${s.id}/important`, { method: 'POST', body: fd });
       s.is_important = false;
-      uiModule.showToast('Unfavorited');
+      uiModule.showToast(i18n.t('sessions.unfavorited'));
       renderSessionList();
     });
   }
@@ -309,7 +310,7 @@ function createSessionItem(s) {
   if (_isGroup) chatTitle = chatTitle.replace(/^\[GRP\]\s*/, '');
   let label = chatTitle;
   if (s.model) label += ' · ' + s.model.split('/').pop();
-  if (s.archived) label += ' [archived]';
+  if (s.archived) label += ' ' + i18n.t('sessions.archived_tag');
   span.textContent = label;
   span.title = (s.model ? s.model.split('/').pop() + ' · ' : '') + chatTitle;
   span.classList.add('text-ellipsis');
@@ -334,7 +335,7 @@ function createSessionItem(s) {
           fd.append('name', newName);
           await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'PATCH', body: fd });
           s.name = newName;
-          uiModule.showToast('Renamed');
+          uiModule.showToast(i18n.t('sessions.renamed'));
         }
         _forceSidebarOpen();
         renderSessionList();
@@ -408,7 +409,7 @@ function createSessionItem(s) {
   // Create a dropdown menu button
   const menuBtn = document.createElement('button');
   menuBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
-  menuBtn.title = 'Session actions';
+  menuBtn.title = i18n.t('sessions.actions');
   menuBtn.className = 'hamburger session-menu-btn';
 
   // Create dropdown menu
@@ -424,15 +425,15 @@ function createSessionItem(s) {
 
   const renameItem = document.createElement('div');
   renameItem.className = 'dropdown-item-compact';
-  renameItem.innerHTML = _icon(_renameIcon) + '<span>Rename</span>';
+  renameItem.innerHTML = _icon(_renameIcon) + '<span>' + i18n.t('sidebar.session.rename') + '</span>';
 
   const archiveItem = document.createElement('div');
   archiveItem.className = 'dropdown-item-compact';
-  archiveItem.innerHTML = _icon(_archiveIcon) + '<span>Archive</span>';
+  archiveItem.innerHTML = _icon(_archiveIcon) + '<span>' + i18n.t('sessions.archive') + '</span>';
 
   const deleteItem = document.createElement('div');
   deleteItem.className = 'dropdown-item-compact dropdown-item-danger';
-  deleteItem.innerHTML = _icon(_deleteIcon) + '<span>Delete</span><span class="dropdown-shortcut">' + _mod + '+Alt+D</span>';
+  deleteItem.innerHTML = _icon(_deleteIcon) + '<span>' + i18n.t('common.delete') + '</span><span class="dropdown-shortcut">' + _mod + '+Alt+D</span>';
 
 
 
@@ -445,7 +446,7 @@ function createSessionItem(s) {
       : '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
     const starItem = document.createElement('div');
     starItem.className = 'dropdown-item-compact';
-    starItem.innerHTML = _icon(_favIcon) + '<span>' + (s.is_important ? 'Unfavorite' : 'Favorite') + '</span><span class="dropdown-shortcut">' + _mod + '+Alt+F</span>';
+    starItem.innerHTML = _icon(_favIcon) + '<span>' + (s.is_important ? i18n.t('sessions.unfavorite') : i18n.t('sessions.favorite')) + '</span><span class="dropdown-shortcut">' + _mod + '+Alt+F</span>';
     starItem.addEventListener('click', async (e) => {
       e.stopPropagation();
       const newVal = !s.is_important;
@@ -461,7 +462,7 @@ function createSessionItem(s) {
 
   const copyItem = document.createElement('div');
   copyItem.className = 'dropdown-item-compact';
-  copyItem.innerHTML = _icon(_copyIcon) + '<span>Copy Chat</span>';
+  copyItem.innerHTML = _icon(_copyIcon) + '<span>' + i18n.t('chat.export.copy_chat') + '</span>';
   copyItem.addEventListener('click', async (e) => {
     e.stopPropagation();
     dropdown.style.display = 'none';
@@ -469,11 +470,11 @@ function createSessionItem(s) {
       const res = await fetch(`${API_BASE}/api/history/${s.id}`);
       const data = await res.json();
       const msgs = data.history || [];
-      if (!msgs.length) { uiModule.showToast('No messages to copy'); return; }
+      if (!msgs.length) { uiModule.showToast(i18n.t('sessions.copy.no_messages')); return; }
       const lines = msgs
         .filter(m => m.role === 'user' || m.role === 'assistant')
         .map(m => {
-          const label = m.role === 'user' ? 'You' : 'AI';
+          const label = m.role === 'user' ? i18n.t('sessions.copy.you') : i18n.t('sessions.copy.ai');
           const text = typeof m.content === 'string' ? m.content.trim() : JSON.stringify(m.content);
           return `${label}: ${text}`;
         });
@@ -490,10 +491,10 @@ function createSessionItem(s) {
         document.execCommand('copy');
         ta.remove();
       }
-      uiModule.showToast('Chat copied to clipboard');
+      uiModule.showToast(i18n.t('sessions.copy.copied'));
     } catch (e) {
       console.error('Copy chat failed:', e);
-      uiModule.showError('Failed to copy chat');
+      uiModule.showError(i18n.t('sessions.copy.failed'));
     }
   });
 
@@ -503,7 +504,7 @@ function createSessionItem(s) {
   if (!isOpenClaw) {
     const selectMoreItem = document.createElement('div');
     selectMoreItem.className = 'dropdown-item-compact';
-    selectMoreItem.innerHTML = _icon('<span style="font-size:16px;line-height:1;">●</span>') + '<span>Select</span>';
+    selectMoreItem.innerHTML = _icon('<span style="font-size:16px;line-height:1;">●</span>') + '<span>' + i18n.t('common.select') + '</span>';
     selectMoreItem.addEventListener('click', (e) => {
       e.stopPropagation();
       dropdown.style.display = 'none';
@@ -538,7 +539,7 @@ function createSessionItem(s) {
   const _cancelIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
   const cancelItem = document.createElement('div');
   cancelItem.className = 'dropdown-item-compact dropdown-cancel-mobile';
-  cancelItem.innerHTML = _icon(_cancelIcon) + '<span>Cancel</span>';
+  cancelItem.innerHTML = _icon(_cancelIcon) + '<span>' + i18n.t('common.cancel') + '</span>';
   cancelItem.addEventListener('click', (e) => {
     e.stopPropagation();
     dropdown.style.display = 'none';
@@ -596,7 +597,7 @@ function createSessionItem(s) {
         fd.append('name', newName);
         await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'PATCH', body: fd });
         s.name = newName;
-        uiModule.showToast('Renamed');
+        uiModule.showToast(i18n.t('sessions.renamed'));
       }
       _forceSidebarOpen();
       renderSessionList();
@@ -611,7 +612,7 @@ function createSessionItem(s) {
 
   deleteItem.addEventListener('click', async () => {
     if (s.is_important) {
-      uiModule.showToast('Unfavorite before deleting');
+      uiModule.showToast(i18n.t('sessions.unfavorite_before_delete'));
       dropdown.style.display = 'none';
       return;
     }
@@ -658,13 +659,13 @@ function createSessionItem(s) {
         _forceSidebarOpen();
         await loadSessions();
         dropdown.style.display = 'none';
-        uiModule.showToast('Session archived');
+        uiModule.showToast(i18n.t('sessions.archived_toast'));
       } else {
         throw new Error('Failed to archive session');
       }
     } catch (error) {
       console.error('Error archiving session:', error);
-      uiModule.showError('Failed to archive session');
+      uiModule.showError(i18n.t('sessions.archive_failed'));
     }
   });
 
@@ -777,7 +778,7 @@ function _renderSessionListImpl() {
       const remaining = allFlat.length - SIDEBAR_MAX_VISIBLE;
       const toggleBtn = document.createElement('button');
       toggleBtn.className = 'session-show-more-btn';
-      toggleBtn.textContent = _showAllSessions ? 'Show less' : `Show ${remaining} more`;
+      toggleBtn.textContent = _showAllSessions ? i18n.t('sessions.show_less') : i18n.t('sessions.show_more', { count: remaining });
       toggleBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         _showAllSessions = !_showAllSessions;
@@ -841,7 +842,7 @@ function _renderSessionListImpl() {
     const dragHandle = document.createElement('span');
     dragHandle.className = 'folder-drag-handle';
     dragHandle.textContent = '\u2630';
-    dragHandle.title = 'Drag to reorder folder';
+    dragHandle.title = i18n.t('sessions.folder.drag_reorder');
     header.appendChild(dragHandle);
 
     const toggle = document.createElement('span');
@@ -863,11 +864,11 @@ function _renderSessionListImpl() {
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'folder-delete-btn';
     deleteBtn.textContent = '\u00d7';
-    deleteBtn.title = 'Delete folder and all sessions';
+    deleteBtn.title = i18n.t('sessions.folder.delete_title');
     deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const count = folders[folderName].length;
-      if (!await uiModule.styledConfirm(`Delete folder "${folderName}" and all ${count} session(s) inside it?`, { confirmText: 'Delete', danger: true })) return;
+      if (!await uiModule.styledConfirm(i18n.t('sessions.folder.delete_confirm', { folder: folderName, count }), { confirmText: i18n.t('common.delete'), danger: true })) return;
       for (const s of folders[folderName]) {
         try {
           await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
@@ -898,10 +899,10 @@ function _renderSessionListImpl() {
     header.addEventListener('dblclick', async (e) => {
       e.stopPropagation();
       if (e.target.closest('.folder-delete-btn')) return;
-      const newName = await styledPrompt('Rename folder:', {
-        title: 'Rename folder',
+      const newName = await styledPrompt(i18n.t('sessions.folder.rename_prompt'), {
+        title: i18n.t('sessions.folder.rename_title'),
         defaultValue: folderName,
-        confirmText: 'Rename',
+        confirmText: i18n.t('sidebar.session.rename'),
       });
       if (!newName || !newName.trim() || newName.trim() === folderName) return;
       const promises = folders[folderName].map(s => moveToFolder(s.id, newName.trim()));
@@ -932,7 +933,7 @@ function _renderSessionListImpl() {
         const rem = folderSessions.length - FOLDER_MAX_VISIBLE;
         const moreBtn = document.createElement('button');
         moreBtn.className = 'session-show-more-btn';
-        moreBtn.textContent = folderExpanded ? 'Show less' : `Show ${rem} more`;
+        moreBtn.textContent = folderExpanded ? i18n.t('sessions.show_less') : i18n.t('sessions.show_more', { count: rem });
         moreBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           _expandedFolders[folderName] = !folderExpanded;
@@ -970,7 +971,7 @@ function _renderSessionListImpl() {
     const dragHandle = document.createElement('span');
     dragHandle.className = 'folder-drag-handle';
     dragHandle.textContent = '\u2630';
-    dragHandle.title = 'Drag to reorder folder';
+    dragHandle.title = i18n.t('sessions.folder.drag_reorder');
     unsortedHeader.appendChild(dragHandle);
 
     const toggle = document.createElement('span');
@@ -979,7 +980,7 @@ function _renderSessionListImpl() {
     unsortedHeader.appendChild(toggle);
     const nameSpan = document.createElement('span');
     nameSpan.className = 'folder-name';
-    nameSpan.textContent = 'Unsorted';
+    nameSpan.textContent = i18n.t('sessions.folder.unsorted');
     unsortedHeader.appendChild(nameSpan);
     const countSpan = document.createElement('span');
     countSpan.className = 'folder-count';
@@ -989,10 +990,10 @@ function _renderSessionListImpl() {
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'folder-delete-btn';
     deleteBtn.textContent = '\u00d7';
-    deleteBtn.title = 'Delete all unsorted sessions';
+    deleteBtn.title = i18n.t('sessions.folder.delete_unsorted_title');
     deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!await uiModule.styledConfirm(`Delete all ${unfiled.length} unsorted session(s)?`, { confirmText: 'Delete', danger: true })) return;
+      if (!await uiModule.styledConfirm(i18n.t('sessions.folder.delete_unsorted_confirm', { count: unfiled.length }), { confirmText: i18n.t('common.delete'), danger: true })) return;
       for (const s of unfiled) {
         try {
           await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
@@ -1036,7 +1037,7 @@ function _renderSessionListImpl() {
     const remaining = unfiled.length - SIDEBAR_MAX_VISIBLE;
     const toggleBtn = document.createElement('button');
     toggleBtn.className = 'session-show-more-btn';
-    toggleBtn.textContent = _showAllSessions ? 'Show less' : `Show ${remaining} more`;
+    toggleBtn.textContent = _showAllSessions ? i18n.t('sessions.show_less') : i18n.t('sessions.show_more', { count: remaining });
     toggleBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       _showAllSessions = !_showAllSessions;
@@ -1090,7 +1091,7 @@ function _showSwipeHint(list) {
       localStorage.setItem('ody-swipe-hint-shown', '1');
       const hint = document.createElement('div');
       hint.className = 'swipe-hint';
-      hint.innerHTML = '<span class="swipe-hint-arrow">\u2190</span> swipe to delete';
+      hint.innerHTML = '<span class="swipe-hint-arrow">\u2190</span> ' + i18n.t('sessions.swipe_hint');
       firstItem.style.position = 'relative';
       firstItem.appendChild(hint);
       setTimeout(() => { hint.style.opacity = '0'; }, 3000);
@@ -1254,7 +1255,7 @@ function _initBulkSelect() {
     archiveBtn.addEventListener('click', async () => {
       if (_selectedIds.size === 0) return;
       const count = _selectedIds.size;
-      if (!await uiModule.styledConfirm(`Archive ${count} session(s)?`, { confirmText: 'Archive' })) return;
+      if (!await uiModule.styledConfirm(i18n.t('sessions.bulk.archive_confirm', { count }), { confirmText: i18n.t('sessions.archive') })) return;
       for (const sid of _selectedIds) {
         try {
           await fetch(`${API_BASE}/api/session/${sid}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
@@ -1263,7 +1264,7 @@ function _initBulkSelect() {
       _exitSelectMode();
       if (window._suppressSidebarClose !== undefined) { window._suppressSidebarClose = true; setTimeout(() => { window._suppressSidebarClose = false; }, 1500); }
       await loadSessions();
-      uiModule.showToast(`${count} session(s) archived`);
+      uiModule.showToast(i18n.t('sessions.bulk.archived', { count }));
     });
   }
 
@@ -1272,7 +1273,7 @@ function _initBulkSelect() {
     deleteBtn.addEventListener('click', async () => {
       if (_selectedIds.size === 0) return;
       const count = _selectedIds.size;
-      if (!await uiModule.styledConfirm(`Delete ${count} session(s)? This cannot be undone.`, { confirmText: 'Delete', danger: true })) return;
+      if (!await uiModule.styledConfirm(i18n.t('sessions.bulk.delete_confirm', { count }), { confirmText: i18n.t('common.delete'), danger: true })) return;
       const deletedIds = [];
       for (const sid of _selectedIds) {
         try {
@@ -1284,7 +1285,7 @@ function _initBulkSelect() {
       _exitSelectMode();
       if (window._suppressSidebarClose !== undefined) { window._suppressSidebarClose = true; setTimeout(() => { window._suppressSidebarClose = false; }, 1500); }
       await loadSessions();
-      uiModule.showToast(`${deletedIds.length} session(s) deleted`);
+      uiModule.showToast(i18n.t('sessions.bulk.deleted', { count: deletedIds.length }));
     });
   }
 }
@@ -1445,7 +1446,7 @@ export async function loadSessions() {
     }
   } catch (error) {
     console.error('Error in loadSessions:', error);
-    uiModule.showError('Failed to load sessions: ' + error.message);
+    uiModule.showError(i18n.t('sessions.load_failed', { message: error.message }));
   }
 }
 
@@ -1507,7 +1508,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     if (sendBtn && sendBtn.dataset.mode === 'streaming') {
       sendBtn.dataset.mode = '';
       sendBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
-      sendBtn.title = 'Send message';
+      sendBtn.title = i18n.t('composer.send_message');
     }
     // Deactivate compare mode on session switch
     if (window.compareModule) {
@@ -1534,7 +1535,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
 
     const currentMetaEl = uiModule.el('current-meta');
     if (currentMetaEl) {
-      currentMetaEl.textContent = meta ? meta.name : 'Odysseus Chat';
+      currentMetaEl.textContent = meta ? meta.name : i18n.t('chat.title_default');
     }
     // Update model picker visibility
     updateModelPicker();
@@ -1600,8 +1601,8 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     if (isOC) {
       if (window.chatModule && window.chatModule.showWelcomeScreen) window.chatModule.showWelcomeScreen();
       window.chatModule.addMessage('assistant',
-        `<p>\uD83E\uDD9E <strong>OpenClaw Agent Connected</strong></p>
-         <p>Messages will be routed through your OpenClaw agent. The agent has access to tools, memory, and skills configured in your OpenClaw workspace.</p>`,
+        `<p>\uD83E\uDD9E <strong>${i18n.t('sessions.openclaw.connected')}</strong></p>
+         <p>${i18n.t('sessions.openclaw.desc')}</p>`,
         'OpenClaw');
     } else if (msgHistory.length) {
       for (const msg of msgHistory) {
@@ -1613,7 +1614,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
           if (displayContent.trim() === 'Continue where you left off' || displayContent.trim().startsWith('Your message was cut off.') || displayContent.trim().startsWith('Your previous response was interrupted.') || displayContent.includes('[Instruction: Rewrite') || displayContent.includes('[Instruction: Explain')) continue;
           const docEditMatch = displayContent.match(/^In the document, edit this specific text \((lines? [\d-]+)\):\n```\n([\s\S]*?)\n```\n\nInstruction: ([\s\S]*)$/);
           if (docEditMatch) {
-            displayContent = `[Doc edit: ${docEditMatch[1]}] ${docEditMatch[3]}`;
+            displayContent = i18n.t('sessions.doc_edit_label', { lines: docEditMatch[1], instruction: docEditMatch[3] });
           }
         }
         window.chatModule.addMessage(msg.role, markdownModule.renderContent(displayContent), modelName, meta);
@@ -1693,7 +1694,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
 
   } catch (error) {
     console.error('Error in selectSession:', error);
-    uiModule.showError('Failed to load session: ' + error.message);
+    uiModule.showError(i18n.t('sessions.load_session_failed', { message: error.message }));
   } finally {
     // Ensure memories are loaded after session selection
     if (window.memoryModule && window.memoryModule.loadMemories) {
@@ -1762,7 +1763,7 @@ export function createDirectChat(url, modelId, endpointId) {
   // Update current-meta header
   const metaEl = document.getElementById('current-meta');
   if (metaEl) {
-    metaEl.textContent = 'New Chat';
+    metaEl.textContent = i18n.t('sidebar.new_chat');
   }
 
   // Enable input
@@ -1796,7 +1797,7 @@ export async function materializePendingSession() {
   try {
     res = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: fd });
   } catch (e) {
-    uiModule.showError('Failed to reach backend: ' + e);
+    uiModule.showError(i18n.t('sessions.backend_unreachable', { error: e }));
     return false;
   }
 
@@ -1808,7 +1809,7 @@ export async function materializePendingSession() {
   }
 
   if (!res.ok) {
-    uiModule.showError(`Session create failed (${res.status}) ${payload.detail || JSON.stringify(payload)}`);
+    uiModule.showError(i18n.t('sessions.create_failed', { status: res.status, detail: payload.detail || JSON.stringify(payload) }));
     return false;
   }
 
@@ -1896,7 +1897,7 @@ function _onSessionListKeydown(e) {
     const s = sessions.find(x => x.id === sid);
     if (!s) return;
     if (s.is_important) {
-      uiModule.showToast('Unfavorite before deleting');
+      uiModule.showToast(i18n.t('sessions.unfavorite_before_delete'));
       return;
     }
     _sessionListFocused = true;
@@ -2263,11 +2264,11 @@ function _arcRelativeTime(iso) {
   if (!iso) return '';
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return i18n.t('sessions.time.minutes_ago', { n: mins });
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
+  if (hrs < 24) return i18n.t('sessions.time.hours_ago', { n: hrs });
   const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
+  if (days < 30) return i18n.t('sessions.time.days_ago', { n: days });
   return new Date(iso).toLocaleDateString();
 }
 
@@ -2291,7 +2292,7 @@ async function _arcPeekOpen(sid) {
     // Find the archived session metadata
     const meta = _arc.data.find(s => s.id === sid);
     const metaEl = document.getElementById('current-meta');
-    if (metaEl) metaEl.textContent = (meta?.name || 'Archived') + ' (archived)';
+    if (metaEl) metaEl.textContent = i18n.t('sessions.peek_title', { name: meta?.name || i18n.t('sessions.archived_name_fallback') });
 
     // Render the chat history
     const chatBox = document.getElementById('chat-history');
@@ -2311,7 +2312,7 @@ async function _arcPeekOpen(sid) {
     if (window.uiModule) window.uiModule.scrollHistory();
   } catch (e) {
     console.error('Peek open failed:', e);
-    uiModule.showError('Failed to open archived session');
+    uiModule.showError(i18n.t('sessions.open_archived_failed'));
   }
 }
 
@@ -2328,21 +2329,21 @@ async function _arcRestore(sid) {
     if (!res.ok) throw new Error('Failed');
     _arcRemove(sid);
     _arcRefreshUI();
-    uiModule.showToast('Session restored');
+    uiModule.showToast(i18n.t('sessions.restored'));
     loadSessions();
-  } catch { uiModule.showError('Failed to restore session'); }
+  } catch { uiModule.showError(i18n.t('sessions.restore_failed')); }
 }
 
 async function _arcDelete(sid) {
-  if (!await window.styledConfirm('Delete this session permanently?', { confirmText: 'Delete', danger: true })) return;
+  if (!await window.styledConfirm(i18n.t('sessions.delete_one_confirm'), { confirmText: i18n.t('common.delete'), danger: true })) return;
   try {
     const res = await fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed');
     await _animateSessionRowsRemoving([sid], '#archive-grid .archive-row[data-session-id]');
     _arcRemove(sid);
     _arcRefreshUI();
-    uiModule.showToast('Session deleted');
-  } catch { uiModule.showError('Failed to delete session'); }
+    uiModule.showToast(i18n.t('sessions.deleted'));
+  } catch { uiModule.showError(i18n.t('sessions.delete_failed')); }
 }
 
 function _arcRemove(sid) {
@@ -2362,14 +2363,14 @@ async function _arcBulkRestore() {
   }
   _arc.selected.clear();
   _arcRefreshUI();
-  uiModule.showToast(`${ids.length} session${ids.length > 1 ? 's' : ''} restored`);
+  uiModule.showToast(i18n.t('sessions.bulk.restored', { count: ids.length }));
   loadSessions();
 }
 
 async function _arcBulkDelete() {
   const ids = [..._arc.selected];
   if (!ids.length) return;
-  const ok = await uiModule.styledConfirm(`Delete ${ids.length} session${ids.length > 1 ? 's' : ''} permanently?`, { confirmText: 'Delete', danger: true });
+  const ok = await uiModule.styledConfirm(i18n.t('sessions.bulk.delete_permanent_confirm', { count: ids.length }), { confirmText: i18n.t('common.delete'), danger: true });
   if (!ok) return;
   const deletedIds = [];
   for (const sid of ids) {
@@ -2384,7 +2385,7 @@ async function _arcBulkDelete() {
   await _animateSessionRowsRemoving(deletedIds, '#archive-grid .archive-row[data-session-id]');
   _arc.selected.clear();
   _arcRefreshUI();
-  uiModule.showToast(`${deletedIds.length} session${deletedIds.length > 1 ? 's' : ''} deleted`);
+  uiModule.showToast(i18n.t('sessions.bulk.deleted', { count: deletedIds.length }));
 }
 
 function _arcToggleSelectMode() {
@@ -2398,9 +2399,9 @@ function _arcUpdateBulkBar() {
   const count = document.getElementById('archive-selected-count');
   const selectBtn = document.getElementById('archive-select-btn');
   if (bar) bar.classList.toggle('hidden', !_arc.selectMode);
-  if (count) count.textContent = `${_arc.selected.size} selected`;
+  if (count) count.textContent = i18n.t('sessions.selected_count', { count: _arc.selected.size });
   if (selectBtn) {
-    selectBtn.textContent = _arc.selectMode ? 'Cancel' : 'Select';
+    selectBtn.textContent = _arc.selectMode ? i18n.t('common.cancel') : i18n.t('common.select');
     selectBtn.classList.toggle('active', _arc.selectMode);
   }
 }
@@ -2465,7 +2466,7 @@ function _arcRenderChips() {
     chip.addEventListener('click', () => { _arc.model = (_arc.model === value ? '' : value); _arcFetch(false); });
     el.appendChild(chip);
   };
-  mkChip('All', '', cached.total);
+  mkChip(i18n.t('common.all'), '', cached.total);
   models.forEach(m => mkChip(m, m, modelCounts[m]));
 }
 
@@ -2482,17 +2483,17 @@ function _arcRenderCard(s) {
   card.innerHTML = `
     ${checkboxHtml}
     <div style="flex:1;min-width:0;">
-      <div class="memory-item-title">${uiModule.esc(s.name || 'Untitled')}</div>
+      <div class="memory-item-title">${uiModule.esc(s.name || i18n.t('sessions.untitled'))}</div>
       <div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">
-        <span>${modelShort || 'no model'}</span>
+        <span>${modelShort || i18n.t('sessions.no_model')}</span>
         <span>\u00b7</span>
-        <span>${msgCount} msg${msgCount !== 1 ? 's' : ''}</span>
+        <span>${i18n.t('sessions.msg_count', { count: msgCount })}</span>
         <span>\u00b7</span>
         <span>${_arcRelativeTime(s.updated_at)}</span>
       </div>
     </div>
     <div class="memory-item-actions">
-      <button class="memory-item-btn archive-menu-btn" title="Actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
+      <button class="memory-item-btn archive-menu-btn" title="${i18n.t('sessions.card_actions')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
     </div>
   `;
 
@@ -2509,9 +2510,9 @@ function _arcRenderCard(s) {
   card.querySelector('.archive-menu-btn').addEventListener('click', (e) => {
     e.stopPropagation();
     _showDropdown(e.currentTarget, [
-      { label: 'Open', action: () => _arcPeekOpen(s.id) },
-      { label: 'Restore', action: () => _arcRestore(s.id) },
-      { label: 'Delete', action: () => _arcDelete(s.id), danger: true },
+      { label: i18n.t('sessions.open'), action: () => _arcPeekOpen(s.id) },
+      { label: i18n.t('sessions.restore'), action: () => _arcRestore(s.id) },
+      { label: i18n.t('common.delete'), action: () => _arcDelete(s.id), danger: true },
     ]);
   });
   card.addEventListener('click', () => {
@@ -2533,7 +2534,7 @@ function _arcRenderGrid() {
   const grid = document.getElementById('archive-grid');
   if (!grid) return;
   if (_arc.data.length === 0) {
-    grid.innerHTML = '<div class="doclib-empty">No archived sessions</div>';
+    grid.innerHTML = `<div class="doclib-empty">${i18n.t('sessions.empty.archive')}</div>`;
     return;
   }
   grid.innerHTML = '';
@@ -2566,31 +2567,31 @@ export function openLibrary(defaultTab) {
   modal.innerHTML = `
     <div class="modal-content doclib-modal-content">
       <div class="modal-header">
-        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>Library <span id="lib-stats" style="font-size:0.8em;opacity:0.5;font-weight:normal;margin-left:4px"></span></h4>
+        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>${i18n.t('tools.library')} <span id="lib-stats" style="font-size:0.8em;opacity:0.5;font-weight:normal;margin-left:4px"></span></h4>
         <button class="close-btn" id="lib-close">✖</button>
       </div>
       <div class="modal-body">
         <div class="lib-tabs" id="lib-tabs">
-          <button class="lib-tab${_lib.tab === 'chats' ? ' active' : ''}" data-lib-tab="chats">Chats</button>
-          <button class="lib-tab${_lib.tab === 'documents' ? ' active' : ''}" data-lib-tab="documents">Documents</button>
-          <button class="lib-tab${_lib.tab === 'archive' ? ' active' : ''}" data-lib-tab="archive">Archive</button>
-          <button class="lib-tab${_lib.tab === 'research' ? ' active' : ''}" data-lib-tab="research">Research</button>
+          <button class="lib-tab${_lib.tab === 'chats' ? ' active' : ''}" data-lib-tab="chats">${i18n.t('sessions.lib.tab_chats')}</button>
+          <button class="lib-tab${_lib.tab === 'documents' ? ' active' : ''}" data-lib-tab="documents">${i18n.t('tools.documents')}</button>
+          <button class="lib-tab${_lib.tab === 'archive' ? ' active' : ''}" data-lib-tab="archive">${i18n.t('sessions.lib.tab_archive')}</button>
+          <button class="lib-tab${_lib.tab === 'research' ? ' active' : ''}" data-lib-tab="research">${i18n.t('sessions.lib.tab_research')}</button>
         </div>
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
           <select class="memory-sort-select" id="lib-sort">
-            <option value="recent">Recent</option>
-            <option value="oldest">Oldest</option>
-            <option value="most-messages">Most messages</option>
-            <option value="alpha">A\u2013Z</option>
+            <option value="recent">${i18n.t('sessions.sort.recent')}</option>
+            <option value="oldest">${i18n.t('memory.sort.oldest')}</option>
+            <option value="most-messages">${i18n.t('sessions.sort.most_messages')}</option>
+            <option value="alpha">${i18n.t('sessions.sort.alpha')}</option>
           </select>
-          <input type="text" class="memory-search-input" id="lib-search" placeholder="Filter\u2026" style="flex:1;" />
-          <button class="memory-toolbar-btn" id="lib-select-btn" title="Select">Select</button>
+          <input type="text" class="memory-search-input" id="lib-search" placeholder="${i18n.t('sessions.filter_placeholder')}" style="flex:1;" />
+          <button class="memory-toolbar-btn" id="lib-select-btn" title="${i18n.t('common.select')}">${i18n.t('common.select')}</button>
         </div>
         <div class="memory-bulk-bar hidden" id="lib-bulk-bar">
-          <label class="memory-bulk-check-all"><input type="checkbox" id="lib-select-all"> All</label>
-          <span id="lib-selected-count" style="color:color-mix(in srgb, var(--fg) 50%, transparent);font-size:10px;flex:1;">0 selected</span>
+          <label class="memory-bulk-check-all"><input type="checkbox" id="lib-select-all"> ${i18n.t('common.all')}</label>
+          <span id="lib-selected-count" style="color:color-mix(in srgb, var(--fg) 50%, transparent);font-size:10px;flex:1;">${i18n.t('sessions.selected_count', { count: 0 })}</span>
           <button class="memory-toolbar-btn" id="lib-bulk-action1"></button>
-          <button class="memory-toolbar-btn danger" id="lib-bulk-delete">Delete</button>
+          <button class="memory-toolbar-btn danger" id="lib-bulk-delete">${i18n.t('common.delete')}</button>
         </div>
         <div class="doclib-grid archive-list" id="lib-grid"></div>
       </div>
@@ -2626,17 +2627,17 @@ export function openLibrary(defaultTab) {
       document.getElementById('lib-bulk-bar').classList.add('hidden');
       // Update bulk action button label based on tab
       const action1 = document.getElementById('lib-bulk-action1');
-      if (_lib.tab === 'archive') { action1.textContent = 'Restore'; }
-      else if (_lib.tab === 'chats') { action1.textContent = 'Archive'; }
-      else if (_lib.tab === 'research') { action1.textContent = 'Open Report'; }
-      else { action1.textContent = 'Export'; }
+      if (_lib.tab === 'archive') { action1.textContent = i18n.t('sessions.restore'); }
+      else if (_lib.tab === 'chats') { action1.textContent = i18n.t('sessions.archive'); }
+      else if (_lib.tab === 'research') { action1.textContent = i18n.t('sessions.open_report'); }
+      else { action1.textContent = i18n.t('common.export'); }
       _renderLibGrid();
     });
   });
 
   // Set initial bulk action label
   const _initAction = document.getElementById('lib-bulk-action1');
-  if (_initAction) _initAction.textContent = _lib.tab === 'archive' ? 'Restore' : _lib.tab === 'documents' ? 'Export' : 'Archive';
+  if (_initAction) _initAction.textContent = _lib.tab === 'archive' ? i18n.t('sessions.restore') : _lib.tab === 'documents' ? i18n.t('common.export') : i18n.t('sessions.archive');
 
   document.getElementById('lib-sort').addEventListener('change', () => { _lib.sort = document.getElementById('lib-sort').value; _renderLibGrid(); });
   document.getElementById('lib-search').addEventListener('input', (e) => {
@@ -2665,10 +2666,10 @@ export function openLibrary(defaultTab) {
   document.getElementById('lib-bulk-action1').addEventListener('click', async () => {
     if (_lib.tab === 'chats') {
       for (const sid of _lib.selected) await fetch(`${API_BASE}/api/session/${sid}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-      uiModule.showToast(`Archived ${_lib.selected.size} sessions`);
+      uiModule.showToast(i18n.t('sessions.lib.archived_n', { count: _lib.selected.size }));
     } else if (_lib.tab === 'archive') {
       for (const sid of _lib.selected) await fetch(`${API_BASE}/api/session/${sid}/restore`, { method: 'POST' });
-      uiModule.showToast(`Restored ${_lib.selected.size} sessions`);
+      uiModule.showToast(i18n.t('sessions.lib.restored_n', { count: _lib.selected.size }));
     }
     _lib.selected.clear();
     _lib.selectMode = false;
@@ -2679,7 +2680,7 @@ export function openLibrary(defaultTab) {
 
   // Bulk delete
   document.getElementById('lib-bulk-delete').addEventListener('click', async () => {
-    if (!await uiModule.styledConfirm(`Delete ${_lib.selected.size} items?`, { confirmText: 'Delete', danger: true })) return;
+    if (!await uiModule.styledConfirm(i18n.t('sessions.lib.delete_items_confirm', { count: _lib.selected.size }), { confirmText: i18n.t('common.delete'), danger: true })) return;
     if (_lib.tab === 'chats' || _lib.tab === 'archive') {
       for (const sid of _lib.selected) await fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' });
     } else if (_lib.tab === 'documents') {
@@ -2699,7 +2700,7 @@ export function openLibrary(defaultTab) {
 
 function _updateLibCount() {
   const el = document.getElementById('lib-selected-count');
-  if (el) el.textContent = `${_lib.selected.size} selected`;
+  if (el) el.textContent = i18n.t('sessions.selected_count', { count: _lib.selected.size });
 }
 
 function _renderLibGrid() {
@@ -2714,7 +2715,7 @@ function _renderLibGrid() {
 
 function _renderLibChats(grid) {
   if (!sessions || !sessions.length) {
-    grid.innerHTML = '<div class="doclib-empty">No sessions loaded</div>';
+    grid.innerHTML = `<div class="doclib-empty">${i18n.t('sessions.empty.no_sessions_loaded')}</div>`;
     return;
   }
   let filtered = sessions.filter(s => !s.archived);
@@ -2730,10 +2731,10 @@ function _renderLibChats(grid) {
   const stats = document.getElementById('lib-stats');
   if (stats) stats.textContent = `(${filtered.length})`;
 
-  if (!filtered.length) { grid.innerHTML = '<div class="doclib-empty">No chats found</div>'; return; }
+  if (!filtered.length) { grid.innerHTML = `<div class="doclib-empty">${i18n.t('sessions.empty.no_chats')}</div>`; return; }
   grid.innerHTML = '';
   for (const s of filtered) {
-    const card = _buildLibCard(s.id, s.name || 'Untitled', s.message_count || 0, (s.model || '').split('/').pop(), s.updated_at, s.id === currentSessionId);
+    const card = _buildLibCard(s.id, s.name || i18n.t('sessions.untitled'), s.message_count || 0, (s.model || '').split('/').pop(), s.updated_at, s.id === currentSessionId);
     card.addEventListener('click', (e) => {
       if (e.target.closest('.archive-menu-btn,.memory-select-cb')) return;
       if (_lib.selectMode) { _toggleLibSelect(card, s.id); return; }
@@ -2742,9 +2743,9 @@ function _renderLibChats(grid) {
     card.querySelector('.archive-menu-btn').addEventListener('click', (e) => {
       e.stopPropagation();
       _showDropdown(e.currentTarget, [
-        { label: 'Open', action: () => { closeLibrary(); selectSession(s.id); } },
-        { label: 'Archive', action: async () => { await fetch(`${API_BASE}/api/session/${s.id}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' } }); await loadSessions(); _renderLibGrid(); } },
-        { label: 'Delete', action: async () => { if (!await uiModule.styledConfirm('Delete?', { confirmText: 'Delete', danger: true })) return; await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' }); await loadSessions(); _renderLibGrid(); }, danger: true },
+        { label: i18n.t('sessions.open'), action: () => { closeLibrary(); selectSession(s.id); } },
+        { label: i18n.t('sessions.archive'), action: async () => { await fetch(`${API_BASE}/api/session/${s.id}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' } }); await loadSessions(); _renderLibGrid(); } },
+        { label: i18n.t('common.delete'), action: async () => { if (!await uiModule.styledConfirm(i18n.t('sessions.delete_short_confirm'), { confirmText: i18n.t('common.delete'), danger: true })) return; await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' }); await loadSessions(); _renderLibGrid(); }, danger: true },
       ]);
     });
     grid.appendChild(card);
@@ -2753,7 +2754,7 @@ function _renderLibChats(grid) {
 
 async function _renderLibArchive(grid) {
   grid.innerHTML = '';
-  grid.appendChild(spinnerModule.createLoadingRow('Loading…'));
+  grid.appendChild(spinnerModule.createLoadingRow(i18n.t('common.loading')));
   try {
     const params = new URLSearchParams({ limit: '50', sort: _lib.sort === 'most-messages' ? 'messages' : _lib.sort });
     if (_lib.search) params.set('search', _lib.search);
@@ -2762,10 +2763,10 @@ async function _renderLibArchive(grid) {
     const items = data.sessions || [];
     const stats = document.getElementById('lib-stats');
     if (stats) stats.textContent = `(${data.total || items.length})`;
-    if (!items.length) { grid.innerHTML = '<div class="doclib-empty">No archived sessions</div>'; return; }
+    if (!items.length) { grid.innerHTML = `<div class="doclib-empty">${i18n.t('sessions.empty.archive')}</div>`; return; }
     grid.innerHTML = '';
     for (const s of items) {
-      const card = _buildLibCard(s.id, s.name || 'Untitled', s.message_count || 0, (s.model || '').split('/').pop(), s.updated_at);
+      const card = _buildLibCard(s.id, s.name || i18n.t('sessions.untitled'), s.message_count || 0, (s.model || '').split('/').pop(), s.updated_at);
       card.addEventListener('click', (e) => {
         if (e.target.closest('.archive-menu-btn,.memory-select-cb')) return;
         if (_lib.selectMode) { _toggleLibSelect(card, s.id); return; }
@@ -2773,18 +2774,18 @@ async function _renderLibArchive(grid) {
       card.querySelector('.archive-menu-btn').addEventListener('click', (e) => {
         e.stopPropagation();
         _showDropdown(e.currentTarget, [
-          { label: 'Restore', action: async () => { await fetch(`${API_BASE}/api/session/${s.id}/restore`, { method: 'POST' }); await loadSessions(); _renderLibGrid(); } },
-          { label: 'Delete', action: async () => { if (!await uiModule.styledConfirm('Delete?', { confirmText: 'Delete', danger: true })) return; await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' }); _renderLibGrid(); }, danger: true },
+          { label: i18n.t('sessions.restore'), action: async () => { await fetch(`${API_BASE}/api/session/${s.id}/restore`, { method: 'POST' }); await loadSessions(); _renderLibGrid(); } },
+          { label: i18n.t('common.delete'), action: async () => { if (!await uiModule.styledConfirm(i18n.t('sessions.delete_short_confirm'), { confirmText: i18n.t('common.delete'), danger: true })) return; await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' }); _renderLibGrid(); }, danger: true },
         ]);
       });
       grid.appendChild(card);
     }
-  } catch (e) { console.error('Library archive error:', e); grid.innerHTML = '<div class="doclib-empty">Failed to load archive</div>'; }
+  } catch (e) { console.error('Library archive error:', e); grid.innerHTML = `<div class="doclib-empty">${i18n.t('sessions.error.load_archive')}</div>`; }
 }
 
 async function _renderLibDocuments(grid) {
   grid.innerHTML = '';
-  grid.appendChild(spinnerModule.createLoadingRow('Loading…'));
+  grid.appendChild(spinnerModule.createLoadingRow(i18n.t('common.loading')));
   try {
     const params = new URLSearchParams({ limit: '50', sort: _lib.sort });
     if (_lib.search) params.set('search', _lib.search);
@@ -2793,10 +2794,10 @@ async function _renderLibDocuments(grid) {
     const docs = data.documents || [];
     const stats = document.getElementById('lib-stats');
     if (stats) stats.textContent = `(${data.total || docs.length})`;
-    if (!docs.length) { grid.innerHTML = '<div class="doclib-empty">No documents found</div>'; return; }
+    if (!docs.length) { grid.innerHTML = `<div class="doclib-empty">${i18n.t('sessions.empty.no_documents')}</div>`; return; }
     grid.innerHTML = '';
     for (const d of docs) {
-      const card = _buildLibCard(d.id, d.title || 'Untitled', d.version_count || 1, d.language || 'text', d.updated_at, false, true);
+      const card = _buildLibCard(d.id, d.title || i18n.t('sessions.untitled'), d.version_count || 1, d.language || 'text', d.updated_at, false, true);
       card.dataset.docId = d.id;
       card.addEventListener('click', (e) => {
         if (e.target.closest('.archive-menu-btn,.memory-select-cb')) return;
@@ -2811,18 +2812,18 @@ async function _renderLibDocuments(grid) {
       card.querySelector('.archive-menu-btn').addEventListener('click', (e) => {
         e.stopPropagation();
         _showDropdown(e.currentTarget, [
-          { label: 'Open', action: () => { if (d.session_id) { closeLibrary(); selectSession(d.session_id); } } },
-          { label: 'Delete', action: async () => { if (!await uiModule.styledConfirm('Delete?', { confirmText: 'Delete', danger: true })) return; await fetch(`${API_BASE}/api/document/${d.id}`, { method: 'DELETE' }); _renderLibGrid(); }, danger: true },
+          { label: i18n.t('sessions.open'), action: () => { if (d.session_id) { closeLibrary(); selectSession(d.session_id); } } },
+          { label: i18n.t('common.delete'), action: async () => { if (!await uiModule.styledConfirm(i18n.t('sessions.delete_short_confirm'), { confirmText: i18n.t('common.delete'), danger: true })) return; await fetch(`${API_BASE}/api/document/${d.id}`, { method: 'DELETE' }); _renderLibGrid(); }, danger: true },
         ]);
       });
       grid.appendChild(card);
     }
-  } catch (e) { console.error('Library documents error:', e); grid.innerHTML = '<div class="doclib-empty">Failed to load documents</div>'; }
+  } catch (e) { console.error('Library documents error:', e); grid.innerHTML = `<div class="doclib-empty">${i18n.t('sessions.error.load_documents')}</div>`; }
 }
 
 async function _renderLibResearch(grid) {
   grid.innerHTML = '';
-  grid.appendChild(spinnerModule.createLoadingRow('Loading research…'));
+  grid.appendChild(spinnerModule.createLoadingRow(i18n.t('sessions.loading_research')));
   try {
     const params = new URLSearchParams({ limit: '50', sort: _lib.sort });
     if (_lib.search) params.set('search', _lib.search);
@@ -2831,24 +2832,24 @@ async function _renderLibResearch(grid) {
     const data = await res.json();
     const items = data.research || [];
     const statsEl = document.getElementById('lib-stats');
-    if (statsEl) statsEl.textContent = `${data.total || 0} research`;
+    if (statsEl) statsEl.textContent = i18n.t('sessions.research_count', { count: data.total || 0 });
     grid.innerHTML = '';
     if (!items.length) {
-      grid.innerHTML = '<div class="doclib-empty">No research found</div>';
+      grid.innerHTML = `<div class="doclib-empty">${i18n.t('sessions.empty.no_research')}</div>`;
       return;
     }
     for (const item of items) {
       const meta = [
         item.duration || '',
-        item.rounds ? item.rounds + ' rounds' : '',
+        item.rounds ? i18n.t('sessions.rounds', { count: item.rounds }) : '',
       ].filter(Boolean).join(' \u00b7 ');
       const card = _buildLibCard(
-        item.id, item.query || '(untitled)', item.source_count || 0,
+        item.id, item.query || i18n.t('sessions.untitled_parens'), item.source_count || 0,
         meta, item.completed_at ? new Date(item.completed_at * 1000).toISOString() : '',
         false, false,
       );
       const metaEl = card.querySelector('.memory-item-meta');
-      if (metaEl) metaEl.textContent = metaEl.textContent.replace(/\d+ msgs?/, (item.source_count || 0) + ' sources');
+      if (metaEl) metaEl.textContent = metaEl.textContent.replace(/\d+ msgs?/, i18n.t('sessions.source_count', { count: item.source_count || 0 }));
       card.addEventListener('click', (e) => {
         if (e.target.closest('.archive-menu-btn') || e.target.closest('.memory-select-cb')) return;
         window.open(`${API_BASE}/api/research/report/${item.id}`, '_blank');
@@ -2858,16 +2859,16 @@ async function _renderLibResearch(grid) {
         menuBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           _showDropdown(e.currentTarget, [
-            { label: 'Open Report', action: () => window.open(`${API_BASE}/api/research/report/${item.id}`, '_blank') },
-            { label: 'Re-run', action: () => {
+            { label: i18n.t('sessions.open_report'), action: () => window.open(`${API_BASE}/api/research/report/${item.id}`, '_blank') },
+            { label: i18n.t('sessions.rerun'), action: () => {
               const modal = document.getElementById('library-modal');
               if (modal) modal.style.display = 'none';
               const msgInput = document.getElementById('message');
               if (msgInput) { msgInput.value = item.query; msgInput.focus(); }
-              uiModule.showToast('Toggle Research and send to re-run');
+              uiModule.showToast(i18n.t('sessions.rerun_hint'));
             }},
-            { label: 'Delete', danger: true, action: async () => {
-              if (!await window.styledConfirm('Delete this research?', { confirmText: 'Delete', danger: true })) return;
+            { label: i18n.t('common.delete'), danger: true, action: async () => {
+              if (!await window.styledConfirm(i18n.t('sessions.delete_research_confirm'), { confirmText: i18n.t('common.delete'), danger: true })) return;
               await fetch(`${API_BASE}/api/research/${item.id}`, { method: 'DELETE' });
               _renderLibGrid();
             }},
@@ -2876,7 +2877,7 @@ async function _renderLibResearch(grid) {
       }
       grid.appendChild(card);
     }
-  } catch (e) { console.error('Library research error:', e); grid.innerHTML = '<div class="doclib-empty">Failed to load research</div>'; }
+  } catch (e) { console.error('Library research error:', e); grid.innerHTML = `<div class="doclib-empty">${i18n.t('sessions.error.load_research')}</div>`; }
 }
 
 function _buildLibCard(id, title, count, meta, time, isActive, isDoc) {
@@ -2887,7 +2888,7 @@ function _buildLibCard(id, title, count, meta, time, isActive, isDoc) {
   const cbHtml = _lib.selectMode ? `<input type="checkbox" class="memory-select-cb"${_lib.selected.has(id) ? ' checked' : ''}>` : '';
   const metaParts = [];
   if (meta) metaParts.push(uiModule.esc(meta));
-  metaParts.push(isDoc ? 'v' + count : count + ' msg' + (count !== 1 ? 's' : ''));
+  metaParts.push(isDoc ? 'v' + count : i18n.t('sessions.msg_count', { count }));
   if (time) metaParts.push(_arcRelativeTime(time));
   card.innerHTML = `
     ${cbHtml}
@@ -2896,7 +2897,7 @@ function _buildLibCard(id, title, count, meta, time, isActive, isDoc) {
       <div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">${metaParts.join(' \u00b7 ')}</div>
     </div>
     <div class="memory-item-actions">
-      <button class="memory-item-btn archive-menu-btn" title="Actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
+      <button class="memory-item-btn archive-menu-btn" title="${i18n.t('sessions.card_actions')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
     </div>
   `;
   const cb = card.querySelector('.memory-select-cb');
@@ -2936,29 +2937,29 @@ export function openArchive() {
   modal.innerHTML = `
     <div class="modal-content doclib-modal-content">
       <div class="modal-header">
-        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>Archive <span id="archive-stats" style="font-size:0.8em;opacity:0.5;font-weight:normal;margin-left:4px"></span></h4>
+        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>${i18n.t('sessions.archive_modal_title')} <span id="archive-stats" style="font-size:0.8em;opacity:0.5;font-weight:normal;margin-left:4px"></span></h4>
         <button class="close-btn" id="archive-close">✖</button>
       </div>
       <div class="modal-body">
         <div class="doclib-chips" id="archive-chips"></div>
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
           <select class="memory-sort-select" id="archive-sort">
-            <option value="recent">Recent</option>
-            <option value="oldest">Oldest</option>
-            <option value="most-messages">Most messages</option>
-            <option value="alpha">A\u2013Z</option>
+            <option value="recent">${i18n.t('sessions.sort.recent')}</option>
+            <option value="oldest">${i18n.t('memory.sort.oldest')}</option>
+            <option value="most-messages">${i18n.t('sessions.sort.most_messages')}</option>
+            <option value="alpha">${i18n.t('sessions.sort.alpha')}</option>
           </select>
-          <input type="text" class="memory-search-input" id="archive-search" placeholder="Filter\u2026" style="flex:1;" />
-          <button class="memory-toolbar-btn" id="archive-select-btn" title="Select sessions">Select</button>
+          <input type="text" class="memory-search-input" id="archive-search" placeholder="${i18n.t('sessions.filter_placeholder')}" style="flex:1;" />
+          <button class="memory-toolbar-btn" id="archive-select-btn" title="${i18n.t('sessions.select_sessions_title')}">${i18n.t('common.select')}</button>
         </div>
         <div class="memory-bulk-bar hidden" id="archive-bulk-bar">
-          <label class="memory-bulk-check-all"><input type="checkbox" id="archive-select-all"> All</label>
-          <span id="archive-selected-count" style="color:color-mix(in srgb, var(--fg) 50%, transparent);font-size:10px;flex:1;">0 selected</span>
-          <button class="memory-toolbar-btn" id="archive-bulk-restore">Restore</button>
-          <button class="memory-toolbar-btn danger" id="archive-bulk-delete">Delete</button>
+          <label class="memory-bulk-check-all"><input type="checkbox" id="archive-select-all"> ${i18n.t('common.all')}</label>
+          <span id="archive-selected-count" style="color:color-mix(in srgb, var(--fg) 50%, transparent);font-size:10px;flex:1;">${i18n.t('sessions.selected_count', { count: 0 })}</span>
+          <button class="memory-toolbar-btn" id="archive-bulk-restore">${i18n.t('sessions.restore')}</button>
+          <button class="memory-toolbar-btn danger" id="archive-bulk-delete">${i18n.t('common.delete')}</button>
         </div>
         <div class="doclib-grid archive-list" id="archive-grid"></div>
-        <button class="doclib-load-more" id="archive-load-more" style="display:none">Load more</button>
+        <button class="doclib-load-more" id="archive-load-more" style="display:none">${i18n.t('sessions.load_more')}</button>
       </div>
     </div>
   `;

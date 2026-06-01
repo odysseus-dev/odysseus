@@ -5,6 +5,7 @@
  */
 
 import themeModule from './theme.js';
+import i18n from './i18n.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -19,7 +20,7 @@ let _scrollBox = null;
 export async function copyToClipboard(text) {
   try {
     await navigator.clipboard.writeText(text);
-    showToast('Copied');
+    showToast(i18n.t('chat.copied'));
   }
   catch {
     const ta = document.createElement('textarea');
@@ -29,7 +30,7 @@ export async function copyToClipboard(text) {
     ta.select();
     document.execCommand('copy');
     document.body.removeChild(ta);
-    showToast('Copied');
+    showToast(i18n.t('chat.copied'));
   }
 }
 
@@ -163,8 +164,8 @@ export function showToast(msg, durationOrOpts) {
     // the user already acted (or just doesn't want the banner sitting there).
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
-    closeBtn.setAttribute('aria-label', 'Dismiss');
-    closeBtn.title = 'Dismiss';
+    closeBtn.setAttribute('aria-label', i18n.t('common.dismiss'));
+    closeBtn.title = i18n.t('common.dismiss');
     closeBtn.textContent = '×';
     closeBtn.style.cssText = 'margin-left:8px;padding:0;width:20px;height:20px;line-height:1;border:none;background:none;color:var(--fg);opacity:0.55;cursor:pointer;font-size:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;pointer-events:auto;';
     closeBtn.addEventListener('mouseenter', () => { closeBtn.style.opacity = '1'; });
@@ -357,7 +358,7 @@ export function el(id) {
  * Styled confirm dialog — replaces native browser confirm().
  * Returns a Promise<boolean>.
  */
-export function styledConfirm(message, { confirmText = 'Confirm', cancelText = 'Cancel', danger = false } = {}) {
+export function styledConfirm(message, { confirmText = i18n.t('common.confirm'), cancelText = i18n.t('common.cancel'), danger = false } = {}) {
   return new Promise(resolve => {
     // Reuse or create the modal
     let overlay = document.getElementById('styled-confirm-overlay');
@@ -367,7 +368,7 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
       overlay.className = 'modal';
       overlay.innerHTML =
         '<div class="modal-content styled-confirm-box">' +
-          '<div class="modal-header"><h4>Confirm</h4></div>' +
+          '<div class="modal-header"><h4>' + i18n.t('common.confirm') + '</h4></div>' +
           '<div class="modal-body"><p id="styled-confirm-msg"></p></div>' +
           '<div class="modal-footer">' +
             '<button id="styled-confirm-cancel"></button>' +
@@ -429,11 +430,11 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
  * Resolves to the trimmed string the user typed, or null on Cancel / Escape / backdrop.
  */
 export function styledPrompt(message, {
-  title = 'Name',
+  title = i18n.t('modal.prompt.title'),
   defaultValue = '',
   placeholder = '',
-  confirmText = 'Save',
-  cancelText = 'Cancel',
+  confirmText = i18n.t('common.save'),
+  cancelText = i18n.t('common.cancel'),
   maxLength = 80,
 } = {}) {
   return new Promise(resolve => {

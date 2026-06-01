@@ -1,11 +1,13 @@
 // static/js/spinner.js
 
+import i18n from './i18n.js';
+
 /**
  * ASCII Spinner Module for AI thinking/processing status
  */
 
 class Spinner {
-  constructor(message = "AI is processing", style = "right", animation = "spinner") {
+  constructor(message = i18n.t('spinner.processing'), style = "right", animation = "spinner") {
     // Different animation frames
     this.animations = {
       spinner: ['|', '/', '-', '\\'],
@@ -386,7 +388,7 @@ export function createWhirlpool(size = 24) {
  * once the element leaves the DOM (see _drawWhirlpool), so callers can just
  * replace it with results — no manual cleanup needed.
  */
-export function createLoadingRow(text = 'Loading…', size = 16) {
+export function createLoadingRow(text = i18n.t('common.loading'), size = 16) {
   const sp = new Spinner('', 'clean', 'whirlpool');
   sp._wpSize = size;
   const canvas = sp.createElement();

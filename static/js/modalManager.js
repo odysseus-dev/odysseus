@@ -27,6 +27,7 @@
 
 import { previewZoneAt, clearPreview, snapModalToZone } from './tileManager.js';
 import { suspendDock, resumeDock, clearRightDock, applyEdgeDock } from './modalSnap.js';
+import i18n from './i18n.js';
 
 const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized }
 
@@ -108,6 +109,33 @@ const _LABELS = {
   // chip via the same dock infrastructure.
   'doc-panel':         { label: 'Document', icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8' },
 };
+
+// i18n key per chip label so the localized text refreshes on every render
+// (locale can change at runtime). The English fallback lives in _LABELS.
+const _LABEL_KEYS = {
+  'cookbook-modal':        'tools.cookbook',
+  'calendar-modal':        'tools.calendar',
+  'gallery-modal':         'tools.gallery',
+  'tasks-modal':           'tools.tasks',
+  'doclib-modal':          'tools.library',
+  'memory-modal':          'tools.brain',
+  'notes-panel':           'tools.notes',
+  'email-lib-modal':       'tools.email',
+  'custom-preset-modal':   'composer.prompt',
+  'research-overlay':      'sidebar.dock.research',
+  'theme-modal':           'tools.theme',
+  'compare-model-overlay': 'tools.compare',
+  'settings-modal':        'settings.title',
+  'ge-shortcuts-modal':    'settings.nav.shortcuts',
+  'doc-panel':             'sidebar.dock.document',
+};
+
+// Resolve a chip's display label: prefer its localized string, fall back to
+// the English label baked into _LABELS (or the raw id for ad-hoc registrants).
+function _chipLabel(id, meta) {
+  const key = _LABEL_KEYS[id];
+  return key ? i18n.t(key) : (meta.label || id);
+}
 
 function _ensureDock() {
   let dock = document.getElementById('minimized-dock');
@@ -305,11 +333,12 @@ function _renderDock() {
   dock.innerHTML = '';
   for (const id of renderIds) {
     const meta = _LABELS[id] || { label: id, icon: '' };
+    const label = _chipLabel(id, meta);
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'minimized-dock-chip';
     chip.dataset.modalId = id;
-    chip.title = `Restore ${meta.label}`;
+    chip.title = i18n.t('modal.dock.restore', { label });
     // Restore any external data-* attributes the previous chip carried
     // (e.g. emailLibrary's data-tab-num slot-number badge).
     const prevAttrs = oldData.get(id);
@@ -325,8 +354,8 @@ function _renderDock() {
       : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${meta.icon}"/></svg>`;
     chip.innerHTML = `
       ${iconHtml}
-      <span class="minimized-dock-label">${meta.label}</span>
-      <span class="minimized-dock-x" title="Close">×</span>
+      <span class="minimized-dock-label">${label}</span>
+      <span class="minimized-dock-x" title="${i18n.t('common.close')}">×</span>
     `;
     chip.addEventListener('click', (e) => {
       if (chip._wasDragging) { chip._wasDragging = false; return; }
@@ -1321,7 +1350,7 @@ export function injectMinimizeButton(modal, modalId) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'modal-minimize-btn';
-  btn.title = 'Minimize';
+  btn.title = i18n.t('modal.minimize');
   btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="18" x2="19" y2="18"/></svg>';
   // Anchor the _/X pair to the right edge regardless of the header's
   // justify-content. Some headers (cookbook) use `space-between`, which

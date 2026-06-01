@@ -5,6 +5,7 @@ import uiModule from './ui.js';
 import searchModule from './search.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { clearDockSide } from './modalSnap.js';
+import i18n from './i18n.js';
 
 let initialized = false;
 let modalEl = null;
@@ -219,7 +220,7 @@ function _bindFallbackWidget(opts) {
       enabledEps().forEach(function(ep) {
         var o = document.createElement('option');
         o.value = ep.id;
-        o.textContent = ep.name + (ep.online ? '' : ' (offline)');
+        o.textContent = ep.name + (ep.online ? '' : i18n.t('settings.ai.offline_suffix'));
         epS.appendChild(o);
       });
       var first = enabledEps()[0];
@@ -243,7 +244,7 @@ function _bindFallbackWidget(opts) {
       var rm = document.createElement('button');
       rm.type = 'button';
       rm.className = 'settings-fallback-remove';
-      rm.title = 'Remove fallback';
+      rm.title = i18n.t('settings.ai.remove_fallback');
       rm.innerHTML = '&times;';
       rm.addEventListener('click', function() {
         current.splice(idx, 1);
@@ -308,7 +309,7 @@ async function initDefaultChat() {
     enabledEndpoints().forEach(function(ep) {
       var opt = document.createElement('option');
       opt.value = ep.id;
-      opt.textContent = ep.name + (ep.online ? '' : ' (offline)');
+      opt.textContent = ep.name + (ep.online ? '' : i18n.t('settings.ai.offline_suffix'));
       epSel.appendChild(opt);
     });
   } catch (e) { console.warn('Failed to load endpoints for default chat', e); }
@@ -331,7 +332,7 @@ async function initDefaultChat() {
       enabledEndpoints().forEach(function(ep) {
         var o = document.createElement('option');
         o.value = ep.id;
-        o.textContent = ep.name + (ep.online ? '' : ' (offline)');
+        o.textContent = ep.name + (ep.online ? '' : i18n.t('settings.ai.offline_suffix'));
         epS.appendChild(o);
       });
       var first = enabledEndpoints()[0];
@@ -356,7 +357,7 @@ async function initDefaultChat() {
       var rm = document.createElement('button');
       rm.type = 'button';
       rm.className = 'settings-fallback-remove';
-      rm.title = 'Remove fallback';
+      rm.title = i18n.t('settings.ai.remove_fallback');
       rm.innerHTML = '&times;';
       rm.addEventListener('click', function() {
         _fallbacks.splice(idx, 1);
@@ -396,9 +397,9 @@ async function initDefaultChat() {
           default_model_fallbacks: clean
         })
       });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+      msg.textContent = i18n.t('settings.status.saved'); msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = i18n.t('settings.status.save_failed'); msg.style.color = 'var(--red)'; }
   }
 
   epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
@@ -417,8 +418,8 @@ async function initUtilityModel() {
   var modelSel = el('set-utilityModelSelect');
   var msg = el('set-utilityChatMsg');
   var _endpoints = [];
-  if (epSel && epSel.options[0]) epSel.options[0].textContent = 'Same as chat';
-  if (modelSel && modelSel.options[0]) modelSel.options[0].textContent = 'Same as chat';
+  if (epSel && epSel.options[0]) epSel.options[0].textContent = i18n.t('settings.ai.same_as_chat');
+  if (modelSel && modelSel.options[0]) modelSel.options[0].textContent = i18n.t('settings.ai.same_as_chat');
 
   try {
     var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
@@ -427,7 +428,7 @@ async function initUtilityModel() {
       if (!ep.is_enabled) return;
       var opt = document.createElement('option');
       opt.value = ep.id;
-      opt.textContent = ep.name + (ep.online ? '' : ' (offline)');
+      opt.textContent = ep.name + (ep.online ? '' : i18n.t('settings.ai.offline_suffix'));
       epSel.appendChild(opt);
     });
   } catch (e) { console.warn('Failed to load endpoints for utility model', e); }
@@ -476,9 +477,9 @@ async function initUtilityModel() {
           utility_model: modelSel.value || ''
         })
       });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+      msg.textContent = i18n.t('settings.status.saved'); msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 1500);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = i18n.t('settings.status.save_failed'); msg.style.color = 'var(--red)'; }
   }
 
   epSel.addEventListener('change', function() { refreshModels(''); saveUtility(); });
@@ -507,7 +508,7 @@ async function initTeacherModel() {
       if (!ep.is_enabled) return;
       var opt = document.createElement('option');
       opt.value = ep.id;
-      opt.textContent = ep.name + (ep.online ? '' : ' (offline)');
+      opt.textContent = ep.name + (ep.online ? '' : i18n.t('settings.ai.offline_suffix'));
       epSel.appendChild(opt);
     });
   } catch (e) { console.warn('Failed to load endpoints for teacher model', e); }
@@ -581,10 +582,10 @@ async function initTeacherModel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ teacher_enabled: enabled, teacher_model: spec })
       });
-      msg.textContent = enabled ? (spec ? 'Saved' : 'Pick an endpoint + model') : 'Disabled';
+      msg.textContent = enabled ? (spec ? i18n.t('settings.status.saved') : i18n.t('settings.ai.pick_endpoint_model')) : i18n.t('settings.ai.disabled');
       msg.style.color = enabled && !spec ? 'var(--red)' : 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = i18n.t('settings.status.save_failed'); msg.style.color = 'var(--red)'; }
   }
 
   if (enabledToggle) {
@@ -628,7 +629,7 @@ async function initImageSettings() {
     // Hardcoded fallbacks shown as "(not detected)" so users know what to
     // download/serve to enable inpaint here.
     ['stable-diffusion-3.5-medium', 'stable-diffusion-inpainting'].forEach(mid => {
-      if (!imageModels.includes(mid)) { const opt = document.createElement('option'); opt.value = mid; opt.textContent = mid + ' (not detected)'; modelSel.appendChild(opt); }
+      if (!imageModels.includes(mid)) { const opt = document.createElement('option'); opt.value = mid; opt.textContent = mid + i18n.t('settings.ai.not_detected_suffix'); modelSel.appendChild(opt); }
     });
   } catch (e) { console.warn('Failed to load models for image settings', e); }
   try {
@@ -651,8 +652,8 @@ async function initImageSettings() {
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image_gen_enabled: enabledToggle ? enabledToggle.checked : true, image_model: modelSel.value, image_quality: qualSel.value }) });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+      msg.textContent = i18n.t('settings.status.saved'); msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
+    } catch (e) { msg.textContent = i18n.t('settings.status.save_failed'); msg.style.color = 'var(--red)'; }
   }
   modelSel.addEventListener('change', saveSettings);
   qualSel.addEventListener('change', saveSettings);
@@ -720,8 +721,8 @@ async function initVisionSettings() {
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vision_enabled: enabledToggle ? enabledToggle.checked : true, vision_model: vlSel.value }) });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+      msg.textContent = i18n.t('settings.status.saved'); msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
+    } catch (e) { msg.textContent = i18n.t('settings.status.save_failed'); msg.style.color = 'var(--red)'; }
   }
   vlSel.addEventListener('change', saveSettings);
   if (enabledToggle) enabledToggle.addEventListener('change', function() { syncVisionDisabled(); saveSettings(); });
@@ -770,7 +771,7 @@ async function initTtsSettings() {
       if (!ep.is_enabled) return;
       var hasTTS = (ep.models || []).some(m => ttsKeywords.some(kw => m.toLowerCase().includes(kw)));
       if (!hasTTS) return;
-      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; provSel.appendChild(opt);
+      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + i18n.t('settings.ai.api_suffix'); provSel.appendChild(opt);
     });
   } catch (e) { console.warn('Failed to load endpoints for TTS', e); }
 
@@ -797,9 +798,9 @@ async function initTtsSettings() {
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1' }) });
-      ttsMsg.textContent = 'Saved'; ttsMsg.style.color = 'var(--fg)'; setTimeout(() => { ttsMsg.textContent = ''; }, 2000);
+      ttsMsg.textContent = i18n.t('settings.status.saved'); ttsMsg.style.color = 'var(--fg)'; setTimeout(() => { ttsMsg.textContent = ''; }, 2000);
       if (window.aiTTSManager) window.aiTTSManager.checkAvailability();
-    } catch (e) { ttsMsg.textContent = 'Failed to save'; ttsMsg.style.color = 'var(--red)'; }
+    } catch (e) { ttsMsg.textContent = i18n.t('settings.status.save_failed'); ttsMsg.style.color = 'var(--red)'; }
   }
 
   async function saveAndClearCache() {
@@ -811,7 +812,7 @@ async function initTtsSettings() {
     var prov = provSel.value;
     if (prov === 'local') voiceInput.value = 'af_heart';
     else if (isEndpoint()) { voiceSelect.value = 'alloy'; modelSelect.value = 'tts-1'; }
-    else if (prov === 'browser') { voiceInput.value = ''; voiceInput.placeholder = 'OS default voice'; }
+    else if (prov === 'browser') { voiceInput.value = ''; voiceInput.placeholder = i18n.t('settings.ai.tts_os_default_voice'); }
     updateVisibility();
     saveTTS();
   });
@@ -827,7 +828,7 @@ async function initTtsSettings() {
   if (previewBtn) {
     var previewAudio = null;
     var previewPlaying = false;
-    function resetPreview() { previewPlaying = false; previewBtn.textContent = 'Preview'; previewBtn.style.borderColor = ''; }
+    function resetPreview() { previewPlaying = false; previewBtn.textContent = i18n.t('settings.ai.preview'); previewBtn.style.borderColor = ''; }
 
     previewBtn.addEventListener('click', async function() {
       if (previewPlaying) {
@@ -837,11 +838,11 @@ async function initTtsSettings() {
       }
       var prov = provSel.value;
       if (prov === 'disabled') {
-        ttsMsg.textContent = 'Select a provider first'; ttsMsg.style.color = 'var(--red, #e55)';
+        ttsMsg.textContent = i18n.t('settings.ai.select_provider_first'); ttsMsg.style.color = 'var(--red, #e55)';
         setTimeout(function() { ttsMsg.textContent = ''; }, 2000); return;
       }
-      var testText = 'Hello, this is a test of text to speech.';
-      previewPlaying = true; previewBtn.textContent = 'Loading...';
+      var testText = i18n.t('settings.ai.tts_test_text');
+      previewPlaying = true; previewBtn.textContent = i18n.t('common.loading_ellipsis');
       try {
         if (prov === 'browser') {
           if (!('speechSynthesis' in window)) throw new Error('Browser TTS not supported');
@@ -855,7 +856,7 @@ async function initTtsSettings() {
             if (match) utt.voice = match;
           }
           utt.rate = parseFloat(speedSelect.value) || 1;
-          previewBtn.textContent = 'Stop'; previewBtn.style.borderColor = 'var(--red, #e55)';
+          previewBtn.textContent = i18n.t('settings.ai.stop'); previewBtn.style.borderColor = 'var(--red, #e55)';
           await new Promise(function(resolve, reject) {
             utt.onend = resolve;
             utt.onerror = function(e) { reject(new Error('Browser TTS: ' + e.error)); };
@@ -871,7 +872,7 @@ async function initTtsSettings() {
           var blob = await res.blob();
           var url = URL.createObjectURL(blob);
           previewAudio = new Audio(url);
-          previewBtn.textContent = 'Stop'; previewBtn.style.borderColor = 'var(--red, #e55)';
+          previewBtn.textContent = i18n.t('settings.ai.stop'); previewBtn.style.borderColor = 'var(--red, #e55)';
           await new Promise(function(resolve, reject) {
             previewAudio.onended = function() { URL.revokeObjectURL(url); previewAudio = null; resolve(); };
             previewAudio.onerror = function() { URL.revokeObjectURL(url); previewAudio = null; reject(new Error('Playback failed')); };
@@ -879,7 +880,7 @@ async function initTtsSettings() {
           });
         }
       } catch (e) {
-        ttsMsg.textContent = 'Preview failed: ' + e.message; ttsMsg.style.color = 'var(--red, #e55)';
+        ttsMsg.textContent = i18n.t('settings.ai.preview_failed', { error: e.message }); ttsMsg.style.color = 'var(--red, #e55)';
         setTimeout(function() { ttsMsg.textContent = ''; }, 3000);
       } finally {
         resetPreview();
@@ -937,7 +938,7 @@ async function initSttSettings() {
     var endpoints = await epRes.json();
     endpoints.forEach(function(ep) {
       if (!ep.is_enabled) return;
-      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; provSel.appendChild(opt);
+      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + i18n.t('settings.ai.api_suffix'); provSel.appendChild(opt);
     });
   } catch (e) { console.warn('Failed to load endpoints for STT', e); }
 
@@ -960,11 +961,11 @@ async function initSttSettings() {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim() }) });
-      sttMsg.textContent = 'Saved'; sttMsg.style.color = 'var(--fg)'; setTimeout(() => { sttMsg.textContent = ''; }, 2000);
+      sttMsg.textContent = i18n.t('settings.status.saved'); sttMsg.style.color = 'var(--fg)'; setTimeout(() => { sttMsg.textContent = ''; }, 2000);
       // Notify voiceRecorder of effective provider and update send button icon
       if (window.voiceRecorderModule) window.voiceRecorderModule._sttProvider = effectiveProvider();
       if (window._updateSendBtnIcon) window._updateSendBtnIcon();
-    } catch (e) { sttMsg.textContent = 'Failed to save'; sttMsg.style.color = 'var(--red)'; }
+    } catch (e) { sttMsg.textContent = i18n.t('settings.status.save_failed'); sttMsg.style.color = 'var(--red)'; }
   }
 
   provSel.addEventListener('change', function() { updateVisibility(); saveSTT(); });
@@ -978,15 +979,18 @@ async function initSttSettings() {
    SEARCH TAB
    ═══════════════════════════════════════════ */
 
-var _searchProviderHints = {
-  searxng: 'Self-hosted SearXNG instance. Leave URL empty to use the SEARXNG_INSTANCE env var.',
-  duckduckgo: 'Free search — no API key required. Works out of the box.',
-  brave: 'Get your API key from brave.com/search/api',
-  google_pse: 'Requires a Google API key and a Programmable Search Engine ID (CX). Create one at programmablesearchengine.google.com',
-  tavily: 'AI-optimized search. 1,000 free credits/month at tavily.com',
-  serper: 'Google results via API. 2,500 free queries at serper.dev',
-  disabled: 'Web search and deep research tools will be unavailable.',
-};
+function _searchProviderHint(prov) {
+  switch (prov) {
+    case 'searxng': return i18n.t('settings.search.hint.searxng');
+    case 'duckduckgo': return i18n.t('settings.search.hint.duckduckgo');
+    case 'brave': return i18n.t('settings.search.hint.brave');
+    case 'google_pse': return i18n.t('settings.search.hint.google_pse');
+    case 'tavily': return i18n.t('settings.search.hint.tavily');
+    case 'serper': return i18n.t('settings.search.hint.serper');
+    case 'disabled': return i18n.t('settings.search.hint.disabled');
+    default: return '';
+  }
+}
 var _searchNeedsKey = { brave: 1, google_pse: 1, tavily: 1, serper: 1 };
 var _searchLabels = {
   searxng: 'SearXNG', duckduckgo: 'DuckDuckGo', brave: 'Brave Search',
@@ -1022,12 +1026,12 @@ async function initSearchSettings() {
     urlRow.style.display = prov === 'searxng' ? 'flex' : 'none';
     keyRow.style.display = _searchNeedsKey[prov] ? 'flex' : 'none';
     cxRow.style.display = prov === 'google_pse' ? 'flex' : 'none';
-    hint.textContent = _searchProviderHints[prov] || '';
-    if (prov === 'brave') keyInput.placeholder = 'Brave API key';
-    else if (prov === 'google_pse') keyInput.placeholder = 'Google API key';
-    else if (prov === 'tavily') keyInput.placeholder = 'Tavily API key';
-    else if (prov === 'serper') keyInput.placeholder = 'Serper API key';
-    else keyInput.placeholder = 'API key';
+    hint.textContent = _searchProviderHint(prov) || '';
+    if (prov === 'brave') keyInput.placeholder = i18n.t('settings.search.key_ph_brave');
+    else if (prov === 'google_pse') keyInput.placeholder = i18n.t('settings.search.key_ph_google');
+    else if (prov === 'tavily') keyInput.placeholder = i18n.t('settings.search.key_ph_tavily');
+    else if (prov === 'serper') keyInput.placeholder = i18n.t('settings.search.key_ph_serper');
+    else keyInput.placeholder = i18n.t('settings.search.api_key_ph');
     loadKeyForProvider(prov);
   }
 
@@ -1053,12 +1057,12 @@ async function initSearchSettings() {
       var kf = keyFieldFor(active);
       var hasKey = kf ? ((s[kf] || '').trim() || (s.search_api_key || '').trim()) : false;
       if (_searchNeedsKey[active]) {
-        extra = hasKey ? ' (key set)' : ' (no key)';
+        extra = hasKey ? i18n.t('settings.search.key_set_suffix') : i18n.t('settings.search.no_key_suffix');
       } else if (active === 'searxng' && (s.search_url || '').trim()) {
         extra = ' (' + s.search_url + ')';
       }
       var count = s.search_result_count || 5;
-      msg.textContent = 'Active: ' + label + extra + ' \u00b7 ' + count + ' results';
+      msg.textContent = i18n.t('settings.search.status_active', { label: label, extra: extra, count: count });
       msg.style.color = active === 'disabled' ? 'var(--red)' : (_searchNeedsKey[active] && !hasKey) ? 'var(--red)' : 'var(--fg)';
     } catch (e) { /* ignore */ }
   }
@@ -1082,10 +1086,10 @@ async function initSearchSettings() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+      msg.textContent = i18n.t('settings.status.saved'); msg.style.color = 'var(--fg)';
       setTimeout(refreshStatus, 2000);
       if (searchModule && searchModule.refresh) searchModule.refresh();
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = i18n.t('settings.status.save_failed'); msg.style.color = 'var(--red)'; }
   }
 
   provSel.addEventListener('change', function() { updateVisibility(); saveSearch(); _syncSearchPicker(); });
@@ -1161,15 +1165,15 @@ async function initSearchSettings() {
       var label = _searchLabels[p] || p;
       var logo = _SEARCH_PROVIDER_LOGOS[p] || '';
       return '<span class="search-fb-chip" draggable="true" data-idx="' + i + '" data-value="' + esc(p) + '">' +
-        '<span class="search-fb-grip" title="Drag to reorder">⋮⋮</span>' +
+        '<span class="search-fb-grip" title="' + esc(i18n.t('settings.search.drag_to_reorder')) + '">⋮⋮</span>' +
         '<span class="search-fb-logo">' + logo + '</span>' +
         '<span>' + esc(label) + '</span>' +
-        '<button type="button" class="search-fb-remove" data-value="' + esc(p) + '" title="Remove">&times;</button>' +
+        '<button type="button" class="search-fb-remove" data-value="' + esc(p) + '" title="' + esc(i18n.t('common.remove')) + '">&times;</button>' +
       '</span>';
     }).join('');
     var addOptions = _availableFallbackOptions();
     var addSelect = addOptions.length
-      ? '<select class="search-fb-add" id="search-fb-add"><option value="">+ Add</option>' +
+      ? '<select class="search-fb-add" id="search-fb-add"><option value="">' + esc(i18n.t('settings.search.add_fallback_opt')) + '</option>' +
           addOptions.map(function(o) { return '<option value="' + esc(o.value) + '">' + esc(o.label) + '</option>'; }).join('') +
         '</select>'
       : '';
@@ -1220,9 +1224,9 @@ async function initSearchSettings() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ search_fallback_chain: chain }),
       });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+      msg.textContent = i18n.t('settings.status.saved'); msg.style.color = 'var(--fg)';
       setTimeout(refreshStatus, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = i18n.t('settings.status.save_failed'); msg.style.color = 'var(--red)'; }
     _renderFallbackChain();
   }
   _renderFallbackChain();
@@ -1235,7 +1239,7 @@ async function initSearchSettings() {
     testBtn.addEventListener('click', async function() {
       var prov = provSel.value;
       if (!prov || prov === 'disabled') {
-        msg.textContent = 'Pick a provider first';
+        msg.textContent = i18n.t('settings.search.pick_provider_first');
         msg.style.color = 'var(--red)';
         return;
       }
@@ -1243,7 +1247,7 @@ async function initSearchSettings() {
       await saveSearch();
       testBtn.disabled = true;
       var orig = testBtn.textContent;
-      testBtn.textContent = 'Testing...';
+      testBtn.textContent = i18n.t('settings.search.testing');
       msg.textContent = '';
       var t0 = performance.now();
       try {
@@ -1255,18 +1259,18 @@ async function initSearchSettings() {
         var d = await r.json();
         var ms = Math.round(performance.now() - t0);
         if (d.error) {
-          msg.textContent = '✗ ' + d.error + ' (' + ms + 'ms)';
+          msg.textContent = i18n.t('settings.search.test_error', { error: d.error, ms: ms });
           msg.style.color = 'var(--red)';
         } else if (!d.results || !d.results.length) {
-          msg.textContent = '⚠ No results returned (' + ms + 'ms)';
+          msg.textContent = i18n.t('settings.search.test_no_results', { ms: ms });
           msg.style.color = 'var(--red)';
         } else {
           var topTitle = (d.results[0].title || d.results[0].url || '').slice(0, 60);
-          msg.textContent = '✓ ' + d.results.length + ' result' + (d.results.length === 1 ? '' : 's') + ' · ' + ms + 'ms · top: ' + topTitle;
+          msg.textContent = i18n.t('settings.search.test_ok', { count: d.results.length, ms: ms, top: topTitle });
           msg.style.color = 'var(--fg)';
         }
       } catch (e) {
-        msg.textContent = '✗ Test failed: ' + (e && e.message ? e.message : e);
+        msg.textContent = i18n.t('settings.search.test_failed', { error: (e && e.message ? e.message : e) });
         msg.style.color = 'var(--red)';
       } finally {
         testBtn.disabled = false; testBtn.textContent = orig;
@@ -1300,7 +1304,7 @@ async function initResearchSettings() {
       if (!ep.is_enabled) return;
       var opt = document.createElement('option');
       opt.value = ep.id;
-      opt.textContent = ep.name + (ep.online ? '' : ' (offline)');
+      opt.textContent = ep.name + (ep.online ? '' : i18n.t('settings.ai.offline_suffix'));
       epSel.appendChild(opt);
     });
   } catch (e) { console.warn('Failed to load endpoints for research', e); }
@@ -1337,17 +1341,17 @@ async function initResearchSettings() {
     var parts = [];
     if (epSel.value) {
       var epName = epSel.options[epSel.selectedIndex].textContent;
-      var mName = modelSel.value ? modelSel.value.split('/').pop() : 'auto';
+      var mName = modelSel.value ? modelSel.value.split('/').pop() : i18n.t('settings.ai.research_model_auto');
       parts.push(epName + ' / ' + mName);
     }
     if (tokensInput.value) {
-      parts.push('Max tokens: ' + tokensInput.value);
+      parts.push(i18n.t('settings.ai.max_tokens_status', { n: tokensInput.value }));
     }
     if (parts.length) {
       msg.textContent = parts.join(' · ');
       msg.style.color = 'var(--fg)';
     } else {
-      msg.textContent = 'Using chat defaults';
+      msg.textContent = i18n.t('settings.ai.using_chat_defaults');
       msg.style.color = 'var(--fg)';
     }
   }
@@ -1365,9 +1369,9 @@ async function initResearchSettings() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+      msg.textContent = i18n.t('settings.status.saved'); msg.style.color = 'var(--fg)';
       setTimeout(showStatus, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = i18n.t('settings.status.save_failed'); msg.style.color = 'var(--red)'; }
   }
 
   epSel.addEventListener('change', async function() {
@@ -1392,7 +1396,7 @@ async function initResearchSearchSettings() {
       if (!kf) return;
       var hasKey = ((settings[kf] || '').trim() || (settings.search_api_key || '').trim());
       if (!hasKey) {
-        opt.textContent = (_searchLabels[prov] || prov) + ' (no key)';
+        opt.textContent = (_searchLabels[prov] || prov) + i18n.t('settings.search.no_key_suffix');
         opt.style.color = 'var(--red)';
       } else {
         opt.textContent = _searchLabels[prov] || prov;
@@ -1414,9 +1418,9 @@ async function initResearchSearchSettings() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ research_search_provider: searchSel.value })
       });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+      msg.textContent = i18n.t('settings.status.saved'); msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = i18n.t('settings.status.save_failed'); msg.style.color = 'var(--red)'; }
   }
 
   searchSel.addEventListener('change', saveResearchSearch);
@@ -1441,14 +1445,14 @@ async function initAgentSettings() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent_max_tool_calls: val })
       });
-      msg.textContent = val > 0 ? 'Limit: ' + val + ' tool calls per message' : 'Unlimited';
+      msg.textContent = val > 0 ? i18n.t('settings.ai.tool_call_limit_status', { n: val }) : i18n.t('settings.ai.unlimited');
       msg.style.color = 'var(--fg)';
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = i18n.t('settings.status.save_failed'); msg.style.color = 'var(--red)'; }
   }
 
   toolsInput.addEventListener('change', save);
   var cur = parseInt(toolsInput.value, 10) || 0;
-  msg.textContent = cur > 0 ? 'Limit: ' + cur + ' tool calls per message' : 'Unlimited';
+  msg.textContent = cur > 0 ? i18n.t('settings.ai.tool_call_limit_status', { n: cur }) : i18n.t('settings.ai.unlimited');
 }
 
 /* ═══════════════════════════════════════════
@@ -1465,7 +1469,7 @@ function initAppearance() {
       if (window.UI_VIS_ADMIN_ONLY && window.UI_VIS_ADMIN_ONLY.has(key) && !chk.checked && !window._isAdmin) {
         chk.checked = true;
         if (uiModule && uiModule.showToast) {
-          uiModule.showToast('Only admins can hide Settings.');
+          uiModule.showToast(i18n.t('settings.appearance.admins_only_hide_settings'));
         }
         return;
       }
@@ -1478,17 +1482,17 @@ function initAppearance() {
         try {
           ok = await (uiModule && uiModule.styledConfirm
             ? uiModule.styledConfirm(
-                'Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.',
-                { confirmText: 'Hide', cancelText: 'Cancel' }
+                i18n.t('settings.appearance.hide_settings_cog_confirm'),
+                { confirmText: i18n.t('settings.appearance.hide'), cancelText: i18n.t('common.cancel') }
               )
-            : Promise.resolve(window.confirm('Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.')));
+            : Promise.resolve(window.confirm(i18n.t('settings.appearance.hide_settings_cog_confirm'))));
         } catch (_) { ok = false; }
         if (!ok) {
           chk.checked = true;
           return;
         }
         if (uiModule && uiModule.showToast) {
-          uiModule.showToast('Settings cog hidden — type /settings to bring it back.', 5000);
+          uiModule.showToast(i18n.t('settings.appearance.settings_cog_hidden_toast'), 5000);
         }
       }
 
@@ -1611,10 +1615,10 @@ const SHORTCUT_LABELS = {
 };
 
 const SHORTCUT_CATEGORIES = [
-  { name: 'Navigation', keys: ['search', 'toggle_sidebar', 'focus_input', 'settings'] },
-  { name: 'Sessions', keys: ['new_session', 'fav_session', 'delete_session'] },
-  { name: 'Tools', keys: ['incognito', 'tts', 'cancel'] },
-  { name: 'Open Tools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_notes', 'open_tasks', 'open_theme'] },
+  { id: 'navigation', name: 'Navigation', keys: ['search', 'toggle_sidebar', 'focus_input', 'settings'] },
+  { id: 'sessions', name: 'Sessions', keys: ['new_session', 'fav_session', 'delete_session'] },
+  { id: 'tools', name: 'Tools', keys: ['incognito', 'tts', 'cancel'] },
+  { id: 'open_tools', name: 'Open Tools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_notes', 'open_tasks', 'open_theme'] },
 ];
 
 function _formatKeyCaps(combo) {
@@ -1678,7 +1682,7 @@ async function initShortcuts() {
     for (const cat of SHORTCUT_CATEGORIES) {
       const catHeader = document.createElement('div');
       catHeader.className = 'shortcut-category';
-      catHeader.textContent = cat.name;
+      catHeader.textContent = i18n.t('settings.shortcuts.category.' + cat.id) || cat.name;
       listEl.appendChild(catHeader);
 
       for (const action of cat.keys) {
@@ -1686,20 +1690,20 @@ async function initShortcuts() {
         const combo = keybinds[action];
         // Unbound shortcuts (empty combo) still render so the user can
         // assign one \u2014 they show a "Set" affordance instead of keycaps.
-        const label = SHORTCUT_LABELS[action] || action;
+        const label = i18n.t('settings.shortcuts.action.' + action) || SHORTCUT_LABELS[action] || action;
         const icon = SHORTCUT_ICONS[action] || '';
         const isCustom = combo !== (SHORTCUT_DEFAULTS[action] || '');
         const hasConflict = combo && conflicts.has(action);
         const row = document.createElement('div');
         row.className = 'shortcut-row' + (hasConflict ? ' shortcut-conflict' : '');
         row.dataset.action = action;
-        const keyContent = combo ? _formatKeyCaps(combo) : '<span class="shortcut-unset">Set</span>';
+        const keyContent = combo ? _formatKeyCaps(combo) : `<span class="shortcut-unset">${esc(i18n.t('settings.shortcuts.set'))}</span>`;
         row.innerHTML = `
-          <span class="shortcut-label"><span class="shortcut-icon">${icon}</span>${esc(label)}${hasConflict ? '<span class="shortcut-warn" title="Duplicate shortcut">!</span>' : ''}</span>
+          <span class="shortcut-label"><span class="shortcut-icon">${icon}</span>${esc(label)}${hasConflict ? `<span class="shortcut-warn" title="${esc(i18n.t('settings.shortcuts.duplicate'))}">!</span>` : ''}</span>
           <div class="shortcut-controls">
             <span class="shortcut-hint" hidden></span>
-            <button class="shortcut-key${combo ? '' : ' shortcut-key-unset'}" data-action="${action}" title="Click to rebind">${keyContent}</button>
-            <button class="shortcut-action-btn ${isCustom ? 'is-reset' : ''}" data-action="${action}" title="${isCustom ? 'Reset to default' : 'Confirm'}" style="${isCustom ? '' : 'visibility:hidden'}">
+            <button class="shortcut-key${combo ? '' : ' shortcut-key-unset'}" data-action="${action}" title="${esc(i18n.t('settings.shortcuts.click_to_rebind'))}">${keyContent}</button>
+            <button class="shortcut-action-btn ${isCustom ? 'is-reset' : ''}" data-action="${action}" title="${isCustom ? esc(i18n.t('settings.shortcuts.reset_to_default')) : esc(i18n.t('common.confirm'))}" style="${isCustom ? '' : 'visibility:hidden'}">
               ${isCustom ? '\u21A9' : '\u2713'}
             </button>
           </div>
@@ -1738,16 +1742,16 @@ async function initShortcuts() {
     });
 
     btn.classList.add('listening');
-    btn.textContent = 'Press keys...';
+    btn.textContent = i18n.t('settings.shortcuts.press_keys');
     // Show confirm button
     actionBtn.textContent = '\u2713';
     actionBtn.classList.remove('is-reset');
     actionBtn.style.visibility = 'visible';
-    actionBtn.title = 'Confirm';
+    actionBtn.title = i18n.t('common.confirm');
     // Hint: tell the user how to commit / cancel the rebind.
     if (hintEl) {
       hintEl.hidden = false;
-      hintEl.textContent = 'press a key';
+      hintEl.textContent = i18n.t('settings.shortcuts.press_a_key');
     }
 
     let pendingCombo = null;
@@ -1774,7 +1778,7 @@ async function initShortcuts() {
         if (isCustom) {
           actionBtn.textContent = '\u21A9';
           actionBtn.classList.add('is-reset');
-          actionBtn.title = 'Reset to default';
+          actionBtn.title = i18n.t('settings.shortcuts.reset_to_default');
         } else {
           actionBtn.style.visibility = 'hidden';
         }
@@ -1796,7 +1800,7 @@ async function initShortcuts() {
       pendingCombo = combo;
       btn.innerHTML = _formatKeyCaps(combo);
       // Now that a combo is captured, prompt to commit with Enter.
-      if (hintEl) hintEl.textContent = '\u21B5 Enter to save';
+      if (hintEl) hintEl.textContent = i18n.t('settings.shortcuts.enter_to_save');
     }
 
     function cleanup() {
@@ -1818,7 +1822,7 @@ async function initShortcuts() {
       });
       // Update global keybinds so they take effect immediately
       window._odysseusKeybinds = keybinds;
-      if (uiModule && uiModule.showToast) uiModule.showToast('Shortcut saved');
+      if (uiModule && uiModule.showToast) uiModule.showToast(i18n.t('settings.shortcuts.saved_toast'));
     } catch (e) {
       console.error('Failed to save keybinds:', e);
     }
@@ -1829,7 +1833,7 @@ async function initShortcuts() {
       keybinds = { ...SHORTCUT_DEFAULTS };
       render();
       await saveKeybinds();
-      if (uiModule && uiModule.showToast) uiModule.showToast('Shortcuts reset to defaults');
+      if (uiModule && uiModule.showToast) uiModule.showToast(i18n.t('settings.shortcuts.reset_toast'));
     });
   }
 
@@ -1847,8 +1851,8 @@ function initAccount() {
       const nameEl = el('settings-account-username');
       const roleEl = el('settings-account-role');
       const avatarEl = el('settings-account-avatar');
-      if (nameEl) nameEl.textContent = d.username || 'Unknown';
-      if (roleEl) roleEl.textContent = d.is_admin ? 'Admin' : 'User';
+      if (nameEl) nameEl.textContent = d.username || i18n.t('settings.account.unknown_user');
+      if (roleEl) roleEl.textContent = d.is_admin ? i18n.t('settings.account.role_admin') : i18n.t('settings.account.role_user');
       if (avatarEl) {
         const initial = (d.username || '?')[0].toUpperCase();
         avatarEl.textContent = initial;
@@ -1864,9 +1868,9 @@ function initAccount() {
       const nw = el('settings-pw-new').value;
       const conf = el('settings-pw-confirm').value;
       msgEl.style.color = '';
-      if (!cur || !nw) { msgEl.textContent = 'Fill in all fields'; msgEl.style.color = 'var(--red)'; return; }
-      if (nw.length < 8) { msgEl.textContent = 'Min 8 characters'; msgEl.style.color = 'var(--red)'; return; }
-      if (nw !== conf) { msgEl.textContent = 'Passwords don\'t match'; msgEl.style.color = 'var(--red)'; return; }
+      if (!cur || !nw) { msgEl.textContent = i18n.t('settings.account.fill_all_fields'); msgEl.style.color = 'var(--red)'; return; }
+      if (nw.length < 8) { msgEl.textContent = i18n.t('settings.account.min_8_chars'); msgEl.style.color = 'var(--red)'; return; }
+      if (nw !== conf) { msgEl.textContent = i18n.t('settings.account.passwords_no_match'); msgEl.style.color = 'var(--red)'; return; }
       saveBtn.disabled = true;
       try {
         const res = await fetch('/api/auth/change-password', {
@@ -1874,9 +1878,9 @@ function initAccount() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ current_password: cur, new_password: nw })
         });
-        if (!res.ok) { const d = await res.json(); throw new Error(d.detail || 'Failed'); }
+        if (!res.ok) { const d = await res.json(); throw new Error(d.detail || i18n.t('settings.status.failed')); }
         msgEl.style.color = 'var(--green)';
-        msgEl.textContent = 'Password updated';
+        msgEl.textContent = i18n.t('settings.account.password_updated');
         el('settings-pw-current').value = '';
         el('settings-pw-new').value = '';
         el('settings-pw-confirm').value = '';
@@ -1900,78 +1904,78 @@ function initAccount() {
           // 2FA is ON — show disable option
           tfaContent.innerHTML = `
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-              <span style="color:var(--color-save-green, #4caf50);font-size:12px;font-weight:600;">&#x2713; Enabled</span>
-              <span style="font-size:11px;opacity:0.5;">Authenticator app required on login</span>
+              <span style="color:var(--color-save-green, #4caf50);font-size:12px;font-weight:600;">&#x2713; ${i18n.t('settings.account.tfa_enabled')}</span>
+              <span style="font-size:11px;opacity:0.5;">${i18n.t('settings.account.tfa_app_required')}</span>
             </div>
-            <input id="tfa-disable-pw" type="password" placeholder="Enter password to disable" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;width:100%;box-sizing:border-box;margin-bottom:6px;">
+            <input id="tfa-disable-pw" type="password" placeholder="${i18n.t('settings.account.tfa_enter_pw_disable')}" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;width:100%;box-sizing:border-box;margin-bottom:6px;">
             <div class="settings-row" style="justify-content:flex-end;">
               <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
-              <button class="admin-btn-add" id="tfa-disable-btn" style="opacity:0.7;">Disable 2FA</button>
+              <button class="admin-btn-add" id="tfa-disable-btn" style="opacity:0.7;">${i18n.t('settings.account.tfa_disable')}</button>
             </div>`;
           el('tfa-disable-btn').addEventListener('click', async () => {
             const pw = el('tfa-disable-pw').value;
             const msg = el('tfa-msg');
-            if (!pw) { msg.textContent = 'Enter your password'; msg.style.color = 'var(--red)'; return; }
+            if (!pw) { msg.textContent = i18n.t('settings.account.tfa_enter_pw'); msg.style.color = 'var(--red)'; return; }
             try {
               const r = await fetch('/api/auth/2fa/disable', {
                 method: 'POST', credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ password: pw })
               });
-              if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Failed'); }
+              if (!r.ok) { const d = await r.json(); throw new Error(d.detail || i18n.t('settings.status.failed')); }
               render2FA();
             } catch (e) { msg.textContent = e.message; msg.style.color = 'var(--red)'; }
           });
         } else {
           // 2FA is OFF — show setup button
           tfaContent.innerHTML = `
-            <div style="font-size:12px;opacity:0.6;margin-bottom:8px;">Add an extra layer of security with an authenticator app (Aegis, Google Authenticator, etc.)</div>
+            <div style="font-size:12px;opacity:0.6;margin-bottom:8px;">${i18n.t('settings.account.tfa_setup_desc')}</div>
             <div class="settings-row" style="justify-content:flex-end;">
               <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
-              <button class="admin-btn-add" id="tfa-setup-btn">Set Up 2FA</button>
+              <button class="admin-btn-add" id="tfa-setup-btn">${i18n.t('settings.account.tfa_setup_btn')}</button>
             </div>`;
           el('tfa-setup-btn').addEventListener('click', async () => {
             const msg = el('tfa-msg');
             try {
               const r = await fetch('/api/auth/2fa/setup', { method: 'POST', credentials: 'same-origin' });
-              if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Failed'); }
+              if (!r.ok) { const d = await r.json(); throw new Error(d.detail || i18n.t('settings.status.failed')); }
               const setup = await r.json();
               // Show QR code + manual secret + verify input
               tfaContent.innerHTML = `
                 <div style="text-align:center;margin-bottom:12px;">
-                  <img src="${setup.qr_code}" alt="QR Code" style="border-radius:8px;max-width:200px;">
+                  <img src="${setup.qr_code}" alt="${i18n.t('settings.account.tfa_qr_alt')}" style="border-radius:8px;max-width:200px;">
                 </div>
                 <div style="font-size:11px;opacity:0.5;text-align:center;margin-bottom:8px;">
-                  Scan with your authenticator app, or enter manually:
+                  ${i18n.t('settings.account.tfa_scan_instructions')}
                 </div>
                 <div style="font-family:monospace;font-size:12px;text-align:center;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;margin-bottom:12px;word-break:break-all;user-select:all;cursor:text;">${setup.secret}</div>
-                <input id="tfa-verify-code" type="text" placeholder="Enter 6-digit code to verify" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:13px;box-sizing:border-box;text-align:center;letter-spacing:3px;margin-bottom:6px;">
+                <input id="tfa-verify-code" type="text" placeholder="${i18n.t('settings.account.tfa_verify_ph')}" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:13px;box-sizing:border-box;text-align:center;letter-spacing:3px;margin-bottom:6px;">
                 <div class="settings-row" style="justify-content:flex-end;">
                   <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
-                  <button class="admin-btn-add" id="tfa-cancel-btn" style="opacity:0.5;">Cancel</button>
-                  <button class="admin-btn-add" id="tfa-verify-btn">Verify & Enable</button>
+                  <button class="admin-btn-add" id="tfa-cancel-btn" style="opacity:0.5;">${i18n.t('common.cancel')}</button>
+                  <button class="admin-btn-add" id="tfa-verify-btn">${i18n.t('settings.account.tfa_verify_enable')}</button>
                 </div>`;
               el('tfa-verify-code').focus();
               el('tfa-cancel-btn').addEventListener('click', () => render2FA());
               el('tfa-verify-btn').addEventListener('click', async () => {
                 const code = el('tfa-verify-code').value.trim();
                 const vmsg = el('tfa-msg');
-                if (!code) { vmsg.textContent = 'Enter the code'; vmsg.style.color = 'var(--red)'; return; }
+                if (!code) { vmsg.textContent = i18n.t('settings.account.tfa_enter_code'); vmsg.style.color = 'var(--red)'; return; }
                 try {
                   const vr = await fetch('/api/auth/2fa/confirm', {
                     method: 'POST', credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ code })
                   });
-                  if (!vr.ok) { const d = await vr.json(); throw new Error(d.detail || 'Invalid code'); }
+                  if (!vr.ok) { const d = await vr.json(); throw new Error(d.detail || i18n.t('settings.account.tfa_invalid_code')); }
                   const result = await vr.json();
                   // Show backup codes
                   const codes = result.backup_codes || [];
                   tfaContent.innerHTML = `
-                    <div style="color:var(--color-save-green, #4caf50);font-size:13px;font-weight:600;margin-bottom:8px;">&#x2713; 2FA Enabled!</div>
-                    <div style="font-size:12px;opacity:0.7;margin-bottom:8px;">Save these backup codes somewhere safe. Each can be used once if you lose your authenticator:</div>
+                    <div style="color:var(--color-save-green, #4caf50);font-size:13px;font-weight:600;margin-bottom:8px;">&#x2713; ${i18n.t('settings.account.tfa_enabled_success')}</div>
+                    <div style="font-size:12px;opacity:0.7;margin-bottom:8px;">${i18n.t('settings.account.tfa_backup_codes_desc')}</div>
                     <div style="font-family:monospace;font-size:12px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;columns:2;column-gap:16px;margin-bottom:8px;">${codes.map(c => '<div style="margin-bottom:2px;">' + c + '</div>').join('')}</div>
-                    <button class="admin-btn-add" id="tfa-done-btn">Done</button>`;
+                    <button class="admin-btn-add" id="tfa-done-btn">${i18n.t('common.done')}</button>`;
                   el('tfa-done-btn').addEventListener('click', () => render2FA());
                 } catch (e) { vmsg.textContent = e.message; vmsg.style.color = 'var(--red)'; }
               });
@@ -1979,7 +1983,7 @@ function initAccount() {
           });
         }
       } catch (_) {
-        tfaContent.innerHTML = '<div style="font-size:11px;opacity:0.4;">Could not load 2FA status</div>';
+        tfaContent.innerHTML = '<div style="font-size:11px;opacity:0.4;">' + i18n.t('settings.account.tfa_load_failed') + '</div>';
       }
     }
     render2FA();
@@ -2073,12 +2077,12 @@ async function initReminderSettings() {
             body: JSON.stringify({ app_public_url: val }),
           });
           if (pubUrlMsg) {
-            pubUrlMsg.textContent = val ? 'Saved' : 'Cleared (deep-links disabled)';
+            pubUrlMsg.textContent = val ? i18n.t('settings.status.saved') : i18n.t('settings.reminders.public_url_cleared');
             pubUrlMsg.style.color = 'var(--green,#50fa7b)';
             setTimeout(() => { pubUrlMsg.textContent = ''; }, 2000);
           }
         } catch (_) {
-          if (pubUrlMsg) { pubUrlMsg.textContent = 'Save failed'; pubUrlMsg.style.color = 'var(--red)'; }
+          if (pubUrlMsg) { pubUrlMsg.textContent = i18n.t('settings.status.save_failed_short'); pubUrlMsg.style.color = 'var(--red)'; }
         }
       }, 600);
     });
@@ -2120,7 +2124,7 @@ async function initReminderSettings() {
 
   if (!smtpConfigured && emailOpt) {
     emailOpt.disabled = true;
-    emailOpt.textContent = 'Email (add an account in Integrations)';
+    emailOpt.textContent = i18n.t('settings.reminders.channel_email_unconfigured');
   }
 
   // Detect whether ntfy integration exists — try admin endpoint, fall back to
@@ -2146,7 +2150,7 @@ async function initReminderSettings() {
 
   if (!ntfyConfigured && ntfyOpt) {
     ntfyOpt.disabled = true;
-    ntfyOpt.textContent = 'ntfy (add in Integrations first)';
+    ntfyOpt.textContent = i18n.t('settings.reminders.channel_ntfy_unconfigured');
   }
 
   const emailFromRow = el('set-reminder-email-from-row');
@@ -2159,7 +2163,7 @@ async function initReminderSettings() {
   function populateReminderEmailAccounts(selectedId = '') {
     if (!emailAcctSel) return;
     emailAcctSel.innerHTML = emailAccounts.map(a =>
-      `<option value="${a.id}">${esc(a.name || a.from_address || a.imap_user || 'Unnamed')}${a.is_default ? ' (default)' : ''}</option>`
+      `<option value="${a.id}">${esc(a.name || a.from_address || a.imap_user || i18n.t('settings.email.unnamed_account'))}${a.is_default ? i18n.t('settings.email.default_suffix') : ''}</option>`
     ).join('');
     const fallback = (emailAccounts.find(a => a.is_default) || emailAccounts[0] || {}).id || '';
     emailAcctSel.value = (selectedId && emailAccounts.some(a => a.id === selectedId)) ? selectedId : fallback;
@@ -2168,11 +2172,11 @@ async function initReminderSettings() {
   function applyReminderChannelAvailability() {
     if (emailOpt) {
       emailOpt.disabled = !smtpConfigured;
-      emailOpt.textContent = smtpConfigured ? 'Email' : 'Email (add an account in Integrations)';
+      emailOpt.textContent = smtpConfigured ? i18n.t('settings.reminders.channel_email') : i18n.t('settings.reminders.channel_email_unconfigured');
     }
     if (ntfyOpt) {
       ntfyOpt.disabled = !ntfyConfigured;
-      ntfyOpt.textContent = ntfyConfigured ? 'ntfy' : 'ntfy (add in Integrations first)';
+      ntfyOpt.textContent = ntfyConfigured ? i18n.t('settings.reminders.channel_ntfy') : i18n.t('settings.reminders.channel_ntfy_unconfigured');
     }
   }
 
@@ -2230,9 +2234,9 @@ async function initReminderSettings() {
   // regardless of channel). The hint should make that clear so
   // users don't think they have to choose between channels.
   const CHANNEL_HINTS = {
-    browser: 'Reminders appear as browser notifications inside Odysseus.',
-    email: 'Reminders are emailed AND shown as a browser notification.',
-    ntfy: 'Reminders are pushed via ntfy AND shown as a browser notification.',
+    browser: i18n.t('settings.reminders.hint_browser'),
+    email: i18n.t('settings.reminders.hint_email'),
+    ntfy: i18n.t('settings.reminders.hint_ntfy'),
   };
 
   applyReminderChannelAvailability();
@@ -2319,7 +2323,7 @@ async function initReminderSettings() {
   if (testBtn) {
     testBtn.addEventListener('click', async () => {
       testBtn.disabled = true;
-      if (testMsg) { testMsg.textContent = 'Sending…'; testMsg.style.color = 'var(--fg)'; }
+      if (testMsg) { testMsg.textContent = i18n.t('settings.reminders.sending'); testMsg.style.color = 'var(--fg)'; }
       // Whirlpool loader right next to the "Sending…" text while it sends.
       let _testSpin = null;
       try {
@@ -2336,35 +2340,35 @@ async function initReminderSettings() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             note_id: 'test-' + Date.now(),
-            title: 'Test Reminder',
-            body: 'This is a test reminder to verify your settings are working.',
+            title: i18n.t('settings.reminders.test_title'),
+            body: i18n.t('settings.reminders.test_body'),
           }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Server error');
+        if (!res.ok) throw new Error(data.detail || i18n.t('settings.reminders.server_error'));
         if (channelSel.value === 'email' && !data.email_sent) {
-          throw new Error(data.email_error || 'Email reminder was not sent');
+          throw new Error(data.email_error || i18n.t('settings.reminders.email_not_sent'));
         }
         if (channelSel.value === 'ntfy' && !data.ntfy_sent) {
-          throw new Error(data.ntfy_error || 'ntfy reminder was not sent');
+          throw new Error(data.ntfy_error || i18n.t('settings.reminders.ntfy_not_sent'));
         }
-        let status = 'Delivered via ' + channelSel.value;
-        if (data.synthesis) status += ' (AI: "' + data.synthesis.slice(0, 60) + '...")';
-        if (data.email_sent) status += ' — email sent';
-        if (data.ntfy_sent) status += ' — ntfy sent';
+        let status = i18n.t('settings.reminders.delivered_via', { channel: channelSel.value });
+        if (data.synthesis) status += i18n.t('settings.reminders.delivered_ai_suffix', { text: data.synthesis.slice(0, 60) });
+        if (data.email_sent) status += i18n.t('settings.reminders.delivered_email_suffix');
+        if (data.ntfy_sent) status += i18n.t('settings.reminders.delivered_ntfy_suffix');
         if (testMsg) { testMsg.textContent = status; testMsg.style.color = 'var(--green, #50fa7b)'; }
         // Also fire a browser notification so user can see it
         if ('Notification' in window && Notification.permission === 'granted') {
           try {
-            new Notification('Test Reminder', {
-              body: data.synthesis || 'This is a test reminder.',
+            new Notification(i18n.t('settings.reminders.test_title'), {
+              body: data.synthesis || i18n.t('settings.reminders.test_notification_body'),
               tag: 'reminder-test',
               icon: '/static/favicon.ico',
             });
           } catch {}
         }
       } catch (e) {
-        if (testMsg) { testMsg.textContent = 'Failed: ' + e.message; testMsg.style.color = 'var(--red)'; }
+        if (testMsg) { testMsg.textContent = i18n.t('settings.reminders.test_failed', { error: e.message }); testMsg.style.color = 'var(--red)'; }
       } finally {
         _stopTestSpin();
         testBtn.disabled = false;
@@ -2391,25 +2395,25 @@ async function initEmailAccountsSettings() {
   }
 
   function renderRow(a) {
-    const imap = a.imap_host ? `${a.imap_host}:${a.imap_port}` : '<no IMAP>';
+    const imap = a.imap_host ? `${a.imap_host}:${a.imap_port}` : i18n.t('settings.email.no_imap');
     const badge = a.is_default
-      ? '<span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 6px;border-radius:3px;background:color-mix(in srgb, var(--accent,#50fa7b) 15%, transparent);color:var(--accent,#50fa7b)">Default</span>'
-      : (a.enabled ? '' : '<span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 6px;border-radius:3px;opacity:0.4">Disabled</span>');
+      ? `<span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 6px;border-radius:3px;background:color-mix(in srgb, var(--accent,#50fa7b) 15%, transparent);color:var(--accent,#50fa7b)">${esc(i18n.t('settings.email.badge_default'))}</span>`
+      : (a.enabled ? '' : `<span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 6px;border-radius:3px;opacity:0.4">${esc(i18n.t('settings.email.badge_disabled'))}</span>`);
     return `<div class="email-account-row" data-acc-id="${esc(a.id)}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:6px">
       <div style="flex:1;min-width:0">
         <div style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">${esc(a.name)} ${badge}</div>
         <div style="font-size:11px;opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.imap_user || a.from_address || '')} — ${esc(imap)}</div>
       </div>
-      ${a.is_default ? '' : `<button class="admin-btn-sm email-acc-default-btn" style="font-size:10px">Make Default</button>`}
-      <button class="admin-btn-sm email-acc-edit-btn" style="font-size:10px">Edit</button>
-      <button class="admin-btn-sm email-acc-del-btn" style="font-size:10px;opacity:0.6">Delete</button>
+      ${a.is_default ? '' : `<button class="admin-btn-sm email-acc-default-btn" style="font-size:10px">${esc(i18n.t('settings.email.make_default'))}</button>`}
+      <button class="admin-btn-sm email-acc-edit-btn" style="font-size:10px">${esc(i18n.t('common.edit'))}</button>
+      <button class="admin-btn-sm email-acc-del-btn" style="font-size:10px;opacity:0.6">${esc(i18n.t('common.delete'))}</button>
     </div>`;
   }
 
   async function renderList() {
     const accs = await fetchAccounts();
     if (!accs.length) {
-      listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">No email accounts configured</div>';
+      listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">' + esc(i18n.t('settings.email.no_accounts')) + '</div>';
       return;
     }
     listEl.innerHTML = accs.map(renderRow).join('');
@@ -2426,7 +2430,7 @@ async function initEmailAccountsSettings() {
       });
       row.querySelector('.email-acc-del-btn')?.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (!await window.styledConfirm(`Delete account "${accs.find(a => a.id === id)?.name}"?`, { confirmText: 'Delete', danger: true })) return;
+        if (!await window.styledConfirm(i18n.t('settings.email.delete_account_confirm', { name: accs.find(a => a.id === id)?.name }), { confirmText: i18n.t('common.delete'), danger: true })) return;
         await fetch(`/api/email/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
         renderList();
       });
@@ -2461,32 +2465,32 @@ async function initEmailAccountsSettings() {
       .map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`)
       .join('');
     formEl.innerHTML = `
-      <h3 style="font-size:12px;margin:0 0 8px">${isEdit ? 'Edit Account' : 'New Account'}</h3>
+      <h3 style="font-size:12px;margin:0 0 8px">${isEdit ? esc(i18n.t('settings.email.edit_account')) : esc(i18n.t('settings.email.new_account'))}</h3>
       <div class="settings-col">
-        <div class="settings-row"><label class="settings-label">Provider${_hint('Pick a known provider to auto-fill the IMAP and SMTP host/port. Choose Custom to type your own.')}</label><select id="eaf-provider" class="settings-select"><option value="">Custom…</option>${_providerOptions}</select></div>
-        <div class="settings-row"><label class="settings-label">Name${_hint('Optional label for this account (e.g. “Work” or “Personal”). Leave blank to use the email address.')}</label><input id="eaf-name" class="settings-input" placeholder="(optional — leave blank to use email)" value="${esc(a.name || '')}"></div>
-        <div class="settings-row"><label class="settings-label">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="eaf-from" class="settings-input" placeholder="you@example.com" value="${esc(a.from_address || '')}"></div>
-        <div style="font-size:11px;font-weight:600;opacity:0.6;margin:6px 0 2px">IMAP (Receiving)</div>
-        <div class="settings-row"><label class="settings-label">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="eaf-imap-host" class="settings-input" value="${esc(a.imap_host || '')}"></div>
-        <div class="settings-row"><label class="settings-label">Port${_hint('993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143.')}</label><input id="eaf-imap-port" class="settings-input" type="number" value="${esc(a.imap_port || 993)}" style="max-width:100px"></div>
-        <div class="settings-row"><label class="settings-label">Username${_hint('Usually your full email address.')}</label><input id="eaf-imap-user" class="settings-input" value="${esc(a.imap_user || '')}"></div>
-        <div class="settings-row"><label class="settings-label">Password${_hint('Your IMAP login password. Use an app-specific password if your provider requires 2FA (Gmail, iCloud, etc.).')}</label><input id="eaf-imap-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_imap_password ? '(unchanged)' : ''}"></div>
-        <div class="settings-row"><label class="settings-label">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch"><input type="checkbox" id="eaf-imap-starttls" ${a.imap_starttls !== false ? 'checked' : ''}><span class="admin-slider"></span></label></div>
-        <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
-        <div class="settings-row"><label class="settings-label">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com, smtp.migadu.com. Leave blank to make this account read-only.')}</label><input id="eaf-smtp-host" class="settings-input" value="${esc(a.smtp_host || '')}"></div>
-        <div class="settings-row"><label class="settings-label">Port${_hint('465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs.')}</label><input id="eaf-smtp-port" class="settings-input" type="number" value="${esc(a.smtp_port || 465)}" style="max-width:100px"></div>
-        <div class="settings-row"><label class="settings-label">Same as IMAP${_hint('Use the IMAP username and password for SMTP too (this is right for almost every provider). Turn off to enter separate SMTP credentials.')}</label><label class="admin-switch"><input type="checkbox" id="eaf-smtp-same" ${(!isEdit || (a.smtp_user && a.imap_user && a.smtp_user === a.imap_user)) ? 'checked' : ''}><span class="admin-slider"></span></label></div>
-        <div class="settings-row eaf-smtp-creds"><label class="settings-label">Username${_hint('Usually the same as your IMAP username (your email address).')}</label><input id="eaf-smtp-user" class="settings-input" value="${esc(a.smtp_user || '')}"></div>
-        <div class="settings-row eaf-smtp-creds"><label class="settings-label">Password${_hint('Your SMTP password — often the same as your IMAP password.')}</label><input id="eaf-smtp-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_smtp_password ? '(unchanged)' : ''}"></div>
+        <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.provider'))}${_hint(i18n.t('settings.email_form.provider_hint'))}</label><select id="eaf-provider" class="settings-select"><option value="">${esc(i18n.t('settings.email_form.custom_opt'))}</option>${_providerOptions}</select></div>
+        <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.name'))}${_hint(i18n.t('settings.email_form.name_hint'))}</label><input id="eaf-name" class="settings-input" placeholder="${esc(i18n.t('settings.email_form.name_ph'))}" value="${esc(a.name || '')}"></div>
+        <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.email'))}${_hint(i18n.t('settings.email_form.email_hint'))}</label><input id="eaf-from" class="settings-input" placeholder="you@example.com" value="${esc(a.from_address || '')}"></div>
+        <div style="font-size:11px;font-weight:600;opacity:0.6;margin:6px 0 2px">${esc(i18n.t('settings.email_form.imap_section'))}</div>
+        <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.host'))}${_hint(i18n.t('settings.email_form.imap_host_hint'))}</label><input id="eaf-imap-host" class="settings-input" value="${esc(a.imap_host || '')}"></div>
+        <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.port'))}${_hint(i18n.t('settings.email_form.imap_port_hint'))}</label><input id="eaf-imap-port" class="settings-input" type="number" value="${esc(a.imap_port || 993)}" style="max-width:100px"></div>
+        <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.username'))}${_hint(i18n.t('settings.email_form.imap_user_hint'))}</label><input id="eaf-imap-user" class="settings-input" value="${esc(a.imap_user || '')}"></div>
+        <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.password'))}${_hint(i18n.t('settings.email_form.imap_pass_hint'))}</label><input id="eaf-imap-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_imap_password ? esc(i18n.t('settings.email_form.unchanged_ph')) : ''}"></div>
+        <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.starttls'))}${_hint(i18n.t('settings.email_form.starttls_hint'))}</label><label class="admin-switch"><input type="checkbox" id="eaf-imap-starttls" ${a.imap_starttls !== false ? 'checked' : ''}><span class="admin-slider"></span></label></div>
+        <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">${esc(i18n.t('settings.email_form.smtp_section'))} <span style="font-weight:normal;opacity:0.7">${esc(i18n.t('settings.email_form.smtp_optional'))}</span></div>
+        <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.host'))}${_hint(i18n.t('settings.email_form.smtp_host_hint'))}</label><input id="eaf-smtp-host" class="settings-input" value="${esc(a.smtp_host || '')}"></div>
+        <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.port'))}${_hint(i18n.t('settings.email_form.smtp_port_hint'))}</label><input id="eaf-smtp-port" class="settings-input" type="number" value="${esc(a.smtp_port || 465)}" style="max-width:100px"></div>
+        <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.same_as_imap'))}${_hint(i18n.t('settings.email_form.same_as_imap_hint'))}</label><label class="admin-switch"><input type="checkbox" id="eaf-smtp-same" ${(!isEdit || (a.smtp_user && a.imap_user && a.smtp_user === a.imap_user)) ? 'checked' : ''}><span class="admin-slider"></span></label></div>
+        <div class="settings-row eaf-smtp-creds"><label class="settings-label">${esc(i18n.t('settings.email_form.username'))}${_hint(i18n.t('settings.email_form.smtp_user_hint'))}</label><input id="eaf-smtp-user" class="settings-input" value="${esc(a.smtp_user || '')}"></div>
+        <div class="settings-row eaf-smtp-creds"><label class="settings-label">${esc(i18n.t('settings.email_form.password'))}${_hint(i18n.t('settings.email_form.smtp_pass_hint'))}</label><input id="eaf-smtp-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_smtp_password ? esc(i18n.t('settings.email_form.unchanged_ph')) : ''}"></div>
         <div class="settings-row" style="margin-top:10px;align-items:center;">
           <button class="admin-btn-add" id="eaf-save" style="background:var(--red);border-color:var(--red);color:#fff;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-            ${isEdit ? 'Save' : 'Create'}
+            ${isEdit ? esc(i18n.t('common.save')) : esc(i18n.t('settings.email_form.create'))}
           </button>
           <span id="eaf-msg" style="font-size:11px;flex:1;margin-left:8px;"></span>
           <button class="admin-btn-add" id="eaf-cancel" style="opacity:0.7;display:inline-flex;align-items:center;gap:5px;position:relative;top:1px;margin-left:auto;">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            Cancel
+            ${esc(i18n.t('common.cancel'))}
           </button>
         </div>
       </div>
@@ -2540,7 +2544,7 @@ async function initEmailAccountsSettings() {
       // Name is optional — fall back to the From address so the list view
       // still has a label to render. Only refuse if both are blank.
       if (!body.name) body.name = body.from_address;
-      if (!body.name) { el('eaf-msg').textContent = 'Need at least a Name or Email'; el('eaf-msg').style.color = 'var(--red)'; return; }
+      if (!body.name) { el('eaf-msg').textContent = i18n.t('settings.email_form.need_name_or_email'); el('eaf-msg').style.color = 'var(--red)'; return; }
 
       try {
         const url = isEdit ? `/api/email/accounts/${a.id}` : '/api/email/accounts';
@@ -2552,15 +2556,15 @@ async function initEmailAccountsSettings() {
         });
         const d = await r.json();
         if (d.ok || d.id) {
-          el('eaf-msg').textContent = 'Saved';
+          el('eaf-msg').textContent = i18n.t('settings.status.saved');
           el('eaf-msg').style.color = 'var(--green,#50fa7b)';
           setTimeout(() => { formEl.style.display = 'none'; renderList(); }, 400);
         } else {
-          el('eaf-msg').textContent = d.error || 'Save failed';
+          el('eaf-msg').textContent = d.error || i18n.t('settings.status.save_failed_short');
           el('eaf-msg').style.color = 'var(--red)';
         }
       } catch (e) {
-        el('eaf-msg').textContent = 'Error: ' + e.message;
+        el('eaf-msg').textContent = i18n.t('settings.status.error', { error: e.message });
         el('eaf-msg').style.color = 'var(--red)';
       }
     });
@@ -2608,7 +2612,7 @@ async function initEmailSettings() {
   // Save email config
   el('set-email-save')?.addEventListener('click', async () => {
     const msg = el('set-email-msg');
-    if (msg) msg.textContent = 'Saving...';
+    if (msg) msg.textContent = i18n.t('settings.status.saving');
     const data = {
       imap_host: el('set-email-imap-host').value,
       imap_port: parseInt(el('set-email-imap-port').value) || 0,
@@ -2629,17 +2633,17 @@ async function initEmailSettings() {
         body: JSON.stringify(data),
       });
       const result = await res.json();
-      if (msg) msg.textContent = result.success ? '✓ Saved' : (result.error || 'Failed');
+      if (msg) msg.textContent = result.success ? i18n.t('settings.status.saved_check') : (result.error || i18n.t('settings.status.failed'));
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
     } catch (e) {
-      if (msg) msg.textContent = 'Failed';
+      if (msg) msg.textContent = i18n.t('settings.status.failed');
     }
   });
 
   // Save CardDAV config
   el('set-carddav-save')?.addEventListener('click', async () => {
     const msg = el('set-carddav-msg');
-    if (msg) msg.textContent = 'Saving...';
+    if (msg) msg.textContent = i18n.t('settings.status.saving');
     const data = {
       carddav_url: el('set-carddav-url').value,
       carddav_username: el('set-carddav-user').value,
@@ -2653,10 +2657,10 @@ async function initEmailSettings() {
         body: JSON.stringify(data),
       });
       const result = await res.json();
-      if (msg) msg.textContent = result.success ? '✓ Saved' : (result.error || 'Failed');
+      if (msg) msg.textContent = result.success ? i18n.t('settings.status.saved_check') : (result.error || i18n.t('settings.status.failed'));
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
     } catch (e) {
-      if (msg) msg.textContent = 'Failed';
+      if (msg) msg.textContent = i18n.t('settings.status.failed');
     }
   });
 
@@ -2679,12 +2683,12 @@ async function initEmailSettings() {
         wrap.style.cssText = 'display:inline-flex;align-items:center;';
         wrap.appendChild(wp.element);
         const txt = document.createElement('span');
-        txt.textContent = 'Analyzing your sent emails…';
+        txt.textContent = i18n.t('settings.email.analyzing_sent');
         txt.style.cssText = 'font-size:12px;opacity:0.7;';
         wrap.appendChild(txt);
         msg.appendChild(wrap);
       } catch (_) {
-        msg.textContent = 'Analyzing your sent emails…';
+        msg.textContent = i18n.t('settings.email.analyzing_sent');
       }
     }
     try {
@@ -2696,12 +2700,12 @@ async function initEmailSettings() {
       const data = await res.json();
       if (data.success && data.style) {
         if (el('set-email-style')) el('set-email-style').value = data.style;
-        if (msg) msg.textContent = '✓ Style extracted';
+        if (msg) msg.textContent = i18n.t('settings.email.style_extracted');
       } else {
-        if (msg) msg.textContent = data.error || 'Failed';
+        if (msg) msg.textContent = data.error || i18n.t('settings.status.failed');
       }
     } catch (e) {
-      if (msg) msg.textContent = 'Failed to extract';
+      if (msg) msg.textContent = i18n.t('settings.email.extract_failed');
     } finally {
       if (wp && wp.destroy) { try { wp.destroy(); } catch (_) {} }
       btn.disabled = false;
@@ -2712,7 +2716,7 @@ async function initEmailSettings() {
   // Save writing style manually
   el('set-email-style-save')?.addEventListener('click', async () => {
     const msg = el('set-email-style-msg');
-    if (msg) msg.textContent = 'Saving...';
+    if (msg) msg.textContent = i18n.t('settings.status.saving');
     try {
       const res = await fetch('/api/email/style', {
         method: 'PUT',
@@ -2720,10 +2724,10 @@ async function initEmailSettings() {
         body: JSON.stringify({ style: el('set-email-style').value }),
       });
       const result = await res.json();
-      if (msg) msg.textContent = result.success ? '✓ Saved' : 'Failed';
+      if (msg) msg.textContent = result.success ? i18n.t('settings.status.saved_check') : i18n.t('settings.status.failed');
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
     } catch (e) {
-      if (msg) msg.textContent = 'Failed';
+      if (msg) msg.textContent = i18n.t('settings.status.failed');
     }
   });
 }
@@ -2790,11 +2794,11 @@ async function initIntegrations() {
   async function renderList() {
     try {
       const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
-      if (!res.ok) { listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;">Admin access required</div>'; return; }
+      if (!res.ok) { listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;">' + _esc(i18n.t('settings.integrations.admin_required')) + '</div>'; return; }
       const data = await res.json();
       const items = data.integrations || [];
       if (!items.length) {
-        listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center;">No integrations configured</div>';
+        listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center;">' + _esc(i18n.t('settings.integrations.none_configured')) + '</div>';
         return;
       }
       listEl.innerHTML = items.map(i => `
@@ -2804,14 +2808,14 @@ async function initIntegrations() {
             <div style="font-size:11px;opacity:0.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(i.base_url || '')}</div>
           </div>
           <div style="display:flex;gap:4px;flex-shrink:0;">
-            <button class="admin-btn-sm intg-edit-btn" data-id="${i.id}" style="font-size:11px;">Edit</button>
-            <button class="admin-btn-sm intg-del-btn" data-id="${i.id}" style="font-size:11px;opacity:0.6;">Del</button>
+            <button class="admin-btn-sm intg-edit-btn" data-id="${i.id}" style="font-size:11px;">${_esc(i18n.t('common.edit'))}</button>
+            <button class="admin-btn-sm intg-del-btn" data-id="${i.id}" style="font-size:11px;opacity:0.6;">${_esc(i18n.t('settings.integrations.del'))}</button>
           </div>
         </div>
       `).join('');
       listEl.querySelectorAll('.intg-edit-btn').forEach(b => b.addEventListener('click', () => startEdit(b.dataset.id)));
       listEl.querySelectorAll('.intg-del-btn').forEach(b => b.addEventListener('click', () => doDelete(b.dataset.id)));
-    } catch (e) { listEl.innerHTML = '<div style="padding:12px;color:var(--red);font-size:12px;">Failed to load</div>'; }
+    } catch (e) { listEl.innerHTML = '<div style="padding:12px;color:var(--red);font-size:12px;">' + _esc(i18n.t('settings.status.failed_to_load')) + '</div>'; }
   }
 
   function _esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -2819,7 +2823,7 @@ async function initIntegrations() {
   // Start editing
   async function startEdit(id) {
     editingId = id;
-    formTitle.textContent = 'Edit Integration';
+    formTitle.textContent = i18n.t('settings.integrations.edit_integration');
     // Fetch full data (with unmasked key from a dedicated edit fetch — we'll just load what we have)
     try {
       const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
@@ -2832,7 +2836,7 @@ async function initIntegrations() {
       authTypeSel.value = item.auth_type || 'none';
       authHeaderIn.value = item.auth_header || '';
       keyIn.value = ''; // masked — user re-enters if changing
-      keyIn.placeholder = item.api_key ? 'Leave blank to keep current' : 'API key or token';
+      keyIn.placeholder = item.api_key ? i18n.t('settings.integrations.key_keep_current') : i18n.t('settings.integrations.key_or_token');
       descIn.value = item.description || '';
       syncAuthRow();
       formCard.style.display = '';
@@ -2842,14 +2846,14 @@ async function initIntegrations() {
   // Show add form
   addBtn.addEventListener('click', () => {
     editingId = null;
-    formTitle.textContent = 'Add Integration';
+    formTitle.textContent = i18n.t('settings.integrations.add_integration');
     presetSel.value = '';
     nameIn.value = '';
     urlIn.value = '';
     authTypeSel.value = 'header';
     authHeaderIn.value = '';
     keyIn.value = '';
-    keyIn.placeholder = 'API key or token';
+    keyIn.placeholder = i18n.t('settings.integrations.key_or_token');
     descIn.value = '';
     statusEl.textContent = '';
     syncAuthRow();
@@ -2872,49 +2876,49 @@ async function initIntegrations() {
     };
     if (presetSel.value) payload.preset = presetSel.value;
     if (keyIn.value.trim()) payload.api_key = keyIn.value.trim();
-    if (!payload.name) { statusEl.textContent = 'Name required'; statusEl.style.color = 'var(--red)'; return; }
-    if (!payload.base_url) { statusEl.textContent = 'URL required'; statusEl.style.color = 'var(--red)'; return; }
+    if (!payload.name) { statusEl.textContent = i18n.t('settings.integrations.name_required'); statusEl.style.color = 'var(--red)'; return; }
+    if (!payload.base_url) { statusEl.textContent = i18n.t('settings.integrations.url_required'); statusEl.style.color = 'var(--red)'; return; }
 
     try {
       const url = editingId ? `/api/auth/integrations/${editingId}` : '/api/auth/integrations';
       const method = editingId ? 'PUT' : 'POST';
       const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), credentials: 'same-origin' });
       if (res.ok) {
-        statusEl.textContent = 'Saved';
+        statusEl.textContent = i18n.t('settings.status.saved');
         statusEl.style.color = 'var(--green, #98c379)';
         formCard.style.display = 'none';
         await renderList();
         notifyIntegrationsChanged();
       } else {
         const err = await res.json().catch(() => ({}));
-        statusEl.textContent = err.detail || 'Save failed';
+        statusEl.textContent = err.detail || i18n.t('settings.status.save_failed_short');
         statusEl.style.color = 'var(--red)';
       }
     } catch (e) {
-      statusEl.textContent = 'Error saving';
+      statusEl.textContent = i18n.t('settings.integrations.error_saving');
       statusEl.style.color = 'var(--red)';
     }
   });
 
   // Test
   testBtn.addEventListener('click', async () => {
-    if (!editingId) { statusEl.textContent = 'Save first, then test'; statusEl.style.color = 'var(--fg)'; return; }
-    statusEl.textContent = 'Testing...';
+    if (!editingId) { statusEl.textContent = i18n.t('settings.integrations.save_first_then_test'); statusEl.style.color = 'var(--fg)'; return; }
+    statusEl.textContent = i18n.t('settings.status.testing');
     statusEl.style.color = 'var(--fg)';
     try {
       const res = await fetch(`/api/auth/integrations/${editingId}/test`, { method: 'POST', credentials: 'same-origin' });
       const data = await res.json();
-      statusEl.textContent = data.message || (data.ok ? 'OK' : 'Failed');
+      statusEl.textContent = data.message || (data.ok ? i18n.t('settings.status.ok') : i18n.t('settings.status.failed'));
       statusEl.style.color = data.ok ? 'var(--green, #98c379)' : 'var(--red)';
     } catch (e) {
-      statusEl.textContent = 'Connection failed';
+      statusEl.textContent = i18n.t('settings.status.connection_failed');
       statusEl.style.color = 'var(--red)';
     }
   });
 
   // Delete
   async function doDelete(id) {
-    if (!await window.styledConfirm('Delete this integration?', { confirmText: 'Delete', danger: true })) return;
+    if (!await window.styledConfirm(i18n.t('settings.integrations.delete_confirm'), { confirmText: i18n.t('common.delete'), danger: true })) return;
     try {
       await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
       if (editingId === id) { formCard.style.display = 'none'; editingId = null; }
@@ -2967,11 +2971,11 @@ async function initUnifiedIntegrations() {
     const items = [];
     // API integrations
     for (const intg of (apiRes.integrations || [])) {
-      items.push({ type: 'api', id: intg.id, name: intg.name || 'Unnamed', detail: intg.base_url || '', enabled: intg.enabled !== false, data: intg });
+      items.push({ type: 'api', id: intg.id, name: intg.name || i18n.t('settings.integrations.unnamed'), detail: intg.base_url || '', enabled: intg.enabled !== false, data: intg });
     }
     // CalDAV
     if (calRes.url) {
-      items.push({ type: 'caldav', id: '__caldav__', name: 'Calendar (CalDAV)', detail: calRes.url, enabled: true, data: calRes });
+      items.push({ type: 'caldav', id: '__caldav__', name: i18n.t('settings.integrations.calendar_caldav'), detail: calRes.url, enabled: true, data: calRes });
     }
     // Contacts / CardDAV
     const contactCount = Number(contactsRes.count || (contactsRes.contacts || []).length || 0);
@@ -2979,23 +2983,23 @@ async function initUnifiedIntegrations() {
       items.push({
         type: 'carddav',
         id: '__carddav__',
-        name: 'Contacts',
-        detail: cardRes.url || `${contactCount} contact${contactCount === 1 ? '' : 's'}`,
+        name: i18n.t('settings.integrations.contacts'),
+        detail: cardRes.url || i18n.t('settings.integrations.contact_count', { count: contactCount }),
         enabled: true,
         data: cardRes,
       });
     }
     // Email — one entry per EmailAccount row
     for (const acc of (emailAccountsRes.accounts || [])) {
-      const label = acc.name + (acc.is_default ? ' (default)' : '');
+      const label = acc.name + (acc.is_default ? i18n.t('settings.email.default_suffix') : '');
       const detail = [acc.from_address || acc.imap_user, acc.imap_host].filter(Boolean).join(' — ');
       items.push({ type: 'email', id: acc.id, name: label, detail, enabled: acc.enabled !== false, data: acc });
     }
     // MCP servers
     const mcpList = Array.isArray(mcpRes) ? mcpRes : (mcpRes.servers || []);
     for (const srv of mcpList) {
-      const statusText = srv.needs_oauth ? 'needs auth' : srv.status === 'connected' ? `${srv.enabled_tool_count}/${srv.tool_count} tools` : srv.status === 'error' ? 'error' : 'disconnected';
-      items.push({ type: 'mcp', id: srv.id || srv.name, name: srv.name || 'MCP Server', detail: statusText, enabled: srv.is_enabled !== false, data: srv });
+      const statusText = srv.needs_oauth ? i18n.t('settings.integrations.mcp_needs_auth') : srv.status === 'connected' ? i18n.t('settings.integrations.mcp_tools_count', { enabled: srv.enabled_tool_count, total: srv.tool_count }) : srv.status === 'error' ? i18n.t('settings.integrations.mcp_error') : i18n.t('settings.integrations.mcp_disconnected');
+      items.push({ type: 'mcp', id: srv.id || srv.name, name: srv.name || i18n.t('settings.integrations.mcp_server'), detail: statusText, enabled: srv.is_enabled !== false, data: srv });
     }
     // Vaultwarden removed as an integration option.
     return items;
@@ -3007,16 +3011,17 @@ async function initUnifiedIntegrations() {
     // type gets. (The clickable glow-on-test variant for email was
     // removed earlier; this matches the API/CalDAV/MCP pattern.)
     const statusDot = item.enabled
-      ? '<span style="width:8px;height:8px;border-radius:50%;background:var(--green,#50fa7b);flex-shrink:0" title="Active"></span>'
-      : '<span style="width:8px;height:8px;border-radius:50%;background:var(--fg);opacity:0.3;flex-shrink:0" title="Disabled"></span>';
-    return `<div class="intg-card" data-intg-id="${item.id}" data-intg-type="${item.type}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;cursor:pointer" title="Click to edit">
+      ? `<span style="width:8px;height:8px;border-radius:50%;background:var(--green,#50fa7b);flex-shrink:0" title="${esc(i18n.t('settings.integrations.active'))}"></span>`
+      : `<span style="width:8px;height:8px;border-radius:50%;background:var(--fg);opacity:0.3;flex-shrink:0" title="${esc(i18n.t('settings.integrations.disabled'))}"></span>`;
+    const typeLabel = i18n.t('settings.integrations.type.' + item.type) || t.label;
+    return `<div class="intg-card" data-intg-id="${item.id}" data-intg-type="${item.type}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;cursor:pointer" title="${esc(i18n.t('settings.integrations.click_to_edit'))}">
       <span style="opacity:0.6;flex-shrink:0">${t.icon}</span>
       <div style="flex:1;min-width:0">
-        <div style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">${item.name} <span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 5px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 50%, transparent);border-radius:3px;color:var(--accent, var(--red));background:color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);">${t.label}</span></div>
+        <div style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">${item.name} <span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 5px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 50%, transparent);border-radius:3px;color:var(--accent, var(--red));background:color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);">${typeLabel}</span></div>
         <div style="font-size:11px;opacity:0.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.detail || ''}</div>
       </div>
       ${statusDot}
-      <button class="admin-btn-sm intg-del-btn" data-intg-id="${item.id}" data-intg-type="${item.type}" title="Remove" style="background:none;border:none;padding:4px;cursor:pointer;color:var(--red);opacity:0.55;display:inline-flex;align-items:center;justify-content:center;">
+      <button class="admin-btn-sm intg-del-btn" data-intg-id="${item.id}" data-intg-type="${item.type}" title="${esc(i18n.t('common.remove'))}" style="background:none;border:none;padding:4px;cursor:pointer;color:var(--red);opacity:0.55;display:inline-flex;align-items:center;justify-content:center;">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
       </button>
     </div>`;
@@ -3027,10 +3032,10 @@ async function initUnifiedIntegrations() {
     const noticeHtml = integrationNotice ? `
       <div class="intg-followup-note" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:8px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);border-left:3px solid var(--accent, var(--red));border-radius:5px;background:color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);font-size:11px;">
         <span style="flex:1;line-height:1.35">${integrationNotice}</span>
-        <button type="button" class="admin-btn-sm intg-open-email-settings" style="white-space:nowrap;">Email settings</button>
+        <button type="button" class="admin-btn-sm intg-open-email-settings" style="white-space:nowrap;">${esc(i18n.t('settings.integrations.email_settings_btn'))}</button>
       </div>` : '';
     if (items.length === 0) {
-      listEl.innerHTML = noticeHtml + '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">No integrations configured</div>';
+      listEl.innerHTML = noticeHtml + '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">' + esc(i18n.t('settings.integrations.none_configured')) + '</div>';
     } else {
       listEl.innerHTML = noticeHtml + items.map(renderCard).join('');
     }
@@ -3054,7 +3059,7 @@ async function initUnifiedIntegrations() {
     listEl.querySelectorAll('.intg-del-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (!await window.styledConfirm('Remove this integration?', { confirmText: 'Remove', danger: true })) return;
+        if (!await window.styledConfirm(i18n.t('settings.integrations.remove_confirm'), { confirmText: i18n.t('common.remove_caps'), danger: true })) return;
         const type = btn.dataset.intgType;
         const id = btn.dataset.intgId;
         try {
@@ -3112,16 +3117,16 @@ async function initUnifiedIntegrations() {
       .join('');
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px">${editId ? 'Edit' : 'Add'} API Integration</h2>
+        <h2 style="font-size:13px">${editId ? esc(i18n.t('settings.integrations.edit_api_integration')) : esc(i18n.t('settings.integrations.add_api_integration'))}</h2>
         <div class="settings-col">
-          <div class="settings-row"><label class="settings-label">Preset</label><select id="uf-api-preset" class="settings-select"><option value="">Custom (no preset)</option>${selectOpts}</select></div>
-          <div class="settings-row"><label class="settings-label">Name</label><input id="uf-api-name" class="settings-input" placeholder="My Service"></div>
-          <div class="settings-row"><label class="settings-label">Base URL</label><input id="uf-api-url" class="settings-input" placeholder="http://localhost:8080"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.integrations.preset'))}</label><select id="uf-api-preset" class="settings-select"><option value="">${esc(i18n.t('settings.integrations.custom_no_preset'))}</option>${selectOpts}</select></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.integrations.name'))}</label><input id="uf-api-name" class="settings-input" placeholder="${esc(i18n.t('settings.integrations.name_ph'))}"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.integrations.base_url'))}</label><input id="uf-api-url" class="settings-input" placeholder="http://localhost:8080"></div>
           <div id="uf-api-ntfy-hint" style="display:none;font-size:11px;line-height:1.35;opacity:0.68;margin:-2px 0 2px 106px;"></div>
-          <div class="settings-row"><label class="settings-label">Auth${_apiHint('How this service expects the credential to be sent. <b>Bearer</b> = sends "Authorization: Bearer YOUR_KEY" (most modern APIs, ntfy, OpenAI-style). <b>Header</b> = sends YOUR_KEY verbatim under a header name you choose (Miniflux uses X-Auth-Token). <b>Basic</b> = HTTP basic auth (user:pass). <b>None</b> = the API is open / no auth.')}</label><select id="uf-api-auth" class="settings-input"><option value="bearer">Bearer (most common)</option><option value="header">Header</option><option value="basic">Basic</option><option value="none">None</option></select></div>
-          <div class="settings-row" id="uf-api-header-row"><label class="settings-label">Header${_apiHint('The HTTP header name the key goes under (Miniflux: X-Auth-Token; most others: Authorization). Only used when Auth = Header.')}</label><input id="uf-api-header" class="settings-input" placeholder="X-Auth-Token"></div>
-          <div class="settings-row"><label class="settings-label">API Key${_apiHint('The secret token the service issued you (generated in its admin panel / settings). Used to prove your identity on each request. Required for any Auth mode except None.')}</label><input id="uf-api-key" class="settings-input" type="password" placeholder="Token/key"></div>
-          <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-api-save">Save</button><button class="admin-btn-sm" id="uf-api-test" style="opacity:0.7">Test</button><button class="admin-btn-sm" id="uf-api-cancel" style="opacity:0.7">Cancel</button><span id="uf-api-msg" style="font-size:11px"></span></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.integrations.auth'))}${_apiHint(i18n.t('settings.integrations.auth_hint'))}</label><select id="uf-api-auth" class="settings-input"><option value="bearer">${esc(i18n.t('settings.integrations.auth_bearer'))}</option><option value="header">${esc(i18n.t('settings.integrations.auth_header_opt'))}</option><option value="basic">${esc(i18n.t('settings.integrations.auth_basic'))}</option><option value="none">${esc(i18n.t('settings.integrations.auth_none'))}</option></select></div>
+          <div class="settings-row" id="uf-api-header-row"><label class="settings-label">${esc(i18n.t('settings.integrations.header'))}${_apiHint(i18n.t('settings.integrations.header_hint'))}</label><input id="uf-api-header" class="settings-input" placeholder="X-Auth-Token"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.integrations.api_key'))}${_apiHint(i18n.t('settings.integrations.api_key_hint'))}</label><input id="uf-api-key" class="settings-input" type="password" placeholder="${esc(i18n.t('settings.integrations.token_key_ph'))}"></div>
+          <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-api-save">${esc(i18n.t('common.save'))}</button><button class="admin-btn-sm" id="uf-api-test" style="opacity:0.7">${esc(i18n.t('settings.search.test'))}</button><button class="admin-btn-sm" id="uf-api-cancel" style="opacity:0.7">${esc(i18n.t('common.cancel'))}</button><span id="uf-api-msg" style="font-size:11px"></span></div>
         </div>
       </div>`;
     const preset = el('uf-api-preset'), name = el('uf-api-name'), url = el('uf-api-url'), auth = el('uf-api-auth'), header = el('uf-api-header'), key = el('uf-api-key'), ntfyHint = el('uf-api-ntfy-hint');
@@ -3173,25 +3178,25 @@ async function initUnifiedIntegrations() {
         // level would silently miss, leaving Test perpetually stuck on
         // "Save first" until the form was reopened.
         if (!_editId && saved) _editId = saved.integration?.id || saved.id;
-        el('uf-api-msg').textContent = 'Saved'; el('uf-api-msg').style.color = 'var(--green,#50fa7b)';
+        el('uf-api-msg').textContent = i18n.t('settings.status.saved'); el('uf-api-msg').style.color = 'var(--green,#50fa7b)';
         await renderList();
         notifyIntegrationsChanged();
-      } catch (_) { el('uf-api-msg').textContent = 'Failed'; el('uf-api-msg').style.color = 'var(--red)'; }
+      } catch (_) { el('uf-api-msg').textContent = i18n.t('settings.status.failed'); el('uf-api-msg').style.color = 'var(--red)'; }
     });
     el('uf-api-test').addEventListener('click', async () => {
-      if (!_editId) { el('uf-api-msg').textContent = 'Save first'; return; }
+      if (!_editId) { el('uf-api-msg').textContent = i18n.t('settings.integrations.save_first'); return; }
       try {
         const r = await fetch(`/api/auth/integrations/${_editId}/test`, { method: 'POST', credentials: 'same-origin' });
         const d = await r.json();
         // Backend returns {ok: bool, message: str}
         if (d.ok) {
-          el('uf-api-msg').textContent = d.message || 'Connected';
+          el('uf-api-msg').textContent = d.message || i18n.t('settings.status.connected');
           el('uf-api-msg').style.color = 'var(--green,#50fa7b)';
         } else {
           el('uf-api-msg').textContent = (d.message || d.error || d.detail || `HTTP ${r.status}`).slice(0, 360);
           el('uf-api-msg').style.color = 'var(--red)';
         }
-      } catch (e) { el('uf-api-msg').textContent = 'Error: ' + e.message; el('uf-api-msg').style.color = 'var(--red)'; }
+      } catch (e) { el('uf-api-msg').textContent = i18n.t('settings.status.error', { error: e.message }); el('uf-api-msg').style.color = 'var(--red)'; }
     });
   }
 
@@ -3199,12 +3204,12 @@ async function initUnifiedIntegrations() {
   async function showCalDavForm() {
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px">Calendar (CalDAV)</h2>
+        <h2 style="font-size:13px">${esc(i18n.t('settings.integrations.calendar_caldav'))}</h2>
         <div class="settings-col">
-          <div class="settings-row"><label class="settings-label">Server URL</label><input id="uf-caldav-url" class="settings-input" placeholder="http://localhost:5232/user"></div>
-          <div class="settings-row"><label class="settings-label">Username</label><input id="uf-caldav-user" class="settings-input"></div>
-          <div class="settings-row"><label class="settings-label">Password</label><input id="uf-caldav-pass" class="settings-input" type="password"></div>
-          <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-caldav-save">Save</button><button class="admin-btn-sm" id="uf-caldav-test" style="opacity:0.7">Test</button><button class="admin-btn-sm" id="uf-caldav-cancel" style="opacity:0.7">Cancel</button><span id="uf-caldav-msg" style="font-size:11px"></span></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.dav.server_url'))}</label><input id="uf-caldav-url" class="settings-input" placeholder="http://localhost:5232/user"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.dav.username'))}</label><input id="uf-caldav-user" class="settings-input"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.dav.password'))}</label><input id="uf-caldav-pass" class="settings-input" type="password"></div>
+          <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-caldav-save">${esc(i18n.t('common.save'))}</button><button class="admin-btn-sm" id="uf-caldav-test" style="opacity:0.7">${esc(i18n.t('settings.search.test'))}</button><button class="admin-btn-sm" id="uf-caldav-cancel" style="opacity:0.7">${esc(i18n.t('common.cancel'))}</button><span id="uf-caldav-msg" style="font-size:11px"></span></div>
         </div>
       </div>`;
     try {
@@ -3230,7 +3235,7 @@ async function initUnifiedIntegrations() {
         });
         return await r.json();
       } catch (e) {
-        return { ok: false, error: 'Network error: ' + e.message };
+        return { ok: false, error: i18n.t('settings.dav.network_error', { error: e.message }) };
       }
     };
     const _setCalDavMsg = (text, ok) => {
@@ -3244,11 +3249,11 @@ async function initUnifiedIntegrations() {
       // Test button uses. If the CalDAV server rejects the creds/URL
       // we won't persist garbage — the user gets the actual error
       // (HTTP 401, "Not found", "Connection refused", etc.) in red.
-      _setCalDavMsg('Testing…', true);
+      _setCalDavMsg(i18n.t('settings.status.testing_ellipsis'), true);
       el('uf-caldav-msg').style.color = '';
       const d = await _runCalDavTest();
       if (!d.ok) {
-        _setCalDavMsg(d.error || 'Connection failed — not saved', false);
+        _setCalDavMsg(d.error || i18n.t('settings.dav.connection_failed_not_saved'), false);
         return;
       }
       try {
@@ -3261,19 +3266,19 @@ async function initUnifiedIntegrations() {
             password: el('uf-caldav-pass').value,
           }),
         });
-        _setCalDavMsg('Saved', true);
+        _setCalDavMsg(i18n.t('settings.status.saved'), true);
         formEl.style.display = 'none';
         await renderList();
         notifyIntegrationsChanged();
       } catch (_) {
-        _setCalDavMsg('Save failed', false);
+        _setCalDavMsg(i18n.t('settings.status.save_failed_short'), false);
       }
     });
     el('uf-caldav-test').addEventListener('click', async () => {
-      _setCalDavMsg('Testing…', true);
+      _setCalDavMsg(i18n.t('settings.status.testing_ellipsis'), true);
       el('uf-caldav-msg').style.color = '';
       const d = await _runCalDavTest();
-      _setCalDavMsg(d.ok ? 'Connected' : (d.error || 'Failed'), d.ok);
+      _setCalDavMsg(d.ok ? i18n.t('settings.status.connected') : (d.error || i18n.t('settings.status.failed')), d.ok);
     });
   }
 
@@ -3281,29 +3286,29 @@ async function initUnifiedIntegrations() {
   async function showCardDavForm() {
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px">Contacts (CardDAV)</h2>
+        <h2 style="font-size:13px">${esc(i18n.t('settings.integrations.contacts_carddav'))}</h2>
         <div class="settings-col">
-          <div class="settings-row"><label class="settings-label">URL</label><input id="uf-carddav-url" class="settings-input" placeholder="http://localhost:5232/user/contacts/"></div>
-          <div class="settings-row"><label class="settings-label">Username</label><input id="uf-carddav-user" class="settings-input"></div>
-          <div class="settings-row"><label class="settings-label">Password</label><input id="uf-carddav-pass" class="settings-input" type="password"></div>
-          <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-carddav-save">Save</button><button class="admin-btn-sm" id="uf-carddav-cancel" style="opacity:0.7">Cancel</button><span id="uf-carddav-msg" style="font-size:11px"></span></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.dav.url'))}</label><input id="uf-carddav-url" class="settings-input" placeholder="http://localhost:5232/user/contacts/"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.dav.username'))}</label><input id="uf-carddav-user" class="settings-input"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.dav.password'))}</label><input id="uf-carddav-pass" class="settings-input" type="password"></div>
+          <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-carddav-save">${esc(i18n.t('common.save'))}</button><button class="admin-btn-sm" id="uf-carddav-cancel" style="opacity:0.7">${esc(i18n.t('common.cancel'))}</button><span id="uf-carddav-msg" style="font-size:11px"></span></div>
         </div>
       </div>
       <div class="admin-card contacts-manager" style="margin-top:8px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <h2 style="font-size:13px;margin:0;">Contacts <span id="cm-count" style="opacity:0.5;font-weight:normal;font-size:11px;"></span></h2>
-          <button class="admin-btn-sm" id="cm-import-btn" style="margin-left:auto;">Import</button>
-          <button class="admin-btn-sm" id="cm-export-vcf-btn">Export .vcf</button>
-          <button class="admin-btn-sm" id="cm-export-csv-btn">Export .csv</button>
-          <button class="admin-btn-sm" id="cm-add-toggle">+ Add</button>
+          <h2 style="font-size:13px;margin:0;">${esc(i18n.t('settings.integrations.contacts'))} <span id="cm-count" style="opacity:0.5;font-weight:normal;font-size:11px;"></span></h2>
+          <button class="admin-btn-sm" id="cm-import-btn" style="margin-left:auto;">${esc(i18n.t('common.import'))}</button>
+          <button class="admin-btn-sm" id="cm-export-vcf-btn">${esc(i18n.t('settings.contacts.export_vcf'))}</button>
+          <button class="admin-btn-sm" id="cm-export-csv-btn">${esc(i18n.t('settings.contacts.export_csv'))}</button>
+          <button class="admin-btn-sm" id="cm-add-toggle">${esc(i18n.t('settings.contacts.add'))}</button>
           <input type="file" id="cm-import-file" accept=".vcf,.csv,text/vcard,text/csv" multiple style="display:none">
         </div>
         <div id="cm-add-row" class="contacts-add-row" style="display:none;">
-          <input id="cm-add-name" class="settings-input" placeholder="Name" style="flex:1;min-width:0;">
+          <input id="cm-add-name" class="settings-input" placeholder="${esc(i18n.t('settings.contacts.name_ph'))}" style="flex:1;min-width:0;">
           <input id="cm-add-email" class="settings-input" placeholder="email@example.com" style="flex:1;min-width:0;">
-          <button class="admin-btn-sm" id="cm-add-save">Save</button>
+          <button class="admin-btn-sm" id="cm-add-save">${esc(i18n.t('common.save'))}</button>
         </div>
-        <div id="cm-list" class="contacts-list"><div style="opacity:0.4;font-size:11px;padding:8px 2px;">Loading…</div></div>
+        <div id="cm-list" class="contacts-list"><div style="opacity:0.4;font-size:11px;padding:8px 2px;">${esc(i18n.t('common.loading'))}</div></div>
       </div>`;
     try {
       const r = await fetch('/api/contacts/config', { credentials: 'same-origin' }); const d = await r.json();
@@ -3315,7 +3320,7 @@ async function initUnifiedIntegrations() {
       if (el('uf-carddav-pass').value) body.carddav_password = el('uf-carddav-pass').value;
       try {
         await fetch('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        el('uf-carddav-msg').textContent = 'Saved';
+        el('uf-carddav-msg').textContent = i18n.t('settings.status.saved');
         el('uf-carddav-msg').style.color = 'var(--green, #50fa7b)';
         // Refresh both the sub-panel (contacts manager) AND the
         // outer integrations list so the CardDAV row appears
@@ -3324,7 +3329,7 @@ async function initUnifiedIntegrations() {
         await renderList();
         notifyIntegrationsChanged();
       } catch (_) {
-        el('uf-carddav-msg').textContent = 'Failed';
+        el('uf-carddav-msg').textContent = i18n.t('settings.status.failed');
         el('uf-carddav-msg').style.color = 'var(--red)';
       }
     });
@@ -3349,10 +3354,10 @@ async function initUnifiedIntegrations() {
     const _downloadContacts = async (format) => {
       const btn = el(format === 'csv' ? 'cm-export-csv-btn' : 'cm-export-vcf-btn');
       const orig = btn ? btn.textContent : '';
-      if (btn) { btn.textContent = 'Exporting...'; btn.disabled = true; }
+      if (btn) { btn.textContent = i18n.t('settings.contacts.exporting'); btn.disabled = true; }
       try {
         const res = await fetch(`/api/contacts/export?format=${encodeURIComponent(format)}`, { credentials: 'same-origin' });
-        if (!res.ok) throw new Error('Export failed');
+        if (!res.ok) throw new Error(i18n.t('settings.contacts.export_failed'));
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -3363,7 +3368,7 @@ async function initUnifiedIntegrations() {
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       } catch (_) {
-        uiModule.showError ? uiModule.showError('Export failed') : alert('Export failed');
+        uiModule.showError ? uiModule.showError(i18n.t('settings.contacts.export_failed')) : alert(i18n.t('settings.contacts.export_failed'));
       } finally {
         if (btn) { btn.textContent = orig; btn.disabled = false; }
       }
@@ -3380,7 +3385,7 @@ async function initUnifiedIntegrations() {
       if (!files.length) return;
       const btn = el('cm-import-btn');
       const orig = btn ? btn.textContent : '';
-      if (btn) { btn.textContent = 'Importing…'; btn.disabled = true; }
+      if (btn) { btn.textContent = i18n.t('settings.contacts.importing'); btn.disabled = true; }
       try {
         const texts = await Promise.all(files.map(f => f.text()));
         const vcfParts = [];
@@ -3405,11 +3410,11 @@ async function initUnifiedIntegrations() {
         };
         if (vcfParts.length) await _postImport({ vcf: vcfParts.join('\n') });
         if (csvParts.length) await _postImport({ csv: csvParts.join('\n') });
-        if (!vcfParts.length && !csvParts.length) throw new Error('No contact data found');
-        const msg = `Imported ${imported}/${total}` + (failed ? ` (${failed} failed)` : '');
+        if (!vcfParts.length && !csvParts.length) throw new Error(i18n.t('settings.contacts.no_data'));
+        const msg = i18n.t('settings.contacts.imported', { imported: imported, total: total }) + (failed ? i18n.t('settings.contacts.imported_failed_suffix', { failed: failed }) : '');
         uiModule.showToast ? uiModule.showToast(msg) : null;
       } catch (err) {
-        uiModule.showError ? uiModule.showError(err?.message || 'Import failed') : alert(err?.message || 'Import failed');
+        uiModule.showError ? uiModule.showError(err?.message || i18n.t('settings.contacts.import_failed')) : alert(err?.message || i18n.t('settings.contacts.import_failed'));
       } finally {
         if (btn) { btn.textContent = orig; btn.disabled = false; }
         e.target.value = '';
@@ -3430,13 +3435,13 @@ async function initUnifiedIntegrations() {
       const d = await r.json();
       contacts = d.contacts || [];
     } catch (_) {
-      list.innerHTML = '<div style="opacity:0.5;font-size:11px;padding:8px 2px;">Failed to load contacts (check CardDAV config above).</div>';
+      list.innerHTML = '<div style="opacity:0.5;font-size:11px;padding:8px 2px;">' + esc(i18n.t('settings.contacts.load_failed')) + '</div>';
       return;
     }
     const cnt = el('cm-count');
     if (cnt) cnt.textContent = contacts.length ? `(${contacts.length})` : '';
     if (!contacts.length) {
-      list.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 2px;">No contacts yet.</div>';
+      list.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 2px;">' + esc(i18n.t('settings.contacts.none_yet')) + '</div>';
       return;
     }
     // Sort by name for a stable list.
@@ -3448,17 +3453,17 @@ async function initUnifiedIntegrations() {
       return `<div class="contact-row" data-uid="${esc(c.uid)}">
         <div class="contact-row-view" style="display:flex;align-items:center;gap:8px;">
           <div style="flex:1;min-width:0;">
-            <div class="contact-name" style="font-size:12px;font-weight:600;">${esc(c.name || '(no name)')}</div>
+            <div class="contact-name" style="font-size:12px;font-weight:600;">${esc(c.name || i18n.t('settings.contacts.no_name'))}</div>
             <div class="contact-sub" style="font-size:10px;opacity:0.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(sub)}</div>
           </div>
-          <button class="admin-btn-sm contact-edit" title="Edit">Edit</button>
-          <button class="admin-btn-sm contact-del" title="Delete" style="opacity:0.75;">Delete</button>
+          <button class="admin-btn-sm contact-edit" title="${esc(i18n.t('common.edit'))}">${esc(i18n.t('common.edit'))}</button>
+          <button class="admin-btn-sm contact-del" title="${esc(i18n.t('common.delete'))}" style="opacity:0.75;">${esc(i18n.t('common.delete'))}</button>
         </div>
         <div class="contact-row-edit" style="display:none;flex-direction:column;gap:4px;">
-          <input class="settings-input contact-edit-name" value="${esc(c.name || '')}" placeholder="Name">
-          <input class="settings-input contact-edit-emails" value="${esc(emails)}" placeholder="email1, email2">
-          <input class="settings-input contact-edit-phones" value="${esc(phones)}" placeholder="phone1, phone2">
-          <div style="display:flex;gap:6px;"><button class="admin-btn-sm contact-save">Save</button><button class="admin-btn-sm contact-cancel" style="opacity:0.7;">Cancel</button></div>
+          <input class="settings-input contact-edit-name" value="${esc(c.name || '')}" placeholder="${esc(i18n.t('settings.contacts.name_ph'))}">
+          <input class="settings-input contact-edit-emails" value="${esc(emails)}" placeholder="${esc(i18n.t('settings.contacts.emails_ph'))}">
+          <input class="settings-input contact-edit-phones" value="${esc(phones)}" placeholder="${esc(i18n.t('settings.contacts.phones_ph'))}">
+          <div style="display:flex;gap:6px;"><button class="admin-btn-sm contact-save">${esc(i18n.t('common.save'))}</button><button class="admin-btn-sm contact-cancel" style="opacity:0.7;">${esc(i18n.t('common.cancel'))}</button></div>
         </div>
       </div>`;
     }).join('');
@@ -3488,8 +3493,8 @@ async function initUnifiedIntegrations() {
       });
       row.querySelector('.contact-del')?.addEventListener('click', async () => {
         const ok = uiModule.styledConfirm
-          ? await uiModule.styledConfirm('Delete this contact?', { confirmText: 'Delete', danger: true })
-          : window.confirm('Delete this contact?');
+          ? await uiModule.styledConfirm(i18n.t('settings.contacts.delete_confirm'), { confirmText: i18n.t('common.delete'), danger: true })
+          : window.confirm(i18n.t('settings.contacts.delete_confirm'));
         if (!ok) return;
         try {
           await fetch('/api/contacts/' + encodeURIComponent(uid), { method: 'DELETE', credentials: 'same-origin' });
@@ -3513,7 +3518,7 @@ async function initUnifiedIntegrations() {
         existing = (d.accounts || []).find(a => a.id === editId) || null;
       } catch (_) {}
     }
-    const placeholderPass = (isEdit && existing) ? '(leave blank to keep current)' : '';
+    const placeholderPass = (isEdit && existing) ? i18n.t('settings.email_form.leave_blank_keep') : '';
     // Small `?` indicator next to each label (native title tooltip).
     const _hint = (tip) =>
       `<span class="uf-hint" title="${esc(tip)}" aria-label="${esc(tip)}" tabindex="0" `
@@ -3536,42 +3541,42 @@ async function initUnifiedIntegrations() {
       .map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px">${isEdit ? 'Edit' : 'Add'} Email Account</h2>
+        <h2 style="font-size:13px">${isEdit ? esc(i18n.t('settings.email.edit_email_account')) : esc(i18n.t('settings.email.add_email_account'))}</h2>
         <div class="settings-col">
-          <div class="settings-row"><label class="settings-label">Provider${_hint('Pick a known provider to auto-fill the IMAP and SMTP host/port. Choose Custom to type your own.')}</label><select id="uf-email-provider" class="settings-select"><option value="">Custom…</option>${_providerOptions}</select></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.provider'))}${_hint(i18n.t('settings.email_form.provider_hint'))}</label><select id="uf-email-provider" class="settings-select"><option value="">${esc(i18n.t('settings.email_form.custom_opt'))}</option>${_providerOptions}</select></div>
           <div id="uf-email-provider-note" style="display:none;font-size:11px;line-height:1.5;padding:8px 10px;margin:2px 0 4px;border:1px solid color-mix(in srgb, var(--fg) 15%, transparent);border-left:3px solid var(--accent, var(--red));border-radius:4px;background:color-mix(in srgb, var(--fg) 4%, transparent);"></div>
-          <div class="settings-row"><label class="settings-label">Name${_hint('Optional label for this account (e.g. “Work” or “Personal”). Leave blank to use the email address.')}</label><input id="uf-email-name" class="settings-input" placeholder="(optional — leave blank to use email)"></div>
-          <div class="settings-row"><label class="settings-label">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="uf-email-from" class="settings-input" placeholder="you@example.com"></div>
-          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:4px 0 2px">IMAP (Receiving)</div>
-          <div class="settings-row"><label class="settings-label">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="uf-imap-host" class="settings-input" placeholder="imap.example.com"></div>
-          <div class="settings-row"><label class="settings-label">Port${_hint('993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143.')}</label><input id="uf-imap-port" class="settings-input" type="number" placeholder="993" style="max-width:100px"></div>
-          <div class="settings-row"><label class="settings-label">Username${_hint('Yes — your full email address goes here too (e.g. you@gmail.com). Same as the Email field above for almost every provider.')}</label><input id="uf-imap-user" class="settings-input" placeholder="you@example.com"></div>
-          <div class="settings-row"><label class="settings-label">Password${_hint('For Gmail, iCloud, and Yahoo: paste your App Password (NOT your normal account password — those are blocked for IMAP). For Migadu, Fastmail, Outlook, etc.: your regular mailbox password works.')}</label><input id="uf-imap-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
-          <div class="settings-row"><label class="settings-label">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-imap-starttls" checked><span class="admin-slider"></span></label></div>
-          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
-          <div class="settings-row"><label class="settings-label">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com. Leave blank to make this account read-only.')}</label><input id="uf-smtp-host" class="settings-input" placeholder="smtp.example.com"></div>
-          <div class="settings-row"><label class="settings-label">Port${_hint('465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs.')}</label><input id="uf-smtp-port" class="settings-input" type="number" placeholder="465" style="max-width:100px"></div>
-          <div class="settings-row"><label class="settings-label">Same as IMAP${_hint('Use the IMAP username and password for SMTP too (right for almost every provider). Turn off to enter separate SMTP credentials.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-smtp-same" checked><span class="admin-slider"></span></label></div>
-          <div class="settings-row uf-smtp-creds"><label class="settings-label">Username${_hint('Usually the same as your IMAP username (your email address).')}</label><input id="uf-smtp-user" class="settings-input"></div>
-          <div class="settings-row uf-smtp-creds"><label class="settings-label">Password${_hint('Your SMTP password — often the same as your IMAP password.')}</label><input id="uf-smtp-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
-          <div class="settings-row" style="margin-top:4px"><label class="settings-label">Default${_hint('Use this account whenever no specific account is chosen.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-email-default"><span class="admin-slider"></span></label><span style="font-size:10px;opacity:0.5;margin-left:6px">Used when nothing else is selected</span></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.name'))}${_hint(i18n.t('settings.email_form.name_hint'))}</label><input id="uf-email-name" class="settings-input" placeholder="${esc(i18n.t('settings.email_form.name_ph'))}"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.email'))}${_hint(i18n.t('settings.email_form.email_hint'))}</label><input id="uf-email-from" class="settings-input" placeholder="you@example.com"></div>
+          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:4px 0 2px">${esc(i18n.t('settings.email_form.imap_section'))}</div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.host'))}${_hint(i18n.t('settings.email_form.imap_host_hint'))}</label><input id="uf-imap-host" class="settings-input" placeholder="imap.example.com"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.port'))}${_hint(i18n.t('settings.email_form.imap_port_hint'))}</label><input id="uf-imap-port" class="settings-input" type="number" placeholder="993" style="max-width:100px"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.username'))}${_hint(i18n.t('settings.email_form.imap_user_hint2'))}</label><input id="uf-imap-user" class="settings-input" placeholder="you@example.com"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.password'))}${_hint(i18n.t('settings.email_form.imap_pass_hint2'))}</label><input id="uf-imap-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.starttls'))}${_hint(i18n.t('settings.email_form.starttls_hint'))}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-imap-starttls" checked><span class="admin-slider"></span></label></div>
+          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">${esc(i18n.t('settings.email_form.smtp_section'))} <span style="font-weight:normal;opacity:0.7">${esc(i18n.t('settings.email_form.smtp_optional'))}</span></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.host'))}${_hint(i18n.t('settings.email_form.smtp_host_hint2'))}</label><input id="uf-smtp-host" class="settings-input" placeholder="smtp.example.com"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.port'))}${_hint(i18n.t('settings.email_form.smtp_port_hint'))}</label><input id="uf-smtp-port" class="settings-input" type="number" placeholder="465" style="max-width:100px"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.same_as_imap'))}${_hint(i18n.t('settings.email_form.same_as_imap_hint2'))}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-smtp-same" checked><span class="admin-slider"></span></label></div>
+          <div class="settings-row uf-smtp-creds"><label class="settings-label">${esc(i18n.t('settings.email_form.username'))}${_hint(i18n.t('settings.email_form.smtp_user_hint'))}</label><input id="uf-smtp-user" class="settings-input"></div>
+          <div class="settings-row uf-smtp-creds"><label class="settings-label">${esc(i18n.t('settings.email_form.password'))}${_hint(i18n.t('settings.email_form.smtp_pass_hint'))}</label><input id="uf-smtp-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
+          <div class="settings-row" style="margin-top:4px"><label class="settings-label">${esc(i18n.t('settings.email_form.default'))}${_hint(i18n.t('settings.email_form.default_hint'))}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-email-default"><span class="admin-slider"></span></label><span style="font-size:10px;opacity:0.5;margin-left:6px">${esc(i18n.t('settings.email_form.default_note'))}</span></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;">
             <button class="admin-btn-add" id="uf-email-save" style="background:var(--red);border-color:var(--red);color:#fff;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
               <span class="uf-email-save-ico" style="display:inline-flex;width:11px;height:11px;align-items:center;justify-content:center;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
               </span>
-              <span class="uf-email-save-label">${isEdit ? 'Save' : 'Create'}</span>
+              <span class="uf-email-save-label">${isEdit ? esc(i18n.t('common.save')) : esc(i18n.t('settings.email_form.create'))}</span>
             </button>
             <button class="admin-btn-add" id="uf-email-test" style="display:inline-flex;align-items:center;gap:5px;opacity:0.85;">
               <span class="uf-email-test-ico" style="display:inline-flex;width:11px;height:11px;align-items:center;justify-content:center;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 4 12 14.01 9 11.01"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
               </span>
-              Test
+              ${esc(i18n.t('settings.search.test'))}
             </button>
             <span id="uf-email-msg" style="font-size:11px;flex:1;margin-left:8px"></span>
             <button class="admin-btn-add" id="uf-email-cancel" style="opacity:0.7;display:inline-flex;align-items:center;gap:5px;position:relative;top:1px;margin-left:auto;">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              Cancel
+              ${esc(i18n.t('common.cancel'))}
             </button>
           </div>
         </div>
@@ -3584,18 +3589,18 @@ async function initUnifiedIntegrations() {
     // mobile / cross-device flows.
     const PROVIDER_NOTES = {
       gmail: {
-        title: 'Gmail needs an App Password',
-        body: 'Your regular Google password won\'t work for IMAP. Generate a 16-character App Password (requires 2-Step Verification enabled) and paste it as the Password.',
+        title: i18n.t('settings.email_form.note_gmail_title'),
+        body: i18n.t('settings.email_form.note_gmail_body'),
         url: 'https://myaccount.google.com/apppasswords',
       },
       icloud: {
-        title: 'iCloud needs an App-Specific Password',
-        body: 'Sign in to your Apple ID, go to Sign-In and Security → App-Specific Passwords, and generate one (requires 2FA on your Apple ID).',
+        title: i18n.t('settings.email_form.note_icloud_title'),
+        body: i18n.t('settings.email_form.note_icloud_body'),
         url: 'https://account.apple.com/account/manage',
       },
       yahoo: {
-        title: 'Yahoo needs an App Password',
-        body: 'Generate an App Password from Yahoo Account Security (requires 2-Step Verification enabled) and paste it as the Password.',
+        title: i18n.t('settings.email_form.note_yahoo_title'),
+        body: i18n.t('settings.email_form.note_yahoo_body'),
         url: 'https://login.yahoo.com/account/security/app-passwords',
       },
     };
@@ -3635,11 +3640,11 @@ async function initUnifiedIntegrations() {
         const orig = copyBtn.innerHTML;
         const ok = await _copyProviderUrl(url);
         if (!ok) {
-          uiModule.showError?.('Copy failed');
+          uiModule.showError?.(i18n.t('settings.email_form.copy_failed'));
           return;
         }
-        uiModule.showToast?.('Copied');
-        copyBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied';
+        uiModule.showToast?.(i18n.t('settings.email_form.copied'));
+        copyBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> ' + esc(i18n.t('settings.email_form.copied'));
         setTimeout(() => {
           if (copyBtn.isConnected) copyBtn.innerHTML = orig;
         }, 1500);
@@ -3655,11 +3660,11 @@ async function initUnifiedIntegrations() {
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <a href="${esc(n.url)}" target="_blank" rel="noopener noreferrer" class="admin-btn-sm" style="background:var(--red);border-color:var(--red);color:#fff;text-decoration:none;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-            Generate App Password
+            ${esc(i18n.t('settings.email_form.generate_app_password'))}
           </a>
           <button type="button" class="admin-btn-sm uf-prov-copy" data-url="${esc(n.url)}" style="opacity:0.7;display:inline-flex;align-items:center;gap:5px;">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            Copy link
+            ${esc(i18n.t('settings.email_form.copy_link'))}
           </button>
         </div>`;
     };
@@ -3814,8 +3819,8 @@ async function initUnifiedIntegrations() {
             '0 0 0 2px color-mix(in srgb, var(--red) 25%, transparent),'
           + ' 0 0 10px 2px color-mix(in srgb, var(--red) 55%, transparent)';
           ico.innerHTML = btn.dataset.origIco;
-          const imap = d.imap?.ok ? 'IMAP ok' : `IMAP: ${d.imap?.error || 'fail'}`;
-          const smtp = d.smtp ? (d.smtp.ok ? ' · SMTP ok' : ` · SMTP: ${d.smtp.error || 'fail'}`) : '';
+          const imap = d.imap?.ok ? i18n.t('settings.email_form.imap_ok') : i18n.t('settings.email_form.imap_fail', { error: d.imap?.error || i18n.t('settings.email_form.fail') });
+          const smtp = d.smtp ? (d.smtp.ok ? i18n.t('settings.email_form.smtp_ok') : i18n.t('settings.email_form.smtp_fail', { error: d.smtp.error || i18n.t('settings.email_form.fail') })) : '';
           msg.textContent = imap + smtp;
           msg.style.color = 'var(--red)';
         }
@@ -3824,7 +3829,7 @@ async function initUnifiedIntegrations() {
         btn.style.borderColor = 'var(--red)';
         btn.style.color = '#fff';
         ico.innerHTML = btn.dataset.origIco;
-        msg.textContent = 'Test error: ' + e.message;
+        msg.textContent = i18n.t('settings.email_form.test_error', { error: e.message });
         msg.style.color = 'var(--red)';
       } finally {
         btn.disabled = false;
@@ -3835,7 +3840,7 @@ async function initUnifiedIntegrations() {
       const body = _collectBody();
       // Name is optional — fall back to Email so the list still has a label.
       if (!body.name) body.name = body.from_address;
-      if (!body.name) { el('uf-email-msg').textContent = 'Need at least a Name or Email'; el('uf-email-msg').style.color = 'var(--red)'; return; }
+      if (!body.name) { el('uf-email-msg').textContent = i18n.t('settings.email_form.need_name_or_email'); el('uf-email-msg').style.color = 'var(--red)'; return; }
       const saveBtn = el('uf-email-save');
       saveBtn.disabled = true;
       const saveIcoEl = saveBtn.querySelector('.uf-email-save-ico');
@@ -3843,7 +3848,7 @@ async function initUnifiedIntegrations() {
       const prevIco = saveIcoEl.innerHTML;
       const prevLbl = saveLblEl.textContent;
       saveIcoEl.innerHTML = _spinner;
-      saveLblEl.textContent = 'Saving…';
+      saveLblEl.textContent = i18n.t('settings.status.saving_ellipsis');
       try {
         const url = isEdit ? `/api/email/accounts/${editId}` : '/api/email/accounts';
         const method = isEdit ? 'PUT' : 'POST';
@@ -3854,18 +3859,18 @@ async function initUnifiedIntegrations() {
         });
         const d = await r.json();
         if (!(d.ok || d.id)) {
-          el('uf-email-msg').textContent = d.error || 'Failed';
+          el('uf-email-msg').textContent = d.error || i18n.t('settings.status.failed');
           el('uf-email-msg').style.color = 'var(--red)';
           return;
         }
-        el('uf-email-msg').textContent = 'Saved';
+        el('uf-email-msg').textContent = i18n.t('settings.status.saved');
         el('uf-email-msg').style.color = 'var(--green,#50fa7b)';
-        integrationNotice = 'Email account saved. Go to Settings > Email for writing style, auto-tagging, spam triage, reminders, and reply settings.';
+        integrationNotice = i18n.t('settings.email_form.saved_notice');
         formEl.style.display = 'none';
         await renderList();
         notifyIntegrationsChanged();
       } catch (e) {
-        el('uf-email-msg').textContent = 'Error: ' + e.message;
+        el('uf-email-msg').textContent = i18n.t('settings.status.error', { error: e.message });
         el('uf-email-msg').style.color = 'var(--red)';
       } finally {
         saveBtn.disabled = false;
@@ -3879,24 +3884,24 @@ async function initUnifiedIntegrations() {
   async function showVaultForm() {
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px">Vaultwarden (Password Vault)</h2>
-        <div id="uf-vault-status" style="font-size:11px;opacity:0.7;margin-bottom:8px">Loading...</div>
+        <h2 style="font-size:13px">${esc(i18n.t('settings.vault.title'))}</h2>
+        <div id="uf-vault-status" style="font-size:11px;opacity:0.7;margin-bottom:8px">${esc(i18n.t('common.loading_ellipsis'))}</div>
         <div class="settings-col">
-          <div class="settings-row"><label class="settings-label">Server URL</label><input id="uf-vault-url" class="settings-input" placeholder="https://vault.example.com"></div>
-          <div class="settings-row"><label class="settings-label">Email</label><input id="uf-vault-email" class="settings-input" placeholder="you@example.com"></div>
-          <div class="settings-row"><label class="settings-label">Master Password</label><input id="uf-vault-pass" class="settings-input" type="password" placeholder="Only required for Login / Unlock"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.dav.server_url'))}</label><input id="uf-vault-url" class="settings-input" placeholder="https://vault.example.com"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.email_form.email'))}</label><input id="uf-vault-email" class="settings-input" placeholder="you@example.com"></div>
+          <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.vault.master_password'))}</label><input id="uf-vault-pass" class="settings-input" type="password" placeholder="${esc(i18n.t('settings.vault.master_password_ph'))}"></div>
           <div class="settings-row" style="margin-top:4px;flex-wrap:wrap;gap:4px">
-            <button class="admin-btn-sm" id="uf-vault-save">Save Config</button>
-            <button class="admin-btn-sm" id="uf-vault-login">Login</button>
-            <button class="admin-btn-sm" id="uf-vault-unlock">Unlock</button>
-            <button class="admin-btn-sm" id="uf-vault-lock" style="opacity:0.7">Lock</button>
-            <button class="admin-btn-sm" id="uf-vault-logout" style="opacity:0.7">Logout</button>
-            <button class="admin-btn-sm" id="uf-vault-cancel" style="opacity:0.7">Cancel</button>
+            <button class="admin-btn-sm" id="uf-vault-save">${esc(i18n.t('settings.vault.save_config'))}</button>
+            <button class="admin-btn-sm" id="uf-vault-login">${esc(i18n.t('settings.vault.login'))}</button>
+            <button class="admin-btn-sm" id="uf-vault-unlock">${esc(i18n.t('settings.vault.unlock'))}</button>
+            <button class="admin-btn-sm" id="uf-vault-lock" style="opacity:0.7">${esc(i18n.t('settings.vault.lock'))}</button>
+            <button class="admin-btn-sm" id="uf-vault-logout" style="opacity:0.7">${esc(i18n.t('settings.vault.logout'))}</button>
+            <button class="admin-btn-sm" id="uf-vault-cancel" style="opacity:0.7">${esc(i18n.t('common.cancel'))}</button>
             <span id="uf-vault-msg" style="font-size:11px;margin-left:4px"></span>
           </div>
           <div style="font-size:10px;opacity:0.5;margin-top:6px;line-height:1.4">
-            <strong>Login</strong> registers this device with your Vaultwarden account (once per account).<br>
-            <strong>Unlock</strong> decrypts the vault — required after restart or Lock. Session is saved so the assistant can read passwords.
+            ${i18n.t('settings.vault.help_login')}<br>
+            ${i18n.t('settings.vault.help_unlock')}
           </div>
         </div>
       </div>`;
@@ -3915,14 +3920,14 @@ async function initUnifiedIntegrations() {
         el('uf-vault-email').value = d.email || '';
         const installed = d.bw_installed;
         const parts = [];
-        parts.push(installed ? 'bw CLI: installed' : 'bw CLI: NOT installed (install nodejs-bitwarden-cli)');
-        parts.push(d.unlocked ? 'Status: UNLOCKED' : 'Status: locked');
-        if (d.unlocked_at) parts.push(`Last unlock: ${d.unlocked_at.replace('T',' ').slice(0,19)}`);
+        parts.push(installed ? i18n.t('settings.vault.cli_installed') : i18n.t('settings.vault.cli_not_installed'));
+        parts.push(d.unlocked ? i18n.t('settings.vault.status_unlocked') : i18n.t('settings.vault.status_locked'));
+        if (d.unlocked_at) parts.push(i18n.t('settings.vault.last_unlock', { time: d.unlocked_at.replace('T',' ').slice(0,19) }));
         const statusEl = el('uf-vault-status');
         statusEl.textContent = parts.join(' — ');
         statusEl.style.color = !installed ? 'var(--red)' : d.unlocked ? 'var(--green,#50fa7b)' : '';
       } catch (_) {
-        el('uf-vault-status').textContent = 'Failed to load vault status';
+        el('uf-vault-status').textContent = i18n.t('settings.vault.status_load_failed');
       }
     }
     await refreshStatus();
@@ -3930,7 +3935,7 @@ async function initUnifiedIntegrations() {
     el('uf-vault-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
 
     el('uf-vault-save').addEventListener('click', async () => {
-      msg('Saving...');
+      msg(i18n.t('settings.status.saving'));
       try {
         const r = await fetch('/api/vault/config', {
           method: 'POST', credentials: 'same-origin',
@@ -3938,16 +3943,16 @@ async function initUnifiedIntegrations() {
           body: JSON.stringify({ server_url: el('uf-vault-url').value, email: el('uf-vault-email').value }),
         });
         const d = await r.json();
-        if (d.ok) { msg('Saved', 'var(--green,#50fa7b)'); await refreshStatus(); await renderList(); }
-        else msg(d.error || 'Failed', 'var(--red)');
-      } catch (e) { msg('Error: ' + e.message, 'var(--red)'); }
+        if (d.ok) { msg(i18n.t('settings.status.saved'), 'var(--green,#50fa7b)'); await refreshStatus(); await renderList(); }
+        else msg(d.error || i18n.t('settings.status.failed'), 'var(--red)');
+      } catch (e) { msg(i18n.t('settings.status.error', { error: e.message }), 'var(--red)'); }
     });
 
     el('uf-vault-login').addEventListener('click', async () => {
       const email = el('uf-vault-email').value.trim();
       const pass = el('uf-vault-pass').value;
-      if (!email || !pass) { msg('Email + master password required', 'var(--red)'); return; }
-      msg('Logging in...');
+      if (!email || !pass) { msg(i18n.t('settings.vault.email_pass_required'), 'var(--red)'); return; }
+      msg(i18n.t('settings.vault.logging_in'));
       try {
         const r = await fetch('/api/vault/login', {
           method: 'POST', credentials: 'same-origin',
@@ -3956,17 +3961,17 @@ async function initUnifiedIntegrations() {
         });
         const d = await r.json();
         if (d.ok) {
-          msg(d.already ? 'Already logged in — use Unlock' : 'Logged in', 'var(--green,#50fa7b)');
+          msg(d.already ? i18n.t('settings.vault.already_logged_in') : i18n.t('settings.vault.logged_in'), 'var(--green,#50fa7b)');
           el('uf-vault-pass').value = '';
           await refreshStatus(); await renderList();
-        } else msg(d.error || 'Login failed', 'var(--red)');
-      } catch (e) { msg('Error: ' + e.message, 'var(--red)'); }
+        } else msg(d.error || i18n.t('settings.vault.login_failed'), 'var(--red)');
+      } catch (e) { msg(i18n.t('settings.status.error', { error: e.message }), 'var(--red)'); }
     });
 
     el('uf-vault-unlock').addEventListener('click', async () => {
       const pass = el('uf-vault-pass').value;
-      if (!pass) { msg('Master password required', 'var(--red)'); return; }
-      msg('Unlocking...');
+      if (!pass) { msg(i18n.t('settings.vault.master_pass_required'), 'var(--red)'); return; }
+      msg(i18n.t('settings.vault.unlocking'));
       try {
         const r = await fetch('/api/vault/unlock', {
           method: 'POST', credentials: 'same-origin',
@@ -3975,30 +3980,30 @@ async function initUnifiedIntegrations() {
         });
         const d = await r.json();
         if (d.ok) {
-          msg('Vault unlocked', 'var(--green,#50fa7b)');
+          msg(i18n.t('settings.vault.vault_unlocked'), 'var(--green,#50fa7b)');
           el('uf-vault-pass').value = '';
           await refreshStatus(); await renderList();
-        } else msg(d.error || 'Unlock failed', 'var(--red)');
-      } catch (e) { msg('Error: ' + e.message, 'var(--red)'); }
+        } else msg(d.error || i18n.t('settings.vault.unlock_failed'), 'var(--red)');
+      } catch (e) { msg(i18n.t('settings.status.error', { error: e.message }), 'var(--red)'); }
     });
 
     el('uf-vault-lock').addEventListener('click', async () => {
-      msg('Locking...');
+      msg(i18n.t('settings.vault.locking'));
       try {
         await fetch('/api/vault/lock', { method: 'POST', credentials: 'same-origin' });
-        msg('Locked', 'var(--green,#50fa7b)');
+        msg(i18n.t('settings.vault.locked'), 'var(--green,#50fa7b)');
         await refreshStatus(); await renderList();
-      } catch (e) { msg('Error: ' + e.message, 'var(--red)'); }
+      } catch (e) { msg(i18n.t('settings.status.error', { error: e.message }), 'var(--red)'); }
     });
 
     el('uf-vault-logout').addEventListener('click', async () => {
-      if (!await window.styledConfirm('Log out of Bitwarden CLI? You\'ll need to re-enter your master password to log back in.', { confirmText: 'Log out' })) return;
-      msg('Logging out...');
+      if (!await window.styledConfirm(i18n.t('settings.vault.logout_confirm'), { confirmText: i18n.t('settings.vault.logout_btn') })) return;
+      msg(i18n.t('settings.vault.logging_out'));
       try {
         await fetch('/api/vault/logout', { method: 'POST', credentials: 'same-origin' });
-        msg('Logged out', 'var(--green,#50fa7b)');
+        msg(i18n.t('settings.vault.logged_out'), 'var(--green,#50fa7b)');
         await refreshStatus(); await renderList();
-      } catch (e) { msg('Error: ' + e.message, 'var(--red)'); }
+      } catch (e) { msg(i18n.t('settings.status.error', { error: e.message }), 'var(--red)'); }
     });
   }
 
@@ -4006,16 +4011,16 @@ async function initUnifiedIntegrations() {
   async function showMcpForm(editId) {
     if (editId && editId !== 'new') {
       // Show management view for existing server
-      formEl.innerHTML = '<div class="admin-card" style="margin-top:8px"><span style="opacity:0.5;font-size:11px">Loading...</span></div>';
+      formEl.innerHTML = '<div class="admin-card" style="margin-top:8px"><span style="opacity:0.5;font-size:11px">' + i18n.t('common.loading_ellipsis') + '</span></div>';
       try {
         const res = await fetch('/api/mcp/servers', { credentials: 'same-origin' });
         const servers = await res.json();
         const srv = servers.find(s => (s.id || s.name) === editId);
-        if (!srv) { formEl.innerHTML = '<div class="admin-card" style="margin-top:8px">Server not found</div>'; return; }
+        if (!srv) { formEl.innerHTML = '<div class="admin-card" style="margin-top:8px">' + i18n.t('settings.mcp.server_not_found') + '</div>'; return; }
         const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
         const statusColor = srv.needs_oauth ? '#e5a33a' : srv.status === 'connected' ? 'var(--green,#50fa7b)' : srv.status === 'error' ? 'var(--red)' : 'var(--fg)';
-        const toolInfo = srv.status === 'connected' ? `${srv.enabled_tool_count}/${srv.tool_count} tools` : '';
-        const statusText = srv.needs_oauth ? 'Needs authorization' : srv.status === 'connected' ? `Connected (${toolInfo})` : srv.status === 'error' ? `Error: ${esc(srv.error || 'unknown')}` : 'Disconnected';
+        const toolInfo = srv.status === 'connected' ? i18n.t('settings.mcp.tools_count', { enabled: srv.enabled_tool_count, total: srv.tool_count }) : '';
+        const statusText = srv.needs_oauth ? i18n.t('settings.mcp.needs_authorization') : srv.status === 'connected' ? i18n.t('settings.mcp.connected_with', { info: toolInfo }) : srv.status === 'error' ? i18n.t('settings.mcp.error_with', { error: esc(srv.error || i18n.t('settings.mcp.unknown')) }) : i18n.t('settings.mcp.disconnected');
         formEl.innerHTML = `
           <div class="admin-card" style="margin-top:8px">
             <h2 style="font-size:13px">${esc(srv.name)}</h2>
@@ -4024,24 +4029,24 @@ async function initUnifiedIntegrations() {
               <span style="font-size:11px;opacity:0.7">${statusText}</span>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-              ${srv.needs_oauth ? `<a href="/api/mcp/oauth/authorize/${srv.id}" target="_blank" class="admin-btn-sm" style="background:var(--red);color:#fff;text-decoration:none">Authorize</a>` : ''}
-              <button class="admin-btn-sm" id="uf-mcp-reconnect">Reconnect</button>
-              <button class="admin-btn-sm" id="uf-mcp-toggle">${srv.is_enabled ? 'Disable' : 'Enable'}</button>
-              <button class="admin-btn-sm" id="uf-mcp-cancel" style="opacity:0.7">Close</button>
+              ${srv.needs_oauth ? `<a href="/api/mcp/oauth/authorize/${srv.id}" target="_blank" class="admin-btn-sm" style="background:var(--red);color:#fff;text-decoration:none">${esc(i18n.t('settings.mcp.authorize'))}</a>` : ''}
+              <button class="admin-btn-sm" id="uf-mcp-reconnect">${esc(i18n.t('settings.mcp.reconnect'))}</button>
+              <button class="admin-btn-sm" id="uf-mcp-toggle">${srv.is_enabled ? esc(i18n.t('settings.mcp.disable')) : esc(i18n.t('settings.mcp.enable'))}</button>
+              <button class="admin-btn-sm" id="uf-mcp-cancel" style="opacity:0.7">${esc(i18n.t('common.close'))}</button>
               <span id="uf-mcp-msg" style="font-size:11px"></span>
             </div>
             <div id="uf-mcp-tools-panel"></div>
           </div>`;
         // Reconnect
         el('uf-mcp-reconnect').addEventListener('click', async () => {
-          const msg = el('uf-mcp-msg'); msg.textContent = 'Reconnecting...';
+          const msg = el('uf-mcp-msg'); msg.textContent = i18n.t('settings.mcp.reconnecting');
           try {
             const r = await fetch(`/api/mcp/servers/${srv.id}/reconnect`, { method: 'POST', credentials: 'same-origin' });
             const d = await r.json();
-            msg.textContent = d.connected ? `Connected (${d.tool_count} tools)` : `Failed: ${d.error || 'unknown'}`;
+            msg.textContent = d.connected ? i18n.t('settings.mcp.connected_tools', { count: d.tool_count }) : i18n.t('settings.mcp.failed_with', { error: d.error || i18n.t('settings.mcp.unknown') });
             await renderList();
             showMcpForm(editId); // refresh this view
-          } catch (e) { msg.textContent = 'Failed'; }
+          } catch (e) { msg.textContent = i18n.t('settings.status.failed'); }
         });
         // Toggle enable/disable
         el('uf-mcp-toggle').addEventListener('click', async () => {
@@ -4059,38 +4064,38 @@ async function initUnifiedIntegrations() {
             const tools = await tr.json();
             if (tools.length) {
               const disabled = new Set(tools.filter(t => t.is_disabled).map(t => t.name));
-              panel.innerHTML = `<div class="mcp-tools-header"><span>Tools</span><span style="display:flex;gap:8px;align-items:center"><span class="mcp-tools-count">${tools.length - disabled.size}/${tools.length} enabled</span><a href="#" id="uf-mcp-all">All</a> <a href="#" id="uf-mcp-none">None</a></span></div><div class="mcp-tools-list">${tools.map(t => `<label title="${esc(t.description)}"><input type="checkbox" data-mcp-tool-name="${esc(t.name)}" ${!t.is_disabled ? 'checked' : ''}><span><strong>${esc(t.name)}</strong> <span style="opacity:0.5">— ${esc((t.description||'').slice(0,80))}</span></span></label>`).join('')}</div>`;
+              panel.innerHTML = `<div class="mcp-tools-header"><span>${esc(i18n.t('settings.mcp.tools'))}</span><span style="display:flex;gap:8px;align-items:center"><span class="mcp-tools-count">${esc(i18n.t('settings.mcp.tools_enabled', { enabled: tools.length - disabled.size, total: tools.length }))}</span><a href="#" id="uf-mcp-all">${esc(i18n.t('settings.mcp.all'))}</a> <a href="#" id="uf-mcp-none">${esc(i18n.t('settings.mcp.none'))}</a></span></div><div class="mcp-tools-list">${tools.map(t => `<label title="${esc(t.description)}"><input type="checkbox" data-mcp-tool-name="${esc(t.name)}" ${!t.is_disabled ? 'checked' : ''}><span><strong>${esc(t.name)}</strong> <span style="opacity:0.5">— ${esc((t.description||'').slice(0,80))}</span></span></label>`).join('')}</div>`;
               const saveFn = async () => {
                 const dis = [];
                 panel.querySelectorAll('input[type=checkbox]').forEach(cb => { if (!cb.checked) dis.push(cb.dataset.mcpToolName); });
                 await fetch(`/api/mcp/servers/${srv.id}/tools`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ disabled: dis }) });
                 const cnt = panel.querySelector('.mcp-tools-count');
-                if (cnt) cnt.textContent = `${tools.length - dis.length}/${tools.length} enabled`;
+                if (cnt) cnt.textContent = i18n.t('settings.mcp.tools_enabled', { enabled: tools.length - dis.length, total: tools.length });
               };
               panel.querySelectorAll('input[type=checkbox]').forEach(cb => cb.addEventListener('change', saveFn));
               el('uf-mcp-all')?.addEventListener('click', (e) => { e.preventDefault(); panel.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true); saveFn(); });
               el('uf-mcp-none')?.addEventListener('click', (e) => { e.preventDefault(); panel.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false); saveFn(); });
             }
-          } catch (_) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px">Failed to load tools</span>'; }
+          } catch (_) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px">' + i18n.t('settings.mcp.tools_load_failed') + '</span>'; }
         }
-      } catch (_) { formEl.innerHTML = '<div class="admin-card" style="margin-top:8px">Failed to load server</div>'; }
+      } catch (_) { formEl.innerHTML = '<div class="admin-card" style="margin-top:8px">' + i18n.t('settings.mcp.server_load_failed') + '</div>'; }
     } else {
       // Add new MCP server form
       formEl.innerHTML = `
         <div class="admin-card" style="margin-top:8px">
-          <h2 style="font-size:13px">Add MCP Server</h2>
+          <h2 style="font-size:13px">${esc(i18n.t('settings.mcp.add_server'))}</h2>
           <div class="settings-col">
-            <div class="settings-row"><label class="settings-label">Name</label><input id="uf-mcp-name" class="settings-input" placeholder="Server name"></div>
-            <div class="settings-row"><label class="settings-label">Transport</label><select id="uf-mcp-transport" class="settings-input"><option value="stdio">stdio</option><option value="sse">SSE</option></select></div>
+            <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.integrations.name'))}</label><input id="uf-mcp-name" class="settings-input" placeholder="${esc(i18n.t('settings.mcp.server_name_ph'))}"></div>
+            <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.mcp.transport'))}</label><select id="uf-mcp-transport" class="settings-input"><option value="stdio">stdio</option><option value="sse">SSE</option></select></div>
             <div id="uf-mcp-stdio-fields" style="display:flex;flex-direction:column;gap:6px;">
-              <div class="settings-row"><label class="settings-label">Command</label><input id="uf-mcp-cmd" class="settings-input" placeholder="npx"></div>
-              <div class="settings-row"><label class="settings-label">Args</label><input id="uf-mcp-args" class="settings-input" placeholder='["-y", "@modelcontextprotocol/server-filesystem"]'></div>
-              <div class="settings-row"><label class="settings-label">Env</label><input id="uf-mcp-env" class="settings-input" placeholder='{"KEY": "value"}'></div>
+              <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.mcp.command'))}</label><input id="uf-mcp-cmd" class="settings-input" placeholder="npx"></div>
+              <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.mcp.args'))}</label><input id="uf-mcp-args" class="settings-input" placeholder='["-y", "@modelcontextprotocol/server-filesystem"]'></div>
+              <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.mcp.env'))}</label><input id="uf-mcp-env" class="settings-input" placeholder='{"KEY": "value"}'></div>
             </div>
             <div id="uf-mcp-sse-fields" style="display:none;flex-direction:column;gap:6px;">
-              <div class="settings-row"><label class="settings-label">URL</label><input id="uf-mcp-url" class="settings-input" placeholder="http://localhost:3001/sse"></div>
+              <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.dav.url'))}</label><input id="uf-mcp-url" class="settings-input" placeholder="http://localhost:3001/sse"></div>
             </div>
-            <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-mcp-save">Save</button><button class="admin-btn-sm" id="uf-mcp-cancel" style="opacity:0.7">Cancel</button><span id="uf-mcp-msg" style="font-size:11px"></span></div>
+            <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-mcp-save">${esc(i18n.t('common.save'))}</button><button class="admin-btn-sm" id="uf-mcp-cancel" style="opacity:0.7">${esc(i18n.t('common.cancel'))}</button><span id="uf-mcp-msg" style="font-size:11px"></span></div>
           </div>
         </div>`;
       el('uf-mcp-transport').addEventListener('change', () => {
@@ -4111,8 +4116,8 @@ async function initUnifiedIntegrations() {
         }
         try {
           await fetch('/api/mcp/servers', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-          el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
-        } catch (_) { el('uf-mcp-msg').textContent = 'Failed'; }
+          el('uf-mcp-msg').textContent = i18n.t('settings.status.saved'); formEl.style.display = 'none'; await renderList();
+        } catch (_) { el('uf-mcp-msg').textContent = i18n.t('settings.status.failed'); }
       });
     }
   }
@@ -4123,16 +4128,16 @@ async function initUnifiedIntegrations() {
       formEl.style.display = '';
       formEl.innerHTML = `
         <div class="admin-card" style="margin-top:8px">
-          <h2 style="font-size:13px">Add Integration</h2>
+          <h2 style="font-size:13px">${esc(i18n.t('settings.integrations.add_integration'))}</h2>
           <div class="settings-col">
-            <div class="settings-row"><label class="settings-label">Type</label>
+            <div class="settings-row"><label class="settings-label">${esc(i18n.t('settings.integrations.type_label'))}</label>
               <select id="uf-type-picker" class="settings-input">
-                <option value="">Select...</option>
-                <option value="api">API Service</option>
-                <option value="caldav">CalDAV Calendar</option>
-                <option value="carddav">Contacts</option>
-                <option value="email">Email (IMAP/SMTP)</option>
-                <option value="mcp">MCP Tool Server</option>
+                <option value="">${esc(i18n.t('settings.integrations.type_select'))}</option>
+                <option value="api">${esc(i18n.t('settings.integrations.type_api'))}</option>
+                <option value="caldav">${esc(i18n.t('settings.integrations.type_caldav'))}</option>
+                <option value="carddav">${esc(i18n.t('settings.integrations.contacts'))}</option>
+                <option value="email">${esc(i18n.t('settings.integrations.type_email'))}</option>
+                <option value="mcp">${esc(i18n.t('settings.integrations.type_mcp'))}</option>
               </select>
             </div>
           </div>
