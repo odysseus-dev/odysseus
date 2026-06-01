@@ -56,10 +56,13 @@ def get_chroma_client():
             f"CHROMADB_PORT to point at a running instance."
         )
 
-    _client = chromadb.HttpClient(host=host, port=port)
+    client = chromadb.HttpClient(host=host, port=port)
 
-    # Health check
-    _client.heartbeat()
+    # Health check before caching — if the port is open but the service isn't
+    # healthy yet (e.g. still starting), don't poison the singleton with a dead
+    # client; leave _client unset so the next call retries.
+    client.heartbeat()
+    _client = client
     logger.info(f"ChromaDB connected: {host}:{port}")
     return _client
 
