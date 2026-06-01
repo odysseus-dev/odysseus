@@ -1695,6 +1695,13 @@ def setup_gallery_routes() -> APIRouter:
             if not chat_url:
                 return {"error": "No vision-capable endpoint configured"}
 
+            # SSRF guard
+            from src.ssrf_guard import validate_url_for_safety, SSRFBlockedException
+            try:
+                validate_url_for_safety(chat_url)
+            except SSRFBlockedException as exc:
+                return {"error": str(exc)}
+
             # Call vision model — format differs between Anthropic and OpenAI
             from src.llm_core import _detect_provider
             provider = _detect_provider(chat_url)

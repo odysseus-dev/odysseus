@@ -560,6 +560,14 @@ def setup_calendar_routes() -> APIRouter:
         url = (body.get("url") or "").strip()
         user = (body.get("username") or "").strip()
         pw = body.get("password") or ""
+
+        # SSRF guard
+        from src.ssrf_guard import validate_url_for_safety, SSRFBlockedException
+        try:
+            validate_url_for_safety(url)
+        except SSRFBlockedException as exc:
+            raise HTTPException(400, str(exc))
+
         if not (url and user and pw):
             # Fall back to saved settings for this user.
             from routes.prefs_routes import _load_for_user

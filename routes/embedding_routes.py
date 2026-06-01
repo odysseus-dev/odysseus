@@ -242,6 +242,13 @@ def setup_embedding_routes():
         if not url:
             raise HTTPException(400, "URL is required")
 
+        # SSRF guard
+        from src.ssrf_guard import validate_url_for_safety, SSRFBlockedException
+        try:
+            validate_url_for_safety(url)
+        except SSRFBlockedException as exc:
+            raise HTTPException(400, str(exc))
+
         # Quick health check
         try:
             import httpx

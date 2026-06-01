@@ -304,6 +304,11 @@ def _classify_endpoint(base_url: str) -> str:
 def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
+    from src.ssrf_guard import validate_url_for_safety, SSRFBlockedException
+    try:
+        validate_url_for_safety(base_url)
+    except SSRFBlockedException:
+        return []
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
     if _detect_provider(base) == "anthropic":

@@ -373,6 +373,12 @@ async def dispatch_reminder(
             )
             if intg:
                 base = intg["base_url"].rstrip("/")
+                from src.ssrf_guard import validate_url_for_safety, SSRFBlockedException
+                try:
+                    validate_url_for_safety(base)
+                except SSRFBlockedException:
+                    ntfy_error = "ntfy URL is not allowed"
+                    raise
                 topic = settings.get("reminder_ntfy_topic") or "reminders"
                 ntfy_body = synthesis or note_body or title
                 hdrs = {"Title": title or "Reminder", "Priority": "high", "Tags": "bell"}
