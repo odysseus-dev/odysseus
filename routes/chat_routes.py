@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import time
 import logging
 from datetime import datetime
@@ -40,35 +41,40 @@ from src.action_intents import message_needs_tools as _message_needs_tools
 logger = logging.getLogger(__name__)
 
 
-def _truthy(v: Any) -> bool:
-    """Coerce a use_web value (bool, "true"/"1"/"on" from form data) to bool."""
-    if isinstance(v, bool):
-        return v
-    return str(v).strip().lower() in ("1", "true", "yes", "on")
-
-
-async def _maybe_auto_web(use_web: Any, message: str) -> Any:
-    """Experimental auto-search: when the `auto_web_search` setting is ON and the
-    user did NOT already enable web search for this message, ask a fast utility
-    LLM whether the message needs the web and flip web search on only if so.
-
-    Returns `use_web` unchanged when: already enabled, the setting is off, or the
-    gate declines/errors. So it can only ADD a search the model judged useful —
-    never removes a user-requested one, never forces an unwanted one.
-    """
+def _auto_search_enabled() -> bool:
+    """Experimental 'Auto-search' setting (default off). When on, plain chat is
+    allowed to use the web_search tool so the MODEL can decide to search."""
     try:
-        if _truthy(use_web):
-            return use_web  # user already asked for it — don't second-guess
         from src.settings import get_setting
-        if not get_setting("auto_web_search", False):
-            return use_web
-        from services.search.query import should_search
-        if await should_search(message or ""):
-            logger.info("auto-search: gate enabled web search for this message")
-            return True
-    except Exception as exc:
-        logger.debug("auto-search gate skipped: %s", exc)
-    return use_web
+        return bool(get_setting("auto_web_search", False))
+    except Exception:
+        return False
+
+
+# Cheap signals that a message MIGHT need current/external info — used only to
+# decide whether to give the model the web_search tool (it still decides whether
+# to actually call it). Deliberately broad: a false positive just means the tool
+# is available and unused; a miss means the model can't search even if it should.
+_SEARCH_WORTHY_RE = re.compile(
+    r"\b("
+    r"latest|recent|current|currently|today|tonight|tomorrow|yesterday|"
+    r"now|right now|this (?:week|month|year|morning)|"
+    r"news|update|updates|breaking|release[ds]?|launch(?:ed|es)?|announce[ds]?|"
+    r"price|prices|cost|stock|weather|forecast|score|results?|"
+    r"who is|who's|what is the latest|how much (?:is|does)|"
+    r"still (?:alive|around|working|available)|"
+    r"\d{4}|version|changelog"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_search_worthy(text: str) -> bool:
+    """Heuristic: does this message plausibly need fresh/external facts?"""
+    t = (text or "").strip()
+    if not t or len(t) > 4000:
+        return False
+    return bool(_SEARCH_WORTHY_RE.search(t))
 
 # Track active streams for partial-save safety net
 _active_streams: Dict[str, dict] = {}
@@ -152,7 +158,6 @@ def setup_chat_routes(
         use_research = chat_request.use_research
         time_filter = chat_request.time_filter
         preset_id = chat_request.preset_id
-        use_web = await _maybe_auto_web(use_web, message)
 
         # Verify the caller owns this session before loading it.
         # Without this, any authenticated user can post into another user's chat.
@@ -261,7 +266,6 @@ def setup_chat_routes(
         use_web = form_data.get("use_web")
         use_research = form_data.get("use_research")
         time_filter = form_data.get("time_filter")
-        use_web = await _maybe_auto_web(use_web, message)
         preset_id = form_data.get("preset_id")
         allow_bash = form_data.get("allow_bash")
         allow_web_search = form_data.get("allow_web_search")
@@ -286,6 +290,16 @@ def setup_chat_routes(
             chat_mode = "agent"
             auto_escalated = True
             logger.info("chat→agent auto-escalation: message matched tool-intent pattern")
+        # Auto-search (experimental): when on, also promote plain chat to the
+        # tool-capable path for messages that look like they need current/
+        # external facts, so the model can call web_search itself. The keyword
+        # check is deliberately cheap (no extra LLM call) — the MODEL still makes
+        # the final call on whether to actually search once it has the tool.
+        elif (chat_mode == "chat" and isinstance(message, str)
+              and _auto_search_enabled() and _looks_search_worthy(message)):
+            chat_mode = "agent"
+            auto_escalated = True
+            logger.info("chat→agent auto-escalation: auto-search (message looks search-worthy)")
         active_doc_id = form_data.get("active_doc_id", "").strip()
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
 
@@ -420,7 +434,12 @@ def setup_chat_routes(
         disabled_tools = set()
         if str(allow_bash).lower() != "true":
             disabled_tools.add("bash")
-        if str(allow_web_search).lower() != "true":
+        # Auto-search (experimental, opt-in): when on, leave web_search available
+        # even if the per-message toggle is off, so the MODEL decides whether to
+        # search (it calls the tool mid-answer when it needs current facts) —
+        # rather than the user toggling search by hand. This mirrors how the tool
+        # already works in agent mode; we just stop force-disabling it here.
+        if str(allow_web_search).lower() != "true" and not _auto_search_enabled():
             disabled_tools.add("web_search")
             disabled_tools.add("web_fetch")
 

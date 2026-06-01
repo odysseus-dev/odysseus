@@ -100,15 +100,40 @@ async def should_search(message: str, owner: Optional[str] = None) -> bool:
             return False
         messages = [
             {"role": "system", "content": _SHOULD_SEARCH_SYSTEM},
-            {"role": "user", "content": msg},
+            # /no_think keeps reasoning models (Qwen3, etc.) from spending the
+            # whole budget thinking and returning empty content; harmless to
+            # non-reasoning models. We still allow enough tokens to survive a
+            # stray <think> preamble and parse the verdict from the full text.
+            {"role": "user", "content": msg + "\n\n/no_think"},
         ]
         out = await llm_call_async(url, model, messages, temperature=0.0,
-                                   max_tokens=4, headers=headers)
-        verdict = (out or "").strip().lower()
-        return verdict.startswith("y")
+                                   max_tokens=256, headers=headers)
+        return _verdict_is_yes(out)
     except Exception as exc:
         logger.debug("auto-search gate failed, not searching: %s", exc)
         return False
+
+
+def _verdict_is_yes(out: Optional[str]) -> bool:
+    """Parse a YES/NO verdict from a (possibly reasoning-wrapped) model reply.
+    Strips <think> blocks, then looks for a standalone YES/NO. Defaults to NO
+    (no search) when the output is empty or ambiguous."""
+    text = (out or "")
+    text = re.sub(r"<think>.*?</think>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<think>.*$", " ", text, flags=re.DOTALL | re.IGNORECASE)  # unclosed
+    low = text.strip().lower()
+    if not low:
+        return False
+    # A clear leading YES/NO wins; otherwise look for the last explicit token.
+    if low.startswith("yes"):
+        return True
+    if low.startswith("no"):
+        return False
+    yes = bool(re.search(r"\byes\b", low))
+    no = bool(re.search(r"\bno\b", low))
+    if yes and not no:
+        return True
+    return False
 
 
 # ----------------------------------------------------------------------
