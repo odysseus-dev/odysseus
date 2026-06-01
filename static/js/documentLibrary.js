@@ -3101,7 +3101,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       importFileBtn.addEventListener('click', () => fileInput.click());
       fileInput.addEventListener('change', async () => {
         if (fileInput.files.length === 0) return;
-        const files = fileInput.files;
+        // Snapshot into a real Array BEFORE clearing the input. `fileInput.files`
+        // is a *live* FileList — setting `fileInput.value = ''` empties it (and any
+        // reference still pointing at it), which left libraryImportFiles iterating
+        // an empty list and reporting "Imported 0 files". Array.from copies the
+        // File objects out so they survive the reset. (issue #302)
+        const files = Array.from(fileInput.files);
         fileInput.value = '';
         // Swap the import icon for a whirlpool while files upload.
         const _orig = importFileBtn.innerHTML;
