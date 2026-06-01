@@ -43,6 +43,14 @@ def prepare() -> None:
     os.environ.setdefault("ODYSSEUS_INPROCESS_POLLERS", "0")
     os.environ.setdefault("ODYSSEUS_INPROCESS_TASKS", "0")
 
+    # Point local embeddings at the model that's actually installed in Ollama
+    # (the app default tag `all-minilm:l6-v2` 404s; the pulled tag is
+    # `all-minilm`). Embeddings power the agent's semantic tool-selector — when
+    # they fail, the agent ships the wrong tools and tool calls silently break.
+    os.environ.setdefault(
+        "EMBEDDING_URL", "http://localhost:11434/v1/embeddings")
+    os.environ.setdefault("EMBEDDING_MODEL", "all-minilm")
+
     _quiet_logging()
     _PREPARED = True
 
@@ -79,6 +87,15 @@ def unlock_tools() -> None:
         import src.agent_loop as al
         if hasattr(al, "blocked_tools_for_owner"):
             al.blocked_tools_for_owner = _no_block
+    except Exception:
+        pass
+
+    # The executor re-checks admin status at run time (tool_execution.py: the
+    # _ADMIN_TOOLS and is_public_blocked_tool gates both call _owner_is_admin).
+    # The CLI is a trusted local admin tool, so treat the owner as admin there.
+    try:
+        import src.tool_execution as te
+        te._owner_is_admin = lambda owner=None: True
     except Exception:
         pass
 

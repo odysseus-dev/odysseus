@@ -102,6 +102,7 @@ async def _drive(cfg, approval_state: ApprovalState, one_shot: str | None,
                 r.info(f"(could not save session: {exc})")
 
     async def handle(user_text: str) -> None:
+        approval_state.reset_calls()  # fresh duplicate-call tracker per turn
         messages.append({"role": "user", "content": user_text})
         reply = await run_turn(cfg, messages)
         messages.append({"role": "assistant", "content": reply})
@@ -200,6 +201,13 @@ def main(argv: List[str] | None = None) -> int:
     except Exception as exc:
         r.error(f"cannot enter project root {cfg.project_root}: {exc}")
         return 2
+
+    # Teach the parser the JSON tool-call format local coder models emit.
+    try:
+        from . import toolcompat
+        toolcompat.install()
+    except Exception as exc:  # pragma: no cover
+        r.info(f"(tool-compat shim not installed: {exc})")
 
     approval_state = ApprovalState(cfg.approval, cfg.project_root)
     install_approval(approval_state)

@@ -31,12 +31,23 @@ class ApprovalState:
         self.policy = policy
         self.project_root = Path(project_root or Path.cwd()).resolve()
         self._always: Set[str] = set()
+        self._call_counts: dict = {}
 
     def always_allowed(self, tool: str) -> bool:
         return tool in self._always
 
     def grant_always(self, tool: str) -> None:
         self._always.add(tool)
+
+    def note_call(self, signature) -> int:
+        """Record a tool-call signature; return how many times it's been seen."""
+        n = self._call_counts.get(signature, 0) + 1
+        self._call_counts[signature] = n
+        return n
+
+    def reset_calls(self) -> None:
+        """Clear the per-turn duplicate-call tracker."""
+        self._call_counts.clear()
 
 
 def _denied_result(tool: str, reason: str = ""):
@@ -84,6 +95,20 @@ def install(state: ApprovalState) -> None:
     async def gated(block, *args, **kwargs):
         tool = getattr(block, "tool_type", None)
         content = getattr(block, "content", "") or ""
+
+        # ── Layer 0: loop breaker ──
+        # Local coder models often re-issue the *same* call every round instead
+        # of using the result they already got. After the first execution of an
+        # identical call, short-circuit and push the model to answer.
+        count = state.note_call((tool, content.strip()))
+        if count > 1:
+            desc = f"{tool}: duplicate call suppressed"
+            return desc, {
+                "error": "You already ran this exact call and its output is "
+                         "shown above. Do NOT call it again — use what you have "
+                         "and write your final answer now.",
+                "exit_code": 1,
+            }
 
         # ── Layer 1: path-containment sandbox for file tools ──
         diff_lines = None
