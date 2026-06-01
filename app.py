@@ -169,9 +169,25 @@ if AUTH_ENABLED:
         "/login",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
+    # Dynamic paths whose own handler proves identity via a path-embedded
+    # secret instead of the session/bearer auth. The route handler at
+    # routes/task_routes.py validates the per-task `webhook_token` itself
+    # and returns 404 on mismatch, so the path is the credential — the
+    # UI labels these URLs "no auth needed" precisely because external
+    # callers (Zapier, n8n, curl) can't supply a session cookie. Without
+    # this exemption AuthMiddleware rejects every POST with 401 before
+    # the token is ever checked.
+    import re as _re
+    AUTH_EXEMPT_PATTERNS = [
+        _re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$"),
+    ]
 
     def _is_auth_exempt(path: str) -> bool:
-        return path in AUTH_EXEMPT_EXACT or any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES)
+        if path in AUTH_EXEMPT_EXACT:
+            return True
+        if any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES):
+            return True
+        return any(p.match(path) for p in AUTH_EXEMPT_PATTERNS)
 
     # In-memory token cache: prefix → list[(token_id, token_hash, owner, scopes)]. The DB
     # query was running on every API-bearer request and scanning bcrypt
