@@ -32,7 +32,13 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         runtimeLibs = mkRuntimeLibs pkgs;
-        pythonEnv = pkgs.python3.withPackages (ps: with ps; [
+        pythonEnv = (pkgs.python3.override {
+          packageOverrides = pyself: pysuper: {
+            niquests = pysuper.niquests.overridePythonAttrs (old: {
+              doCheck = !pkgs.stdenv.isDarwin;
+            });
+          };
+        }).withPackages (ps: with ps; [
           fastapi
           uvicorn
           python-multipart
@@ -461,6 +467,7 @@
               name = "odysseus-container";
               nodes.machine = {
                 virtualisation.podman.enable = true;
+                virtualisation.diskSize = 8192;
                 users.users.test.isNormalUser = true;
               };
               testScript = ''
@@ -489,6 +496,84 @@
             };
           in
             darwinConfig.system;
+
+        aarch64-darwin.integration-test =
+          let
+            system = "aarch64-darwin";
+            pkgs = nixpkgs.legacyPackages.${system};
+            odysseus = self.packages.${system}.default;
+          in
+            pkgs.runCommand "odysseus-darwin-integration-test" {
+              nativeBuildInputs = [ odysseus pkgs.curl pkgs.python3 ];
+            } ''
+              set -euo pipefail
+
+              DATA_DIR=$(mktemp -d)
+              export ODYSSEUS_DATA_DIR="$DATA_DIR/data"
+              mkdir -p "$ODYSSEUS_DATA_DIR"
+
+              # Set up runtime library path (same as the darwin module)
+              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath (mkRuntimeLibs pkgs)}"
+
+              # Database path must be exported so core/database.py sees it
+              # in the server process (odysseus-setup sets it internally only)
+              export DATABASE_URL="sqlite:///$ODYSSEUS_DATA_DIR/app.db"
+
+              # SSL_CERT_FILE may point to a missing path in the build env;
+              # unset it so httpx falls back to system certs
+              unset SSL_CERT_FILE
+
+              # Create admin user
+              ${odysseus}/bin/odysseus-setup
+
+              # Find an ephemeral port
+              PORT=$(python3 -c "import socket; s=socket.socket(); s.bind((\"\", 0)); print(s.getsockname()[1]); s.close()")
+
+              # Start server in background (redirect stdout to avoid BrokenPipe in build)
+              ${odysseus}/bin/odysseus --host 127.0.0.1 --port "$PORT" > "$DATA_DIR/server.log" 2>&1 &
+              SERVER_PID=$!
+
+              # Wait for server with 30s timeout
+              i=0
+              while [ $i -lt 30 ]; do
+                if curl -sf -o /dev/null "http://127.0.0.1:$PORT" > /dev/null 2>&1; then
+                  break
+                fi
+                if ! kill -0 $SERVER_PID 2>/dev/null; then
+                  echo "FAIL: server exited early"
+                  echo "--- server.log ---"
+                  tail -40 "$DATA_DIR/server.log" || true
+                  exit 1
+                fi
+                i=$((i + 1))
+                sleep 1
+              done
+
+              if [ $i -eq 30 ]; then
+                echo "FAIL: timed out waiting for Odysseus"
+                echo "--- server.log ---"
+                tail -40 "$DATA_DIR/server.log" || true
+                kill $SERVER_PID 2>/dev/null || true
+                exit 1
+              fi
+
+              # Verify response (check HTTP status, not body)
+              if ! curl -sf -o /dev/null "http://127.0.0.1:$PORT" > /dev/null 2>&1; then
+                echo "FAIL: no response from Odysseus on port $PORT"
+                echo "--- server.log ---"
+                tail -40 "$DATA_DIR/server.log" || true
+                kill $SERVER_PID 2>/dev/null || true
+                exit 1
+              fi
+
+              echo "PASS: got response from Odysseus on port $PORT"
+
+              # Clean up
+              kill $SERVER_PID 2>/dev/null || true
+              wait $SERVER_PID 2>/dev/null || true
+
+              touch $out
+            '';
       };
     };
 }
