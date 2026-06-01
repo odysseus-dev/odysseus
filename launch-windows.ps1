@@ -1,17 +1,17 @@
 #Requires -Version 5.1
 <#
-Odysseus - native Windows launcher (no Docker).
+  Odysseus - native Windows launcher (no Docker).
 
-One command to: create a virtualenv, install dependencies, run first-time
-setup (prints an admin password on first run), and start the server.
-Safe to re-run - it skips whatever already exists.
+  One command to: create a virtualenv, install dependencies, run first-time
+  setup (prints an admin password on first run), and start the server.
+  Safe to re-run - it skips whatever already exists.
 
-Usage:
+  Usage:
     powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
     powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1 -Port 7000 -BindHost 127.0.0.1
 
-Tip: bind 127.0.0.1 (default) for local-only use. Use 0.0.0.0 only when you
-intentionally want other devices on your LAN to reach it.
+  Tip: bind 127.0.0.1 (default) for local-only use. Use 0.0.0.0 only when you
+  intentionally want other devices on your LAN to reach it.
 #>
 param(
     [int]$Port = 7000,
