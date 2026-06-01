@@ -1,4 +1,5 @@
 """Tests for model route helper functions — pure logic, no server needed."""
+# ruff: noqa: E402
 
 import sys
 import types

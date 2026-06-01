@@ -771,8 +771,10 @@ async def action_mark_email_boundaries(owner: str, **kwargs) -> Tuple[str, bool]
                     except Exception:
                         continue
             finally:
-                try: conn.logout()
-                except Exception: pass
+                try:
+                    conn.logout()
+                except Exception:
+                    pass
             return results
 
         mails = await _aio.to_thread(_pull_recent)
@@ -816,8 +818,10 @@ async def action_mark_email_boundaries(owner: str, **kwargs) -> Tuple[str, bool]
                     except Exception:
                         return str(raw)
                 finally:
-                    try: conn.logout()
-                    except Exception: pass
+                    try:
+                        conn.logout()
+                    except Exception:
+                        pass
             try:
                 body = (await _aio.to_thread(_fetch_body, str(uid))).strip()
             except Exception as e:
@@ -968,8 +972,10 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
                     except Exception:
                         continue
             finally:
-                try: conn.logout()
-                except Exception: pass
+                try:
+                    conn.logout()
+                except Exception:
+                    pass
             return results
 
         mails = await _aio.to_thread(_pull_headers)
@@ -1045,8 +1051,10 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
                         except Exception:
                             continue
                 finally:
-                    try: conn2.logout()
-                    except Exception: pass
+                    try:
+                        conn2.logout()
+                    except Exception:
+                        pass
                 return bodies
 
             try:
@@ -1196,8 +1204,10 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
                     except Exception as fe:
                         logger.debug(f"daily_brief: header fetch for uid {uid} failed: {fe}")
             finally:
-                try: conn.logout()
-                except Exception: pass
+                try:
+                    conn.logout()
+                except Exception:
+                    pass
         except Exception as ee:
             logger.debug(f"daily_brief: email fetch failed: {ee}")
 
@@ -1325,9 +1335,12 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
                 detail = ""
                 if v in ("unknown", "inconclusive", "fail", "needs_work"):
                     bits = []
-                    if summary: bits.append(summary[:160])
-                    if tlen < 200: bits.append(f"transcript {tlen}b")
-                    if bits: detail = " — " + "; ".join(bits)
+                    if summary:
+                        bits.append(summary[:160])
+                    if tlen < 200:
+                        bits.append(f"transcript {tlen}b")
+                    if bits:
+                        detail = " — " + "; ".join(bits)
                 per_skill_log.append(f"{name}: {v}{detail}")
                 # #4 + #8 + #12: ONLY persist a real verdict (pass / needs_work /
                 # fail / inconclusive). Skip 'unknown' — that's the judge's
@@ -1759,8 +1772,10 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                         except Exception as _fe:
                             logger.debug(f"urgency: header fetch for uid {uid} failed: {_fe}")
                 finally:
-                    try: conn.logout()
-                    except Exception: pass
+                    try:
+                        conn.logout()
+                    except Exception:
+                        pass
                 return results
 
             try:

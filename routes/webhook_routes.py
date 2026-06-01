@@ -1,4 +1,5 @@
 """Webhook, API Token, and sync chat routes."""
+# ruff: noqa: E402
 
 import asyncio
 import uuid
@@ -265,7 +266,7 @@ def setup_webhook_routes(
         if not sess:
             db = SessionLocal()
             try:
-                ep = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).first()
+                ep = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).first()  # noqa: E712
             finally:
                 db.close()
 

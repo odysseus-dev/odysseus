@@ -1,6 +1,7 @@
 """gallery_helpers.py — extracted helpers, models, and small utilities.
 
 Imported by gallery_routes.py."""
+# ruff: noqa: E402
 
 """Gallery routes — browsable library for photos and AI-generated images."""
 

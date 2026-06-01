@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 import os
 import logging
 from datetime import datetime
@@ -1708,9 +1709,9 @@ def cleanup_old_sessions(days: int = 30):
         cutoff_date = datetime.utcnow() - timedelta(days=days)
         
         deleted_count = db.query(Session).filter(
-            Session.archived == True,
+            Session.archived == True,  # noqa: E712
             Session.last_accessed < cutoff_date,
-            Session.is_important == False
+            Session.is_important == False  # noqa: E712
         ).delete()
         
         return deleted_count
@@ -1720,8 +1721,8 @@ def get_session_stats():
     with get_db_session() as db:
         stats = {
             'total_sessions': db.query(Session).count(),
-            'active_sessions': db.query(Session).filter(Session.archived == False).count(),
-            'archived_sessions': db.query(Session).filter(Session.archived == True).count(),
+            'active_sessions': db.query(Session).filter(Session.archived == False).count(),  # noqa: E712
+            'archived_sessions': db.query(Session).filter(Session.archived == True).count(),  # noqa: E712
             'total_messages': db.query(ChatMessage).count(),
             'total_memories': db.query(Memory).count()
         }

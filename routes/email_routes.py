@@ -337,24 +337,42 @@ def _md_to_email_html(text: str) -> str:
         m_ul = re.match(r"^\s*[-*]\s+(.*)$", ln)
         m_ol = re.match(r"^\s*\d+\.\s+(.*)$", ln)
         if m_h:
-            if in_ul: parts.append("</ul>"); in_ul = False
-            if in_ol: parts.append("</ol>"); in_ol = False
+            if in_ul:
+                parts.append("</ul>")
+                in_ul = False
+            if in_ol:
+                parts.append("</ol>")
+                in_ol = False
             lvl = len(m_h.group(1))
             parts.append(f"<h{lvl}>{_inline(m_h.group(2))}</h{lvl}>")
         elif m_ul:
-            if in_ol: parts.append("</ol>"); in_ol = False
-            if not in_ul: parts.append("<ul>"); in_ul = True
+            if in_ol:
+                parts.append("</ol>")
+                in_ol = False
+            if not in_ul:
+                parts.append("<ul>")
+                in_ul = True
             parts.append(f"<li>{_inline(m_ul.group(1))}</li>")
         elif m_ol:
-            if in_ul: parts.append("</ul>"); in_ul = False
-            if not in_ol: parts.append("<ol>"); in_ol = True
+            if in_ul:
+                parts.append("</ul>")
+                in_ul = False
+            if not in_ol:
+                parts.append("<ol>")
+                in_ol = True
             parts.append(f"<li>{_inline(m_ol.group(1))}</li>")
         else:
-            if in_ul: parts.append("</ul>"); in_ul = False
-            if in_ol: parts.append("</ol>"); in_ol = False
+            if in_ul:
+                parts.append("</ul>")
+                in_ul = False
+            if in_ol:
+                parts.append("</ol>")
+                in_ol = False
             parts.append(_inline(ln) + "<br>")
-    if in_ul: parts.append("</ul>")
-    if in_ol: parts.append("</ol>")
+    if in_ul:
+        parts.append("</ul>")
+    if in_ol:
+        parts.append("</ol>")
     return "<html><body>" + "\n".join(parts) + "</body></html>"
 
 
@@ -486,12 +504,16 @@ def setup_email_routes():
                         del _IMAP_POOL[pool_key]
                         return conn, True  # reused
                     except Exception:
-                        try: conn.logout()
-                        except Exception: pass
+                        try:
+                            conn.logout()
+                        except Exception:
+                            pass
                         del _IMAP_POOL[pool_key]
                 else:
-                    try: conn.logout()
-                    except Exception: pass
+                    try:
+                        conn.logout()
+                    except Exception:
+                        pass
                     del _IMAP_POOL[pool_key]
         # Fresh connection
         return _imap_connect(account_id, owner=owner), False
@@ -500,8 +522,10 @@ def setup_email_routes():
         # SECURITY: match the (account_id, owner) key used by _pooled_connect
         # so a pooled handle is returned to the same per-user slot.
         if not ok:
-            try: conn.logout()
-            except Exception: pass
+            try:
+                conn.logout()
+            except Exception:
+                pass
             return
         with _pool_lock:
             _IMAP_POOL[(account_id, owner)] = (conn, _time.monotonic())
@@ -517,7 +541,8 @@ def setup_email_routes():
 
     def _list_cache_get(key):
         v = _LIST_CACHE.get(key)
-        if not v: return None
+        if not v:
+            return None
         if v[0] < _time.monotonic():
             _LIST_CACHE.pop(key, None)
             return None
@@ -549,7 +574,8 @@ def setup_email_routes():
 
     def _read_cache_get(key):
         v = _READ_CACHE.get(key)
-        if not v: return None
+        if not v:
+            return None
         if v[0] < _time.monotonic():
             _READ_CACHE.pop(key, None)
             return None
@@ -1552,13 +1578,20 @@ def setup_email_routes():
                     if not text.strip():
                         lines.append("")
                         continue
-                    if style.startswith("Heading 1"): lines.append(f"# {text}")
-                    elif style.startswith("Heading 2"): lines.append(f"## {text}")
-                    elif style.startswith("Heading 3"): lines.append(f"### {text}")
-                    elif style.startswith("Heading "): lines.append(f"#### {text}")
-                    elif style.startswith("List Bullet"): lines.append(f"- {text}")
-                    elif style.startswith("List Number"): lines.append(f"1. {text}")
-                    else: lines.append(text)
+                    if style.startswith("Heading 1"):
+                        lines.append(f"# {text}")
+                    elif style.startswith("Heading 2"):
+                        lines.append(f"## {text}")
+                    elif style.startswith("Heading 3"):
+                        lines.append(f"### {text}")
+                    elif style.startswith("Heading "):
+                        lines.append(f"#### {text}")
+                    elif style.startswith("List Bullet"):
+                        lines.append(f"- {text}")
+                    elif style.startswith("List Number"):
+                        lines.append(f"1. {text}")
+                    else:
+                        lines.append(text)
                 for tbl in d.tables:
                     lines.append("")
                     for ri, row in enumerate(tbl.rows):
@@ -1574,7 +1607,7 @@ def setup_email_routes():
                 ver_id = str(uuid.uuid4())
                 _db = _SL()
                 try:
-                    _db.query(_Doc).filter(_Doc.is_active == True).update({"is_active": False})
+                    _db.query(_Doc).filter(_Doc.is_active == True).update({"is_active": False})  # noqa: E712
                     _db.add(_Doc(
                         id=doc_id, session_id=doc_session_id, title=title,
                         language="markdown", current_content=content,
@@ -1601,7 +1634,7 @@ def setup_email_routes():
                 ver_id = str(uuid.uuid4())
                 _db = _SL()
                 try:
-                    _db.query(_Doc).filter(_Doc.is_active == True).update({"is_active": False})
+                    _db.query(_Doc).filter(_Doc.is_active == True).update({"is_active": False})  # noqa: E712
                     _db.add(_Doc(
                         id=doc_id, session_id=doc_session_id, title=title,
                         language="markdown", current_content=content,
@@ -3104,8 +3137,10 @@ def setup_email_routes():
                     conn.login(imap_user, imap_pass)
                     imap_result = {"ok": True}
                 finally:
-                    try: conn.logout()
-                    except Exception: pass
+                    try:
+                        conn.logout()
+                    except Exception:
+                        pass
             except Exception as e:
                 imap_result = {"ok": False, "error": str(e)[:200]}
 
@@ -3124,8 +3159,10 @@ def setup_email_routes():
                     smtp.login(smtp_user, smtp_pass)
                     smtp_result = {"ok": True}
                 finally:
-                    try: smtp.quit()
-                    except Exception: pass
+                    try:
+                        smtp.quit()
+                    except Exception:
+                        pass
             except Exception as e:
                 smtp_result = {"ok": False, "error": str(e)[:200]}
 

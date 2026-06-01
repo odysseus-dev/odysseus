@@ -217,7 +217,7 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
     db = SessionLocal()
     try:
         endpoints = (
-            db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+            db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()  # noqa: E712
         )
     finally:
         db.close()

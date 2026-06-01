@@ -256,7 +256,8 @@ async def dispatch_reminder(
             logger.warning(f"Reminder LLM synthesis failed: {e}")
             synthesis = _SYNTH_FAILED_TAG
         if synthesis:
-            _s = synthesis.strip(); _low = _s.lower()
+            _s = synthesis.strip()
+            _low = _s.lower()
             if (not _s or _low.startswith("error:") or _low.startswith("[error")
                     or "operation failed" in _low
                     or ("upstream" in _low and "failed" in _low)) and synthesis != _SYNTH_FAILED_TAG:
@@ -483,7 +484,7 @@ def setup_note_routes(task_scheduler=None):
             if archived is not None:
                 q = q.filter(Note.archived == archived)
             else:
-                q = q.filter(Note.archived == False)
+                q = q.filter(Note.archived == False)  # noqa: E712
             if label:
                 q = q.filter(Note.label == label)
             # Archived view: most recently archived first. Active view: pin + manual order.

@@ -1,5 +1,6 @@
 """Tests for agent_loop.py — _detect_admin_intent and _compute_final_metrics.
 Uses mock imports to avoid loading the full app stack."""
+# ruff: noqa: E402
 
 import sys
 from unittest.mock import MagicMock

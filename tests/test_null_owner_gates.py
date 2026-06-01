@@ -10,6 +10,7 @@ Pattern under test (multi-tenant deploy):
   user "alice" must NOT be able to read/write a row whose owner is None
   or whose owner is "bob".
 """
+# ruff: noqa: E402
 
 import sys
 import types

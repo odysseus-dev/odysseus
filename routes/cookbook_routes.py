@@ -1,4 +1,5 @@
 """Cookbook routes — model download, serve, cache scanning, and cookbook state sync."""
+# ruff: noqa: E402
 
 import asyncio
 import json
@@ -1825,8 +1826,8 @@ def setup_cookbook_routes() -> APIRouter:
                         full_snapshot = log_path.read_text(
                             encoding="utf-8", errors="replace"
                         ).strip()[-12000:]
-                        lines = [l.strip() for l in full_snapshot.split('\n') if l.strip()]
-                        downloading_lines = [l for l in lines if l.startswith("Downloading")]
+                        lines = [lvl.strip() for lvl in full_snapshot.split('\n') if lvl.strip()]
+                        downloading_lines = [lvl for lvl in lines if lvl.startswith("Downloading")]
                         if downloading_lines:
                             progress_text = downloading_lines[-1]
                         elif lines:
@@ -1848,8 +1849,8 @@ def setup_cookbook_routes() -> APIRouter:
                         cap = subprocess.run(capture_cmd, timeout=10, capture_output=True, text=True)
                         if cap.returncode == 0:
                             full_snapshot = cap.stdout.strip()
-                            lines = [l.strip() for l in full_snapshot.split('\n') if l.strip()]
-                            downloading_lines = [l for l in lines if l.startswith("Downloading")]
+                            lines = [lvl.strip() for lvl in full_snapshot.split('\n') if lvl.strip()]
+                            downloading_lines = [lvl for lvl in lines if lvl.startswith("Downloading")]
                             if downloading_lines:
                                 progress_text = downloading_lines[-1]
                             elif lines:

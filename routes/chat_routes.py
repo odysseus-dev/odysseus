@@ -75,7 +75,7 @@ def _clear_orphaned_session_endpoint(sess) -> bool:
         return False
     db = SessionLocal()
     try:
-        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()  # noqa: E712
         for ep in endpoints:
             if _session_url_matches_endpoint(sess.endpoint_url or "", ep.base_url or ""):
                 return False
@@ -353,7 +353,7 @@ def setup_chat_routes(
             if not active_doc:
                 active_doc = _doc_db.query(DBDocument).filter(
                     DBDocument.session_id == session,
-                    DBDocument.is_active == True
+                    DBDocument.is_active == True  # noqa: E712
                 ).order_by(DBDocument.updated_at.desc()).first()
                 if active_doc:
                     logger.info(f"[doc-inject] found by session fallback: title={active_doc.title!r}")
@@ -645,7 +645,7 @@ def setup_chat_routes(
                     try:
                         _is_image_model = _db.query(ModelEndpoint).filter(
                             ModelEndpoint.model_type == "image",
-                            ModelEndpoint.is_enabled == True,
+                            ModelEndpoint.is_enabled == True,  # noqa: E712
                             ModelEndpoint.base_url.contains(_ep_base.split("://")[-1].split("/")[0]),
                         ).first() is not None
                     finally:
@@ -961,7 +961,7 @@ def setup_chat_routes(
                 db.query(DBChatMessage, DBSession.name)
                 .join(DBSession, DBChatMessage.session_id == DBSession.id)
                 .filter(
-                    DBSession.archived == False,
+                    DBSession.archived == False,  # noqa: E712
                     DBChatMessage.content.ilike(f"%{query_term}%"),
                     DBChatMessage.role.in_(["user", "assistant"]),
                 )

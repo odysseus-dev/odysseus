@@ -189,7 +189,8 @@ def _load_config(account: str | None = None) -> dict:
         try:
             from src.secret_storage import decrypt as _decrypt
         except Exception:
-            _decrypt = lambda v: v  # noqa: E731
+            def _decrypt(v):
+                return v
         cfg["imap_password"] = (
             _decrypt(row["imap_password"])
             if row["imap_password"]
@@ -572,7 +573,6 @@ def _search_emails(query, folders=None, max_results=20, account=None):
     cache = _get_cached_summaries()
     out = []
     conn = _imap_connect(account)
-    touched = []
     try:
         for folder in folders:
             try:

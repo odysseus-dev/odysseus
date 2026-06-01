@@ -178,7 +178,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                     continue
         for folder in folders_to_scan:
             try:
-                conn.select(_q(folder), readonly=True)
+                conn.select(_q(folder), readonly=True)  # noqa: F403, F823
                 status, data = conn.uid("SEARCH", None, f'(SINCE {since})')
                 if status == "OK" and data[0]:
                     for u in reversed(data[0].split()[-30:]):
@@ -532,8 +532,10 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                             if not cuid or not op.get("date"):
                                                 continue
                                             args = {"action": "update_event", "uid": cuid, "dtstart": op["date"]}
-                                            if op.get("end_date"): args["dtend"] = op["end_date"]
-                                            if op.get("title"): args["summary"] = op["title"]
+                                            if op.get("end_date"):
+                                                args["dtend"] = op["end_date"]
+                                            if op.get("title"):
+                                                args["summary"] = op["title"]
                                             if op.get("description"):
                                                 args["description"] = f"[Updated from email] {op['description']} (from: {sender})"
                                             r = await do_manage_calendar(json.dumps(args), owner=_acct_owner)
@@ -869,10 +871,14 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
             logger.info(f"Auto-processed {processed} new email(s) for summary/reply/classify")
         # Build a clear status message
         ops = []
-        if auto_sum: ops.append("summary")
-        if auto_reply: ops.append("reply")
-        if auto_tag: ops.append("tag")
-        if auto_spam: ops.append("spam")
+        if auto_sum:
+            ops.append("summary")
+        if auto_reply:
+            ops.append("reply")
+        if auto_tag:
+            ops.append("tag")
+        if auto_spam:
+            ops.append("spam")
         ops_label = "/".join(ops) or "none"
         parts = [f"Scanned {len(uid_list)} email(s) ({ops_label})"]
         if processed:

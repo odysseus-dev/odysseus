@@ -11,6 +11,7 @@ The fix offloads the bcrypt-bearing AuthManager calls via asyncio.to_thread.
 This test asserts those calls run on a worker thread, not the loop thread; it
 fails if they are awaited inline again.
 """
+# ruff: noqa: E402
 import os
 import sys
 import types

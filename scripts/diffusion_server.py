@@ -7,6 +7,7 @@ Odysseus's image generation tool.
 Usage:
     python3 scripts/diffusion_server.py --model /path/to/model --port 8100
 """
+# ruff: noqa: E402
 
 import os
 import sys
@@ -595,7 +596,6 @@ def _get_inpaint_pipe():
 
     import diffusers
 
-    model_path = _args.model
     torch_dtype = DTYPE_MAP.get(_args.dtype, torch.bfloat16)
 
     # Check if the main pipeline IS already an inpaint pipeline

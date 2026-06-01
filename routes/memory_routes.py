@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 # routes/memory_routes.py
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile, File
 from typing import Dict, Any, Optional, List
@@ -256,7 +257,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
             db = SessionLocal()
             try:
                 ep = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.id == ep_id, ModelEndpoint.is_enabled == True
+                    ModelEndpoint.id == ep_id, ModelEndpoint.is_enabled == True  # noqa: E712
                 ).first()
                 if ep:
                     base = _normalize_base(ep.base_url)
@@ -457,8 +458,8 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         except json.JSONDecodeError:
             # Fallback: split by lines, stripping any "1.", "2)" markdown-list
             # numbering the model added so saved memories don't keep the prefix.
-            lines = [_strip_list_prefix(l.strip()) for l in raw.splitlines() if l.strip() and len(l.strip()) > 5]
-            return {"suggestions": [{"text": l, "category": "fact"} for l in lines[:20]], "filename": filename}
+            lines = [_strip_list_prefix(lvl.strip()) for lvl in raw.splitlines() if lvl.strip() and len(lvl.strip()) > 5]
+            return {"suggestions": [{"text": lvl, "category": "fact"} for lvl in lines[:20]], "filename": filename}
         except Exception as e:
             logger.error(f"Memory import extraction failed: {e}")
             raise HTTPException(502, f"LLM extraction failed: {str(e)}")

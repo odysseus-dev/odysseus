@@ -80,7 +80,7 @@ async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
         rows = (
             db.query(DbSession)
             .filter(
-                DbSession.archived == False,
+                DbSession.archived == False,  # noqa: E712
                 *([DbSession.owner == owner] if owner else []),
             )
             .all()
@@ -163,7 +163,7 @@ async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
         remaining = (
             db.query(DbSession)
             .filter(
-                DbSession.archived == False,
+                DbSession.archived == False,  # noqa: E712
                 *([DbSession.owner == owner] if owner else []),
             )
             .all()

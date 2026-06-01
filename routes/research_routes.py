@@ -363,7 +363,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     db.query(ModelEndpoint)
                     .filter(
                         ModelEndpoint.id == body.endpoint_id,
-                        ModelEndpoint.is_enabled == True,
+                        ModelEndpoint.is_enabled == True,  # noqa: E712
                     )
                     .first()
                 )
@@ -412,7 +412,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     ep = (
                         db.query(ModelEndpoint)
                         .filter(
-                            ModelEndpoint.is_enabled == True,
+                            ModelEndpoint.is_enabled == True,  # noqa: E712
                         )
                         .first()
                     )
@@ -594,7 +594,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             try:
                 ep = (
                     db.query(ModelEndpoint)
-                    .filter(ModelEndpoint.is_enabled == True)
+                    .filter(ModelEndpoint.is_enabled == True)  # noqa: E712
                     .first()
                 )
                 if ep:

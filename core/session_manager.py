@@ -59,7 +59,7 @@ class SessionManager:
         db = SessionLocal()
         try:
             db_sessions = db.query(DbSession).filter(
-                DbSession.archived == False,
+                DbSession.archived == False,  # noqa: E712
                 DbSession.message_count > 0,
             ).order_by(DbSession.last_accessed.desc()).limit(100).all()
 
@@ -114,7 +114,8 @@ class SessionManager:
         if db_session.messages:
             for db_msg in db_session.messages:
                 meta = json.loads(db_msg.meta_data) if db_msg.meta_data else {}
-                if meta is None: meta = {}
+                if meta is None:
+                    meta = {}
                 meta['_db_id'] = db_msg.id
                 meta.setdefault('timestamp', _message_timestamp_iso(db_msg.timestamp))
                 history.append(ChatMessage(
@@ -129,7 +130,8 @@ class SessionManager:
 
             for db_msg in db_messages:
                 meta = json.loads(db_msg.meta_data) if db_msg.meta_data else {}
-                if meta is None: meta = {}
+                if meta is None:
+                    meta = {}
                 meta['_db_id'] = db_msg.id
                 meta.setdefault('timestamp', _message_timestamp_iso(db_msg.timestamp))
                 history.append(ChatMessage(

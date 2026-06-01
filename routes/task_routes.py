@@ -165,7 +165,7 @@ def _resolve_run_endpoint(db, task: ScheduledTask, run: TaskRun) -> str:
     try:
         from core.database import ModelEndpoint
 
-        eps = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        eps = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()  # noqa: E712
         for ep in eps:
             cached = []
             if ep.cached_models:

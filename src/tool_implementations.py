@@ -522,7 +522,7 @@ async def do_search_chats(query: str, limit: int = 20, owner: str | None = None)
             db.query(DBChatMessage, DBSession.id, DBSession.name)
             .join(DBSession, DBChatMessage.session_id == DBSession.id)
             .filter(
-                DBSession.archived == False,
+                DBSession.archived == False,  # noqa: E712
                 DBChatMessage.content.ilike(f"%{safe_q}%", escape="\\"),
                 DBChatMessage.role.in_(["user", "assistant"]),
             )
@@ -1363,15 +1363,19 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
             diff = (now - ts).total_seconds()
         except Exception:
             return 'unknown'
-        if diff < 60: return 'just now'
-        if diff < 3600: return f'{int(diff / 60)}m ago'
-        if diff < 86400: return f'{int(diff / 3600)}h ago'
-        if diff < 86400 * 7: return f'{int(diff / 86400)}d ago'
+        if diff < 60:
+            return 'just now'
+        if diff < 3600:
+            return f'{int(diff / 60)}m ago'
+        if diff < 86400:
+            return f'{int(diff / 3600)}h ago'
+        if diff < 86400 * 7:
+            return f'{int(diff / 86400)}d ago'
         return ts.strftime('%Y-%m-%d')
 
     try:
         if action == "list":
-            q = db.query(Document).filter(Document.is_active == True)
+            q = db.query(Document).filter(Document.is_active == True)  # noqa: E712
             if args.get("search"):
                 q = q.filter(Document.title.ilike(f"%{args['search']}%"))
             if args.get("language"):
@@ -1402,7 +1406,7 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
             doc_id = args.get("document_id") or args.get("id") or args.get("uid")
             if not doc_id:
                 return {"error": "Need document_id (use action=list to find one)", "exit_code": 1}
-            doc = db.query(Document).filter(Document.id == doc_id, Document.is_active == True).first()
+            doc = db.query(Document).filter(Document.id == doc_id, Document.is_active == True).first()  # noqa: E712
             if not doc:
                 return {"error": f"Document '{doc_id}' not found", "exit_code": 1}
             body = doc.current_content or ""
@@ -1430,7 +1434,7 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
                 doc = db.query(Document).filter(Document.id == doc_id).first()
             if not doc:
                 # Fallback: most recently updated doc (likely what the user means)
-                doc = db.query(Document).filter(Document.is_active == True).order_by(Document.updated_at.desc()).first()
+                doc = db.query(Document).filter(Document.is_active == True).order_by(Document.updated_at.desc()).first()  # noqa: E712
             if not doc:
                 return {"error": "No document to delete", "exit_code": 1}
             title = doc.title
@@ -1546,7 +1550,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             if not wanted_slug:
                 return None
             best = None
-            for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
+            for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():  # noqa: E712
                 raw_models = []
                 try:
                     raw_models = _json.loads(ep.cached_models or "[]") or []
@@ -2895,10 +2899,14 @@ async def do_download_model(content: str, owner: Optional[str] = None) -> Dict:
         payload["include"] = args["include"]
     # Per-host env_prefix + hf_token from cookbook_state (same as serve).
     env_cfg = await _cookbook_env_for_host(host)
-    if env_cfg.get("env_prefix"): payload["env_prefix"] = env_cfg["env_prefix"]
-    if env_cfg.get("hf_token"):   payload["hf_token"]   = env_cfg["hf_token"]
-    if env_cfg.get("platform"):   payload["platform"]   = env_cfg["platform"]
-    if env_cfg.get("ssh_port"):   payload["ssh_port"]   = env_cfg["ssh_port"]
+    if env_cfg.get("env_prefix"):
+        payload["env_prefix"] = env_cfg["env_prefix"]
+    if env_cfg.get("hf_token"):
+        payload["hf_token"] = env_cfg["hf_token"]
+    if env_cfg.get("platform"):
+        payload["platform"] = env_cfg["platform"]
+    if env_cfg.get("ssh_port"):
+        payload["ssh_port"] = env_cfg["ssh_port"]
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(f"{_COOKBOOK_BASE}/api/model/download",
@@ -2945,11 +2953,16 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
     # the UI uses. Without env_prefix, `vllm serve …` lands in a shell
     # without the user's venv and fails 'command not found'.
     env_cfg = await _cookbook_env_for_host(host)
-    if env_cfg.get("env_prefix"): payload["env_prefix"] = env_cfg["env_prefix"]
-    if env_cfg.get("gpus"):       payload["gpus"]       = env_cfg["gpus"]
-    if env_cfg.get("hf_token"):   payload["hf_token"]   = env_cfg["hf_token"]
-    if env_cfg.get("platform"):   payload["platform"]   = env_cfg["platform"]
-    if env_cfg.get("ssh_port"):   payload["ssh_port"]   = env_cfg["ssh_port"]
+    if env_cfg.get("env_prefix"):
+        payload["env_prefix"] = env_cfg["env_prefix"]
+    if env_cfg.get("gpus"):
+        payload["gpus"] = env_cfg["gpus"]
+    if env_cfg.get("hf_token"):
+        payload["hf_token"] = env_cfg["hf_token"]
+    if env_cfg.get("platform"):
+        payload["platform"] = env_cfg["platform"]
+    if env_cfg.get("ssh_port"):
+        payload["ssh_port"] = env_cfg["ssh_port"]
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(f"{_COOKBOOK_BASE}/api/model/serve",
@@ -3494,11 +3507,16 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
     # env_prefix (source ~/vllm-env/bin/activate), gpus, hf_token,
     # etc. from cookbook_state.env so launches actually find vllm.
     env_cfg = await _cookbook_env_for_host(host)
-    if env_cfg.get("env_prefix"): payload["env_prefix"] = env_cfg["env_prefix"]
-    if env_cfg.get("gpus"):       payload["gpus"]       = env_cfg["gpus"]
-    if env_cfg.get("hf_token"):   payload["hf_token"]   = env_cfg["hf_token"]
-    if env_cfg.get("platform"):   payload["platform"]   = env_cfg["platform"]
-    if env_cfg.get("ssh_port"):   payload["ssh_port"]   = env_cfg["ssh_port"]
+    if env_cfg.get("env_prefix"):
+        payload["env_prefix"] = env_cfg["env_prefix"]
+    if env_cfg.get("gpus"):
+        payload["gpus"] = env_cfg["gpus"]
+    if env_cfg.get("hf_token"):
+        payload["hf_token"] = env_cfg["hf_token"]
+    if env_cfg.get("platform"):
+        payload["platform"] = env_cfg["platform"]
+    if env_cfg.get("ssh_port"):
+        payload["ssh_port"] = env_cfg["ssh_port"]
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -3709,11 +3727,15 @@ async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict
     payload: Dict[str, Any] = {"query": topic}
     # Optional knobs the research panel supports.
     if args.get("max_rounds") is not None:
-        try: payload["max_rounds"] = int(args["max_rounds"])
-        except (ValueError, TypeError): pass
+        try:
+            payload["max_rounds"] = int(args["max_rounds"])
+        except (ValueError, TypeError):
+            pass
     if args.get("max_time") is not None:
-        try: payload["max_time"] = int(args["max_time"])
-        except (ValueError, TypeError): pass
+        try:
+            payload["max_time"] = int(args["max_time"])
+        except (ValueError, TypeError):
+            pass
     if args.get("category"):
         payload["category"] = args["category"]
     if args.get("search_provider"):

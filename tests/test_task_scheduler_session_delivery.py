@@ -1,4 +1,5 @@
 """Regression tests for task-result delivery into chat sessions (issue #326)."""
+# ruff: noqa: E402
 import asyncio
 import types as _types
 

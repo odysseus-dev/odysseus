@@ -1,4 +1,5 @@
 """Calendar routes — local SQLite-backed calendar CRUD."""
+# ruff: noqa: E402
 
 import logging
 import uuid
@@ -196,11 +197,17 @@ def parse_due_for_user(s: str) -> str:
 
     def _parse_time(t):
         m = _re.match(r'^\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$', t, _re.IGNORECASE)
-        if not m: return None
-        h = int(m.group(1)); mn = int(m.group(2) or 0); ampm = (m.group(3) or "").lower()
-        if ampm == "pm" and h < 12: h += 12
-        elif ampm == "am" and h == 12: h = 0
-        if not (0 <= h < 24 and 0 <= mn < 60): return None
+        if not m:
+            return None
+        h = int(m.group(1))
+        mn = int(m.group(2) or 0)
+        ampm = (m.group(3) or "").lower()
+        if ampm == "pm" and h < 12:
+            h += 12
+        elif ampm == "am" and h == 12:
+            h = 0
+        if not (0 <= h < 24 and 0 <= mn < 60):
+            return None
         return h, mn
 
     today = user_now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -209,8 +216,10 @@ def parse_due_for_user(s: str) -> str:
     if m:
         word, rest = m.group(1), m.group(2).strip()
         base = today
-        if word in ("tomorrow", "tmrw"): base = today + _td(days=1)
-        elif word == "yesterday":         base = today - _td(days=1)
+        if word in ("tomorrow", "tmrw"):
+            base = today + _td(days=1)
+        elif word == "yesterday":
+            base = today - _td(days=1)
         if not rest:
             return base.isoformat()
         t = _parse_time(rest)
@@ -219,10 +228,14 @@ def parse_due_for_user(s: str) -> str:
 
     m = _re.match(r'^in\s+(\d+)\s*(hour|hr|minute|min|day)s?\s*$', lower)
     if m:
-        n = int(m.group(1)); unit = m.group(2)
-        if unit in ("hour", "hr"):  return (user_now + _td(hours=n)).isoformat()
-        if unit in ("minute", "min"): return (user_now + _td(minutes=n)).isoformat()
-        if unit == "day":             return (user_now + _td(days=n)).isoformat()
+        n = int(m.group(1))
+        unit = m.group(2)
+        if unit in ("hour", "hr"):
+            return (user_now + _td(hours=n)).isoformat()
+        if unit in ("minute", "min"):
+            return (user_now + _td(minutes=n)).isoformat()
+        if unit == "day":
+            return (user_now + _td(days=n)).isoformat()
 
     t = _parse_time(lower)
     if t is not None:

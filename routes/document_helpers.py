@@ -1,4 +1,5 @@
 """document_helpers.py — Pydantic models, doc serializers, owner gating, file-locator helpers shared with document_routes.py."""
+# ruff: noqa: E402
 
 """Document routes — CRUD for living documents with version history."""
 

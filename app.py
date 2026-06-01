@@ -1,4 +1,5 @@
 # app.py — slim orchestrator
+# ruff: noqa: E402
 import os
 
 # Windows: force HuggingFace/fastembed to COPY model files instead of symlinking.
@@ -177,7 +178,7 @@ if AUTH_ENABLED:
         new_map = defaultdict(list)
         db = SessionLocal()
         try:
-            rows = db.query(ApiToken).filter(ApiToken.is_active == True).all()
+            rows = db.query(ApiToken).filter(ApiToken.is_active == True).all()  # noqa: E712
             for r in rows:
                 scopes = [s.strip() for s in (getattr(r, "scopes", "") or "chat").split(",") if s.strip()]
                 new_map[r.token_prefix].append((r.id, r.token_hash, getattr(r, "owner", None), scopes))

@@ -331,7 +331,7 @@ def resolve_endpoint_by_id(
             db.query(ModelEndpoint)
             .filter(
                 ModelEndpoint.id == ep_id,
-                ModelEndpoint.is_enabled == True,
+                ModelEndpoint.is_enabled == True,  # noqa: E712
             )
             .first()
         )

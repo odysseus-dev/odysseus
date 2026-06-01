@@ -75,7 +75,7 @@ def setup_editor_draft_routes() -> APIRouter:
         user = get_current_user(request)
         db = SessionLocal()
         try:
-            q = db.query(EditorDraft).filter(EditorDraft.is_active == True)
+            q = db.query(EditorDraft).filter(EditorDraft.is_active == True)  # noqa: E712
             if user is not None:
                 q = q.filter(EditorDraft.owner == user)
             rows = q.order_by(EditorDraft.updated_at.desc()).limit(200).all()
@@ -90,7 +90,7 @@ def setup_editor_draft_routes() -> APIRouter:
         try:
             d = (
                 db.query(EditorDraft)
-                .filter(EditorDraft.id == draft_id, EditorDraft.is_active == True)
+                .filter(EditorDraft.id == draft_id, EditorDraft.is_active == True)  # noqa: E712
                 .first()
             )
             if not d or not _owns(d, user):
@@ -141,7 +141,7 @@ def setup_editor_draft_routes() -> APIRouter:
         try:
             d = (
                 db.query(EditorDraft)
-                .filter(EditorDraft.id == draft_id, EditorDraft.is_active == True)
+                .filter(EditorDraft.id == draft_id, EditorDraft.is_active == True)  # noqa: E712
                 .first()
             )
             if not d or not _owns(d, user):

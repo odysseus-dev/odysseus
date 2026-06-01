@@ -8,6 +8,7 @@ don't regress. Specifically:
   notifications; ownerless legacy notifications are drained only by
   anonymous/no-owner callers.
 """
+# ruff: noqa: E402
 
 import os
 import sys

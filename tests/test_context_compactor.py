@@ -1,5 +1,6 @@
 """Tests for context_compactor.py — constants and prompt templates.
 Uses mock imports to avoid loading the full app stack."""
+# ruff: noqa: E402
 
 import sys
 from unittest.mock import MagicMock

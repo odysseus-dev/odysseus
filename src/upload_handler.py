@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 # src/upload_handler.py
 import os
 import re

@@ -57,7 +57,7 @@ def main():
     db = SessionLocal()
     try:
         # Sessions
-        count = db.query(Session).filter(Session.owner == None).update({"owner": owner})
+        count = db.query(Session).filter(Session.owner is None).update({"owner": owner})
         print(f"  sessions: claimed {count}")
 
         # Documents
@@ -75,7 +75,7 @@ def main():
         if GalleryImage:
             count = (
                 db.query(GalleryImage)
-                .filter(GalleryImage.owner == None)
+                .filter(GalleryImage.owner is None)
                 .update({"owner": owner})
             )
             print(f"  gallery: claimed {count}")
@@ -84,7 +84,7 @@ def main():
         if Comparison:
             count = (
                 db.query(Comparison)
-                .filter(Comparison.owner == None)
+                .filter(Comparison.owner is None)
                 .update({"owner": owner})
             )
             print(f"  comparisons: claimed {count}")

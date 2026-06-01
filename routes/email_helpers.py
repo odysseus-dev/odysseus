@@ -11,6 +11,7 @@ and `email_pollers.py` (the background loops):
     - sender context retrieval for the AI-summary / AI-reply pipelines
     - Pydantic models, shared constants, scheduled-DB bootstrap
 """
+# ruff: noqa: E402
 
 import os
 import imaplib
@@ -544,7 +545,7 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
             if account_id:
                 row = (
                     db.query(_EA)
-                    .filter(_EA.id == account_id, _EA.enabled == True)
+                    .filter(_EA.id == account_id, _EA.enabled == True)  # noqa: E712
                     .first()
                 )  # noqa: E712
                 # If the resolved row belongs to a different owner, treat as

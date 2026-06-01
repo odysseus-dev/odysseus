@@ -463,7 +463,7 @@ def setup_model_routes(model_discovery):
                 from concurrent.futures import ThreadPoolExecutor, as_completed
                 db = SessionLocal()
                 try:
-                    endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+                    endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()  # noqa: E712
                     # Skip endpoints that have failed 3+ times in a row in the last 5 min
                     now = _time.time()
                     to_probe = []
@@ -518,7 +518,7 @@ def setup_model_routes(model_discovery):
 
         db = SessionLocal()
         try:
-            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
             if owner and not is_admin:
                 # Regular users see: their own endpoints + null-owner
                 # (legacy / shared). Admins see everything.
@@ -529,7 +529,6 @@ def setup_model_routes(model_discovery):
 
         for ep in endpoints:
             base = _normalize_base(ep.base_url)
-            provider = _detect_provider(base)
             # Use cached models — background refresh keeps them updated
             model_ids = []
             if ep.cached_models:
@@ -650,7 +649,7 @@ def setup_model_routes(model_discovery):
 
         db = SessionLocal()
         try:
-            endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+            endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()  # noqa: E712
             local_eps = [
                 (ep.id, _normalize_base(ep.base_url), ep.api_key)
                 for ep in endpoints
@@ -692,7 +691,7 @@ def setup_model_routes(model_discovery):
         require_admin(request)
         db = SessionLocal()
         try:
-            endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+            endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()  # noqa: E712
         finally:
             db.close()
 
@@ -799,7 +798,7 @@ def setup_model_routes(model_discovery):
         require_admin(request)
         db = SessionLocal()
         try:
-            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
             if endpoint_id:
                 q = q.filter(ModelEndpoint.id == endpoint_id)
             endpoints = q.all()
@@ -1223,7 +1222,7 @@ def setup_model_routes(model_discovery):
             ep = None
             if ep_id:
                 ep_q = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.id == ep_id, ModelEndpoint.is_enabled == True
+                    ModelEndpoint.id == ep_id, ModelEndpoint.is_enabled == True  # noqa: E712
                 )
                 # Honor the same owner-scope rule as /api/models — a per-user
                 # default that points at an endpoint owned by a different user
@@ -1246,7 +1245,7 @@ def setup_model_routes(model_discovery):
                     if not fid:
                         continue
                     cand_q = db.query(ModelEndpoint).filter(
-                        ModelEndpoint.id == fid, ModelEndpoint.is_enabled == True
+                        ModelEndpoint.id == fid, ModelEndpoint.is_enabled == True  # noqa: E712
                     )
                     if _user and not _is_admin:
                         cand_q = owner_filter(cand_q, ModelEndpoint, _user)
@@ -1265,7 +1264,7 @@ def setup_model_routes(model_discovery):
             # existing shared/admin endpoint. Shared endpoints remain visible
             # in the picker and still work when explicitly selected/saved.
             if not ep:
-                _last_q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+                _last_q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
                 if _user and not _is_admin:
                     _last_q = owner_filter(_last_q, ModelEndpoint, _user, include_shared=False)
                 ep = _last_q.first()

@@ -10,6 +10,7 @@
 
 These are pure-function tests — no FastAPI app boot, no DB.
 """
+# ruff: noqa: E402
 
 import sys
 import types

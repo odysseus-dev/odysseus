@@ -7,6 +7,7 @@ send_to_session, pipeline.
 These are agent tools — the LLM writes fenced code blocks and they execute
 through the standard agent_tools.py pipeline.
 """
+# ruff: noqa: E402
 
 import json
 import logging
@@ -83,7 +84,7 @@ def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
 
     db = SessionLocal()
     try:
-        query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
         if target_endpoint_name:
             query = query.filter(ModelEndpoint.name.ilike(f"%{target_endpoint_name}%"))
         endpoints = query.all()
@@ -485,10 +486,14 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
                 diff = (now - ts).total_seconds()
             except Exception:
                 return 'unknown'
-            if diff < 60: return 'just now'
-            if diff < 3600: return f'{int(diff / 60)}m ago'
-            if diff < 86400: return f'{int(diff / 3600)}h ago'
-            if diff < 86400 * 7: return f'{int(diff / 86400)}d ago'
+            if diff < 60:
+                return 'just now'
+            if diff < 3600:
+                return f'{int(diff / 60)}m ago'
+            if diff < 86400:
+                return f'{int(diff / 3600)}h ago'
+            if diff < 86400 * 7:
+                return f'{int(diff / 86400)}d ago'
             return ts.strftime('%Y-%m-%d')
 
         lines = []
@@ -1100,7 +1105,7 @@ async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict
 
     db = SessionLocal()
     try:
-        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()  # noqa: E712
         if not endpoints:
             return {"results": "No enabled model endpoints configured."}
 
@@ -1587,7 +1592,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                 _idb = SessionLocal()
                 try:
                     _img_eps = _idb.query(ModelEndpoint).filter(
-                        ModelEndpoint.is_enabled == True,
+                        ModelEndpoint.is_enabled == True,  # noqa: E712
                         ModelEndpoint.model_type == "image",
                     ).all()
                     for _iep in _img_eps:
