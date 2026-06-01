@@ -4,11 +4,12 @@
     "url": "https://github.com/pewdiepie-archdaemon/odysseus.git"
   },
   "scripts": {
-    "start": "npm install && tsc && node dist/setup.js"
+    "start": "npm install && ts-node scripts/setup.ts"
   },
   "devDependencies": {
     "@antithesishq/bombadil": "^0.3.2",
     "@types/node": "^22",
+    "ts-node": "^10.9.2",
     "typescript": "^6.0.3"
   },
   "dependencies": {
