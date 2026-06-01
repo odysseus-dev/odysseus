@@ -3207,9 +3207,9 @@ async function _cmdTourSettings(args, ctx) {
     { sel: '#settings-modal .settings-nav-item[data-settings-tab="search"]',
       text: '<b>Search</b> — plug in your own search provider, or use the bundled <b>SearXNG</b> out of the box.',
       before: () => _clickNav('search') },
-    { sel: '#settings-modal .settings-nav-item[data-settings-tab="appearance"]',
-      text: '<b>Appearance</b> — too many tools you don\'t need? Adjust them here! Toggle sidebar buttons, tool icons, and section visibility.',
-      before: () => _clickNav('appearance') },
+    { sel: '#settings-modal .settings-nav-item[data-settings-tab="visibility"]',
+      text: '<b>Visibility</b> — too many tools you don\'t need? Adjust them here! Toggle sidebar buttons, tool icons, and section visibility.',
+      before: () => _clickNav('visibility') },
     { sel: '#settings-modal .settings-nav-item[data-settings-tab="email"]',
       text: '<b>Email</b> — sync schedule, drafts, snooze defaults — everything email-flow related.',
       before: () => _clickNav('email') },
@@ -5511,7 +5511,7 @@ const COMMANDS = {
   'tour-settings': {
     alias: ['tour-setting', 'settings-tour'],
     category: 'Tours',
-    help: 'Settings tour: models, integrations, appearance',
+    help: 'Settings tour: models, integrations, visibility',
     handler: _cmdTourSettings,
     usage: '/tour-settings'
   },

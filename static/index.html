@@ -1308,7 +1308,7 @@
         </button>
         <button class="close-btn" aria-label="Close settings">✖</button>
       </div>
-      <div class="admin-toggle-sub" style="padding:0 12px 8px;opacity:0.6;font-size:11px;">Toggle on/off visibility of tools and modules across the interface.</div>
+      <div id="settings-tab-blurb" class="admin-toggle-sub" style="padding:0 12px 8px;opacity:0.6;font-size:11px;"></div>
       <div class="settings-layout">
         <div class="settings-sidebar">
           <!-- Section 1: AI plumbing (Add Models → AI Defaults → Search) -->
@@ -1341,10 +1341,10 @@
             <span>Reminders</span>
           </button>
           <div class="settings-sidebar-divider"></div>
-          <!-- Section 3: UX (Appearance → Shortcuts) -->
-          <button class="settings-nav-item" data-settings-tab="appearance">
+          <!-- Section 3: UX (Visibility → Shortcuts) -->
+          <button class="settings-nav-item" data-settings-tab="visibility">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 0 0 0 20 4 4 0 0 1 0-8 4 4 0 0 0 0-8"/></svg>
-            <span>Appearance</span>
+            <span>Visibility</span>
           </button>
           <button class="settings-nav-item" data-settings-tab="shortcuts">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>
@@ -1635,8 +1635,8 @@
           </div>
         </div>
 
-        <!-- ═══ APPEARANCE TAB ═══ -->
-        <div data-settings-panel="appearance" class="settings-appearance-panel hidden">
+        <!-- ═══ VISIBILITY TAB ═══ -->
+        <div data-settings-panel="visibility" class="settings-visibility-panel hidden">
           <div class="admin-card" style="padding-bottom:6px;">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>Sidebar</h2>
             <div class="vis-toggles">
@@ -1896,12 +1896,12 @@
 
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Writing Style</h2>
-            <div class="admin-toggle-sub" style="margin-bottom:8px">AI-extracted from your sent emails. Used when AI drafts replies.</div>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Learns your tone from recent sent mail (max 15, min 3). Used when AI drafts replies.</div>
             <div class="settings-col">
               <textarea id="set-email-style" rows="4" class="settings-select" style="font-family:inherit;resize:vertical" placeholder="e.g. I write emails in this style. I don't use exclamation marks. I sign emails with: ..."></textarea>
               <div class="settings-row" style="margin-top:4px">
                 <span id="set-email-style-msg" style="font-size:11px;"></span>
-                <button class="admin-btn-add" id="set-email-style-extract" style="margin-left:auto;">Extract from Sent (15 emails)</button>
+                <button class="admin-btn-add" id="set-email-style-extract" style="margin-left:auto;">Extract from Sent</button>
                 <button class="admin-btn-add" id="set-email-style-save">Save</button>
               </div>
             </div>
@@ -1982,7 +1982,7 @@
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>Add User</h2>
             <div class="admin-add-form">
-              <input id="adm-newUsername" type="text" placeholder="Username (email)">
+              <input id="adm-newUsername" type="text" placeholder="Username">
               <input id="adm-newPassword" type="password" placeholder="Password (min 8)">
               <div class="admin-switch-inline" title="Grant full admin access"><label class="admin-switch"><input type="checkbox" id="adm-newIsAdmin"><span class="admin-slider"></span></label> Admin</div>
             </div>

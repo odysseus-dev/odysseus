@@ -1,5 +1,5 @@
 // static/js/settings.js — Settings panel module (ES6)
-// User-facing preferences: AI models, search, appearance
+// User-facing preferences: AI models, search, visibility
 
 import uiModule from './ui.js';
 import searchModule from './search.js';
@@ -16,6 +16,30 @@ function esc(s) { return uiModule.esc(s); }
 
 /* ── Tab switching ── */
 const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'users', 'system']);
+const VISIBILITY_TAB = 'visibility';
+
+const SETTINGS_TAB_BLURBS = {
+  services: 'Connect local and cloud model endpoints for chat and images.',
+  ai: 'Default chat model, utility model, and related AI behavior.',
+  search: 'Search API used for web search and deep research.',
+  integrations: 'All external service connections in one place.',
+  email: 'Email writing style and links to account setup in Integrations.',
+  reminders: 'How fired note reminders are delivered (browser, email, ntfy).',
+  visibility: 'Toggle visibility of tools and modules across the interface.',
+  shortcuts: 'Click a shortcut to rebind; press Escape to cancel.',
+  account: 'Profile, password, and two-factor authentication.',
+  tools: 'Enable or disable tools available to the AI agent.',
+  users: 'User accounts, open signup, and per-user privileges.',
+  system: 'Backup, import, tokens, webhooks, and server maintenance.',
+};
+
+function syncSettingsTabBlurb(tab) {
+  const blurb = el('settings-tab-blurb');
+  if (!blurb) return;
+  const text = SETTINGS_TAB_BLURBS[tab] || '';
+  blurb.textContent = text;
+  blurb.style.display = text ? '' : 'none';
+}
 
 function initTabs() {
   modalEl.querySelectorAll('[data-settings-tab]').forEach(btn => {
@@ -28,11 +52,12 @@ function initTabs() {
       }
       modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
       modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
-      // Mark when the Appearance tab is open so the modal can go
+      syncSettingsTabBlurb(tab);
+      // Mark when the Visibility tab is open so the modal can go
       // semi-transparent — lets the user see the rest of the UI react as
       // they flip toggles instead of having to close + reopen the modal.
-      document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
-      syncAppearanceOpacity(tab === 'appearance');
+      document.body.classList.toggle('settings-visibility-open', tab === VISIBILITY_TAB);
+      syncAppearanceOpacity(tab === VISIBILITY_TAB);
       if (tab === 'ai') refreshAiModelEndpoints();
     });
   });
@@ -103,11 +128,11 @@ function initClose() {
   });
 }
 
-/* ── Appearance-tab opacity slider ──
+/* ── Visibility-tab opacity slider ──
    Mirrors the Theme customizer's slider: fades the settings modal's
    background (and inner cards) via color-mix so the user can watch the
    rest of the UI react to toggles, while keeping text/controls crisp
-   (no element opacity). Only shown/active on the Appearance tab. */
+   (no element opacity). Only shown/active on the Visibility tab. */
 const _SETTINGS_PEEK = 55; // % opacity when the Peek toggle is on
 function _applySettingsOpacity(on) {
   const content = modalEl && modalEl.querySelector('.settings-modal-content, .modal-content');
@@ -136,14 +161,14 @@ function _applySettingsOpacity(on) {
   }
 }
 
-// Show/hide the Peek toggle for the Appearance tab and apply or clear the fade.
+// Show/hide the Peek toggle for the Visibility tab and apply or clear the fade.
 function syncAppearanceOpacity(active) {
   const toggle = el('settings-opacity-wrap');
   if (toggle) toggle.classList.toggle('hidden', !active);
   if (active) {
     _applySettingsOpacity(toggle ? toggle.classList.contains('active') : false);
   } else {
-    _applySettingsOpacity(false); // clear the fade off the Appearance tab
+    _applySettingsOpacity(false); // clear the fade off the Visibility tab
   }
 }
 
@@ -1563,7 +1588,7 @@ async function initAgentSettings() {
 }
 
 /* ═══════════════════════════════════════════
-   APPEARANCE TAB
+   VISIBILITY TAB
    ═══════════════════════════════════════════ */
 function initAppearance() {
   syncAppearanceCheckboxes();
@@ -4340,8 +4365,9 @@ export function open(tab) {
   }
   // Auto-init admin data if showing an admin tab
   const activeTab = tab || (modalEl.querySelector('[data-settings-tab].active') || {}).dataset?.settingsTab || 'services';
-  document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
-  syncAppearanceOpacity(activeTab === 'appearance');
+  syncSettingsTabBlurb(activeTab);
+  document.body.classList.toggle('settings-visibility-open', activeTab === VISIBILITY_TAB);
+  syncAppearanceOpacity(activeTab === VISIBILITY_TAB);
   if (activeTab === 'ai') refreshAiModelEndpoints();
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
@@ -4350,9 +4376,9 @@ export function open(tab) {
 
 export function close() {
   if (!modalEl) return;
-  // Always clear the appearance-tab body class so the rest of the app
+  // Always clear the visibility-tab body class so the rest of the app
   // doesn't keep its dimmed state if the modal got closed mid-tab.
-  document.body.classList.remove('settings-appearance-open');
+  document.body.classList.remove('settings-visibility-open');
   syncAppearanceOpacity(false); // clear any opacity-slider fade
   const content = modalEl.querySelector('.modal-content, .settings-modal-content');
   if (content && !content.classList.contains('modal-closing')) {

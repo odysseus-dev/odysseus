@@ -20735,16 +20735,16 @@ body.gallery-selecting .gallery-dl-btn,
   padding: 16px 20px;
   min-width: 0;
 }
-.settings-appearance-panel {
+.settings-visibility-panel {
   flex-direction: column;
 }
-.settings-appearance-panel:not(.hidden) {
+.settings-visibility-panel:not(.hidden) {
   display: flex;
 }
-.settings-appearance-panel > .admin-card:nth-of-type(1) { order: 3; }
-.settings-appearance-panel > .admin-card:nth-of-type(2) { order: 1; }
-.settings-appearance-panel > .admin-card:nth-of-type(3) { order: 2; }
-.settings-appearance-panel > .admin-card:nth-of-type(n+4) { order: 4; }
+.settings-visibility-panel > .admin-card:nth-of-type(1) { order: 3; }
+.settings-visibility-panel > .admin-card:nth-of-type(2) { order: 1; }
+.settings-visibility-panel > .admin-card:nth-of-type(3) { order: 2; }
+.settings-visibility-panel > .admin-card:nth-of-type(n+4) { order: 4; }
 
 /* Mobile: stack tabs on top */
 @media (max-width: 600px) {
