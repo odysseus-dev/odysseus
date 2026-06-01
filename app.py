@@ -817,7 +817,6 @@ async def startup_event():
             from src.tool_index import get_tool_index
             idx = await asyncio.to_thread(get_tool_index)
             if idx:
-                await asyncio.to_thread(idx.index_builtin_tools)
                 await asyncio.to_thread(idx.get_tools_for_query, "warmup", 8)
                 logger.info("[startup] Tool index pre-warmed")
         except Exception as e:
