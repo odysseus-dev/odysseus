@@ -805,6 +805,18 @@ body.bg-pattern-sparkles {
     }
     .icon-rail-btn:hover { opacity: 1; background: color-mix(in srgb, var(--accent) 12%, transparent); }
     .icon-rail-btn.active-section { opacity: 1; background: color-mix(in srgb, var(--color-accent) 15%, transparent); }
+    /* Von Restorff Effect: the New Chat action is visually distinct from
+       navigation destinations. Higher default opacity + subtle border makes
+       it read as "button" not "tab" — the user's eye finds it first. */
+    .icon-rail-btn.rail-new-chat {
+      opacity: 0.7;
+      border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    }
+    .icon-rail-btn.rail-new-chat:hover {
+      opacity: 1;
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 18%, transparent);
+    }
     /* Unified "minimized" indicator for any rail/sidebar button whose modal is held open */
     .rail-minimized { position: relative; }
     .rail-minimized::after {
@@ -1152,7 +1164,14 @@ body.bg-pattern-sparkles {
     }
     #rail-admin,
     #rail-settings { color: var(--fg); }
-    .rail-separator { width: 20px; height: 1px; background: var(--border); margin: 4px auto; }
+    /* Miller's Law: chunk rail icons into groups of 5-7.
+       Separators create visual "chunks" so users scan groups, not 16 individual icons. */
+    .rail-separator {
+      width: 24px;
+      height: 1px;
+      background: color-mix(in srgb, var(--border) 50%, transparent);
+      margin: 6px auto;
+    }
     .rail-dynamic {
       position: relative;
     }
@@ -2177,6 +2196,8 @@ body.bg-pattern-sparkles {
       max-width: 800px;
       margin: 0 auto 12px auto;
       width: 100%;
+      /* Smooth focus transition — the bar "wakes up" when the user starts typing */
+      transition: border-color 0.25s ease, box-shadow 0.25s ease;
     }
     .chat-input-top {
       width: 100%;
@@ -2232,6 +2253,12 @@ body.bg-pattern-sparkles {
       font-family: inherit;
       transition: height 0.12s ease-out;
     }
+    /* Norman's Feedback: the chat bar glows subtly when the textarea is focused,
+       signaling "I'm ready for input" without overwhelming the eye. */
+    .chat-input-bar:focus-within {
+      border-color: color-mix(in srgb, var(--brand-color, var(--red)) 45%, var(--input-border, var(--border)));
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand-color, var(--red)) 12%, transparent);
+    }
     .chat-input-bar textarea#message::placeholder {
       color: color-mix(in srgb, var(--fg) 35%, transparent);
     }
@@ -2275,13 +2302,17 @@ body.bg-pattern-sparkles {
       position: relative;
       z-index: 1;
     }
+    /* Gestalt Proximity: dividers separate action-toggles (web/bash) from
+       status-indicators (RAG/research/group) — two distinct groups.
+       Thicker and taller than before so the grouping reads instantly. */
     .input-divider {
       width: 1px;
-      height: 16px;
+      height: 20px;
       background: var(--border);
-      opacity: 0.4;
-      margin: 0 2px;
+      opacity: 0.35;
+      margin: 0 5px;
       flex-shrink: 0;
+      align-self: center;
     }
     .chat-input-right {
       display: flex;
@@ -2295,13 +2326,17 @@ body.bg-pattern-sparkles {
       color: var(--fg);
       opacity: 0.5;
       cursor: pointer;
-      padding: 6px;
+      padding: 9px;
       border-radius: 8px;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: opacity 0.15s, background 0.15s, color 0.15s;
+      transition: opacity 0.15s, background 0.15s, color 0.15s, transform 0.12s ease;
       position: relative;
+      /* Fitts's Law: minimum 36px touch target on desktop, 44px on mobile.
+         With 18px SVG icons and 9px padding, each button is 36×36. */
+      min-width: 36px;
+      min-height: 36px;
     }
     .input-icon-btn:hover {
       opacity: 0.8;
@@ -2311,7 +2346,15 @@ body.bg-pattern-sparkles {
     .input-icon-btn.expanded {
       opacity: 1;
       color: var(--fg);
-      background: color-mix(in srgb, var(--fg) 9%, transparent);
+      background: color-mix(in srgb, var(--fg) 12%, transparent);
+      /* Norman's Feedback: active toggles need a tangible "pressed" feel.
+         A subtle ring + deeper background makes state change undeniable. */
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 15%, transparent);
+    }
+    /* Active tools with accent color get a stronger signal */
+    .input-icon-btn.active.tool-indicator {
+      background: color-mix(in srgb, var(--red) 18%, transparent);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red) 30%, transparent);
     }
     /* While the menu is open the chevron stays in its highlighted state
        — don't run the opacity fade transition so we never flash from
@@ -2345,6 +2388,25 @@ body.bg-pattern-sparkles {
     /* Character indicator — hide name text below 768px, icon always visible */
     @media (max-width: 768px) {
       #character-indicator-name { display: none !important; }
+      /* Fitts's Law + Krug: 44px minimum touch targets on mobile.
+         Override the desktop 36px to meet accessibility standards. */
+      .input-icon-btn {
+        padding: 11px;
+        min-width: 44px;
+        min-height: 44px;
+        border-radius: 10px;
+      }
+      .send-btn {
+        min-width: 44px;
+        width: 44px;
+        height: 44px !important;
+        border-radius: 12px;
+      }
+      /* Larger dividers on mobile for clear group separation */
+      .input-divider {
+        height: 24px;
+        margin: 0 6px;
+      }
     }
 
     /* Document indicator — hidden by default, shown when docs exist */
@@ -2381,18 +2443,22 @@ body.bg-pattern-sparkles {
       background: var(--send-btn-bg, var(--red));
       color: #fff;
       border: none;
-      border-radius: 8px;
-      min-width: 32px;
-      width: 32px;
-      height: 32px !important;
+      border-radius: 10px;
+      /* Fitts's Law: primary action must be the easiest target to hit.
+         38×38 on desktop, 44×44 on mobile — the largest button in the bar. */
+      min-width: 38px;
+      width: 38px;
+      height: 38px !important;
       padding: 0;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background 0.25s, border-color 0.25s, color 0.25s, width 0.3s cubic-bezier(0.34, 1, 0.64, 1), padding 0.3s, border-radius 0.3s, opacity 0.1s;
+      transition: background 0.25s, border-color 0.25s, color 0.25s, width 0.3s cubic-bezier(0.34, 1, 0.64, 1), padding 0.3s, border-radius 0.3s, opacity 0.1s, transform 0.12s ease;
       flex-shrink: 0;
       overflow: hidden;
+      /* Krug's "Make clickable things obvious": subtle glow on the primary CTA */
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--send-btn-bg, var(--red)) 15%, transparent);
     }
     /* Instant feedback while the send handler is spinning up before streaming begins */
     .send-btn.send-pending {
@@ -8233,6 +8299,27 @@ body.hide-thinking .thinking-section { display: none !important; }
   transition: all 0.3s ease;
 }
 
+
+/* Agentic transparency (Wattenberger, Anthropic, LangChain):
+   Active thinking sections get a breathing left-border pulse — the user
+   sees the agent working. Completed sections settle into a quieter
+   green-tinted state — the user sees the work is done. */
+.thinking-section.thinking-active {
+  border-left: 3px solid var(--red) !important;
+  animation: thinking-active-pulse 2.5s ease-in-out infinite;
+}
+@keyframes thinking-active-pulse {
+  0%, 100% { border-left-color: color-mix(in srgb, var(--red) 60%, transparent); }
+  50%      { border-left-color: var(--red); }
+}
+.thinking-section.thinking-done {
+  border-left-color: color-mix(in srgb, var(--color-success, #4caf50) 50%, transparent) !important;
+  opacity: 0.85;
+}
+.thinking-section.thinking-done .thinking-header {
+  color: color-mix(in srgb, var(--color-success, #4caf50) 70%, var(--fg));
+}
+
 .thinking-header {
   display: flex;
   align-items: center;
@@ -8845,6 +8932,37 @@ body.hide-thinking .thinking-section { display: none !important; }
   font-size: 12px;
   letter-spacing: 0.5px;
 }
+	/* Dead Air Elimination (Wattenberger, Anthropic, LangChain):
+	   The thinking indicator must feel ALIVE from the instant it appears.
+	   A graceful entrance + subtle background tells the user "I'm working
+	   on it" without a word. Combined with the JS _showThinkingSpinner
+	   (which fires with tool-specific labels like "Searching" or "Running"),
+	   this turns dead air into a trust-building progress signal. */
+	.agent-thinking-dots {
+	  animation: think-enter 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+	}
+	@keyframes think-enter {
+	  from { opacity: 0; transform: translateY(6px); }
+	  to   { opacity: 1; transform: translateY(0); }
+	}
+	.agent-thinking-dots .body {
+	  padding: 8px 16px;
+	  border-radius: 8px;
+	  background: color-mix(in srgb, var(--red) 3%, transparent);
+	  border-left: 2px solid color-mix(in srgb, var(--red) 25%, transparent);
+	}
+	/* Tool-call badge — scannable label even when thinking section is collapsed */
+	.thinking-header-left .tool-badge {
+	  font-size: 0.75em;
+	  padding: 1px 6px;
+	  border-radius: 4px;
+	  background: color-mix(in srgb, var(--red) 12%, transparent);
+	  color: var(--red);
+	  font-weight: 600;
+	  letter-spacing: 0.3px;
+	  text-transform: uppercase;
+	  flex-shrink: 0;
+	}
 
 .agent-tool-output[open] {
   background: color-mix(in srgb, var(--red) 6%, transparent);
@@ -34603,4 +34721,7 @@ body.theme-frosted .modal {
   color: var(--fg);
   background-color: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
   transform: translateX(1px);
+}
+  0%, 100% { border-left-color: color-mix(in srgb, var(--red) 60%, transparent); }
+  50%      { border-left-color: var(--red); }
 }
