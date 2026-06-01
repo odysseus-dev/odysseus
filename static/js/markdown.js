@@ -5,6 +5,7 @@
  */
 
 import uiModule from './ui.js';
+import { replaceEmojiShortcodes } from './emoji/shortcodes.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -544,6 +545,7 @@ export function mdToHtml(src) {
     s = s.replace(`___CODE_BLOCK_${index}___`, block);
   });
 
+  s = replaceEmojiShortcodes(s);
   return _useSvgEmoji() ? svgifyEmoji(s) : s;
 }
 
