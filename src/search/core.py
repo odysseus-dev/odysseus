@@ -26,6 +26,7 @@ from .providers import (
     searxng_search_api,
     brave_search,
     duckduckgo_search,
+    exa_search,
     google_pse_search,
     tavily_search,
     serper_search,
@@ -76,6 +77,8 @@ def _call_provider(provider_name: str, query: str, count: int, time_filter: str 
         return brave_search(query, count, time_filter)
     elif provider_name == "duckduckgo":
         return duckduckgo_search(query, count, time_filter)
+    elif provider_name == "exa":
+        return exa_search(query, count, time_filter)
     elif provider_name == "google_pse":
         return google_pse_search(query, count, time_filter)
     elif provider_name == "tavily":

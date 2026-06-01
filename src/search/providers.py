@@ -1,8 +1,9 @@
-"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper."""
+"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Exa, Google PSE, Tavily, Serper."""
 
 import json
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import httpx
@@ -21,6 +22,7 @@ PROVIDER_INFO = {
     "searxng":  ("SearXNG",           False, True),
     "brave":    ("Brave Search",      True,  False),
     "duckduckgo": ("DuckDuckGo",      False, False),
+    "exa":      ("Exa",               True,  False),
     "google_pse": ("Google PSE",      True,  False),
     "tavily":   ("Tavily",            True,  False),
     "serper":   ("Serper",            True,  False),
@@ -53,6 +55,7 @@ def _get_provider_key(provider: str) -> str:
     settings = _get_search_settings()
     key_map = {
         "brave": "brave_api_key",
+        "exa": "exa_api_key",
         "google_pse": "google_pse_key",
         "tavily": "tavily_api_key",
         "serper": "serper_api_key",
@@ -359,6 +362,73 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
     except Exception as e:
         logger.warning(f"DuckDuckGo search failed: {e}")
         return _html_fallback()
+
+
+# ── Exa ──
+
+def exa_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+    """Search using Exa's official Search API."""
+    api_key = _get_provider_key("exa") or os.environ.get("EXA_API_KEY", "")
+    if not api_key:
+        logger.warning("Exa: no API key configured")
+        return []
+
+    payload = {
+        "query": query,
+        "type": "auto",
+        "numResults": min(count, 100),
+        # Request parsed page text so we can produce a useful snippet without
+        # relying on a second fetch of the result URL.
+        "text": True,
+    }
+    if time_filter:
+        days_map = {"day": 1, "week": 7, "month": 30, "year": 365}
+        days = days_map.get(time_filter)
+        if days:
+            payload["startPublishedDate"] = (
+                datetime.now(timezone.utc) - timedelta(days=days)
+            ).isoformat().replace("+00:00", "Z")
+        payload["category"] = "news"
+
+    try:
+        response = httpx.post(
+            "https://api.exa.ai/search",
+            json=payload,
+            headers={"x-api-key": api_key, "Content-Type": "application/json"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code == 429:
+            raise RateLimitError("Exa rate limit hit")
+        response.raise_for_status()
+        data = response.json()
+    except httpx.RequestError as e:
+        error_logger.error(f"Exa search failed: {e}")
+        return []
+    except RateLimitError as e:
+        error_logger.error(str(e))
+        return []
+
+    results = []
+    for item in data.get("results", [])[:count]:
+        url = item.get("url", "")
+        if not url:
+            continue
+        snippet = (
+            item.get("summary", "")
+            or item.get("text", "")
+            or item.get("highlights", [""])[0]
+        )
+        if snippet:
+            snippet = " ".join(str(snippet).split())[:400]
+        results.append({
+            "title": item.get("title", ""),
+            "url": url,
+            "snippet": snippet,
+            "age": item.get("publishedDate", ""),
+        })
+
+    logger.info(f"Exa returned {len(results)} results")
+    return results
 
 
 # ── Google Programmable Search Engine ──

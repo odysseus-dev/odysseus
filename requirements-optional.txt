@@ -6,7 +6,7 @@
 
 # DuckDuckGo as a search provider option.
 # Install if you want DDG in the search-provider dropdown.
-# Alternatives: SearXNG, Brave, Tavily, Serper, Google PSE.
+# Alternatives: SearXNG, Brave, Exa, Tavily, Serper, Google PSE.
 duckduckgo-search
 
 # PDF form-filling feature (fillable AcroForm detection, field extraction,

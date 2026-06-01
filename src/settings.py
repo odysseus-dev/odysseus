@@ -56,6 +56,7 @@ DEFAULT_SETTINGS = {
     "search_url": "",
     "search_result_count": 5,
     "brave_api_key": "",
+    "exa_api_key": "",
     "google_pse_key": "",
     "google_pse_cx": "",
     "tavily_api_key": "",

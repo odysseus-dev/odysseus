@@ -28,7 +28,7 @@ export function getCurrentProvider() {
 }
 
 const _labels = {
-  searxng: 'SearXNG', brave: 'Brave', duckduckgo: 'DuckDuckGo',
+  searxng: 'SearXNG', brave: 'Brave', duckduckgo: 'DuckDuckGo', exa: 'Exa',
   google_pse: 'Google', tavily: 'Tavily', serper: 'Serper',
   disabled: 'search (disabled)',
 };
