@@ -27,7 +27,8 @@ from .config import (
 HELP = """\
 commands:
   /help            show this help
-  /model <name>    switch model (e.g. /model qwen2.5-coder:7b)
+  /models          list models installed at the endpoint (pick by number)
+  /model <n|name>  switch model: /model 3  or  /model qwen2.5-coder:7b
   /approval <m>    set approval policy: ask | auto | deny
   /clear           clear the conversation history
   /save            save this conversation now
@@ -76,6 +77,7 @@ def _resolve_config(args: argparse.Namespace):
 
 async def _drive(cfg, approval_state: ApprovalState, one_shot: str | None,
                  resume: bool = False, autosave: bool = True):
+    from . import models as models_mod
     from . import session
     from .agent import build_project_context, run_turn
 
@@ -110,6 +112,7 @@ async def _drive(cfg, approval_state: ApprovalState, one_shot: str | None,
         return
 
     r.banner(cfg.model, cfg.endpoint, str(cfg.project_root), approval_state.policy)
+    last_models: List[str] = []  # most recent /models listing, for numeric pick
     while True:
         try:
             line = input(r.user_prompt()).strip()
@@ -145,9 +148,29 @@ async def _drive(cfg, approval_state: ApprovalState, one_shot: str | None,
                 for s in rows:
                     r.info(f"{s['id']}  {s['messages']}msg  {s['model']}  {s['root']}")
                 continue
+            if cmd == "models":
+                last_models = models_mod.list_models(cfg.endpoint, cfg.api_key)
+                if not last_models:
+                    r.info(f"no models found at {cfg.endpoint} "
+                           "(is the server running?)")
+                for i, name in enumerate(last_models, 1):
+                    mark = "  (current)" if name == cfg.model else ""
+                    r.info(f"  {i}. {name}{mark}")
+                if last_models:
+                    r.info("switch with /model <number> or /model <name>")
+                continue
             if cmd == "model" and rest:
-                cfg = cfg.with_overrides(model=rest)
-                r.info(f"model → {rest}")
+                target = rest
+                # Numeric selection refers to the last `/models` listing.
+                if rest.isdigit() and last_models:
+                    idx = int(rest) - 1
+                    if 0 <= idx < len(last_models):
+                        target = last_models[idx]
+                    else:
+                        r.info(f"no model #{rest} (run /models to list)")
+                        continue
+                cfg = cfg.with_overrides(model=target)
+                r.info(f"model → {target}")
                 continue
             if cmd == "approval" and rest in (APPROVAL_ASK, APPROVAL_AUTO, APPROVAL_DENY):
                 approval_state.policy = rest
