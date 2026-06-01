@@ -307,3 +307,41 @@ class TestBothCallPathsEnforce:
         res_fenced = run_tool("read_file", workspace["secret"])
         assert res_hosted["exit_code"] == 1 and "outside" in res_hosted["error"]
         assert res_fenced["exit_code"] == 1 and "outside" in res_fenced["error"]
+
+
+# ---------------------------------------------------------------------------
+# 6. Pure-Python fallback (no ripgrep): still correct, confined, AND bounded
+#    so it cannot hang on a large tree (the rg path has its own subprocess
+#    timeout; this proves the fallback path has a deadline + file cap).
+# ---------------------------------------------------------------------------
+
+class TestPurePythonFallback:
+    @pytest.fixture(autouse=True)
+    def _no_ripgrep(self, monkeypatch):
+        # Force shutil.which("rg") -> None so glob/grep take the Python fallback.
+        import shutil
+        monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
+
+    def test_glob_fallback_confined_to_root(self, workspace):
+        res = run_tool("glob", "**/*.txt")
+        assert res["exit_code"] == 0
+        assert "inside.txt" in res["output"]
+        assert "secret.txt" not in res["output"]
+
+    def test_grep_fallback_excludes_outside(self, workspace):
+        res = run_tool("grep", '{"pattern": "SECRET", "output_mode": "content"}')
+        assert res["exit_code"] == 0
+        assert "TOP SECRET" not in res["output"]
+
+    def test_fallback_honors_file_cap(self, workspace, monkeypatch):
+        # Cap the fallback at 2 files; with 5 matching files present it must stop
+        # early rather than scan everything — the bound that prevents a hang.
+        from src import tool_execution as te
+        monkeypatch.setattr(te, "FALLBACK_SCAN_MAX_FILES", 2)
+        for i in range(5):
+            with open(os.path.join(workspace["root"], f"m{i}.txt"), "w", encoding="utf-8") as fh:
+                fh.write("FINDME\n")
+        res = run_tool("grep", '{"pattern": "FINDME", "output_mode": "files_with_matches"}')
+        assert res["exit_code"] == 0
+        found = [l for l in res["output"].splitlines() if l.strip() and "No matches" not in l]
+        assert len(found) <= 2  # cap engaged: did not scan all 5

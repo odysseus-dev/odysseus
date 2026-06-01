@@ -20,6 +20,12 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
 
 MAX_OUTPUT_CHARS = 10_000
+
+# Wall-clock + file-count bounds for the pure-Python grep/glob fallback (used
+# only when ripgrep is unavailable). The rg path is already bounded by its own
+# subprocess timeout; these guarantee the fallback can never hang on a huge tree.
+FALLBACK_SCAN_TIMEOUT_S = 30
+FALLBACK_SCAN_MAX_FILES = 20_000
 MAX_READ_CHARS = 20_000
 
 # Bash + python tools used to share a single 60s timeout. That's
@@ -708,11 +714,16 @@ async def _direct_fallback(
                     except (OSError, subprocess.SubprocessError):
                         matches = []
                 if not matches:
-                    # Pure-Python fallback.
+                    # Pure-Python fallback (no ripgrep). Lazy iglob bounded by a
+                    # wall-clock deadline + match cap so a huge tree can't hang it.
                     pat = os.path.join(root, pattern)
-                    for p in _glob.glob(pat, recursive=True):
+                    _deadline = time.monotonic() + FALLBACK_SCAN_TIMEOUT_S
+                    for p in _glob.iglob(pat, recursive=True):
                         if os.path.isfile(p):
                             matches.append(p)
+                        if (len(matches) >= FALLBACK_SCAN_MAX_FILES
+                                or time.monotonic() > _deadline):
+                            break
                 # Defense in depth: drop anything that resolves outside the
                 # workspace root (e.g. a symlinked directory the glob followed).
                 matches = [p for p in matches
@@ -830,7 +841,13 @@ async def _direct_fallback(
                                 continue
                             yield os.path.join(dirpath, fn)
 
+                _deadline = time.monotonic() + FALLBACK_SCAN_TIMEOUT_S
+                _scanned = 0
                 for fpath in _iter_files():
+                    if (_scanned >= FALLBACK_SCAN_MAX_FILES
+                            or time.monotonic() > _deadline):
+                        break
+                    _scanned += 1
                     try:
                         with open(fpath, "r", encoding="utf-8", errors="replace") as f:
                             matched_file = False

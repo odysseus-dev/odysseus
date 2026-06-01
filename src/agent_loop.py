@@ -218,14 +218,18 @@ Read a file and return its contents.""",
 ```
 Write content to a file. First line is the path, rest is the content.""",
 
-    "edit_file": """\
+    # The OLD/NEW markers are built from char-repeats so this prompt example
+    # carries no literal conflict-marker lines at column 0 (keeps
+    # `git diff --check` clean). The rendered string is byte-identical to the
+    # real "<<<<<<< OLD" / "=======" / ">>>>>>> NEW" markers the parser expects.
+    "edit_file": f"""\
 ```edit_file
 <file path>
-<<<<<<< OLD
+{'<' * 7} OLD
 old text to find (verbatim, exact)
-=======
+{'=' * 7}
 new text to replace it with
->>>>>>> NEW
+{'>' * 7} NEW
 ```
 Exact-string replace inside an EXISTING file on disk (the primary way to edit a file — prefer this over rewriting the whole file with write_file). Line 1 is the path; the OLD block is the exact text to find, the NEW block is its replacement. The OLD text must match a UNIQUE spot — include enough surrounding context. To replace every occurrence, add ` replace_all` to the path line (e.g. `src/app.py replace_all`). To CREATE a new file, leave the OLD block empty and put the file body in NEW.""",
 
