@@ -1608,6 +1608,13 @@
                 <label class="settings-label">URL</label>
                 <input id="set-searchUrl" type="text" placeholder="http://localhost:8080" class="settings-select">
               </div>
+              <div class="settings-row">
+                <label class="settings-label">Auto-search <span style="opacity:0.55;font-weight:400;">(experimental)</span></label>
+                <label class="vis-row" style="border:none;padding:0;justify-content:flex-end;gap:8px;">
+                  <span class="vis-hint" style="opacity:0.6;">Let the model search the web only when a question needs it</span>
+                  <input id="set-autoWebSearch" type="checkbox"><span class="vis-switch"></span>
+                </label>
+              </div>
               <div id="set-searchKeyRow" class="settings-row" style="display:none;">
                 <label class="settings-label">API Key</label>
                 <input id="set-searchApiKey" type="password" placeholder="API key" class="settings-select">

@@ -67,6 +67,51 @@ async def rewrite_search_query(question: str, owner: Optional[str] = None,
 
 
 # ----------------------------------------------------------------------
+# Auto-search gate (experimental, off by default)
+# ----------------------------------------------------------------------
+# When auto-search is enabled, a fast utility-LLM call decides whether a given
+# user message actually needs the web (current events, facts that change, things
+# beyond the model's knowledge) before running a search — so search fires only
+# when useful instead of always-on or never. Defaults to NOT searching on any
+# uncertainty/failure, so it can't add unwanted searches.
+
+_SHOULD_SEARCH_SYSTEM = (
+    "Decide if answering the user's latest message needs a live web search. "
+    "Answer YES only when it needs current/changing/external facts the model "
+    "likely can't know reliably: recent events, news, today's data, prices, "
+    "release dates, 'is X still ...', someone's current status, niche specifics. "
+    "Answer NO for general knowledge, reasoning, math, coding, writing, "
+    "definitions, opinions, or chit-chat. Reply with exactly YES or NO."
+)
+
+
+async def should_search(message: str, owner: Optional[str] = None) -> bool:
+    """Return True if `message` likely needs a web search, via a fast utility-LLM
+    yes/no gate. Conservative: returns False on no-LLM / timeout / error / unclear
+    output, so enabling auto-search can never force an unwanted search."""
+    msg = (message or "").strip()
+    if not msg or len(msg) > 2000:
+        return False
+    try:
+        from src.endpoint_resolver import resolve_endpoint
+        from src.llm_core import llm_call_async
+        url, model, headers = resolve_endpoint("utility", owner=owner)
+        if not url or not model:
+            return False
+        messages = [
+            {"role": "system", "content": _SHOULD_SEARCH_SYSTEM},
+            {"role": "user", "content": msg},
+        ]
+        out = await llm_call_async(url, model, messages, temperature=0.0,
+                                   max_tokens=4, headers=headers)
+        verdict = (out or "").strip().lower()
+        return verdict.startswith("y")
+    except Exception as exc:
+        logger.debug("auto-search gate failed, not searching: %s", exc)
+        return False
+
+
+# ----------------------------------------------------------------------
 # Query processing helpers
 # ----------------------------------------------------------------------
 def _detect_question_type(query: str) -> Optional[str]:

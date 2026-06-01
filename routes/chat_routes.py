@@ -39,6 +39,37 @@ from src.action_intents import message_needs_tools as _message_needs_tools
 
 logger = logging.getLogger(__name__)
 
+
+def _truthy(v: Any) -> bool:
+    """Coerce a use_web value (bool, "true"/"1"/"on" from form data) to bool."""
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+async def _maybe_auto_web(use_web: Any, message: str) -> Any:
+    """Experimental auto-search: when the `auto_web_search` setting is ON and the
+    user did NOT already enable web search for this message, ask a fast utility
+    LLM whether the message needs the web and flip web search on only if so.
+
+    Returns `use_web` unchanged when: already enabled, the setting is off, or the
+    gate declines/errors. So it can only ADD a search the model judged useful —
+    never removes a user-requested one, never forces an unwanted one.
+    """
+    try:
+        if _truthy(use_web):
+            return use_web  # user already asked for it — don't second-guess
+        from src.settings import get_setting
+        if not get_setting("auto_web_search", False):
+            return use_web
+        from services.search.query import should_search
+        if await should_search(message or ""):
+            logger.info("auto-search: gate enabled web search for this message")
+            return True
+    except Exception as exc:
+        logger.debug("auto-search gate skipped: %s", exc)
+    return use_web
+
 # Track active streams for partial-save safety net
 _active_streams: Dict[str, dict] = {}
 
@@ -121,6 +152,7 @@ def setup_chat_routes(
         use_research = chat_request.use_research
         time_filter = chat_request.time_filter
         preset_id = chat_request.preset_id
+        use_web = await _maybe_auto_web(use_web, message)
 
         # Verify the caller owns this session before loading it.
         # Without this, any authenticated user can post into another user's chat.
@@ -229,6 +261,7 @@ def setup_chat_routes(
         use_web = form_data.get("use_web")
         use_research = form_data.get("use_research")
         time_filter = form_data.get("time_filter")
+        use_web = await _maybe_auto_web(use_web, message)
         preset_id = form_data.get("preset_id")
         allow_bash = form_data.get("allow_bash")
         allow_web_search = form_data.get("allow_web_search")

@@ -55,6 +55,11 @@ DEFAULT_SETTINGS = {
     "search_fallback_chain": ["duckduckgo"],
     "search_url": "",
     "search_result_count": 5,
+    # Experimental, OFF by default: when on, and the user hasn't already toggled
+    # web search for a message, a fast utility-LLM gate decides whether the
+    # message needs the web and only then searches. Conservative — never forces
+    # a search on uncertainty/failure. See services/search/query.should_search.
+    "auto_web_search": False,
     "brave_api_key": "",
     "google_pse_key": "",
     "google_pse_cx": "",

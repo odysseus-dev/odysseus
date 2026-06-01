@@ -1112,6 +1112,8 @@ async function initSearchSettings() {
     if (_settings.search_result_count) countSel.value = String(_settings.search_result_count);
     if (_settings.search_url) urlInput.value = _settings.search_url;
     if (_settings.google_pse_cx) cxInput.value = _settings.google_pse_cx;
+    var autoWebEl = el('set-autoWebSearch');
+    if (autoWebEl) autoWebEl.checked = _settings.auto_web_search === true;
   } catch (e) { console.warn('Failed to load search settings', e); }
 
   updateVisibility();
@@ -1141,11 +1143,13 @@ async function initSearchSettings() {
   async function saveSearch() {
     try {
       var prov = provSel.value;
+      var autoWebEl = el('set-autoWebSearch');
       var payload = {
         search_provider: prov,
         search_result_count: parseInt(countSel.value, 10),
         search_url: urlInput.value.trim(),
         google_pse_cx: cxInput.value.trim(),
+        auto_web_search: !!(autoWebEl && autoWebEl.checked),
       };
       var kf = keyFieldFor(prov);
       if (kf) {
@@ -1165,6 +1169,8 @@ async function initSearchSettings() {
   provSel.addEventListener('change', function() { updateVisibility(); saveSearch(); _syncSearchPicker(); });
   countSel.addEventListener('change', saveSearch);
   urlInput.addEventListener('change', saveSearch);
+  var _autoWebEl = el('set-autoWebSearch');
+  if (_autoWebEl) _autoWebEl.addEventListener('change', saveSearch);
   keyInput.addEventListener('change', saveSearch);
   cxInput.addEventListener('change', saveSearch);
 
