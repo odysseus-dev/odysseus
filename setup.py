@@ -70,9 +70,11 @@ def create_default_admin():
         print(f"  [ok] Initial admin user created ({username})")
         print(f"        Temporary password: {password}")
         print(f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
+        return True
     except ImportError:
         print("  [warn] bcrypt not installed — skipping admin user creation")
         print("         Run: pip install bcrypt")
+        return False
 
 
 def create_env():
