@@ -51,6 +51,14 @@ docker compose logs --tail=120 odysseus
 
 Mention what you ran in the pull request description. If you could not run a check, say so.
 
+## Localization
+
+The UI is localized by matching rendered English text against source-keyed JSON
+catalogs in `static/locales/` — adding a language or translating a string is
+editing JSON, no code changes. To add a language, translate a string, or find
+what's still untranslated, see [`static/locales/README.md`](static/locales/README.md).
+Run `python scripts/i18n/check_locales.py` to validate catalogs.
+
 ## Pull Requests
 
 Good pull requests usually include:
