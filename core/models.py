@@ -11,14 +11,24 @@ from typing import Dict, List, Any, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from .session_manager import SessionManager
 
-# Module-level session manager reference (set at app startup)
-_session_manager: Optional["SessionManager"] = None
+# Module-level session manager singleton (single source of truth)
+_SESSION_MANAGER_INSTANCE: Optional["SessionManager"] = None
 
 
-def set_session_manager(manager: "SessionManager"):
-    """Set the global session manager reference."""
-    global _session_manager
-    _session_manager = manager
+def set_session_manager_instance(manager: "SessionManager"):
+    """Set the global SessionManager singleton."""
+    global _SESSION_MANAGER_INSTANCE
+    _SESSION_MANAGER_INSTANCE = manager
+
+
+def get_session_manager_instance() -> Optional["SessionManager"]:
+    """Get the global SessionManager singleton."""
+    return _SESSION_MANAGER_INSTANCE
+
+
+# Keep legacy name for backward compatibility
+set_session_manager = set_session_manager_instance
+get_session_manager = get_session_manager_instance
 
 
 @dataclass
@@ -92,8 +102,8 @@ class Session:
         self.message_count = len(self._history)
 
         # Delegate to session manager for persistence
-        if _session_manager:
-            _session_manager._persist_message(self.id, message)
+        if _SESSION_MANAGER_INSTANCE:
+            _SESSION_MANAGER_INSTANCE._persist_message(self.id, message)
 
     def get_context_messages(self) -> List[Dict[str, Any]]:
         """Get messages in format for LLM API.

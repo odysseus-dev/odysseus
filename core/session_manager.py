@@ -17,6 +17,9 @@ from typing import Dict, Optional
 from .database import Session as DbSession, ChatMessage as DbChatMessage, Document as DbDocument, SessionLocal, utcnow_naive
 from .models import Session, ChatMessage
 
+# Re-export singleton accessors from models for convenience
+from .models import set_session_manager_instance, get_session_manager_instance
+
 logger = logging.getLogger(__name__)
 
 
