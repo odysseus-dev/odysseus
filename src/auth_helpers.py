@@ -2,6 +2,7 @@
 
 from typing import Optional
 from fastapi import Request, HTTPException
+from sqlalchemy import false as _false
 
 
 def get_current_user(request: Request) -> Optional[str]:
@@ -60,10 +61,27 @@ def require_privilege(request: Request, key: str) -> str:
 
 def owner_filter(query, model_cls, user: str, *, include_shared: bool = True):
     """Filter `query` so only rows owned by `user` (and optionally null-owner
-    'shared' rows) come through. No-op when `user` is empty (single-user
-    mode). Returns the modified query."""
+    'shared' rows) come through. Returns an empty filter (false) for None
+    users to prevent anonymous data leaks in multi-tenant mode. No-op (returns
+    the query as-is) when `user` is empty string (single-user/bypass mode).
+    """
+    if user is None:
+        return query.filter(_false())
     if not user:
         return query
     if include_shared:
         return query.filter((model_cls.owner == user) | (model_cls.owner == None))  # noqa: E711
     return query.filter(model_cls.owner == user)
+
+
+def verify_ownership(resource: any, user: Optional[str], *, model_name: str = "Resource"):
+    """Verify that the user owns the given resource.
+
+    If user is None (anonymous via localhost bypass), ownership is strictly
+    verified (resource.owner must also be None). If user is an empty string
+    (single-user mode), the check is skipped.
+    """
+    if user == "":
+        return
+    if resource.owner != user:
+        raise HTTPException(404, f"{model_name} not found")

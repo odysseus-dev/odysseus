@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, Note
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, verify_ownership
 from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger(__name__)
@@ -534,10 +534,7 @@ def setup_note_routes(task_scheduler=None):
             note = db.query(Note).filter(Note.id == note_id).first()
             if not note:
                 raise HTTPException(404, "Note not found")
-            # SECURITY: strict ownership — previously `note.owner and note.owner != user`
-            # let any user touch a row whose owner field was null/empty.
-            if user is not None and note.owner != user:
-                raise HTTPException(404, "Note not found")
+            verify_ownership(note, user, model_name="Note")
             return _note_to_dict(note)
         finally:
             db.close()
@@ -551,10 +548,7 @@ def setup_note_routes(task_scheduler=None):
             note = db.query(Note).filter(Note.id == note_id).first()
             if not note:
                 raise HTTPException(404, "Note not found")
-            # SECURITY: strict ownership — previously `note.owner and note.owner != user`
-            # let any user touch a row whose owner field was null/empty.
-            if user is not None and note.owner != user:
-                raise HTTPException(404, "Note not found")
+            verify_ownership(note, user, model_name="Note")
 
             if body.title is not None:
                 note.title = body.title
@@ -599,10 +593,7 @@ def setup_note_routes(task_scheduler=None):
             note = db.query(Note).filter(Note.id == note_id).first()
             if not note:
                 raise HTTPException(404, "Note not found")
-            # SECURITY: strict ownership — previously `note.owner and note.owner != user`
-            # let any user touch a row whose owner field was null/empty.
-            if user is not None and note.owner != user:
-                raise HTTPException(404, "Note not found")
+            verify_ownership(note, user, model_name="Note")
             db.delete(note)
             db.commit()
             return {"ok": True}
@@ -618,10 +609,7 @@ def setup_note_routes(task_scheduler=None):
             note = db.query(Note).filter(Note.id == note_id).first()
             if not note:
                 raise HTTPException(404, "Note not found")
-            # SECURITY: strict ownership — previously `note.owner and note.owner != user`
-            # let any user touch a row whose owner field was null/empty.
-            if user is not None and note.owner != user:
-                raise HTTPException(404, "Note not found")
+            verify_ownership(note, user, model_name="Note")
             note.pinned = not note.pinned
             db.commit()
             return {"ok": True, "pinned": note.pinned}
@@ -637,10 +625,7 @@ def setup_note_routes(task_scheduler=None):
             note = db.query(Note).filter(Note.id == note_id).first()
             if not note:
                 raise HTTPException(404, "Note not found")
-            # SECURITY: strict ownership — previously `note.owner and note.owner != user`
-            # let any user touch a row whose owner field was null/empty.
-            if user is not None and note.owner != user:
-                raise HTTPException(404, "Note not found")
+            verify_ownership(note, user, model_name="Note")
             note.archived = not note.archived
             db.commit()
             return {"ok": True, "archived": note.archived}
@@ -656,10 +641,7 @@ def setup_note_routes(task_scheduler=None):
             note = db.query(Note).filter(Note.id == note_id).first()
             if not note:
                 raise HTTPException(404, "Note not found")
-            # SECURITY: strict ownership — previously `note.owner and note.owner != user`
-            # let any user touch a row whose owner field was null/empty.
-            if user is not None and note.owner != user:
-                raise HTTPException(404, "Note not found")
+            verify_ownership(note, user, model_name="Note")
             if not note.items:
                 raise HTTPException(400, "Note has no checklist items")
             items = json.loads(note.items)

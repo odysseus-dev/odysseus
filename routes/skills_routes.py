@@ -1063,12 +1063,6 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         return get_current_user(request)
 
     def _verify_owner(skill: dict, user: Optional[str]):
-        if user is None:
-            return
-        # SECURITY: strict check — previously `sk_owner and sk_owner != user`
-        # let any user mutate/read a skill that happened to have no owner
-        # field (legacy or un-stamped writes), since the truthiness guard
-        # short-circuited the comparison. Treat missing owner as not-owned.
         if skill.get("owner") != user:
             raise HTTPException(404, "Skill not found")
 
