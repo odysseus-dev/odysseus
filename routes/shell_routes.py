@@ -556,7 +556,7 @@ async def _generate_tmux(cmd: str, request: Request):
     # Using a script avoids shell quoting issues with the tmux command.
     script_path = TMUX_LOG_DIR / f"{session_id}.sh"
     script_path.write_text(
-        f"#!/bin/bash\n"
+        f"#!/usr/bin/env bash\n"
         f"ODYSSEUS_USER_SHELL=\"${{SHELL:-}}\"\n"
         f"if [ -n \"$ODYSSEUS_USER_SHELL\" ] && [ -x \"$ODYSSEUS_USER_SHELL\" ]; then\n"
         f"  ODYSSEUS_USER_PATH=\"$(\"$ODYSSEUS_USER_SHELL\" -ic 'printf \"__ODYSSEUS_PATH__%s\\n\" \"$PATH\"' 2>/dev/null | sed -n 's/^__ODYSSEUS_PATH__//p' | tail -n 1 || true)\"\n"
@@ -992,6 +992,9 @@ def setup_shell_routes() -> APIRouter:
                 pkg["installed"] = True
                 pkg["status_note"] = f"native llama-server: {shutil.which('llama-server')}"
                 probe = {"binaries": {"llama-server": shutil.which("llama-server")}, "dists": {}}
+            elif pkg["name"] == "playwright":
+                # playwright here is the npm/npx package, not a Python module
+                pkg["installed"] = shutil.which("playwright") is not None or shutil.which("npx") is not None
             elif pkg["name"] == "vllm":
                 _vllm_cli = shutil.which("vllm")
                 pkg["installed"] = _vllm_cli is not None

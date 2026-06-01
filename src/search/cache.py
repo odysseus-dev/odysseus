@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict
@@ -9,7 +10,8 @@ from typing import Dict
 logger = logging.getLogger(__name__)
 
 # Cache directories
-CACHE_DIR = Path(__file__).resolve().parent.parent / "cache"
+_DATA_DIR = Path(os.environ.get("ODYSSEUS_DATA_DIR", Path(__file__).resolve().parents[3] / "data"))
+CACHE_DIR = _DATA_DIR / "cache"
 SEARCH_CACHE_DIR = CACHE_DIR / "search"
 CONTENT_CACHE_DIR = CACHE_DIR / "content"
 CACHE_MAX_ENTRIES = 1000

@@ -427,7 +427,7 @@ def setup_cookbook_routes() -> APIRouter:
 
         # Build the shell wrapper — runs hf download directly in tmux (which is a TTY)
         # No script/tee needed — we'll use tmux capture-pane to read output
-        lines = ["#!/bin/bash"]
+        lines = ["#!/usr/bin/env bash"]
         lines.extend(_user_shell_path_bootstrap())
         if req.hf_token:
             lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
@@ -525,7 +525,7 @@ def setup_cookbook_routes() -> APIRouter:
         elif remote:
             # ── Linux/Termux remote: create tmux session ON the remote host ──
             remote_runner = f".{session_id}_run.sh"
-            runner_lines = ["#!/bin/bash"]
+            runner_lines = ["#!/usr/bin/env bash"]
             runner_lines.extend(_user_shell_path_bootstrap())
             runner_lines.append("# Auto-detect environment")
             runner_lines.append("deactivate 2>/dev/null; hash -r")
@@ -997,7 +997,7 @@ def setup_cookbook_routes() -> APIRouter:
             )
         else:
             # ── Linux/Termux: bash + tmux (existing flow) ──
-            runner_lines = ["#!/bin/bash"]
+            runner_lines = ["#!/usr/bin/env bash"]
             runner_lines.extend(_user_shell_path_bootstrap())
             runner_lines.append('ODYSSEUS_PREFLIGHT_EXIT=""')
             # Put Odysseus's own venv bin on PATH (local runs only) so the serve

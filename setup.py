@@ -10,7 +10,7 @@ import shutil
 import sys
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
+DATA_DIR = os.environ.get("ODYSSEUS_DATA_DIR", os.path.join(BASE_DIR, "data"))
 
 DIRS = [
     DATA_DIR,
@@ -23,7 +23,7 @@ DIRS = [
     os.path.join(DATA_DIR, "chroma"),
     os.path.join(DATA_DIR, "rag"),
     os.path.join(DATA_DIR, "memory_vectors"),
-    os.path.join(BASE_DIR, "logs"),
+    os.path.join(DATA_DIR, "logs"),
 ]
 
 
@@ -131,10 +131,14 @@ def create_env():
         print("  [skip] .env already exists")
         return
     if os.path.exists(example_path):
-        import shutil
-        shutil.copy2(example_path, env_path)
-        print("  [ok] .env created from .env.example")
-        print("        ** Edit .env with your LLM host and API keys **")
+        try:
+            shutil.copy2(example_path, env_path)
+            print("  [ok] .env created from .env.example")
+            print("        ** Edit .env with your LLM host and API keys **")
+        except OSError:
+            # Source dir is read-only (e.g. Nix store). Use ODYSSEUS_DATA_DIR
+            # or an environmentFile in the systemd service instead.
+            print("  [skip] .env is in a read-only location — configure via environment")
     else:
         print("  [warn] .env.example not found — create .env manually")
 

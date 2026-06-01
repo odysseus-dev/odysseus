@@ -116,8 +116,8 @@ class FastEmbedClient:
         # the download lands exactly where the admin panel's _is_downloaded()
         # check looks (both default to this same path).
         cache_dir = os.getenv("FASTEMBED_CACHE_PATH") or os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "data", "fastembed_cache",
+            os.environ.get("ODYSSEUS_DATA_DIR", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")),
+            "fastembed_cache",
         )
         os.makedirs(cache_dir, exist_ok=True)
         # Windows self-heal: the HuggingFace-hub cache stores model files as
@@ -187,8 +187,8 @@ def _load_persisted_endpoint() -> dict:
     """Load the custom embedding endpoint saved from the admin panel."""
     try:
         endpoint_file = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "data", "embedding_endpoint.json",
+            os.environ.get("ODYSSEUS_DATA_DIR", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")),
+            "embedding_endpoint.json",
         )
         if os.path.exists(endpoint_file):
             import json

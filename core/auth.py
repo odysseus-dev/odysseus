@@ -36,7 +36,8 @@ DEFAULT_PRIVILEGES = {
 ADMIN_PRIVILEGES = {k: (True if isinstance(v, bool) else (0 if isinstance(v, int) else [])) for k, v in DEFAULT_PRIVILEGES.items()}
 
 DEFAULT_AUTH_PATH = os.path.join(
-    Path(__file__).parent.parent, "data", "auth.json"
+    os.environ.get("ODYSSEUS_DATA_DIR", os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")),
+    "auth.json"
 )
 TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 
