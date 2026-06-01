@@ -1,154 +1,193 @@
-# Odysseus — Podman Quadlets Installation Runbook
+# Odysseus Podman Quadlet Runbook for Rocky Linux
 
-Replaces `docker-compose.yml` with rootless Podman Quadlets managed by systemd.
+This replaces `docker-compose.yml` with rootless Podman Quadlets managed by the
+user systemd instance on Rocky Linux 9 or newer.
 
----
+The deployment keeps Odysseus on host port `7500`, matching the Compose file.
+Inside the container, the app still listens on `7000`.
 
-## Overview
+## Stack
 
-The stack has four services:
+| Unit | Image | Host bind |
+| --- | --- | --- |
+| `odysseus.service` | built from this repo's `Dockerfile` | `0.0.0.0:7500 -> 7000` |
+| `chromadb.service` | `chromadb/chroma:latest` | `0.0.0.0:8100 -> 8000` |
+| `searxng.service` | `searxng/searxng:latest` | `127.0.0.1:8080 -> 8080` |
+| `ntfy.service` | `binwiederhier/ntfy:latest` | `0.0.0.0:8091 -> 80` |
 
-| Service    | Image                        | Host port |
-|------------|------------------------------|-----------|
-| odysseus   | built from `./Dockerfile`    | 7500      |
-| chromadb   | `chromadb/chroma:latest`     | 8100      |
-| searxng    | `searxng/searxng:latest`     | 8080      |
-| ntfy       | `binwiederhier/ntfy`         | 8091      |
+ChromaDB, SearXNG, and ntfy use Podman named volumes. Odysseus uses bind
+mounts under the repo for `data/`, `logs/`, SSH keys, and model cache so they
+stay easy to inspect and back up.
 
----
+## Assumptions
 
-## Prerequisites
+- Host OS: Rocky Linux 9 or newer.
+- Deployment user: a normal non-root user, examples use `odysseus`.
+- Project path: `/opt/odysseus/app`.
+- Service account home: `/opt/odysseus`.
+- SELinux: enforcing.
+- Firewall: `firewalld`.
+- Reverse proxy is optional and runs outside this runbook.
 
-- Podman ≥ 4.7 (Quadlet `.build` file support was added in 4.7)
-- systemd user session enabled (`loginctl enable-linger $USER`)
-- `XDG_RUNTIME_DIR` set (auto-set on most distros; verify with `echo $XDG_RUNTIME_DIR`)
+If you deploy from your own user instead, replace `/opt/odysseus/app` with the
+repo path and skip the service-account creation.
+
+## 1. Prepare the Host
+
+Install Podman and the systemd user-session pieces:
 
 ```bash
-# Check versions
+sudo dnf install -y podman shadow-utils systemd-container firewalld git
 podman --version
 systemctl --version
-
-# Enable linger so user units survive logout
-loginctl enable-linger $USER
 ```
 
----
-
-## Step 1 — Project layout
-
-Clone (or copy) the repo somewhere permanent. The bind mounts below reference `$PROJECT_DIR`.
+Quadlet support ships with modern Podman. Confirm the build unit is present:
 
 ```bash
-export PROJECT_DIR=$HOME/odysseus   # adjust to wherever you cloned it
-cd $PROJECT_DIR
+man podman-build.unit >/dev/null
+man podman-systemd.unit >/dev/null
 ```
 
-Pre-create bind-mount directories so Podman doesn't create them as root:
+Create a dedicated deployment user:
 
 ```bash
-mkdir -p \
-  "$PROJECT_DIR/data" \
-  "$PROJECT_DIR/data/ssh" \
-  "$PROJECT_DIR/data/huggingface" \
-  "$PROJECT_DIR/logs"
+sudo useradd --system --create-home --home-dir /opt/odysseus --shell /bin/bash odysseus
+sudo loginctl enable-linger odysseus
 ```
 
-Copy your `.env` file into place:
+Linger matters because rootless user units otherwise stop when the user logs
+out.
+
+Open only the public ports you actually want reachable:
 
 ```bash
-cp .env.example .env   # then fill in your values
+sudo firewall-cmd --permanent --add-port=7500/tcp
+sudo firewall-cmd --permanent --add-port=8091/tcp
+sudo firewall-cmd --reload
 ```
 
----
+Do not open `8080` unless you intentionally want SearXNG reachable outside the
+host. The runbook binds it to `127.0.0.1`.
 
-## Step 2 — Quadlet directory
+## 2. Put the Repo in Place
 
-Rootless quadlets live in `~/.config/containers/systemd/`.
+As root or your admin user:
+
+```bash
+sudo mkdir -p /opt/odysseus/app
+sudo chown -R odysseus:odysseus /opt/odysseus
+```
+
+As `odysseus`, clone or copy the repo:
+
+```bash
+sudo -iu odysseus
+git clone <your-odysseus-repo-url> /opt/odysseus/app
+cd /opt/odysseus/app
+```
+
+Create persistent bind-mount directories:
+
+```bash
+mkdir -p data data/ssh data/huggingface logs
+chmod 700 data/ssh
+```
+
+Create `.env`:
+
+```bash
+cp .env.example .env
+```
+
+Set at least these deployment values in `.env`:
+
+```dotenv
+AUTH_ENABLED=true
+LOCALHOST_BYPASS=false
+SEARXNG_INSTANCE=http://searxng:8080
+CHROMADB_HOST=chromadb
+CHROMADB_PORT=8000
+```
+
+Then append the deployment user's UID and GID:
+
+```bash
+printf 'PUID=%s\nPGID=%s\n' "$(id -u)" "$(id -g)" >> .env
+```
+
+Optional first-boot admin seed:
+
+```dotenv
+ODYSSEUS_ADMIN_PASSWORD=replace-with-a-long-temporary-password
+```
+
+Remove it after the first successful login or rotate the password in the app.
+
+## 3. Install the Quadlets
+
+Rootless Quadlets live under `~/.config/containers/systemd/`. Podman scans
+subdirectories, so keep this stack grouped under `odysseus/`.
 
 ```bash
 mkdir -p ~/.config/containers/systemd/odysseus
+cd ~/.config/containers/systemd/odysseus
 ```
 
-All files below go into that directory.
-
----
-
-## Step 3 — Network unit
-
-**`~/.config/containers/systemd/odysseus/odysseus.network`**
+Create `odysseus.network`:
 
 ```ini
 [Network]
-# Shared bridge for all four services.
-# Containers reference each other by their Container name.
+NetworkName=odysseus
 ```
 
----
-
-## Step 4 — Named volume units
-
-**`~/.config/containers/systemd/odysseus/chromadb-data.volume`**
+Create `chromadb-data.volume`:
 
 ```ini
 [Volume]
+VolumeName=odysseus-chromadb-data
 ```
 
-**`~/.config/containers/systemd/odysseus/searxng-data.volume`**
+Create `searxng-data.volume`:
 
 ```ini
 [Volume]
+VolumeName=odysseus-searxng-data
 ```
 
-**`~/.config/containers/systemd/odysseus/ntfy-cache.volume`**
+Create `ntfy-cache.volume`:
 
 ```ini
 [Volume]
+VolumeName=odysseus-ntfy-cache
 ```
 
-Empty `[Volume]` sections are valid — Podman creates the volume with default settings.
-
----
-
-## Step 5 — Build unit (odysseus image)
-
-**`~/.config/containers/systemd/odysseus/odysseus-img.build`**
+Create `odysseus-img.build`:
 
 ```ini
 [Build]
-# Builds localhost/odysseus-img:latest from the project Dockerfile.
-# Re-run with: systemctl --user start odysseus-img-build
 ImageTag=localhost/odysseus-img:latest
-File=%h/odysseus/Dockerfile
-SetWorkingDirectory=%h/odysseus
+File=/opt/odysseus/app/Dockerfile
+SetWorkingDirectory=/opt/odysseus/app
+
+[Service]
+TimeoutStartSec=1800
 ```
 
-> Replace `%h/odysseus` if `$PROJECT_DIR` is elsewhere. `%h` expands to `$HOME`.
-
----
-
-## Step 6 — Container units
-
-### SearXNG
-
-**`~/.config/containers/systemd/odysseus/searxng.container`**
+Create `searxng.container`:
 
 ```ini
 [Unit]
-Description=SearXNG search engine
-After=network-online.target
+Description=Odysseus SearXNG
 
 [Container]
 Image=searxng/searxng:latest
-Network=odysseus.network
 ContainerName=searxng
-
+Network=odysseus.network
 PublishPort=127.0.0.1:8080:8080
-
 Volume=searxng-data.volume:/etc/searxng
-Volume=%h/odysseus/config/searxng/settings.yml:/etc/searxng/settings.yml:z
-
+Volume=/opt/odysseus/app/config/searxng/settings.yml:/etc/searxng/settings.yml:Z
 Environment=SEARXNG_BASE_URL=http://localhost:8080/
-
 HealthCmd=python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5).read(1)"
 HealthInterval=5s
 HealthTimeout=6s
@@ -157,217 +196,298 @@ HealthStartPeriod=10s
 
 [Service]
 Restart=always
+TimeoutStartSec=300
 
 [Install]
 WantedBy=default.target
 ```
 
-### ChromaDB
-
-**`~/.config/containers/systemd/odysseus/chromadb.container`**
+Create `chromadb.container`:
 
 ```ini
 [Unit]
-Description=ChromaDB vector database
-After=network-online.target
+Description=Odysseus ChromaDB
 
 [Container]
 Image=chromadb/chroma:latest
-Network=odysseus.network
 ContainerName=chromadb
-
+Network=odysseus.network
 PublishPort=8100:8000
-
 Volume=chromadb-data.volume:/chroma/chroma
-
 Environment=ANONYMIZED_TELEMETRY=FALSE
 
 [Service]
 Restart=always
+TimeoutStartSec=300
 
 [Install]
 WantedBy=default.target
 ```
 
-### Ntfy
-
-**`~/.config/containers/systemd/odysseus/ntfy.container`**
+Create `ntfy.container`:
 
 ```ini
 [Unit]
-Description=Ntfy notification server
-After=network-online.target
+Description=Odysseus ntfy
 
 [Container]
-Image=binwiederhier/ntfy
-Network=odysseus.network
+Image=binwiederhier/ntfy:latest
 ContainerName=ntfy
-
+Network=odysseus.network
 PublishPort=8091:80
-
 Exec=serve
-
 Volume=ntfy-cache.volume:/var/cache/ntfy
-
 Environment=NTFY_BASE_URL=http://localhost:8091
 
 [Service]
 Restart=always
+TimeoutStartSec=300
 
 [Install]
 WantedBy=default.target
 ```
 
-### Odysseus (main app)
-
-**`~/.config/containers/systemd/odysseus/odysseus.container`**
+Create `odysseus.container`:
 
 ```ini
 [Unit]
-Description=Odysseus AI research assistant
-After=searxng.service chromadb.service
-Requires=searxng.service chromadb.service
+Description=Odysseus
+Requires=searxng.container chromadb.container
+After=searxng.container chromadb.container
 
 [Container]
-# Image built by the odysseus-img.build unit
 Image=localhost/odysseus-img:latest
-Network=odysseus.network
 ContainerName=odysseus
-
+Network=odysseus.network
 PublishPort=7500:7000
-
-# Bind mounts — use :z to relabel for SELinux hosts
-Volume=%h/odysseus/data:/app/data:z
-Volume=%h/odysseus/logs:/app/logs:z
-Volume=%h/odysseus/data/ssh:/app/.ssh:z
-Volume=%h/odysseus/data/huggingface:/app/.cache/huggingface:z
-
-# Load secrets and configuration from .env
-EnvironmentFile=%h/odysseus/.env
-
+Volume=/opt/odysseus/app/data:/app/data:Z
+Volume=/opt/odysseus/app/logs:/app/logs:Z
+Volume=/opt/odysseus/app/data/ssh:/app/.ssh:Z
+Volume=/opt/odysseus/app/data/huggingface:/app/.cache/huggingface:Z
+EnvironmentFile=/opt/odysseus/app/.env
 Environment=SEARXNG_INSTANCE=http://searxng:8080
 Environment=CHROMADB_HOST=chromadb
 Environment=CHROMADB_PORT=8000
-Environment=PUID=1000
-Environment=PGID=1000
 
 [Service]
-# Give searxng time to pass its healthcheck before considering this a failure.
-# Adjust if your machine is slow to start searxng.
-RestartSec=10s
 Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=600
 
 [Install]
 WantedBy=default.target
 ```
 
-> **Note on PUID/PGID:** The entrypoint script in the image reads `PUID`/`PGID` and drops to that user. If your host UID differs from 1000, override in `.env` or change the `Environment=` lines above. Check with `id -u` and `id -g`.
+The image build is intentionally a separate unit. That keeps app restarts fast
+and makes rebuilds explicit.
 
----
+## 4. Generate, Build, and Start
 
-## Step 7 — Enable and start
+Reload the user systemd manager:
 
 ```bash
-# Reload systemd so it picks up the new unit files
 systemctl --user daemon-reload
+```
 
-# Verify Quadlet generated the units correctly
-systemctl --user list-unit-files | grep -E 'searxng|chromadb|ntfy|odysseus'
+Check that Quadlet generated units:
 
-# Build the odysseus image first
+```bash
+systemctl --user list-unit-files | grep -E 'odysseus|searxng|chromadb|ntfy'
+```
+
+If a unit is missing, inspect the generator output:
+
+```bash
+/usr/lib/systemd/system-generators/podman-system-generator --user --dryrun
+```
+
+Build the Odysseus image:
+
+```bash
 systemctl --user start odysseus-img-build.service
-# Watch the build (Ctrl-C when done)
-journalctl --user -fu odysseus-img-build.service
+journalctl --user -u odysseus-img-build.service -f
+```
 
-# Start supporting services
-systemctl --user start searxng.service chromadb.service ntfy.service
+If `systemctl --user` cannot find the user bus from a `sudo -iu odysseus`
+shell, set it explicitly and retry:
 
-# Wait for searxng to become healthy before starting odysseus
-# (optional — odysseus will retry on its own due to RestartSec=10s)
-until podman healthcheck run searxng 2>/dev/null | grep -q healthy; do
-  echo "Waiting for searxng health…"; sleep 5
-done
+```bash
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+systemctl --user daemon-reload
+```
 
-# Start odysseus
+Start the stack:
+
+```bash
+systemctl --user start chromadb.service searxng.service ntfy.service
 systemctl --user start odysseus.service
-
-# Enable auto-start on boot
-systemctl --user enable searxng.service chromadb.service ntfy.service odysseus.service
 ```
 
----
+The `[Install]` sections make the generated services start on future boots
+after `daemon-reload`. You do not need to run `systemctl --user enable` on the
+generated Quadlet services.
 
-## Step 8 — Verify
+## 5. Verify
+
+Check units:
 
 ```bash
-# Check all four units are active
-systemctl --user status searxng chromadb ntfy odysseus
-
-# Tail logs
-journalctl --user -fu odysseus.service
-journalctl --user -fu searxng.service
-
-# Quick smoke test
-curl -s http://localhost:7500/health   # or whatever health endpoint the app exposes
-curl -s http://localhost:8100/api/v2/heartbeat   # chromadb
-curl -s http://127.0.0.1:8080/healthz            # searxng
-curl -s http://localhost:8091/v1/health          # ntfy
+systemctl --user status chromadb.service searxng.service ntfy.service odysseus.service
 ```
 
----
-
-## Day-2 operations
-
-### Stop / restart the stack
+Check containers:
 
 ```bash
-systemctl --user stop odysseus searxng chromadb ntfy
-systemctl --user restart odysseus
+podman ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 ```
 
-### Update a service image
+Smoke-test the app and bundled services:
 
 ```bash
-podman pull searxng/searxng:latest
-systemctl --user restart searxng.service
+curl -fsS http://localhost:7500/api/health
+curl -fsS http://localhost:8100/api/v2/heartbeat
+curl -fsS http://127.0.0.1:8080/
+curl -fsS http://localhost:8091/v1/health
 ```
 
-### Rebuild odysseus after a code change
+Expected Odysseus response:
+
+```json
+{"status":"healthy","timestamp":"..."}
+```
+
+Watch the first boot logs:
 
 ```bash
-cd $PROJECT_DIR
-systemctl --user start odysseus-img-build.service
-# Wait for build to finish, then restart
+journalctl --user -u odysseus.service -f
+```
+
+Look for ChromaDB and memory startup lines:
+
+```bash
+journalctl --user -u odysseus.service --no-pager | grep -E 'ChromaDB|MemoryVectorStore|DEGRADED'
+```
+
+Open:
+
+```text
+http://<rocky-host>:7500
+```
+
+## 6. Day-2 Operations
+
+Restart one service:
+
+```bash
 systemctl --user restart odysseus.service
 ```
 
-### View logs
+Stop the stack:
 
 ```bash
-# Follow a service
-journalctl --user -fu odysseus.service
-
-# Last 100 lines
-journalctl --user -n 100 -u odysseus.service
+systemctl --user stop odysseus.service searxng.service chromadb.service ntfy.service
 ```
 
-### List volumes and inspect data
+Start the stack:
 
 ```bash
-podman volume ls
-podman volume inspect chromadb-data
+systemctl --user start chromadb.service searxng.service ntfy.service odysseus.service
 ```
 
----
+Rebuild Odysseus after code changes:
 
-## Troubleshooting
+```bash
+cd /opt/odysseus/app
+git pull
+systemctl --user start odysseus-img-build.service
+journalctl --user -u odysseus-img-build.service -f
+systemctl --user restart odysseus.service
+```
+
+Update third-party images:
+
+```bash
+podman pull chromadb/chroma:latest
+podman pull searxng/searxng:latest
+podman pull binwiederhier/ntfy:latest
+systemctl --user restart chromadb.service searxng.service ntfy.service
+```
+
+Tail logs:
+
+```bash
+journalctl --user -u odysseus.service -f
+journalctl --user -u searxng.service -f
+```
+
+List volumes:
+
+```bash
+podman volume ls | grep odysseus
+```
+
+Backup the important local state:
+
+```bash
+tar -C /opt/odysseus/app -czf "$HOME/odysseus-bind-data-$(date +%F).tgz" data logs .env
+podman volume export odysseus-chromadb-data > "$HOME/odysseus-chromadb-$(date +%F).tar"
+podman volume export odysseus-searxng-data > "$HOME/odysseus-searxng-$(date +%F).tar"
+podman volume export odysseus-ntfy-cache > "$HOME/odysseus-ntfy-cache-$(date +%F).tar"
+```
+
+Restore a named volume:
+
+```bash
+systemctl --user stop odysseus.service chromadb.service
+podman volume import odysseus-chromadb-data odysseus-chromadb-YYYY-MM-DD.tar
+systemctl --user start chromadb.service odysseus.service
+```
+
+## 7. SELinux Notes
+
+This runbook uses `:Z` on bind mounts because each host path is private to one
+container. If you intentionally share a bind-mounted path across multiple
+containers, use `:z` instead.
+
+If you get permission denials, check AVCs first:
+
+```bash
+sudo ausearch -m avc -ts recent
+```
+
+Then confirm labels were applied:
+
+```bash
+ls -Zd /opt/odysseus/app/data /opt/odysseus/app/logs
+```
+
+Avoid disabling SELinux for this stack. Bad labels are usually fixed by the
+`:Z` suffix or by recreating the mount path as the deployment user.
+
+## 8. Troubleshooting
 
 | Symptom | Check |
-|---------|-------|
-| `systemctl --user` fails / "Failed to connect to bus" | `XDG_RUNTIME_DIR` is not set. Log in via a real TTY or SSH, not `su`. |
-| Unit not found after daemon-reload | Quadlet parse error — run `systemd-analyze --user verify ~/.config/containers/systemd/odysseus/*.container` |
-| `odysseus` fails to start | Check `journalctl --user -u odysseus.service`; searxng may not be healthy yet, let it restart |
-| Bind-mount files owned by root after start | `PUID`/`PGID` mismatch — verify `id -u` matches the env vars and the entrypoint's `chown` ran |
-| SELinux permission denied | Add `:z` (shared) or `:Z` (private) to `Volume=` lines |
-| `localhost/odysseus-img:latest` not found | Build unit didn't finish — check `journalctl --user -u odysseus-img-build.service` |
-| Port already in use | Another process owns the port — `ss -tlnp | grep <port>` to find it |
+| --- | --- |
+| `systemctl --user` says it cannot connect to the bus | Log in as the deployment user with `sudo -iu odysseus` or SSH. Do not use `su` without a real user session. Confirm `echo $XDG_RUNTIME_DIR`. |
+| Services stop after logout | Run `sudo loginctl enable-linger odysseus`. |
+| Unit missing after `daemon-reload` | Run `/usr/lib/systemd/system-generators/podman-system-generator --user --dryrun` and fix the Quadlet syntax error. |
+| Build times out | Keep `TimeoutStartSec=1800` in `odysseus-img.build`, or pre-build manually with `podman build -t localhost/odysseus-img:latest /opt/odysseus/app`. |
+| `localhost/odysseus-img:latest` not found | The build unit did not finish. Check `journalctl --user -u odysseus-img-build.service`. |
+| Odysseus cannot reach ChromaDB | Confirm `CHROMADB_HOST=chromadb`, `CHROMADB_PORT=8000`, and all containers are on `odysseus.network`. |
+| Odysseus cannot search | Confirm `SEARXNG_INSTANCE=http://searxng:8080`, then check `journalctl --user -u searxng.service`. |
+| Files under `data/` are owned by the wrong UID | Set `PUID` and `PGID` in `.env` to `id -u` and `id -g` for the deployment user, then restart `odysseus.service`. |
+| SELinux denies bind mounts | Keep `:Z` on private bind mounts and inspect `ausearch -m avc -ts recent`. |
+| Port conflict | Run `ss -tlnp | grep -E ':7500|:8100|:8080|:8091'`. |
+| App health check fails | Use `/api/health`, not `/health`: `curl -fsS http://localhost:7500/api/health`. |
+
+## 9. References
+
+- [Rocky Linux Podman docs](https://docs.rockylinux.org/gemstones/containers/podman/):
+  Quadlet is the systemd generator used for rootless and rootful Podman
+  services.
+- [Upstream Podman `podman-systemd.unit(5)`](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html):
+  rootless search paths, recursive subdirectory scanning, generated services,
+  dependency translation, and debugging with `podman-system-generator --dryrun`.
+- [Upstream Podman `podman-build.unit(5)`](https://docs.podman.io/en/latest/markdown/podman-build.unit.5.html):
+  `.build` files, `ImageTag=`, `File=`, `SetWorkingDirectory=`, and build
+  timeout behavior.

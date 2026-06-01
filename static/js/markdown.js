@@ -97,6 +97,26 @@ function normalizePlainThinking(text) {
   return text;
 }
 
+function normalizeThinkingDetails(text) {
+  if (!text || !/<details/i.test(text)) return text;
+
+  return text.replace(
+    /<details(?:\s+[^>]*)?>\s*<summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/gi,
+    (match, summary, body) => {
+      const label = String(summary || '')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&nbsp;/gi, ' ')
+        .trim()
+        .toLowerCase();
+      if (!/\b(thinking|thoughts?|thought process|reasoning|internal reasoning|chain of thought)\b/.test(label)) {
+        return match;
+      }
+      const thinking = String(body || '').trim();
+      return thinking ? `<think>${thinking}</think>` : '';
+    }
+  );
+}
+
 /**
  * Extract all complete thinking blocks and remaining content
  */
@@ -104,7 +124,7 @@ export function extractThinkingBlocks(text) {
   // Handle malformed patterns: <think></think>\n...actual thinking...\n</think>
   // Some models emit an empty <think></think> then put thinking text outside,
   // closed by a second orphaned </think>.
-  let normalized = normalizePlainThinking(text);
+  let normalized = normalizeThinkingDetails(normalizePlainThinking(text));
   // Collapse <think>short</think>...real thinking...</think> into one block
   // Models sometimes emit a trivial first block then continue thinking outside tags
   normalized = normalized.replace(/<think(?:ing)?(?:\s+[^>]*)?>.{0,30}<\/think(?:ing)?>\s*([\s\S]*?)<\/think(?:ing)?>/gi, (m, content) => {
