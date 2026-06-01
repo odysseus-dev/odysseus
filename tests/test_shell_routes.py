@@ -11,6 +11,8 @@ from routes.shell_routes import (
     _find_line_break,
     _running_in_container,
     _docker_row_status,
+    _package_installed_from_probe,
+    _package_status_note,
     DOCKER_IN_CONTAINER_HINT,
 )
 
@@ -182,3 +184,60 @@ class TestDockerRowStatus:
         assert "remote" in lowered
         assert "socket" in lowered
         assert "host-root" in lowered or "host root" in lowered
+
+
+class TestPackageProbeStatus:
+    """Dependency rows should reflect serve readiness, not import coincidences."""
+
+    def test_vllm_namespace_without_cli_is_not_installed(self):
+        probe = {
+            "modules": {
+                "vllm": {
+                    "found": True,
+                    "origin": None,
+                    "loader": None,
+                    "locations": ["/root/vllm"],
+                    "real_module": False,
+                }
+            },
+            "dists": {},
+            "binaries": {"vllm": None},
+        }
+
+        assert _package_installed_from_probe("vllm", probe) is False
+        assert "namespace" in _package_status_note("vllm", probe)
+        assert "no vLLM CLI" in _package_status_note("vllm", probe)
+
+    def test_vllm_requires_cli_for_current_serve_command(self):
+        probe = {
+            "modules": {"vllm": {"found": True, "real_module": True}},
+            "dists": {"vllm": "0.8.5"},
+            "binaries": {"vllm": "/home/user/venv/bin/vllm"},
+        }
+
+        assert _package_installed_from_probe("vllm", probe) is True
+
+    def test_llama_cpp_is_installed_when_native_llama_server_exists(self):
+        probe = {
+            "modules": {"llama_cpp": {"found": False, "real_module": False}},
+            "dists": {},
+            "binaries": {"llama-server": "/usr/local/bin/llama-server"},
+        }
+
+        assert _package_installed_from_probe("llama_cpp", probe) is True
+        assert "native llama-server" in _package_status_note("llama_cpp", probe)
+
+    def test_diffusers_requires_torch_too(self):
+        missing_torch = {
+            "modules": {"diffusers": {"found": True, "real_module": True}, "torch": {"found": False}},
+            "dists": {"diffusers": "0.37.0"},
+            "binaries": {},
+        }
+        ready = {
+            "modules": {"diffusers": {"found": True, "real_module": True}, "torch": {"found": True, "real_module": True}},
+            "dists": {"diffusers": "0.37.0", "torch": "2.10.0"},
+            "binaries": {},
+        }
+
+        assert _package_installed_from_probe("diffusers", missing_torch) is False
+        assert _package_installed_from_probe("diffusers", ready) is True

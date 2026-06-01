@@ -554,10 +554,12 @@ async function _fetchDependencies() {
       const isLocal = pkg.target === 'local';
       const isSystemDep = pkg.kind === 'system';
       const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
+      const note = pkg.status_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.65;margin-top:3px;">${esc(pkg.status_note)}</div>` : '';
       return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
         + `<div class="cookbook-dep-info">`
         + `<div class="memory-item-title">${esc(pkg.name)}</div>`
         + `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`
+        + note
         + `</div>`
         + `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`
         + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
