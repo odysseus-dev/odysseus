@@ -1586,6 +1586,18 @@ function initAgentPickerUI() {
     }, 200);
   }
 
+  var items = agentPickerMenu ? agentPickerMenu.querySelectorAll('.model-switch-item') : [];
+  
+  function updateActiveItem(val) {
+    items.forEach(function(i) {
+      if (i.getAttribute('data-value') === val) {
+        i.classList.add('active');
+      } else {
+        i.classList.remove('active');
+      }
+    });
+  }
+
   if (agentPickerBtn && agentPickerMenu) {
     agentPickerBtn.addEventListener('click', function(e) {
       if (agentPickerMenu.classList.contains('hidden') || agentPickerMenu.classList.contains('closing')) {
@@ -1603,7 +1615,6 @@ function initAgentPickerUI() {
       }
     });
 
-    var items = agentPickerMenu.querySelectorAll('.model-switch-item');
     items.forEach(function(item) {
       item.addEventListener('click', function(e) {
         e.stopPropagation();
@@ -1611,6 +1622,7 @@ function initAgentPickerUI() {
         var text = this.textContent;
         if (agentPickerLabel) agentPickerLabel.textContent = text;
         globalAgentStyle = val;
+        updateActiveItem(val);
         _closeAgentMenu();
         
         // Save using fetch
@@ -1634,7 +1646,10 @@ function initAgentPickerUI() {
           agentPickerLabel.textContent = globalAgentStyle === 'hermes' ? 'Hermes Agent' : 'OpenAgent';
         }
       }
-    }).catch(e => {});
+      updateActiveItem(globalAgentStyle);
+    }).catch(e => {
+      updateActiveItem(globalAgentStyle);
+    });
 }
 
 // Initialize the dropdown immediately
@@ -1662,7 +1677,7 @@ async function initAgentSettings() {
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_max_tool_calls: val, agent_prompt_style: currentStyle })
+        body: JSON.stringify({ agent_max_tool_calls: val })
       });
       if (msg) {
         msg.textContent = val > 0 ? 'Limit: ' + val + ' tool calls per message' : 'Unlimited';
