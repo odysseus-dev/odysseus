@@ -13,25 +13,33 @@ if _endpoint_resolver is not None and not getattr(_endpoint_resolver, "__file__"
     sys.modules.pop("src.endpoint_resolver", None)
     sys.modules.pop("routes.model_routes", None)
 
-if "core.database" not in sys.modules:
-    _core_db = types.ModuleType("core.database")
-    for _name in [
-        "SessionLocal", "ModelEndpoint", "Session", "ChatMessage", "Document",
-        "DocumentVersion", "GalleryImage", "GalleryAlbum", "Note",
-        "CalendarCal", "CalendarEvent", "ScheduledTask", "TaskRun",
-        "McpServer",
-    ]:
-        setattr(_core_db, _name, MagicMock())
-    sys.modules["core.database"] = _core_db
+_orig_core_db = sys.modules.get("core.database")
+
+_core_db = types.ModuleType("core.database")
+for _name in [
+    "SessionLocal", "ModelEndpoint", "Session", "ChatMessage", "Document",
+    "DocumentVersion", "GalleryImage", "GalleryAlbum", "Note",
+    "CalendarCal", "CalendarEvent", "ScheduledTask", "TaskRun",
+    "McpServer",
+]:
+    setattr(_core_db, _name, MagicMock())
+sys.modules["core.database"] = _core_db
 
 import routes.model_routes as model_routes
 import src.endpoint_resolver as endpoint_resolver
+
+# Clean up import side-effects to avoid polluting subsequent tests
+if _orig_core_db is not None:
+    sys.modules["core.database"] = _orig_core_db
+else:
+    sys.modules.pop("core.database", None)
 from routes.model_routes import (
     _match_provider_curated,
     _curate_models,
     _is_chat_model,
     _classify_endpoint,
     _probe_endpoint,
+    _ping_endpoint,
     _truthy,
     _PROVIDER_CURATED,
 )
@@ -297,6 +305,7 @@ class TestSetupProbeSafety:
 
         assert _probe_endpoint("https://api.anthropic.com/v1") == ANTHROPIC_MODELS
 
+
 def test_ollama_endpoint_error_message_includes_troubleshooting():
     msg = model_routes._model_endpoint_error_message(
         "http://localhost:11434/v1",
@@ -370,3 +379,107 @@ class TestDockerHostGatewayReachable:
 
         monkeypatch.setattr(model_routes.socket, "getaddrinfo", _fail)
         assert model_routes._docker_host_gateway_reachable() is False
+
+
+# ── _ping_endpoint ──
+
+class TestPingEndpoint:
+    def test_ping_success(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+
+        def fake_get(url, headers=None, timeout=None):
+            req = httpx.Request("GET", url)
+            return httpx.Response(200, request=req)
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        res = _ping_endpoint("http://my-model-host/v1")
+        assert res["reachable"] is True
+        assert res["status_code"] == 200
+        assert res["error"] is None
+
+    def test_ping_failure_status(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+
+        def fake_get(url, headers=None, timeout=None):
+            req = httpx.Request("GET", url)
+            return httpx.Response(404, request=req)
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        res = _ping_endpoint("http://my-model-host/v1")
+        assert res["reachable"] is False
+        assert res["status_code"] == 404
+        assert res["error"] == "HTTP 404"
+
+    def test_ping_self_odysseus_redirect(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+
+        def fake_get(url, headers=None, timeout=None):
+            req = httpx.Request("GET", url)
+            return httpx.Response(302, headers={"location": "/login"}, request=req)
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        res = _ping_endpoint("http://my-model-host/v1")
+        assert res["reachable"] is False
+        assert res["status_code"] == 302
+        assert "Odysseus, not a model server" in res["error"]
+
+    def test_ping_general_redirect(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+
+        def fake_get(url, headers=None, timeout=None):
+            req = httpx.Request("GET", url)
+            return httpx.Response(301, headers={"location": "http://other-place"}, request=req)
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        res = _ping_endpoint("http://my-model-host/v1")
+        assert res["reachable"] is False
+        assert res["status_code"] == 301
+        assert "HTTP 301 redirect" in res["error"]
+
+    def test_ping_ollama_fallback_success(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        calls = []
+
+        def fake_get(url, headers=None, timeout=None):
+            calls.append(url)
+            req = httpx.Request("GET", url)
+            if "/models" in url:
+                raise httpx.ConnectError("Connection refused")
+            if "/api/version" in url:
+                return httpx.Response(200, json={"version": "0.1.48"}, request=req)
+            return httpx.Response(404, request=req)
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        res = _ping_endpoint("http://localhost:11434/v1")
+        assert res["reachable"] is True
+        assert res["status_code"] == 200
+        assert res["error"] is None
+        assert "http://localhost:11434/api/version" in calls
+
+    def test_ping_ollama_fallback_failure(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        calls = []
+
+        def fake_get(url, headers=None, timeout=None):
+            calls.append(url)
+            if "/models" in url:
+                raise httpx.ConnectError("Connection refused")
+            raise httpx.ConnectError("Host unreachable")
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        res = _ping_endpoint("http://ollama-service:11434/v1")
+        assert res["reachable"] is False
+        assert res["status_code"] is None
+        assert "Host unreachable" in res["error"]
+
+    def test_ping_connection_error_no_fallback(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+
+        def fake_get(url, headers=None, timeout=None):
+            raise httpx.ConnectError("Connection timeout")
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        res = _ping_endpoint("http://some-openai-compatible-host/v1")
+        assert res["reachable"] is False
+        assert res["status_code"] is None
+        assert "Connection timeout" in res["error"]

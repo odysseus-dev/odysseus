@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 
@@ -72,16 +73,18 @@ def test_validate_serve_model_id_accepts_cached_local_model_names():
         _validate_serve_model_id("../escape")
 
 
-def test_local_tooling_path_export_prepends_interpreter_bin():
+def test_local_tooling_path_export_prepends_interpreter_bin(monkeypatch):
     """The cookbook runners must see the venv's bin (where `hf`/`python` live)
     so tmux shells can find them without an activated venv."""
+    monkeypatch.setattr(os.path, "abspath", lambda p: p)
     assert (
         _local_tooling_path_export("/opt/venv/bin/python")
         == 'export PATH="/opt/venv/bin:$PATH"'
     )
 
 
-def test_local_tooling_path_export_preserves_spaces_and_expands_path():
+def test_local_tooling_path_export_preserves_spaces_and_expands_path(monkeypatch):
+    monkeypatch.setattr(os.path, "abspath", lambda p: p)
     line = _local_tooling_path_export("/Users/John Smith/.venv/bin/python3")
     assert line == 'export PATH="/Users/John Smith/.venv/bin:$PATH"'
     assert line.endswith(':$PATH"')  # $PATH stays expandable in double quotes

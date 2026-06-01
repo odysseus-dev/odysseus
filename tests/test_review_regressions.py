@@ -80,6 +80,7 @@ def _install_model_route_import_stubs(monkeypatch):
     db_mod.Document = MagicMock()
     db_mod.DocumentVersion = MagicMock()
     db_mod.GalleryImage = MagicMock()
+
     middleware_mod = types.ModuleType("core.middleware")
     middleware_mod.require_admin = lambda request: None
     multipart_mod = types.ModuleType("python_multipart")
