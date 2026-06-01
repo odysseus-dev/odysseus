@@ -11,6 +11,13 @@ from typing import Optional, Dict, List
 from src.model_context import get_context_length, DEFAULT_CONTEXT
 from urllib.parse import urlparse
 
+# Provider seam — codex (ChatGPT-subscription / OAuth) endpoints route through a
+# pure transport + a per-request credential resolver. Other providers stay on the
+# legacy dispatch in this module; the seam is one-directional (providers never
+# import llm_core), so there is no cycle.
+from src.providers import registry, auth
+from src.providers.endpoint_ref import EndpointRef
+
 logger = logging.getLogger(__name__)
 
 class LLMConfig:
@@ -862,6 +869,15 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None, 
              timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
+    # Codex (ChatGPT-subscription / OAuth) endpoints are async-only: credential
+    # resolution refreshes tokens, which the sync path cannot do. Fail loudly
+    # rather than POSTing an unauthenticated chat/completions payload upstream.
+    if registry.is_codex_url(url):
+        raise HTTPException(
+            501,
+            "ChatGPT-subscription (codex) endpoints require async credential "
+            "resolution and are not supported on the sync llm_call path",
+        )
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
     # double-encoded) — otherwise h.update() throws "dictionary update sequence
@@ -1005,6 +1021,138 @@ async def llm_call_async_with_fallback(candidates, messages, **kwargs) -> str:
     raise last_err if last_err else HTTPException(503, "All fallback candidates failed")
 
 
+# ── OpenAI-Codex (ChatGPT-subscription) provider seam ──────────────────────
+# Codex endpoints authenticate via an OAuth session, not a static key, so their
+# credentials must be resolved — and refreshed — per request from endpoint
+# identity. These two helpers are the codex execution path: `llm_core` still owns
+# the wire (httpx pool, dead-host cooldown, error mapping) while the pure
+# `codex_responses` transport shapes the request and normalizes the stream. The
+# response cache is bypassed (a per-user OAuth response must not be shared). All
+# other providers stay on the legacy dispatch — this is a sidecar, not a rewrite.
+
+def _codex_consolidate(messages: List[Dict]) -> List[Dict]:
+    """Sanitize + consolidate system messages, mirroring the legacy entry fns."""
+    msgs = _sanitize_llm_messages(messages)
+    sys_parts = [m["content"] for m in msgs if m.get("role") == "system"]
+    non_sys = [m for m in msgs if m.get("role") != "system"]
+    if sys_parts:
+        return [{"role": "system", "content": "\n\n".join(sys_parts)}] + non_sys
+    return non_sys
+
+
+async def _stream_codex(url, model, messages, temperature, max_tokens, headers, timeout, tools, ref):
+    """Codex streaming path — yields the same SSE chunk protocol as stream_llm."""
+    try:
+        if ref is None:
+            ref = EndpointRef.from_legacy(url, model, headers)
+        messages_copy = _codex_consolidate(messages)
+        spec = registry.detect_spec(ref.url)
+        transport = registry.get_transport(spec)
+        target_url = transport.target_url(ref.url)
+        creds = await auth.resolve(ref, spec)
+        h = transport.build_headers(creds.headers)
+        payload = transport.build_payload(ref.model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
+    except HTTPException as e:
+        # Surface as a stream error rather than raising — a raise here propagates
+        # as a 500 the SPA can't render, which reads as a hang.
+        yield f'event: error\ndata: {json.dumps({"error": e.detail, "status": e.status_code})}\n\n'
+        return
+    except Exception as e:
+        logger.error(f"codex stream setup error: {e}")
+        yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+        return
+
+    stream_timeout = httpx.Timeout(connect=3.0, read=float(timeout), write=30.0, pool=5.0)
+    if _is_host_dead(target_url):
+        yield f'event: error\ndata: {json.dumps({"error": f"Upstream {_host_key(target_url)} unreachable (cooldown active)", "status": 503})}\n\n'
+        return
+    note_model_activity(target_url, ref.model)
+
+    decoder = transport.stream_decoder(ref.model)
+    try:
+        client = _get_http_client()
+        async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
+            _clear_host_dead(target_url)
+            if r.status_code != 200:
+                raw = (await r.aread()).decode(errors="replace")
+                friendly = _format_upstream_error(r.status_code, raw, target_url)
+                yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                return
+            async for line in r.aiter_lines():
+                chunks, stop = decoder.decode_line(line)
+                for chunk in chunks:
+                    yield chunk
+                if stop:
+                    return
+            for chunk in decoder.finalize():
+                yield chunk
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        _cooled = _mark_host_dead(target_url)
+        _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
+        logger.warning(f"codex stream connect to {target_url} failed: {e}{_tail}")
+        yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+    except httpx.ReadTimeout:
+        yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
+    except httpx.NetworkError:
+        yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
+    except Exception as e:
+        logger.error(f"codex stream error: {e}")
+        yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+
+
+async def _call_codex_async(url, model, messages, temperature, max_tokens, headers, timeout, max_retries, ref):
+    """Codex non-streaming path — returns assistant text (mirrors llm_call_async).
+
+    No response caching: OAuth-backed responses are per-user and must not be
+    shared via the module cache.
+    """
+    if ref is None:
+        ref = EndpointRef.from_legacy(url, model, headers)
+    messages_copy = _codex_consolidate(messages)
+    spec = registry.detect_spec(ref.url)
+    transport = registry.get_transport(spec)
+    target_url = transport.target_url(ref.url)
+    creds = await auth.resolve(ref, spec)
+    h = transport.build_headers(creds.headers)
+    payload = transport.build_payload(ref.model, messages_copy, temperature, max_tokens, stream=False, tools=None)
+
+    if _is_host_dead(target_url):
+        raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")
+    call_timeout = httpx.Timeout(connect=3.0, read=float(timeout), write=10.0, pool=5.0)
+    attempt = 0
+    while attempt < max_retries:
+        attempt += 1
+        start = time.time()
+        try:
+            note_model_activity(target_url, ref.model)
+            client = _get_http_client()
+            r = await client.post(target_url, headers=h, json=payload, timeout=call_timeout)
+            duration = time.time() - start
+            if not r.is_success:
+                friendly = _format_upstream_error(r.status_code, r.text, target_url)
+                logger.warning(f"codex async call to {target_url} failed in {duration:.2f}s (attempt {attempt}): HTTP {r.status_code} {friendly}")
+                raise HTTPException(r.status_code, friendly)
+            logger.info(f"codex async call to {target_url} succeeded in {duration:.2f}s (attempt {attempt})")
+            _clear_host_dead(target_url)
+            data = r.json()
+            try:
+                return transport.parse_response(data)
+            except Exception:
+                raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}")
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            _cooled = _mark_host_dead(target_url)
+            duration = time.time() - start
+            _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
+            logger.warning(f"codex async connect to {target_url} failed after {duration:.2f}s: {e}{_tail}")
+            raise HTTPException(503, f"Cannot reach {_host_key(target_url)}: {e}")
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            duration = time.time() - start
+            logger.warning(f"codex async call attempt {attempt} failed after {duration:.2f}s: {e}")
+            if attempt >= max_retries:
+                raise HTTPException(502, f"POST {target_url} failed after {max_retries} attempts: {e}")
+            await asyncio.sleep(LLMConfig.RETRY_DELAY)
+
+
 async def llm_call_async(
     url: str,
     model: str,
@@ -1014,9 +1162,15 @@ async def llm_call_async(
     headers: Optional[Dict] = None,
     timeout: int = LLMConfig.STREAM_TIMEOUT,
     max_retries: int = LLMConfig.MAX_RETRIES,
-    prompt_type: Optional[str] = None
+    prompt_type: Optional[str] = None,
+    ref: Optional[EndpointRef] = None,
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
+    # Codex (ChatGPT-subscription / OAuth) endpoints take a self-contained path —
+    # credentials resolve per request from endpoint identity, cache bypassed. All
+    # other providers fall through to the legacy dispatch below, byte-identical.
+    if registry.is_codex_url(url):
+        return await _call_codex_async(url, model, messages, temperature, max_tokens, headers, timeout, max_retries, ref)
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
@@ -1117,7 +1271,7 @@ async def llm_call_async(
 async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
-                     tools: Optional[List[Dict]] = None):
+                     tools: Optional[List[Dict]] = None, ref: Optional[EndpointRef] = None):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -1126,6 +1280,12 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
       - event: error                       — errors
       - data: [DONE]                       — end of stream
     """
+    # Codex (ChatGPT-subscription / OAuth) endpoints take a self-contained path;
+    # all other providers fall through to the legacy dispatch below.
+    if registry.is_codex_url(url):
+        async for chunk in _stream_codex(url, model, messages, temperature, max_tokens, headers, timeout, tools, ref):
+            yield chunk
+        return
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
