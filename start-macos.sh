@@ -90,6 +90,7 @@ if [ ! -d venv ]; then
   "$PY" -m venv venv
 fi
 echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
+PY="$(pwd)/venv/bin/python"
 "$PY" -m pip install --quiet --upgrade pip
 # Not --quiet: this is the slow step, so show progress (and any real errors).
 "$PY" -m pip install -r requirements.txt
