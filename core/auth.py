@@ -446,6 +446,22 @@ class AuthManager:
             self._sessions.pop(token, None)
         self._save_sessions()
 
+    def revoke_user_sessions(self, username: str, except_token: Optional[str] = None) -> int:
+        """Revoke active browser sessions for a user, optionally preserving one."""
+        username = username.strip().lower()
+        revoked = 0
+        with self._sessions_lock:
+            to_drop = [
+                token for token, session in self._sessions.items()
+                if token != except_token and (session or {}).get("username") == username
+            ]
+            for token in to_drop:
+                self._sessions.pop(token, None)
+                revoked += 1
+            if revoked:
+                self._save_sessions()
+        return revoked
+
     def status(self, token: Optional[str]) -> Dict[str, Any]:
         username = self.get_username_for_token(token)
         authenticated = username is not None
