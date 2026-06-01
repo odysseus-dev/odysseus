@@ -49,6 +49,7 @@ Thumbs.db
 *.cache
 cache/
 output.txt.txt
+src-tauri/target/
 
 # Media (uploaded/generated)
 *.jpg

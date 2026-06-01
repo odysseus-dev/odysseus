@@ -1,0 +1,16 @@
+[package]
+name = "odysseus-desktop"
+version = "1.0.0"
+description = "Odysseus desktop shell"
+authors = ["Odysseus Contributors"]
+license = "MIT"
+repository = "https://github.com/DonnieDice/odysseus"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+url = "2"

@@ -1,5 +1,5 @@
-diff --git a/app.py b/app.py
-index 0ff6e42..4ca3919 100644
+﻿diff --git a/app.py b/app.py
+index 0ff6e42..79a0328 100644
 --- a/app.py
 +++ b/app.py
 @@ -1,5 +1,7 @@
@@ -15,19 +15,19 @@ index 0ff6e42..4ca3919 100644
      os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
  
 +
-+def _configure_windows_frozen_database_url() -> None:
-+    """Use a writable SQLite path for packaged Windows builds."""
++def _configure_windows_frozen_data_paths() -> None:
++    """Use a writable data root for packaged Windows builds."""
 +    if os.name != "nt" or not getattr(sys, "frozen", False):
-+        return
-+    if os.getenv("DATABASE_URL"):
 +        return
 +
 +    base_dir = Path(
 +        os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
 +    )
-+    db_path = base_dir / "Odysseus" / "data" / "app.db"
-+    db_path.parent.mkdir(parents=True, exist_ok=True)
-+    os.environ["DATABASE_URL"] = f"sqlite:///{db_path.as_posix()}"
++    data_dir = Path(os.environ.get("ODYSSEUS_DATA_DIR") or base_dir / "Odysseus" / "data")
++    data_dir.mkdir(parents=True, exist_ok=True)
++    os.environ.setdefault("ODYSSEUS_DATA_DIR", str(data_dir))
++    os.environ.setdefault("DATA_DIR", str(data_dir))
++    os.environ.setdefault("DATABASE_URL", f"sqlite:///{(data_dir / 'app.db').as_posix()}")
 +
  from dotenv import load_dotenv
  # encoding="utf-8-sig" tolerates a UTF-8 BOM in .env — a common Windows gotcha
@@ -36,7 +36,7 @@ index 0ff6e42..4ca3919 100644
  # is silently ignored and the user is unexpectedly forced to log in (issue #142).
  # utf-8-sig reads plain UTF-8 (no BOM) identically, so this is safe everywhere.
  load_dotenv(encoding="utf-8-sig")
-+_configure_windows_frozen_database_url()
++_configure_windows_frozen_data_paths()
  import uuid
  
  import asyncio
@@ -105,3 +105,48 @@ index 0ff6e42..4ca3919 100644
 +        port=int(os.getenv("ODYSSEUS_PORT", "7000")),
 +        log_level=os.getenv("ODYSSEUS_LOG_LEVEL", "info"),
 +    )
+diff --git a/core/auth.py b/core/auth.py
+index 4d35554..1f37c53 100644
+--- a/core/auth.py
++++ b/core/auth.py
+@@ -35,9 +35,12 @@ DEFAULT_PRIVILEGES = {
+ # Admins get everything
+ ADMIN_PRIVILEGES = {k: (True if isinstance(v, bool) else (0 if isinstance(v, int) else [])) for k, v in DEFAULT_PRIVILEGES.items()}
+ 
+-DEFAULT_AUTH_PATH = os.path.join(
+-    Path(__file__).parent.parent, "data", "auth.json"
++_DEFAULT_DATA_DIR = (
++    os.getenv("ODYSSEUS_DATA_DIR")
++    or os.getenv("DATA_DIR")
++    or os.path.join(Path(__file__).parent.parent, "data")
+ )
++DEFAULT_AUTH_PATH = os.path.join(_DEFAULT_DATA_DIR, "auth.json")
+ TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
+ 
+ 
+diff --git a/core/constants.py b/core/constants.py
+index 5dcf9e9..b3733d0 100644
+--- a/core/constants.py
++++ b/core/constants.py
+@@ -7,7 +7,7 @@ APP_VERSION = "0.9.1"
+ # Base paths
+ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/"
+ STATIC_DIR = os.path.join(BASE_DIR, "static")
+-DATA_DIR = os.path.join(BASE_DIR, "data")
++DATA_DIR = os.getenv("ODYSSEUS_DATA_DIR") or os.getenv("DATA_DIR") or os.path.join(BASE_DIR, "data")
+ 
+ # Data file paths
+ SESSIONS_FILE = os.path.join(DATA_DIR, "sessions.json")
+diff --git a/src/constants.py b/src/constants.py
+index e44c6c4..fa662d1 100644
+--- a/src/constants.py
++++ b/src/constants.py
+@@ -7,7 +7,7 @@ APP_VERSION = "1.0.0"
+ # Base paths
+ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/"
+ STATIC_DIR = os.path.join(BASE_DIR, "static")
+-DATA_DIR = os.path.join(BASE_DIR, "data")
++DATA_DIR = os.getenv("ODYSSEUS_DATA_DIR") or os.getenv("DATA_DIR") or os.path.join(BASE_DIR, "data")
+ 
+ # Data file paths
+ SESSIONS_FILE = os.path.join(DATA_DIR, "sessions.json")

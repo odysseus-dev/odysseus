@@ -368,7 +368,7 @@ jobs:
           retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
 
   windows:
-    name: Windows .exe installer
+    name: Windows Tauri desktop app
     runs-on: windows-latest
     steps:
       - name: Check out repository
@@ -383,26 +383,41 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
+          npm ci
 
-      - name: Build Windows .exe with PyInstaller
+      - name: Build Windows backend sidecar with PyInstaller
         run: |
-          pyinstaller --onefile --name odysseus --add-data "static;static" --add-data "core;core" --add-data "routes;routes" --add-data "src;src" --add-data "services;services" --add-data "mcp_servers;mcp_servers" --add-data "config;config" --add-data "scripts;scripts" app.py
-          $VERSION = (Select-String -Path pyproject.toml -Pattern '^version = "(.*)"').Matches.Groups[1].Value
-          New-Item -ItemType Directory -Force artifacts | Out-Null
-          Copy-Item dist/odysseus.exe "artifacts/odysseus-windows-$VERSION.exe"
+          pyinstaller --onefile --name odysseus-backend --add-data "static;static" --add-data "core;core" --add-data "routes;routes" --add-data "src;src" --add-data "services;services" --add-data "mcp_servers;mcp_servers" --add-data "config;config" --add-data "scripts;scripts" app.py
 
-      - name: Smoke test Windows package
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\smoke-windows-package.ps1 -ExePath .\dist\odysseus.exe
+      - name: Smoke test Windows backend sidecar
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\smoke-windows-package.ps1 -ExePath .\dist\odysseus-backend.exe
+
+      - name: Smoke test Tauri desktop config
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\smoke-tauri-config.ps1
+
+      - name: Prepare Tauri backend sidecar
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\prepare-tauri-sidecar.ps1 -BackendExe .\dist\odysseus-backend.exe
+
+      - name: Build Windows desktop app with Tauri
+        run: npm run tauri:build
 
       - name: Finalize artifacts
         run: |
+          mkdir -p artifacts
           VERSION=$(awk -F'"' '/^version = / { print $2; exit }' pyproject.toml)
-          bash scripts/ci/finalize-artifacts.sh artifacts "windows" "$VERSION" "windows" "exe"
+          find src-tauri/target/release/bundle -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.zip' \) -exec cp {} artifacts/ \;
+          bash scripts/ci/finalize-artifacts.sh artifacts "windows-tauri" "$VERSION" "windows" "tauri"
         shell: bash
 
       - name: Read package version
@@ -413,7 +428,7 @@ jobs:
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: odysseus-windows-${{ steps.version.outputs.version }}-${{ github.sha }}
+          name: odysseus-windows-tauri-${{ steps.version.outputs.version }}-${{ github.sha }}
           path: artifacts/
           retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
 

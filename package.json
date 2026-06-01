@@ -3,7 +3,13 @@
     "type": "git",
     "url": "https://github.com/pewdiepie-archdaemon/odysseus.git"
   },
+  "scripts": {
+    "tauri": "tauri",
+    "tauri:build": "tauri build",
+    "tauri:dev": "tauri dev"
+  },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0",
     "@antithesishq/bombadil": "^0.3.2"
   },
   "dependencies": {

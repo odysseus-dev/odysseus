@@ -43,6 +43,10 @@ require_file "MANIFEST.in" "source distributions must include runtime assets"
 require_file "scripts/ci/build-package-artifacts.sh" "package build steps must be reproducible locally"
 require_file "scripts/ci/finalize-artifacts.sh" "artifacts must have checksums and manifests"
 require_file "scripts/ci/install-rpm-build-deps.sh" "RPM build dependencies must be installed through a retryable script"
+require_file "scripts/ci/prepare-tauri-sidecar.ps1" "Tauri desktop builds must prepare a bundled backend sidecar"
+require_file "scripts/ci/smoke-tauri-config.ps1" "Tauri desktop packaging must have a config smoke test"
+require_file "src-tauri/tauri.conf.json" "native desktop packaging must use a Tauri shell"
+require_file "src-tauri/src/main.rs" "Tauri shell must own backend launch and native window creation"
 require_file "packaging/README.md" "maintainer-owned publishing placeholders must be documented"
 
 require_pattern ".github/workflows/ci.yml" "python -m pytest" "unit tests must execute pytest"
@@ -57,6 +61,12 @@ require_pattern ".github/workflows/package.yml" "refs/tags/v" "releases must be 
 require_pattern ".github/workflows/package.yml" "install-rpm-build-deps\\.sh" "RPM distro installs must use the retryable install script"
 require_pattern ".github/workflows/package.yml" "smoke-windows-package\\.ps1" "Windows packaged binary must be smoke-tested in CI"
 require_pattern ".github/workflows/package.yml" "ExecutionPolicy Bypass" "Windows smoke tests must run under CI-friendly PowerShell execution policy"
+require_pattern ".github/workflows/package.yml" "prepare-tauri-sidecar\\.ps1" "Windows desktop build must prepare the backend as a Tauri sidecar"
+require_pattern ".github/workflows/package.yml" "npm run tauri:build" "Windows desktop package must be built through Tauri"
+require_pattern ".github/workflows/package.yml" "odysseus-windows-tauri" "Windows artifacts must identify the native Tauri package"
+require_pattern "src-tauri/tauri.conf.json" "binaries/odysseus-backend" "Tauri desktop app must bundle the backend as a sidecar"
+require_pattern "src-tauri/src/main.rs" "WebviewWindowBuilder" "Tauri shell must open a native WebView window"
+require_pattern "src-tauri/src/main.rs" "ODYSSEUS_DATA_DIR" "Tauri shell must give the backend a writable app data directory"
 require_pattern "scripts/ci/smoke-windows-package.ps1" "odysseus-windows-install-smoke" "Windows smoke test must launch from an isolated install directory"
 require_pattern "scripts/ci/smoke-windows-package.ps1" "LOCALAPPDATA" "Windows smoke test must verify packaged writable data behavior"
 require_pattern "scripts/ci/smoke-windows-package.ps1" "/static/app\\.js" "Windows smoke test must verify bundled static JavaScript"
@@ -74,7 +84,8 @@ require_pattern "packaging/README.md" "SNAPCRAFT_STORE_CREDENTIALS" "Snap publis
 require_pattern "packaging/README.md" "No third-party store credentials" "PR package builds must not require personal publishing keys"
 require_pattern "packaging/README.md" 'Push a matching `vX.Y.Z` tag' "tag-driven release instructions must be documented"
 require_pattern "packaging/README.md" "website/GitHub Pages deployment is intentionally out of scope" "website deployment must stay out of this package pipeline"
-require_pattern "patches/windows/pyinstaller-static.patch" "_configure_windows_frozen_database_url" "Windows packaged app database path must stay in the Windows packaging patch"
+require_pattern "patches/windows/pyinstaller-static.patch" "_configure_windows_frozen_data_paths" "Windows packaged app data path must stay in the Windows packaging patch"
+require_pattern "patches/windows/pyinstaller-static.patch" "ODYSSEUS_DATA_DIR" "Windows packaged auth/settings/session state must use a writable app data root"
 require_pattern "patches/windows/pyinstaller-static.patch" "_resolve_windows_static_dir" "Windows packaged app static asset resolution must stay in the Windows packaging patch"
 
 if [ -f ".github/workflows/pages.yml" ]; then
@@ -92,7 +103,7 @@ target_count="$(
   grep -E "target: (debian12|debian13|ubuntu2404|ubuntu2604|fedora43|fedora44|el10|opensuse-tumbleweed|alpine320|alpine322|alpine323)" .github/workflows/package.yml | wc -l | tr -d ' '
 )"
 fixed_targets="$(
-  grep -E "name: (Python wheel and sdist|Git source archive|Docker image|AUR source package|macOS standalone|Windows .exe installer)" .github/workflows/package.yml | wc -l | tr -d ' '
+  grep -E "name: (Python wheel and sdist|Git source archive|Docker image|AUR source package|macOS standalone|Windows Tauri desktop app)" .github/workflows/package.yml | wc -l | tr -d ' '
 )"
 total_targets=$((target_count + fixed_targets))
 if [ "${total_targets}" -ne 17 ]; then
