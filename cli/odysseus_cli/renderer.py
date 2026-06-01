@@ -113,6 +113,21 @@ def metrics(data: dict) -> None:
         write(c("\n  " + "  ".join(parts), GREY))
 
 
+def status_line(model: str, used_tokens: int, context_len: int) -> None:
+    """Print a one-line footer: context usage on the left, model on the right."""
+    import shutil
+    width = shutil.get_terminal_size((80, 24)).columns
+    pct = int(round(100 * used_tokens / context_len)) if context_len else 0
+    pct_color = GREEN if pct < 60 else (YELLOW if pct < 85 else RED)
+    left_plain = f"  {used_tokens:,}/{context_len:,} tok · {pct}% ctx"
+    left = (f"  {c(f'{used_tokens:,}/{context_len:,} tok', GREY)} · "
+            f"{c(f'{pct}% ctx', pct_color)}")
+    right_plain = f"{model}  "
+    right = c(f"{model}  ", DIM)
+    pad = max(1, width - len(left_plain) - len(right_plain))
+    write(left + " " * pad + right)
+
+
 def error(msg: str) -> None:
     write(c(f"\n  ✗ {msg}", RED))
 

@@ -328,7 +328,11 @@ async def run_turn(cfg: CliConfig, messages: List[Dict], state: ApprovalState) -
                 r.error(f"{resp.status_code}: {resp.text[:300]}")
                 return final_text
 
-            msg = resp.json().get("choices", [{}])[0].get("message", {}) or {}
+            data = resp.json()
+            usage = data.get("usage") or {}
+            if usage:
+                state.last_usage = usage
+            msg = data.get("choices", [{}])[0].get("message", {}) or {}
             content = (msg.get("content") or "").strip()
             calls = [] if force_answer else _calls_from_message(msg)
 
@@ -370,3 +374,48 @@ async def run_turn(cfg: CliConfig, messages: List[Dict], state: ApprovalState) -
 
     r.info("(max rounds reached)")
     return final_text
+
+
+async def compact(cfg: CliConfig, messages: List[Dict]) -> List[Dict]:
+    """Summarize the conversation so far to free context.
+
+    Keeps the system message, replaces everything else with a concise summary of
+    facts, decisions, files touched, and the current task state. Returns the new
+    message list (or the original on failure).
+    """
+    if len(messages) <= 2:
+        return messages
+    system = messages[0]
+    transcript_parts = []
+    for m in messages[1:]:
+        role = m.get("role", "?")
+        content = (m.get("content") or "")[:2000]
+        if content:
+            transcript_parts.append(f"{role}: {content}")
+    transcript = "\n".join(transcript_parts)
+
+    prompt = [
+        {"role": "system", "content":
+            "Summarize the following coding-session transcript for handoff. Be "
+            "concise but preserve: the user's goal, key facts learned, files "
+            "read/edited, decisions made, and what remains to do. Output only the "
+            "summary."},
+        {"role": "user", "content": transcript[:20000]},
+    ]
+    url = to_chat_completions_url(cfg.endpoint)
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+            resp = await client.post(url, json={
+                "model": cfg.model, "messages": prompt,
+                "temperature": 0.1, "stream": False,
+            }, headers=_headers(cfg))
+        if resp.status_code != 200:
+            return messages
+        summary = (resp.json().get("choices", [{}])[0]
+                   .get("message", {}).get("content") or "").strip()
+    except Exception:
+        return messages
+    if not summary:
+        return messages
+    return [system, {"role": "user",
+                     "content": f"[Summary of earlier conversation]\n{summary}"}]

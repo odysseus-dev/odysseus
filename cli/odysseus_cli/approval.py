@@ -33,6 +33,7 @@ class ApprovalState:
         self._always: Set[str] = set()
         self._call_counts: dict = {}
         self.todos: list = []  # agent's task checklist (todo_write tool)
+        self.last_usage: dict = {}  # token usage from the most recent model call
 
     def always_allowed(self, tool: str) -> bool:
         return tool in self._always

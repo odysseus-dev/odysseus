@@ -82,6 +82,14 @@ def test_todo_write_stores_and_summarizes():
     assert "3 task(s)" in out and "1 completed" in out
 
 
+def test_compact_noop_for_short_history():
+    import asyncio
+    from odysseus_cli.config import CliConfig
+    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "hi"}]
+    out = asyncio.run(na.compact(CliConfig(), msgs))
+    assert out == msgs  # nothing to compact → unchanged, no network call
+
+
 def test_todo_write_skips_malformed_entries():
     from odysseus_cli.approval import ApprovalState
     state = ApprovalState("deny")

@@ -38,6 +38,7 @@ commands:
   /model <n|name>  switch model: /model 3  or  /model qwen2.5-coder:7b
   /approval <m>    set approval policy: ask | auto | deny
   /clear           clear the conversation history
+  /compact         summarize history to free up context
   /save            save this conversation now
   /sessions        list recent saved sessions
   /exit, /quit     leave the CLI
@@ -123,12 +124,20 @@ async def _drive(cfg, approval_state: ApprovalState, one_shot: str | None,
             except Exception as exc:
                 r.info(f"(could not save session: {exc})")
 
+    def show_status() -> None:
+        u = approval_state.last_usage or {}
+        used = u.get("total_tokens") or (
+            u.get("prompt_tokens", 0) + u.get("completion_tokens", 0))
+        if used:
+            r.status_line(cfg.model, used, cfg.context_length)
+
     async def handle(user_text: str) -> None:
         approval_state.reset_calls()  # fresh duplicate-call tracker per turn
         messages.append({"role": "user", "content": user_text})
         reply = await run_turn(cfg, messages)
         messages.append({"role": "assistant", "content": reply})
         persist()
+        show_status()
 
     if one_shot is not None:
         await handle(one_shot)
@@ -155,7 +164,18 @@ async def _drive(cfg, approval_state: ApprovalState, one_shot: str | None,
                 continue
             if cmd == "clear":
                 del messages[1:]
+                approval_state.last_usage = {}
                 r.info("history cleared.")
+                continue
+            if cmd == "compact":
+                if legacy:
+                    r.info("/compact is available in the native loop only.")
+                    continue
+                from . import nativeagent
+                r.info("compacting conversation…")
+                messages[:] = await nativeagent.compact(cfg, messages)
+                approval_state.last_usage = {}
+                r.info(f"compacted → {len(messages)} message(s) kept.")
                 continue
             if cmd == "save":
                 try:
