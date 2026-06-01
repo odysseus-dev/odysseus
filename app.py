@@ -512,6 +512,10 @@ app.include_router(setup_chat_routes(
     skills_manager=skills_manager,
 ))
 
+# Tool-approval decisions (manual / accept-edits agent modes)
+from routes.approval_routes import setup_approval_routes
+app.include_router(setup_approval_routes())
+
 # Research (background deep-research tasks)
 from routes.research_routes import setup_research_routes
 app.include_router(setup_research_routes(research_handler, session_manager=session_manager))

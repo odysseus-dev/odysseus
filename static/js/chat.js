@@ -731,13 +731,14 @@ import createResearchSynapse from './researchSynapse.js';
       }
       // Web toggle: pre-search in Chat mode, tool permission in Agent mode
       const toggleState = Storage.loadToggleState();
-      let isAgentMode = (toggleState.mode || 'chat') === 'agent';
+      let _composerMode = (toggleState.mode || 'chat');   // chat|plan|manual|accept_edits|agent
       // Auto-escalate to agent mode when a document is open — the user expects
       // the AI to see the document and have tools to edit it
-      if (!isAgentMode && documentModule && documentModule.isPanelOpen() && documentModule.getCurrentDocId()) {
-        isAgentMode = true;
+      if (_composerMode === 'chat' && documentModule && documentModule.isPanelOpen() && documentModule.getCurrentDocId()) {
+        _composerMode = 'agent';
       }
-      fd.append('mode', isAgentMode ? 'agent' : 'chat');
+      let isAgentMode = (_composerMode !== 'chat');
+      fd.append('mode', _composerMode);
       if (el('web-toggle').checked) {
         if (isAgentMode) {
           fd.append('allow_web_search', 'true');
@@ -771,9 +772,9 @@ import createResearchSynapse from './researchSynapse.js';
       currentAbort = abortCtrl;
 
       const _tState = Storage.loadToggleState();
-      const _isAgent = (_tState.mode || 'chat') === 'agent';
+      const _isAgent = (_tState.mode || 'chat') !== 'chat';
 
-      // Timeout: 6 min for research and agent mode, 3 min otherwise
+      // Timeout: 6 min for research + any agentic mode, 3 min otherwise
       const timeoutMs = el('research-toggle').checked || _isAgent ? RESEARCH_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
       const timeoutId = setTimeout(() => {
         if (!abortCtrl.signal.aborted) {
@@ -934,19 +935,7 @@ import createResearchSynapse from './researchSynapse.js';
         // Auto-switch to chat mode for tool-related errors
         if (errText.includes('tool') || errText.includes('auto')) {
           errText = 'This model doesn\'t support agent tools — switched to Chat mode. Try again.';
-          const _ab = document.getElementById('mode-agent-btn');
-          const _cb = document.getElementById('mode-chat-btn');
-          if (_ab && _cb) {
-            _ab.classList.remove('active');
-            _cb.classList.add('active');
-            const _toggle = _ab.closest('.mode-toggle');
-            if (_toggle) _toggle.classList.add('mode-chat');
-          }
-          if (typeof Storage !== 'undefined' && Storage.KEYS) {
-            const _st = Storage.getJSON(Storage.KEYS.TOGGLES, {});
-            _st.mode = 'chat';
-            Storage.setJSON(Storage.KEYS.TOGGLES, _st);
-          }
+          if (window.__setComposerMode) window.__setComposerMode('chat');
         }
         typewriterInto(holder.querySelector('.body'), errText);
         enableResearchBtn();
@@ -2069,6 +2058,37 @@ import createResearchSynapse from './researchSynapse.js';
                 // agent_step in the same SSE chunk can cancel it before it shows)
                 _scheduleThinkingSpinner();
                 uiModule.scrollHistory();
+
+              } else if (json.type === 'approval_required') {
+                if (_isBg) continue;
+                const chatBox = document.getElementById('chat-history');
+                const _aTool = json.tool || 'tool';
+                const _card = document.createElement('div');
+                _card.className = 'approval-card';
+                _card.dataset.approvalId = json.id;
+                _card.style.cssText = 'margin:8px 0;padding:10px 12px;border:1px solid var(--accent,#d49a3a);border-radius:10px;background:rgba(212,154,58,0.08);font-size:.9em;';
+                const _cmdHtml = json.command ? `<pre style="margin:6px 0;white-space:pre-wrap;word-break:break-word;opacity:.85;">${esc(json.command)}</pre>` : '';
+                _card.innerHTML = `<div style="font-weight:600;">Approval needed — ${esc(_aTool)} <span style="opacity:.55;font-weight:normal;">(${esc(json.tool_class || '')})</span></div>${_cmdHtml}<div style="opacity:.7;margin:2px 0 8px;">${esc(json.reason || '')}</div><div class="approval-actions" style="display:flex;gap:6px;flex-wrap:wrap;"><button data-act="approve" style="background:var(--accent,#3a6);color:#fff;border:none;border-radius:6px;padding:5px 12px;cursor:pointer;">Approve</button><button data-act="deny" style="background:var(--red,#c44);color:#fff;border:none;border-radius:6px;padding:5px 12px;cursor:pointer;">Deny</button><button data-act="remember" style="background:transparent;color:var(--accent,#3a6);border:1px solid var(--accent,#3a6);border-radius:6px;padding:5px 12px;cursor:pointer;">Approve &amp; don't ask again</button></div>`;
+                chatBox.appendChild(_card);
+                uiModule.scrollHistory();
+                const _decide = async (approved, remember) => {
+                  _card.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+                  try {
+                    await fetch('/api/chat/approval', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: json.id, approved: approved, remember: remember }) });
+                  } catch (e) { /* the loop auto-denies on timeout if this never lands */ }
+                  const _act = _card.querySelector('.approval-actions');
+                  if (_act) _act.innerHTML = `<span style="opacity:.8;">${approved ? ('✓ Approved' + (remember ? " — won't ask again this session" : '')) : '✕ Denied'}</span>`;
+                };
+                _card.querySelector('[data-act="approve"]').addEventListener('click', () => _decide(true, false));
+                _card.querySelector('[data-act="deny"]').addEventListener('click', () => _decide(false, false));
+                _card.querySelector('[data-act="remember"]').addEventListener('click', () => _decide(true, true));
+
+              } else if (json.type === 'approval_resolved') {
+                const _rcard = document.getElementById('chat-history').querySelector(`.approval-card[data-approval-id="${json.id}"]`);
+                const _ract = _rcard && _rcard.querySelector('.approval-actions');
+                if (_ract && _ract.querySelector('button')) {
+                  _ract.innerHTML = `<span style="opacity:.8;">${json.approved ? '✓ Approved' : '✕ Auto-denied (timed out)'}</span>`;
+                }
 
               } else if (json.type === 'doc_stream_open') {
                 if (_isBg) {

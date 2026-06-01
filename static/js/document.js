@@ -129,12 +129,12 @@ import * as Modals from './modalManager.js';
     }
   }
 
-  /** Switch chat to agent mode if not already */
+  /** Switch chat to agent mode if not already (don't downgrade plan/manual/accept_edits) */
   function _ensureAgentMode() {
-    const ab = document.getElementById('mode-agent-btn');
-    const cb = document.getElementById('mode-chat-btn');
-    if (ab && !ab.classList.contains('active')) {
-      ab.click();
+    let _curMode = 'chat';
+    try { _curMode = (JSON.parse(localStorage.getItem('odysseus-toggles') || '{}').mode) || 'chat'; } catch (_) {}
+    if (_curMode === 'chat' && window.__setComposerMode) {
+      window.__setComposerMode('agent');
     }
   }
 

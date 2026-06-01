@@ -390,6 +390,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
 
             # Delete the session and all its messages
             if session_manager.delete_session(sid):
+                from src import approvals
+                approvals.clear_session(sid)   # drop any "don't ask again" memory for this session
                 return {"status": "deleted"}
             else:
                 raise HTTPException(404, "Session not found")

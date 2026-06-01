@@ -195,6 +195,20 @@
     @font-face { font-family: 'Inter'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-Regular.woff2') format('woff2'); }
     @font-face { font-family: 'Inter'; font-weight: 500; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-Medium.woff2') format('woff2'); }
     @font-face { font-family: 'Inter'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-SemiBold.woff2') format('woff2'); }
+    /* 5-mode composer selector */
+    #mode-select { position: relative; }
+    #mode-select-btn { display:flex; align-items:center; gap:5px; background:var(--panel,#222); color:var(--fg); border:1px solid var(--border,#444); border-radius:8px; padding:5px 9px; font-size:12px; cursor:pointer; line-height:1; }
+    #mode-select-btn:hover, #mode-select-btn.mode-hot { border-color:var(--accent,#3a6); }
+    #mode-select-btn .mode-dot { width:7px; height:7px; border-radius:50%; background:var(--accent,#3a6); flex-shrink:0; }
+    #mode-select-menu { position:absolute; bottom:calc(100% + 6px); right:0; min-width:248px; background:var(--panel,#222); border:1px solid var(--border,#444); border-radius:10px; padding:5px; box-shadow:0 8px 28px rgba(0,0,0,.4); z-index:60; }
+    #mode-select-menu.hidden { display:none; }
+    #mode-select-menu .mode-opt { display:block !important; width:100%; height:auto !important; min-height:0 !important; text-align:left; background:transparent; color:var(--fg); border:none; border-radius:7px; padding:7px 10px; margin:0; cursor:pointer; line-height:1.3 !important; white-space:normal !important; }
+    #mode-select-menu .mode-opt + .mode-opt { margin-top:2px; }
+    #mode-select-menu .mode-opt:hover { background:var(--hover,rgba(255,255,255,.07)); }
+    #mode-select-menu .mode-opt.active { background:var(--accent,#3a6); color:#fff; }
+    #mode-select-menu .mode-opt b { display:block !important; font-size:12.5px; font-weight:600; line-height:1.35 !important; margin:0 !important; }
+    #mode-select-menu .mode-opt i { display:block !important; font-style:normal; font-size:11px; opacity:.6; line-height:1.3 !important; margin-top:1px !important; white-space:normal !important; }
+    #mode-select-menu .mode-opt.active i { opacity:.85; }
   </style>
   <!-- KaTeX CSS is loaded with media="print" so it doesn't block render,
        then flipped to "all" via JS after load. Mermaid init runs once the
@@ -1092,10 +1106,19 @@
           </button>
         </div>
         <div class="chat-input-right">
-          <!-- Agent / Chat mode toggle -->
-          <div class="mode-toggle">
-            <button type="button" class="mode-toggle-btn active" id="mode-agent-btn">Agent</button>
-            <button type="button" class="mode-toggle-btn" id="mode-chat-btn">Chat</button>
+          <!-- Composer mode (5-mode selector; Shift+Tab cycles) -->
+          <div class="mode-select" id="mode-select">
+            <button type="button" class="mode-select-btn" id="mode-select-btn" title="Composer mode — Shift+Tab to cycle">
+              <span class="mode-dot"></span><span id="mode-select-label">Agent</span>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="mode-select-menu hidden" id="mode-select-menu">
+              <button type="button" class="mode-opt" data-mode="chat"><b>Chat</b><i>No tools — just conversation</i></button>
+              <button type="button" class="mode-opt" data-mode="plan"><b>Plan</b><i>Read-only — investigate &amp; propose</i></button>
+              <button type="button" class="mode-opt" data-mode="manual"><b>Manual</b><i>Approve every action</i></button>
+              <button type="button" class="mode-opt" data-mode="accept_edits"><b>Accept Edits</b><i>Auto-approve edits; ask for the rest</i></button>
+              <button type="button" class="mode-opt" data-mode="agent"><b>Agent</b><i>Full autonomy</i></button>
+            </div>
           </div>
           <button type="submit" form="chat-form" class="send-btn newchat-mode" data-mode="newchat" aria-label="New chat">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="send-btn-label">+ New</span>

@@ -1174,10 +1174,7 @@ async function _cmdMode(args, ctx) {
     slashReply(`Current mode: ${Storage.getToggle('mode', 'chat')}. Usage: /mode &lt;agent|chat&gt;`);
     return true;
   }
-  const ab = document.getElementById('mode-agent-btn'), cb = document.getElementById('mode-chat-btn');
-  if (ab && cb) { ab.classList.toggle('active', mode === 'agent'); cb.classList.toggle('active', mode === 'chat'); }
-  Storage.setToggle('mode', mode);
-  document.querySelectorAll('[data-mode-tool]').forEach(b => { b.style.display = mode === 'agent' ? '' : 'none'; });
+  if (window.__setComposerMode) window.__setComposerMode(mode);
   await typewriterReply(`Mode: ${mode}`);
   return true;
 }
@@ -2148,14 +2145,7 @@ async function _cmdDemo(args, ctx) {
   // Reset to a known starting state so the interactive steps (switch to Agent,
   // turn Web on) actually have something to do.
   try {
-    const _agentBtn = document.getElementById('mode-agent-btn');
-    const _chatBtn  = document.getElementById('mode-chat-btn');
-    if (_agentBtn && _chatBtn) {
-      _agentBtn.classList.remove('active');
-      _chatBtn.classList.add('active');
-      const _t = _agentBtn.closest('.mode-toggle');
-      if (_t) _t.classList.add('mode-chat');
-    }
+    if (window.__setComposerMode) window.__setComposerMode('chat');
     // Web is persisted per-mode under web_chat / web_agent. Zero both so the
     // toggle is genuinely off when the user reaches the "turn it on" step.
     const _st = Storage.getJSON(Storage.KEYS.TOGGLES, {});
@@ -2179,7 +2169,7 @@ async function _cmdDemo(args, ctx) {
     { sel: '#sidebar-new-chat-btn', text: 'Start a new chat here. <b>Click it.</b> You can do it!', mode: 'click',
       before() { if (sidebar?.classList.contains('hidden')) sidebar.classList.remove('hidden'); } },
     { sel: '#model-picker-btn',   text: 'Pick your LLM, Local or API.', advanceOnClick: true },
-    { sel: '#mode-agent-btn',     text: '<b>Agent mode</b> gives Odysseus more control of the app when your model supports tools: create a theme, download a model, make a daily task, organize things, and more.', mode: 'click' },
+    { sel: '#mode-select-btn',    text: 'Pick a <b>mode</b> here. <b>Agent</b> gives Odysseus more control of the app when your model supports tools: create a theme, download a model, make a daily task, organize things, and more. Other modes (Plan, Manual, Accept Edits) trade autonomy for control.', mode: 'click' },
     { sel: '#web-toggle-btn',     text: 'Toggle tools like <b>web search</b>. Odysseus comes with private built-in <b>SearXNG</b> search.', mode: 'click' },
     { sel: '#overflow-plus-btn',  text: 'More tools can be found here, or in your sidebar. <b>Click to peek.</b>',
       advanceOnClick: true, pulseNext: true, afterDelay: 2200 },

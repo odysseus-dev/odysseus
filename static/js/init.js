@@ -63,12 +63,13 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
       hideOn('#tool-research-btn, #research-toggle-btn', privs.can_use_research);
       // Memory & skills (rail/tool button only — UI/API entry).
       hideOn('#tool-memory-btn', privs.can_manage_memory);
-      // Agent mode toggle — force chat mode by hiding the Agent toggle button.
+      // Agent mode gate — hide every non-chat option in the mode dropdown and
+      // force chat. Robust to running before the dropdown inits (direct DOM hide
+      // + forced mode via the global helper, falling back to direct storage).
       if (privs.can_use_agent === false) {
-        const _agent = document.getElementById('mode-agent-btn');
-        const _chat = document.getElementById('mode-chat-btn');
-        if (_agent) _agent.style.display = 'none';
-        if (_chat) { _chat.classList.add('active'); _chat.click?.(); }
+        document.querySelectorAll('#mode-select-menu .mode-opt').forEach(o => { if (o.dataset.mode !== 'chat') o.style.display = 'none'; });
+        if (window.__setComposerMode) window.__setComposerMode('chat');
+        else { try { const t = Storage.getJSON(Storage.KEYS.TOGGLES, {}); t.mode = 'chat'; Storage.setJSON(Storage.KEYS.TOGGLES, t); } catch(_){} }
       }
     } catch (_) { /* DOM not ready or unexpected shape — UI gates are non-fatal */ }
   } catch (_) { /* anonymous / loopback mode — nothing to do */ }

@@ -1540,35 +1540,62 @@ function initializeEventListeners() {
     });
   }
 
-  // ── Agent / Chat mode toggle ──
-  (function initModeToggle() {
-    const agentBtn = el('mode-agent-btn');
-    const chatBtn = el('mode-chat-btn');
-    if (!agentBtn || !chatBtn) return;
-    const state = loadToggleState();
-    let currentMode = state.mode || 'chat';
+  // ── Composer mode selector (5 modes; dropdown + Shift+Tab cycle) ──
+  (function initModeSelect() {
+    const btn = el('mode-select-btn');
+    const menu = el('mode-select-menu');
+    const label = el('mode-select-label');
+    if (!btn || !menu || !label) return;
+    const MODES = ['chat', 'plan', 'manual', 'accept_edits', 'agent'];
+    const LABELS = { chat: 'Chat', plan: 'Plan', manual: 'Manual', accept_edits: 'Accept Edits', agent: 'Agent' };
+    // Modes that act WITHOUT asking — warn once (per mode) before entering.
+    const ACTS_FREELY = {
+      agent: 'Agent mode runs every tool automatically — including shell commands and file changes — without asking you first.',
+      accept_edits: 'Accept-Edits applies file edits automatically without asking (other actions still prompt for approval).',
+    };
+    const SEEN_KEY = 'odysseus-mode-warned';
+    const _seen = () => { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')); } catch (_) { return new Set(); } };
+    const _markSeen = (m) => { const s = _seen(); s.add(m); try { localStorage.setItem(SEEN_KEY, JSON.stringify([...s])); } catch (_) {} };
 
-    function setMode(mode) {
-      currentMode = mode;
-      const st = loadToggleState();
-      st.mode = mode;
-      saveToggleState(st);
-      agentBtn.classList.toggle('active', mode === 'agent');
-      chatBtn.classList.toggle('active', mode === 'chat');
-      // Slide the pill to the active button
-      const toggle = agentBtn.closest('.mode-toggle');
-      if (toggle) toggle.classList.toggle('mode-chat', mode === 'chat');
-      // Delay tool glow-up for a staggered effect
-      setTimeout(() => applyModeToToggles(mode), 500);
+    function apply(mode) {
+      const st = loadToggleState(); st.mode = mode; saveToggleState(st);
+      btn.dataset.mode = mode;
+      label.textContent = LABELS[mode] || mode;
+      menu.querySelectorAll('.mode-opt').forEach((o) => o.classList.toggle('active', o.dataset.mode === mode));
+      btn.classList.toggle('mode-hot', mode === 'agent' || mode === 'accept_edits');
+      document.querySelectorAll('[data-mode-tool]').forEach((b) => { b.style.display = (mode === 'chat') ? 'none' : ''; });
+      setTimeout(() => applyModeToToggles(mode === 'chat' ? 'chat' : 'agent'), 300);
     }
-    agentBtn.addEventListener('click', () => {
-      // Agent mode turns off research if active
-      const resChk = el('research-toggle');
-      if (resChk && resChk.checked) _syncResearchIndicator(false);
-      setMode('agent');
+    // Let other modules (research / incognito toggles) force the composer mode + keep the dropdown synced.
+    window.__setComposerMode = apply;
+    function setMode(mode, viaUser) {
+      if (!MODES.includes(mode)) mode = 'chat';
+      if (viaUser && ACTS_FREELY[mode] && !_seen().has(mode)) {
+        if (!window.confirm(ACTS_FREELY[mode] + '\n\nSwitch to ' + LABELS[mode] + ' mode?')) return;
+        _markSeen(mode);
+      }
+      if (viaUser && mode !== 'chat') {
+        const resChk = el('research-toggle');
+        if (resChk && resChk.checked && typeof _syncResearchIndicator === 'function') _syncResearchIndicator(false);
+      }
+      apply(mode);
+    }
+
+    const _saved = loadToggleState().mode;
+    apply(MODES.includes(_saved) ? _saved : 'chat');
+
+    btn.addEventListener('click', (e) => { e.stopPropagation(); menu.classList.toggle('hidden'); });
+    menu.querySelectorAll('.mode-opt').forEach((o) => o.addEventListener('click', () => { setMode(o.dataset.mode, true); menu.classList.add('hidden'); }));
+    document.addEventListener('click', () => menu.classList.add('hidden'));
+
+    // Shift+Tab cycles modes (rising autonomy), except while a modal is open.
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Tab' || !e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (document.querySelector('.modal:not(.hidden)')) return;   // don't hijack modal/settings tabbing
+      e.preventDefault();
+      const cur = btn.dataset.mode || 'chat';
+      setMode(MODES[(MODES.indexOf(cur) + 1) % MODES.length], true);
     });
-    chatBtn.addEventListener('click', () => setMode('chat'));
-    setMode(currentMode);
   })();
 
   // ── Tool splash explainer messages (shown first 2 times per tool) ──
@@ -1885,15 +1912,9 @@ function initializeEventListeners() {
             if (webBtn) webBtn.classList.remove('active');
             saveToolPref('web', (loadToggleState().mode || 'chat'), false);
           }
-          // Research requires chat mode — force switch from agent
-          const rs = loadToggleState();
-          if (rs.mode === 'agent') {
-            rs.mode = 'chat';
-            saveToggleState(rs);
-            const ab = el('mode-agent-btn'), cb = el('mode-chat-btn');
-            if (ab) ab.classList.remove('active');
-            if (cb) cb.classList.add('active');
-            applyModeToToggles('chat');
+          // Research requires chat mode — force switch from any agentic mode
+          if ((loadToggleState().mode || 'chat') !== 'chat' && window.__setComposerMode) {
+            window.__setComposerMode('chat');
           }
         }
       });
@@ -2137,15 +2158,9 @@ function initializeEventListeners() {
           if (webBtn) webBtn.classList.remove('active');
           saveToolPref('web', (loadToggleState().mode || 'chat'), false);
         }
-        // Research requires chat mode
-        const rs2 = loadToggleState();
-        if (rs2.mode === 'agent') {
-          rs2.mode = 'chat';
-          saveToggleState(rs2);
-          const ab2 = el('mode-agent-btn'), cb2 = el('mode-chat-btn');
-          if (ab2) ab2.classList.remove('active');
-          if (cb2) cb2.classList.add('active');
-          applyModeToToggles('chat');
+        // Research requires chat mode — force switch from any agentic mode
+        if ((loadToggleState().mode || 'chat') !== 'chat' && window.__setComposerMode) {
+          window.__setComposerMode('chat');
         }
       }
     });
@@ -2248,12 +2263,10 @@ function initializeEventListeners() {
         const _offIds = ['web-toggle', 'bash-toggle', 'research-toggle'];
         _offIds.forEach(id => { const c = el(id); if (c) c.checked = false; });
         ['web-toggle-btn', 'bash-toggle-btn'].forEach(id => { const b = el(id); if (b) b.classList.remove('active'); });
-        const _ab = el('mode-agent-btn'), _cb = el('mode-chat-btn');
-        if (_ab) _ab.classList.remove('active');
-        if (_cb) _cb.classList.add('active');
         const ts = Storage.getJSON(Storage.KEYS.TOGGLES, {});
-        ts.research = false; ts.mode = 'chat';
+        ts.research = false;
         Storage.setJSON(Storage.KEYS.TOGGLES, ts);
+        if (window.__setComposerMode) window.__setComposerMode('chat');
       } else {
         incognitoBtn.innerHTML = INCOGNITO_EYE_OPEN + '<span class="incognito-label">Nobody</span>';
         if (welcomeName && welcomeName.dataset.originalHtml) {

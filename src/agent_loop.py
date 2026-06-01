@@ -1240,6 +1240,7 @@ async def stream_agent_loop(
     relevant_tools: Optional[Set[str]] = None,
     fallbacks: Optional[List[tuple]] = None,
     _is_teacher_run: bool = False,
+    mode: str = "agent",
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -1872,6 +1873,40 @@ async def stream_agent_loop(
                 yield f'data: {json.dumps({"type": "budget_exceeded", "limit": max_tool_calls, "used": total_tool_calls})}\n\n'
                 budget_hit = True
                 break
+
+            # --- Mode permission gate: server-side, identical for native
+            # tool_calls and fenced-block calls (model-agnostic enforcement). ---
+            from src.permissions import evaluate as _evaluate_perm
+            from src import approvals as _approvals
+            _perm = _evaluate_perm(mode, block.tool_type, block.content or "")
+            _cmd_disp = (block.content or "").strip()[:80]
+
+            if _perm.action == "deny":
+                # plan mode / disallowed tool — never runs; the model sees why.
+                yield f'data: {json.dumps({"type": "tool_start", "tool": block.tool_type, "command": _cmd_disp, "round": round_num})}\n\n'
+                yield f'data: {json.dumps({"type": "tool_output", "tool": block.tool_type, "command": _cmd_disp, "output": _perm.reason, "exit_code": 1, "blocked": True})}\n\n'
+                _formatted = format_tool_result(f"{block.tool_type} (blocked)", {"error": _perm.reason, "exit_code": 1})
+                tool_results.append(_formatted)
+                tool_result_texts.append(_formatted)
+                continue
+
+            if _perm.action == "approve" and not _approvals.is_remembered(session_id, block.tool_type):
+                # manual / accept-edits — pause for the user's decision.
+                _aid = _approvals.new_id()
+                _approvals.register(_aid, owner=owner)
+                yield f'data: {json.dumps({"type": "approval_required", "id": _aid, "tool": block.tool_type, "command": _cmd_disp, "tool_class": _perm.tool_class, "reason": _perm.reason, "round": round_num})}\n\n'
+                _decision = await _approvals.await_decision(_aid)
+                _approved = bool(_decision.get("approved"))
+                yield f'data: {json.dumps({"type": "approval_resolved", "id": _aid, "approved": _approved})}\n\n'
+                if not _approved:
+                    _why = "Auto-denied — no response within 5 minutes." if _decision.get("timeout") else "Denied by user."
+                    yield f'data: {json.dumps({"type": "tool_output", "tool": block.tool_type, "command": _cmd_disp, "output": _why, "exit_code": 1, "blocked": True})}\n\n'
+                    _formatted = format_tool_result(f"{block.tool_type} (blocked)", {"error": _why, "exit_code": 1})
+                    tool_results.append(_formatted)
+                    tool_result_texts.append(_formatted)
+                    continue
+                if _decision.get("remember"):
+                    _approvals.remember(session_id, block.tool_type)
 
             total_tool_calls += 1
             # Build a short display string for the frontend tool bubble.
