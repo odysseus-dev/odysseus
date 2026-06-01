@@ -819,7 +819,9 @@ export function _hwfitRenderList(el, models) {
     const pcount = m.parameter_count || '?';
     const ctx = m.context ? (m.context >= 1024 ? (m.context / 1024).toFixed(0) + 'k' : m.context) : '?';
     const fitLabel = (m.fit_level || '').replace('_', ' ');
-    const modeLabel = (m.run_mode || '').replace('_', '+');
+    const modeLabel = m.run_mode === 'cpu_offload'
+      ? 'cpu+offload'
+      : (m.run_mode || '').replace(/_/g, ' ');
     const vramLabel = m.required_gb ? m.required_gb.toFixed(1) + 'G' : '?';
     const moeBadge = m.is_moe ? '<span class="hwfit-badge hwfit-moe">MoE</span>' : '';
     const imgBadge = m.is_image_gen ? '<span class="hwfit-badge" style="background:color-mix(in srgb, var(--red) 20%, transparent);color:var(--red);font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px;">IMG</span>' : '';

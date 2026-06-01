@@ -219,9 +219,9 @@ def _quant_bits(q):
     Returns 0 when unknown (caller treats unknown as "don't filter")."""
     qu = (q or "").upper().replace("-", "").replace("_", "").replace(" ", "")
     # GGUF k-quants + float formats
-    if qu.startswith("Q8") or "FP8" in qu:
+    if qu.startswith("Q8") or "FP8" in qu or "INT8" in qu or qu.startswith("W8"):
         return 8
-    if qu.startswith("Q4") or qu.startswith("IQ4"):
+    if qu.startswith("Q4") or qu.startswith("IQ4") or "FP4" in qu or "NF4" in qu or "INT4" in qu or qu.startswith("W4"):
         return 4
     if qu.startswith("Q2") or qu.startswith("IQ2"):
         return 2
@@ -233,7 +233,7 @@ def _quant_bits(q):
         return 6
     if qu.startswith("F16") or qu.startswith("BF16") or qu.startswith("F32"):
         return 16
-    # Prequantized formats: pull the bit-width digit (AWQ4 / AWQ4BIT / GPTQ8 / 4BIT / INT8 …)
+    # Prequantized formats: pull the bit-width digit (AWQ4 / AWQ4BIT / GPTQ8 / 4BIT / INT8 ...)
     m = re.search(r"(?:AWQ|GPTQ|MLX|EXL2|BNB|INT|W)(\d{1,2})", qu) or re.search(r"(\d{1,2})BIT", qu)
     if m:
         b = int(m.group(1))
@@ -282,15 +282,21 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None):
     else:
         effective_vram = gpu_vram
 
+    native_gpu_only = preq and not native_quant.startswith("mlx-")
+
     # Determine which quant to evaluate at
+    native_quant_prefixes = (
+        "AWQ-", "GPTQ-", "FP8", "FP4", "NVFP4", "MXFP4", "NF4",
+        "INT4", "INT8", "W4A16", "W8A8", "W8A16",
+    )
+
     if preq:
-        # AWQ/GPTQ/FP8/MLX come at a fixed bit-width. If the user picked a
-        # GGUF quant tier (Q4/Q8/etc.), do not treat a same-bit AWQ/GPTQ build
-        # as equivalent. "Q4" means llama.cpp/Ollama-style GGUF in this UI;
-        # AWQ/GPTQ/FP8 are separate GPU-serving formats and must only appear
-        # when explicitly selected or when no quant filter is applied.
+        # Native HF/vLLM quantized repos come at a fixed format. If the user
+        # picked a GGUF quant tier (Q4/Q8/etc.), do not treat same-bit
+        # AWQ/GPTQ/FP8/FP4 builds as equivalent; those formats are separate
+        # serving paths and only appear when explicitly selected or unfiltered.
         if target_quant:
-            if not any(target_quant.startswith(p) for p in ("AWQ-", "GPTQ-", "FP8", "NVFP4")):
+            if not any(target_quant.startswith(p) for p in native_quant_prefixes):
                 return None
             _tb, _nb = _quant_bits(target_quant), _quant_bits(native_quant)
             if _tb and _nb and _tb != _nb:
@@ -303,16 +309,7 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None):
         # Default: Q4_K_M (user's stated preference)
         quant_to_try = "Q4_K_M"
 
-    result = _try_quant_at(model, quant_to_try, ctx, effective_vram, eff_ram)
-
-    # If target quant doesn't fit and it's not pre-quantized, try lower quants
-    if result is None and not preq and target_quant:
-        from services.hwfit.models import QUANT_HIERARCHY
-        idx = QUANT_HIERARCHY.index(target_quant) if target_quant in QUANT_HIERARCHY else -1
-        for q in QUANT_HIERARCHY[idx + 1:]:
-            result = _try_quant_at(model, q, ctx, effective_vram, eff_ram)
-            if result:
-                break
+    result = _try_quant_at(model, quant_to_try, ctx, effective_vram, 0 if native_gpu_only else eff_ram)
 
     if result is None:
         # Model doesn't fit on the user's current hardware. Surface it
@@ -447,8 +444,11 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
             results.sort(key=sort_fn, reverse=(sort != "vram"))
             return results[:limit]
 
-    # If user picked a prequantized format (AWQ/FP8/GPTQ/NVFP4), filter to only those models
-    filter_native = quant and any(quant.startswith(p) for p in ("AWQ-", "GPTQ-", "FP8", "NVFP4"))
+    # If user picked a native prequantized format, filter to only those models.
+    filter_native = quant and any(quant.startswith(p) for p in (
+        "AWQ-", "GPTQ-", "FP8", "FP4", "NVFP4", "MXFP4", "NF4",
+        "INT4", "INT8", "W4A16", "W8A8", "W8A16",
+    ))
 
     system_backend = (system.get("backend") or "").lower()
     apple_silicon = system_backend in ("mps", "metal", "apple")
@@ -459,9 +459,9 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         if "nvfp4" in (m.get("name") or "").lower():
             native_q = "NVFP4"
 
-        # MLX is Apple Silicon only. Hide MLX rows on non-Mac hardware scans,
-        # but leave them visible on Metal/MPS so Mac support is not broken.
-        if not apple_silicon and (native_q.startswith("mlx-") or "mlx" in (m.get("name") or "").lower()):
+        # MLX needs the mlx_lm runtime, which Odysseus does not generate serve
+        # commands for. Hide it on every backend, including Metal.
+        if native_q.startswith("mlx-") or "mlx" in (m.get("name") or "").lower():
             continue
 
         # ROCm support for vLLM/SGLang quantized safetensors is too brittle to
@@ -479,19 +479,22 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         # default GGUF quant) and vLLM-only AWQ/GPTQ/FP8 builds alike. Without
         # this the Cookbook recommends models the Mac can't run; on CUDA these
         # stay visible because vLLM serves safetensors directly.
-        is_mlx = native_q.startswith("mlx-") or "mlx" in (m.get("name") or "").lower()
-        if apple_silicon and not (m.get("is_gguf") or m.get("gguf_sources") or is_mlx):
+        if apple_silicon and not (m.get("is_gguf") or m.get("gguf_sources")):
             continue
 
-        # Format filter: AWQ tab → only AWQ models, FP8 tab → only FP8 models
+        # Format filter: AWQ tab -> only AWQ models, FP4 tab -> FP4-family models, etc.
         if filter_native:
             if quant == "FP8" and native_q != "FP8":
+                continue
+            if quant == "FP4" and native_q not in ("FP4", "NVFP4", "MXFP4", "NF4"):
                 continue
             if quant.startswith("AWQ") and not native_q.startswith("AWQ"):
                 continue
             if quant.startswith("GPTQ") and not native_q.startswith("GPTQ"):
                 continue
             if quant.startswith("NVFP4") and not native_q.startswith("NVFP4"):
+                continue
+            if quant in ("INT4", "INT8", "W4A16", "W8A8", "W8A16") and native_q != quant:
                 continue
 
         if search:
