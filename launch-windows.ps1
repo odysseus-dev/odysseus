@@ -1,17 +1,17 @@
 #Requires -Version 5.1
 <#
-  Odysseus - native Windows launcher (no Docker).
+Odysseus - native Windows launcher (no Docker).
 
-  One command to: create a virtualenv, install dependencies, run first-time
-  setup (prints an admin password on first run), and start the server.
-  Safe to re-run - it skips whatever already exists.
+One command to: create a virtualenv, install dependencies, run first-time
+setup (prints an admin password on first run), and start the server.
+Safe to re-run - it skips whatever already exists.
 
-  Usage:
+Usage:
     powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
     powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1 -Port 7000 -BindHost 127.0.0.1
 
-  Tip: bind 127.0.0.1 (default) for local-only use. Use 0.0.0.0 only when you
-  intentionally want other devices on your LAN to reach it.
+Tip: bind 127.0.0.1 (default) for local-only use. Use 0.0.0.0 only when you
+intentionally want other devices on your LAN to reach it.
 #>
 param(
     [int]$Port = 7000,
@@ -72,7 +72,31 @@ if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
     Write-Host "      https://git-scm.com/download/win" -ForegroundColor Yellow
 }
 
-# 6. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
+# 6. Register 'odysseus' command in PowerShell profile (idempotent)
+#    After this step, typing 'odysseus' (or 'ody<Tab>') in any PowerShell
+#    window launches the app without needing the full script path.
+Write-Step "Registering 'odysseus' command in PowerShell profile"
+$profilePath = $PROFILE.CurrentUserAllHosts
+$scriptPath  = $PSCommandPath
+$marker      = "# odysseus-launcher"
+$block       = @"
+
+$marker
+function odysseus { powershell -ExecutionPolicy Bypass -File "$scriptPath" @args }
+"@
+if (-not (Test-Path $profilePath)) {
+    New-Item -ItemType File -Path $profilePath -Force | Out-Null
+}
+$existing = Get-Content -Path $profilePath -Raw -ErrorAction SilentlyContinue
+if ($existing -notmatch [regex]::Escape($marker)) {
+    Add-Content -Path $profilePath -Value $block
+    Write-Host "  Done. Open a new PowerShell window and type 'odysseus' to launch." -ForegroundColor Green
+    Write-Host "  Tip: 'ody' + Tab autocompletes to 'odysseus'." -ForegroundColor Yellow
+} else {
+    Write-Host "  Already registered - skipping." -ForegroundColor Gray
+}
+
+# 7. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
 Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
