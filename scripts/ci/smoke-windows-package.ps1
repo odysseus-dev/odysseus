@@ -15,11 +15,12 @@ if (-not (Test-Path -LiteralPath $resolvedExe -PathType Leaf)) {
 }
 
 $smokeRootBase = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { Join-Path $PWD "tmp" }
+$runId = "port-$Port-$PID"
 if (-not $InstallRoot) {
-    $InstallRoot = Join-Path $smokeRootBase "odysseus-windows-install-smoke"
+    $InstallRoot = Join-Path $smokeRootBase "odysseus-windows-install-smoke-$runId"
 }
 if (-not $LocalAppDataRoot) {
-    $LocalAppDataRoot = Join-Path $smokeRootBase "odysseus-windows-localappdata-smoke"
+    $LocalAppDataRoot = Join-Path $smokeRootBase "odysseus-windows-localappdata-smoke-$runId"
 }
 
 Remove-Item -LiteralPath $InstallRoot, $LocalAppDataRoot -Recurse -Force -ErrorAction SilentlyContinue
