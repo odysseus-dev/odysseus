@@ -8,6 +8,7 @@ import { providerLogo } from './providers.js';
 import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
+import { renderSandboxedOpenUI, unmountSandboxedOpenUI } from './openuiSandbox.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -873,8 +874,6 @@ export function buildFindingsBox(findings, expanded) {
 	    + '</div></div>';
 	}
 
-let _openUIRendererPromise = null;
-
 export function isOpenUIResponse(content, metadata = {}) {
   if (metadata?.openui) return true;
   const text = String(content || '').trim();
@@ -895,30 +894,13 @@ function normalizeOpenUIResponse(content) {
     .trim();
 }
 
-function ensureOpenUIStyles() {
-  if (document.querySelector('link[data-openui-renderer-style]')) return;
-  const link = document.createElement('link');
-  link.rel = 'stylesheet';
-  link.href = '/static/vendor/openui-renderer.css';
-  link.dataset.openuiRendererStyle = 'true';
-  document.head.appendChild(link);
-}
-
-async function loadOpenUIRenderer() {
-  if (!_openUIRendererPromise) {
-    _openUIRendererPromise = import('/static/vendor/openui-renderer.js');
-  }
-  return _openUIRendererPromise;
-}
-
 /**
  * Render partial OpenUI-lang into `host` while the LLM is still streaming.
- * Reuses a single mount across deltas so the React root updates in place
- * (no flicker / remount) and the streaming parser can tolerate partial code.
+ * Reuses a single sandboxed iframe across deltas so the OpenUI runtime never
+ * mounts model-generated UI in the main Odysseus DOM.
  */
 export function renderOpenUIStreaming(host, response) {
   if (!host) return;
-  ensureOpenUIStyles();
   let mount = host._openuiStreamMount;
   if (!mount || !host.contains(mount)) {
     host.innerHTML = '';
@@ -931,9 +913,7 @@ export function renderOpenUIStreaming(host, response) {
     host._openuiStreamMount = mount;
   }
   const source = normalizeOpenUIResponse(response);
-  loadOpenUIRenderer()
-    .then((mod) => mod.renderOpenUI(mount, source, { isStreaming: true }))
-    .catch((err) => console.warn('OpenUI stream render failed:', err));
+  renderSandboxedOpenUI(mount, source, { isStreaming: true, title: 'Streaming OpenUI response' });
 }
 
 export function renderOpenUIInBody(body, response, options = {}) {
@@ -944,9 +924,9 @@ export function renderOpenUIInBody(body, response, options = {}) {
   // don't leak detached React roots when we rebuild the final frame below.
   const prevMounts = body.querySelectorAll('.inline-openui-mount');
   if (prevMounts.length) {
-    loadOpenUIRenderer()
-      .then((mod) => prevMounts.forEach((m) => { try { mod.unmountOpenUI(m); } catch (_e) {} }))
-      .catch(() => {});
+    prevMounts.forEach((m) => {
+      try { unmountSandboxedOpenUI(m); } catch (_e) {}
+    });
   }
 
   body.innerHTML = options.sourcesPrefix || '';
@@ -969,22 +949,13 @@ export function renderOpenUIInBody(body, response, options = {}) {
   // message rehydrates the values the user entered (in-memory, session scope).
   const onState = (state) => { body._openuiState = state; };
 
-  ensureOpenUIStyles();
-  loadOpenUIRenderer()
-    .then((mod) => mod.renderOpenUI(mount, source, {
-      isStreaming: false,
-      initialState: body._openuiState,
-      onState,
-    }))
-    .catch((err) => {
-      console.error('OpenUI inline render failed:', err);
-      mount.innerHTML = '<div class="inline-openui-error">OpenUI render failed.</div>';
-      const details = document.createElement('details');
-      details.className = 'inline-openui-source';
-      details.innerHTML = '<summary>Source</summary><pre><code></code></pre>';
-      details.querySelector('code').textContent = source;
-      frame.appendChild(details);
-    });
+  renderSandboxedOpenUI(mount, source, {
+    isStreaming: false,
+    initialState: body._openuiState,
+    onState,
+    forwardActions: true,
+    title: 'OpenUI response',
+  });
 }
 
 	/** Append report button + continue research prompt. */

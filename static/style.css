@@ -35055,6 +35055,16 @@ body.theme-frosted .modal {
 .doc-openui-preview .odysseus-openui-render {
   min-height: 100%;
 }
+.openui-sandbox-frame {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  border: 0;
+  background: transparent;
+}
+.openui-sandbox-host {
+  padding: 0;
+}
 .doc-openui-loading,
 .doc-openui-error {
   padding: 14px;

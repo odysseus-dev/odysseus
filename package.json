@@ -4,7 +4,7 @@
     "url": "https://github.com/pewdiepie-archdaemon/odysseus.git"
   },
   "scripts": {
-    "build:openui": "node scripts/generate_openui_prompt.mjs && esbuild static/js/openui-renderer.jsx --bundle --format=esm --outfile=static/vendor/openui-renderer.js --loader:.css=css"
+    "build:openui": "node scripts/generate_openui_prompt.mjs && esbuild static/js/openui-renderer.jsx --bundle --format=iife --global-name=OpenUIRenderer --outfile=static/vendor/openui-renderer.js --loader:.css=css"
   },
   "devDependencies": {
     "@antithesishq/bombadil": "^0.3.2"

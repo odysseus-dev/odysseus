@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/static/vendor/openui-renderer.css">
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #111111;
+      --accent: #2aa198;
+      --border: rgba(0,0,0,0.18);
+      --font-family: system-ui, sans-serif;
+
+      --openui-background: color-mix(in srgb, var(--bg) 92%, var(--fg));
+      --openui-foreground: color-mix(in srgb, var(--bg) 85%, var(--fg));
+      --openui-popover-background: color-mix(in srgb, var(--bg) 85%, var(--fg));
+      --openui-inverted-background: var(--fg);
+      --openui-overlay: color-mix(in srgb, #000 55%, transparent);
+
+      --openui-sunk-light: color-mix(in srgb, var(--fg) 3%, transparent);
+      --openui-sunk: color-mix(in srgb, var(--fg) 6%, transparent);
+      --openui-sunk-deep: color-mix(in srgb, var(--fg) 10%, transparent);
+      --openui-elevated-light: color-mix(in srgb, var(--fg) 5%, transparent);
+      --openui-elevated: color-mix(in srgb, var(--fg) 8%, transparent);
+      --openui-elevated-strong: color-mix(in srgb, var(--fg) 14%, transparent);
+      --openui-elevated-intense: color-mix(in srgb, var(--fg) 26%, transparent);
+      --openui-highlight-subtle: color-mix(in srgb, var(--fg) 3%, transparent);
+      --openui-highlight: color-mix(in srgb, var(--fg) 6%, transparent);
+      --openui-highlight-strong: color-mix(in srgb, var(--fg) 10%, transparent);
+      --openui-highlight-intense: color-mix(in srgb, var(--fg) 26%, transparent);
+
+      --openui-text-neutral-primary: var(--fg);
+      --openui-text-neutral-secondary: color-mix(in srgb, var(--fg) 62%, transparent);
+      --openui-text-neutral-tertiary: color-mix(in srgb, var(--fg) 32%, transparent);
+      --openui-text-neutral-link: var(--accent);
+      --openui-text-brand: var(--fg);
+      --openui-text-accent-primary: var(--bg);
+      --openui-text-accent-secondary: color-mix(in srgb, var(--bg) 60%, transparent);
+
+      --openui-interactive-accent-default: var(--accent);
+      --openui-interactive-accent-hover: color-mix(in srgb, var(--accent) 85%, var(--fg));
+      --openui-interactive-accent-pressed: color-mix(in srgb, var(--accent) 78%, #000);
+      --openui-interactive-accent-disabled: color-mix(in srgb, var(--accent) 40%, transparent);
+
+      --openui-chat-user-response-bg: color-mix(in srgb, var(--fg) 8%, transparent);
+      --openui-chat-user-response-text: var(--fg);
+
+      --openui-border-default: color-mix(in srgb, var(--border) 80%, transparent);
+      --openui-border-interactive: var(--border);
+      --openui-border-interactive-emphasis: color-mix(in srgb, var(--fg) 32%, transparent);
+      --openui-border-interactive-selected: var(--accent);
+      --openui-border-accent: color-mix(in srgb, var(--accent) 40%, transparent);
+      --openui-border-accent-emphasis: var(--accent);
+
+      --openui-font-body: var(--font-family);
+      --openui-font-heading: var(--font-family);
+      --openui-font-label: var(--font-family);
+      --openui-font-numbers: var(--font-family);
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      min-height: 100%;
+      background: transparent;
+      color: var(--fg);
+      font-family: var(--font-family);
+      overflow: hidden;
+    }
+    #root {
+      box-sizing: border-box;
+      min-height: 120px;
+      padding: 14px;
+    }
+    .odysseus-openui-render { min-height: 0; }
+    .openui-button-base-secondary,
+    .openui-button-base-tertiary {
+      background-color: color-mix(in srgb, var(--fg) 8%, transparent);
+      color: var(--fg);
+      border-color: color-mix(in srgb, var(--fg) 26%, transparent);
+    }
+    .openui-button-base-secondary:not(:disabled):hover,
+    .openui-button-base-tertiary:not(:disabled):hover {
+      background-color: color-mix(in srgb, var(--fg) 15%, transparent);
+      border-color: color-mix(in srgb, var(--fg) 38%, transparent);
+    }
+    .openui-button-base-primary { color: var(--bg); }
+    .openui-input:not(.openui-input-error):focus,
+    .openui-textarea:not(.openui-textarea-error):focus,
+    .openui-select-trigger:focus,
+    .openui-select-trigger:focus-visible {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--accent) 28%, transparent);
+      outline: none;
+    }
+    .sandbox-error {
+      padding: 14px;
+      color: #f44336;
+      font: 12px/1.4 var(--font-family);
+    }
+  </style>
+</head>
+<body>
+  <div id="root"><div class="inline-openui-loading">Loading OpenUI...</div></div>
+  <script src="/static/vendor/openui-renderer.js"></script>
+  <script src="/static/js/openuiSandboxFrame.js"></script>
+</body>
+</html>

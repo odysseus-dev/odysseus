@@ -58,6 +58,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # Tool render endpoints are served inside iframes — allow framing by self
         is_tool_render = path.startswith("/api/tools/") and path.endswith("/render")
+        # OpenUI artifacts render in a sandboxed iframe. Allow only the parent
+        # Odysseus app to frame this shell; the iframe's sandbox attribute keeps
+        # it from sharing the parent origin or opening popups/forms/top-nav.
+        is_openui_sandbox = path == "/static/openui-sandbox.html"
         # Visual report pages are self-contained HTML — need inline scripts + external images
         is_report = path.startswith("/api/research/report/")
 
@@ -79,6 +83,20 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # sandbox="allow-scripts" attribute provides isolation.
             # Don't overwrite the route's own restrictive CSP either.
             pass
+        elif is_openui_sandbox:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'none'; "
+                "script-src 'self'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "font-src 'self'; "
+                "img-src 'self' data: blob:; "
+                "connect-src 'none'; "
+                "media-src 'none'; "
+                "object-src 'none'; "
+                "base-uri 'none'; "
+                "form-action 'none'; "
+                "frame-ancestors 'self'"
+            )
         else:
             response.headers["X-Frame-Options"] = "DENY"
             # NOTE: `style-src 'unsafe-inline'` is intentionally retained.

@@ -16,6 +16,7 @@ import spinnerModule from './spinner.js';
 import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js';
 import signatureModule from './signature.js';
 import * as Modals from './modalManager.js';
+import { renderSandboxedOpenUI, unmountSandboxedOpenUI } from './openuiSandbox.js';
 
   let API_BASE = '';
   let isOpen = false;
@@ -8545,44 +8546,15 @@ import * as Modals from './modalManager.js';
     _syncHeaderActions();
 	  }
 
-  let _openuiRendererModule = null;
-
-  function _ensureOpenUIStyles() {
-    if (document.getElementById('openui-renderer-css')) return;
-    const link = document.createElement('link');
-    link.id = 'openui-renderer-css';
-    link.rel = 'stylesheet';
-    link.href = '/static/vendor/openui-renderer.css';
-    document.head.appendChild(link);
-  }
-
-  async function _loadOpenUIRenderer() {
-    if (!_openuiRendererModule) {
-      _ensureOpenUIStyles();
-      _openuiRendererModule = import('/static/vendor/openui-renderer.js');
-    }
-    return _openuiRendererModule;
-  }
-
-  async function renderOpenUIPreview(target, response) {
+  function renderOpenUIPreview(target, response) {
     if (!target) return;
     target.innerHTML = '<div class="doc-openui-loading">Rendering OpenUI...</div>';
-    try {
-      const mod = await _loadOpenUIRenderer();
-      mod.renderOpenUI(target, response);
-    } catch (e) {
-      console.error('OpenUI renderer failed:', e);
-      target.innerHTML = `<div class="doc-openui-error">OpenUI renderer failed: ${uiModule.esc(e.message || String(e))}</div>`;
-    }
+    renderSandboxedOpenUI(target, response, { isStreaming: false, title: 'OpenUI document preview' });
   }
 
-  async function unmountOpenUIPreview(target) {
-    if (!target || !_openuiRendererModule) return;
-    try {
-      const mod = await _openuiRendererModule;
-      mod.unmountOpenUI(target);
-    } catch (_) {}
-    target.innerHTML = '';
+  function unmountOpenUIPreview(target) {
+    if (!target) return;
+    unmountSandboxedOpenUI(target);
   }
 
 	  /** Toggle inline HTML preview (iframe) */
