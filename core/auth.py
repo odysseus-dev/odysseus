@@ -73,6 +73,15 @@ class AuthManager:
             if os.path.exists(self.auth_path):
                 with open(self.auth_path, "r", encoding="utf-8") as f:
                     self._config = json.load(f)
+                # Normalize all stored usernames to lowercase so they match
+                # the .strip().lower() applied at login/verify time. Fixes
+                # "Invalid credentials" when auth.json was written with
+                # mixed-case keys (e.g. via manual edit or a future migration).
+                if "users" in self._config:
+                    self._config["users"] = {
+                        k.strip().lower(): v
+                        for k, v in self._config["users"].items()
+                    }
                 logger.info("Auth config loaded")
             else:
                 self._config = {}
