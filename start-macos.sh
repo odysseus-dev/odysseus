@@ -100,8 +100,10 @@ echo "▶ Installing Python packages (first run downloads a few — can take a f
 echo "▶ Preparing Odysseus…"
 ODYSSEUS_SKIP_RUN_HINT=1 ./venv/bin/python setup.py
 
-# 5. Launch. Bind to loopback only (safe default).
-URL="http://127.0.0.1:$PORT"
+# 5. Launch. Bind to all interfaces so other machines on the LAN can reach it.
+LOCAL_URL="http://127.0.0.1:$PORT"
+LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "<your-mac-ip>")"
+LAN_URL="http://${LAN_IP}:$PORT"
 
 # Open the browser automatically once the server is accepting connections — so
 # the URL isn't lost in the startup logs that keep scrolling. Runs in the
@@ -113,12 +115,13 @@ if [ -z "$ODYSSEUS_NO_OPEN" ] && command -v open >/dev/null 2>&1; then
     for _ in $(seq 1 90); do
       if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
         printf '\n'
-        printf '  ┌────────────────────────────────────────────┐\n'
-        printf '  │  ✓ Odysseus is ready — opening your browser  │\n'
-        printf '  │     %-40s │\n' "$URL"
-        printf '  │     (Press Ctrl+C in this window to stop)    │\n'
-        printf '  └────────────────────────────────────────────┘\n\n'
-        open "$URL"
+        printf '  ┌──────────────────────────────────────────────────┐\n'
+        printf '  │  ✓ Odysseus is ready — opening your browser       │\n'
+        printf '  │     Local:   %-36s │\n' "$LOCAL_URL"
+        printf '  │     Network: %-36s │\n' "$LAN_URL"
+        printf '  │     (Press Ctrl+C in this window to stop)         │\n'
+        printf '  └──────────────────────────────────────────────────┘\n\n'
+        open "$LOCAL_URL"
         break
       fi
       sleep 1
@@ -133,7 +136,9 @@ trap - ERR
 trap '[ -n "$POLLER_PID" ] && kill "$POLLER_PID" 2>/dev/null' EXIT INT TERM
 
 echo
-echo "▶ Starting Odysseus — it will open in your browser at $URL"
+echo "▶ Starting Odysseus on all interfaces (port $PORT)"
+echo "  Local:   $LOCAL_URL"
+echo "  Network: $LAN_URL"
 echo "  (this takes a few seconds; press Ctrl+C here to stop)"
 echo
 "$PY" -m uvicorn app:app --host 127.0.0.1 --port "$PORT"
