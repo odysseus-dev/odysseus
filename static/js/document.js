@@ -55,6 +55,7 @@ import * as Modals from './modalManager.js';
   // "Run / Preview" path. (hljs maps detected `xml` → `html` already; this also
   // covers the doc being explicitly typed svg/xml.)
   const _isRenderLang = (l) => ['html', 'svg', 'xml'].includes((l || '').toLowerCase());
+  const _isOpenUILang = (l) => (l || '').toLowerCase() === 'openui';
   // Languages that get the segmented Code / Run-or-View toggle in the toolbar
   // (the same UX as markdown's Edit / Preview switch). CSV's "run" view is the
   // table; Python/JS/etc.'s is the code-run output; HTML/SVG/XML render via
@@ -67,7 +68,7 @@ import * as Modals from './modalManager.js';
       'c', 'cpp', 'c++', 'csharp', 'c#',
       'yaml', 'json', 'css',
       'ini', 'toml',
-    ].includes(lang) || _isRenderLang(lang);
+    ].includes(lang) || _isRenderLang(lang) || _isOpenUILang(lang);
   };
 
   async function _getEmailAccountsCached() {
@@ -2089,10 +2090,12 @@ import * as Modals from './modalManager.js';
     const _mdPreview = document.getElementById('doc-md-preview');
     const _csvPreview = document.getElementById('doc-csv-preview');
     const _htmlPreview = document.getElementById('doc-html-preview');
+    const _openuiPreview = document.getElementById('doc-openui-preview');
     const _outputPanel = document.getElementById('doc-run-output');
     const _mdActive = _mdPreview && _mdPreview.style.display !== 'none';
     const _csvActive = _csvPreview && _csvPreview.style.display !== 'none';
-    const _htmlActive = _htmlPreview && _htmlPreview.style.display !== 'none';
+    const _htmlActive = (_htmlPreview && _htmlPreview.style.display !== 'none')
+      || (_openuiPreview && _openuiPreview.style.display !== 'none');
     const _outputActive = _outputPanel && _outputPanel.style.display !== 'none';
 
     let show = false;
@@ -2115,7 +2118,7 @@ import * as Modals from './modalManager.js';
         if (lang === 'csv') {
           icon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>';
           title = 'Table view';
-        } else if (_isRenderLang(lang)) {
+        } else if (_isRenderLang(lang) || _isOpenUILang(lang)) {
           icon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
           title = 'Preview';
         } else {
@@ -2150,7 +2153,7 @@ import * as Modals from './modalManager.js';
       // for runnable langs = output panel open.
       let _viewActive = false;
       if (lang === 'csv') _viewActive = _csvActive;
-      else if (_isRenderLang(lang)) _viewActive = _htmlActive;
+      else if (_isRenderLang(lang) || _isOpenUILang(lang)) _viewActive = _htmlActive;
       else _viewActive = _outputActive;
       const _codeBtn2 = renderToggle.querySelector('[data-renderview="code"]');
       const _runBtn2 = renderToggle.querySelector('[data-renderview="run"]');
@@ -2169,8 +2172,8 @@ import * as Modals from './modalManager.js';
       actionBtn.innerHTML = _csvActive ? _penIco : '<span style="font-size:12px;font-weight:600;">⊞</span>';
       actionBtn.title = _csvActive ? 'Edit' : 'Table View';
       if (_csvActive) actionBtn.classList.add('active');
-    } else if (_isRenderLang(lang)) {
-      // SVG/HTML/XML use the segmented Code </> | Run ▶ light-switch toggle
+    } else if (_isRenderLang(lang) || _isOpenUILang(lang)) {
+      // SVG/HTML/XML/OpenUI use the segmented Code </> | Run light-switch toggle
       // (like markdown's edit/preview switch) instead of the single button.
       show = false;
       if (renderToggle) {
@@ -3733,9 +3736,10 @@ import * as Modals from './modalManager.js';
           <option value="c">c</option>
           <option value="cpp">c++</option>
           <option value="csharp">c#</option>
-          <option value="xml">xml</option>
-          <option value="svg">svg</option>
-          <option value="toml">toml</option>
+	          <option value="xml">xml</option>
+	          <option value="svg">svg</option>
+	          <option value="openui">openui</option>
+	          <option value="toml">toml</option>
           <option value="ini">ini</option>
           <option value="ruby">ruby</option>
           <option value="php">php</option>
@@ -3844,6 +3848,7 @@ import * as Modals from './modalManager.js';
       </div>
       <div id="doc-md-preview" class="doc-md-preview" style="display:none"></div>
       <div id="doc-csv-preview" class="doc-csv-preview" style="display:none"></div>
+      <div id="doc-openui-preview" class="doc-openui-preview" style="display:none"></div>
       <iframe id="doc-html-preview" class="doc-html-preview" sandbox="allow-scripts allow-modals" style="display:none"></iframe>
       <div id="doc-pdf-view" style="display:none;width:100%;flex:1;min-height:0;overflow:auto;background:#525659;padding:20px 0;position:relative;">
         <div id="doc-pdf-save-pill" style="display:none;position:absolute;top:8px;right:14px;padding:4px 10px;border-radius:12px;font-size:11px;z-index:5;pointer-events:none;background:transparent;color:transparent;"></div>
@@ -3892,6 +3897,14 @@ import * as Modals from './modalManager.js';
         // The X close was here too but is now redundant with the per-tab close
         // button in the title strip — removed.
         if (_undo) _footer.insertBefore(_undo, _footer.firstChild);
+        const _openuiBtn = document.createElement('button');
+        _openuiBtn.type = 'button';
+        _openuiBtn.id = 'doc-openui-btn';
+        _openuiBtn.className = 'doc-action-icon-btn doc-openui-btn';
+        _openuiBtn.title = 'Generate UI';
+        _openuiBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2L12 3z"/><path d="M5 3v4"/><path d="M3 5h4"/><path d="M19 17v4"/><path d="M17 19h4"/></svg><span>OpenUI</span>';
+        if (_undo) _undo.after(_openuiBtn);
+        else _footer.insertBefore(_openuiBtn, _footer.firstChild);
         const _anchor = _undo;
         if (_preview && _anchor) _anchor.after(_preview);
         if (_lang) _split.before(_lang);
@@ -4055,6 +4068,7 @@ import * as Modals from './modalManager.js';
       else copyDocument();
     });
     document.getElementById('doc-footer-export-btn')?.addEventListener('click', (e) => showExportMenu(null, e.currentTarget.getBoundingClientRect()));
+    document.getElementById('doc-openui-btn')?.addEventListener('click', () => openOpenUIModal());
     // Mobile footer: Close the current doc + Copy its content (replaces the
     // per-tab × on small screens, mirroring the email reader's Close footer).
     document.getElementById('doc-mobile-close')?.addEventListener('click', () => { if (activeDocId) closeTab(activeDocId); });
@@ -4246,8 +4260,8 @@ import * as Modals from './modalManager.js';
         if (csvPreview) csvPreview.style.display = 'none';
         if (wrap2) wrap2.style.display = '';
       }
-      // If switching away from html, exit HTML preview
-      if (!_isRenderLang(lang)) exitHtmlPreview();
+      // If switching away from renderable docs, exit preview
+      if (!_isRenderLang(lang) && !_isOpenUILang(lang)) exitHtmlPreview();
       // Show/hide email fields
       if (lang === 'email') {
         const doc = activeDocId && docs.get(activeDocId);
@@ -5670,6 +5684,96 @@ import * as Modals from './modalManager.js';
   }
 
   // ---- Document CRUD ----
+
+  function _openuiDemoPrompt() {
+    return 'A cinematic AI workspace launch dashboard for an X video: live agent runs, model endpoints, memory signals, a compact timeline, interactive controls, and a beautiful first viewport.';
+  }
+
+  function openOpenUIModal() {
+    const existing = document.getElementById('openui-generate-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'openui-generate-overlay';
+    overlay.className = 'openui-generate-overlay';
+    overlay.innerHTML = `
+      <div class="openui-generate-modal" role="dialog" aria-modal="true" aria-labelledby="openui-title">
+        <div class="openui-generate-head">
+          <div>
+            <div class="openui-kicker">OpenUI</div>
+            <h3 id="openui-title">Generate an interface</h3>
+          </div>
+          <button type="button" class="openui-close" id="openui-close" title="Close"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <textarea id="openui-prompt" class="openui-prompt" spellcheck="true"></textarea>
+        <div class="openui-actions">
+          <button type="button" class="openui-secondary" id="openui-demo">Use demo prompt</button>
+          <span class="openui-status" id="openui-status"></span>
+          <button type="button" class="openui-primary" id="openui-generate"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2L12 3z"/></svg>Generate</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const promptEl = overlay.querySelector('#openui-prompt');
+    const statusEl = overlay.querySelector('#openui-status');
+    const generateBtn = overlay.querySelector('#openui-generate');
+    promptEl.value = _openuiDemoPrompt();
+
+    const cleanup = () => overlay.remove();
+    overlay.querySelector('#openui-close')?.addEventListener('click', cleanup);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+    overlay.querySelector('#openui-demo')?.addEventListener('click', () => {
+      promptEl.value = _openuiDemoPrompt();
+      promptEl.focus();
+      promptEl.select();
+    });
+
+    const submit = async () => {
+      const prompt = (promptEl.value || '').trim();
+      if (prompt.length < 4) {
+        statusEl.textContent = 'Add a little more detail.';
+        return;
+      }
+      const sessionId = docs.get(activeDocId)?.sessionId
+        || _lastSessionId
+        || sessionModule?.getCurrentSessionId()
+        || null;
+      generateBtn.disabled = true;
+      statusEl.textContent = 'Generating...';
+      try {
+        const res = await fetch(`${API_BASE}/api/openui/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ prompt, session_id: sessionId }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || data.error || `OpenUI failed (${res.status})`);
+        addDocToTabs(data, data.session_id || sessionId);
+        _ensureDocPaneMounted();
+        switchToDoc(data.id);
+        cleanup();
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (!_htmlPreviewActive) toggleHtmlPreview();
+        }));
+        if (uiModule) uiModule.showToast('OpenUI artifact generated');
+      } catch (e) {
+        console.error('OpenUI generation failed:', e);
+        statusEl.textContent = e.message || 'Generation failed';
+        if (uiModule) uiModule.showError(e.message || 'OpenUI generation failed');
+      } finally {
+        generateBtn.disabled = false;
+      }
+    };
+
+    generateBtn.addEventListener('click', submit);
+    promptEl.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submit();
+      if (e.key === 'Escape') cleanup();
+    });
+    setTimeout(() => promptEl.focus(), 30);
+  }
 
   /** Create a new document for the current session */
   // Create a new blank document, reusing the current/last session or
@@ -8439,11 +8543,52 @@ import * as Modals from './modalManager.js';
     // auto-shows the table view left the Edit (code) side wrongly marked
     // active and the user had to flip the toggle to resync.
     _syncHeaderActions();
+	  }
+
+  let _openuiRendererModule = null;
+
+  function _ensureOpenUIStyles() {
+    if (document.getElementById('openui-renderer-css')) return;
+    const link = document.createElement('link');
+    link.id = 'openui-renderer-css';
+    link.rel = 'stylesheet';
+    link.href = '/static/vendor/openui-renderer.css';
+    document.head.appendChild(link);
   }
 
-  /** Toggle inline HTML preview (iframe) */
+  async function _loadOpenUIRenderer() {
+    if (!_openuiRendererModule) {
+      _ensureOpenUIStyles();
+      _openuiRendererModule = import('/static/vendor/openui-renderer.js');
+    }
+    return _openuiRendererModule;
+  }
+
+  async function renderOpenUIPreview(target, response) {
+    if (!target) return;
+    target.innerHTML = '<div class="doc-openui-loading">Rendering OpenUI...</div>';
+    try {
+      const mod = await _loadOpenUIRenderer();
+      mod.renderOpenUI(target, response);
+    } catch (e) {
+      console.error('OpenUI renderer failed:', e);
+      target.innerHTML = `<div class="doc-openui-error">OpenUI renderer failed: ${uiModule.esc(e.message || String(e))}</div>`;
+    }
+  }
+
+  async function unmountOpenUIPreview(target) {
+    if (!target || !_openuiRendererModule) return;
+    try {
+      const mod = await _openuiRendererModule;
+      mod.unmountOpenUI(target);
+    } catch (_) {}
+    target.innerHTML = '';
+  }
+
+	  /** Toggle inline HTML preview (iframe) */
   function toggleHtmlPreview() {
     const iframe = document.getElementById('doc-html-preview');
+    const openuiPreview = document.getElementById('doc-openui-preview');
     const wrap = document.getElementById('doc-editor-wrap');
     const textarea = document.getElementById('doc-editor-textarea');
     if (!iframe || !wrap || !textarea) return;
@@ -8453,8 +8598,22 @@ import * as Modals from './modalManager.js';
       const mdPreview = document.getElementById('doc-md-preview');
       if (mdPreview) mdPreview.style.display = 'none';
       const code = textarea.value || '';
-      iframe.srcdoc = code;
-      iframe.style.display = '';
+      const lang = (document.getElementById('doc-language-select')?.value || '').toLowerCase();
+      if (_isOpenUILang(lang)) {
+        iframe.style.display = 'none';
+        iframe.srcdoc = '';
+        if (openuiPreview) {
+          openuiPreview.style.display = '';
+          renderOpenUIPreview(openuiPreview, code);
+        }
+      } else {
+        if (openuiPreview) {
+          openuiPreview.style.display = 'none';
+          unmountOpenUIPreview(openuiPreview);
+        }
+        iframe.srcdoc = code;
+        iframe.style.display = '';
+      }
       wrap.style.display = 'none';
       _htmlPreviewActive = true;
       renderTabs();
@@ -8463,13 +8622,18 @@ import * as Modals from './modalManager.js';
     }
   }
 
-  /** Exit HTML preview back to code view */
+	  /** Exit HTML preview back to code view */
   function exitHtmlPreview() {
     const iframe = document.getElementById('doc-html-preview');
+    const openuiPreview = document.getElementById('doc-openui-preview');
     const wrap = document.getElementById('doc-editor-wrap');
     if (!_htmlPreviewActive) return;
     _htmlPreviewActive = false;
     if (iframe) { iframe.style.display = 'none'; iframe.srcdoc = ''; }
+    if (openuiPreview) {
+      openuiPreview.style.display = 'none';
+      unmountOpenUIPreview(openuiPreview);
+    }
     if (wrap) wrap.style.display = '';
     renderTabs();
   }
@@ -9415,6 +9579,7 @@ const documentModule = {
   swapSide,
   createDocument,
   newDocument,
+  openOpenUIModal,
   loadDocument,
   injectFreshDoc,
   ensurePaneMounted: _ensureDocPaneMounted,

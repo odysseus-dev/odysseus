@@ -93,6 +93,12 @@ const ICONS = {
     '<circle cx="7" cy="7" r="4"/>' +
     '<rect x="13" y="13" width="8" height="8"/>' +
     '<polygon points="13 3 21 3 17 11"/>',
+  // OpenUI — generated component tree / sparkle
+  openui:
+    '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>' +
+    '<rect x="3" y="16" width="5" height="5" rx="1"/>' +
+    '<rect x="16" y="16" width="5" height="5" rx="1"/>' +
+    '<path d="M8 18.5h8"/>',
   // Rust — gear / cog (Rust's mark is a gear with R inside)
   rust:
     '<circle cx="12" cy="12" r="3"/>' +

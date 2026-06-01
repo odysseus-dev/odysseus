@@ -2,10 +2,13 @@
 
 import uuid
 import logging
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
+from pydantic import BaseModel
 
 from sqlalchemy import func
 from core.database import SessionLocal, Document, DocumentVersion
@@ -13,6 +16,35 @@ from core.database import Session as DbSession
 from src.auth_helpers import get_current_user
 
 logger = logging.getLogger(__name__)
+
+
+class OpenUIGenerateRequest(BaseModel):
+    prompt: str
+    session_id: Optional[str] = None
+    model: Optional[str] = None
+
+
+def _strip_code_fence(text: str) -> str:
+    text = (text or "").strip()
+    match = re.match(r"^```(?:openui|openui-lang|text)?\s*(.*?)\s*```$", text, re.DOTALL | re.IGNORECASE)
+    return match.group(1).strip() if match else text
+
+
+def _openui_title(prompt: str) -> str:
+    title = re.sub(r"\s+", " ", (prompt or "").strip())
+    title = re.sub(r"^(make|build|create|design|generate)\s+(me\s+)?", "", title, flags=re.IGNORECASE)
+    return (title[:58].rstrip(" .,:;-") or "OpenUI Artifact")
+
+
+def _openui_system_prompt() -> str:
+    prompt_path = Path(__file__).resolve().parents[1] / "config" / "openui_system_prompt.txt"
+    try:
+        return prompt_path.read_text(encoding="utf-8")
+    except Exception:
+        logger.warning("OpenUI system prompt file missing; using fallback prompt")
+        return """You are an AI assistant that responds using openui-lang.
+Your entire response must be valid openui-lang code, no markdown and no explanations.
+Define root as the entry point. Prefer product UI surfaces with cards, charts, tables, forms, timelines, and controls."""
 
 
 
@@ -41,6 +73,102 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             return load_pymupdf_for_pdf_viewer()
         except RuntimeError as exc:
             raise HTTPException(503, str(exc)) from exc
+
+    @router.post("/api/openui/generate")
+    async def generate_openui_artifact(request: Request, req: OpenUIGenerateRequest) -> Dict[str, Any]:
+        """Generate OpenUI Lang with thesysdev/openui and save it as a document."""
+        from src.auth_helpers import require_privilege
+        from src.endpoint_resolver import resolve_endpoint
+        from src.llm_core import llm_call_async
+
+        user = require_privilege(request, "can_use_documents")
+        prompt = (req.prompt or "").strip()
+        if len(prompt) < 4:
+            raise HTTPException(400, "Prompt is too short")
+
+        session = None
+        db = SessionLocal()
+        try:
+            if req.session_id:
+                session = db.query(DbSession).filter(DbSession.id == req.session_id).first()
+                if not session:
+                    raise HTTPException(404, "Session not found")
+                if user and session.owner and session.owner != user:
+                    raise HTTPException(403, "Cannot create document in another user's session")
+        finally:
+            db.close()
+
+        url, model, headers = resolve_endpoint("utility", owner=user)
+        if not url or not model:
+            url, model, headers = resolve_endpoint("default", owner=user)
+        if not url or not model:
+            raise HTTPException(400, "No LLM endpoint configured")
+        if req.model:
+            model = req.model.strip() or model
+
+        messages = [
+            {"role": "system", "content": _openui_system_prompt()},
+            {"role": "user", "content": f"{prompt}\n\nBuild this as a polished, responsive OpenUI Lang interface for an Odysseus screen-recorded demo."},
+        ]
+        try:
+            raw = await llm_call_async(
+                url,
+                model,
+                messages,
+                temperature=0.55,
+                headers=headers,
+                timeout=90,
+            )
+            openui_lang = _strip_code_fence(raw)
+            if "root" not in openui_lang:
+                raise HTTPException(502, "OpenUI generation did not return a root component")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("OpenUI generation failed: %s", e)
+            raise HTTPException(502, f"OpenUI generation failed: {e}")
+
+        db = SessionLocal()
+        try:
+            doc_id = str(uuid.uuid4())
+            ver_id = str(uuid.uuid4())
+            title = _openui_title(prompt)
+            doc = Document(
+                id=doc_id,
+                session_id=req.session_id,
+                title=title,
+                language="openui",
+                current_content=openui_lang,
+                version_count=1,
+                is_active=True,
+                owner=user or (session.owner if session else None),
+            )
+            ver = DocumentVersion(
+                id=ver_id,
+                document_id=doc_id,
+                version_number=1,
+                content=openui_lang,
+                summary=f"Generated with thesysdev/openui ({model})",
+                source="ai",
+            )
+            db.add(doc)
+            db.add(ver)
+            db.commit()
+            db.refresh(doc)
+            try:
+                from src.event_bus import fire_event
+                fire_event("document_created", doc.owner)
+            except Exception:
+                logger.debug("document_created event dispatch failed", exc_info=True)
+            result = _doc_to_dict(doc)
+            result["openui"] = {"model": model, "prompt": prompt}
+            return result
+        except Exception as e:
+            db.rollback()
+            logger.error("Failed to save OpenUI artifact: %s", e)
+            raise HTTPException(500, f"Failed to save OpenUI artifact: {e}")
+        finally:
+            db.close()
 
     # ---- POST /api/document ----
     @router.post("/api/document")
