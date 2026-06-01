@@ -66,3 +66,25 @@ def test_calls_from_content_arg_alias_normalized():
 def test_no_calls_when_plain_answer():
     msg = {"content": "The bug is on line 7: division by zero."}
     assert na._calls_from_message(msg) == []
+
+
+# ── todo_write planning tool ───────────────────────────────────────────────
+def test_todo_write_stores_and_summarizes():
+    from odysseus_cli.approval import ApprovalState
+    state = ApprovalState("deny")
+    todos = [
+        {"content": "Read the file", "status": "completed"},
+        {"content": "Fix the bug", "status": "in_progress"},
+        {"content": "Run tests", "status": "pending"},
+    ]
+    out = na._todo_write(state, todos)
+    assert state.todos == todos
+    assert "3 task(s)" in out and "1 completed" in out
+
+
+def test_todo_write_skips_malformed_entries():
+    from odysseus_cli.approval import ApprovalState
+    state = ApprovalState("deny")
+    na._todo_write(state, [{"content": "ok", "status": "pending"}, {"status": "pending"}, "bad"])
+    assert len(state.todos) == 1
+    assert state.todos[0]["content"] == "ok"

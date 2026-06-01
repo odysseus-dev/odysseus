@@ -121,6 +121,22 @@ def info(msg: str) -> None:
     write(c(f"  {msg}", GREY))
 
 
+def todos(items: list) -> None:
+    """Render the agent's task checklist."""
+    if not items:
+        return
+    write(c("\n  ☑ plan", BOLD + MAGENTA))
+    for it in items:
+        status = (it.get("status") or "pending").lower()
+        content = it.get("content", "")
+        if status == "completed":
+            write(c(f"    [x] {content}", GREEN))
+        elif status == "in_progress":
+            write(c(f"    [~] {content}", YELLOW))
+        else:
+            write(c(f"    [ ] {content}", GREY))
+
+
 def diff(lines: list) -> None:
     """Render a unified diff with colored +/- lines."""
     if not lines:

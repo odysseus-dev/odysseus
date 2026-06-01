@@ -32,6 +32,7 @@ class ApprovalState:
         self.project_root = Path(project_root or Path.cwd()).resolve()
         self._always: Set[str] = set()
         self._call_counts: dict = {}
+        self.todos: list = []  # agent's task checklist (todo_write tool)
 
     def always_allowed(self, tool: str) -> bool:
         return tool in self._always

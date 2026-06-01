@@ -72,6 +72,18 @@ TOOLS: List[Dict] = [
         "parameters": {"type": "object", "properties": {
             "command": {"type": "string"}
         }, "required": ["command"]}}},
+    {"type": "function", "function": {
+        "name": "todo_write",
+        "description": "Create or update your task checklist for multi-step work. Pass the FULL "
+                       "list every time (it replaces the previous one). Plan before you start, "
+                       "then mark items in_progress / completed as you go. Keep exactly one item "
+                       "in_progress at a time.",
+        "parameters": {"type": "object", "properties": {
+            "todos": {"type": "array", "items": {"type": "object", "properties": {
+                "content": {"type": "string", "description": "Short task description."},
+                "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+            }, "required": ["content", "status"]}}
+        }, "required": ["todos"]}}},
 ]
 
 def system_prompt(root: Path, project_context: str) -> str:
@@ -79,6 +91,8 @@ def system_prompt(root: Path, project_context: str) -> str:
         "You are Odysseus CLI, a focused local coding agent working in "
         f"{root}. Use the provided tools to inspect and edit code.\n"
         "Rules:\n"
+        "- For any task with more than one step, call todo_write FIRST to plan, "
+        "then keep it updated (one item in_progress at a time).\n"
         "- Use read_file / list_dir / grep to understand the code BEFORE editing.\n"
         "- Make minimal, targeted edits with edit_file; use write_file for new files.\n"
         "- Never call the same tool with the same arguments twice — use the result you got.\n"
@@ -212,8 +226,25 @@ async def _bash(root: Path, state: ApprovalState, command: str) -> str:
     return f"exit={proc.returncode}\n{out[:MAX_TOOL_OUTPUT]}"
 
 
+def _todo_write(state: ApprovalState, todos: list) -> str:
+    """Replace the agent's task checklist and render it."""
+    clean = []
+    for t in todos or []:
+        if isinstance(t, dict) and t.get("content"):
+            clean.append({
+                "content": str(t.get("content")),
+                "status": str(t.get("status") or "pending"),
+            })
+    state.todos = clean
+    r.todos(clean)
+    done = sum(1 for t in clean if t["status"] == "completed")
+    return f"Plan updated: {len(clean)} task(s), {done} completed."
+
+
 async def _dispatch(cfg: CliConfig, state: ApprovalState, name: str, args: dict) -> str:
     root = cfg.project_root
+    if name == "todo_write":
+        return _todo_write(state, args.get("todos", []))
     if name == "read_file":
         return _read_file(root, args.get("path", ""))
     if name == "list_dir":
