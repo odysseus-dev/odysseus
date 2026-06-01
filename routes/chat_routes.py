@@ -36,6 +36,11 @@ from routes.chat_helpers import (
     _enforce_chat_privileges,
 )
 from src.action_intents import message_needs_tools as _message_needs_tools
+from src.codex_model_provider import (
+    codex_complete_chat,
+    is_codex_provider_selection,
+    stream_codex_chat,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +77,8 @@ def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
 def _clear_orphaned_session_endpoint(sess) -> bool:
     """Clear a session model if its endpoint was deleted from ModelEndpoint."""
     if not getattr(sess, "endpoint_url", ""):
+        return False
+    if is_codex_provider_selection(sess.endpoint_url, getattr(sess, "model", "")):
         return False
     db = SessionLocal()
     try:
@@ -133,6 +140,8 @@ def setup_chat_routes(
         if _clear_orphaned_session_endpoint(sess):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
 
+        is_codex_session = is_codex_provider_selection(sess.endpoint_url, sess.model)
+
         # Same allowed_models + daily-cap gate as chat_stream (mirror so the
         # non-streaming path can't be used to bypass).
         _enforce_chat_privileges(request, sess)
@@ -168,15 +177,21 @@ def setup_chat_routes(
             except Exception as e:
                 logger.error(f"Research failed: {e}")
 
-        reply = await llm_call_async(
-            sess.endpoint_url,
-            sess.model,
-            ctx.messages,
-            headers=sess.headers,
-            temperature=ctx.preset.temperature,
-            max_tokens=ctx.preset.max_tokens,
-            prompt_type=preset_id,
-        )
+        if is_codex_session:
+            result = await codex_complete_chat(ctx.messages, model=sess.model)
+            if not result.get("ok"):
+                raise HTTPException(502, result.get("error") or result.get("status") or "Codex provider failed")
+            reply = result.get("message") or ""
+        else:
+            reply = await llm_call_async(
+                sess.endpoint_url,
+                sess.model,
+                ctx.messages,
+                headers=sess.headers,
+                temperature=ctx.preset.temperature,
+                max_tokens=ctx.preset.max_tokens,
+                prompt_type=preset_id,
+            )
         _clean_reply, _clean_md = clean_thinking_for_save(reply, {"model": sess.model})
         sess.add_message(ChatMessage("assistant", _clean_reply, metadata=_clean_md))
 
@@ -289,6 +304,7 @@ def setup_chat_routes(
 
         # Ensure session has auth headers
         resolve_session_auth(sess, session)
+        is_codex_session = is_codex_provider_selection(sess.endpoint_url, sess.model)
 
         # Check for research_pending BEFORE mode persist overwrites it
         do_research = str(use_research).lower() == "true"
@@ -630,6 +646,45 @@ def setup_chat_routes(
             if ctx.preset.character_name:
                 _model_info["character_name"] = ctx.preset.character_name
             yield f'data: {json.dumps(_model_info)}\n\n'
+
+            if is_codex_session and _effective_mode == "chat":
+                try:
+                    async for chunk in stream_codex_chat(messages, model=sess.model):
+                        if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
+                            try:
+                                data = json.loads(chunk[6:])
+                                if "delta" in data:
+                                    full_response += data["delta"]
+                                    _stream_set(session, partial=full_response)
+                                elif data.get("type") == "metrics":
+                                    last_metrics = data.get("data", {})
+                            except json.JSONDecodeError:
+                                pass
+                        yield chunk
+                    if full_response:
+                        _saved_id = save_assistant_response(
+                            sess, session_manager, session, full_response, last_metrics,
+                            character_name=ctx.preset.character_name,
+                            web_sources=web_sources,
+                            rag_sources=ctx.rag_sources,
+                            research_sources=research_sources,
+                            used_memories=ctx.used_memories,
+                            do_research=do_research,
+                            incognito=incognito,
+                        )
+                        if _saved_id:
+                            yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
+                        run_post_response_tasks(
+                            sess, session_manager, session, message, full_response,
+                            last_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
+                            incognito=incognito, compare_mode=compare_mode,
+                            character_name=ctx.preset.character_name,
+                            owner=_user,
+                        )
+                    _stream_set(session, status="done")
+                finally:
+                    _active_streams.pop(session, None)
+                return
 
             # Detect image models and route directly to image generation
             _IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")

@@ -649,6 +649,23 @@ async def llm_call_async(
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
+    try:
+        from src.codex_model_provider import is_codex_provider_selection, codex_complete_chat
+        if is_codex_provider_selection(url, model):
+            result = await codex_complete_chat(
+                messages_copy,
+                model=model,
+                timeout_seconds=timeout,
+                allow_odysseus_tools=True,
+            )
+            if not result.get("ok"):
+                raise HTTPException(502, result.get("error") or result.get("status") or "Codex CLI provider failed")
+            return result.get("message") or ""
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Codex CLI provider failed: {exc}")
+
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
     non_sys = []
@@ -751,6 +768,22 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     """
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
+
+    try:
+        from src.codex_model_provider import is_codex_provider_selection, stream_codex_chat
+        if is_codex_provider_selection(url, model):
+            async for chunk in stream_codex_chat(
+                messages_copy,
+                model=model,
+                timeout_seconds=timeout,
+                allow_odysseus_tools=True,
+            ):
+                yield chunk
+            return
+    except Exception as exc:
+        logger.error(f"Codex CLI stream error: {exc}")
+        yield f'event: error\ndata: {json.dumps({"error": str(exc), "status": 502})}\n\n'
+        return
 
     # Consolidate multiple system messages into one at the start.
     # Some models (e.g. Qwen3.5) reject system messages that aren't first.

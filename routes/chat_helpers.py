@@ -434,10 +434,17 @@ async def build_chat_context(
     for transcript in preprocessed.youtube_transcripts:
         preface.append(untrusted_context_message("youtube transcript", transcript))
 
-    # Normalize model ID
-    norm = normalize_model_id(sess.endpoint_url, sess.model)
-    if norm:
-        sess.model = norm
+    # Normalize model ID. Virtual providers such as Codex CLI are not
+    # OpenAI-compatible HTTP endpoints, so never probe /models for them.
+    try:
+        from src.codex_model_provider import is_codex_provider_selection
+        _virtual_provider = is_codex_provider_selection(sess.endpoint_url, sess.model)
+    except Exception:
+        _virtual_provider = False
+    if not _virtual_provider:
+        norm = normalize_model_id(sess.endpoint_url, sess.model)
+        if norm:
+            sess.model = norm
 
     # Build messages
     messages = preface + sess.get_context_messages()

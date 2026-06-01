@@ -13,15 +13,27 @@ import os
 import re
 import tempfile
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 from src.codex_auth import get_codex_auth_service
 
 
 CODEX_MODEL_PROVIDER_FLAG = "ODYSSEUS_CODEX_MODEL_PROVIDER_ENABLED"
+CODEX_PROVIDER_ENDPOINT_URL = "codex-cli://chat"
+CODEX_PROVIDER_ENDPOINT_ID = "codex-cli"
+CODEX_PROVIDER_ENDPOINT_NAME = "Codex / ChatGPT"
 CODEX_EXPERIMENTAL_MODEL_ID = "codex-cli/chatgpt-experimental"
 CODEX_EXPERIMENTAL_MODEL_DISPLAY = "Codex CLI / ChatGPT (experimental, non-streaming)"
 CODEX_CHAT_TIMEOUT_SECONDS = 120
+CODEX_MODELS_CACHE_PATH = Path.home() / ".codex" / "models_cache.json"
+CODEX_FALLBACK_MODELS = [
+    {
+        "id": CODEX_EXPERIMENTAL_MODEL_ID,
+        "display": CODEX_EXPERIMENTAL_MODEL_DISPLAY,
+        "experimental": True,
+    }
+]
 
 _TOKEN_PATTERNS = (
     re.compile(r"(?i)(access_token|refresh_token|id_token)\s*[:=]\s*['\"]?[^'\"\s,}]+"),
@@ -31,7 +43,7 @@ _TOKEN_PATTERNS = (
 _LIMITATIONS = [
     "Non-streaming: returns one completed assistant message.",
     "Stateless: session/resume is not implemented.",
-    "Codex tool execution is not mapped into Odysseus agent rounds.",
+    "In Odysseus agent mode, tools are executed by Odysseus agent rounds, not by Codex CLI itself.",
     "The adapter requires Codex CLI sandbox/approval flags before running.",
 ]
 
@@ -49,6 +61,59 @@ def _sanitize_text(text: str | None, limit: int = 2000) -> str:
     for pattern in _TOKEN_PATTERNS:
         safe = pattern.sub("<redacted-token>", safe)
     return safe.strip()[:limit]
+
+
+def normalize_codex_model_id(model: str | None) -> str:
+    """Return the Codex CLI model slug to pass with --model.
+
+    Older Odysseus builds exposed a synthetic codex-cli/chatgpt-experimental id.
+    Modern Codex CLI stores real selectable slugs in ~/.codex/models_cache.json.
+    """
+    raw = (model or "").strip()
+    if not raw or raw == CODEX_EXPERIMENTAL_MODEL_ID:
+        models = codex_available_models()
+        first = models[0]["id"] if models else ""
+        return "" if first == CODEX_EXPERIMENTAL_MODEL_ID else first
+    if raw.startswith("codex-cli/"):
+        slug = raw.split("/", 1)[1]
+        return "" if slug == "chatgpt-experimental" else slug
+    return raw
+
+
+def codex_available_models(cache_path: Path | None = None) -> list[dict[str, Any]]:
+    """Read the model list that Codex CLI/VS Code cache after ChatGPT OAuth.
+
+    We intentionally only expose list-visible, API-supported entries and never
+    return the bulky instruction payloads from the cache.
+    """
+    path = cache_path or CODEX_MODELS_CACHE_PATH
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return [dict(m) for m in CODEX_FALLBACK_MODELS]
+
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in payload.get("models") or []:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("visibility") != "list" or entry.get("supported_in_api") is False:
+            continue
+        slug = str(entry.get("slug") or entry.get("id") or "").strip()
+        if not slug or slug in seen:
+            continue
+        seen.add(slug)
+        items.append({
+            "id": slug,
+            "display": str(entry.get("display_name") or slug),
+            "description": str(entry.get("description") or ""),
+            "priority": entry.get("priority") if isinstance(entry.get("priority"), int) else 9999,
+            "experimental": False,
+            "streaming_supported": False,
+            "session_resume_supported": False,
+        })
+    items.sort(key=lambda m: (m.get("priority", 9999), str(m.get("display") or m.get("id"))))
+    return items or [dict(m) for m in CODEX_FALLBACK_MODELS]
 
 
 class CodexCliChatAdapter:
@@ -90,6 +155,7 @@ class CodexCliChatAdapter:
         messages: list[dict[str, Any]],
         model: str | None = None,
         timeout_seconds: int = CODEX_CHAT_TIMEOUT_SECONDS,
+        allow_odysseus_tools: bool = False,
     ) -> dict[str, Any]:
         started = time.time()
         availability = await self.available()
@@ -102,19 +168,26 @@ class CodexCliChatAdapter:
             }
 
         preflight = await self._preflight()
-        prompt = self._build_prompt(messages)
+        prompt = self._build_prompt(messages, allow_odysseus_tools=allow_odysseus_tools)
         timeout = max(1, min(int(timeout_seconds or CODEX_CHAT_TIMEOUT_SECONDS), 300))
 
         with tempfile.TemporaryDirectory(prefix="odysseus-codex-chat-") as workdir:
+            model_slug = normalize_codex_model_id(model)
+            sandbox_mode = "workspace-write" if allow_odysseus_tools else "read-only"
             args = [
                 preflight["bin_path"],
                 "exec",
+                "-c",
+                "approval_policy=\"never\"",
                 "--sandbox",
-                "read-only",
-                "--ask-for-approval",
-                "never",
-                prompt,
+                sandbox_mode,
+                "--skip-git-repo-check",
+                "--ignore-rules",
+                "--ephemeral",
             ]
+            if model_slug:
+                args.extend(["--model", model_slug])
+            args.append(prompt)
             rc, out, err = await self._run(
                 args,
                 timeout=timeout,
@@ -142,7 +215,7 @@ class CodexCliChatAdapter:
             "limitations": list(_LIMITATIONS),
             "streaming_supported": False,
             "session_resume_supported": False,
-            "tool_execution_allowed": False,
+            "tool_execution_allowed": bool(allow_odysseus_tools),
         }
 
     async def _preflight(self) -> dict[str, Any]:
@@ -191,7 +264,7 @@ class CodexCliChatAdapter:
                 "detail": _sanitize_text(err or out, limit=500),
             }
         help_text = out or ""
-        missing = [flag for flag in ("--sandbox", "--ask-for-approval") if flag not in help_text]
+        missing = [flag for flag in ("--sandbox",) if flag not in help_text]
         if missing:
             return {
                 "ok": False,
@@ -199,11 +272,18 @@ class CodexCliChatAdapter:
                 "error": "Codex CLI does not advertise required safety flags",
                 "missing_flags": missing,
             }
+        # Codex CLI 0.135+ no longer exposes the old --ask-for-approval flag.
+        # Approval can still be pinned safely for exec runs through config:
+        #   -c approval_policy="never"
+        # Keep accepting older CLIs that advertise --ask-for-approval too, but
+        # do not block modern CLIs just because that legacy flag disappeared.
         return {
             "ok": True,
             "status": "exec_help_ok",
             "supports_json": "--json" in help_text,
             "supports_model": "--model" in help_text or " -m" in help_text,
+            "supports_approval_config": True,
+            "supports_legacy_ask_for_approval": "--ask-for-approval" in help_text,
         }
 
     async def _run(
@@ -239,15 +319,25 @@ class CodexCliChatAdapter:
             return 1, "", f"Failed to start Codex CLI: {exc.__class__.__name__}"
 
     @staticmethod
-    def _build_prompt(messages: list[dict[str, Any]]) -> str:
-        parts = [
-            "You are replying through Odysseus' experimental Codex CLI provider.",
-            "Return only the final assistant response.",
-            "Do not run tools, shell commands, file edits, or web requests.",
-            "If a request requires tools, say that this experimental provider does not support tools yet.",
-            "",
-            "Conversation:",
-        ]
+    def _build_prompt(messages: list[dict[str, Any]], allow_odysseus_tools: bool = False) -> str:
+        parts = ["You are replying through Odysseus' Codex CLI provider."]
+        if allow_odysseus_tools:
+            parts.extend([
+                "You are inside Odysseus agent mode. Odysseus, not Codex CLI, executes tools between rounds.",
+                "You are NOT a read-only agent: the local Codex CLI wrapper is constrained, but Odysseus agent tools are allowed to modify the workspace when the user asks.",
+                "You may create, edit, overwrite, and delete files by requesting Odysseus tool blocks such as ```write_file, ```bash, or ```python.",
+                "Use Odysseus fenced tool blocks for shell commands, file edits, browsing, and other tool work; Odysseus will execute them between rounds.",
+                "When you need a tool, output the exact fenced tool block requested by the system prompt (for example ```read_file or ```write_file).",
+                "After Odysseus executes that block, you will receive the result in a later round and can continue.",
+                "Return only assistant text plus any required Odysseus fenced tool blocks; do not explain this wrapper.",
+            ])
+        else:
+            parts.extend([
+                "Return only the final assistant response.",
+                "Do not run tools, shell commands, file edits, or web requests.",
+                "If a request requires tools, say that this experimental provider does not support tools yet.",
+            ])
+        parts.extend(["", "Conversation:"])
         for msg in messages or []:
             if not isinstance(msg, dict):
                 continue
@@ -365,13 +455,7 @@ class CodexModelProvider:
                 status = chat_available.get("status") or "unsupported_unsafe_cli_mode"
             else:
                 base["chat_supported"] = True
-                models.append({
-                    "id": CODEX_EXPERIMENTAL_MODEL_ID,
-                    "display": CODEX_EXPERIMENTAL_MODEL_DISPLAY,
-                    "experimental": True,
-                    "streaming_supported": False,
-                    "session_resume_supported": False,
-                })
+                models.extend(codex_available_models())
 
         return {
             **base,
@@ -393,5 +477,107 @@ class CodexModelProvider:
         messages: list[dict[str, Any]],
         model: str | None = None,
         timeout_seconds: int = CODEX_CHAT_TIMEOUT_SECONDS,
+        allow_odysseus_tools: bool = False,
     ) -> dict[str, Any]:
-        return await self._chat_adapter.complete(messages, model=model, timeout_seconds=timeout_seconds)
+        return await self._chat_adapter.complete(
+            messages,
+            model=model,
+            timeout_seconds=timeout_seconds,
+            allow_odysseus_tools=allow_odysseus_tools,
+        )
+
+
+def is_codex_provider_selection(endpoint_url: str | None, model: str | None = None) -> bool:
+    """Return True when a chat/session selection targets the Codex CLI provider."""
+    endpoint = (endpoint_url or "").strip().rstrip("/")
+    model_id = (model or "").strip()
+    return (
+        endpoint == CODEX_PROVIDER_ENDPOINT_URL
+        or endpoint.startswith(CODEX_PROVIDER_ENDPOINT_URL + "/")
+        or model_id == CODEX_EXPERIMENTAL_MODEL_ID
+    )
+
+
+async def codex_model_picker_item(provider: CodexModelProvider | None = None) -> dict[str, Any] | None:
+    """Build an /api/models item when Codex OAuth is ready.
+
+    The Codex provider is virtual: it is backed by the local Codex CLI/OAuth
+    state, not a ModelEndpoint DB row and not an OpenAI-compatible HTTP URL.
+    """
+    provider = provider or CodexModelProvider()
+    status = await provider.status()
+    models = [m.get("id") for m in (status.get("models") or []) if m.get("id")]
+    if status.get("status") != "available" or not models or not status.get("chat_supported"):
+        return None
+    display_by_id = {m.get("id"): m.get("display") for m in status.get("models") or []}
+    return {
+        "host": "codex",
+        "port": 0,
+        "url": CODEX_PROVIDER_ENDPOINT_URL,
+        "models": models,
+        "models_display": [display_by_id.get(m) or m.split("/")[-1] for m in models],
+        "models_extra": [],
+        "models_extra_display": [],
+        "endpoint_id": CODEX_PROVIDER_ENDPOINT_ID,
+        "endpoint_name": CODEX_PROVIDER_ENDPOINT_NAME,
+        "category": "cloud",
+        "model_type": "llm",
+        "experimental": True,
+        "streaming_supported": False,
+        "session_resume_supported": False,
+        "tool_execution_allowed": False,
+    }
+
+
+async def codex_complete_chat(
+    messages: list[dict[str, Any]],
+    model: str | None = None,
+    provider: CodexModelProvider | None = None,
+    timeout_seconds: int = CODEX_CHAT_TIMEOUT_SECONDS,
+    allow_odysseus_tools: bool = False,
+) -> dict[str, Any]:
+    provider = provider or CodexModelProvider()
+    return await provider.test_chat(
+        messages,
+        model=model or CODEX_EXPERIMENTAL_MODEL_ID,
+        timeout_seconds=timeout_seconds,
+        allow_odysseus_tools=allow_odysseus_tools,
+    )
+
+
+async def stream_codex_chat(
+    messages: list[dict[str, Any]],
+    model: str | None = None,
+    provider: CodexModelProvider | None = None,
+    timeout_seconds: int = CODEX_CHAT_TIMEOUT_SECONDS,
+    allow_odysseus_tools: bool = False,
+):
+    """SSE wrapper for the non-streaming Codex CLI adapter."""
+    result = await codex_complete_chat(
+        messages,
+        model=model,
+        provider=provider,
+        timeout_seconds=timeout_seconds,
+        allow_odysseus_tools=allow_odysseus_tools,
+    )
+    if not result.get("ok"):
+        payload = {
+            "type": "error",
+            "error": result.get("error") or result.get("status") or "Codex CLI provider failed",
+            "status": result.get("status"),
+            "model": result.get("model") or model or CODEX_EXPERIMENTAL_MODEL_ID,
+        }
+        yield f"event: error\ndata: {json.dumps(payload)}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+    message = result.get("message") or ""
+    if message:
+        yield f"data: {json.dumps({'delta': message})}\n\n"
+    metrics = {
+        "model": result.get("model") or model or CODEX_EXPERIMENTAL_MODEL_ID,
+        "response_time": round((result.get("duration_ms") or 0) / 1000, 2),
+        "usage_source": "codex-cli",
+        "streaming_supported": False,
+    }
+    yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
+    yield "data: [DONE]\n\n"
