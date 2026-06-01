@@ -422,8 +422,12 @@ def _expand_rrule(
     Non-recurring events (empty rrule) are returned as a single-item
     list — the caller doesn't need to branch.
     """
+    duration = ev.dtend - ev.dtstart
+
     if not ev.rrule or not ev.rrule.strip():
-        # Non-recurring — return the base event as-is.
+        # Non-recurring — return the base event as-is. list_events
+        # already filters non-recurring rows with the overlap check
+        # in SQL, so we don't re-check here.
         d = _event_to_dict(ev)
         d["is_recurrence"] = False
         d["series_uid"] = ev.uid
@@ -439,19 +443,34 @@ def _expand_rrule(
         d = _event_to_dict(ev)
         d["is_recurrence"] = False
         d["series_uid"] = ev.uid
-        return [d]
+        # Malformed RRULE rows are fetched by the recurring SQL branch
+        # with only dtstart < end_dt — the base event may not actually
+        # overlap the window. Only return if it does.
+        if ev.dtstart < end and ev.dtend > start:
+            return [d]
+        return []
 
-    # `between` gives us all occurrence start times in [start, end).
-    occurrences = rule.between(start, end, inc=True)
+    # Expand from start - duration so multi-day / overnight occurrences
+    # that start before the window but end inside it are captured
+    # (matching non-recurring overlap semantics: dtstart < end AND
+    # dtend > start).
+    expand_start = start - duration
+    occurrences = rule.between(expand_start, end, inc=True)
     if not occurrences:
         return []
 
-    duration = ev.dtend - ev.dtstart
     results = []
     base = _event_to_dict(ev)
 
     for occ_start in occurrences:
         occ_end = occ_start + duration
+
+        # Overlap filter: occurrence must intersect [start, end).
+        # This enforces exclusive-end semantics (occ_start >= end is
+        # excluded) and includes multi-day crossings (occ_end > start).
+        if occ_start >= end or occ_end <= start:
+            continue
+
         # Build the compound uid: {base_uid}::{date} or ::{datetime}
         if ev.all_day:
             occ_uid = f"{ev.uid}::{occ_start.strftime('%Y-%m-%d')}"

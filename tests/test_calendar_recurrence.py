@@ -208,16 +208,94 @@ def test_expand_monthly_all_day():
 
 
 def test_expand_bad_rrule_graceful():
-    """Malformed rrule should fall back to returning the base event."""
+    """Malformed rrule should fall back to returning the base event,
+    but only when the base event overlaps the requested window."""
     cal = _import_calendar_helpers()
     ev = _make_event(
         uid="evt-broken",
         rrule="FREQ=GARBAGE",
     )
+    # Base event (2026-06-01) falls inside the window — should appear
     results = cal._expand_rrule(ev, datetime(2026, 1, 1), datetime(2026, 12, 31))
     assert len(results) == 1
     assert results[0]["uid"] == "evt-broken"
     assert results[0]["is_recurrence"] is False
+
+
+def test_expand_bad_rrule_fallback_rejects_non_overlapping():
+    """Malformed rrule with a base event outside the requested window
+    must return zero results, not leak the event into an unrelated range."""
+    cal = _import_calendar_helpers()
+    ev = _make_event(
+        uid="evt-old-broken",
+        dtstart=datetime(2020, 1, 1, 9, 0),
+        dtend=datetime(2020, 1, 1, 10, 0),
+        rrule="FREQ=GARBAGE",
+    )
+    # Query a far-future window that the base event doesn't overlap
+    results = cal._expand_rrule(ev, datetime(2030, 1, 1), datetime(2030, 2, 1))
+    assert len(results) == 0, (
+        f"Malformed rrule base event outside window should return empty, "
+        f"got {len(results)}: {[r['uid'] for r in results]}"
+    )
+
+
+def test_expand_exclusive_end_boundary():
+    """An occurrence whose start equals the window end must be excluded.
+    The contract is [start, end), same as the non-recurring SQL filter."""
+    cal = _import_calendar_helpers()
+    ev = _make_event(
+        uid="evt-daily",
+        dtstart=datetime(2026, 6, 1, 9, 0),
+        dtend=datetime(2026, 6, 1, 10, 0),
+        rrule="FREQ=DAILY",
+    )
+    # Query [Jun 1, Jun 5) — occurrences on Jun 1-4 only
+    results = cal._expand_rrule(ev, datetime(2026, 6, 1), datetime(2026, 6, 5))
+    uids = [r["uid"] for r in results]
+    assert len(results) == 4, f"Expected 4 (Jun 1-4), got {len(results)}: {uids}"
+    assert "evt-daily::2026-06-05T09:00" not in uids, "Jun 5 is at end boundary, must be excluded"
+
+
+def test_expand_multi_day_crossing_range_start():
+    """A multi-day occurrence that starts before the window but ends inside
+    it must be included (matching non-recurring overlap: dtend > start)."""
+    cal = _import_calendar_helpers()
+    ev = _make_event(
+        uid="evt-weekly-multi",
+        summary="Weekend Trip",
+        dtstart=datetime(2026, 5, 29, 18, 0),   # Friday evening
+        dtend=datetime(2026, 6, 1, 12, 0),       # Monday noon
+        rrule="FREQ=WEEKLY",
+    )
+    # Query the Monday window — the occurrence starts Fri but ends Mon,
+    # so it overlaps the query.
+    results = cal._expand_rrule(ev, datetime(2026, 6, 1), datetime(2026, 6, 2))
+    # The 2026-06-05 occurrence starts Fri Jun 5 and ends Mon Jun 8 —
+    # that crosses [Jun 1, Jun 2): occ_start=2026-06-05 >= end=2026-06-02 → excluded.
+    # The 2026-05-29 occurrence starts Fri May 29 and ends Mon Jun 1 —
+    # occ_end=2026-06-01T12:00 > start=2026-06-01 → included.
+    assert len(results) == 1, (
+        f"Expected 1 occurrence crossing into the window, got {len(results)}: "
+        f"{[r['uid'] for r in results]}"
+    )
+    assert results[0]["uid"] == "evt-weekly-multi::2026-05-29T18:00"
+
+
+def test_expand_multi_day_fully_before_window():
+    """A multi-day occurrence that ends exactly at the window start
+    must be excluded (occ_end <= start)."""
+    cal = _import_calendar_helpers()
+    ev = _make_event(
+        uid="evt-multi",
+        dtstart=datetime(2026, 5, 29, 18, 0),
+        dtend=datetime(2026, 6, 1, 0, 0),   # ends at midnight Jun 1
+        rrule="FREQ=WEEKLY",
+    )
+    # Query starting Jun 1 midnight — occ_end <= start, excluded
+    results = cal._expand_rrule(ev, datetime(2026, 6, 1), datetime(2026, 6, 8))
+    assert len(results) == 1  # only the next week's occurrence (Jun 5-8)
+    assert results[0]["uid"] == "evt-multi::2026-06-05T18:00"
 
 
 def test_expand_metadata_inheritance():
