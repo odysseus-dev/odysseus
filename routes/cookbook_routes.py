@@ -38,7 +38,8 @@ from routes.cookbook_helpers import (
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
-    _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache, _venv_safe_local_pip_install_cmd,
+    _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
+    _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -294,15 +295,6 @@ def setup_cookbook_routes() -> APIRouter:
         safe_chmod(key_path.with_suffix(".pub"), 0o644)
         return {"ok": True, "public_key": _read_cookbook_public_key()}
 
-    def _user_shell_path_bootstrap() -> list[str]:
-        return [
-            'ODYSSEUS_USER_SHELL="${SHELL:-}"',
-            'if [ -n "$ODYSSEUS_USER_SHELL" ] && [ -x "$ODYSSEUS_USER_SHELL" ]; then',
-            '  ODYSSEUS_USER_PATH="$("$ODYSSEUS_USER_SHELL" -ic \'printf "__ODYSSEUS_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__ODYSSEUS_PATH__//p\' | tail -n 1 || true)"',
-            '  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi',
-            'fi',
-        ]
-
     def _needs_binary(cmd: str, binary: str) -> bool:
         return bool(re.search(rf"(^|[\s;&|()]){re.escape(binary)}($|[\s;&|()])", cmd or ""))
 
@@ -443,8 +435,8 @@ def setup_cookbook_routes() -> APIRouter:
         lines.append('export PATH="$HOME/.local/bin:$PATH"')
         # When Odysseus runs from a venv (e.g. native macOS install), put its bin
         # on PATH so the tmux shell finds the bundled `hf`/`python3` without an
-        # activated venv. Local bash runs only — meaningless over SSH/Windows.
-        if not req.remote_host and req.platform != "windows":
+        # activated venv. Local bash runs only — meaningless over SSH.
+        if not req.remote_host:
             lines.append(_local_tooling_path_export(sys.executable))
         # Best-effort install hf CLI (always). hf_transfer (Rust parallel downloader)
         # is fast but flaky on large files — it tends to crash near the end at high

@@ -16,6 +16,7 @@ from routes.cookbook_helpers import (
     _pip_install_fallback_chain,
     _ollama_bind_from_cmd,
     _safe_env_prefix,
+    _user_shell_path_bootstrap,
     _venv_safe_local_pip_install_cmd,
     _validate_gpus,
     _validate_repo_id,
@@ -256,6 +257,17 @@ def test_pip_install_attempt_surfaces_stderr_on_failure():
     # pip's error message should be visible in the output (not swallowed)
     combined = result.stdout + result.stderr
     assert "nonexistent" in combined.lower() or result.returncode != 0
+
+
+def test_local_tooling_path_export_converts_windows_paths_for_bash():
+    line = _local_tooling_path_export(r"C:\Users\Jane Dev\.venv\Scripts\python.exe")
+    assert line == 'export PATH="/c/Users/Jane Dev/.venv/Scripts:$PATH"'
+    assert "C:" not in line
+
+
+def test_user_shell_path_bootstrap_falls_back_to_python_on_windows_bash():
+    script = "\n".join(_user_shell_path_bootstrap())
+    assert 'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }' in script
 
 
 def test_serve_preflight_failure_keeps_tmux_pane_visible():
