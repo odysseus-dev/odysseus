@@ -200,9 +200,9 @@
        then flipped to "all" via JS after load. Mermaid init runs once the
        library finishes loading. Both hooks are wired via addEventListener
        below (inline onload= attrs are blocked by CSP script-src-attr). -->
-  <link id="katex-css" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css" media="print">
-  <script async src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js"></script>
-  <script id="mermaid-script" async src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <link id="katex-css" rel="stylesheet" href="/static/lib/katex/katex.min.css" media="print">
+  <script async src="/static/lib/katex/katex.min.js"></script>
+  <script id="mermaid-script" async src="/static/lib/mermaid.min.js"></script>
   <script nonce="{{CSP_NONCE}}">
     (function(){
       var k = document.getElementById('katex-css');
