@@ -32,6 +32,39 @@ def _parse_sse(chunk: str):
             continue
 
 
+# Directories not worth showing the agent in a repo map.
+_SKIP_DIRS = {
+    ".git", "node_modules", "__pycache__", ".venv", "venv", "data", "logs",
+    ".mypy_cache", ".pytest_cache", "dist", "build", ".next", "target",
+    ".idea", ".vscode",
+}
+
+
+def build_repo_map(root: Path, max_entries: int = 120) -> str:
+    """A compact, depth-limited listing of the project tree for orientation."""
+    root = Path(root)
+    lines: list[str] = []
+    try:
+        for path in sorted(root.rglob("*")):
+            rel = path.relative_to(root)
+            parts = rel.parts
+            if any(p in _SKIP_DIRS for p in parts):
+                continue
+            if len(parts) > 3:  # cap depth
+                continue
+            if path.name.startswith(".") and path.is_file():
+                continue
+            indent = "  " * (len(parts) - 1)
+            suffix = "/" if path.is_dir() else ""
+            lines.append(f"{indent}{path.name}{suffix}")
+            if len(lines) >= max_entries:
+                lines.append("… (truncated)")
+                break
+    except Exception:
+        return ""
+    return "\n".join(lines)
+
+
 def build_project_context(root: Path) -> str:
     """A short system note giving the agent its bearings in the project."""
     lines = [
@@ -49,6 +82,9 @@ def build_project_context(root: Path) -> str:
                 lines.append(f"\nProject guide ({name}):\n{text}")
             except Exception:
                 pass
+    repo_map = build_repo_map(root)
+    if repo_map:
+        lines.append(f"\nProject files (depth-limited):\n{repo_map}")
     return "\n".join(lines)
 
 

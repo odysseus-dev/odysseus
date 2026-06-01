@@ -26,7 +26,9 @@ CONFIG_PATH = Path.home() / ".odysseus" / "cli.toml"
 
 # Default local model server. Ollama speaks the OpenAI-compatible API at /v1.
 DEFAULT_ENDPOINT = "http://localhost:11434/v1"
-DEFAULT_MODEL = "qwen2.5-coder:7b"
+# Interim default. Swap to a stronger coding model (e.g. qwen2.5-coder:7b) via
+# --model, ~/.odysseus/cli.toml, or ODYSSEUS_CLI_MODEL once one is pulled.
+DEFAULT_MODEL = "llama3.2:3b"
 
 # Approval policies for tools that touch the system.
 #   "ask"   — prompt before every bash / write / edit (Claude Code style)

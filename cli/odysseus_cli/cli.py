@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List
@@ -29,6 +30,8 @@ commands:
   /model <name>    switch model (e.g. /model qwen2.5-coder:7b)
   /approval <m>    set approval policy: ask | auto | deny
   /clear           clear the conversation history
+  /save            save this conversation now
+  /sessions        list recent saved sessions
   /exit, /quit     leave the CLI
 """
 
@@ -46,6 +49,10 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
                    help="shortcut for --approval auto (no prompts)")
     p.add_argument("--read-only", action="store_true",
                    help="shortcut for --approval deny (no system mutations)")
+    p.add_argument("--resume", action="store_true",
+                   help="resume the last conversation for this project")
+    p.add_argument("--no-save", action="store_true",
+                   help="do not persist this conversation to ~/.odysseus/sessions")
     p.add_argument("--version", action="version",
                    version=f"odysseus-cli {__version__}")
     return p.parse_args(argv)
@@ -67,17 +74,36 @@ def _resolve_config(args: argparse.Namespace):
     )
 
 
-async def _drive(cfg, approval_state: ApprovalState, one_shot: str | None):
+async def _drive(cfg, approval_state: ApprovalState, one_shot: str | None,
+                 resume: bool = False, autosave: bool = True):
+    from . import session
     from .agent import build_project_context, run_turn
 
     messages: List[Dict] = [
         {"role": "system", "content": build_project_context(cfg.project_root)},
     ]
+    if resume:
+        prev = session.latest_for_root(cfg.project_root)
+        if prev:
+            data = session.load(prev)
+            if data.get("messages"):
+                messages = data["messages"]
+                r.info(f"resumed {len(messages)} messages from {prev.name}")
+        else:
+            r.info("no previous session for this project — starting fresh.")
+
+    def persist() -> None:
+        if autosave:
+            try:
+                session.save(messages, cfg.model, cfg.project_root)
+            except Exception as exc:
+                r.info(f"(could not save session: {exc})")
 
     async def handle(user_text: str) -> None:
         messages.append({"role": "user", "content": user_text})
         reply = await run_turn(cfg, messages)
         messages.append({"role": "assistant", "content": reply})
+        persist()
 
     if one_shot is not None:
         await handle(one_shot)
@@ -105,6 +131,20 @@ async def _drive(cfg, approval_state: ApprovalState, one_shot: str | None):
                 del messages[1:]
                 r.info("history cleared.")
                 continue
+            if cmd == "save":
+                try:
+                    path = session.save(messages, cfg.model, cfg.project_root)
+                    r.info(f"saved → {path}")
+                except Exception as exc:
+                    r.info(f"save failed: {exc}")
+                continue
+            if cmd == "sessions":
+                rows = session.list_sessions()
+                if not rows:
+                    r.info("no saved sessions yet.")
+                for s in rows:
+                    r.info(f"{s['id']}  {s['messages']}msg  {s['model']}  {s['root']}")
+                continue
             if cmd == "model" and rest:
                 cfg = cfg.with_overrides(model=rest)
                 r.info(f"model → {rest}")
@@ -131,12 +171,20 @@ def main(argv: List[str] | None = None) -> int:
         r.error(f"failed to initialize Odysseus runtime: {exc}")
         return 2
 
-    approval_state = ApprovalState(cfg.approval)
+    # Tools run relative to the project root — make it the working directory.
+    try:
+        os.chdir(cfg.project_root)
+    except Exception as exc:
+        r.error(f"cannot enter project root {cfg.project_root}: {exc}")
+        return 2
+
+    approval_state = ApprovalState(cfg.approval, cfg.project_root)
     install_approval(approval_state)
 
     one_shot = " ".join(args.prompt).strip() if args.prompt else None
     try:
-        asyncio.run(_drive(cfg, approval_state, one_shot))
+        asyncio.run(_drive(cfg, approval_state, one_shot,
+                           resume=args.resume, autosave=not args.no_save))
     except KeyboardInterrupt:
         return 130
     return 0

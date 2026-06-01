@@ -121,6 +121,25 @@ def info(msg: str) -> None:
     write(c(f"  {msg}", GREY))
 
 
+def diff(lines: list) -> None:
+    """Render a unified diff with colored +/- lines."""
+    if not lines:
+        write(c("    (no changes)", GREY))
+        return
+    shown = lines[:60]
+    for line in shown:
+        if line.startswith("+") and not line.startswith("+++"):
+            write(c("    " + line[:200], GREEN))
+        elif line.startswith("-") and not line.startswith("---"):
+            write(c("    " + line[:200], RED))
+        elif line.startswith("@@"):
+            write(c("    " + line[:200], CYAN))
+        else:
+            write(c("    " + line[:200], GREY))
+    if len(lines) > len(shown):
+        write(c(f"    … {len(lines) - len(shown)} more diff lines", GREY))
+
+
 def web_sources(sources: list) -> None:
     if not sources:
         return
