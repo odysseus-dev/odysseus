@@ -1,0 +1,25 @@
+{
+  "name": "Odysseus (Ubuntu)",
+  "dockerComposeFile": [
+    "../docker-compose.dev.yml",
+    "docker-compose.yml"
+  ],
+  "service": "odysseus",
+  "workspaceFolder": "/app",
+  "remoteUser": "odysseus",
+  "forwardPorts": [7000, 8080, 8100, 8091],
+  "portsAttributes": {
+    "7000": { "label": "Odysseus UI" },
+    "8080": { "label": "SearXNG" },
+    "8100": { "label": "ChromaDB" },
+    "8091": { "label": "ntfy" }
+  },
+  "postCreateCommand": "python setup.py",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/bin/python3"
+      }
+    }
+  }
+}
