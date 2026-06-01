@@ -1,0 +1,39 @@
+{
+  "_meta": {
+    "code": "ja",
+    "name": "Japanese",
+    "note": "日本語カタログ。en.json のキー集合をミラーします。欠けているキーは en.json にフォールバックします。"
+  },
+  "common": {
+    "save": "保存",
+    "cancel": "キャンセル",
+    "close": "閉じる",
+    "delete": "削除",
+    "edit": "編集",
+    "loading": "読み込み中…",
+    "search": "検索",
+    "confirm": "確認"
+  },
+  "settings": {
+    "title": "設定",
+    "nav": {
+      "services": "モデルを追加",
+      "ai": "AI の既定値",
+      "search": "検索",
+      "integrations": "連携",
+      "email": "メール",
+      "reminders": "リマインダー",
+      "appearance": "外観",
+      "shortcuts": "ショートカット",
+      "account": "アカウント",
+      "tools": "エージェントツール"
+    },
+    "appearance": {
+      "language": {
+        "title": "言語",
+        "label": "インターフェース言語",
+        "hint": "Odysseus インターフェースの言語を変更します。未翻訳のテキストは英語で表示されます。"
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "_meta": {
+    "code": "en",
+    "name": "English",
+    "note": "Source catalog — the canonical key set. Other locales fall back to these strings for any key they omit. Keep keys sorted within each namespace."
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "close": "Close",
+    "delete": "Delete",
+    "edit": "Edit",
+    "loading": "Loading…",
+    "search": "Search",
+    "confirm": "Confirm"
+  },
+  "settings": {
+    "title": "Settings",
+    "nav": {
+      "services": "Add Models",
+      "ai": "AI Defaults",
+      "search": "Search",
+      "integrations": "Integrations",
+      "email": "Email",
+      "reminders": "Reminders",
+      "appearance": "Appearance",
+      "shortcuts": "Shortcuts",
+      "account": "Account",
+      "tools": "Agent Tools"
+    },
+    "appearance": {
+      "language": {
+        "title": "Language",
+        "label": "Interface language",
+        "hint": "Changes the language of the Odysseus interface. Untranslated text falls back to English."
+      }
+    }
+  }
+}
