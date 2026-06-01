@@ -21,7 +21,7 @@ def mock_managers(monkeypatch):
 
 async def _rag(content: str) -> Dict:
     from src.ai_interaction import do_manage_rag
-    return await do_manage_rag(content)
+    return do_manage_rag(content)
 
 
 # ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@ def mock_memory_manager(monkeypatch):
 
 async def _memory(content: str, owner: str = "user1") -> Dict:
     from src.ai_interaction import do_manage_memory
-    return await do_manage_memory(content, owner=owner)
+    return do_manage_memory(content, owner=owner)
 
 
 # ---------------------------------------------------------------------------

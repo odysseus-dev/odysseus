@@ -59,7 +59,7 @@ def mock_session_manager(monkeypatch):
 
 async def _manage(content: str, session_id: str = "sess1", owner: str = "user1") -> Dict:
     from src.ai_interaction import do_manage_session
-    return await do_manage_session(content, session_id=session_id, owner=owner)
+    return do_manage_session(content, session_id=session_id, owner=owner)
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +86,8 @@ class TestManageSessionList:
     @pytest.mark.asyncio
     async def test_list_action_dispatches_to_list_sessions(self) -> None:
         """manage_session with 'list' should delegate to list_sessions logic."""
-        with patch("src.ai_interaction.do_list_sessions", new_callable=AsyncMock) as mock_list:
+        # do_list_sessions is now sync, so patch with a plain MagicMock.
+        with patch("src.ai_interaction.do_list_sessions", new_callable=MagicMock) as mock_list:
             mock_list.return_value = {"results": "listed"}
             result = await _manage("list")
         mock_list.assert_called_once()

@@ -314,13 +314,12 @@ class TestColorValidation:
 class TestModelResolution:
     """Test model resolution error handling."""
 
-    @pytest.mark.asyncio
-    async def test_resolve_model_safe_error_handling(self) -> None:
+    def test_resolve_model_safe_error_handling(self) -> None:
         """Verify resolve_model_safe returns error dict on failure."""
         from src.ai_interaction import resolve_model_safe
 
         # Use a clearly invalid model spec
-        url, model, headers, error = await resolve_model_safe("nonexistent_model_xyz_not_real_12345")
+        url, model, headers, error = resolve_model_safe("nonexistent_model_xyz_not_real_12345")
 
         assert url is None, "URL should be None on error"
         assert model is None, "Model should be None on error"
@@ -329,12 +328,11 @@ class TestModelResolution:
         assert "error" in error, "Error dict should have 'error' key"
         assert isinstance(error["error"], str), "Error message should be string"
 
-    @pytest.mark.asyncio
-    async def test_resolve_model_safe_returns_all_none_on_error(self) -> None:
+    def test_resolve_model_safe_returns_all_none_on_error(self) -> None:
         """Verify resolve_model_safe returns (None, None, None, error_dict) on error."""
         from src.ai_interaction import resolve_model_safe
 
-        result = await resolve_model_safe("invalid_model")
+        result = resolve_model_safe("invalid_model")
 
         assert isinstance(result, tuple), "Should return tuple"
         assert len(result) == 4, "Should return 4-tuple"

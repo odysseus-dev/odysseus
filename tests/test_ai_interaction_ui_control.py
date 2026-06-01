@@ -20,7 +20,7 @@ from typing import Dict
 async def _ui(content: str, session_id: str = None) -> Dict:
     """Shortcut to call do_ui_control."""
     from src.ai_interaction import do_ui_control
-    return await do_ui_control(content, session_id=session_id)
+    return do_ui_control(content, session_id=session_id)
 
 
 # ---------------------------------------------------------------------------

@@ -299,7 +299,7 @@ def is_valid_hex_color(value: str) -> bool:
     return bool(re.match(r'^#[0-9a-fA-F]{6}$', value))
 
 
-async def resolve_model_safe(model_spec: str) -> Tuple[Optional[str], Optional[str], Optional[Dict], Optional[Dict]]:
+def resolve_model_safe(model_spec: str) -> Tuple[Optional[str], Optional[str], Optional[Dict], Optional[Dict]]:
     """Resolve model spec or return error dict.
 
     Wraps _resolve_model with error handling.
@@ -477,7 +477,7 @@ def _image_save_to_gallery(
         return ""
 
 
-async def _image_save_b64(
+def _image_save_b64(
     b64_data: str, prompt: str, model_id: str, size: str, quality: str,
     session_id: Optional[str], owner: Optional[str],
 ) -> tuple:
@@ -677,7 +677,7 @@ def _match_model_id(model_name: str, model_ids: List[str]) -> Optional[str]:
 # Tool implementations
 # ---------------------------------------------------------------------------
 
-async def do_chat_with_model(content: str, session_id: Optional[str] = None) -> Dict:
+async def do_chat_with_model(content: str) -> Dict:
     """Send a message to a specific model and return its response.
 
     Content format:
@@ -716,7 +716,7 @@ async def do_chat_with_model(content: str, session_id: Optional[str] = None) -> 
 _TEACHER_SYSTEM_PROMPT = TEACHER_SYSTEM_PROMPT
 
 
-async def do_ask_teacher(content: str, session_id: Optional[str] = None) -> Dict:
+async def do_ask_teacher(content: str) -> Dict:
     """Ask a more capable model for help.
 
     Content format:
@@ -878,7 +878,7 @@ async def _second_opinion_unify(sess, context_text: str, reviewer_model: str, re
         return original_model, f"(Failed to get unified response: {e})"
 
 
-async def do_create_session(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+def do_create_session(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """Create a new chat session.
 
     Content format:
@@ -929,7 +929,7 @@ async def do_create_session(content: str, session_id: Optional[str] = None, owne
         return {"error": f"Failed to create session: {e}"}
 
 
-async def do_list_sessions(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+def do_list_sessions(content: str, owner: Optional[str] = None) -> Dict:
     """List sessions sorted by most-recently-active first.
 
     Output includes a relative "last active" timestamp per row so the
@@ -1108,7 +1108,7 @@ async def stream_ai_tool(tool: str, content: str, session_id: Optional[str] = No
     yield {"_final": True, "desc": desc, "result": result}
 
 
-async def do_pipeline(content: str, session_id: Optional[str] = None) -> Dict:
+async def do_pipeline(content: str) -> Dict:
     """Execute a multi-step pipeline where each model's output feeds the next.
 
     Content format (JSON):
@@ -1192,7 +1192,7 @@ async def do_pipeline(content: str, session_id: Optional[str] = None) -> Dict:
 # Session management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_session(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+def do_manage_session(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """Manage sessions: list, switch, rename, archive, unarchive, delete, important, truncate, fork.
 
     Accepts both JSON format ({action, session_id, value}) and line format:
@@ -1209,7 +1209,7 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
         return {"error": "Missing action (rename|archive|delete|important|truncate|fork|list|switch)"}
 
     if action == "list":
-        return await do_list_sessions(list_filter, session_id, owner=owner)
+        return do_list_sessions(list_filter, owner=owner)
 
     if not target_sid:
         return {"error": "Need a session_id (or 'current' for the active chat)"}
@@ -1218,7 +1218,7 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
         target_sid = session_id
 
     try:
-        return await _dispatch_session_action(action, target_sid, value, session_id, owner)
+        return _dispatch_session_action(action, target_sid, value, session_id, owner)
     except Exception as e:
         logger.error(f"manage_session failed: {e}")
         return {"error": str(e)}
@@ -1279,7 +1279,7 @@ def _parse_session_lines(raw: str) -> Tuple[str, str, Optional[str], str]:
     return action, target_sid, value, list_filter
 
 
-async def _dispatch_session_action(
+def _dispatch_session_action(
     action: str,
     target_sid: str,
     value: Optional[str],
@@ -1322,7 +1322,7 @@ async def _dispatch_session_action(
             return _session_action_truncate(db_sess, target_sid, value)
 
         if action == "fork":
-            return await _session_action_fork(db_sess, target_sid, value, owner)
+            return _session_action_fork(db_sess, target_sid, value, owner)
 
         return {"error": f"Unknown action '{action}'. Use: {_VALID}"}
 
@@ -1426,7 +1426,7 @@ def _session_action_truncate(db_sess, target_sid: str, value: Optional[str]) -> 
     return {"error": f"Failed to truncate session '{target_sid}'"}
 
 
-async def _session_action_fork(db_sess, target_sid: str, value: Optional[str], owner: Optional[str]) -> Dict:
+def _session_action_fork(db_sess, target_sid: str, value: Optional[str], owner: Optional[str]) -> Dict:
     """Fork a session, copying messages into a new session."""
     if not db_sess:
         return _session_not_found_error(target_sid)
@@ -1478,7 +1478,7 @@ async def _session_action_fork(db_sess, target_sid: str, value: Optional[str], o
 # Memory management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_memory(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+def do_manage_memory(content: str, owner: Optional[str] = None) -> Dict:
     """Manage memories: list, add, edit, delete, search.
 
     Content format:
@@ -1671,7 +1671,7 @@ def _fire_memory_event(event: str, owner: Optional[str]) -> None:
 # List models tool
 # ---------------------------------------------------------------------------
 
-async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict:
+def do_list_models(content: str) -> Dict:
     """List all available models across configured endpoints.
 
     Content = optional filter keyword.
@@ -1764,7 +1764,7 @@ def _fetch_endpoint_model_ids(base: str, headers: Dict, provider: str, anthropic
 # RAG management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
+def do_manage_rag(content: str) -> Dict:
     """Manage RAG indexed documents: list, add_directory, remove_directory.
 
     Content format:
@@ -1871,7 +1871,7 @@ def _rag_action_remove_directory(lines: list) -> Dict:
 # UI control tool (returns events for frontend to apply)
 # ---------------------------------------------------------------------------
 
-async def do_ui_control(content: str, session_id: Optional[str] = None) -> Dict:
+def do_ui_control(content: str, session_id: Optional[str] = None) -> Dict:
     """Control frontend UI: toggle settings, switch model, change theme.
 
     Content format:
@@ -1914,7 +1914,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None) -> Dict:
     }
 
     if action == "switch_model":
-        return await _ui_handle_switch_model(parts, lines, session_id)
+        return _ui_handle_switch_model(parts, lines, session_id)
 
     handler = _HANDLERS.get(action)
     if handler:
@@ -1957,7 +1957,7 @@ def _ui_handle_set_mode(parts: list, lines: list) -> Dict:
     }
 
 
-async def _ui_handle_switch_model(parts: list, lines: list, session_id: Optional[str]) -> Dict:
+def _ui_handle_switch_model(parts: list, lines: list, session_id: Optional[str]) -> Dict:
     """Handle switch_model — validate and apply a model change to the current session."""
     model_spec = " ".join(parts[1:]) if len(parts) > 1 else ""
     if not model_spec:
@@ -2289,7 +2289,7 @@ async def _image_persist_result(
 ) -> Dict:
     """Persist a returned image (b64 or url) and build the tool result dict."""
     if img.get("b64_json"):
-        image_url, image_id = await _image_save_b64(
+        image_url, image_id = _image_save_b64(
             img["b64_json"], prompt, model_id, size, quality, session_id, owner
         )
     elif img.get("url"):
@@ -2320,19 +2320,20 @@ async def dispatch_ai_tool(
 ) -> Tuple[str, Dict]:
     """Dispatch an AI interaction tool. Returns (description, result_dict).
 
-    Each entry in _TOOL_REGISTRY is:
-        tool_name -> (handler_coro, desc_fn)
-    where desc_fn(content) produces the human-readable description string.
+    Each entry in _TOOL_REGISTRY maps a tool name to
+    ``(handler_factory, description_factory)``. Handlers may be sync or async;
+    the result is awaited only when it is actually awaitable, so handlers that
+    do no I/O can stay plain functions.
     """
-    # Registry: tool name → (coroutine_factory, description_factory)
-    # desc_fn receives raw content and returns a short label for the UI.
+    import inspect
+
     _TOOL_REGISTRY = {
         "chat_with_model": (
-            lambda c: do_chat_with_model(c, session_id),
+            lambda c: do_chat_with_model(c),
             lambda c: f"chat_with_model: {get_first_line(c, 60)}",
         ),
         "ask_teacher": (
-            lambda c: do_ask_teacher(c, session_id),
+            lambda c: do_ask_teacher(c),
             lambda c: f"ask_teacher: {get_first_line(c, 60)}",
         ),
         "second_opinion": (
@@ -2344,7 +2345,7 @@ async def dispatch_ai_tool(
             lambda c: f"create_session: {get_first_line(c, 60)}",
         ),
         "list_sessions": (
-            lambda c: do_list_sessions(c, session_id, owner=owner),
+            lambda c: do_list_sessions(c, owner=owner),
             lambda c: f"list_sessions{': ' + c.strip()[:40] if c.strip() else ''}",
         ),
         "send_to_session": (
@@ -2356,15 +2357,15 @@ async def dispatch_ai_tool(
             lambda c: f"manage_session: {get_action_from_content(c)}",
         ),
         "pipeline": (
-            lambda c: do_pipeline(c, session_id),
+            lambda c: do_pipeline(c),
             lambda c: "pipeline: running steps",
         ),
         "manage_memory": (
-            lambda c: do_manage_memory(c, session_id, owner=owner),
+            lambda c: do_manage_memory(c, owner=owner),
             lambda c: f"manage_memory: {get_action_from_content(c)}",
         ),
         "list_models": (
-            lambda c: do_list_models(c, session_id),
+            lambda c: do_list_models(c),
             lambda c: f"list_models{': ' + c.strip()[:40] if c.strip() else ''}",
         ),
         "ui_control": (
@@ -2382,5 +2383,7 @@ async def dispatch_ai_tool(
 
     handler_factory, desc_factory = _TOOL_REGISTRY[tool]
     desc = desc_factory(content)
-    result = await handler_factory(content)
+    result = handler_factory(content)
+    if inspect.isawaitable(result):
+        result = await result
     return desc, result

@@ -76,7 +76,7 @@ def mock_session_manager(monkeypatch):
 
 async def _list(content: str = "", owner: str = "user1") -> Dict:
     from src.ai_interaction import do_list_sessions
-    return await do_list_sessions(content, owner=owner)
+    return do_list_sessions(content, owner=owner)
 
 
 class TestListSessions:
