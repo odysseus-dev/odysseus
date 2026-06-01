@@ -1619,25 +1619,35 @@ def setup_cookbook_routes() -> APIRouter:
         except Exception as e:
             return {"models": [], "error": str(e)}
 
-        # Estimate VRAM from the model id. Looks for patterns like "7B", "70B", "1.5B" etc.
-        # Returns approx VRAM in GB at fp16 (params*2). Caller adjusts for quant.
-        def _est_vram_fp16(repo_id: str) -> float | None:
+        # Extract parameter count (billions) from the model id: "7B", "70B", "1.5B".
+        def _params_b(repo_id: str) -> float | None:
             m = re.search(r'[-_/](\d+(?:\.\d+)?)\s*[Bb](?![a-zA-Z])', repo_id)
-            if not m:
-                return None
-            params_b = float(m.group(1))
-            return params_b * 2.0  # fp16 baseline
+            return float(m.group(1)) if m else None
 
-        # Detect quantization from repo_id / tags. Returns a multiplier on fp16 size.
-        def _quant_factor(repo_id: str, tags: list) -> float:
+        # Bytes-per-param at the quant we'd ACTUALLY run. The old code assumed
+        # fp16 (2 B/param) for any repo without an explicit quant marker, so a
+        # 30B model looked like 60 GB and got filtered out of a 16 GB card's list
+        # — leaving only tiny 1-3B models. In reality you'd run a big model
+        # quantized (Q4 ≈ 0.55 B/param incl. overhead), so estimate that way:
+        # if the repo names a quant use it, otherwise assume Q4 (the common case).
+        def _bytes_per_param(repo_id: str, tags: list) -> float:
             text = (repo_id + " " + " ".join(tags or [])).lower()
-            if "fp4" in text or "nf4" in text or "int4" in text or "4bit" in text or "q4" in text or "awq" in text or "gptq" in text:
-                return 0.25
-            if "int8" in text or "8bit" in text or "q8" in text or "fp8" in text:
-                return 0.5
-            if "bf16" in text or "fp16" in text:
-                return 1.0
-            return 1.0  # default fp16
+            if any(t in text for t in ("q2", "iq2", "2bit")):
+                return 0.34
+            if any(t in text for t in ("q3", "iq3", "3bit")):
+                return 0.46
+            if any(t in text for t in ("fp4", "nf4", "int4", "4bit", "q4", "iq4", "awq", "gptq")):
+                return 0.55
+            if any(t in text for t in ("q5", "5bit")):
+                return 0.68
+            if any(t in text for t in ("q6", "6bit")):
+                return 0.82
+            if any(t in text for t in ("int8", "8bit", "q8", "fp8")):
+                return 1.06
+            if any(t in text for t in ("bf16", "fp16", "f16")):
+                return 2.0
+            # No quant marker → a GGUF/llama.cpp user would run it at ~Q4.
+            return 0.55
 
         # Exclude adapters, LoRAs, datasets, GGUF-only repos, and other non-runnable artifacts
         EXCLUDE_TAG_SUBSTRINGS = (
@@ -1680,18 +1690,27 @@ def setup_cookbook_routes() -> APIRouter:
             if _is_excluded(repo_id, tags):
                 continue
 
-            est_fp16 = _est_vram_fp16(repo_id)
-            quant_mult = _quant_factor(repo_id, tags)
-            est_vram = (est_fp16 * quant_mult) if est_fp16 else None
+            params_b = _params_b(repo_id)
+            # Skip if no size info — without a size we can't tell a real
+            # full-weight model from a tiny adapter, so we'd rather drop it.
+            if params_b is None:
+                continue
+            bpp = _bytes_per_param(repo_id, tags)
+            est_vram = params_b * bpp
             # Add 30% headroom for KV cache, activations, etc.
-            needed_vram = (est_vram * 1.3) if est_vram else None
+            needed_vram = est_vram * 1.3
 
-            if vram_gb > 0 and needed_vram is not None and needed_vram > vram_gb:
-                continue
-            # Skip if no size info — without a size we can't tell if it's a real
-            # full-weight model or a tiny adapter, so we'd rather drop it
-            if est_vram is None:
-                continue
+            if vram_gb > 0:
+                if needed_vram > vram_gb:
+                    continue  # doesn't fit
+                # Lower bound: don't recommend models that barely use the card —
+                # a 1-3B model on 16 GB is a poor use of the hardware when much
+                # larger (smarter) models also fit. Require the model to use at
+                # least ~35% of available VRAM (skip the tiny-model clutter).
+                # Always keep a couple of small ones isn't needed; the Scan list
+                # below already covers the full range.
+                if needed_vram < vram_gb * 0.35:
+                    continue
 
             out.append({
                 "repo_id": repo_id,
@@ -1700,13 +1719,18 @@ def setup_cookbook_routes() -> APIRouter:
                 "createdAt": entry.get("createdAt", ""),
                 "tags": tags[:5],  # trim
                 "pipeline_tag": pipeline_tag,
-                "est_vram_gb": round(est_vram, 1) if est_vram else None,
-                "needed_vram_gb": round(needed_vram, 1) if needed_vram else None,
+                "params_b": params_b,
+                "est_vram_gb": round(est_vram, 1),
+                "needed_vram_gb": round(needed_vram, 1),
             })
-            if len(out) >= limit:
-                break
 
-        return {"models": out}
+        # Order so the best use of the hardware surfaces first: biggest model
+        # that still fits (more params ≈ smarter), trending score as tiebreak
+        # (the pool already arrived in trending order, so a stable sort by
+        # -params keeps trending order within a size). Then cap to `limit`.
+        if vram_gb > 0:
+            out.sort(key=lambda m: m.get("params_b") or 0, reverse=True)
+        return {"models": out[:limit]}
 
     @router.get("/api/cookbook/tasks/status")
     async def cookbook_tasks_status(request: Request):
