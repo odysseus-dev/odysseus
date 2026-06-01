@@ -124,6 +124,79 @@ def _local_tooling_path_export(executable: str) -> str:
     return f'export PATH="{esc}:$PATH"'
 
 
+def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
+    """Build the standalone Python scanner used by /api/model/cached."""
+    lines = [
+        "import json, os",
+        "models = []",
+        "seen = set()",
+        "BLOCKED_ROOTS = ('/sys', '/proc', '/dev', '/run', '/var/run')",
+        "def safe_path(p):",
+        "    try:",
+        "        rp = os.path.realpath(os.path.expanduser(p))",
+        "        return not any(rp == b or rp.startswith(b + os.sep) for b in BLOCKED_ROOTS)",
+        "    except Exception:",
+        "        return False",
+        "def safe_walk(top):",
+        "    if not safe_path(top): return",
+        "    for root, dirs, fns in os.walk(top, followlinks=False):",
+        "        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d)) and safe_path(os.path.join(root, d))]",
+        "        yield root, dirs, fns",
+        "def scan_hf(cache):",
+        "    if not os.path.isdir(cache): return",
+        "    for d in sorted(os.listdir(cache)):",
+        "        if not d.startswith('models--'): continue",
+        "        rid = d.replace('models--','').replace('--','/')",
+        "        if rid in seen: continue",
+        "        seen.add(rid)",
+        "        blobs = os.path.join(cache, d, 'blobs')",
+        "        sz, nf, ic = 0, 0, False",
+        "        if os.path.isdir(blobs):",
+        "            for f in os.scandir(blobs):",
+        "                if f.is_file(): nf += 1; sz += f.stat().st_size",
+        "                if f.name.endswith('.incomplete'): ic = True",
+        "        snap = os.path.join(cache, d, 'snapshots')",
+        "        is_diffusion = False; is_gguf = False",
+        "        if os.path.isdir(snap):",
+        "            for sd in os.listdir(snap):",
+        "                sf = os.path.join(snap, sd)",
+        "                if not os.path.isdir(sf): continue",
+        "                if os.path.exists(os.path.join(sf, 'model_index.json')): is_diffusion = True",
+        "                try:",
+        "                    if any(x.endswith('.gguf') for x in os.listdir(sf)): is_gguf = True",
+        "                except Exception: pass",
+        "        models.append({'repo_id':rid,'size_bytes':sz,'nb_files':nf,'has_incomplete':ic,'path':cache,'is_diffusion':is_diffusion,'is_gguf':is_gguf})",
+        "def scan_dir(p):",
+        "    if not os.path.isdir(p) or not safe_path(p): return",
+        "    for d in sorted(os.listdir(p)):",
+        "        if d.startswith('.'): continue",
+        "        if d.startswith('models--'): continue",
+        "        fp = os.path.join(p, d)",
+        "        if not os.path.isdir(fp) or os.path.islink(fp) or not safe_path(fp): continue",
+        "        if d in seen: continue",
+        "        is_model = False; is_gguf = False",
+        "        for root, dirs, fns in safe_walk(fp):",
+        "            for fn in fns:",
+        "                if fn.endswith('.gguf'): is_gguf = True; is_model = True",
+        "                elif fn == 'config.json' or fn.endswith('.safetensors') or fn.endswith('.bin'): is_model = True",
+        "            if is_model: break",
+        "        if not is_model: continue",
+        "        seen.add(d)",
+        "        sz, nf = 0, 0",
+        "        for dp, _, fns in safe_walk(fp):",
+        "            for fn in fns:",
+        "                try: nf += 1; sz += os.path.getsize(os.path.join(dp, fn))",
+        "                except Exception: pass",
+        "        is_diff = os.path.exists(os.path.join(fp, 'model_index.json'))",
+        "        models.append({'repo_id':d,'size_bytes':sz,'nb_files':nf,'has_incomplete':False,'path':p,'is_local_dir':True,'is_diffusion':is_diff,'is_gguf':is_gguf})",
+        "scan_hf(os.path.expanduser('~/.cache/huggingface/hub'))",
+    ]
+    for model_dir in model_dirs or []:
+        lines.append(f"scan_dir(os.path.expanduser({model_dir!r}))")
+    lines.append("print(json.dumps(models))")
+    return "\n".join(lines) + "\n"
+
+
 def _ps_squote(v: str) -> str:
     """Escape a value for PowerShell single-quoted string interpolation.
     Belt-and-suspenders on top of _validate_token's regex — if the regex
