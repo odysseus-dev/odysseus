@@ -35,6 +35,7 @@ from routes.chat_helpers import (
     clean_thinking_for_save,
     _enforce_chat_privileges,
 )
+from src.action_intents import message_needs_tools as _message_needs_tools
 
 logger = logging.getLogger(__name__)
 
@@ -53,40 +54,6 @@ def _stream_set(session_id: str, **fields) -> None:
     if rec is None:
         return
     rec.update(fields)
-
-
-import re as _re
-# Phrases that clearly signal the user wants to create a todo / reminder /
-# calendar event. When any of these hit in plain chat mode we silently
-# escalate to the agent loop so manage_notes / manage_calendar are in scope.
-_TOOL_INTENT_PATTERNS = [
-    _re.compile(r"\bremind\s+me\b", _re.I),
-    _re.compile(r"\badd\s+(a\s+|an\s+)?(todo|task|reminder)\b", _re.I),
-    _re.compile(r"\b(create|schedule|book)\s+(a\s+|an\s+)?(event|meeting|appointment|reminder|call)\b", _re.I),
-    _re.compile(r"\bput\s+.+\bon\s+(my\s+)?calendar\b", _re.I),
-    _re.compile(r"\b(todo|reminder)\s*:", _re.I),
-    _re.compile(r"\bmake\s+(a\s+|an\s+)?(note|todo|reminder)\b", _re.I),
-    # Email intent — "write/send/email/message [someone]", "write hi to X"
-    _re.compile(r"\b(write|send)\s+.{1,30}\bto\s+\w+", _re.I),
-    _re.compile(r"\b(send|write|reply)\s+(an?\s+)?(email|message|mail)\b", _re.I),
-    _re.compile(r"\b(email|message)\s+\w+\b", _re.I),
-    _re.compile(r"\bcheck\s+(my\s+)?(email|inbox|mail)\b", _re.I),
-    _re.compile(r"\bunread\s+(email|mail)s?\b", _re.I),
-    # Shell / remote-host intent — covers the deepseek "can you ssh into X"
-    # case. We escalate to agent so `bash` is available; the model can still
-    # decide it doesn't need to actually run anything.
-    _re.compile(r"\bssh\s+(in)?to\b", _re.I),
-    _re.compile(r"\bssh\s+\w+", _re.I),
-    _re.compile(r"\b(run|execute)\s+.{1,40}\bon\s+\w+", _re.I),
-    _re.compile(r"\b(can|could|please|would)\s+you\s+(run|execute|exec)\b", _re.I),
-    _re.compile(r"\b(deploy|build|install|restart|reboot|kill|tail|grep|cat|ls|cd|cp|mv|rm)\b\s+\S+", _re.I),
-    _re.compile(r"\b(check|see)\s+(if|whether|what)\s+.{1,40}\b(running|process|service|port|file|exists?)\b", _re.I),
-]
-
-def _message_needs_tools(text: str) -> bool:
-    if not text:
-        return False
-    return any(p.search(text) for p in _TOOL_INTENT_PATTERNS)
 
 
 def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
