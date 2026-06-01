@@ -48,8 +48,6 @@ class DraftUpdate(BaseModel):
 
 
 def _owns(d: EditorDraft, user: Optional[str]) -> bool:
-    if user is None:
-        return True
     return (d.owner or None) == user
 
 

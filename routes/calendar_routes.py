@@ -49,7 +49,7 @@ def _get_or_404_calendar(db, cal_id: str, owner: str) -> CalendarCal:
     # belongs to a different user, treat it as not-found. The previous
     # rule (`if cal.owner and cal.owner != owner`) silently allowed any
     # authenticated user to read/edit any calendar with owner=None.
-    if owner and (cal.owner is None or cal.owner != owner):
+    if cal.owner != owner:
         raise HTTPException(404, "Calendar not found")
     return cal
 
@@ -59,7 +59,7 @@ def _get_or_404_event(db, uid: str, owner: str) -> CalendarEvent:
     if not ev:
         raise HTTPException(404, "Event not found")
     cal = ev.calendar
-    if owner and cal and (cal.owner is None or cal.owner != owner):
+    if not cal or cal.owner != owner:
         raise HTTPException(404, "Event not found")
     return ev
 
@@ -704,7 +704,7 @@ def setup_calendar_routes() -> APIRouter:
                 # passed null-owner (legacy) rows, letting any authenticated
                 # user write events into them. Same null-owner gate as
                 # `_get_or_404_calendar`.
-                if cal and (cal.owner is None or cal.owner != owner):
+                if not cal or cal.owner != owner:
                     raise HTTPException(404, "Calendar not found")
             if not cal:
                 cal = _ensure_default_calendar(db, owner)

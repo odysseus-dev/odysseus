@@ -48,7 +48,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 # unconfigured / localhost-bypass mode the middleware leaves
                 # current_user unset (None), and those sessions are already
                 # served freely everywhere else.
-                if user and session.owner and session.owner != user:
+                if session.owner != user:
                     raise HTTPException(403, "Cannot create document in another user's session")
 
             doc_id = str(uuid.uuid4())
@@ -142,7 +142,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 sess = db.query(DbSession).filter(DbSession.id == session_id).first()
                 if not sess:
                     raise HTTPException(404, "Session not found")
-                if user and sess.owner and sess.owner != user:
+                if sess.owner != user:
                     raise HTTPException(403, "Cannot import into another user's session")
             finally:
                 db.close()
@@ -334,7 +334,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # auth failures.
             if not session:
                 raise HTTPException(404, "Session not found")
-            if user and session.owner and session.owner != user:
+            if session.owner != user:
                 raise HTTPException(403, "Access denied")
             docs = db.query(Document).filter(
                 Document.session_id == session_id

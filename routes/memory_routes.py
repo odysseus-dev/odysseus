@@ -45,8 +45,6 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         allowed any user to read/edit/delete memories with an empty/null owner
         field, which leaked legacy data across the multi-user deploy.
         """
-        if user is None:
-            return  # Auth disabled
         if memory.get("owner") != user:
             raise HTTPException(404, "Memory not found")
 
