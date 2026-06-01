@@ -149,6 +149,9 @@ async def auto_name_session(session_manager, sess):
         t_url, t_model, t_headers = resolve_task_endpoint(
             sess.endpoint_url, sess.model, sess.headers,
         )
+        if not t_model:
+            logger.debug("[auto-name] No model provided, skipping")
+            return
 
         # max_tokens big enough that reasoning models (Minimax M2,
         # DeepSeek R1, QwQ, etc.) have headroom for <think>…</think>
