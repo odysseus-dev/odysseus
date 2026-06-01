@@ -145,11 +145,9 @@ if AUTH_ENABLED:
     # in app.state, called by routes/api_token_routes.
     _token_cache: dict = {}
     _token_cache_lock = _asyncio.Lock()
-    _token_cache_dirty = True
 
     def _token_cache_invalidate():
-        nonlocal_dict = app.state.__dict__
-        nonlocal_dict["_token_cache_dirty"] = True
+        app.state._token_cache_dirty = True
     app.state.invalidate_token_cache = _token_cache_invalidate
     app.state._token_cache = _token_cache
     app.state._token_cache_dirty = True
