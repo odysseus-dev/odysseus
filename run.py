@@ -1,4 +1,5 @@
 import os
+import sys
 import argparse
 import subprocess
 from dotenv import load_dotenv
@@ -22,14 +23,16 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-cmd = ["uvicorn", "app:app", "--host", args.host, "--port", args.port]
+# Fixed: Explicitly using sys.executable guarantees it runs cross-platform
+cmd = [sys.executable, "-m", "uvicorn", "app:app", "--host", args.host, "--port", args.port]
 
 print(f"Launching Odysseus server...")
-print(f"Target: http://{args.host}:{args.port}")
+print(f"Target: http://{args.host}:{args.port}\n")
 
 try:
-    result = subprocess.run(cmd, check=True)
+    # Fixed: Removed result variable; streaming logs live to the console
+    subprocess.run(cmd, check=True)
 except KeyboardInterrupt:
-    print(f"\n[info] Server stopped by user.")
+    print(f"\n[info] Server stopped cleanly by user.")
 except subprocess.CalledProcessError as e:
     print(f"\n[error] Uvicorn failed to start. Exit code: {e.returncode}")
