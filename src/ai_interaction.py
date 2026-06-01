@@ -382,10 +382,15 @@ def _image_build_payload(
     quality: str,
     *,
     is_gpt_image: bool,
-    is_dalle: bool,
     is_local_diffusion: bool,
+    **_kind: bool,  # absorbs is_dalle from the classify-model dict
 ) -> Dict:
-    """Build the images/generations API request payload."""
+    """Build the images/generations API request payload.
+
+    DALL-E 3 rejects a quality field, so only GPT-image and local-diffusion
+    models receive one. ``is_dalle`` is therefore not needed here; it is
+    accepted via ``**_kind`` only so the caller can splat the classify dict.
+    """
     payload: Dict = {
         "model": model_id,
         "prompt": prompt,
@@ -506,7 +511,8 @@ async def _image_download_and_save(
     from pathlib import Path
 
     try:
-        dl = httpx.get(remote_url, timeout=HTTP_TIMEOUT_IMAGE_DOWNLOAD)
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_IMAGE_DOWNLOAD) as client:
+            dl = await client.get(remote_url)
         if dl.status_code == 200:
             img_dir = Path("data/generated_images")
             img_dir.mkdir(parents=True, exist_ok=True)
@@ -525,6 +531,34 @@ async def _image_download_and_save(
 # Pipeline helpers
 # ---------------------------------------------------------------------------
 
+def _pipeline_steps_from_json(stripped: str) -> Optional[List[Dict]]:
+    """Parse pipeline steps from a JSON object/array, or None if not JSON."""
+    if not stripped.startswith(("{", "[")):
+        return None
+    try:
+        data = json.loads(stripped)
+    except (ValueError, TypeError):
+        return None
+    return data.get("steps") if isinstance(data, dict) else data
+
+
+def _pipeline_steps_from_lines(stripped: str) -> Tuple[List[Dict], Optional[Dict]]:
+    """Parse 'model | instruction' lines into steps.
+
+    Returns (steps, error_dict); error_dict is None on success.
+    """
+    steps: List[Dict] = []
+    for line in stripped.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if "|" not in line:
+            return [], {"error": "Each line must be: model | instruction (or use JSON format)"}
+        model_part, instruction_part = line.split("|", 1)
+        steps.append({"model": model_part.strip(), "instruction": instruction_part.strip()})
+    return steps, None
+
+
 def _pipeline_parse_steps(content: str) -> Tuple[Optional[List[Dict]], Optional[Dict]]:
     """Parse pipeline steps from JSON or pipe-delimited line format.
 
@@ -535,26 +569,11 @@ def _pipeline_parse_steps(content: str) -> Tuple[Optional[List[Dict]], Optional[
     if not stripped:
         return None, {"error": "No pipeline steps provided"}
 
-    # Try JSON first
-    steps = None
-    if stripped.startswith(("{", "[")):
-        try:
-            data = json.loads(stripped)
-            steps = data.get("steps") if isinstance(data, dict) else data
-        except (ValueError, TypeError):
-            pass
-
-    # Fall back to line-based format: model | instruction
+    steps = _pipeline_steps_from_json(stripped)
     if steps is None:
-        steps = []
-        for line in stripped.split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            if "|" not in line:
-                return None, {"error": "Each line must be: model | instruction (or use JSON format)"}
-            model_part, instruction_part = line.split("|", 1)
-            steps.append({"model": model_part.strip(), "instruction": instruction_part.strip()})
+        steps, error = _pipeline_steps_from_lines(stripped)
+        if error:
+            return None, error
 
     if not steps:
         return None, {"error": "No pipeline steps provided"}
@@ -605,14 +624,7 @@ def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
     from src.llm_core import _detect_provider, ANTHROPIC_MODELS
 
     spec = spec.strip()
-    target_endpoint_name = None
-
-    if "@" in spec:
-        model_name, target_endpoint_name = spec.rsplit("@", 1)
-        model_name = model_name.strip()
-        target_endpoint_name = target_endpoint_name.strip()
-    else:
-        model_name = spec
+    model_name, target_endpoint_name = _parse_model_spec(spec)
 
     with get_db_session() as db:
         query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled.is_(True))
@@ -634,14 +646,31 @@ def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
         model_ids = _fetch_endpoint_model_ids(base, headers, provider, ANTHROPIC_MODELS)
         model_ids = [m for m in model_ids if m != ENDPOINT_OFFLINE]
 
-        for mid in model_ids:
-            if mid.lower() == model_name.lower():
-                return build_chat_url(base), mid, headers
-        for mid in model_ids:
-            if model_name.lower() in mid.lower() or mid.lower() in model_name.lower():
-                return build_chat_url(base), mid, headers
+        matched = _match_model_id(model_name, model_ids)
+        if matched:
+            return build_chat_url(base), matched, headers
 
     raise ValueError(f"Model '{spec}' not found on any configured endpoint")
+
+
+def _parse_model_spec(spec: str) -> Tuple[str, Optional[str]]:
+    """Split a 'model@endpoint' spec into (model_name, endpoint_name | None)."""
+    if "@" in spec:
+        model_name, endpoint_name = spec.rsplit("@", 1)
+        return model_name.strip(), endpoint_name.strip()
+    return spec, None
+
+
+def _match_model_id(model_name: str, model_ids: List[str]) -> Optional[str]:
+    """Find the best matching model id: exact match first, then substring."""
+    target = model_name.lower()
+    for mid in model_ids:
+        if mid.lower() == target:
+            return mid
+    for mid in model_ids:
+        if target in mid.lower() or mid.lower() in target:
+            return mid
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -768,59 +797,17 @@ async def do_second_opinion(content: str, session_id: Optional[str] = None) -> D
         return {"error": "No conversation context found to review"}
 
     # ── Step 1: Get the reviewer's feedback ──
-    reviewer_message = f"Here's the conversation so far:\n\n{context_text}"
-    if focus:
-        reviewer_message += f"\n\n---\nSpecifically, I want your take on: {focus}"
-    else:
-        reviewer_message += "\n\n---\nGive me your honest second opinion on what's being discussed."
-
     try:
-        review = await llm_call_async(
-            reviewer_url, reviewer_model,
-            [
-                {"role": "system", "content": SECOND_OPINION_REVIEWER_SYSTEM},
-                {"role": "user", "content": reviewer_message},
-            ],
-            headers=reviewer_headers,
-            timeout=AI_CHAT_TIMEOUT,
+        review = await _second_opinion_review(
+            reviewer_url, reviewer_model, reviewer_headers, context_text, focus
         )
-        review = truncate_for_teacher(review)
     except Exception as e:
         logger.error(f"second_opinion reviewer call failed: {e}")
         return {"error": f"Failed to get second opinion from {model_spec}: {e}"}
 
     # ── Step 2: Send review back to session's own model for evaluation ──
-    unified = ""
-    original_model = "unknown"
-    if sess:
-        original_url = sess.endpoint_url
-        original_model = sess.model
-        original_headers = getattr(sess, "headers", None) or {}
+    original_model, unified = await _second_opinion_unify(sess, context_text, reviewer_model, review)
 
-        unify_message = (
-            f"Here's the conversation context:\n\n{context_text}\n\n"
-            f"---\n\n"
-            f"**Review from {reviewer_model}:**\n\n{review}\n\n"
-            f"---\n\n"
-            f"Evaluate this feedback and produce a unified improved version."
-        )
-
-        try:
-            unified = await llm_call_async(
-                original_url, original_model,
-                [
-                    {"role": "system", "content": SECOND_OPINION_UNIFIER_SYSTEM},
-                    {"role": "user", "content": unify_message},
-                ],
-                headers=original_headers,
-                timeout=AI_CHAT_TIMEOUT,
-            )
-            unified = truncate_response(unified)
-        except Exception as e:
-            logger.error(f"second_opinion unify call failed: {e}")
-            unified = f"(Failed to get unified response: {e})"
-
-    # Build combined result
     combined = (
         f"## Second Opinion from {reviewer_model}\n\n{review}"
         f"\n\n---\n\n"
@@ -832,6 +819,63 @@ async def do_second_opinion(content: str, session_id: Optional[str] = None) -> D
         "response": combined,
         "instruction": "Present these results to the user exactly as they are. Do NOT call second_opinion again. The user can continue the conversation from here.",
     }
+
+
+async def _second_opinion_review(
+    reviewer_url: str, reviewer_model: str, reviewer_headers: Dict,
+    context_text: str, focus: str,
+) -> str:
+    """Ask the reviewer model for honest feedback on the conversation."""
+    reviewer_message = f"Here's the conversation so far:\n\n{context_text}"
+    if focus:
+        reviewer_message += f"\n\n---\nSpecifically, I want your take on: {focus}"
+    else:
+        reviewer_message += "\n\n---\nGive me your honest second opinion on what's being discussed."
+
+    review = await llm_call_async(
+        reviewer_url, reviewer_model,
+        [
+            {"role": "system", "content": SECOND_OPINION_REVIEWER_SYSTEM},
+            {"role": "user", "content": reviewer_message},
+        ],
+        headers=reviewer_headers,
+        timeout=AI_CHAT_TIMEOUT,
+    )
+    return truncate_for_teacher(review)
+
+
+async def _second_opinion_unify(sess, context_text: str, reviewer_model: str, review: str) -> Tuple[str, str]:
+    """Have the session's own model evaluate the review and produce a unified result.
+
+    Returns (original_model_name, unified_text). When there is no session, returns
+    ("unknown", "").
+    """
+    if not sess:
+        return "unknown", ""
+
+    original_model = sess.model
+    unify_message = (
+        f"Here's the conversation context:\n\n{context_text}\n\n"
+        f"---\n\n"
+        f"**Review from {reviewer_model}:**\n\n{review}\n\n"
+        f"---\n\n"
+        f"Evaluate this feedback and produce a unified improved version."
+    )
+
+    try:
+        unified = await llm_call_async(
+            sess.endpoint_url, original_model,
+            [
+                {"role": "system", "content": SECOND_OPINION_UNIFIER_SYSTEM},
+                {"role": "user", "content": unify_message},
+            ],
+            headers=getattr(sess, "headers", None) or {},
+            timeout=AI_CHAT_TIMEOUT,
+        )
+        return original_model, truncate_response(unified)
+    except Exception as e:
+        logger.error(f"second_opinion unify call failed: {e}")
+        return original_model, f"(Failed to get unified response: {e})"
 
 
 async def do_create_session(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
@@ -1975,6 +2019,15 @@ def _ui_handle_set_theme(parts: list, lines: list) -> Dict:
     }
 
 
+def _theme_effect_label(bg: Dict) -> Optional[str]:
+    """Return a short label describing a theme's background effect, or None."""
+    if not bg:
+        return None
+    if bg.get("pattern"):
+        return bg["pattern"]
+    return "frosted" if bg.get("frosted") else "custom"
+
+
 def _ui_handle_create_theme(parts: list, lines: list) -> Dict:
     """Handle create_theme — create a custom named theme with colors and optional effects."""
     all_parts = lines[0].strip().split()
@@ -2006,7 +2059,7 @@ def _ui_handle_create_theme(parts: list, lines: list) -> Dict:
     if advanced:
         colors["advanced"] = advanced
 
-    effect_label = bg.get("pattern", "frosted" if bg.get("frosted") else "custom") if bg else None
+    effect_label = _theme_effect_label(bg)
     return {
         "ui_event": "create_theme",
         "theme_name": name,
