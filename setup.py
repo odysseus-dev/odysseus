@@ -157,7 +157,16 @@ def main():
         print(f"\nStart the server with:")
         print(f"  python -m uvicorn app:app --host 127.0.0.1 --port 7000")
         print(f"\nThen open http://localhost:7000")
-    print(f"Login with the admin username and temporary password printed above.\n")
+    
+    # Conditional logic based on your dynamic status tracker
+    if admin_status == "created":
+        print(f"Login with the admin username and temporary password printed above.\n")
+    elif admin_status == "exists":
+        print(f"Login with your existing admin credentials.\n")
+    elif admin_status == "skipped":
+        print(f"WARNING: Admin user was NOT created because dependencies are missing. Please run 'pip install bcrypt' and execute this setup script again to generate your admin account.\n")
+    elif admin_status == "failed":
+        print(f"ERROR: Admin user creation failed due to a system or file error. Please check write permissions for the 'data' directory.\n")
 
 
 if __name__ == "__main__":
