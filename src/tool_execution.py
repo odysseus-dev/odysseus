@@ -167,6 +167,7 @@ async def _run_subprocess_streaming(
     )
 
 _ADMIN_TOOLS = {
+    "app_api",
     "manage_endpoints",
     "manage_mcp",
     "manage_webhooks",

@@ -382,3 +382,34 @@ def test_mcp_config_listing_is_admin_gated():
     assert "def list_servers(request: Request):" in src
     assert "def list_tools(request: Request):" in src
     assert "def list_server_tools(server_id: str, request: Request):" in src
+
+# ── app_api security ──────────────────────────────────────────
+
+def test_app_api_blocklist_normalization():
+    """Verify that app_api correctly normalizes paths to prevent double-slash bypasses."""
+    from src.tool_implementations import app_api
+    import asyncio
+    
+    async def run_test():
+        # Double-slash bypass attempt
+        res = await app_api('{"action": "call", "path": "//api/admin/wipe/chats"}')
+        assert res["exit_code"] == 1
+        assert "Path blocked for safety" in res["error"]
+        
+        # Omitted sensitive endpoint
+        res = await app_api('{"action": "call", "path": "/api/shell/exec"}')
+        assert res["exit_code"] == 1
+        assert "Path blocked for safety" in res["error"]
+        
+        # Traversal attempt
+        res = await app_api('{"action": "call", "path": "/api/chat/../../api/admin/wipe/chats"}')
+        assert res["exit_code"] == 1
+        assert "Path blocked for safety" in res["error"]
+
+    asyncio.run(run_test())
+
+
+def test_app_api_is_admin_tool():
+    """Verify that app_api is restricted to admins."""
+    from src.tool_execution import _ADMIN_TOOLS
+    assert "app_api" in _ADMIN_TOOLS

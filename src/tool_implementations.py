@@ -2585,6 +2585,11 @@ _APP_API_BLOCKLIST_PREFIXES = (
     "/api/tokens/",        # api token mgmt
     "/api/admin/",         # admin one-shots (wipe etc.)
     "/api/backup/restore", # destructive restore
+    "/api/shell/",         # RCE vector (exec/stream)
+    "/api/cookbook/",      # setup/kill-pid/packages/etc.
+    "/api/settings/",      # system settings
+    "/api/prefs/",         # security prefs
+    "/api/email/accounts", # owner-filtered bypass
 )
 
 # (method, prefix) pairs to refuse specifically. Used for endpoints
@@ -2637,6 +2642,7 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     refuses auth/user/admin paths to keep blast radius bounded.
     """
     import httpx
+    import posixpath
     try:
         args = _parse_tool_args(content) if content.strip() else {}
     except ValueError:
@@ -2661,12 +2667,14 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
         for path, methods in (data.get("paths") or {}).items():
             if not isinstance(methods, dict):
                 continue
-            if any(path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
+            # Normalize path before checking blocklist
+            clean_p = posixpath.normpath("/" + path.lstrip("/"))
+            if any(clean_p.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
                 continue
             for method, op in methods.items():
                 if method.lower() not in ("get", "post", "put", "patch", "delete"):
                     continue
-                if any(method.upper() == m and path.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
+                if any(method.upper() == m and clean_p.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
                     continue
                 summary = (op or {}).get("summary") or (op or {}).get("description") or ""
                 if isinstance(summary, str):
@@ -2691,15 +2699,18 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     path = args.get("path") or ""
     if not path:
         return {"error": "path is required (e.g. '/api/cookbook/gpus')", "exit_code": 1}
-    if not path.startswith("/"):
-        path = "/" + path
-    if any(path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
+    
+    # Normalize path to prevent double-slash bypasses (//api/admin)
+    # and directory traversal.
+    clean_path = posixpath.normpath("/" + path.lstrip("/"))
+
+    if any(clean_path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
         return {"error": f"Path blocked for safety: {path}. Auth/user/admin endpoints are off-limits via app_api.", "exit_code": 1}
 
     method = (args.get("method") or "GET").upper()
     if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
         return {"error": f"Unsupported method: {method}", "exit_code": 1}
-    if any(method == m and path.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
+    if any(method == m and clean_path.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
         if "/api/email/accounts" in path:
             return {"error": "Don't use /api/email/accounts via app_api — it is owner-filtered in tool context and may return empty. Use the `list_email_accounts` email tool, then pass `account` to list_emails/read_email.", "exit_code": 1}
         if "/api/model/download" in path:
