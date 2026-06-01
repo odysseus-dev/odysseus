@@ -66,22 +66,6 @@ def _ensure_stub(name: str, **attrs):
         setattr(parent, child_name, mod)
     return mod
 
-_ensure_stub("core.database",
-    SessionLocal=MagicMock(), ScheduledTask=MagicMock(), TaskRun=MagicMock(),
-    ModelEndpoint=MagicMock(), Session=MagicMock(), ChatMessage=MagicMock(),
-    CalendarCal=MagicMock(), CalendarEvent=MagicMock(),
-    Document=MagicMock(), DocumentVersion=MagicMock(),
-    GalleryImage=MagicMock(), GalleryAlbum=MagicMock(), Note=MagicMock(),
-    McpServer=MagicMock(),
-)
-_ensure_stub("core.auth", AuthManager=MagicMock())
-_ensure_stub("src.endpoint_resolver",
-    resolve_endpoint=MagicMock(return_value=("", "", {})),
-    normalize_base=MagicMock(),
-    build_chat_url=MagicMock(),
-    build_headers=MagicMock(),
-)
-
 from fastapi import HTTPException
 
 

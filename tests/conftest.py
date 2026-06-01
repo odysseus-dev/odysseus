@@ -16,6 +16,19 @@ def _has_module(mod_name: str) -> bool:
 
 # Stub optional dependencies only when they are not installed. Do not replace
 # real FastAPI/Starlette/Pydantic modules: route tests import their subpackages.
+if "core.database" not in sys.modules:
+    try:
+        import core.database
+    except Exception:
+        # If the real module can't be imported (e.g. missing deps in a minimal
+        # test env), install a stub so later top-level stubs don't pollute
+        # the global namespace with a raw MagicMock.
+        _db_mod = types.ModuleType("core.database")
+        _db_mod.SessionLocal = MagicMock()
+        _db_mod.ModelEndpoint = MagicMock()
+        _db_mod.Session = MagicMock()
+        sys.modules["core.database"] = _db_mod
+
 for mod_name in [
     "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.types", "sqlalchemy.ext", "sqlalchemy.ext.declarative",
     "sqlalchemy.ext.hybrid", "sqlalchemy.sql", "sqlalchemy.sql.expression",

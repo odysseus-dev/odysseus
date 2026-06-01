@@ -68,6 +68,7 @@ def _install_model_route_import_stubs(monkeypatch):
     db_mod = types.ModuleType("core.database")
     db_mod.SessionLocal = lambda: _FakeDb([])
     db_mod.ModelEndpoint = _FakeModelEndpoint
+    db_mod.Session = MagicMock()
     middleware_mod = types.ModuleType("core.middleware")
     middleware_mod.require_admin = lambda request: None
     multipart_mod = types.ModuleType("python_multipart")

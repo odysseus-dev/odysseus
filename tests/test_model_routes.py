@@ -13,17 +13,6 @@ if _endpoint_resolver is not None and not getattr(_endpoint_resolver, "__file__"
     sys.modules.pop("src.endpoint_resolver", None)
     sys.modules.pop("routes.model_routes", None)
 
-if "core.database" not in sys.modules:
-    _core_db = types.ModuleType("core.database")
-    for _name in [
-        "SessionLocal", "ModelEndpoint", "Session", "ChatMessage", "Document",
-        "DocumentVersion", "GalleryImage", "GalleryAlbum", "Note",
-        "CalendarCal", "CalendarEvent", "ScheduledTask", "TaskRun",
-        "McpServer",
-    ]:
-        setattr(_core_db, _name, MagicMock())
-    sys.modules["core.database"] = _core_db
-
 import routes.model_routes as model_routes
 import src.endpoint_resolver as endpoint_resolver
 from routes.model_routes import (

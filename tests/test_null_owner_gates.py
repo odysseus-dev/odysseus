@@ -18,37 +18,6 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-# `tests/conftest.py` stubs the heavy optional deps. We additionally
-# stub `core.database` here because the real module instantiates
-# SQLAlchemy declarative classes at import-time — which blows up under
-# the conftest's `sqlalchemy.*` MagicMock stubs ("metaclass conflict").
-# Stub also a handful of route modules each of these targeted modules
-# happens to drag in at import-time.
-for _stub in [
-    "core.database",
-    "core.auth",
-    "src.endpoint_resolver",
-]:
-    if _stub not in sys.modules:
-        m = types.ModuleType(_stub)
-        # Provide the names the importers will look up.
-        if _stub == "core.database":
-            m.SessionLocal = MagicMock()
-            m.CalendarCal = MagicMock()
-            m.CalendarEvent = MagicMock()
-            m.Document = MagicMock()
-            m.DocumentVersion = MagicMock()
-            m.Session = MagicMock()
-            m.GalleryImage = MagicMock()
-            m.GalleryAlbum = MagicMock()
-            m.Note = MagicMock()
-            m.ScheduledTask = MagicMock()
-            m.TaskRun = MagicMock()
-            m.ModelEndpoint = MagicMock()
-        elif _stub == "core.auth":
-            m.AuthManager = MagicMock()
-        sys.modules[_stub] = m
-
 from fastapi import HTTPException
 
 
