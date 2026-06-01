@@ -43,6 +43,61 @@ PROGRESS_INTERVAL_S = 2.0
 # snippet without dragging the whole output along.
 PROGRESS_TAIL_LINES = 12
 
+# ---------------------------------------------------------------------------
+# Optional sandboxed code execution
+# ---------------------------------------------------------------------------
+# By default bash/python tool calls run directly on the host (unchanged). When
+# ODYSSEUS_SANDBOX=1 AND a container runtime (podman or docker) is available,
+# the agent's bash/python runs inside a locked-down throwaway container instead:
+# no network, read-only root, dropped capabilities, no-new-privileges, memory /
+# CPU / pid caps, non-root user, a writable tmpfs only. This is opt-in so it
+# changes nothing for existing users and adds no hard dependency — if the env
+# var is off or no runtime is found, execution falls back to the host path.
+import shutil as _shutil  # local alias; stdlib, no new dependency
+
+SANDBOX_ENABLED = os.getenv("ODYSSEUS_SANDBOX", "").strip().lower() in ("1", "true", "yes", "on")
+SANDBOX_IMAGE = os.getenv("ODYSSEUS_SANDBOX_IMAGE", "python:3.12-slim")
+SANDBOX_MEMORY = os.getenv("ODYSSEUS_SANDBOX_MEMORY", "2g")
+SANDBOX_CPUS = os.getenv("ODYSSEUS_SANDBOX_CPUS", "2")
+SANDBOX_PIDS = os.getenv("ODYSSEUS_SANDBOX_PIDS", "256")
+SANDBOX_TMPFS = os.getenv("ODYSSEUS_SANDBOX_TMPFS", "512m")
+
+
+def _sandbox_runtime() -> Optional[str]:
+    """Return 'podman' or 'docker' if sandboxing is enabled and a runtime is on
+    PATH, else None (callers then run on the host as before)."""
+    if not SANDBOX_ENABLED:
+        return None
+    for rt in ("podman", "docker"):
+        if _shutil.which(rt):
+            return rt
+    logger.warning("ODYSSEUS_SANDBOX=1 but neither podman nor docker found — running on host")
+    return None
+
+
+def _wrap_in_sandbox(runtime: str, inner_argv: list, *, network: bool = False) -> list:
+    """Wrap an argv (e.g. ['bash','-lc',code] or ['python','-I','-c',code]) in a
+    hardened, throwaway container. Mirrors the isolation a careful self-hoster
+    wants: no network by default, read-only root, all caps dropped, non-root,
+    resource-bounded, writable tmpfs only. The code is passed as an argument
+    (no bind mount) so nothing from the host is exposed."""
+    argv = [
+        runtime, "run", "--rm", "-i",
+        "--network", "bridge" if network else "none",
+        "--memory", SANDBOX_MEMORY,
+        "--cpus", SANDBOX_CPUS,
+        "--pids-limit", SANDBOX_PIDS,
+        "--read-only",
+        "--tmpfs", f"/tmp:rw,nosuid,nodev,size={SANDBOX_TMPFS}",
+        "--workdir", "/tmp",
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
+        "--user", "65534:65534",   # nobody
+        SANDBOX_IMAGE,
+    ]
+    argv.extend(inner_argv)
+    return argv
+
 
 def get_mcp_manager():
     from src import agent_tools
@@ -324,14 +379,24 @@ async def _direct_fallback(
         "LINES": "40",
     }
 
+    _rt = _sandbox_runtime()
     try:
         if tool == "bash":
-            proc = await asyncio.create_subprocess_shell(
-                content,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=_subproc_env,
-            )
+            if _rt:
+                # Sandboxed: run the script inside a hardened throwaway container.
+                proc = await asyncio.create_subprocess_exec(
+                    *_wrap_in_sandbox(_rt, ["bash", "-lc", content]),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=_subproc_env,
+                )
+            else:
+                proc = await asyncio.create_subprocess_shell(
+                    content,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=_subproc_env,
+                )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
                 proc,
                 timeout=DEFAULT_BASH_TIMEOUT,
@@ -350,14 +415,24 @@ async def _direct_fallback(
             # Run user code in a subprocess so an infinite loop or crash
             # can't take the whole server down. -I = isolated mode (skip
             # user site, no PYTHONPATH inheritance) for hygiene.
-            proc = await asyncio.create_subprocess_exec(
-                # Use the running interpreter — there is no `python3.exe` on
-                # Windows, which made the agent's `python` tool fail there.
-                (sys.executable or "python"), "-I", "-c", content,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=_subproc_env,
-            )
+            if _rt:
+                # Sandboxed: run inside the container's python (the image's
+                # interpreter, not the host's). -I keeps the same hygiene.
+                proc = await asyncio.create_subprocess_exec(
+                    *_wrap_in_sandbox(_rt, ["python", "-I", "-c", content]),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=_subproc_env,
+                )
+            else:
+                proc = await asyncio.create_subprocess_exec(
+                    # Use the running interpreter — there is no `python3.exe` on
+                    # Windows, which made the agent's `python` tool fail there.
+                    (sys.executable or "python"), "-I", "-c", content,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=_subproc_env,
+                )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
                 proc,
                 timeout=DEFAULT_PYTHON_TIMEOUT,
