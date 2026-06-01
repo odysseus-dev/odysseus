@@ -3695,6 +3695,19 @@ async function initUnifiedIntegrations() {
           <div class="settings-row"><label class="settings-label">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="uf-email-from" class="settings-input" placeholder="you@example.com"></div>
           <div id="uf-oauth-section" style="display:none;margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:6px;background:color-mix(in srgb,var(--accent,#50fa7b) 6%,transparent)">
             <div id="uf-oauth-title" style="font-size:11px;font-weight:600;margin-bottom:6px"></div>
+            <details id="uf-oauth-appcfg" style="margin-bottom:8px">
+              <summary style="cursor:pointer;font-size:11px;opacity:0.9">App credentials <span id="uf-oauth-cfgstate" style="opacity:0.7;margin-left:4px"></span></summary>
+              <div style="margin-top:7px;display:flex;flex-direction:column;gap:6px">
+                <div style="font-size:10px;opacity:0.75;line-height:1.5">Register this <b>redirect URI</b> in your provider's app:<br>
+                  <code id="uf-oauth-redirect" style="font-size:10px;word-break:break-all"></code>
+                  <button type="button" id="uf-oauth-redirect-copy" class="admin-btn-sm" style="font-size:10px;margin-left:4px">Copy</button>
+                </div>
+                <input id="uf-oauth-clientid" class="settings-input" placeholder="Client ID" autocomplete="off">
+                <input id="uf-oauth-secret" class="settings-input" type="password" placeholder="Client secret" autocomplete="off">
+                <input id="uf-oauth-tenant" class="settings-input" placeholder="Tenant (common)" autocomplete="off">
+                <button type="button" id="uf-oauth-savecfg" class="admin-btn-add" style="font-size:11px">Save app credentials</button>
+              </div>
+            </details>
             <div id="uf-oauth-status" style="font-size:11px;opacity:0.7;margin-bottom:6px"></div>
             <button type="button" id="uf-oauth-btn" class="admin-btn-add" style="font-size:11px">Connect</button>
           </div>
@@ -3853,14 +3866,66 @@ async function initUnifiedIntegrations() {
           ? `✓ Connected via ${meta.name} OAuth`
           : 'Not connected — fill Name/Email above, then click below to authorize.';
         el('uf-oauth-btn').textContent = connected ? `Reconnect with ${meta.name}` : `Connect with ${meta.name}`;
+        el('uf-oauth-tenant').style.display = prov === 'microsoft' ? '' : 'none';
+        _refreshOauthAppCfg(prov);
       }
     }
+
+    // Load the saved app credentials (Client ID / tenant / redirect URI) for a
+    // provider into the panel. The secret is never returned — a saved one shows
+    // as a placeholder and is kept unless the user types a new value.
+    async function _refreshOauthAppCfg(prov) {
+      try {
+        const r = await fetch(`/api/email/oauth/app-config?provider=${encodeURIComponent(prov)}`, { credentials: 'same-origin' });
+        const d = await r.json();
+        el('uf-oauth-clientid').value = d.client_id || '';
+        el('uf-oauth-secret').value = '';
+        el('uf-oauth-secret').placeholder = d.has_client_secret ? '(saved — leave blank to keep)' : 'Client secret';
+        el('uf-oauth-redirect').textContent = d.redirect_uri || '';
+        if (prov === 'microsoft') el('uf-oauth-tenant').value = d.tenant || 'common';
+        el('uf-oauth-cfgstate').textContent = d.configured ? '✓ configured' : '— not configured yet';
+        el('uf-oauth-appcfg').open = !d.configured;  // auto-expand when unset
+      } catch (_) {}
+    }
+
+    el('uf-oauth-savecfg').addEventListener('click', async () => {
+      const prov = _activeOauth;
+      if (!prov) return;
+      const body = { provider: prov, client_id: el('uf-oauth-clientid').value.trim(), tenant: el('uf-oauth-tenant').value.trim() };
+      const sec = el('uf-oauth-secret').value;
+      if (sec) body.client_secret = sec;
+      const st = el('uf-oauth-cfgstate');
+      st.textContent = 'saving…';
+      try {
+        const r = await fetch('/api/email/oauth/app-config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const d = await r.json();
+        if (d.ok) { await _refreshOauthAppCfg(prov); }
+        else { st.textContent = '— ' + (d.error || 'save failed'); }
+      } catch (e) { st.textContent = '— error: ' + e.message; }
+    });
+
+    el('uf-oauth-redirect-copy').addEventListener('click', async () => {
+      const ok = await _copyProviderUrl(el('uf-oauth-redirect').textContent || '');
+      const b = el('uf-oauth-redirect-copy');
+      if (ok) { b.textContent = 'Copied'; setTimeout(() => { if (b.isConnected) b.textContent = 'Copy'; }, 1200); }
+    });
 
     // "Connect with ..." — persist the account first (we need an account_id to
     // stamp the tokens onto), then redirect into the provider consent flow.
     el('uf-oauth-btn').addEventListener('click', async () => {
       const prov = _activeOauth || 'microsoft';
       const msg = el('uf-email-msg');
+      // Don't leave the page if the OAuth app isn't configured yet.
+      try {
+        const cr = await fetch(`/api/email/oauth/app-config?provider=${encodeURIComponent(prov)}`, { credentials: 'same-origin' });
+        const cd = await cr.json();
+        if (!cd.configured) {
+          msg.textContent = 'Enter the app Client ID + secret under “App credentials” first';
+          msg.style.color = 'var(--red)';
+          el('uf-oauth-appcfg').open = true;
+          return;
+        }
+      } catch (_) {}
       const body = {
         name: el('uf-email-name').value.trim() || el('uf-email-from').value.trim(),
         from_address: el('uf-email-from').value.trim(),

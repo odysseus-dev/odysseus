@@ -3217,10 +3217,12 @@ def setup_email_routes():
     @router.get("/oauth/google/authorize")
     async def google_oauth_authorize(account_id: str = Query(...), request: Request = None, owner: str = Depends(require_user)):
         import urllib.parse
+        from routes.email_helpers import _email_oauth_app
         _assert_owns_account(account_id, owner)
-        client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+        app = _email_oauth_app("google")
+        client_id = app["client_id"]
         if not client_id:
-            raise HTTPException(400, "GOOGLE_OAUTH_CLIENT_ID not set — add it to .env")
+            raise HTTPException(400, "Google OAuth app not configured — add a Client ID and secret in the account's OAuth panel.")
         redirect_uri = (
             os.environ.get("GOOGLE_OAUTH_REDIRECT_URI")
             or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
@@ -3247,6 +3249,7 @@ def setup_email_routes():
     ):
         import urllib.parse
         from fastapi.responses import RedirectResponse as _RR
+        from routes.email_helpers import _email_oauth_app
         if error:
             return _RR("/?section=integrations&email_oauth_error=google_error")
         if not code or not state:
@@ -3256,8 +3259,9 @@ def setup_email_routes():
             return _RR("/?section=integrations&email_oauth_error=invalid_state")
         account_id = state_data.get("a", "")
         owner = state_data.get("o", "")
-        client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
-        client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+        app = _email_oauth_app("google")
+        client_id = app["client_id"]
+        client_secret = app["client_secret"]
         redirect_uri = (
             os.environ.get("GOOGLE_OAUTH_REDIRECT_URI")
             or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
@@ -3339,18 +3343,18 @@ def setup_email_routes():
     @router.get("/oauth/microsoft/authorize")
     async def microsoft_oauth_authorize(account_id: str = Query(...), request: Request = None, owner: str = Depends(require_user)):
         import urllib.parse
-        from routes.email_helpers import MICROSOFT_OAUTH_SCOPES, _microsoft_tenant
+        from routes.email_helpers import MICROSOFT_OAUTH_SCOPES, _email_oauth_app
         _assert_owns_account(account_id, owner)
-        client_id = os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "")
-        if not client_id:
-            raise HTTPException(400, "MICROSOFT_OAUTH_CLIENT_ID not set — add it to .env")
+        app = _email_oauth_app("microsoft")
+        if not app["client_id"]:
+            raise HTTPException(400, "Microsoft OAuth app not configured — add a Client ID and secret in the account's OAuth panel.")
         redirect_uri = (
             os.environ.get("MICROSOFT_OAUTH_REDIRECT_URI")
             or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/microsoft/callback"
         )
         state = make_oauth_state(account_id, owner)
         params = urllib.parse.urlencode({
-            "client_id": client_id,
+            "client_id": app["client_id"],
             "redirect_uri": redirect_uri,
             "response_type": "code",
             "scope": MICROSOFT_OAUTH_SCOPES,
@@ -3359,7 +3363,7 @@ def setup_email_routes():
             "state": state,
         })
         from fastapi.responses import RedirectResponse as _RR
-        authorize_url = f"https://login.microsoftonline.com/{_microsoft_tenant()}/oauth2/v2.0/authorize?{params}"
+        authorize_url = f"https://login.microsoftonline.com/{app['tenant']}/oauth2/v2.0/authorize?{params}"
         return _RR(authorize_url)
 
     @router.get("/oauth/microsoft/callback")
@@ -3370,7 +3374,7 @@ def setup_email_routes():
         request: Request = None,
     ):
         from fastapi.responses import RedirectResponse as _RR
-        from routes.email_helpers import MICROSOFT_OAUTH_SCOPES, _microsoft_tenant
+        from routes.email_helpers import MICROSOFT_OAUTH_SCOPES, _email_oauth_app
         if error:
             return _RR("/?section=integrations&email_oauth_error=microsoft_error")
         if not code or not state:
@@ -3380,8 +3384,9 @@ def setup_email_routes():
             return _RR("/?section=integrations&email_oauth_error=invalid_state")
         account_id = state_data.get("a", "")
         owner = state_data.get("o", "")
-        client_id = os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "")
-        client_secret = os.environ.get("MICROSOFT_OAUTH_CLIENT_SECRET", "")
+        app = _email_oauth_app("microsoft")
+        client_id = app["client_id"]
+        client_secret = app["client_secret"]
         redirect_uri = (
             os.environ.get("MICROSOFT_OAUTH_REDIRECT_URI")
             or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/microsoft/callback"
@@ -3389,7 +3394,7 @@ def setup_email_routes():
         import httpx as _httpx
         try:
             resp = _httpx.post(
-                f"https://login.microsoftonline.com/{_microsoft_tenant()}/oauth2/v2.0/token",
+                f"https://login.microsoftonline.com/{app['tenant']}/oauth2/v2.0/token",
                 data={
                     "code": code,
                     "client_id": client_id,
@@ -3451,5 +3456,52 @@ def setup_email_routes():
         finally:
             db.close()
         return _RR("/?section=integrations&email_oauth_success=1")
+
+    # ── OAuth app credentials (UI-editable, no .env required) ──
+    # Deployment-level Client ID/secret/tenant for each provider, shared by all
+    # of that provider's accounts. Stored in settings.json (secret encrypted),
+    # falling back to env vars. The secret itself is never returned.
+
+    def _oauth_redirect_uri(provider: str, request: Request) -> str:
+        host = request.headers.get("host", "localhost:7000") if request else "localhost:7000"
+        return (
+            os.environ.get(f"{provider.upper()}_OAUTH_REDIRECT_URI")
+            or f"http://{host}/api/email/oauth/{provider}/callback"
+        )
+
+    @router.get("/oauth/app-config")
+    async def get_oauth_app_config(provider: str = Query(...), request: Request = None, owner: str = Depends(require_user)):
+        """Return a provider's OAuth app config (without the secret)."""
+        from routes.email_helpers import _email_oauth_app
+        if provider not in ("microsoft", "google"):
+            raise HTTPException(400, "Unknown provider")
+        app = _email_oauth_app(provider)
+        return {
+            "provider": provider,
+            "client_id": app["client_id"],
+            "tenant": app["tenant"],
+            "has_client_secret": bool(app["client_secret"]),
+            "configured": bool(app["client_id"] and app["client_secret"]),
+            "redirect_uri": _oauth_redirect_uri(provider, request),
+        }
+
+    @router.put("/oauth/app-config")
+    async def set_oauth_app_config(data: dict, owner: str = Depends(require_user)):
+        """Save a provider's OAuth app credentials (client id/secret/tenant)."""
+        from src.secret_storage import encrypt as _enc
+        provider = (data.get("provider") or "").strip()
+        if provider not in ("microsoft", "google"):
+            raise HTTPException(400, "Unknown provider")
+        settings = _load_settings()
+        settings[f"{provider}_oauth_client_id"] = (data.get("client_id") or "").strip()
+        # Only overwrite the secret when a non-empty value is supplied, so
+        # editing the Client ID/tenant later doesn't wipe a stored secret.
+        sec = data.get("client_secret")
+        if sec:
+            settings[f"{provider}_oauth_client_secret"] = _enc(sec)
+        if provider == "microsoft":
+            settings["microsoft_oauth_tenant"] = (data.get("tenant") or "").strip() or "common"
+        _save_settings(settings)
+        return {"ok": True}
 
     return router

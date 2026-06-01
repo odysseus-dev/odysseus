@@ -89,13 +89,56 @@ def verify_oauth_state(state: str) -> dict | None:
         return None
 
 
+def _email_oauth_app(provider: str) -> dict:
+    """Resolve OAuth *app* credentials (client id/secret/tenant) for a provider.
+
+    Self-hosted users configure these in the UI (Settings -> Integrations ->
+    email account -> the OAuth panel), persisted in data/settings.json with the
+    client secret encrypted. Environment variables remain a fallback so
+    existing .env-based setups keep working.
+
+    Returns {"client_id", "client_secret", "tenant"} (tenant only meaningful
+    for Microsoft; "common" by default).
+    """
+    from src.secret_storage import decrypt as _dec
+    settings = _load_settings()
+
+    def _resolve(skey, env):
+        return (settings.get(skey) or "").strip() or os.environ.get(env, "").strip()
+
+    def _resolve_secret(skey, env):
+        enc = settings.get(skey) or ""
+        if enc:
+            try:
+                return _dec(enc)
+            except Exception:
+                return ""
+        return os.environ.get(env, "")
+
+    if provider == "microsoft":
+        tenant = _resolve("microsoft_oauth_tenant", "MICROSOFT_OAUTH_TENANT") or "common"
+        return {
+            "client_id": _resolve("microsoft_oauth_client_id", "MICROSOFT_OAUTH_CLIENT_ID"),
+            "client_secret": _resolve_secret("microsoft_oauth_client_secret", "MICROSOFT_OAUTH_CLIENT_SECRET"),
+            "tenant": tenant,
+        }
+    if provider == "google":
+        return {
+            "client_id": _resolve("google_oauth_client_id", "GOOGLE_OAUTH_CLIENT_ID"),
+            "client_secret": _resolve_secret("google_oauth_client_secret", "GOOGLE_OAUTH_CLIENT_SECRET"),
+            "tenant": "",
+        }
+    return {"client_id": "", "client_secret": "", "tenant": ""}
+
+
 def _refresh_google_token(account_id: str) -> str | None:
     """Exchange the stored refresh token for a new access token and persist it."""
     import httpx
     from core.database import SessionLocal as _SL, EmailAccount as _EA
     from src.secret_storage import encrypt as _enc, decrypt as _dec
-    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
-    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+    _app = _email_oauth_app("google")
+    client_id = _app["client_id"]
+    client_secret = _app["client_secret"]
     if not client_id or not client_secret:
         return None
     db = _SL()
@@ -156,9 +199,9 @@ def _microsoft_tenant() -> str:
     """Azure AD tenant for the authorize/token endpoints.
 
     `common` accepts both consumer (outlook.com/hotmail) and work/school
-    accounts; operators can pin a single tenant id via env.
+    accounts; operators can pin a single tenant id in the UI or via env.
     """
-    return os.environ.get("MICROSOFT_OAUTH_TENANT", "").strip() or "common"
+    return _email_oauth_app("microsoft")["tenant"] or "common"
 
 
 def _refresh_microsoft_token(account_id: str) -> str | None:
@@ -171,8 +214,9 @@ def _refresh_microsoft_token(account_id: str) -> str | None:
     import httpx
     from core.database import SessionLocal as _SL, EmailAccount as _EA
     from src.secret_storage import encrypt as _enc, decrypt as _dec
-    client_id = os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "")
-    client_secret = os.environ.get("MICROSOFT_OAUTH_CLIENT_SECRET", "")
+    _app = _email_oauth_app("microsoft")
+    client_id = _app["client_id"]
+    client_secret = _app["client_secret"]
     if not client_id or not client_secret:
         return None
     db = _SL()
