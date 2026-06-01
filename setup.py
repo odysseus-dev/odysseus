@@ -137,7 +137,7 @@ def main():
 
     print("\n5. Creating initial admin...")
     try:
-        create_default_admin()
+        admin_created = create_default_admin()
     except Exception as e:
         print(f"  [warn] Admin creation failed: {e}")
 
@@ -145,7 +145,10 @@ def main():
     print(f"\nStart the server with:")
     print(f"  python -m uvicorn app:app --host 0.0.0.0 --port 7000")
     print(f"\nThen open http://localhost:7000")
-    print(f"Login with the admin username and temporary password printed above.\n")
+    if admin_created:
+        print(f"Login with the admin username and temporary password printed above.\n")
+    else:
+        print(f"Login with your existing admin credentials.\n")
 
 
 if __name__ == "__main__":
