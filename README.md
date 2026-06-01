@@ -38,6 +38,10 @@ Open `http://localhost:7000` when the containers are healthy. The first admin pa
 
 Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](docs/setup.md).
 
+### System requirements
+
+Odysseus requires Python 3.11+ for native installs and Docker Compose for the recommended container setup. The core app runs on modest CPU-only hosts when you use API or remote model providers; local model serving depends on the selected runtime, model size, GPU, and available VRAM.
+
 ## Features
 
 - **Chat + Agents** — local/API models, tools, MCP, files, shell, skills, and memory.
