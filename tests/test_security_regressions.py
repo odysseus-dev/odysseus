@@ -296,15 +296,85 @@ def test_chat_preprocess_does_not_surface_cross_owner_attachment(tmp_path, monke
 
 
 def test_document_upload_lookup_rejects_cross_owner_marker(tmp_path, monkeypatch):
+    from src.upload_handler import UploadHandler
+
     sys.modules.pop("routes.document_helpers", None)
     _stub_core_database_for_route_imports(monkeypatch)
     from routes.document_helpers import _locate_upload
 
     upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
 
-    assert _locate_upload(str(upload_dir), bob_id, owner="alice") is None
-    assert _locate_upload(str(upload_dir), bob_id, owner="bob").endswith(bob_id)
+    assert _locate_upload(str(upload_dir), bob_id, owner="alice", upload_handler=handler) is None
+    assert _locate_upload(str(upload_dir), bob_id, owner="bob", upload_handler=handler).endswith(bob_id)
     sys.modules.pop("routes.document_helpers", None)
+
+
+def test_find_source_upload_id_rejects_path_traversal_marker():
+    from src.pdf_form_doc import find_source_upload_id
+
+    content = '<!-- pdf_source upload_id="../../etc/passwd" -->\n\n# x\n'
+    assert find_source_upload_id(content) is None
+
+
+def test_pdf_marker_write_rejects_cross_owner_upload(tmp_path, monkeypatch):
+    """Saving a doc whose front-matter points at another user's upload must 400."""
+    from src.upload_handler import UploadHandler
+
+    sys.modules.pop("routes.document_helpers", None)
+    _stub_core_database_for_route_imports(monkeypatch)
+    from fastapi import HTTPException
+    from routes.document_helpers import _assert_pdf_marker_upload_owned
+
+    upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+
+    class _AuthMgr:
+        is_configured = True
+
+        @staticmethod
+        def is_admin(_user):
+            return False
+
+    class _AppState:
+        auth_manager = _AuthMgr()
+
+    class _App:
+        state = _AppState()
+
+    class _Req:
+        app = _App()
+
+    marker = f'<!-- pdf_source upload_id="{bob_id}" -->\n\n# Notes\n'
+    with pytest.raises(HTTPException) as exc:
+        _assert_pdf_marker_upload_owned(_Req(), marker, "alice", handler)
+    assert exc.value.status_code == 400
+
+    # Own upload is allowed
+    own_marker = f'<!-- pdf_source upload_id="{_alice_id}" -->\n\n# Notes\n'
+    _assert_pdf_marker_upload_owned(_Req(), own_marker, "alice", handler)
+
+    sys.modules.pop("routes.document_helpers", None)
+
+
+def test_pdf_marker_render_lookup_denies_cross_owner_without_doc_leak(tmp_path):
+    """Read path: cross-owner marker resolves to None (404 at route layer)."""
+    from src.upload_handler import UploadHandler
+
+    upload_dir, alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+
+    class _AuthMgr:
+        is_configured = True
+
+        @staticmethod
+        def is_admin(_user):
+            return False
+
+    assert handler.resolve_upload(bob_id, owner="alice", auth_manager=_AuthMgr()) is None
+    resolved = handler.resolve_upload(alice_id, owner="alice", auth_manager=_AuthMgr())
+    assert resolved is not None
+    assert resolved["path"].endswith(alice_id)
 
 
 # ── require_user dependency rejects anon callers ────────────────

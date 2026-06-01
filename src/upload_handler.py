@@ -29,6 +29,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+UPLOAD_ID_RE = re.compile(r"^[0-9a-fA-F]{32}\.[A-Za-z0-9]+$")
+
+
+def is_valid_upload_id(upload_id: str) -> bool:
+    """Return True when *upload_id* matches the canonical uploads.json id format."""
+    return UPLOAD_ID_RE.fullmatch(upload_id or "") is not None
+
+
 class UploadHandler:
     def __init__(self, base_dir: str, upload_dir: str):
         self.base_dir = base_dir
@@ -223,8 +231,7 @@ class UploadHandler:
     
     def validate_upload_id(self, upload_id: str) -> bool:
         """Validate that the upload ID matches the expected pattern."""
-        pattern = r'^[0-9a-fA-F]{32}\.[A-Za-z0-9]+$'
-        return re.fullmatch(pattern, upload_id) is not None
+        return is_valid_upload_id(upload_id)
 
     def _inside_upload_dir(self, path: str) -> bool:
         """Check if path is inside the upload directory."""
