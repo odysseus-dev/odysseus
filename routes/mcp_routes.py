@@ -87,6 +87,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
         args: str = Form("[]"),
         env: str = Form("{}"),
         url: str = Form(None),
+        headers: str = Form("{}"),
         oauth_file: str = Form(None),
         oauth_config: str = Form(None),
     ):
@@ -99,8 +100,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
         # Validate
         if transport == "stdio" and not command:
             raise HTTPException(400, "command is required for stdio transport")
-        if transport == "sse" and not url:
-            raise HTTPException(400, "url is required for SSE transport")
+        if transport in ("sse", "http", "streamable-http", "streamable_http") and not url:
+            raise HTTPException(400, f"url is required for {transport} transport")
 
         # Parse JSON fields
         try:
@@ -111,6 +112,13 @@ def setup_mcp_routes(mcp_manager: McpManager):
             parsed_env = json.loads(env) if env else {}
         except json.JSONDecodeError:
             parsed_env = {}
+        # HTTP headers for sse/http transports (e.g. {"Authorization": "Bearer ..."}).
+        try:
+            parsed_headers = json.loads(headers) if headers else {}
+        except json.JSONDecodeError:
+            parsed_headers = {}
+        if not isinstance(parsed_headers, dict):
+            parsed_headers = {}
 
         # Parse OAuth config
         parsed_oauth_config = None
@@ -162,6 +170,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 url=url,
                 is_enabled=True,
                 oauth_config=json.dumps(parsed_oauth_config) if parsed_oauth_config else None,
+                headers=json.dumps(parsed_headers) if parsed_headers else None,
             )
             db.add(srv)
             db.commit()
@@ -185,6 +194,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 args=parsed_args,
                 env=parsed_env,
                 url=url,
+                headers=parsed_headers,
             )
 
         status = mcp_manager.get_server_status(server_id)

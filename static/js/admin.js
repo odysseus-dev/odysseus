@@ -1444,6 +1444,40 @@ function initMcpForm() {
   const transportSel = el('adm-mcpTransport');
   const sseRow = el('adm-mcpSseRow');
   const envRow = el('adm-mcpEnvRow');
+
+  // Add "http" (Streamable HTTP) transport option if not already present.
+  // The backend McpManager routes transport "http"/"streamable-http" to the
+  // streamable-HTTP client — the modern remote-MCP transport. Idempotent.
+  if (transportSel && !Array.from(transportSel.options).some(o => o.value === 'http')) {
+    const httpOpt = document.createElement('option');
+    httpOpt.value = 'http';
+    httpOpt.textContent = 'Streamable HTTP';
+    transportSel.appendChild(httpOpt);
+  }
+
+  // Headers (JSON) input — shown for the url-based transports (sse|http) so
+  // authed remote MCP servers can carry e.g. an Authorization bearer header.
+  // Created dynamically (mirrors the env raw-JSON fallback) and inserted after
+  // the URL row so it sits with the other url-transport fields.
+  let headersRow = el('adm-mcpHeadersRow');
+  if (!headersRow && sseRow) {
+    headersRow = document.createElement('div');
+    headersRow.id = 'adm-mcpHeadersRow';
+    headersRow.className = sseRow.className || 'admin-model-form-row';
+    headersRow.style.cssText = (sseRow.style.cssText || '') + 'display:none;';
+    const hLabel = document.createElement('span');
+    hLabel.style.cssText = 'font-size:11px;opacity:0.55;min-width:0;white-space:nowrap;';
+    hLabel.textContent = 'Headers (JSON)';
+    const hInput = document.createElement('input');
+    hInput.id = 'adm-mcpHeaders';
+    hInput.type = 'text';
+    hInput.placeholder = '{"Authorization": "Bearer ..."}';
+    hInput.style.cssText = 'flex:1;';
+    headersRow.appendChild(hLabel);
+    headersRow.appendChild(hInput);
+    sseRow.parentElement.insertBefore(headersRow, sseRow.nextSibling);
+  }
+  const headersInput = el('adm-mcpHeaders');
   const envFieldsWrap = el('adm-mcpEnvFields');
   const helpBox = el('adm-mcpHelp');
   const cmdRow = cmdEl.parentElement;
@@ -1554,10 +1588,12 @@ function initMcpForm() {
   }
 
   transportSel.addEventListener('change', () => {
-    const isSse = transportSel.value === 'sse';
-    sseRow.style.display = isSse ? '' : 'none';
-    cmdRow.style.display = isSse ? 'none' : '';
-    if (isSse) { _clearEnvFields(); helpBox.style.display = 'none'; }
+    // sse + http are both url-based transports: reveal URL + Headers, hide command.
+    const isUrlTransport = transportSel.value === 'sse' || transportSel.value === 'http';
+    sseRow.style.display = isUrlTransport ? '' : 'none';
+    if (headersRow) headersRow.style.display = isUrlTransport ? '' : 'none';
+    cmdRow.style.display = isUrlTransport ? 'none' : '';
+    if (isUrlTransport) { _clearEnvFields(); helpBox.style.display = 'none'; }
   });
 
   // Preset catalog
@@ -1577,6 +1613,7 @@ function initMcpForm() {
       el('adm-mcpCommand').value = p.command;
       el('adm-mcpArgs').value = JSON.stringify(p.args);
       sseRow.style.display = 'none';
+      if (headersRow) headersRow.style.display = 'none';
       cmdRow.style.display = '';
       _buildEnvFields(p.env, p.help || null, p);
       _activeOauthFile = p.oauthFile || null;
@@ -1596,13 +1633,16 @@ function initMcpForm() {
     const args = el('adm-mcpArgs').value.trim() || '[]';
     const env = _collectEnv();
     const url = el('adm-mcpUrl').value.trim();
+    const headers = headersInput ? headersInput.value.trim() : '';
     const msg = el('adm-mcpMsg');
     if (!name) { msg.textContent = 'Name is required'; msg.className = 'admin-error'; return; }
     if (transport === 'stdio' && !command) { msg.textContent = 'Command is required for stdio'; msg.className = 'admin-error'; return; }
-    if (transport === 'sse' && !url) { msg.textContent = 'URL is required for SSE'; msg.className = 'admin-error'; return; }
+    if ((transport === 'sse' || transport === 'http') && !url) { msg.textContent = 'URL is required for ' + (transport === 'http' ? 'Streamable HTTP' : 'SSE'); msg.className = 'admin-error'; return; }
     try { JSON.parse(env); } catch { msg.textContent = 'Env must be valid JSON'; msg.className = 'admin-error'; return; }
+    if (headers) { try { JSON.parse(headers); } catch { msg.textContent = 'Headers must be valid JSON'; msg.className = 'admin-error'; return; } }
     const fd = new FormData();
     fd.append('name', name); fd.append('transport', transport); fd.append('command', command); fd.append('args', args); fd.append('env', env); fd.append('url', url);
+    if (headers) fd.append('headers', headers);
     // If preset has oauthFile config, send credentials for file generation
     if (_activeOauthFile) {
       const envObj = JSON.parse(env);
@@ -1628,6 +1668,7 @@ function initMcpForm() {
         msg.textContent = `Added ${name} (${data.tool_count} tools discovered)`; msg.className = 'admin-success';
       } else { msg.textContent = `Added but connection failed: ${data.error || 'unknown'}`; msg.className = 'admin-error'; }
       el('adm-mcpName').value = ''; el('adm-mcpCommand').value = ''; el('adm-mcpArgs').value = ''; el('adm-mcpUrl').value = '';
+      if (headersInput) headersInput.value = '';
       _clearEnvFields(); helpBox.style.display = 'none'; _activeHelp = null; _activeOauthFile = null; _activeOauth = null;
       loadMcpServers();
     } catch (e) { msg.textContent = 'Failed: ' + e.message; msg.className = 'admin-error'; }

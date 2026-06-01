@@ -35,13 +35,21 @@ class McpManager:
         args: Optional[List[str]] = None,
         env: Optional[Dict[str, str]] = None,
         url: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> bool:
-        """Connect to an MCP server via stdio or SSE transport."""
+        """Connect to an MCP server via stdio, SSE, or streamable-HTTP transport.
+
+        `headers` carries per-server HTTP headers (e.g. Authorization: Bearer ...)
+        for the sse/http transports, so authed remote MCP servers (GitHub, Linear,
+        Sentry, Cloudflare, etc.) can be added directly without a stdio bridge.
+        """
         try:
             if transport == "stdio":
                 return await self._connect_stdio(server_id, name, command, args or [], env or {})
             elif transport == "sse":
-                return await self._connect_sse(server_id, name, url)
+                return await self._connect_sse(server_id, name, url, headers or {})
+            elif transport in ("http", "streamable-http", "streamable_http"):
+                return await self._connect_http(server_id, name, url, headers or {})
             else:
                 logger.error(f"Unknown MCP transport: {transport}")
                 return False
@@ -109,15 +117,15 @@ class McpManager:
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
 
-    async def _connect_sse(self, server_id: str, name: str, url: str) -> bool:
-        """Connect to an MCP server via SSE transport."""
+    async def _connect_sse(self, server_id: str, name: str, url: str, headers: Optional[Dict[str, str]] = None) -> bool:
+        """Connect to an MCP server via SSE transport (with optional auth headers)."""
         try:
             from mcp import ClientSession
             from mcp.client.sse import sse_client
             from contextlib import AsyncExitStack
 
             stack = AsyncExitStack()
-            transport = await stack.enter_async_context(sse_client(url))
+            transport = await stack.enter_async_context(sse_client(url, headers=headers or None))
             read_stream, write_stream = transport
             session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
 
@@ -151,6 +159,53 @@ class McpManager:
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
 
+    async def _connect_http(self, server_id: str, name: str, url: str, headers: Optional[Dict[str, str]] = None) -> bool:
+        """Connect to an MCP server via streamable-HTTP transport (with optional auth headers).
+
+        This is the modern remote-MCP transport used by most hosted/SaaS MCP
+        servers (GitHub, Linear, Sentry, Cloudflare, builders.dev, ...). Unlike
+        SSE, streamablehttp_client yields a 3-tuple (read, write, get_session_id).
+        """
+        try:
+            from mcp import ClientSession
+            from mcp.client.streamable_http import streamablehttp_client
+            from contextlib import AsyncExitStack
+
+            stack = AsyncExitStack()
+            transport = await stack.enter_async_context(streamablehttp_client(url, headers=headers or None))
+            # streamable-http yields (read, write, get_session_id); SSE/stdio yield 2.
+            read_stream, write_stream = transport[0], transport[1]
+            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+
+            await session.initialize()
+
+            tools_result = await session.list_tools()
+            tools = []
+            for tool in tools_result.tools:
+                tools.append({
+                    "name": tool.name,
+                    "description": tool.description or "",
+                    "input_schema": tool.inputSchema if hasattr(tool, 'inputSchema') else {},
+                })
+
+            self._sessions[server_id] = session
+            self._stacks[server_id] = stack
+            self._tools[server_id] = tools
+            self._connections[server_id] = {
+                "status": "connected",
+                "name": name,
+                "transport": "http",
+                "tool_count": len(tools),
+            }
+
+            logger.info(f"MCP server connected: {name} ({server_id}) - {len(tools)} tools via streamable-HTTP")
+            return True
+
+        except ImportError:
+            logger.warning("MCP package missing streamable-http client. Upgrade with: pip install -U mcp")
+            self._connections[server_id] = {"status": "error", "error": "mcp streamable-http client unavailable", "name": name}
+            return False
+
     async def disconnect_server(self, server_id: str):
         """Disconnect from an MCP server."""
         stack = self._stacks.pop(server_id, None)
@@ -181,6 +236,7 @@ class McpManager:
             for srv in servers:
                 args = json.loads(srv.args) if srv.args else []
                 env = json.loads(srv.env) if srv.env else {}
+                headers = json.loads(srv.headers) if getattr(srv, "headers", None) else {}
                 await self.connect_server(
                     server_id=srv.id,
                     name=srv.name,
@@ -189,6 +245,7 @@ class McpManager:
                     args=args,
                     env=env,
                     url=srv.url,
+                    headers=headers,
                 )
         finally:
             db.close()
