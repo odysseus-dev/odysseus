@@ -180,6 +180,23 @@ python setup.py
 python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
 
+**Desktop app** (the Windows equivalent of `build-macos-app.sh`). After the
+venv exists (run `launch-windows.ps1` once), build a native app:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build-windows-app.ps1
+```
+
+A launcher starts the local server in the background (no terminal window)
+and shows the UI in a **WebView2** window. The window and its taskbar icon show the
+Odysseus logo. It produces `dist\Odysseus.lnk` and, by default, a matching
+**Start-Menu** entry that pins to the taskbar (pass `-NoStartMenu` to skip);
+override the port with `-Port`. The server stops when you close the window, and
+your login/theme persist between launches. The build installs `pywebview` into
+the venv; **WebView2** ships with Windows 11. Like the macOS builder, this
+drives the repo's venv rather than bundling Python, so re-run it if you move the
+repo.
+
 **Requirements:** Python 3.11+. The core app (chat, agent, memory, documents,
 email, calendar, deep research) runs fully native. For full **Cookbook** background
 model downloads and the agent shell tool, also install
