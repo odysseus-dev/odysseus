@@ -26,7 +26,8 @@ GPU_BANDWIDTH = {
     "m1 ultra": 800, "m1 max": 400, "m1 pro": 200, "m1": 68,
     "m2 ultra": 800, "m2 max": 400, "m2 pro": 200, "m2": 100,
     "m3 ultra": 800, "m3 max": 300, "m3 pro": 150, "m3": 100,
-    "m4 max": 410, "m4 pro": 273, "m4": 120,
+    "m4 max": 546, "m4 pro": 273, "m4": 120,
+    "m5 max": 546, "m5 pro": 273, "m5": 150,
 }
 
 # Pre-sort keys by length descending for correct substring matching
