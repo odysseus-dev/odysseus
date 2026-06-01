@@ -2,6 +2,7 @@ import pytest
 from fastapi import HTTPException
 
 from routes.cookbook_helpers import (
+    _append_serve_preflight_exit_lines,
     _local_tooling_path_export,
     _safe_env_prefix,
     _validate_gpus,
@@ -58,3 +59,24 @@ def test_local_tooling_path_export_preserves_spaces_and_expands_path():
     line = _local_tooling_path_export("/Users/John Smith/.venv/bin/python3")
     assert line == 'export PATH="/Users/John Smith/.venv/bin:$PATH"'
     assert line.endswith(':$PATH"')  # $PATH stays expandable in double quotes
+
+
+def test_serve_preflight_failure_keeps_tmux_pane_visible():
+    """Dependency preflight failures should remain visible in tmux output.
+
+    A bare `exit 127` kills the tmux pane before the browser/status poller can
+    capture the helpful error, leaving users with a blank "crashed" card.
+    """
+    runner_lines = [
+        'ODYSSEUS_PREFLIGHT_EXIT=""',
+        'echo "ERROR: vLLM is not installed. Open Cookbook -> Dependencies and install vllm on this server, then launch again."',
+        'ODYSSEUS_PREFLIGHT_EXIT=127',
+    ]
+    _append_serve_preflight_exit_lines(runner_lines, keep_shell_open=True)
+    script = "\n".join(runner_lines)
+
+    assert "ERROR: vLLM is not installed" in script
+    assert 'ODYSSEUS_PREFLIGHT_EXIT=127' in script
+    assert 'echo "=== Process exited with code $ODYSSEUS_PREFLIGHT_EXIT ==="' in script
+    assert 'exec "${SHELL:-/bin/bash}"' in script
+    assert "exit 127" not in script

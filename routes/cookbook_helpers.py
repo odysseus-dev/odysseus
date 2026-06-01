@@ -214,6 +214,17 @@ def _validate_serve_cmd(v: str | None) -> str | None:
     return v
 
 
+def _append_serve_preflight_exit_lines(runner_lines: list[str], *, keep_shell_open: bool) -> None:
+    """Append serve-runner lines that surface preflight failures before exit."""
+    runner_lines.append('if [ -n "$ODYSSEUS_PREFLIGHT_EXIT" ]; then')
+    runner_lines.append('  echo ""; echo "=== Process exited with code $ODYSSEUS_PREFLIGHT_EXIT ==="')
+    if keep_shell_open:
+        runner_lines.append('  exec "${SHELL:-/bin/bash}"')
+    else:
+        runner_lines.append('  exit "$ODYSSEUS_PREFLIGHT_EXIT"')
+    runner_lines.append('fi')
+
+
 class ModelDownloadRequest(BaseModel):
     repo_id: str
     include: str | None = None  # glob pattern e.g. "*Q4_K_M*"

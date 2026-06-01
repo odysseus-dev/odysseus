@@ -36,7 +36,7 @@ from routes.cookbook_helpers import (
     _validate_repo_id, _validate_include, _validate_remote_host, _validate_token,
     _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
-    _safe_env_prefix, _local_tooling_path_export,
+    _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -950,6 +950,7 @@ def setup_cookbook_routes() -> APIRouter:
             # ── Linux/Termux: bash + tmux (existing flow) ──
             runner_lines = ["#!/bin/bash"]
             runner_lines.extend(_user_shell_path_bootstrap())
+            runner_lines.append('ODYSSEUS_PREFLIGHT_EXIT=""')
             # Put Odysseus's own venv bin on PATH (local runs only) so the serve
             # shell resolves the bundled python3/hf, mirroring the download flow.
             if not remote:
@@ -1020,7 +1021,7 @@ def setup_cookbook_routes() -> APIRouter:
                 # command (the natural serving engine on Apple Silicon / Metal).
                 runner_lines.append('if ! command -v ollama &>/dev/null; then')
                 runner_lines.append('  echo "ERROR: Ollama not found. Install it (macOS: brew install ollama, or https://ollama.com/download), then launch again."')
-                runner_lines.append('  exit 127')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
                 runner_lines.append('if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then')
                 runner_lines.append('  echo "Starting ollama server..."; (ollama serve >/dev/null 2>&1 &)')
@@ -1030,7 +1031,7 @@ def setup_cookbook_routes() -> APIRouter:
                 # vLLM is CUDA/ROCm-only and does not run on macOS at all.
                 runner_lines.append('if [ "$(uname -s)" = "Darwin" ]; then')
                 runner_lines.append('  echo "ERROR: vLLM does not run on macOS. Use Ollama or llama.cpp (Metal) instead."')
-                runner_lines.append('  exit 1')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=1')
                 runner_lines.append('fi')
                 # Put ~/.local/bin on PATH first — without a venv, vllm installs
                 # there via --user and the non-login serve shell otherwise can't
@@ -1038,21 +1039,25 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! command -v vllm &>/dev/null; then')
                 runner_lines.append('  echo "ERROR: vLLM is not installed. Open Cookbook -> Dependencies and install vllm on this server, then launch again."')
-                runner_lines.append('  exit 127')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
             elif "sglang.launch_server" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! python3 -c "import sglang" 2>/dev/null; then')
                 runner_lines.append('  echo "ERROR: SGLang is not installed. Open Cookbook -> Dependencies and install sglang on this server, then launch again."')
-                runner_lines.append('  exit 127')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
             elif "scripts/diffusion_server.py" in req.cmd or ".diffusion_server.py" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! python3 -c "import torch, diffusers" 2>/dev/null; then')
                 runner_lines.append('  echo "ERROR: Diffusion serving requires PyTorch + diffusers. Open Cookbook -> Dependencies and install diffusers on this server, then launch again."')
-                runner_lines.append('  exit 127')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
 
+            _append_serve_preflight_exit_lines(
+                runner_lines,
+                keep_shell_open=not local_windows,
+            )
             runner_lines.append(req.cmd)
             if local_windows:
                 # Detached background process — no interactive shell to keep open.
