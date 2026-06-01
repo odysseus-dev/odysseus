@@ -1424,6 +1424,46 @@ def setup_cookbook_routes() -> APIRouter:
         if gpus:
             return {"ok": True, "gpus": gpus, "backend": "cuda", "source": "nvidia-smi"}
 
+        # Local Apple Silicon / Metal fallback. macOS has no nvidia-smi and no
+        # Linux /sys/class/drm tree, but services.hwfit.hardware already knows
+        # how to size the shared unified-memory GPU budget. Keep this route in
+        # sync so Cookbook's GPU picker doesn't show "nvidia-smi not found" on
+        # native Mac launches.
+        if not host and sys.platform == "darwin":
+            try:
+                from services.hwfit.hardware import detect_system
+                info = detect_system(fresh=True)
+                backend = str(info.get("backend") or "").lower()
+                if backend in {"metal", "mps", "apple"} and info.get("gpu_count", 0) > 0:
+                    total_mb = int(float(info.get("gpu_vram_gb") or info.get("total_ram_gb") or 0) * 1024)
+                    free_mb = int(float(info.get("available_ram_gb") or 0) * 1024)
+                    if total_mb and (free_mb <= 0 or free_mb > total_mb):
+                        free_mb = total_mb
+                    used_mb = max(0, total_mb - max(0, free_mb))
+                    return {
+                        "ok": True,
+                        "gpus": [{
+                            "index": 0,
+                            "name": info.get("gpu_name") or info.get("cpu_name") or "Apple Silicon GPU",
+                            "uuid": "apple-metal-0",
+                            "free_mb": max(0, free_mb),
+                            "total_mb": max(0, total_mb),
+                            "used_mb": used_mb,
+                            "util_pct": 0,
+                            "busy": bool(total_mb and (free_mb / total_mb) < 0.5),
+                            "processes": [],
+                            "backend": "metal",
+                            "source": "apple-metal",
+                            "unified_memory": True,
+                        }],
+                        "backend": "metal",
+                        "source": "apple-metal",
+                        "fallback_from": "nvidia-smi",
+                        "nvidia_error": nvidia_error,
+                    }
+            except Exception as e:
+                logger.warning("Apple Metal GPU fallback failed: %s", e)
+
         amd_gpus = await _probe_amd_sysfs(host, ssh_port)
         if amd_gpus:
             return {
