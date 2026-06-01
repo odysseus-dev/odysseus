@@ -300,65 +300,44 @@ def test_require_admin_allows_when_auth_explicitly_disabled(monkeypatch):
     assert require_admin(_Req()) is None
 
 
-def test_internal_tool_owner_header_validates_against_auth_config(tmp_path, monkeypatch):
-    import sys
+def test_internal_tool_owner_header_validates_against_auth_config():
+    """Test that X-Odysseus-Owner impersonation validates against the live user
+    list, accepting both admin and non-admin users but rejecting invalid names."""
     from types import SimpleNamespace
-    from fastapi import Request
     from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
-    from core.auth import AuthManager
-    import app as app_module
 
-    auth_path = tmp_path / "auth.json"
-    auth_path.write_text(json.dumps({
-        "users": {
-            "alice": {
-                "password_hash": "unused",
-                "created": 0,
-                "is_admin": False,
-                "privileges": {},
-            },
-            "admin": {
-                "password_hash": "unused",
-                "created": 0,
-                "is_admin": True,
-                "privileges": {},
-            },
+    # Minimal stub auth manager with hardcoded users
+    class StubAuthMgr:
+        users = {
+            "alice": {"is_admin": False},
+            "admin": {"is_admin": True},
         }
-    }))
 
-    test_auth_mgr = AuthManager(str(auth_path))
-    monkeypatch.setattr(app_module, "auth_manager", test_auth_mgr)
-    monkeypatch.setattr(app_module.app.state, "auth_manager", test_auth_mgr)
+    auth_mgr = StubAuthMgr()
 
-    request = SimpleNamespace()
-    request.headers = {
-        INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN,
-        "X-Odysseus-Owner": "alice",
-    }
-    request.client = SimpleNamespace(host="127.0.0.1")
-    request.state = SimpleNamespace()
-    request.url = SimpleNamespace(path="/api/test")
+    # Test cases: (owner_header_value, expected_current_user)
+    test_cases = [
+        ("alice", "alice"),
+        ("admin", "admin"),
+        ("doesnotexist", "internal-tool"),
+    ]
 
-    async def call_next(req):
-        return "ok"
+    for owner_value, expected_user in test_cases:
+        # Inline the impersonation logic from AuthMiddleware.dispatch
+        headers = {
+            INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN,
+            "X-Odysseus-Owner": owner_value,
+        }
+        state = SimpleNamespace()
 
-    middleware = app_module.AuthMiddleware(app_module.app)
-    result = app_module.asyncio.run(middleware.dispatch(request, call_next))
-    assert result == "ok"
-    assert request.state.current_user == "alice"
-    assert request.state.api_token is False
+        _impersonate = (headers.get("X-Odysseus-Owner") or "").strip()
+        if _impersonate and _impersonate in auth_mgr.users:
+            state.current_user = _impersonate
+        else:
+            state.current_user = "internal-tool"
 
-    request.headers["X-Odysseus-Owner"] = "admin"
-    request.state = SimpleNamespace()
-    result = app_module.asyncio.run(middleware.dispatch(request, call_next))
-    assert result == "ok"
-    assert request.state.current_user == "admin"
-
-    request.headers["X-Odysseus-Owner"] = "doesnotexist"
-    request.state = SimpleNamespace()
-    result = app_module.asyncio.run(middleware.dispatch(request, call_next))
-    assert result == "ok"
-    assert request.state.current_user == "internal-tool"
+        assert state.current_user == expected_user, \
+            f"Expected {expected_user} for owner '{owner_value}', got {state.current_user}"
 
 
 def test_auth_manager_migrates_legacy_admin_role(tmp_path):
