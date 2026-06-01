@@ -4,6 +4,61 @@ import re
 
 QUANT_HIERARCHY = ["Q8_0", "Q6_K", "Q5_K_M", "Q4_K_M", "Q3_K_M", "Q2_K"]
 
+COMPATIBILITY_MATRIX = {
+    # Backend / Architecture -> list of supported formats/quantizations.
+    # Note: GGUF represents GGUF format, AWQ, GPTQ, FP8, mlx are prequantized formats.
+    "cuda": ["GGUF", "AWQ", "GPTQ", "FP8"],
+    # Consumer AMD cards (like Navi 21, gfx1030) are not officially supported by vLLM for AWQ/GPTQ,
+    # but run GGUF models perfectly via llama.cpp and Ollama.
+    "rocm:gfx1030": ["GGUF"],
+    "rocm": ["GGUF"],  # Default ROCm fallback
+    "mps": ["GGUF", "MLX"],
+    "metal": ["GGUF", "MLX"],
+    "apple": ["GGUF", "MLX"],
+    "cpu_x86": ["GGUF"],
+    "cpu_arm": ["GGUF"],
+}
+
+def get_model_format(model):
+    """Determine the quantization format of a model."""
+    if model.get("gguf_sources"):
+        return "GGUF"
+    q = (model.get("quantization") or "").upper()
+    if q.startswith("AWQ"):
+        return "AWQ"
+    if q.startswith("GPTQ"):
+        return "GPTQ"
+    if q.startswith("MLX"):
+        return "mlx"
+    if q == "FP8":
+        return "FP8"
+    if not is_prequantized(model):
+        return "GGUF"
+    return "UNKNOWN"
+
+def is_format_compatible(backend, arch, quant_format):
+    """Check if a given format (e.g., 'GGUF', 'AWQ', 'GPTQ', 'FP8', 'mlx')
+    is compatible with the host backend and architecture.
+    """
+    backend = (backend or "cpu_x86").lower()
+    arch = (arch or "").lower()
+    
+    # MLX is strictly for Apple Silicon
+    if quant_format.lower() == "mlx" and backend not in ("mps", "metal", "apple"):
+        return False
+        
+    # Resolve lookup key
+    key = f"{backend}:{arch}"
+    if key in COMPATIBILITY_MATRIX:
+        allowed = COMPATIBILITY_MATRIX[key]
+    elif backend in COMPATIBILITY_MATRIX:
+        allowed = COMPATIBILITY_MATRIX[backend]
+    else:
+        allowed = COMPATIBILITY_MATRIX.get("cpu_x86", ["GGUF"])
+        
+    return quant_format.upper() in allowed
+
+
 QUANT_BPP = {
     "F32": 4.0, "F16": 2.0, "BF16": 2.0, "FP8": 1.0,
     "Q8_0": 1.05, "Q6_K": 0.80, "Q5_K_M": 0.68,

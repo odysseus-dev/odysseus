@@ -4,6 +4,7 @@ from services.hwfit.models import (
     params_b, estimate_memory_gb, infer_use_case,
     get_models, is_prequantized, _active_params_b, QUANT_BYTES_PER_PARAM,
     QUANT_SPEED_MULT, QUANT_QUALITY_PENALTY,
+    get_model_format, is_format_compatible,
 )
 
 GPU_BANDWIDTH = {
@@ -416,12 +417,18 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     # unrunnable suggestions.
     system_backend = (system.get("backend") or "").lower()
     apple_silicon = system_backend in ("mps", "metal", "apple")
+    system_arch = (system.get("gpu_arch") or "").lower()
 
     for m in models:
         native_q = m.get("quantization", "")
 
         # Drop MLX models on non-Apple hardware
         if not apple_silicon and native_q.startswith("mlx-"):
+            continue
+
+        # Filter by platform compatibility matrix (e.g. drop AWQ/GPTQ/FP8 on AMD/gfx1030)
+        fmt = get_model_format(m)
+        if not is_format_compatible(system_backend, system_arch, fmt):
             continue
 
         # Format filter: AWQ tab → only AWQ models, FP8 tab → only FP8 models

@@ -867,7 +867,7 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  mkdir -p ~/bin')
                 runner_lines.append('  cd ~ && [ -d llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp')
                 # GPU build if CUDA is present; fall back to a plain (CPU) build.
-                runner_lines.append('  cd ~/llama.cpp && { cmake -B build -DGGML_CUDA=ON 2>/dev/null || cmake -B build; } \\')
+                runner_lines.append('  cd ~/llama.cpp && { [ -f /opt/rocm/bin/hipcc ] && HIP_PATH=/opt/rocm ROCM_PATH=/opt/rocm LD_LIBRARY_PATH=/opt/rocm/lib LDFLAGS="-L/opt/rocm/lib" cmake -B build -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1030 -DCMAKE_C_COMPILER=/opt/rocm/bin/hipcc -DCMAKE_CXX_COMPILER=/opt/rocm/bin/hipcc 2>/dev/null || cmake -B build -DGGML_CUDA=ON 2>/dev/null || cmake -B build; } \\')
                 runner_lines.append('    && cmake --build build -j"$(nproc)" --target llama-server \\')
                 runner_lines.append('    && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
                 runner_lines.append('  # If the native build failed, fall back to the Python bindings.')

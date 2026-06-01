@@ -186,6 +186,23 @@ def _detect_amd():
             return None
         total_vram = sum(c["vram_gb"] for c in cards)
         groups = _group_gpus(cards)
+        
+        # Detect AMD GPU Architecture (e.g., gfx1030) using rocminfo
+        gfx_version = None
+        rocminfo_out = _run(["rocminfo"])
+        if not rocminfo_out and _remote_host:
+            # Fallback path for remote login shells
+            rocminfo_out = _run("bash -lc 'export PATH=\"$PATH:/opt/rocm/bin\"; rocminfo'")
+        if not rocminfo_out:
+            # Try absolute path
+            rocminfo_out = _run(["/opt/rocm/bin/rocminfo"])
+        
+        if rocminfo_out:
+            import re
+            m = re.search(r"Name:\s+(gfx\d+)", rocminfo_out)
+            if m:
+                gfx_version = m.group(1)
+
         # NOTE: for APUs with BIOS UMA carveout (e.g. Strix Halo), vis_vram_total
         # is the real usable GPU memory — it's physically backed but reserved
         # by BIOS so it doesn't appear in /proc/meminfo. Don't cap it at system
@@ -198,6 +215,7 @@ def _detect_amd():
             "gpu_groups": groups,
             "homogeneous": len(groups) <= 1,
             "backend": "rocm",
+            "gpu_arch": gfx_version,
             "unified_memory": is_apu,
         }
     except Exception:
@@ -427,6 +445,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             "gpu_groups": gpu_info.get("gpu_groups", []),
             "homogeneous": gpu_info.get("homogeneous", True),
             "backend": gpu_info["backend"],
+            "gpu_arch": gpu_info.get("gpu_arch"),
         }
     else:
         if _remote_host:

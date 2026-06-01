@@ -17,6 +17,11 @@ if "core.database" not in sys.modules:
         setattr(_core_db, _name, MagicMock())
     sys.modules["core.database"] = _core_db
 
+# Clean up polluted sys.modules if other tests stubbed them with MagicMock
+for _mod in ["src.endpoint_resolver", "src.llm_core", "routes.model_routes"]:
+    if _mod in sys.modules and isinstance(sys.modules[_mod], MagicMock):
+        del sys.modules[_mod]
+
 import routes.model_routes as model_routes
 import src.endpoint_resolver as endpoint_resolver
 from routes.model_routes import (

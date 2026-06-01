@@ -488,6 +488,21 @@ export async function _hwfitFetch(fresh = false) {
     }
     _hwfitCache = data;
     _hwfitRenderHw(hw, data.system);
+
+    // Disable and hide CUDA-only options (AWQ, FP8) in quant dropdown for AMD/gfx1030 GPUs
+    const quantSel = document.getElementById('hwfit-quant');
+    if (quantSel && data.system) {
+      const isAMD = (data.system.backend === 'rocm') || (data.system.gpu_arch === 'gfx1030');
+      Array.from(quantSel.options).forEach(opt => {
+        if (opt.value === 'AWQ-4bit' || opt.value === 'FP8') {
+          opt.disabled = isAMD;
+          opt.style.display = isAMD ? 'none' : '';
+        }
+      });
+      if (isAMD && (quantSel.value === 'AWQ-4bit' || quantSel.value === 'FP8')) {
+        quantSel.value = 'Q4_K_M';
+      }
+    }
     // Sort client-side by the active column so the highest↔lowest toggle is
     // deterministic (the previous array .reverse() didn't reliably flip).
     // 1st click on a column = highest first; clicking it again = lowest first.
