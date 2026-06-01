@@ -814,6 +814,15 @@ def setup_chat_routes(
                                         pct = min(round((last_metrics["input_tokens"] / ctx.context_length) * 100, 1), 100.0)
                                         last_metrics["context_percent"] = pct
                                         last_metrics["context_length"] = ctx.context_length
+                                    # The frontend reads `tokens_per_second`; the raw usage event
+                                    # carries the backend's true gen speed as `gen_tps` (llama.cpp
+                                    # timings). Map it through so this direct-chat path shows real
+                                    # t/s instead of "n/a" → falling back to a bare token count.
+                                    if last_metrics.get("gen_tps") and not last_metrics.get("tokens_per_second"):
+                                        last_metrics["tokens_per_second"] = last_metrics["gen_tps"]
+                                        last_metrics["tps_source"] = "backend"
+                                    # Wall-clock response time for the stats popup ("Time").
+                                    last_metrics.setdefault("response_time", round(time.time() - _chat_start, 2))
                                     yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             except json.JSONDecodeError:
                                 yield chunk
