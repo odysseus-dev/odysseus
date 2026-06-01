@@ -211,6 +211,22 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
         except Exception:
             pass
 
+    # Try Ollama /api/show — reports GGUF native context used as Ollama's serving default.
+    # Only for local endpoints; fails silently on non-Ollama servers.
+    if _is_local_endpoint(endpoint_url) and api_ctx is None:
+        try:
+            base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rsplit("/", 1)[0]
+            r = httpx.post(f"{base}/api/show", json={"name": model}, timeout=REQUEST_TIMEOUT)
+            if r.is_success:
+                model_info = r.json().get("model_info") or {}
+                for key, val in model_info.items():
+                    if key.endswith(".context_length") and isinstance(val, int) and val > 0:
+                        logger.info(f"Ollama /api/show reports context_length={val} for {model}")
+                        api_ctx = val
+                        break
+        except Exception:
+            pass
+
     models_url = endpoint_url.replace("/chat/completions", "/models")
     try:
         r = httpx.get(models_url, timeout=REQUEST_TIMEOUT)
