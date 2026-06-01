@@ -420,6 +420,14 @@ export function _buildServeCmd(f, modelName, backend) {
       // llama-cpp-python exposes these as type_k/type_v; pass through best-effort.
       _lcpExtra += ` --type_k ${_kv} --type_v ${_kv}`;
     }
+    // Vision: serve the multimodal projector so the model can read images. The
+    // mmproj path is resolved at runtime (find mmproj-*.gguf next to the model);
+    // only emitted when the Vision toggle is on AND a projector was found.
+    if (f.vision && f._mmproj_path) {
+      _lcExtra += ` --mmproj "${f._mmproj_path}" --image-max-tokens 1024`;
+      // llama-cpp-python takes the projector via --clip_model_path.
+      _lcpExtra += ` --clip_model_path "${f._mmproj_path}"`;
+    }
     const _lcpServer = `${lcPrefix}${py} -m llama_cpp.server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} --n_gpu_layers ${f.ngl || '99'} --n_ctx ${f.ctx || '8192'}${_lcpExtra}`;
     if (_isWindows()) {
       cmd += _lcpServer;

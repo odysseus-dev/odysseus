@@ -1320,9 +1320,16 @@ def setup_cookbook_routes() -> APIRouter:
             total_mb = max(0, int(total_bytes / (1024 * 1024)))
             used_mb = max(0, min(total_mb, int(used_bytes / (1024 * 1024))))
             free_mb = max(0, total_mb - used_mb)
+            # GTT = the system-RAM pool the GPU pages into when VRAM is full.
+            # On a discrete card a large gtt_used means the model spilled past
+            # VRAM into RAM over PCIe — much slower. Surface it so the UI can
+            # warn "spilling to RAM" instead of the user wondering why it's slow.
+            gtt_used_raw = await _gpu_read_file(f"{base}/mem_info_gtt_used", host, ssh_port)
+            gtt_used_mb = max(0, int(int(gtt_used_raw) / (1024 * 1024))) if (gtt_used_raw and gtt_used_raw.isdigit()) else 0
             gpus.append({
                 "index": len(gpus), "name": name, "uuid": entry,
                 "free_mb": free_mb, "total_mb": total_mb, "used_mb": used_mb,
+                "gtt_used_mb": gtt_used_mb,
                 "util_pct": 0, "busy": bool(total_mb and (free_mb / total_mb) < 0.85),
                 "processes": [], "backend": "rocm", "source": "amd-sysfs",
                 "unified_memory": unified,

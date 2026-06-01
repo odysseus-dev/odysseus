@@ -435,12 +435,20 @@ function _rerenderCachedModels() {
       panelHtml += `<label>${_l('CPU MoE','n-cpu-moe: number of MoE expert layers to run on CPU when the model is bigger than VRAM. 0 = all on GPU. Set automatically by the Auto profiles below.')}<input type="text" class="hwfit-sf" data-field="n_cpu_moe" value="${esc(sv('n_cpu_moe',''))}" placeholder="0" style="width:54px;" /></label>`;
       panelHtml += `<label>${_l('KV Cache','cache-type-k/v: quantize the KV cache. q4_0 = smallest (more context), q8_0 = sharp long-context, f16 = full. Blank = llama.cpp default.')}<select class="hwfit-sf" data-field="cache_type">${_kvOpts}</select></label>`;
       panelHtml += `<label class="hwfit-sf-cb" style="align-self:end;"><input type="checkbox" class="hwfit-sf" data-field="flash_attn"${sv('flash_attn',false)?' checked':''} /> Flash Attn${_h('--flash-attn on: faster attention + needed for quantized KV cache.')}</label>`;
+      panelHtml += `<label class="hwfit-sf-cb" style="align-self:end;"><input type="checkbox" class="hwfit-sf" data-field="vision"${sv('vision',false)?' checked':''} /> Vision${_h('Serve with the vision encoder so the model can read images. Auto-finds an mmproj-*.gguf next to the model (download one into the model folder). Adds ~1 GB VRAM + a small per-image cost.')}</label>`;
       panelHtml += `</div>`;
       // Row 2d: Auto profiles — computed from detected hardware (see profiles.py).
       // Buttons are injected after the panel mounts (needs an async fetch).
       panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp hwfit-serve-profiles" style="align-items:center;gap:8px;">`;
       panelHtml += `<span style="opacity:0.7;font-size:11px;">Auto profiles:</span>`;
       panelHtml += `<span class="hwfit-profile-btns" style="display:flex;gap:6px;flex-wrap:wrap;"><span style="opacity:0.5;font-size:11px;">computing…</span></span>`;
+      panelHtml += `</div>`;
+      // Live VRAM / RAM-spillover monitor for the serve target's GPU. Polls
+      // /api/cookbook/gpus while the panel is open so you can SEE whether the
+      // config fits VRAM (fast) or spills to system RAM (slow). Populated after mount.
+      panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp hwfit-vram-monitor" style="align-items:center;gap:8px;font-size:11px;">`;
+      panelHtml += `<span style="opacity:0.7;">GPU memory:</span>`;
+      panelHtml += `<span class="hwfit-vram-readout" style="opacity:0.5;">checking…</span>`;
       panelHtml += `</div>`;
       // Row 3a: Checkboxes (llama.cpp-only)
       panelHtml += `<div class="hwfit-serve-checks hwfit-backend-llamacpp">`;
@@ -537,6 +545,11 @@ function _rerenderCachedModels() {
           f._gguf_path = m.is_local_dir && m.path
             ? `$({ find ${_ldir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${_ldir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`
             : `$({ find ${dir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${dir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
+          // Vision: auto-find the mmproj (CLIP/projector) file in the same dir.
+          // Resolved at runtime so the toggle just works if an mmproj-*.gguf is
+          // present (downloaded alongside the model). Empty if none → cmd omits it.
+          const _vsearchdir = (m.is_local_dir && m.path) ? _ldir : dir;
+          f._mmproj_path = `$(find ${_vsearchdir} -iname 'mmproj*.gguf' 2>/dev/null | sort | head -1)`;
         }
         if (f.reasoning_parser) {
           const _rpEl2 = panel.querySelector('[data-field="reasoning_parser"]');
@@ -642,6 +655,59 @@ function _rerenderCachedModels() {
         }
       }
       _loadServeProfiles();
+
+      // Live GPU-memory monitor: poll /api/cookbook/gpus and show VRAM usage +
+      // RAM-spillover, with a plain-language health/speed hint. Lets you tell at
+      // a glance whether the chosen config fits VRAM (fast) or is paging into
+      // system RAM over PCIe (slow). AMD sysfs reports gtt_used_mb for spillover.
+      async function _refreshVramMonitor() {
+        const el = panel.querySelector('.hwfit-vram-readout');
+        if (!el || !document.body.contains(el)) return false;  // panel closed → stop
+        try {
+          const host = (_es.remoteHost || '').trim();
+          const params = new URLSearchParams();
+          if (host) {
+            params.set('host', host);
+            const _sp = (_es.servers || []).find(s => s.host === host)?.port;
+            if (_sp) params.set('ssh_port', _sp);
+          }
+          const res = await fetch('/api/cookbook/gpus' + (params.toString() ? '?' + params : ''));
+          const data = await res.json();
+          const gpus = Array.isArray(data) ? data : (data.gpus || []);
+          if (!gpus.length) { el.textContent = 'no GPU detected'; el.style.color = ''; return true; }
+          const g = gpus[0];
+          const usedG = (g.used_mb / 1024), totG = (g.total_mb / 1024);
+          const pct = totG ? Math.round((usedG / totG) * 100) : 0;
+          const freeG = Math.max(0, totG - usedG);
+          const spillG = (g.gtt_used_mb || 0) / 1024;
+          // Color: green < 85%, amber 85-97%, red > 97% or spilling.
+          const spilling = spillG > 0.5 && !g.unified_memory;   // unified APUs always use GTT; not a spill
+          let color = 'var(--green, #50fa7b)';
+          if (pct >= 97 || spilling) color = 'var(--red, #ff5555)';
+          else if (pct >= 85) color = 'var(--orange, #ffb86c)';
+          let txt = `${usedG.toFixed(1)} / ${totG.toFixed(1)} GB (${pct}%) · ${freeG.toFixed(1)} GB free`;
+          if (spilling) {
+            txt += ` · ⚠ ${spillG.toFixed(1)} GB spilled to RAM — slow (raise CPU MoE or lower context)`;
+          } else if (pct >= 90) {
+            txt += ` · tight — risk of OOM/spill on long context or images`;
+          } else {
+            txt += ` · healthy`;
+          }
+          el.textContent = txt;
+          el.style.color = color;
+          return true;
+        } catch {
+          el.textContent = 'unavailable';
+          el.style.color = '';
+          return true;
+        }
+      }
+      _refreshVramMonitor();
+      // Poll every 4s while the panel is open; stop when it's removed from the DOM.
+      const _vramTimer = setInterval(async () => {
+        const ok = await _refreshVramMonitor();
+        if (ok === false) clearInterval(_vramTimer);
+      }, 4000);
 
       // Show/hide backend-specific sections
       function updateBackendVisibility() {
