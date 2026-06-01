@@ -3,10 +3,16 @@
     "type": "git",
     "url": "https://github.com/pewdiepie-archdaemon/odysseus.git"
   },
+  "scripts": {
+    "start": "npm install && tsc && node dist/setup.js"
+  },
   "devDependencies": {
-    "@antithesishq/bombadil": "^0.3.2"
+    "@antithesishq/bombadil": "^0.3.2",
+    "@types/node": "^22",
+    "typescript": "^6.0.3"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.98.0"
+    "@anthropic-ai/sdk": "^0.98.0",
+    "dotenv": "^17.4.2"
   }
 }
