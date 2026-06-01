@@ -434,7 +434,7 @@
             system = "x86_64-linux";
             pkgs = nixpkgs.legacyPackages.${system};
           in
-            pkgs.nixosTest {
+            pkgs.testers.nixosTest {
               name = "odysseus-nixos-module";
               nodes.machine = {
                 imports = [ self.nixosModules.default ];
@@ -457,7 +457,7 @@
             pkgs = nixpkgs.legacyPackages.${system};
             image = self.packages.${system}.container;
           in
-            pkgs.nixosTest {
+            pkgs.testers.nixosTest {
               name = "odysseus-container";
               nodes.machine = {
                 virtualisation.podman.enable = true;
