@@ -1,11 +1,21 @@
 version: "0.5"
+
+# This file acts as a lightweight, native process manager (similar to docker-compose).
+# It ensures our database and app run simultaneously and handle failures gracefully.
 processes:
+  
+  # 1. Vector Database Process
   chroma:
     command: chroma run --path ./data/chroma
     availability:
+      # Automatically recovers the database if it crashes unexpectedly
       restart: "on_failure"
+  
+  # 2. Main Backend Application Process
   app:
     command: python -m uvicorn app:app --host 0.0.0.0 --port 7000
     depends_on:
       chroma:
+        # Prevents race conditions: The app will only attempt to start 
+        # AFTER the Chroma database process has been successfully initiated.
         condition: process_started
