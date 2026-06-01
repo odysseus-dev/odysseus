@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Shell/File Interceptor - Juniperus</title><link rel="stylesheet" href="/static/gnexus/gnexus-core.css"></head>
+<body><main class="wrap"><section class="top"><div><div class="brand">Juniperus / Gnexus Operations Console</div><h1 class="title">Shell/File Interceptor</h1><p class="sub">Routes shell and file power through operation guard policy.</p></div><a class="pill" href="/gnexus">Back to cockpit</a></section>
+<section class="status"><div class="metric"><b>Room</b><span>Shell/File Interceptor</span></div><div class="metric"><b>State</b><span>Renderable fallback active</span></div><div class="metric"><b>Approval</b><span>Required for mutation</span></div><div class="metric"><b>Boundary</b><span>External writes disabled</span></div></section>
+<section class="note" id="room-state">This room renders without waiting on API hydration. Use the cockpit links below to move through the governed loop.</section>
+<section class="row"><a class="btn" href="/gnexus/governance">Governance</a><a class="btn" href="/gnexus/app-dock">App Dock</a><a class="btn" href="/gnexus/approval-desk">Approval Desk</a><a class="btn" href="/gnexus/interceptor">Shell/File Interceptor</a><a class="btn" href="/gnexus/diff-gate">Diff Gate</a><a class="btn" href="/gnexus/patch-apply">Patch Apply</a><a class="btn" href="/gnexus/verifier-loop">Verifier Loop</a><a class="btn" href="/gnexus/operator-loop">Operator Loop</a><a class="btn" href="/gnexus/memory-routing">Memory Routing</a><a class="btn" href="/gnexus/live-control">Live Control</a></section>
+<div class="footer">No endless loading. If API hydration fails, this page still remains usable.</div>
+</main><script>
+(function(){
+  var box=document.getElementById('room-state');
+  fetch('/api/gnexus/frontstage/state',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null}).then(function(j){
+    if(j) box.textContent='Hydrated frontstage state: '+(j.status||'ready')+'. Human approval remains required.';
+  }).catch(function(){ box.textContent='Fallback state active. API hydration is unavailable or blocked, but this room is usable.'; });
+})();
+</script></body></html>

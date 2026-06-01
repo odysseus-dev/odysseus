@@ -1,0 +1,12 @@
+JUNIPERUS080 route binding patch candidate.
+
+Insert into app.py before "# ========= ROUTES (kept in app.py)":
+
+# GNEXUS JUNIPERUS080 OPERATOR LOOP ROUTE BINDING
+try:
+    from routes.gnexus_operator_loop_routes import setup_gnexus_operator_loop_routes
+    app.include_router(setup_gnexus_operator_loop_routes())
+    logger.info("Gnexus operator loop routes initialized")
+except Exception:
+    logger.warning("Gnexus operator loop routes unavailable", exc_info=True)
+# END GNEXUS JUNIPERUS080 OPERATOR LOOP ROUTE BINDING

@@ -1,0 +1,26 @@
+{
+  "schema": "gnexus.diffGatePolicy.v1",
+  "status": "DIFF_FIRST_GATE_ACTIVE_APPLY_LOCKED",
+  "workspaceRoot": "C:\\Users\\iamcy\\CymaticsDev",
+  "targetRepo": "C:\\Users\\iamcy\\CymaticsDev\\00_SYSTEMS\\Juniperus",
+  "rawWriteFileDefault": "QUEUE_DIFF_FOR_HUMAN_APPROVAL",
+  "applyApprovedPatch": false,
+  "blockOutsideWorkspace": true,
+  "blockSensitivePaths": true,
+  "sensitivePathTerms": [
+    ".env",
+    "auth.json",
+    "app.db",
+    "juniperus.db",
+    "token",
+    "secret",
+    ".ssh",
+    "AppData",
+    "vault",
+    "password",
+    "private_key"
+  ],
+  "proposalStatus": "PENDING_HUMAN_APPROVAL",
+  "receiptRequired": true,
+  "rollbackRequiredBeforeApply": true
+}

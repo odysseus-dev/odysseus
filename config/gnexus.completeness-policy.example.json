@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "JUNIPERUS_COMPLETENESS_POLICY_v0_1_0",
+  "system": "Juniperus",
+  "title": "Gnexus Operations Console",
+  "workspaceRoot": "C:\\Users\\iamcy\\CymaticsDev",
+  "targetRepo": "C:\\Users\\iamcy\\CymaticsDev\\00_SYSTEMS\\Juniperus",
+  "cockpit": {
+    "route": "/gnexus",
+    "staticPage": "static/gnexus/index.html",
+    "mustRenderWithoutApi": true,
+    "noLoadingOnlyStates": true
+  },
+  "rooms": [
+    "governance",
+    "app-dock",
+    "approval-desk",
+    "interceptor",
+    "diff-gate",
+    "patch-apply",
+    "verifier-loop",
+    "operator-loop",
+    "memory-routing",
+    "live-control",
+    "ollama-models"
+  ],
+  "resilience": {
+    "apiFailureShowsErrorCard": true,
+    "authBlockShowsLoginCard": true,
+    "missingLedgerShowsStatus": true,
+    "serverSideFallbackRender": true
+  },
+  "branding": {
+    "appShellTitle": "Juniperus - Gnexus Operations Console",
+    "forbiddenVisibleStrings": ["Odysseus", "Odysseus Chat"]
+  },
+  "boundaries": {
+    "localFirst": true,
+    "humanApprovalRequired": true,
+    "productionMutationLocked": true,
+    "externalReads": false,
+    "externalWrites": false,
+    "connectorCalls": false,
+    "secretsStored": false,
+    "publicExposure": false
+  },
+  "closeoutStatus": "JUNIPERUS_GNEXUS_OPERATIONS_CONSOLE_COMPLETENESS_READY_LOCAL_CLOSEOUT"
+}

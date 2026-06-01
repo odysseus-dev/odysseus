@@ -114,7 +114,7 @@ class TestFindLineBreak:
 
 
 class TestRunningInContainer:
-    """Detect whether the Odysseus process itself runs inside a container."""
+    """Detect whether the Juniperus process itself runs inside a container."""
 
     def test_dockerenv_marker_present(self, tmp_path):
         marker = tmp_path / ".dockerenv"

@@ -1,0 +1,39 @@
+{
+  "schema": "gnexus.operator_loop.policy.v1",
+  "package": "JUNIPERUS080",
+  "workspaceRoot": "C:\\Users\\iamcy\\CymaticsDev",
+  "targetRepo": "C:\\Users\\iamcy\\CymaticsDev\\00_SYSTEMS\\Juniperus",
+  "defaultMode": "proposal_only",
+  "humanApprovalRequired": true,
+  "operatorLoop": {
+    "createOperationPlans": true,
+    "queueApprovals": true,
+    "linkDiffGate": true,
+    "linkPatchApply": true,
+    "linkVerifierLoop": true,
+    "autoExecute": false,
+    "autoApplyPatch": false,
+    "autoRollback": false
+  },
+  "allowedStages": [
+    "intent_received",
+    "workspace_selected",
+    "operation_planned",
+    "approval_requested",
+    "diff_proposed",
+    "patch_approved",
+    "patch_applied",
+    "verification_requested",
+    "verification_passed",
+    "repair_required",
+    "rollback_requested",
+    "closeout"
+  ],
+  "blocked": {
+    "externalReads": true,
+    "externalWrites": true,
+    "connectorCalls": true,
+    "secretStorage": true,
+    "unapprovedMutation": true
+  }
+}

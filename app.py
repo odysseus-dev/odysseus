@@ -1,4 +1,4 @@
-# app.py — slim orchestrator
+﻿# app.py â€” slim orchestrator
 import os
 
 # Windows: force HuggingFace/fastembed to COPY model files instead of symlinking.
@@ -11,9 +11,9 @@ if os.name == "nt":
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 from dotenv import load_dotenv
-# encoding="utf-8-sig" tolerates a UTF-8 BOM in .env — a common Windows gotcha
+# encoding="utf-8-sig" tolerates a UTF-8 BOM in .env â€” a common Windows gotcha
 # when the file is saved from Notepad. Without this, the first key parses as
-# "﻿AUTH_ENABLED" instead of "AUTH_ENABLED", so AUTH_ENABLED=false (etc.)
+# "ï»¿AUTH_ENABLED" instead of "AUTH_ENABLED", so AUTH_ENABLED=false (etc.)
 # is silently ignored and the user is unexpectedly forced to log in (issue #142).
 # utf-8-sig reads plain UTF-8 (no BOM) identically, so this is safe everywhere.
 load_dotenv(encoding="utf-8-sig")
@@ -58,8 +58,8 @@ logger = logging.getLogger(__name__)
 
 # ========= APP =========
 app = FastAPI(
-    title="AI Chat Application",
-    description="Comprehensive AI chat with memory, research, and multi-modal capabilities",
+    title="Juniperus - Gnexus Operations Console",
+    description="Governed local AI operations console for the Gnexus workspace",
     version="1.0.0",
 )
 
@@ -76,8 +76,8 @@ app.add_middleware(
         "Content-Type",
         "X-API-Key",
         "X-Auth-Token",
-        "X-Odysseus-Internal-Token",
-        "X-Odysseus-Owner",
+        "X-Juniperus-Internal-Token",
+        "X-Juniperus-Owner",
         "X-Requested-With",
         "X-TZ-Offset",
     ],
@@ -107,7 +107,7 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/model-endpoints", # /probe sub-route also iterates models
     "/api/cookbook/setup",  # remote pacman/apt installs
     "/api/upload",          # large files
-    "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
+    "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) â€” own 120s httpx timeout
 )
 
 
@@ -156,10 +156,10 @@ if AUTH_ENABLED:
     def _is_auth_exempt(path: str) -> bool:
         return path in AUTH_EXEMPT_EXACT or any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES)
 
-    # In-memory token cache: prefix → list[(token_id, token_hash, owner, scopes)]. The DB
+    # In-memory token cache: prefix â†’ list[(token_id, token_hash, owner, scopes)]. The DB
     # query was running on every API-bearer request and scanning bcrypt
     # checks linearly. With this cache, we hit the DB only when the cache
-    # version bumps (token created/revoked) — see _token_cache_invalidate
+    # version bumps (token created/revoked) â€” see _token_cache_invalidate
     # in app.state, called by routes/api_token_routes.
     _token_cache: dict = {}
     _token_cache_lock = _asyncio.Lock()
@@ -173,7 +173,7 @@ if AUTH_ENABLED:
     app.state._token_cache_dirty = True
 
     def _refresh_token_cache():
-        """Rebuild the prefix→[(id,hash)] map from the DB."""
+        """Rebuild the prefixâ†’[(id,hash)] map from the DB."""
         from collections import defaultdict
         new_map = defaultdict(list)
         db = SessionLocal()
@@ -189,7 +189,7 @@ if AUTH_ENABLED:
         app.state._token_cache_dirty = False
 
     # Headers that prove a request was forwarded by a proxy/tunnel (cloudflared,
-    # nginx, Caddy, Tailscale Funnel, …). cloudflared connects to the app FROM
+    # nginx, Caddy, Tailscale Funnel, â€¦). cloudflared connects to the app FROM
     # 127.0.0.1, so without this check every tunneled request would look like
     # loopback and could bypass auth.
     _PROXY_FWD_HEADERS = (
@@ -202,7 +202,7 @@ if AUTH_ENABLED:
         forwarding headers. A bare ``client.host in ('127.0.0.1','::1')`` check is
         unsafe behind a Cloudflare tunnel / reverse proxy: those connect from
         loopback, so a remote visitor would otherwise inherit local trust and
-        slip past LOCALHOST_BYPASS or spoof the internal-tool path. Odysseus's own
+        slip past LOCALHOST_BYPASS or spoof the internal-tool path. Juniperus's own
         in-process agent loopback calls carry none of these headers, so they still
         qualify."""
         host = request.client.host if request.client else None
@@ -227,10 +227,10 @@ if AUTH_ENABLED:
                 _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
                 if _hdr and secrets.compare_digest(_hdr, _ITT) and _is_trusted_loopback(request):
                     # Impersonation: when the agent's loopback call sets
-                    # X-Odysseus-Owner, attribute the request to that user only
+                    # X-Juniperus-Owner, attribute the request to that user only
                     # if they exist. Authorization checks remain separate; this
                     # is just owner attribution for notes/calendar/etc.
-                    _impersonate = (request.headers.get("X-Odysseus-Owner") or "").strip()
+                    _impersonate = (request.headers.get("X-Juniperus-Owner") or "").strip()
                     _auth_mgr = getattr(request.app.state, "auth_manager", None) or auth_manager
                     if _impersonate and _impersonate in getattr(_auth_mgr, "users", {}):
                         request.state.current_user = _impersonate
@@ -248,7 +248,7 @@ if AUTH_ENABLED:
             if LOCALHOST_BYPASS and _is_trusted_loopback(request):
                 return await call_next(request)
             if not auth_manager.is_configured:
-                # No users yet — redirect to login for first-time setup
+                # No users yet â€” redirect to login for first-time setup
                 if not path.startswith("/api/"):
                     return RedirectResponse(url="/login", status_code=302)
                 return JSONResponse(status_code=401, content={"error": "Setup required"})
@@ -305,7 +305,7 @@ if AUTH_ENABLED:
                         return await call_next(request)
                 except Exception:
                     logger.warning("API token auth error", exc_info=False)
-                # Invalid bearer token — reject immediately
+                # Invalid bearer token â€” reject immediately
                 return JSONResponse(status_code=401, content={"error": "Invalid API token"})
 
             # --- Cookie-based session auth ---
@@ -333,7 +333,7 @@ class _RevalidatingStatic(StaticFiles):
     """Serve static assets normally, but force the browser to REVALIDATE
     source files (.js/.css/.html) on every load instead of serving a stale
     copy from disk cache. The app ships raw ES modules with no build step or
-    versioned URLs, so browsers were caching modules across deploys — a code
+    versioned URLs, so browsers were caching modules across deploys â€” a code
     change wouldn't appear without a manual hard-refresh. `no-cache` keeps the
     cached bytes but requires a conditional request; unchanged files still
     return a cheap 304 (ETag/Last-Modified are preserved)."""
@@ -369,8 +369,8 @@ async def serve_generated_image(filename: str, request: Request):
             _db = _SL()
             try:
                 _row = _db.query(_GI).filter(_GI.filename == filename).first()
-                # Generated-but-not-yet-imported images have no row → allow.
-                # Row exists with a different owner → 404 (don't confirm existence).
+                # Generated-but-not-yet-imported images have no row â†’ allow.
+                # Row exists with a different owner â†’ 404 (don't confirm existence).
                 if _row is not None and _row.owner and _row.owner != _user:
                     raise HTTPException(status_code=404, detail="Image not found")
             finally:
@@ -386,7 +386,7 @@ async def serve_generated_image(filename: str, request: Request):
         "mp4": "video/mp4", "mov": "video/quicktime", "webm": "video/webm",
         "mkv": "video/x-matroska", "m4v": "video/mp4",
     }.get(ext, "application/octet-stream")
-    # Generated-image filenames are content hashes → the bytes for a given
+    # Generated-image filenames are content hashes â†’ the bytes for a given
     # filename never change. Cache them hard so the gallery doesn't
     # re-download every full-size image each time it's opened. `immutable`
     # tells the browser it never needs to revalidate within the max-age.
@@ -402,7 +402,7 @@ init_youtube()
 
 # ========= RAG (vector document RAG) =========
 # VectorRAG (ChromaDB-backed personal-document semantic search). Initialized
-# lazily via get_rag_manager() — returns None if ChromaDB isn't reachable
+# lazily via get_rag_manager() â€” returns None if ChromaDB isn't reachable
 # (no server running on the configured host:port), in which case personal-doc
 # routes return a clean 503 instead of busy-retrying every request.
 #
@@ -418,7 +418,7 @@ if rag_available:
 else:
     logger.info(
         "Vector document RAG not available at startup "
-        "(ChromaDB may not be reachable yet — routes will retry lazily)"
+        "(ChromaDB may not be reachable yet â€” routes will retry lazily)"
     )
 
 # ========= IMPORT CONFIG =========
@@ -484,7 +484,7 @@ upload_router, upload_cleanup_func = setup_upload_routes(upload_handler)
 app.include_router(upload_router)
 upload_cleanup_task = None
 
-# Emoji SVG proxy (same-origin, lazy-cached Twemoji) — lets the chat render
+# Emoji SVG proxy (same-origin, lazy-cached Twemoji) â€” lets the chat render
 # emojis as flat SVG instead of system color glyphs.
 from routes.emoji_routes import setup_emoji_routes
 app.include_router(setup_emoji_routes())
@@ -494,7 +494,7 @@ from routes.session_routes import setup_session_routes
 session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
 app.include_router(setup_session_routes(session_manager, session_config, webhook_manager=webhook_manager))
 
-# Admin Danger Zone wipes (Settings → System → Danger Zone)
+# Admin Danger Zone wipes (Settings â†’ System â†’ Danger Zone)
 from routes.admin_wipe_routes import setup_admin_wipe_routes
 app.include_router(setup_admin_wipe_routes(session_manager))
 
@@ -596,6 +596,11 @@ app.include_router(setup_calendar_routes())
 from routes.shell_routes import setup_shell_routes
 app.include_router(setup_shell_routes())
 
+# Gnexus Governance (workspace boundary, approval queue, receipts, governance console)
+from routes.gnexus_governance_routes import setup_gnexus_governance_routes
+app.include_router(setup_gnexus_governance_routes())
+logger.info('Gnexus governance routes initialized')
+
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes
 app.include_router(setup_cookbook_routes())
@@ -662,6 +667,91 @@ app.include_router(setup_vault_routes())
 from routes.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())
 
+
+# Gnexus App Dock routes (JUNIPERUS020)
+try:
+    from routes.gnexus_app_dock_routes import setup_gnexus_app_dock_routes
+    app.include_router(setup_gnexus_app_dock_routes())
+    logger.info("Gnexus app dock routes initialized")
+except Exception:
+    logger.warning("Gnexus app dock routes unavailable", exc_info=True)
+
+# Gnexus Shell/File Governance Interceptor
+try:
+    from routes.gnexus_interceptor_routes import setup_gnexus_interceptor_routes
+    app.include_router(setup_gnexus_interceptor_routes())
+    logger.info("Gnexus interceptor routes initialized")
+except Exception:
+    logger.exception("Failed to initialize Gnexus interceptor routes")
+
+# Gnexus Diff-First Code Editing Gate
+try:
+    from routes.gnexus_diff_gate_routes import setup_gnexus_diff_gate_routes
+    app.include_router(setup_gnexus_diff_gate_routes())
+    logger.info("Gnexus diff-first code editing gate routes initialized")
+except Exception:
+    logger.warning("Gnexus diff-first code editing gate routes unavailable", exc_info=True)
+
+
+# Gnexus Patch Apply routes (JUNIPERUS060)
+try:
+    from routes.gnexus_patch_apply_routes import setup_gnexus_patch_apply_routes
+    app.include_router(setup_gnexus_patch_apply_routes())
+    logger.info("Gnexus patch apply routes initialized")
+except Exception:
+    logger.exception("Failed to initialize Gnexus patch apply routes")
+
+# Gnexus Verifier / Repair / Rollback Loop routes (JUNIPERUS070)
+try:
+    from routes.gnexus_verifier_loop_routes import setup_gnexus_verifier_loop_routes
+    app.include_router(setup_gnexus_verifier_loop_routes())
+    logger.info("Gnexus verifier loop routes initialized")
+except Exception:
+    logger.exception("Failed to initialize Gnexus verifier loop routes")
+
+# GNEXUS JUNIPERUS080 OPERATOR LOOP ROUTE BINDING
+try:
+    from routes.gnexus_operator_loop_routes import setup_gnexus_operator_loop_routes
+    app.include_router(setup_gnexus_operator_loop_routes())
+    logger.info("Gnexus operator loop routes initialized")
+except Exception:
+    logger.warning("Gnexus operator loop routes unavailable", exc_info=True)
+# END GNEXUS JUNIPERUS080 OPERATOR LOOP ROUTE BINDING
+
+# Gnexus Memory / Skills / Model Routing (JUNIPERUS090)
+from routes.gnexus_memory_routing_routes import setup_gnexus_memory_routing_routes
+app.include_router(setup_gnexus_memory_routing_routes())
+logger.info('Gnexus memory routing routes initialized (JUNIPERUS090)')
+
+# Gnexus live-control finalizer
+try:
+    from routes.gnexus_live_control_routes import setup_gnexus_live_control_routes
+    app.include_router(setup_gnexus_live_control_routes())
+    logger.info("Gnexus live-control routes initialized")
+except Exception:
+    logger.warning("Gnexus live-control routes failed to initialize", exc_info=True)
+
+# Gnexus Local Ollama model readiness routes (register BEFORE the frontstage
+# catch-all so /gnexus/ollama-models serves the rich page, not the fallback).
+try:
+    from routes.gnexus_ollama_routes import setup_gnexus_ollama_routes
+    app.include_router(setup_gnexus_ollama_routes())
+    logger.info("Gnexus Ollama model readiness routes initialized")
+except Exception:
+    logger.warning("Gnexus Ollama routes unavailable", exc_info=True)
+
+# Gnexus completeness state routes
+try:
+    from routes.gnexus_completeness_routes import setup_gnexus_completeness_routes
+    app.include_router(setup_gnexus_completeness_routes())
+    logger.info("Gnexus completeness routes initialized")
+except Exception:
+    logger.warning("Gnexus completeness routes unavailable", exc_info=True)
+
+# Gnexus frontstage completeness routes (catch-all /gnexus/{room} LAST)
+from routes.gnexus_frontstage_routes import setup_gnexus_frontstage_routes
+app.include_router(setup_gnexus_frontstage_routes())
+logger.info("Gnexus frontstage completeness routes initialized")
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
@@ -690,7 +780,7 @@ async def serve_notes(request: Request):
 async def serve_calendar(request: Request):
     return await serve_index(request)
 
-# Per-tool deep-link routes — all serve the same SPA, the JS auto-opens
+# Per-tool deep-link routes â€” all serve the same SPA, the JS auto-opens
 # the matching modal based on window.location.pathname. Each route also
 # gets a unique favicon + page title via inline script in index.html so
 # bookmarks render with tool-specific icons.
@@ -756,6 +846,12 @@ async def runtime_info() -> Dict[str, object]:
         "ollama_base_url": ollama_url,
     }
 
+
+# Gnexus Local Ollama model routes
+from routes.gnexus_ollama_routes import setup_gnexus_ollama_routes
+app.include_router(setup_gnexus_ollama_routes())
+logger.info("Gnexus local Ollama routes initialized")
+
 # ========= LIFECYCLE =========
 
 @app.on_event("startup")
@@ -763,7 +859,7 @@ async def startup_event():
     global upload_cleanup_task
     logger.info("Application starting up...")
     webhook_manager.set_loop(asyncio.get_running_loop())
-    # Wipe any leftover incognito sessions from previous process — they're
+    # Wipe any leftover incognito sessions from previous process â€” they're
     # ephemeral by design and must not survive a restart.
     try:
         from core.database import SessionLocal as _SL, Session as _DbSess, ChatMessage as _DbMsg
@@ -787,7 +883,7 @@ async def startup_event():
     if upload_cleanup_func:
         upload_cleanup_task = asyncio.create_task(upload_cleanup_func())
     # Always-on monitor that auto-continues the agent when a background bash
-    # job (#!bg) finishes — re-invokes the turn with the job output.
+    # job (#!bg) finishes â€” re-invokes the turn with the job output.
     try:
         from src.bg_monitor import start_bg_monitor
         _startup_tasks.append(start_bg_monitor())
@@ -814,7 +910,7 @@ async def startup_event():
     # embedding model + opening ChromaDB + indexing the built-in tools is a
     # one-time ~1-3s cost that otherwise lands on the user's FIRST message
     # (showing up as a big `tool_selection` time). Doing it here makes the
-    # first turn as fast as subsequent ones (warm embed ≈ a few ms).
+    # first turn as fast as subsequent ones (warm embed â‰ˆ a few ms).
     async def _warmup_tool_index():
         try:
             from src.tool_index import get_tool_index
@@ -926,7 +1022,7 @@ async def startup_event():
     except Exception as e:
         logger.debug(f"Skill owner backfill skipped: {e}")
 
-    # Start scheduled task runner — skip when running under a cron-driven
+    # Start scheduled task runner â€” skip when running under a cron-driven
     # deployment where an external worker drives task firing. Mirrors
     # `ODYSSEUS_INPROCESS_POLLERS` from the email pollers.
     _tasks_inprocess = os.environ.get("ODYSSEUS_INPROCESS_TASKS", "1").strip().lower()
@@ -937,7 +1033,7 @@ async def startup_event():
             "In-process task scheduler disabled (ODYSSEUS_INPROCESS_TASKS=0); "
             "drive task firing externally (e.g. cron)."
         )
-    # Periodic null-owner sweep — re-runs the legacy-owner assignment hourly
+    # Periodic null-owner sweep â€” re-runs the legacy-owner assignment hourly
     # so any data created while auth was disabled / localhost-bypassed gets
     # claimed by the admin instead of staying world-visible (M19).
     async def _null_owner_sweep_loop():
@@ -952,7 +1048,7 @@ async def startup_event():
 
     _startup_tasks.append(asyncio.create_task(_null_owner_sweep_loop()))
 
-    # Nightly skill audit — at ~02:00 local, test + judge a batch of the
+    # Nightly skill audit â€” at ~02:00 local, test + judge a batch of the
     # least-recently-checked skills, auto-fixing/escalating weak ones (never
     # deletes). Rotates through the library so each night covers different
     # skills. Gated by the `skill_audit_nightly` setting (default on); hour via
@@ -1008,3 +1104,18 @@ async def shutdown_event():
     except Exception as e:
         logger.warning(f"MCP shutdown error: {e}")
     logger.info("Application shutdown complete")
+
+
+
+# Gnexus Approval Desk routes (JUNIPERUS030)
+from routes.gnexus_approval_desk_routes import setup_gnexus_approval_desk_routes
+app.include_router(setup_gnexus_approval_desk_routes())
+logger.info("Gnexus approval desk routes initialized")
+
+
+
+
+
+
+
+

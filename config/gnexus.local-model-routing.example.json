@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "JUNIPERUS_LOCAL_MODEL_ROUTING_v0_1_0",
+  "system": "Juniperus",
+  "title": "Gnexus Operations Console - Local Model Routing",
+  "localFirst": true,
+  "ollama": {
+    "detection": {
+      "order": [
+        "http://127.0.0.1:11434/api/tags",
+        "http://localhost:11434/api/tags",
+        "ollama list (CLI fallback)"
+      ]
+    },
+    "endpoint": {
+      "name": "Local Ollama (All Models)",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "is_enabled": true,
+      "model_type": "llm",
+      "policy": "one_endpoint_all_models",
+      "cachedModelsSource": "discovered"
+    }
+  },
+  "capabilityClasses": [
+    "fast chat candidate",
+    "coding candidate",
+    "reasoning candidate",
+    "long-context candidate"
+  ],
+  "toolCapableValues": ["unknown", "yes", "no"],
+  "fallbackModelSelection": "smallest_fast_candidate_or_first",
+  "smokeTest": {
+    "prompt": "Say OK",
+    "maxTokens": 8,
+    "endpoint": "http://127.0.0.1:11434/api/generate",
+    "recordLatency": true,
+    "cloudCallsAllowed": false
+  },
+  "routingPreferences": {
+    "defaultChat": "fast chat candidate",
+    "coding": "coding candidate",
+    "reasoning": "reasoning candidate",
+    "longContext": "long-context candidate"
+  }
+}

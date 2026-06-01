@@ -1,0 +1,8 @@
+*** Begin Patch
+*** Update File: app.py
+@@
+ # Gnexus Memory / Skills / Model Routing (JUNIPERUS090)
+ from routes.gnexus_memory_routing_routes import setup_gnexus_memory_routing_routes
+ app.include_router(setup_gnexus_memory_routing_routes())
+ logger.info('Gnexus memory routing routes initialized (JUNIPERUS090)')
+*** End Patch

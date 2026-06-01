@@ -23,7 +23,7 @@ DEFAULT_FILE_EXTENSIONS: Set[str] = {
 VECTOR_WEIGHT = 0.7
 KEYWORD_WEIGHT = 0.3
 
-COLLECTION_NAME = "odysseus_rag"
+COLLECTION_NAME = "juniperus_rag"
 
 
 class VectorRAG:

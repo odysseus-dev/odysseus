@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "JUNIPERUS_POLICY_v0_1_2",
+  "productionMutationLocked": true,
+  "workspaceMutationLockedByDefault": true,
+  "approvalRequired": true,
+  "diffFirstEditingRequired": true,
+  "receiptRequired": true,
+  "rollbackPointerRequiredForMutation": true,
+  "defaultBindHost": "127.0.0.1",
+  "networkExposureAllowed": false,
+  "connectorCallsAllowed": false,
+  "secretsStorageAllowed": false,
+  "shellPolicy": {
+    "readOnlyCommandsAllowedWithoutApproval": [
+      "dir",
+      "ls",
+      "pwd",
+      "git status",
+      "git diff",
+      "git log",
+      "type",
+      "cat",
+      "Get-ChildItem",
+      "Get-Content"
+    ],
+    "approvalRequiredPatterns": [
+      "del ",
+      "Remove-Item",
+      "rm ",
+      "move ",
+      "Move-Item",
+      "copy ",
+      "Copy-Item",
+      "git add",
+      "git commit",
+      "git reset",
+      "git checkout",
+      "npm install",
+      "pnpm install",
+      "pip install",
+      "python setup.py",
+      "docker",
+      "curl",
+      "Invoke-WebRequest",
+      "Invoke-RestMethod"
+    ],
+    "blockedPatterns": [
+      "format ",
+      "cipher /w",
+      "shutdown",
+      "Restart-Computer",
+      "Stop-Computer"
+    ]
+  },
+  "filePolicy": {
+    "readSensitiveFilesRequiresApproval": true,
+    "writeRequiresApproval": true,
+    "deleteRequiresApproval": true,
+    "directOverwriteDisallowed": true
+  }
+}

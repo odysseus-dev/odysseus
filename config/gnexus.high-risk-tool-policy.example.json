@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "JUNIPERUS_HIGH_RISK_TOOL_POLICY_v0_1_0",
+  "system": "Juniperus",
+  "title": "Gnexus Operations Console - High-Risk Tool Policy",
+  "workspaceRoot": "C:\\Users\\iamcy\\CymaticsDev",
+  "classifications": ["read_only_allowed", "approval_required", "blocked", "admin_only", "live_activation_required"],
+  "tools": [
+    { "surface": "shell_exec", "risk": "critical", "classification": "approval_required", "notes": "Diff/plan first; no auto destructive ops." },
+    { "surface": "shell_stream", "risk": "critical", "classification": "approval_required", "notes": "Streamed output of approved commands only." },
+    { "surface": "agent_bash", "risk": "critical", "classification": "approval_required", "notes": "Governed via interceptor + approval desk." },
+    { "surface": "agent_python", "risk": "high", "classification": "approval_required", "notes": "Approval for mutation or network." },
+    { "surface": "read_file", "risk": "medium", "classification": "read_only_allowed", "notes": "Workspace boundary + sensitive-file gate." },
+    { "surface": "write_file", "risk": "critical", "classification": "approval_required", "notes": "Diff-first gate + rollback snapshot." },
+    { "surface": "mcp_tools", "risk": "high", "classification": "approval_required", "notes": "Connector authority gate." },
+    { "surface": "email_send", "risk": "high", "classification": "approval_required", "notes": "External send blocked unless approved + live." },
+    { "surface": "email_read", "risk": "medium", "classification": "read_only_allowed", "notes": "Local mailbox read only." },
+    { "surface": "calendar_write", "risk": "high", "classification": "approval_required", "notes": "Write requires approval." },
+    { "surface": "task_scheduler_action", "risk": "high", "classification": "approval_required", "notes": "Scheduled actions gated." },
+    { "surface": "skills_mutation", "risk": "high", "classification": "approval_required", "notes": "Skill create/edit gated." },
+    { "surface": "memory_mutation", "risk": "medium", "classification": "approval_required", "notes": "Memory writes gated." },
+    { "surface": "api_tokens", "risk": "high", "classification": "admin_only", "notes": "Token scope gate + rotation receipts." },
+    { "surface": "webhooks", "risk": "high", "classification": "admin_only", "notes": "Explicit tokenized scope gate." },
+    { "surface": "vault_access", "risk": "critical", "classification": "blocked", "notes": "Secret material; approval-gate + redact previews." },
+    { "surface": "backup_export_import", "risk": "high", "classification": "approval_required", "notes": "Export may contain sensitive data." },
+    { "surface": "model_download_serve", "risk": "medium", "classification": "approval_required", "notes": "Local serve; no external publish." },
+    { "surface": "settings_mutation", "risk": "high", "classification": "admin_only", "notes": "Admin-only settings changes." },
+    { "surface": "user_tool_miniapp_creation", "risk": "high", "classification": "approval_required", "notes": "Generated mini-apps reviewed before activation." }
+  ],
+  "secretsPolicy": {
+    "blockOrApprovalGatePaths": [".env", "auth.json", "app.db", "*.key", "*.pem", "id_rsa", "id_ed25519", "vault*", "token*.json", "credentials*.json"],
+    "redactSensitivePreviews": true,
+    "secretScanBeforeRelease": true
+  },
+  "workspacePolicy": {
+    "activeWorkspace": "C:\\Users\\iamcy\\CymaticsDev",
+    "activeRepos": "C:\\Users\\iamcy\\CymaticsDev\\01_ACTIVE_REPOS",
+    "systemTools": "C:\\Users\\iamcy\\CymaticsDev\\00_SYSTEMS",
+    "infiniteBrain": "C:\\Users\\iamcy\\CymaticsDev\\06_INFINITE_BRAIN",
+    "packageProofRoot": "C:\\GNX",
+    "readOnlyOrUntrusted": ["archives", "downloads", "temp"]
+  },
+  "boundaries": {
+    "publicExposure": false,
+    "externalWritesUnlocked": false,
+    "autoRunDestructiveOps": false,
+    "humanApprovalAuthority": true
+  }
+}

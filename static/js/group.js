@@ -18,7 +18,7 @@ let _abortControllers = [];
 let _mode = 'round-robin';    // 'parallel' or 'round-robin'
 let _roundRobinIdx = 0;
 let _parentSessionId = null;
-const GROUP_STATE_KEY = 'odysseus-group-state';
+const GROUP_STATE_KEY = 'juniperus-group-state';
 
 export function init(apiBase) {
   API_BASE = apiBase;
@@ -546,8 +546,8 @@ export async function startGroup(models, parentSessionId) {
     _parentSessionId = pdata.id;
     // Register as group session for sidebar icon
     try {
-      const gids = JSON.parse(localStorage.getItem('odysseus-group-sessions') || '[]');
-      if (!gids.includes(_parentSessionId)) { gids.push(_parentSessionId); localStorage.setItem('odysseus-group-sessions', JSON.stringify(gids)); }
+      const gids = JSON.parse(localStorage.getItem('juniperus-group-sessions') || '[]');
+      if (!gids.includes(_parentSessionId)) { gids.push(_parentSessionId); localStorage.setItem('juniperus-group-sessions', JSON.stringify(gids)); }
     } catch (e) {}
   } catch (e) {
     console.error('[group] Failed to create parent session:', e);
@@ -822,7 +822,7 @@ async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
             );
             uiModule.scrollHistory();
           }
-          // Text delta (Odysseus format)
+          // Text delta (Juniperus format)
           else if (json.delta !== undefined) {
             if (_firstToken) { _firstToken = false; if (holderEl._spinner) { holderEl._spinner.destroy(); delete holderEl._spinner; } bodyEl.innerHTML = ''; }
             // Handle thinking tags from vLLM

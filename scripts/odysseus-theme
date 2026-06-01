@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""odysseus-theme — shell wrapper for the theme system.
+"""juniperus-theme — shell wrapper for the theme system.
 
 Built-in preset definitions live in `static/js/theme.js` (the `THEMES`
 export). Each user's chosen preset + custom-color overrides persist
 in `data/user_prefs.json` under that user's key, so we can read/write
 themes from the shell without needing the browser.
 
-    odysseus-theme list                          # built-in preset names
-    odysseus-theme users                         # users with a saved theme
-    odysseus-theme get --user alice@example.com  # one user's theme blob
-    odysseus-theme set --user alice@example.com --preset chatgpt
-    odysseus-theme export --user alice@example.com --pretty > theme.json
+    juniperus-theme list                          # built-in preset names
+    juniperus-theme users                         # users with a saved theme
+    juniperus-theme get --user alice@example.com  # one user's theme blob
+    juniperus-theme set --user alice@example.com --preset chatgpt
+    juniperus-theme export --user alice@example.com --pretty > theme.json
 
 `set --preset NAME` clears any custom-color overrides — pass
 `--keep-colors` to preserve them (useful when switching presets but
@@ -164,7 +164,7 @@ def cmd_export(args):
 def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
-    p = argparse.ArgumentParser(prog="odysseus-theme", parents=[common])
+    p = argparse.ArgumentParser(prog="juniperus-theme", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

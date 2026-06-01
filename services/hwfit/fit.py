@@ -427,7 +427,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     for m in models:
         native_q = m.get("quantization", "")
 
-        # MLX-quantized models need the MLX runtime (mlx_lm), which Odysseus
+        # MLX-quantized models need the MLX runtime (mlx_lm), which Juniperus
         # doesn't generate serve commands for — only llama.cpp/Ollama (Metal)
         # and vLLM/SGLang (CUDA). MLX repos ship no GGUF alternative, so they're
         # unrunnable on every backend we support. Always drop them, on Apple

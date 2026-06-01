@@ -309,7 +309,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         from src.auth_helpers import require_privilege
         user = require_privilege(request, "can_use_research")
         if user == "internal-tool":
-            tool_owner = (request.headers.get("X-Odysseus-Owner") or "").strip()
+            tool_owner = (request.headers.get("X-Juniperus-Owner") or "").strip()
             if tool_owner and tool_owner not in {"internal-tool", "api", "demo", "system"}:
                 auth_mgr = getattr(request.app.state, "auth_manager", None)
                 if auth_mgr is not None and getattr(auth_mgr, "is_configured", False):

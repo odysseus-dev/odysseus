@@ -1,4 +1,4 @@
-"""Shell routes — user-facing command execution endpoint."""
+﻿"""Shell routes — user-facing command execution endpoint."""
 
 import asyncio
 import json
@@ -13,6 +13,12 @@ import tempfile
 from collections import namedtuple
 from pathlib import Path
 from typing import Dict, Any
+
+# JUNIPERUS040 shell guard import
+try:
+    from src.gnexus_governance.operation_guard import evaluate_shell_command
+except Exception:
+    evaluate_shell_command = None
 
 # POSIX-only: `pty`/`fcntl` transitively import `termios`, which does NOT exist
 # on Windows, so importing them unconditionally crashed app startup there
@@ -98,7 +104,7 @@ PTY_SUPPORTED = pty is not None and fcntl is not None and hasattr(os, "setsid")
 
 
 DOCKER_IN_CONTAINER_HINT = (
-    "Not available inside the Odysseus container by design. The image ships no "
+    "Not available inside the Juniperus container by design. The image ships no "
     "docker CLI and no host socket is mounted. Run Docker-backed launches on a "
     "remote server, where docker is checked over SSH. Mounting /var/run/docker.sock "
     "into the container would grant it host-root access, so only do that if you "
@@ -254,7 +260,7 @@ def _find_line_break(buf):
 EXEC_TIMEOUT = 30  # seconds — shorter than agent's 60s
 STREAM_TIMEOUT = 120  # default for short commands
 MAX_OUTPUT = 200_000  # truncate limit
-TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "odysseus-tmux"
+TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "juniperus-tmux"
 PTY_UNSUPPORTED_ERROR = "pty_unsupported"
 
 
@@ -460,10 +466,10 @@ async def _generate_tmux(cmd: str, request: Request):
     script_path = TMUX_LOG_DIR / f"{session_id}.sh"
     script_path.write_text(
         f"#!/bin/bash\n"
-        f"ODYSSEUS_USER_SHELL=\"${{SHELL:-}}\"\n"
-        f"if [ -n \"$ODYSSEUS_USER_SHELL\" ] && [ -x \"$ODYSSEUS_USER_SHELL\" ]; then\n"
-        f"  ODYSSEUS_USER_PATH=\"$(\"$ODYSSEUS_USER_SHELL\" -ic 'printf \"__ODYSSEUS_PATH__%s\\n\" \"$PATH\"' 2>/dev/null | sed -n 's/^__ODYSSEUS_PATH__//p' | tail -n 1 || true)\"\n"
-        f"  if [ -n \"$ODYSSEUS_USER_PATH\" ]; then export PATH=\"$ODYSSEUS_USER_PATH:$PATH\"; fi\n"
+        f"JUNIPERUS_USER_SHELL=\"${{SHELL:-}}\"\n"
+        f"if [ -n \"$JUNIPERUS_USER_SHELL\" ] && [ -x \"$JUNIPERUS_USER_SHELL\" ]; then\n"
+        f"  JUNIPERUS_USER_PATH=\"$(\"$JUNIPERUS_USER_SHELL\" -ic 'printf \"__JUNIPERUS_PATH__%s\\n\" \"$PATH\"' 2>/dev/null | sed -n 's/^__JUNIPERUS_PATH__//p' | tail -n 1 || true)\"\n"
+        f"  if [ -n \"$JUNIPERUS_USER_PATH\" ]; then export PATH=\"$JUNIPERUS_USER_PATH:$PATH\"; fi\n"
         f"fi\n"
         f"{cmd} 2>&1 | tee '{log_path}'\n"
         f"EC=${{PIPESTATUS[0]}}\n"
@@ -654,6 +660,11 @@ def setup_shell_routes() -> APIRouter:
         if not cmd:
             return {"stdout": "", "stderr": "No command provided", "exit_code": 1}
 
+        # JUNIPERUS040 shell_exec guard
+        if evaluate_shell_command is not None:
+            decision = evaluate_shell_command(cmd, source="browser_shell_exec")
+            if decision.get("blocked"):
+                return {"stdout": "", "stderr": decision.get("message", "Blocked by Gnexus governance"), "exit_code": 403, "gnexus_governance": decision}
         logger.info("User shell exec requested: length=%d", len(cmd))
         result = await _exec_shell(cmd, timeout=EXEC_TIMEOUT)
         return result
@@ -679,6 +690,15 @@ def setup_shell_routes() -> APIRouter:
             use_tmux,
             len(cmd),
         )
+
+        # JUNIPERUS040 shell_stream guard
+        if evaluate_shell_command is not None:
+            decision = evaluate_shell_command(cmd, source="browser_shell_stream")
+            if decision.get("blocked"):
+                async def blocked_by_gnexus():
+                    yield f"data: {json.dumps({'stream': 'stderr', 'data': decision.get('message', 'Blocked by Gnexus governance'), 'gnexus_governance': decision})}\n\n"
+                    yield f"data: {json.dumps({'exit_code': 403})}\n\n"
+                return StreamingResponse(blocked_by_gnexus(), media_type="text/event-stream")
 
         if use_tmux:
             # tmux is POSIX-only; Windows uses a detached-process + logfile tail
@@ -934,3 +954,4 @@ def setup_shell_routes() -> APIRouter:
         return {"ok": False, "error": stderr.decode()[-300:]}
 
     return router
+

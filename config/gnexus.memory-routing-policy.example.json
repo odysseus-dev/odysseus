@@ -1,0 +1,62 @@
+{
+  "schema": "gnexus.memory-routing-policy.v1",
+  "package": "JUNIPERUS090",
+  "workspaceRoot": "C:\\Users\\iamcy\\CymaticsDev",
+  "defaultMode": "governed_read_only",
+  "memory": {
+    "autoWriteAllowed": false,
+    "secretRedactionRequired": true,
+    "requiresApprovalFor": [
+      "create_memory",
+      "edit_memory",
+      "delete_memory",
+      "project_binding",
+      "canon_promotion"
+    ],
+    "blockedPatterns": [
+      ".env",
+      "auth.json",
+      "app.db",
+      "token",
+      "secret",
+      "private key",
+      "password",
+      ".ssh"
+    ]
+  },
+  "skills": {
+    "autoCreateAllowed": false,
+    "autoPublishAllowed": false,
+    "requiresApprovalFor": [
+      "add_skill",
+      "patch_skill",
+      "delete_skill",
+      "publish_skill"
+    ],
+    "allowedRecommendationOnly": true
+  },
+  "models": {
+    "autoSwitchAllowed": false,
+    "paidModelRequiresApproval": true,
+    "externalApiRequiresApproval": true,
+    "localModelPreferredForSensitiveWork": true,
+    "routingSignals": [
+      "privacy",
+      "cost",
+      "latency",
+      "code_reasoning",
+      "long_context",
+      "vision",
+      "voice",
+      "tool_use"
+    ]
+  },
+  "boundaries": {
+    "externalReads": false,
+    "externalWrites": false,
+    "connectorCalls": false,
+    "secretsStored": false,
+    "productionMutationLocked": true,
+    "humanApprovalRequired": true
+  }
+}

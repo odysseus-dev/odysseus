@@ -1,0 +1,26 @@
+{
+  "schema": "gnexus.verifier-loop-policy.v1",
+  "workspaceRoot": "C:\\Users\\iamcy\\CymaticsDev",
+  "package": "JUNIPERUS070",
+  "verification": {
+    "autoExecute": false,
+    "requiresHumanApprovalForShell": true,
+    "recordAllResults": true,
+    "failedResultCreatesRepairItem": true,
+    "rollbackRequestRequiresHumanApproval": true
+  },
+  "blocked": {
+    "externalReads": true,
+    "externalWrites": true,
+    "connectorCalls": true,
+    "secretsStored": false,
+    "autoRollback": true
+  },
+  "allowedRecordTypes": [
+    "verification_request",
+    "verification_result",
+    "repair_item",
+    "rollback_request",
+    "closeout_receipt"
+  ]
+}

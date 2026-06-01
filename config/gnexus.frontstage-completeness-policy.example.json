@@ -1,0 +1,10 @@
+{
+  "system": "Juniperus",
+  "workspaceRoot": "C:\\Users\\iamcy\\CymaticsDev",
+  "targetRepo": "C:\\Users\\iamcy\\CymaticsDev\\00_SYSTEMS\\Juniperus",
+  "requiredBrand": "Juniperus / Gnexus Operations Console",
+  "loadingOnlyPagesAllowed": false,
+  "primaryVisibleJuniperusBrandAllowed": false,
+  "humanApprovalRequired": true,
+  "productionMutationLocked": true
+}

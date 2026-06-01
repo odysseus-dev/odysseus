@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""odysseus-docs — shell wrapper for the living-document store.
+"""juniperus-docs — shell wrapper for the living-document store.
 
 Documents are the AI-editable text/markdown/code files the assistant
 creates in-place (think: a scratchpad it can revise). Each document
 has a content blob + version history.
 
-    odysseus-docs list [--active] [--limit N]
-    odysseus-docs show DOC_ID                # current content + metadata
-    odysseus-docs versions DOC_ID            # version history (no content)
-    odysseus-docs export DOC_ID --version N  # full content of a specific version
-    odysseus-docs search "invoice"           # title + current_content match
-    odysseus-docs delete DOC_ID              # soft-delete (is_active=False)
+    juniperus-docs list [--active] [--limit N]
+    juniperus-docs show DOC_ID                # current content + metadata
+    juniperus-docs versions DOC_ID            # version history (no content)
+    juniperus-docs export DOC_ID --version N  # full content of a specific version
+    juniperus-docs search "invoice"           # title + current_content match
+    juniperus-docs delete DOC_ID              # soft-delete (is_active=False)
 
 Reads `data/app.db` directly.
 """
@@ -160,7 +160,7 @@ def cmd_delete(args):
 def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
-    p = argparse.ArgumentParser(prog="odysseus-docs", parents=[common])
+    p = argparse.ArgumentParser(prog="juniperus-docs", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

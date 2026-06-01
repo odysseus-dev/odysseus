@@ -1,0 +1,55 @@
+{
+  "schema": "gnexus.app-dock-policy.v1",
+  "package": "JUNIPERUS020",
+  "workspaceRoot": "C:\\Users\\iamcy\\CymaticsDev",
+  "runtimeStartEnabled": false,
+  "launchApprovalRequired": true,
+  "scanMode": "read_only",
+  "maxScanDepth": 5,
+  "skipDirectories": [
+    ".git",
+    "node_modules",
+    "venv",
+    ".venv",
+    "__pycache__",
+    ".next",
+    "dist",
+    "build",
+    "logs",
+    "data",
+    ".mypy_cache",
+    ".pytest_cache"
+  ],
+  "recognizedAppSignals": [
+    "package.json",
+    "vite.config",
+    "next.config",
+    "pyproject.toml",
+    "requirements.txt",
+    "app.py",
+    "main.py",
+    "START.bat",
+    "VERIFY.bat",
+    "docker-compose.yml"
+  ],
+  "blockedCommandPatterns": [
+    "del ",
+    "Remove-Item",
+    "rm -rf",
+    "git reset",
+    "git clean",
+    "git push",
+    "npm install",
+    "pip install",
+    "curl ",
+    "Invoke-WebRequest",
+    "docker compose up"
+  ],
+  "governance": {
+    "readAllowed": true,
+    "writeAllowed": false,
+    "shellExecuteAllowed": false,
+    "launchProposalAllowed": true,
+    "approvedLaunchExecutionAllowed": false
+  }
+}

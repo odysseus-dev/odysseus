@@ -2,7 +2,7 @@
 """Minimal OpenAI-compatible image generation API server using diffusers.
 
 Serves /v1/images/generations and /v1/models for compatibility with
-Odysseus's image generation tool.
+Juniperus's image generation tool.
 
 Usage:
     python3 scripts/diffusion_server.py --model /path/to/model --port 8100

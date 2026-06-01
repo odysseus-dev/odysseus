@@ -1,0 +1,30 @@
+﻿<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Juniperus - Gnexus Operations Console</title><link rel="stylesheet" href="/static/gnexus/gnexus-core.css"></head>
+<body><main class="wrap"><section class="top"><div><div class="brand">Juniperus</div><h1 class="title">Gnexus Operations Console</h1><p class="sub">Frontstage cockpit for governed operations inside <code>C:\Users\iamcy\CymaticsDev</code>. This page is intentionally useful without API hydration, then enhances itself if the local API is available.</p></div><div class="pill">Human approval required</div></section>
+<section class="status" id="status"><div class="metric"><b>Console</b><span>Frontstage ready</span></div><div class="metric"><b>Mutation</b><span>Locked unless approved</span></div><div class="metric"><b>Workspace</b><span>CymaticsDev bound</span></div><div class="metric"><b>Live control</b><span>External writes disabled</span></div></section>
+<section class="grid"><a class="card" href="/gnexus/governance"><h3>Governance</h3><p>Workspace authority, policy, approval boundaries, and Mission Control state.</p></a>
+<a class="card" href="/gnexus/app-dock"><h3>App Dock</h3><p>Discovered CymaticsDev apps, internal tools, project cards, and proposed launches.</p></a>
+<a class="card" href="/gnexus/approval-desk"><h3>Approval Desk</h3><p>Human decision surface for risky operations before execution.</p></a>
+<a class="card" href="/gnexus/interceptor"><h3>Shell/File Interceptor</h3><p>Routes shell and file power through operation guard policy.</p></a>
+<a class="card" href="/gnexus/diff-gate"><h3>Diff Gate</h3><p>Turns proposed code writes into reviewable patch proposals.</p></a>
+<a class="card" href="/gnexus/patch-apply"><h3>Patch Apply</h3><p>Applies approved patches only after rollback snapshot creation.</p></a>
+<a class="card" href="/gnexus/verifier-loop"><h3>Verifier Loop</h3><p>Verification, repair queue, rollback requests, and result ledgers.</p></a>
+<a class="card" href="/gnexus/operator-loop"><h3>Operator Loop</h3><p>End-to-end governed operation workflow across all rooms.</p></a>
+<a class="card" href="/gnexus/memory-routing"><h3>Memory Routing</h3><p>Project context, skills, model routing, and memory boundary planning.</p></a>
+<a class="card" href="/gnexus/live-control"><h3>Live Control</h3><p>Controlled write posture, activation gates, and finalizer state.</p></a>
+<a class="card" href="/gnexus/ollama-models"><h3>Local Ollama Models</h3><p>Local model readiness: status, model count, capability classification, and smoke test for the local Ollama endpoint.</p></a></section>
+<section class="note" id="api-note">API hydration is optional. If it fails, this cockpit still renders and remains navigable.</section>
+<div class="footer">Juniperus / Gnexus Operations Console - governed power, visible rooms, no endless loading.</div>
+<a class="card" href="/gnexus/ollama-models">
+  <h2>Local Ollama Models</h2>
+  <p>Imported local models available to Juniperus.</p>
+</a>
+</main><script>
+(function(){
+  var note=document.getElementById('api-note');
+  fetch('/api/gnexus/frontstage/state',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null}).then(function(j){
+    if(!j){note.textContent='Local API state unavailable; fallback cockpit is active.';return;}
+    note.textContent='Hydrated: '+(j.title||'Gnexus Operations Console')+' / '+(j.status||'ready');
+  }).catch(function(){note.textContent='Local API state unavailable; fallback cockpit is active.';});
+})();
+</script></body></html>

@@ -1,6 +1,6 @@
-{
-  "name": "Odysseus",
-  "short_name": "Odysseus",
+﻿{
+  "name": "Juniperus",
+  "short_name": "Juniperus",
   "description": "Self-hosted AI chat with memory, documents, and tools",
   "start_url": "/",
   "scope": "/",
@@ -13,3 +13,4 @@
     { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]
 }
+

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "JUNIPERUS_WORKSPACE_v0_1_2",
+  "workspaceRoot": "C:\\Users\\iamcy\\CymaticsDev",
+  "preferredJuniperusRepo": "C:\\Users\\iamcy\\CymaticsDev\\00_SYSTEMS\\Juniperus",
+  "fallbackJuniperusRepo": "C:\\Users\\iamcy\\Juniperus",
+  "activeReposRoot": "C:\\Users\\iamcy\\CymaticsDev\\01_ACTIVE_REPOS",
+  "systemsRoot": "C:\\Users\\iamcy\\CymaticsDev\\00_SYSTEMS",
+  "infiniteBrainRoot": "C:\\Users\\iamcy\\CymaticsDev\\06_INFINITE_BRAIN",
+  "runtimeShortRoot": "C:\\GNX",
+  "approvedReadRoots": [
+    "C:\\Users\\iamcy\\CymaticsDev",
+    "C:\\GNX"
+  ],
+  "approvedWriteRoots": [
+    "C:\\Users\\iamcy\\CymaticsDev\\00_SYSTEMS\\Juniperus",
+    "C:\\Users\\iamcy\\CymaticsDev\\01_ACTIVE_REPOS",
+    "C:\\Users\\iamcy\\CymaticsDev\\06_INFINITE_BRAIN",
+    "C:\\GNX"
+  ],
+  "sensitivePatterns": [
+    ".env",
+    "id_rsa",
+    "id_ed25519",
+    "*.pem",
+    "*.key",
+    "auth.json",
+    "app.db",
+    "*.sqlite",
+    "*.sqlite3"
+  ],
+  "createdBy": "JUNIPERUS010_v0_1_2_PATHFIX"
+}

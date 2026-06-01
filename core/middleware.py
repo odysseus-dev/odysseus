@@ -13,8 +13,17 @@ from starlette.responses import Response
 # routes via HTTP loopback (the agent's tool calls don't carry the
 # admin user's session cookie). Set once at import; tools read the
 # same value from this module. Never persisted or exposed externally.
-INTERNAL_TOOL_TOKEN = os.environ.get("ODYSSEUS_INTERNAL_TOKEN") or secrets.token_hex(32)
-INTERNAL_TOOL_HEADER = "X-Odysseus-Internal-Token"
+# Compatibility: honour the legacy ODYSSEUS_INTERNAL_TOKEN env var if set,
+# but prefer the Juniperus alias when present. Never persisted or exposed.
+INTERNAL_TOOL_TOKEN = (
+    os.environ.get("JUNIPERUS_INTERNAL_TOKEN")
+    or os.environ.get("ODYSSEUS_INTERNAL_TOKEN")
+    or secrets.token_hex(32)
+)
+INTERNAL_TOOL_HEADER = "X-Juniperus-Internal-Token"
+# Legacy header kept as a read-only compatibility alias so older loopback
+# callers that still send X-Odysseus-Internal-Token keep working.
+INTERNAL_TOOL_HEADER_LEGACY = "X-Odysseus-Internal-Token"
 
 
 def require_admin(request: Request):
@@ -23,11 +32,11 @@ def require_admin(request: Request):
     the in-process internal-tool token used by loopback agent tools.
     """
     # In-process bypass for tool-layer loopback calls. Two paths:
-    # (a) header-direct (caller set X-Odysseus-Internal-Token), or
+    # (a) header-direct (caller set X-Juniperus-Internal-Token), or
     # (b) the auth middleware already validated the token and stamped
     #     request.state.current_user = "internal-tool".
     try:
-        hdr = request.headers.get(INTERNAL_TOOL_HEADER)
+        hdr = request.headers.get(INTERNAL_TOOL_HEADER) or request.headers.get(INTERNAL_TOOL_HEADER_LEGACY)
         if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
             return
         if getattr(request.state, "current_user", None) == "internal-tool":

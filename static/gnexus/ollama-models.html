@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local Ollama Models - Juniperus</title><link rel="stylesheet" href="/static/gnexus/gnexus-core.css"></head>
+<body><main class="wrap">
+<section class="top"><div><div class="brand">Juniperus / Gnexus Operations Console</div><h1 class="title">Local Ollama Models</h1><p class="sub">Local-first model readiness for <code>http://127.0.0.1:11434</code>. This page renders immediately and then hydrates from the local API. It never gets stuck on loading.</p></div><a class="pill" href="/gnexus">Back to cockpit</a></section>
+
+<section class="status" id="status">
+  <div class="metric"><b>Ollama</b><span id="m-ollama">Checking...</span></div>
+  <div class="metric"><b>Models</b><span id="m-count">-</span></div>
+  <div class="metric"><b>Endpoint</b><span id="m-endpoint">http://127.0.0.1:11434/v1</span></div>
+  <div class="metric"><b>Picker visible</b><span id="m-picker">-</span></div>
+</section>
+
+<section class="note" id="banner">Reading local Ollama readiness ledger. If the API is blocked, the cached registry JSON is shown instead.</section>
+
+<section class="row">
+  <a class="btn" href="/api/gnexus/ollama/state" target="_blank" rel="noopener">View JSON state</a>
+  <a class="btn" href="/gnexus/operator-loop">Operator Loop</a>
+  <a class="btn" href="/gnexus/memory-routing">Memory Routing</a>
+</section>
+
+<section class="grid" id="models"></section>
+
+<div class="footer">Juniperus / Gnexus Operations Console - one endpoint, all local models, no endless loading.</div>
+</main>
+<script>
+(function(){
+  var banner=document.getElementById('banner');
+  var elOllama=document.getElementById('m-ollama');
+  var elCount=document.getElementById('m-count');
+  var elEndpoint=document.getElementById('m-endpoint');
+  var elPicker=document.getElementById('m-picker');
+  var grid=document.getElementById('models');
+
+  function card(title, body){
+    var d=document.createElement('div'); d.className='card';
+    var h=document.createElement('h3'); h.textContent=title; d.appendChild(h);
+    var p=document.createElement('p'); p.innerHTML=body; d.appendChild(p);
+    return d;
+  }
+
+  function render(j){
+    var st=(j && j.ollama) || {};
+    var running = st.running===true;
+    elOllama.textContent = running ? ('online (' + (st.source||'http') + ')') : 'offline';
+    elOllama.className = running ? 'ok' : 'error';
+    var models=(j && j.models) || [];
+    elCount.textContent = String(models.length);
+    if(j && j.endpoint && j.endpoint.base_url){ elEndpoint.textContent=j.endpoint.base_url; }
+    var picker = j && j.endpoint && j.endpoint.registered_in_picker;
+    elPicker.textContent = picker===true ? 'yes' : (picker===false ? 'no (run import)' : 'unknown');
+
+    grid.innerHTML='';
+    if(!running){
+      grid.appendChild(card('Ollama not running','Start Ollama, then re-run the import script:<br><code>.\\venv\\Scripts\\python.exe .\\scripts\\gnexus\\Import-LocalOllamaModels.py</code>'));
+      banner.textContent='Ollama appears offline. Cached registry shown if available. Start Ollama and re-import.';
+      return;
+    }
+    if(models.length===0){
+      grid.appendChild(card('No models found','Ollama is running but has no models. Pull one, e.g. <code>ollama pull llama3.2</code>, then re-import.'));
+      banner.textContent='Ollama is running but reports zero models.';
+      return;
+    }
+    banner.textContent='Hydrated from local API. '+models.length+' local model(s) available via one endpoint.';
+    models.forEach(function(m){
+      var caps=(m.capabilities||[]).join(', ')||'general';
+      var tools=(m.tool_capable==null)?'unknown':(m.tool_capable?'yes':'no');
+      grid.appendChild(card(m.name||'model',
+        'Family: <code>'+(m.family||'?')+'</code><br>'+
+        'Params: <code>'+(m.parameter_size||'?')+'</code><br>'+
+        'Capabilities: '+caps+'<br>'+
+        'Tool-capable: '+tools+
+        (m.fallback?'<br><b class="ok">fallback model</b>':'')));
+    });
+  }
+
+  fetch('/api/gnexus/ollama/state',{credentials:'same-origin'})
+    .then(function(r){return r.ok?r.json():null})
+    .then(function(j){
+      if(!j){ banner.textContent='Local API unavailable or login required. Showing offline shell. Try restarting Juniperus or logging in.'; elOllama.textContent='unknown'; return; }
+      render(j);
+    })
+    .catch(function(){ banner.textContent='Local API state unavailable; offline shell active. This page is still usable.'; elOllama.textContent='unknown'; });
+})();
+</script></body></html>

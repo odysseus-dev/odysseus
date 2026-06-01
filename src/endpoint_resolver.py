@@ -166,8 +166,8 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     if provider == "openrouter":
-        headers.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
-        headers.setdefault("X-OpenRouter-Title", "Odysseus")
+        headers.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/juniperus")
+        headers.setdefault("X-OpenRouter-Title", "Juniperus")
     return headers
 
 

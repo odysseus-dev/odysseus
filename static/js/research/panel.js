@@ -42,8 +42,8 @@ let _expandedJobId = null;
 let _markdownModule = null;
 let _sessionModule = null;
 let _settingsCollapsed = false;
-const _SETTINGS_KEY = 'odysseus-research-settings';
-const _COLLAPSE_KEY = 'odysseus-research-settings-collapsed';
+const _SETTINGS_KEY = 'juniperus-research-settings';
+const _COLLAPSE_KEY = 'juniperus-research-settings-collapsed';
 
 try { _settingsCollapsed = localStorage.getItem(_COLLAPSE_KEY) === '1'; } catch {}
 
@@ -354,7 +354,7 @@ function _buildPanelHTML() {
           <span>Multi-step web research with an LLM-in-the-loop agent</span>
         </p>
         <div id="research-no-past-hint" class="memory-desc doclib-desc" style="display:none;margin-top:-2px;font-size:11px;opacity:0.7;">All past research found in <button type="button" class="research-library-link">Library, Research</button></div>
-        <textarea id="research-query" class="research-query" placeholder="e.g. Trace Odysseus's ten-year journey home from Troy — every island, monster, and detour, and why each one cost him" rows="4"></textarea>
+        <textarea id="research-query" class="research-query" placeholder="e.g. Trace Juniperus's ten-year journey home from Troy — every island, monster, and detour, and why each one cost him" rows="4"></textarea>
         <div class="research-category-row" id="research-category-row">
           <button class="research-cat active" data-cat="" title="LLM auto-detects the best format">Auto</button>
           <button class="research-cat" data-cat="product">Product</button>
@@ -447,7 +447,7 @@ function _wireEvents(pane) {
     _settingsCollapsed = !_settingsCollapsed;
     body.style.display = _settingsCollapsed ? 'none' : '';
     btn.classList.toggle('collapsed', _settingsCollapsed);
-    try { localStorage.setItem('odysseus-research-settings-collapsed', _settingsCollapsed ? '1' : '0'); } catch {}
+    try { localStorage.setItem('juniperus-research-settings-collapsed', _settingsCollapsed ? '1' : '0'); } catch {}
   });
 
   const queryInput = pane.querySelector('#research-query');

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""odysseus-sessions — shell wrapper for chat sessions.
+"""juniperus-sessions — shell wrapper for chat sessions.
 
-    odysseus-sessions list [--archived] [--folder F] [--limit N]
-    odysseus-sessions show SESSION_ID
-    odysseus-sessions archive SESSION_ID
-    odysseus-sessions unarchive SESSION_ID
-    odysseus-sessions delete SESSION_ID         # hard-delete (irreversible)
+    juniperus-sessions list [--archived] [--folder F] [--limit N]
+    juniperus-sessions show SESSION_ID
+    juniperus-sessions archive SESSION_ID
+    juniperus-sessions unarchive SESSION_ID
+    juniperus-sessions delete SESSION_ID         # hard-delete (irreversible)
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
 
-    p = argparse.ArgumentParser(prog="odysseus-sessions", parents=[common])
+    p = argparse.ArgumentParser(prog="juniperus-sessions", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

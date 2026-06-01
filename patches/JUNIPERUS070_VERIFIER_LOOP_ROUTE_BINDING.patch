@@ -1,0 +1,11 @@
+JUNIPERUS070 route binding patch candidate
+
+Insert before '# ========= ROUTES (kept in app.py) =========':
+
+# Gnexus Verifier / Repair / Rollback Loop routes (JUNIPERUS070)
+try:
+    from routes.gnexus_verifier_loop_routes import setup_gnexus_verifier_loop_routes
+    app.include_router(setup_gnexus_verifier_loop_routes())
+    logger.info("Gnexus verifier loop routes initialized")
+except Exception:
+    logger.exception("Failed to initialize Gnexus verifier loop routes")

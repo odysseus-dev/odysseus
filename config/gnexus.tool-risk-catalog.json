@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "JUNIPERUS_TOOL_RISK_CATALOG_v0_1_2",
+  "tools": [
+    {
+      "tool": "bash",
+      "currentPower": "full_access_shell",
+      "targetGovernance": "approval_gate_required",
+      "risk": "critical"
+    },
+    {
+      "tool": "python",
+      "currentPower": "local_code_execution",
+      "targetGovernance": "approval_gate_for_mutation_or_network",
+      "risk": "high"
+    },
+    {
+      "tool": "read_file",
+      "currentPower": "disk_read",
+      "targetGovernance": "workspace_boundary_and_sensitive_file_gate",
+      "risk": "medium"
+    },
+    {
+      "tool": "write_file",
+      "currentPower": "disk_write",
+      "targetGovernance": "diff_first_approval_gate",
+      "risk": "critical"
+    },
+    {
+      "tool": "mcp",
+      "currentPower": "external_tool_bridge",
+      "targetGovernance": "connector_authority_gate",
+      "risk": "high"
+    },
+    {
+      "tool": "api_tokens",
+      "currentPower": "integration_auth",
+      "targetGovernance": "token_scope_gate_and_rotation_receipts",
+      "risk": "high"
+    },
+    {
+      "tool": "webhooks",
+      "currentPower": "external_trigger_surface",
+      "targetGovernance": "explicit_tokenized_scope_gate",
+      "risk": "high"
+    }
+  ]
+}

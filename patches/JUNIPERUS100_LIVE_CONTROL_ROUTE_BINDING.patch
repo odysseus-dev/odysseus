@@ -1,0 +1,13 @@
+# JUNIPERUS100 live-control route binding candidate
+
+Insert before app.py marker:
+# ========= ROUTES (kept in app.py)
+
+Block:
+# Gnexus live-control finalizer
+try:
+    from routes.gnexus_live_control_routes import setup_gnexus_live_control_routes
+    app.include_router(setup_gnexus_live_control_routes())
+    logger.info("Gnexus live-control routes initialized")
+except Exception:
+    logger.warning("Gnexus live-control routes failed to initialize", exc_info=True)

@@ -1,0 +1,16 @@
+diff --git a/app.py b/app.py
+--- a/app.py
++++ b/app.py
+@@
+ # Shell (user-facing command execution)
+ from routes.shell_routes import setup_shell_routes
+ app.include_router(setup_shell_routes())
++
++# Gnexus Governance (workspace boundary, approval queue, receipts, governance console)
++from routes.gnexus_governance_routes import setup_gnexus_governance_routes
++app.include_router(setup_gnexus_governance_routes())
++logger.info("Gnexus governance routes initialized")
+
+ # Cookbook (model download/serve/cache, cookbook state sync)
+ from routes.cookbook_routes import setup_cookbook_routes
+ app.include_router(setup_cookbook_routes())

@@ -1,0 +1,12 @@
+JUNIPERUS050 patch summary
+
+app.py:
+  Add setup_gnexus_diff_gate_routes() route binding.
+
+src/tool_execution.py:
+  In the write_file direct fallback branch, insert JUNIPERUS050_DIFF_FIRST_WRITE_FILE_GATE before the raw filesystem write.
+  The gate calls src.gnexus_governance.diff_gate.propose_write_file_diff(path, body, source="agent_write_file").
+  The original raw write block remains below but is no longer reached unless the patch is later revised.
+
+src/tool_schemas.py:
+  Change write_file description from "Write/save a file to disk" to diff-first proposal language.

@@ -30,7 +30,7 @@ import { suspendDock, resumeDock, clearRightDock, applyEdgeDock } from './modalS
 
 const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized, restoreMinHeight }
 
-const _rememberedDockKey = (id) => `odysseus-modal-remembered-dock-${id}`;
+const _rememberedDockKey = (id) => `juniperus-modal-remembered-dock-${id}`;
 function _rememberDock(id, side) {
   if (!id || !side) return;
   try { localStorage.setItem(_rememberedDockKey(id), side); } catch (_) {}
@@ -67,7 +67,7 @@ function _bringToFront(modal) {
 
 function _emitModalOpened(id, modal) {
   try {
-    window.dispatchEvent(new CustomEvent('odysseus:modal-opened', {
+    window.dispatchEvent(new CustomEvent('juniperus:modal-opened', {
       detail: { id, modal },
     }));
   } catch (_) {}
@@ -155,7 +155,7 @@ let _dockPos = null; // { left, top } | null
 const _renderedChipIds = new Set();
 
 // ── Persistence (mobile dock + free-chip positions) ──
-const _DOCK_STORAGE_KEY = 'odysseus.mobileDockState.v1';
+const _DOCK_STORAGE_KEY = 'juniperus.mobileDockState.v1';
 let _dockStateLoaded = false;
 
 function _saveDockState() {

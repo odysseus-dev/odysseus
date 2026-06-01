@@ -1,0 +1,23 @@
+﻿{
+  "schemaVersion": "0.1.1",
+  "name": "Gnexus Approval Desk Policy",
+  "status": "ready",
+  "workspaceRoot": "C:\\Users\\iamcy\\CymaticsDev",
+  "defaultDecisionMode": "human_required",
+  "decisionStates": [
+    "pending",
+    "approved",
+    "denied",
+    "expired",
+    "superseded"
+  ],
+  "riskBands": {
+    "low": "Review recommended",
+    "medium": "Human approval required",
+    "high": "Human approval and verifier required",
+    "critical": "Human approval, explicit reason, backup, verifier, and rollback required"
+  },
+  "executionUnlocked": false,
+  "shellInterceptionActive": false,
+  "fileInterceptionActive": false
+}

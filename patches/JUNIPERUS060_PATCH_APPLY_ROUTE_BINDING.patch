@@ -1,0 +1,9 @@
+JUNIPERUS060 route binding concept:
+
+# Gnexus Patch Apply routes (JUNIPERUS060)
+try:
+    from routes.gnexus_patch_apply_routes import setup_gnexus_patch_apply_routes
+    app.include_router(setup_gnexus_patch_apply_routes())
+    logger.info("Gnexus patch apply routes initialized")
+except Exception:
+    logger.exception("Failed to initialize Gnexus patch apply routes")

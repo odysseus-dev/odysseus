@@ -1,0 +1,16 @@
+{
+  "schema": "gnexus.live-control-policy.v1",
+  "stage": "JUNIPERUS100",
+  "canonicalWorkspaceRoot": "C:\\Users\\iamcy\\CymaticsDev",
+  "targetRepoDefault": "C:\\Users\\iamcy\\CymaticsDev\\00_SYSTEMS\\Juniperus",
+  "humanApprovalRequired": true,
+  "controlledWriteReady": true,
+  "liveActivationEnabled": false,
+  "externalReadsEnabled": false,
+  "externalWritesEnabled": false,
+  "connectorCallsEnabled": false,
+  "secretsStored": false,
+  "productionMutationLocked": true,
+  "allowedMutationPath": "approved_patch_apply_only",
+  "finalizerStatusTarget": "JUNIPERUS_CONTROLLED_WRITE_LIVE_ACTIVATION_FINALIZER_READY_LOCAL_CLOSEOUT"
+}

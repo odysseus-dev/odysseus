@@ -1,0 +1,25 @@
+{
+  "name": "Juniperus Local Ollama Import Policy",
+  "version": "0.1.0",
+  "workspaceRoot": "C:\\Users\\iamcy\\CymaticsDev",
+  "targetRepo": "C:\\Users\\iamcy\\CymaticsDev\\00_SYSTEMS\\Juniperus",
+  "ollamaRoots": [
+    "http://127.0.0.1:11434",
+    "http://localhost:11434"
+  ],
+  "registeredEndpoint": {
+    "name": "Local Ollama (All Models)",
+    "baseUrl": "http://127.0.0.1:11434/v1",
+    "modelType": "llm",
+    "enabled": true,
+    "supportsTools": null
+  },
+  "boundaries": {
+    "externalReads": false,
+    "externalWrites": false,
+    "connectorCalls": false,
+    "secretsStored": false,
+    "modelPulls": false,
+    "packageInstalls": false
+  }
+}

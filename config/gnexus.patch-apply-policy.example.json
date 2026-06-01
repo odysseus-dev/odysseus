@@ -1,0 +1,30 @@
+{
+  "name": "gnexus.patch-apply-policy",
+  "version": "0.1.0",
+  "workspaceRoot": "C:\\Users\\iamcy\\CymaticsDev",
+  "targetRepoDefault": "C:\\Users\\iamcy\\CymaticsDev\\00_SYSTEMS\\Juniperus",
+  "executionMode": "approval_required",
+  "autoApply": false,
+  "requireApprovedStatus": true,
+  "requireRollbackSnapshot": true,
+  "requireReceipt": true,
+  "allowedStatusesForApply": ["approved", "human_approved", "ready_to_apply"],
+  "blockedPathFragments": [
+    ".env",
+    "auth.json",
+    "app.db",
+    "juniperus.db",
+    "tokens",
+    "secrets",
+    ".ssh",
+    "AppData",
+    "vault",
+    "private_key",
+    "id_rsa",
+    "id_ed25519"
+  ],
+  "notes": [
+    "This policy enables approved patch application only inside the canonical workspace root.",
+    "It does not authorize raw shell, package installs, connector calls, or external writes."
+  ]
+}

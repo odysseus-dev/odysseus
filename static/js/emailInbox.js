@@ -11,8 +11,8 @@ import { applyEdgeDock } from './modalSnap.js';
 import { buildReplyAllCc } from './emailLibrary/replyRecipients.js';
 
 const API_BASE = window.location.origin;
-const _acct = () => window.__odysseusActiveEmailAccount
-  ? `&account_id=${encodeURIComponent(window.__odysseusActiveEmailAccount)}`
+const _acct = () => window.__juniperusActiveEmailAccount
+  ? `&account_id=${encodeURIComponent(window.__juniperusActiveEmailAccount)}`
   : '';
 
 const _emailSetupHint = () => '<div style="margin-top:6px;opacity:0.72;font-size:11px;">Setup: <span style="color:var(--accent,var(--red));">Settings &rsaquo; Integrations</span></div>';
@@ -241,7 +241,7 @@ async function _refreshUnreadCount() {
     }
 
     // Compare highest unread UID to the last-seen threshold in localStorage
-    const lastSeen = parseInt(localStorage.getItem('odysseus-email-last-seen-uid') || '0', 10);
+    const lastSeen = parseInt(localStorage.getItem('juniperus-email-last-seen-uid') || '0', 10);
     const maxUid = Math.max(...emails.map(e => parseInt(e.uid, 10) || 0));
 
     // Only show dot if there's a new email above the threshold
@@ -276,7 +276,7 @@ export function markInboxAsSeen() {
         const emails = data.emails || [];
         if (emails.length > 0) {
           const maxUid = Math.max(...emails.map(e => parseInt(e.uid, 10) || 0));
-          localStorage.setItem('odysseus-email-last-seen-uid', String(maxUid));
+          localStorage.setItem('juniperus-email-last-seen-uid', String(maxUid));
         }
         const dot = document.getElementById('email-unread-dot');
         if (dot) dot.style.display = 'none';

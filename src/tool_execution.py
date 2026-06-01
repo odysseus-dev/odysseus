@@ -1,4 +1,4 @@
-"""
+﻿"""
 tool_execution.py
 
 Tool dispatcher and result formatter for the agent loop.
@@ -55,6 +55,12 @@ def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
     return text
 
 logger = logging.getLogger(__name__)
+
+# JUNIPERUS040 agent guard import
+try:
+    from src.gnexus_governance.operation_guard import evaluate_agent_tool
+except Exception:
+    evaluate_agent_tool = None
 
 
 async def _run_subprocess_streaming(
@@ -259,6 +265,14 @@ async def _call_mcp_tool(
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
 ) -> Dict:
     """Route a legacy tool call through the MCP manager, with direct fallbacks."""
+    # JUNIPERUS040 MCP tool guard
+    if tool in ("bash", "read_file", "write_file"):
+        if evaluate_agent_tool is None:
+            return {"error": "Gnexus governance guard unavailable; high-power tool failed closed", "exit_code": 403}
+        decision = evaluate_agent_tool(tool, content, source="agent_mcp_tool")
+        if decision.get("blocked"):
+            return {"error": decision.get("message", "Blocked by Gnexus governance"), "exit_code": 403, "gnexus_governance": decision}
+
     mcp = get_mcp_manager()
     if not mcp:
         return await _direct_fallback(tool, content, progress_cb=progress_cb) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1}
@@ -323,6 +337,14 @@ async def _direct_fallback(
         "COLUMNS": "120",
         "LINES": "40",
     }
+
+    # JUNIPERUS040 direct fallback guard
+    if tool in ("bash", "read_file", "write_file"):
+        if evaluate_agent_tool is None:
+            return {"error": "Gnexus governance guard unavailable; high-power tool failed closed", "exit_code": 403}
+        decision = evaluate_agent_tool(tool, content, source="agent_direct_fallback")
+        if decision.get("blocked"):
+            return {"error": decision.get("message", "Blocked by Gnexus governance"), "exit_code": 403, "gnexus_governance": decision}
 
     try:
         if tool == "bash":
@@ -399,6 +421,20 @@ async def _direct_fallback(
             body = lines[1] if len(lines) > 1 else ""
             if not path:
                 return {"error": "write_file: path required", "exit_code": 1}
+            # JUNIPERUS050_DIFF_FIRST_WRITE_FILE_GATE
+            try:
+                from src.gnexus_governance.diff_gate import propose_write_file_diff
+                _gnx_diff = propose_write_file_diff(path, body, source="agent_write_file")
+                if not _gnx_diff.get("ok", False):
+                    return {"error": _gnx_diff.get("error", "write_file blocked by diff-first gate"), "exit_code": 1, "gnexus_diff_gate": _gnx_diff}
+                return {
+                    "output": _gnx_diff.get("message", "Diff proposal queued for human approval"),
+                    "exit_code": 0,
+                    "gnexus_diff_gate": _gnx_diff,
+                }
+            except Exception as _gnx_diff_error:
+                return {"error": f"write_file blocked by diff-first gate error: {_gnx_diff_error}", "exit_code": 1}
+
             try:
                 def _write():
                     import os
@@ -861,3 +897,4 @@ def format_tool_result(description: str, result: Dict) -> str:
             pass
 
     return "\n".join(parts)
+

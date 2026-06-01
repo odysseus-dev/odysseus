@@ -1,0 +1,37 @@
+{
+  "schema": "gnexus.juniperus.interceptionPolicy.v1",
+  "package": "JUNIPERUS040",
+  "status": "interceptor_policy_example",
+  "workspaceRoot": "C:\\Users\\iamcy\\CymaticsDev",
+  "targetRepo": "C:\\Users\\iamcy\\CymaticsDev\\00_SYSTEMS\\Juniperus",
+  "defaultMode": "deny_mutation_queue_approval",
+  "interceptedSurfaces": [
+    "routes.shell.exec",
+    "routes.shell.stream",
+    "agent.tool.bash",
+    "agent.tool.read_file",
+    "agent.tool.write_file",
+    "mcp.legacy.bash",
+    "mcp.legacy.filesystem.read_file",
+    "mcp.legacy.filesystem.write_file"
+  ],
+  "allowedWithoutApproval": [
+    "read_only_workspace_inspection",
+    "git_status",
+    "git_diff",
+    "directory_listing",
+    "non_sensitive_workspace_file_read"
+  ],
+  "blockedAndQueued": [
+    "file_write",
+    "file_delete",
+    "git_mutation",
+    "package_install",
+    "process_start_stop",
+    "network_mutation",
+    "outside_workspace_access",
+    "sensitive_file_read"
+  ],
+  "approvalQueue": "data/gnexus/approval-queue.json",
+  "interceptLedger": "data/gnexus/interceptor/intercept-ledger.json"
+}
