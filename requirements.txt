@@ -29,6 +29,10 @@ icalendar
 caldav
 cryptography
 bcrypt
+# AWS Bedrock support (src/bedrock_client.py). boto3 handles SigV4 signing,
+# the Converse / ConverseStream APIs, and foundation-model listing so Bedrock
+# endpoints work with any model the account can invoke.
+boto3
 mcp
 pyotp
 qrcode[pil]

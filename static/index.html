@@ -2043,7 +2043,27 @@
                   <option value="https://generativelanguage.googleapis.com/v1beta/openai" data-logo="gemini">Google Gemini</option>
                   <option value="https://api.x.ai/v1" data-logo="grok">xAI Grok</option>
                   <option value="https://api.z.ai/api/paas/v4" data-logo="zhipu">Z.AI (Zhipu)</option>
+                  <option value="https://bedrock-runtime.us-east-1.amazonaws.com" data-logo="bedrock">AWS Bedrock</option>
                 </select>
+                <!-- AWS Bedrock credential panel — shown only when the Bedrock
+                     provider is selected. The region is folded into the base
+                     URL (bedrock-runtime.<region>.amazonaws.com) and the keys
+                     are packed into the encrypted api_key field as JSON. -->
+                <div id="adm-epBedrock" class="hidden">
+                  <div class="admin-model-form-row">
+                    <input id="adm-bedrockRegion" type="text" placeholder="AWS region (e.g. us-east-1)" value="us-east-1" autocomplete="off">
+                  </div>
+                  <div class="admin-model-form-row">
+                    <input id="adm-bedrockAccessKey" type="text" placeholder="AWS Access Key ID" autocomplete="off" autocapitalize="off" spellcheck="false">
+                  </div>
+                  <div class="admin-model-form-row">
+                    <input id="adm-bedrockSecretKey" type="password" placeholder="AWS Secret Access Key" autocomplete="off">
+                  </div>
+                  <div class="admin-model-form-row">
+                    <input id="adm-bedrockSessionToken" type="password" placeholder="Session token (optional — for temporary credentials)" autocomplete="off">
+                  </div>
+                  <div class="adm-ep-inline-msg" style="opacity:.6">Leave keys empty to use the host's IAM role / AWS credential chain.</div>
+                </div>
                 <div class="admin-model-form-row">
                   <input id="adm-epApiKey" type="password" placeholder="API key">
                   <select id="adm-epType" style="padding:5px;width:80px;">

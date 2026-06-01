@@ -143,6 +143,8 @@ ANTHROPIC_MODELS = [
 def _detect_provider(url: str) -> str:
     """Detect API provider from URL."""
     u = (url or "").lower()
+    if "bedrock" in u and "amazonaws.com" in u:
+        return "bedrock"
     if "anthropic.com" in u:
         return "anthropic"
     if "openrouter.ai" in u:
@@ -150,6 +152,15 @@ def _detect_provider(url: str) -> str:
     if "groq.com" in u:
         return "groq"
     return "openai"
+
+
+def _bedrock_creds(headers: Optional[Dict]) -> Optional[str]:
+    """Pull the (decrypted) AWS credential blob out of the carrier header that
+    endpoint_resolver.build_headers() attaches for Bedrock endpoints."""
+    if isinstance(headers, dict):
+        from src.bedrock_client import BEDROCK_CREDS_HEADER
+        return headers.get(BEDROCK_CREDS_HEADER) or headers.get("x-bedrock-creds")
+    return None
 
 
 def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str, str]:
@@ -165,6 +176,7 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
 def _provider_label(url: str) -> str:
     """Human-friendly provider name for error messages."""
     u = (url or "").lower()
+    if "bedrock" in u and "amazonaws.com" in u: return "AWS Bedrock"
     if "anthropic.com" in u: return "Anthropic"
     if "api.x.ai" in u or "x.ai/" in u: return "xAI"
     if "openai.com" in u: return "OpenAI"
@@ -472,6 +484,17 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
 
+    if provider == "bedrock":
+        from src import bedrock_client
+        try:
+            note_model_activity(url, model)
+            response = bedrock_client.converse(url, _bedrock_creds(headers), model,
+                                               messages_copy, temperature, max_tokens)
+        except Exception as e:
+            raise HTTPException(502, bedrock_client.friendly_error(e))
+        _set_cached_response(cache_key, response)
+        return response
+
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
@@ -579,6 +602,18 @@ async def llm_call_async(
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
 
+    if provider == "bedrock":
+        from src import bedrock_client
+        try:
+            note_model_activity(url, model)
+            response = await asyncio.to_thread(
+                bedrock_client.converse, url, _bedrock_creds(headers), model,
+                messages_copy, temperature, max_tokens)
+        except Exception as e:
+            raise HTTPException(502, bedrock_client.friendly_error(e))
+        _set_cached_response(cache_key, response)
+        return response
+
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
@@ -668,6 +703,51 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         messages_copy = [{"role": "system", "content": "\n\n".join(sys_parts)}] + non_sys
     else:
         messages_copy = non_sys
+
+    # ── Bedrock streaming (boto3 Converse, native) ──
+    # boto3's event stream is synchronous, so we run it on a worker thread and
+    # bridge events back onto this event loop through a queue. The emitted SSE
+    # chunks match the OpenAI/Anthropic branches so everything downstream is
+    # provider-agnostic.
+    if provider == "bedrock":
+        from src import bedrock_client
+        import threading
+        note_model_activity(url, model)
+        creds = _bedrock_creds(headers)
+        loop = asyncio.get_event_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def _worker():
+            try:
+                for ev in bedrock_client.converse_stream_events(
+                    url, creds, model, messages_copy, temperature, max_tokens, tools):
+                    loop.call_soon_threadsafe(queue.put_nowait, ev)
+            except Exception as e:  # pragma: no cover - defensive
+                loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e), 502))
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        threading.Thread(target=_worker, daemon=True).start()
+        while True:
+            ev = await queue.get()
+            if ev is None:
+                break
+            kind = ev[0]
+            if kind == "delta":
+                yield f'data: {json.dumps({"delta": ev[1]})}\n\n'
+            elif kind == "tool_call_delta":
+                _idx, _name, _partial = ev[1], ev[2], ev[3]
+                if _name in ("create_document", "update_document", "edit_document"):
+                    yield f'data: {json.dumps({"type": "tool_call_delta", "index": _idx, "name": _name, "arg_delta": _partial})}\n\n'
+            elif kind == "tool_calls":
+                yield f'data: {json.dumps({"type": "tool_calls", "calls": ev[1]})}\n\n'
+            elif kind == "usage":
+                yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": ev[1], "output_tokens": ev[2]}})}\n\n'
+            elif kind == "error":
+                yield f'event: error\ndata: {json.dumps({"error": ev[1], "status": ev[2]})}\n\n'
+                return
+        yield "data: [DONE]\n\n"
+        return
 
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)

@@ -118,6 +118,10 @@ def build_chat_url(base: str) -> str:
     base = resolve_url(base)
     provider = _detect_provider(base)
     host = urlparse(base).hostname or ""
+    if provider == "bedrock":
+        # boto3 talks to the AWS endpoint directly; there is no chat URL to
+        # build. Pass the base through so the region stays encoded in it.
+        return base
     if provider == "anthropic" or host.endswith("anthropic.com"):
         return _anthropic_api_root(base) + "/v1/messages"
     return base + "/chat/completions"
@@ -127,6 +131,13 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     """Build auth headers for an endpoint."""
     provider = _detect_provider(base)
     headers: Dict[str, str] = {}
+    if provider == "bedrock":
+        # No HTTP auth header — boto3 signs with SigV4. Carry the decrypted
+        # credential blob in a private header that llm_core pops before dispatch.
+        from src.bedrock_client import BEDROCK_CREDS_HEADER
+        if api_key:
+            headers[BEDROCK_CREDS_HEADER] = api_key
+        return headers
     if provider == "anthropic":
         if api_key:
             headers["x-api-key"] = api_key

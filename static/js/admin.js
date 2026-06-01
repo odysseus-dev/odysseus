@@ -630,6 +630,37 @@ function initEndpointForm() {
   const provider = el('adm-epProvider');
   const urlInput = el('adm-epUrl');
 
+  // ── AWS Bedrock: region + IAM keys are entered in a dedicated panel; the
+  // region folds into the base URL and the keys are packed into the encrypted
+  // api_key field as JSON. ──
+  function _isBedrockSel() {
+    return /bedrock/i.test(provider.value || '') || /bedrock-runtime/i.test(urlInput.value || '');
+  }
+  function _syncBedrockUI() {
+    const on = _isBedrockSel();
+    const panel = el('adm-epBedrock');
+    const apiKeyInput = el('adm-epApiKey');
+    if (panel) panel.classList.toggle('hidden', !on);
+    // For Bedrock the URL is derived from the region and auth comes from the
+    // panel, so hide the raw URL box and the single API-key field.
+    if (apiKeyInput) apiKeyInput.style.display = on ? 'none' : '';
+    if (urlInput) urlInput.style.display = on ? 'none' : '';
+  }
+  function _bedrockBuild() {
+    const region = ((el('adm-bedrockRegion') || {}).value || 'us-east-1').trim() || 'us-east-1';
+    const ak = ((el('adm-bedrockAccessKey') || {}).value || '').trim();
+    const sk = ((el('adm-bedrockSecretKey') || {}).value || '').trim();
+    const st = ((el('adm-bedrockSessionToken') || {}).value || '').trim();
+    const url = `https://bedrock-runtime.${region}.amazonaws.com`;
+    let apiKey = '';
+    if (ak || sk) {
+      const creds = { access_key_id: ak, secret_access_key: sk, region };
+      if (st) creds.session_token = st;
+      apiKey = JSON.stringify(creds);
+    }
+    return { url, apiKey };
+  }
+
   // Custom provider picker — mirrors the (now hidden) <select id="adm-epProvider">
   // so the rest of this function (which reads provider.value and dispatches
   // change events) keeps working unchanged.
@@ -659,6 +690,7 @@ function initEndpointForm() {
     _renderPickerMenu();
     _syncPickerCurrent();
     if (provider.value && !urlInput.value) urlInput.value = provider.value;
+    _syncBedrockUI();
     pickerBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       pickerMenu.classList.toggle('hidden');
@@ -680,6 +712,7 @@ function initEndpointForm() {
   provider.addEventListener('change', () => {
     if (provider.value) urlInput.value = provider.value;
     else urlInput.value = '';
+    _syncBedrockUI();
   });
   urlInput.addEventListener('input', () => {
     if (provider.value && urlInput.value.trim() !== provider.value) {
@@ -757,11 +790,17 @@ function initEndpointForm() {
     apiTestBtn.addEventListener('click', async () => {
       const msg = _endpointMsg('api');
       msg.textContent = ''; msg.className = '';
-      const rawUrl = (urlInput.value || provider.value).trim();
-      const apiKey = el('adm-epApiKey').value.trim();
-      if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
-      if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
-      const url = provider.value && rawUrl === provider.value ? rawUrl : _normalizeBaseUrl(rawUrl);
+      let rawUrl = (urlInput.value || provider.value).trim();
+      let apiKey = el('adm-epApiKey').value.trim();
+      let url;
+      if (_isBedrockSel()) {
+        const b = _bedrockBuild();
+        url = b.url; apiKey = b.apiKey;
+      } else {
+        if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
+        if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
+        url = provider.value && rawUrl === provider.value ? rawUrl : _normalizeBaseUrl(rawUrl);
+      }
       apiTestController = new AbortController();
       apiTestBtn.disabled = true;
       apiTestBtn.textContent = 'Testing...';
@@ -802,12 +841,18 @@ function initEndpointForm() {
   el('adm-epAddBtn').addEventListener('click', async () => {
     const msg = _endpointMsg('api');
     msg.textContent = ''; msg.className = '';
-    const rawUrl = (urlInput.value || provider.value).trim();
-    const apiKey = el('adm-epApiKey').value.trim();
-    if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
-    if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
-    // Normalize URL (fix typos, add /v1, strip wrong paths)
-    const url = provider.value && rawUrl === provider.value ? rawUrl : _normalizeBaseUrl(rawUrl);
+    let rawUrl = (urlInput.value || provider.value).trim();
+    let apiKey = el('adm-epApiKey').value.trim();
+    let url;
+    if (_isBedrockSel()) {
+      const b = _bedrockBuild();
+      url = b.url; apiKey = b.apiKey;
+    } else {
+      if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
+      if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
+      // Normalize URL (fix typos, add /v1, strip wrong paths)
+      url = provider.value && rawUrl === provider.value ? rawUrl : _normalizeBaseUrl(rawUrl);
+    }
     const btn = el('adm-epAddBtn');
     btn.disabled = true; btn.textContent = 'Adding...';
     try {
@@ -823,6 +868,8 @@ function initEndpointForm() {
         const count = d.models ? d.models.length : 0;
         urlInput.value = ''; urlInput.style.display = '';
         el('adm-epApiKey').value = ''; provider.value = '';
+        ['adm-bedrockAccessKey', 'adm-bedrockSecretKey', 'adm-bedrockSessionToken'].forEach(id => { const n = el(id); if (n) n.value = ''; });
+        _syncBedrockUI();
         if (epType) epType.value = 'llm';
         if (d.id) _recentlyAddedEpId = String(d.id);
         await loadEndpoints();
