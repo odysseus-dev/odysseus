@@ -53,7 +53,7 @@ def analyze_topics(session_manager, owner: str = None) -> Dict[str, Any]:
                         topic_counts[topic] += 1
                         sentences = re.split(r'[.!?]', str(content_raw))
                         for sentence in sentences:
-                            if kw in sentence.lower():
+                            if re.search(rf"\b{re.escape(kw)}\b", sentence.lower()):
                                 topic_matches[topic].append({
                                     "session_id": session_id,
                                     "session_name": session_name,
