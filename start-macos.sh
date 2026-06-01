@@ -63,23 +63,41 @@ if ! command -v brew >/dev/null 2>&1; then
 fi
 
 # 2. Find a Python 3.11+ to build the environment with.
-#    On Apple Silicon we require an *arm64* interpreter (Homebrew's, under
-#    /opt/homebrew). A universal2 or x86 Python — e.g. the python.org installer
-#    at /usr/local — produces a venv whose compiled extensions get loaded as the
-#    wrong architecture when launched from the .app bundle (Cookbook then dies
-#    with "incompatible architecture"). So on arm64 we only look under
-#    /opt/homebrew and install Homebrew's python@3.11 if it's missing. On Intel
-#    (or non-mac) we just use whatever Python 3.11+ is on PATH.
+#    On Apple Silicon we require an *arm64* interpreter. A universal2 or x86 Python —
+#    e.g. the python.org installer at /usr/local — produces a venv whose compiled
+#    extensions get loaded as the wrong architecture when launched from the .app bundle
+#    (Cookbook then dies with "incompatible architecture"). We check pyenv first (if
+#    available), then Homebrew, then general PATH, and on arm64 verify that the interpreter
+#    runs as native arm64.
 PY=""
-if [ "$(uname -m)" = "arm64" ]; then
-  cands="/opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11"
-else
-  cands="python3 python3.13 python3.12 python3.11"
+cands=""
+
+if command -v pyenv >/dev/null 2>&1; then
+  # Gather python binaries from installed pyenv versions matching 3.11+
+  # Sort in reverse order to prefer newer minor/patch versions using portable numeric sort
+  for ver in $(pyenv versions --bare | grep -E '^3\.(11|12|13|14|15)\.' | sort -t. -k 1,1rn -k 2,2rn -k 3,3rn); do
+    cands="$cands $(pyenv prefix "$ver")/bin/python"
+  done
 fi
+
+if [ "$(uname -m)" = "arm64" ]; then
+  cands="$cands /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11"
+fi
+
+cands="$cands python3 python3.13 python3.12 python3.11 python"
+
+if [ "$(uname -m)" = "arm64" ]; then
+  # On Apple Silicon, ensure Python runs natively as arm64 to avoid Rosetta mismatches
+  check_cmd='import sys, platform; sys.exit(0 if sys.version_info[:2] >= (3, 11) and platform.machine() == "arm64" else 1)'
+else
+  check_cmd='import sys; sys.exit(0 if sys.version_info[:2] >= (3, 11) else 1)'
+fi
+
 for cand in $cands; do
   p="$(command -v "$cand" 2>/dev/null)" || continue
-  if "$p" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 11) else 1)' 2>/dev/null; then
-    PY="$p"; break
+  if "$p" -c "$check_cmd" 2>/dev/null; then
+    PY="$p"
+    break
   fi
 done
 
