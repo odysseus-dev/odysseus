@@ -40,6 +40,22 @@ DEFAULT_AUTH_PATH = os.path.join(
 )
 TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 
+# Usernames the auth + middleware layer reserve as internal "synthetic owner"
+# sentinels; they must never belong to a real account. The most dangerous is
+# "internal-tool": `core.middleware.require_admin` treats any request whose
+# `current_user == "internal-tool"` as the in-process tool loopback and grants
+# admin, and because the cookie auth path sets `current_user` to the raw
+# username, an account literally named "internal-tool" would be silently
+# treated as an admin by every `require_admin`-gated route. "api" collides with
+# the bearer-token owner-attribution sentinel. "demo"/"system" round out the
+# synthetic-owner set the rest of the codebase already special-cases (see
+# `_SYNTHETIC_OWNERS` in routes/assistant_routes.py and the matching guards in
+# src/task_scheduler.py / routes/research_routes.py) — a real account with one
+# of those names would be denied an assistant and inconsistently owner-scoped.
+# Refuse to create or rename into any of them so the sentinels can't be
+# impersonated. (Keep this in sync with that synthetic-owner set.)
+RESERVED_USERNAMES = frozenset({"internal-tool", "api", "demo", "system"})
+
 
 def _hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
@@ -168,6 +184,11 @@ class AuthManager:
     def create_user(self, username: str, password: str, is_admin: bool = False) -> bool:
         """Create a new user account."""
         username = username.strip().lower()
+        if not username:
+            return False
+        if username in RESERVED_USERNAMES:
+            logger.warning("Refused to create reserved username '%s'", username)
+            return False
         if username in self.users:
             return False
         if "users" not in self._config:
@@ -220,6 +241,9 @@ class AuthManager:
         new_username = new_username.strip().lower()
         requesting_user = (requesting_user or "").strip().lower()
         if not old_username or not new_username:
+            return False
+        if new_username in RESERVED_USERNAMES:
+            logger.warning("Refused to rename '%s' into reserved username '%s'", old_username, new_username)
             return False
         if old_username not in self.users:
             return False
