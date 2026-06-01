@@ -308,6 +308,10 @@ async def _direct_fallback(
     ignore it.
     """
     import json as _json
+    import logging as _logging
+    
+    _audit_logger = _logging.getLogger("admin_audit")
+    _audit_logger.warning("AUDIT [TOOL EXEC]: tool=%s length=%d cmd=%r", tool, len(content), content[:1000] + ("..." if len(content) > 1000 else ""))
 
     # Inherit env + force a sane terminal so subprocesses that touch
     # terminfo (anything calling `clear`, `tput`, `os.system("clear")`,
