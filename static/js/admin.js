@@ -4,6 +4,7 @@
 import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { providerLogo } from './providers.js';
+import { sortModelObjects } from './modelSort.js';
 
 let initialized = false;
 let modalEl = null;
@@ -53,6 +54,7 @@ async function loadUsers() {
           </div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;">
+          <button class="admin-btn-sm" data-adm-rename-user="${esc(u.username)}" style="font-size:11px;">Rename</button>
           ${u.is_admin ? '' : `<button class="admin-btn-delete" data-adm-del-user="${esc(u.username)}" style="font-size:11px;">Remove</button>`}
           ${u.is_admin ? '' : '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>'}
         </div>
@@ -106,7 +108,7 @@ async function loadUsers() {
         // Toggle panel visibility + rotate chevron + load models
         let _modelsLoaded = false;
         header.addEventListener('click', (e) => {
-          if (e.target.closest('.admin-btn-delete')) return;
+          if (e.target.closest('.admin-btn-delete, [data-adm-rename-user]')) return;
           privPanel.classList.toggle('hidden');
           const chevron = header.querySelector('.admin-user-chevron');
           if (chevron) {
@@ -140,6 +142,42 @@ async function loadUsers() {
           };
           if (input.type === 'checkbox') input.addEventListener('change', handler);
           else input.addEventListener('change', handler);
+        });
+      }
+
+      // Rename button
+      const renameBtn = row.querySelector('[data-adm-rename-user]');
+      if (renameBtn) {
+        renameBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const oldUsername = renameBtn.dataset.admRenameUser;
+          const next = await uiModule.styledPrompt(`Rename "${oldUsername}"`, {
+            defaultValue: oldUsername,
+            placeholder: 'New username',
+            confirmText: 'Rename',
+          });
+          const username = (next || '').trim();
+          if (!username || username === oldUsername) return;
+          try {
+            const res = await fetch(`/api/auth/users/${encodeURIComponent(oldUsername)}/rename`, {
+              method: 'PUT',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ username }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              uiModule.showError(data.detail || 'Failed to rename user');
+              return;
+            }
+            if (data.renamed_self) {
+              window.location.reload();
+              return;
+            }
+            loadUsers();
+          } catch (err) {
+            uiModule.showError('Failed to rename user');
+          }
         });
       }
 
@@ -179,7 +217,7 @@ async function _loadModelsForUser(username, allowedSet, privPanel) {
       return;
     }
     const allEmpty = allowedSet.size === 0;
-    listEl.innerHTML = allModels.map(m => {
+    listEl.innerHTML = sortModelObjects(allModels).map(m => {
       const checked = allEmpty || allowedSet.has(m.mid) ? 'checked' : '';
       return `<label>
         <input type="checkbox" class="priv-model-cb" data-mid="${esc(m.mid)}" ${checked}>
@@ -280,6 +318,51 @@ function _isLocalEndpoint(url) {
   } catch { return false; }
 }
 
+async function _refreshAfterEndpointChange(deletedEndpointId) {
+  try {
+    const sm = window.sessionModule;
+    const pending = sm && sm.getPendingChat ? sm.getPendingChat() : null;
+    if (deletedEndpointId && pending && String(pending.endpointId || '') === String(deletedEndpointId)) {
+      if (sm.setPendingChat) sm.setPendingChat(null);
+    }
+  } catch (_) {}
+  try {
+    if (window.modelsModule && window.modelsModule.refreshModels) {
+      await window.modelsModule.refreshModels(true);
+    }
+  } catch (_) {}
+  try {
+    window.dispatchEvent(new CustomEvent('ge:model-endpoints-updated', {
+      detail: { deletedEndpointId: deletedEndpointId || null }
+    }));
+  } catch (_) {}
+  try {
+    if (window.sessionModule && window.sessionModule.updateModelPicker) {
+      window.sessionModule.updateModelPicker();
+    }
+  } catch (_) {}
+}
+
+async function _selectAddedModelInChat(endpoint) {
+  const modelId = endpoint && Array.isArray(endpoint.models) ? endpoint.models[0] : '';
+  if (!modelId) return;
+  try {
+    if (window.modelsModule && window.modelsModule.refreshModels) {
+      await window.modelsModule.refreshModels(true);
+    }
+  } catch (_) {}
+  try {
+    document.dispatchEvent(new CustomEvent('odysseus:auto-select-model', {
+      detail: {
+        endpointId: endpoint.id || '',
+        endpointName: endpoint.name || '',
+        modelId,
+        url: endpoint.base_url || '',
+      }
+    }));
+  } catch (_) {}
+}
+
 async function loadEndpoints() {
   const listLocal = el('adm-epList-local');
   const listApi = el('adm-epList-api');
@@ -295,6 +378,9 @@ async function loadEndpoints() {
       }
     }, 1500);
   }
+  if (settingsModule && typeof settingsModule.refreshAiModelEndpoints === 'function') {
+    settingsModule.refreshAiModelEndpoints();
+  }
   try {
     const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
     // Treat a non-OK response (e.g. 401/403 for non-admins, or backend
@@ -306,7 +392,7 @@ async function loadEndpoints() {
       try { data = await res.json(); } catch { data = []; }
     }
     if (!Array.isArray(data) || data.length === 0) {
-      const empty = '<div class="admin-empty">No endpoints configured</div>';
+      const empty = '<div class="admin-empty">None</div>';
       if (listLocal) listLocal.innerHTML = empty;
       if (listApi) listApi.innerHTML = '<div class="admin-empty">None</div>';
       if (listLegacy) listLegacy.innerHTML = empty;
@@ -319,9 +405,11 @@ async function loadEndpoints() {
       // empty, but we still need to render the expand panel so the user can
       // un-hide them. Gate on the total instead.
       const hasModels = ep.online && totalCount > 0;
-      const statusBadge = ep.online
-        ? `<span class="admin-badge">${visibleCount}/${totalCount} models enabled</span>`
-        : '<span class="admin-badge admin-badge-off">offline</span>';
+      const statusBadge = ep.status === 'empty'
+        ? '<span class="admin-badge">no models</span>'
+        : ep.online
+          ? `<span class="admin-badge">${visibleCount}/${totalCount} models enabled</span>`
+          : '<span class="admin-badge admin-badge-off">offline</span>';
       const justAddedClass = (_recentlyAddedEpId && String(ep.id) === _recentlyAddedEpId) ? ' adm-ep-just-added' : '';
       return `
         <div class="admin-user-row${ep.is_enabled ? '' : ' admin-ep-disabled'}${justAddedClass}" data-adm-ep-id="${ep.id}">
@@ -417,7 +505,10 @@ async function loadEndpoints() {
         // Optimistic: remove from UI immediately
         const row = btn.closest('[data-adm-ep-id]');
         if (row) row.remove();
-        fetch('/api/model-endpoints/' + epId, { method: 'DELETE' }).then(() => loadEndpoints()).catch(() => loadEndpoints());
+        fetch('/api/model-endpoints/' + epId, { method: 'DELETE' })
+          .then(() => _refreshAfterEndpointChange(epId))
+          .then(() => loadEndpoints())
+          .catch(() => loadEndpoints());
       });
     });
     // Clear the just-added marker now that the row has been rendered
@@ -465,17 +556,18 @@ async function loadEndpoints() {
             const res = await fetch(`/api/model-endpoints/${epId}/models`, { credentials: 'same-origin' });
             const models = await res.json();
             _stopSpin();
-            if (!models.length) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px;">No models</span>'; return; }
-            const hiddenSet = new Set(models.filter(m => m.is_hidden).map(m => m.id));
-            const showSearch = models.length >= 8;
+            const sortedModels = sortModelObjects(models);
+            if (!sortedModels.length) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px;">No models</span>'; return; }
+            const hiddenSet = new Set(sortedModels.filter(m => m.is_hidden).map(m => m.id));
+            const showSearch = sortedModels.length >= 8;
             panel.innerHTML = `<div class="mcp-tools-header">
               <span>Models</span>
               <span style="display:flex;gap:8px;align-items:center;">
-                <span class="mcp-tools-count">${models.length - hiddenSet.size}/${models.length} enabled</span>
+                <span class="mcp-tools-count">${sortedModels.length - hiddenSet.size}/${sortedModels.length} enabled</span>
                 <a href="#" data-ep-select-all="${epId}">All</a>
                 <a href="#" data-ep-select-none="${epId}">None</a>
               </span>
-            </div>${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${models.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + models.map(m =>
+            </div>${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map(m =>
               `<label title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row">
                 <input type="checkbox" class="adm-cb-hidden" data-ep-model-id="${esc(m.id)}" ${!m.is_hidden ? 'checked' : ''}>
                 <span class="adm-check-dot" aria-hidden="true"></span>
@@ -536,6 +628,9 @@ async function _saveEpModelState(epId, panel) {
       const badge = row.querySelector('.admin-badge');
       if (badge && !badge.classList.contains('admin-badge-off')) badge.textContent = `${total - hidden.length}/${total} models enabled`;
     }
+    if (settingsModule && typeof settingsModule.refreshAiModelEndpoints === 'function') {
+      settingsModule.refreshAiModelEndpoints();
+    }
   } catch (e) { /* silent */ }
 }
 
@@ -571,6 +666,7 @@ function initEndpointForm() {
   if (picker && pickerBtn && pickerMenu && pickerCurrent) {
     _renderPickerMenu();
     _syncPickerCurrent();
+    if (provider.value && !urlInput.value) urlInput.value = provider.value;
     pickerBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       pickerMenu.classList.toggle('hidden');
@@ -593,6 +689,13 @@ function initEndpointForm() {
     if (provider.value) urlInput.value = provider.value;
     else urlInput.value = '';
   });
+  urlInput.addEventListener('input', () => {
+    if (provider.value && urlInput.value.trim() !== provider.value) {
+      provider.value = '';
+      _renderPickerMenu();
+      _syncPickerCurrent();
+    }
+  });
   function _normalizeBaseUrl(raw) {
     let u = raw.trim();
     // Fix common protocol typos
@@ -607,12 +710,19 @@ function initEndpointForm() {
     // Strip trailing paths that shouldn't be in a base URL
     u = u.replace(/\/v1\/(models|chat\/completions|completions|messages)\/?$/i, '/v1');
     u = u.replace(/\/(models|chat\/completions|completions|v1\/messages)\/?$/i, '');
+    u = u.replace(/\/api\/(chat|tags|generate)\/?$/i, '/api');
     // Fix double /v1/v1
     u = u.replace(/\/v1\/v1$/, '/v1');
     // Strip query params and fragments
     u = u.split('?')[0].split('#')[0];
+    try {
+      const parsed = new URL(u);
+      if (parsed.hostname.endsWith('ollama.com')) {
+        u = 'https://ollama.com/api';
+      }
+    } catch(e) {}
     // Ensure /v1 suffix for bare host:port URLs (not cloud providers)
-    if (!u.includes('api.') && !u.includes('openrouter') && !u.endsWith('/v1')) {
+    if (!u.includes('api.') && !u.includes('openrouter') && !u.includes('ollama.com') && !u.endsWith('/v1')) {
       try {
         const parsed = new URL(u);
         if (!parsed.pathname || parsed.pathname === '/') {
@@ -623,24 +733,109 @@ function initEndpointForm() {
     return u;
   }
 
+  async function _defaultOllamaUrl() {
+    try {
+      const res = await fetch('/api/runtime', { credentials: 'same-origin' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.ollama_base_url) return data.ollama_base_url;
+      }
+    } catch (_) {}
+    return 'http://127.0.0.1:11434/v1';
+  }
+
+  function _renderEndpointTestResult(msg, res, d) {
+    if (res.ok && d.status === 'empty') {
+      msg.textContent = 'Online — no models found';
+      msg.className = 'admin-success';
+      return;
+    }
+    if (res.ok && d.online) {
+      const models = d.models || [];
+      const preview = models.slice(0, 3).map(m => esc(String(m).split('/').pop())).join(', ');
+      msg.innerHTML = `Online — found ${models.length} model${models.length !== 1 ? 's' : ''}${preview ? `: ${preview}${models.length > 3 ? ', …' : ''}` : ''}`;
+      msg.className = 'admin-success';
+      return;
+    }
+    msg.textContent = (d && d.detail) || (d && d.ping_error ? `Offline — ${d.ping_error}` : 'Offline');
+    msg.className = 'admin-error';
+  }
+
+  function _endpointMsg(kind) {
+    return el(kind === 'local' ? 'adm-epLocalMsg' : 'adm-epApiMsg') || el('adm-epMsg');
+  }
+
+  let apiTestController = null;
+  const apiTestBtn = el('adm-epApiTestBtn');
+  const apiCancelTestBtn = el('adm-epApiCancelTestBtn');
+  if (apiTestBtn) {
+    apiTestBtn.addEventListener('click', async () => {
+      const msg = _endpointMsg('api');
+      msg.textContent = ''; msg.className = '';
+      const rawUrl = (urlInput.value || provider.value).trim();
+      const apiKey = el('adm-epApiKey').value.trim();
+      if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
+      if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
+      const url = provider.value && rawUrl === provider.value ? rawUrl : _normalizeBaseUrl(rawUrl);
+      apiTestController = new AbortController();
+      apiTestBtn.disabled = true;
+      apiTestBtn.textContent = 'Testing...';
+      if (apiCancelTestBtn) apiCancelTestBtn.classList.remove('hidden');
+      try {
+        const fd = new FormData();
+        fd.append('base_url', url);
+        if (apiKey) fd.append('api_key', apiKey);
+        const res = await fetch('/api/model-endpoints/test', {
+          method: 'POST',
+          body: fd,
+          credentials: 'same-origin',
+          signal: apiTestController.signal,
+        });
+        const d = await res.json();
+        _renderEndpointTestResult(msg, res, d);
+      } catch (e) {
+        if (e && e.name === 'AbortError') {
+          msg.textContent = 'Test canceled';
+          msg.className = '';
+        } else {
+          msg.textContent = 'Test failed: ' + (e && e.message ? e.message : 'request failed');
+          msg.className = 'admin-error';
+        }
+      }
+      apiTestController = null;
+      apiTestBtn.disabled = false;
+      apiTestBtn.textContent = 'Test';
+      if (apiCancelTestBtn) apiCancelTestBtn.classList.add('hidden');
+    });
+  }
+  if (apiCancelTestBtn) {
+    apiCancelTestBtn.addEventListener('click', () => {
+      if (apiTestController) apiTestController.abort();
+    });
+  }
+
   el('adm-epAddBtn').addEventListener('click', async () => {
-    const msg = el('adm-epMsg');
+    const msg = _endpointMsg('api');
     msg.textContent = ''; msg.className = '';
-    const rawUrl = (provider.value || urlInput.value).trim();
+    const rawUrl = (urlInput.value || provider.value).trim();
     const apiKey = el('adm-epApiKey').value.trim();
     if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
     if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
     // Normalize URL (fix typos, add /v1, strip wrong paths)
-    const url = provider.value ? rawUrl : _normalizeBaseUrl(rawUrl);
+    const url = provider.value && rawUrl === provider.value ? rawUrl : _normalizeBaseUrl(rawUrl);
     const btn = el('adm-epAddBtn');
     btn.disabled = true; btn.textContent = 'Adding...';
     try {
       const fd = new FormData();
       fd.append('base_url', url);
       if (apiKey) fd.append('api_key', apiKey);
+      if (provider.value && provider.selectedOptions && provider.selectedOptions[0]) {
+        fd.append('name', provider.selectedOptions[0].textContent.trim());
+      }
       const epType = el('adm-epType');
       if (epType) fd.append('model_type', epType.value);
-      fd.append('skip_probe', 'true');
+      if (provider.value && /openrouter\.ai|ollama\.com/i.test(provider.value)) fd.append('require_models', 'true');
+      else fd.append('skip_probe', 'false');
       const res = await fetch('/api/model-endpoints', { method: 'POST', body: fd, credentials: 'same-origin' });
       const d = await res.json();
       if (res.ok) {
@@ -649,45 +844,17 @@ function initEndpointForm() {
         el('adm-epApiKey').value = ''; provider.value = '';
         if (epType) epType.value = 'llm';
         if (d.id) _recentlyAddedEpId = String(d.id);
-        loadEndpoints();
+        await loadEndpoints();
+        await _selectAddedModelInChat(d);
         if (!d.online) {
           msg.textContent = 'Added (endpoint offline — will retry on next load)';
           msg.className = 'admin-error';
-        } else {
-          msg.innerHTML = `Added — found ${count} model${count !== 1 ? 's' : ''}. `
-            + `<a href="#" id="adm-probe-now" style="text-decoration:underline;cursor:pointer;">Probe models?</a>`;
+        } else if (d.status === 'empty') {
+          msg.textContent = 'Added — endpoint reachable, no models found';
           msg.className = 'admin-success';
-          const probeLink = el('adm-probe-now');
-          if (probeLink) {
-            probeLink.addEventListener('click', async (e) => {
-              e.preventDefault();
-              msg.textContent = 'Probing models...';
-              try {
-                const es = new EventSource(`/api/model-endpoints/${d.id}/probe`);
-                let lines = [];
-                es.onmessage = (ev) => {
-                  const r = JSON.parse(ev.data);
-                  if (r.type === 'probe_result') {
-                    const dot = r.status === 'ok' ? '<span style="color:var(--color-success);">●</span>'
-                              : r.status === 'timeout' ? '<span style="color:var(--color-warning);">●</span>'
-                              : '<span style="color:var(--color-error);">●</span>';
-                    const lat = r.latency_ms ? ` ${r.latency_ms}ms` : '';
-                    const err = r.error ? ` — ${esc(r.error)}` : '';
-                    lines.push(`${dot} ${esc(r.model.split('/').pop())}${lat}${err}`);
-                    msg.innerHTML = `Probing... ${lines.length} checked<div style="font-size:0.78rem;margin-top:4px;">${lines.join('<br>')}</div>`;
-                  } else if (r.type === 'probe_done') {
-                    es.close();
-                    let txt = `Done — ${r.ok}/${r.ok + r.hidden} models responding`;
-                    if (r.hidden) txt += ` — ${r.hidden} non-responding hidden`;
-                    txt += `<div style="font-size:0.78rem;margin-top:4px;">${lines.join('<br>')}</div>`;
-                    msg.innerHTML = txt;
-                    loadEndpoints();
-                  }
-                };
-                es.onerror = () => { es.close(); msg.textContent += ' (probe connection lost)'; };
-              } catch (e) { msg.textContent = 'Probe failed'; msg.className = 'admin-error'; }
-            });
-          }
+        } else {
+          msg.textContent = `Added — found ${count} model${count !== 1 ? 's' : ''}`;
+          msg.className = 'admin-success';
         }
       } else { msg.textContent = d.detail || 'Failed'; msg.className = 'admin-error'; }
     } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
@@ -696,9 +863,33 @@ function initEndpointForm() {
 
   // Local "Add" button — sibling form for self-hosted base URLs.
   const localAddBtn = el('adm-epLocalAddBtn');
+  const localTestBtn = el('adm-epLocalTestBtn');
+  if (localTestBtn) {
+    localTestBtn.addEventListener('click', async () => {
+      const msg = _endpointMsg('local');
+      msg.textContent = ''; msg.className = '';
+      const raw = (el('adm-epLocalUrl').value || '').trim();
+      if (!raw) { msg.textContent = 'Enter a base URL to test'; msg.className = 'admin-error'; return; }
+      const url = _normalizeBaseUrl(raw);
+      localTestBtn.disabled = true;
+      localTestBtn.textContent = 'Testing...';
+      try {
+        const fd = new FormData();
+        fd.append('base_url', url);
+        const res = await fetch('/api/model-endpoints/test', { method: 'POST', body: fd, credentials: 'same-origin' });
+        const d = await res.json();
+        _renderEndpointTestResult(msg, res, d);
+      } catch (e) {
+        msg.textContent = 'Test failed: ' + (e && e.message ? e.message : 'request failed');
+        msg.className = 'admin-error';
+      }
+      localTestBtn.disabled = false;
+      localTestBtn.textContent = 'Test';
+    });
+  }
   if (localAddBtn) {
     localAddBtn.addEventListener('click', async () => {
-      const msg = el('adm-epMsg');
+      const msg = _endpointMsg('local');
       msg.textContent = ''; msg.className = '';
       const raw = (el('adm-epLocalUrl').value || '').trim();
       if (!raw) { msg.textContent = 'Enter a base URL (e.g. http://localhost:8002/v1)'; msg.className = 'admin-error'; return; }
@@ -709,16 +900,19 @@ function initEndpointForm() {
         fd.append('base_url', url);
         const lt = el('adm-epLocalType');
         if (lt) fd.append('model_type', lt.value);
-        fd.append('skip_probe', 'true');
+        fd.append('skip_probe', 'false');
         const res = await fetch('/api/model-endpoints', { method: 'POST', body: fd, credentials: 'same-origin' });
         const d = await res.json();
         if (res.ok) {
           el('adm-epLocalUrl').value = '';
           if (lt) lt.value = 'llm';
           if (d.id) _recentlyAddedEpId = String(d.id);
-          loadEndpoints();
+          await loadEndpoints();
+          await _selectAddedModelInChat(d);
           const count = (d.models || []).length;
-          msg.textContent = d.online
+          msg.textContent = d.status === 'empty'
+            ? 'Added — Ollama is running, no models pulled yet'
+            : d.online
             ? `Added — found ${count} model${count !== 1 ? 's' : ''}`
             : 'Added (offline — will retry on next load)';
           msg.className = d.online ? 'admin-success' : 'admin-error';
@@ -728,11 +922,27 @@ function initEndpointForm() {
     });
   }
 
+  const ollamaBtn = el('adm-epOllamaBtn');
+  if (ollamaBtn) {
+    ollamaBtn.addEventListener('click', async () => {
+      const input = el('adm-epLocalUrl');
+      if (input) {
+        input.value = await _defaultOllamaUrl();
+        input.focus();
+      }
+      const msg = _endpointMsg('local');
+      if (msg) {
+        msg.innerHTML = '<span style="font-size:11px;opacity:0.55;">Ollama ready to test.</span>';
+        msg.className = '';
+      }
+    });
+  }
+
   // Discover local models button
   const discoverBtn = el('adm-epDiscoverBtn');
   if (discoverBtn) {
     discoverBtn.addEventListener('click', async () => {
-      const msg = el('adm-epMsg');
+      const msg = _endpointMsg('local');
       discoverBtn.disabled = true;
       // Keep the button's icon as-is while scanning; the whirlpool +
       // status text below is enough feedback. (Two spinning indicators
@@ -747,7 +957,7 @@ function initEndpointForm() {
         wrap.style.cssText = 'display:flex;align-items:center;padding:8px 0;';
         wrap.appendChild(wp.element);
         const txt = document.createElement('span');
-        txt.textContent = 'Scanning ports 8000-8020 for model servers...';
+        txt.textContent = 'Scanning ports 8000-8020 and 11434 for model servers...';
         txt.style.cssText = 'font-size:12px;opacity:0.7;';
         wrap.appendChild(txt);
         msg.appendChild(wrap);
@@ -758,24 +968,32 @@ function initEndpointForm() {
         const data = await res.json();
         const items = data.items || [];
         if (!items.length) {
-          msg.textContent = 'No model servers found. Make sure vLLM, Ollama, or similar is running.';
+          msg.textContent = 'No model servers found. Make sure vLLM, llama.cpp, SGLang, or Ollama is running. Docker users may need OLLAMA_HOST=0.0.0.0:11434.';
           msg.className = 'admin-error';
         } else {
-          // Auto-add each discovered endpoint
+          // Auto-add each discovered endpoint. Server dedupes on base_url
+          // and returns `existing: true` for already-registered ones.
           let added = 0;
+          let skipped = 0;
           for (const item of items) {
             const base = item.url.replace('/chat/completions', '').replace(/\/$/, '');
             const fd = new FormData();
             fd.append('base_url', base);
-            fd.append('skip_probe', 'true');
+            fd.append('skip_probe', 'false');
             const r = await fetch('/api/model-endpoints', { method: 'POST', body: fd });
             if (r.ok) {
-              added++;
-              try { const dd = await r.json(); if (dd && dd.id) _recentlyAddedEpId = String(dd.id); } catch (_) {}
+              try {
+                const dd = await r.json();
+                if (dd && dd.existing) { skipped++; }
+                else { added++; if (dd && dd.id) _recentlyAddedEpId = String(dd.id); }
+              } catch (_) { added++; }
             }
           }
           const totalModels = items.reduce((n, i) => n + (i.models ? i.models.length : 0), 0);
-          msg.innerHTML = `Found ${items.length} server${items.length !== 1 ? 's' : ''} with ${totalModels} model${totalModels !== 1 ? 's' : ''}` + (added ? ` — added ${added} new` : ' (already added)');
+          const parts = [`Found ${items.length} server${items.length !== 1 ? 's' : ''} with ${totalModels} model${totalModels !== 1 ? 's' : ''}`];
+          if (added) parts.push(`added ${added} new`);
+          if (skipped) parts.push(`${skipped} already added`);
+          msg.innerHTML = parts.join(' — ');
           msg.className = 'admin-success';
           loadEndpoints();
         }
@@ -794,6 +1012,27 @@ function initEndpointForm() {
   // in localStorage so a frequent API-adder doesn't re-expand every time.
   document.querySelectorAll('#adm-add-api, #adm-add-local').forEach((sec) => {
     const head = sec.querySelector('.adm-section-toggle');
+    if (!head) return;
+    const key = 'odysseus.addModels.' + sec.id + '.open';
+    let open = false;
+    try { open = localStorage.getItem(key) === '1'; } catch {}
+    const apply = () => {
+      sec.classList.toggle('collapsed', !open);
+      head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    apply();
+    const toggle = () => {
+      open = !open;
+      try { localStorage.setItem(key, open ? '1' : '0'); } catch {}
+      apply();
+    };
+    head.addEventListener('click', toggle);
+    head.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+  });
+  document.querySelectorAll('.adm-quickstart-section').forEach((sec) => {
+    const head = sec.querySelector('.adm-quickstart-toggle');
     if (!head) return;
     const key = 'odysseus.addModels.' + sec.id + '.open';
     let open = false;

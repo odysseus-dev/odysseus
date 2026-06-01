@@ -62,14 +62,16 @@ def setup_compare_routes(session_manager: SessionManager):
             db = SessionLocal()
             try:
                 from core.database import ModelEndpoint
+                from src.endpoint_resolver import build_headers, normalize_base
                 # Find matching endpoint by URL
+                base = normalize_base(endpoint)
                 ep = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.base_url == endpoint.replace('/chat/completions', '')
+                    ModelEndpoint.base_url == base
                 ).first()
                 if ep and ep.api_key:
                     s = session_manager.sessions.get(sid)
                     if s:
-                        s.headers = {"Authorization": f"Bearer {ep.api_key}"}
+                        s.headers = build_headers(ep.api_key, ep.base_url)
             finally:
                 db.close()
 

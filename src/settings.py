@@ -64,6 +64,8 @@ DEFAULT_SETTINGS = {
     "research_model": "",
     "research_search_provider": "",
     "research_max_tokens": 16384,
+    "research_extraction_timeout_seconds": 90,
+    "research_extraction_concurrency": 3,
     "agent_max_tool_calls": 0,
     "agent_input_token_budget": 6000,
     "agent_stream_timeout_seconds": 300,
@@ -120,6 +122,7 @@ DEFAULT_SETTINGS = {
 
 DEFAULT_FEATURES = {
     "web_search": True,
+    "web_fetch": True,
     "deep_research": False,
     "memory": True,
     "document_editor": True,
@@ -138,7 +141,7 @@ def load_settings() -> dict:
     if _settings_cache and (now - _settings_cache[0]) < _CACHE_TTL:
         return _settings_cache[1]
     try:
-        with open(SETTINGS_FILE, "r") as f:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
             saved = json.load(f)
         merged = {**DEFAULT_SETTINGS, **saved}
     except (FileNotFoundError, json.JSONDecodeError):
@@ -203,7 +206,7 @@ def load_features() -> dict:
     if _features_cache and (now - _features_cache[0]) < _CACHE_TTL:
         return _features_cache[1]
     try:
-        with open(FEATURES_FILE, "r") as f:
+        with open(FEATURES_FILE, "r", encoding="utf-8") as f:
             saved = json.load(f)
         merged = {**DEFAULT_FEATURES, **saved}
     except (FileNotFoundError, json.JSONDecodeError):

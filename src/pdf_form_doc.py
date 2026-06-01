@@ -142,7 +142,7 @@ def save_field_sidecar(pdf_path: str, fields: list[dict[str, Any]]) -> str:
     """Persist the field schema next to its source PDF. Returns the sidecar path."""
     path = sidecar_path(pdf_path)
     try:
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(fields, f, indent=2)
     except Exception as e:
         logger.warning(f"Failed to write field sidecar {path}: {e}")
@@ -155,7 +155,7 @@ def load_field_sidecar(pdf_path: str) -> Optional[list[dict[str, Any]]]:
     if not os.path.exists(path):
         return None
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
         logger.warning(f"Failed to read field sidecar {path}: {e}")

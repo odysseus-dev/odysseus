@@ -68,7 +68,7 @@ class AuthManager:
     def _load(self):
         try:
             if os.path.exists(self.auth_path):
-                with open(self.auth_path, "r") as f:
+                with open(self.auth_path, "r", encoding="utf-8") as f:
                     self._config = json.load(f)
                 logger.info("Auth config loaded")
             else:
@@ -82,7 +82,7 @@ class AuthManager:
         """Load persisted session tokens from disk, pruning expired ones."""
         try:
             if os.path.exists(self._sessions_path):
-                with open(self._sessions_path, "r") as f:
+                with open(self._sessions_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 now = time.time()
                 self._sessions = {k: v for k, v in data.items() if v.get("expiry", 0) > now}
@@ -208,6 +208,36 @@ class AuthManager:
         if revoked:
             self._save_sessions()
         logger.info(f"Deleted user '{username}' (by {requesting_user}); revoked {revoked} active session(s)")
+        return True
+
+    def rename_user(self, old_username: str, new_username: str, requesting_user: str) -> bool:
+        """Rename a user in auth config and active sessions. Admin only."""
+        old_username = old_username.strip().lower()
+        new_username = new_username.strip().lower()
+        requesting_user = (requesting_user or "").strip().lower()
+        if not old_username or not new_username:
+            return False
+        if old_username not in self.users:
+            return False
+        if new_username in self.users:
+            return False
+        if not self.users.get(requesting_user, {}).get("is_admin"):
+            return False
+        self._config.setdefault("users", {})[new_username] = self._config["users"].pop(old_username)
+        self._save()
+
+        renamed_sessions = 0
+        with self._sessions_lock:
+            for sess in self._sessions.values():
+                if (sess or {}).get("username") == old_username:
+                    sess["username"] = new_username
+                    renamed_sessions += 1
+        if renamed_sessions:
+            self._save_sessions()
+        logger.info(
+            "Renamed user '%s' -> '%s' (by %s); updated %d active session(s)",
+            old_username, new_username, requesting_user, renamed_sessions,
+        )
         return True
 
     def is_admin(self, username: str) -> bool:

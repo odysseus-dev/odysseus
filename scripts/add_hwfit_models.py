@@ -120,20 +120,40 @@ def _entry_from_modelinfo(mi, overrides):
                 total = bt
                 if ba and active is None:
                     active = ba
-    # Last resort: read safetensors param count (note: for quantized repos this
-    # is the *packed* count, so it's only an approximation).
+    # Determine quant first — we need it to unpack the safetensors fallback.
+    quant = _quant_from_name(name)
+    # Last resort: read safetensors element counts. For pre-quantized repos
+    # (AWQ/GPTQ/MLX-Int4 etc.) the weights are packed: 8× 4-bit weights per
+    # I32 element, 4× 8-bit weights per I32. The bare safetensors total
+    # therefore undercounts real parameter count by the same factor, which
+    # then feeds a wrong `min_vram_gb` downstream. Sum per-dtype and unpack
+    # the packed I32 tensors so the catalog stores the true param count.
     if total is None:
         try:
             full = api.model_info(name, files_metadata=False)
             st = getattr(full, "safetensors", None)
-            if st and getattr(st, "total", None):
-                total = int(st.total)
+            if st:
+                params_by_dtype = getattr(st, "parameters", None) or {}
+                if quant.endswith("4bit") or quant.endswith("Int4"):
+                    pack_factor = 8
+                elif quant.endswith("8bit") or quant.endswith("Int8") or quant == "FP8":
+                    pack_factor = 4
+                else:
+                    pack_factor = 1
+                if params_by_dtype:
+                    # I32/I64 hold the packed quantized weights; everything
+                    # else (F16/BF16 scales, zeros, embeddings) is already at
+                    # its real element count.
+                    packed = sum(c for d, c in params_by_dtype.items() if d in ("I32", "I64"))
+                    rest = sum(c for d, c in params_by_dtype.items() if d not in ("I32", "I64"))
+                    total = packed * pack_factor + rest
+                elif getattr(st, "total", None):
+                    total = int(st.total) * pack_factor
         except Exception:
             pass
     if total is None:
         return None  # can't size it — skip
     pb = total / 1e9
-    quant = _quant_from_name(name)
     created = getattr(mi, "created_at", None)
     rel = created.strftime("%Y-%m-%d") if created else datetime.utcnow().strftime("%Y-%m-%d")
     # Rough RAM/VRAM hints (fit.py recomputes the real requirement from params+quant).
@@ -173,7 +193,7 @@ def _entry_from_modelinfo(mi, overrides):
 
 
 def main():
-    with open(DATA_PATH) as f:
+    with open(DATA_PATH, encoding="utf-8") as f:
         catalog = json.load(f)
     by_name = {m["name"]: m for m in catalog}
     existing = set(by_name)
@@ -214,12 +234,12 @@ def main():
         return
 
     # Backup + merge
-    with open(DATA_PATH + ".bak", "w") as f:
+    with open(DATA_PATH + ".bak", "w", encoding="utf-8") as f:
         json.dump(catalog, f, indent=2)
     for name, entry in to_add.items():
         by_name[name] = entry
     merged = list(by_name.values())
-    with open(DATA_PATH, "w") as f:
+    with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(merged, f, indent=2)
 
     print(f"\nAdded/updated {len(to_add)} models. Catalog now {len(merged)} (was {len(catalog)}).")

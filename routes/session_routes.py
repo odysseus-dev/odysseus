@@ -227,6 +227,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         )
         # Set auth headers for custom API-key endpoints
         resolved_key = api_key.strip() if api_key else ""
+        resolved_base = endpoint_url
         if not resolved_key and endpoint_id and endpoint_id.strip():
             from core.database import ModelEndpoint
             _db = SessionLocal()
@@ -234,10 +235,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id.strip()).first()
                 if ep and ep.api_key:
                     resolved_key = ep.api_key
+                    resolved_base = ep.base_url
             finally:
                 _db.close()
         if resolved_key:
-            session.headers = {"Authorization": f"Bearer {resolved_key}"}
+            from src.endpoint_resolver import build_headers
+            session.headers = build_headers(resolved_key, resolved_base)
             session_manager.save_sessions()
         # Fire webhook (sync-safe)
         if webhook_manager:
@@ -284,11 +287,19 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db.close()
         # Switch model/endpoint mid-session
         if model is not None and endpoint_url is not None:
+            if endpoint_id:
+                from core.database import ModelEndpoint
+                _db = SessionLocal()
+                try:
+                    ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
+                    if not ep:
+                        raise HTTPException(400, "Model endpoint no longer exists")
+                finally:
+                    _db.close()
             session.model = model
             session.endpoint_url = endpoint_url
             # Update auth headers from the endpoint's stored API key
             if endpoint_id:
-                from core.database import ModelEndpoint
                 _db = SessionLocal()
                 try:
                     ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
@@ -797,7 +808,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         }
         _THROWAWAY_MAX_MESSAGES = 4  # only delete if <= this many messages
         try:
-            rows = db.query(DbSession).filter(DbSession.archived == False).all()
+            rows = db.query(DbSession).filter(DbSession.archived == False, DbSession.owner == user).all()
             folder_map = {r.id: r.folder for r in rows}
             # Precompute per-session message counts in TWO aggregate queries
             # instead of 1–3 queries PER session — with many chats the per-row
@@ -1014,7 +1025,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         db = SessionLocal()
         try:
             for sid, folder_name in assignments.items():
-                db_session = db.query(DbSession).filter(DbSession.id == sid).first()
+                db_session = db.query(DbSession).filter(DbSession.id == sid, DbSession.owner == user).first()
                 if db_session:
                     db_session.folder = folder_name
                     db_session.updated_at = datetime.utcnow()

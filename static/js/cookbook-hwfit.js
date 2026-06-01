@@ -887,7 +887,30 @@ export function _expandModelRow(row, modelData) {
   const quickRunBtn = panel.querySelector('.hwfit-quickrun-btn');
   if (quickRunBtn) {
     quickRunBtn.addEventListener('click', async () => {
-      _syncHostFromScanDropdown();
+      const _qrHost = _syncHostFromScanDropdown();
+
+      // Don't serve a model that isn't downloaded yet. vLLM/SGLang would
+      // background-pull at launch, so the serve task shows up as "running" in
+      // the Running tab while nothing is actually served (and llama.cpp just
+      // errors "No GGUF found"). The Configure button and the Serve tab already
+      // gate on the cached-model list — mirror that here. When the model isn't
+      // present, honor the button's "Download" half by kicking off the download
+      // instead, then the user can Run again to serve once it finishes.
+      const _short = modelData.name.split('/').pop();
+      const _downloaded = _cachedModelIds && (
+        _cachedModelIds.has(modelData.name)
+        || [..._cachedModelIds].some(id => id === modelData.name || id.endsWith('/' + _short))
+      );
+      if (_cachedModelIds && !_downloaded) {
+        uiModule.showToast('Model not downloaded yet — starting download. Run again to serve once it finishes.');
+        if (backend === 'ollama') {
+          _runPanelCmd(panel, _buildDownloadCmd(modelData, backend), { timeout: 0 });
+        } else {
+          _runModelDownload(panel, modelData, backend, _qrHost);
+        }
+        return;
+      }
+
       quickRunBtn.disabled = true;
       quickRunBtn.textContent = 'Starting...';
 
@@ -1094,12 +1117,13 @@ export function _hwfitInit() {
     for (const sel of selectors) {
       if (!sel) continue;
       const currentVal = sel.value;
-      sel.innerHTML = `<option value="local">Local</option>`;
+      let html = `<option value="local">Local</option>`;
       _envState.servers.forEach((s, i) => {
         if (!s.host) return;
         const label = s.name || s.host || `Server ${i + 1}`;
-        sel.innerHTML += `<option value="${i}">${uiModule.esc(label)}</option>`;
+        html += `<option value="${i}">${uiModule.esc(label)}</option>`;
       });
+      sel.innerHTML = html;
       sel.value = currentVal;
     }
   }

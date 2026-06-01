@@ -37,8 +37,9 @@ RUN groupadd -g 1000 odysseus \
     && useradd -u 1000 -g 1000 -M -s /bin/sh -d /app odysseus
 
 # Create data directory (mount a volume here for persistence)
-RUN mkdir -p data logs \
-    && chown -R odysseus:odysseus data logs
+
+RUN mkdir -p data logs services/cache/search \
+    && chown -R odysseus:odysseus data logs services/cache/search
 
 # Entrypoint that drops to PUID/PGID (default 1000:1000) and repairs
 # ownership on the bind-mounted /app/data and /app/logs. Without this,

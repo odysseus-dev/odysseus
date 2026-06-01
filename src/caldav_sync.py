@@ -133,6 +133,10 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                 from icalendar import Calendar as iCal
 
                 seen_uids = set()
+                # Track events added to the session but not yet committed so
+                # duplicate UIDs within the same batch are updated, not re-inserted
+                # (which would violate the UNIQUE constraint on commit).
+                pending: dict = {}
                 try:
                     objs = remote_cal.date_search(start=start, end=end, expand=False)
                 except Exception as e:
@@ -182,7 +186,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                             else ""
                         )
 
-                        existing = db.query(CalendarEvent).filter(
+                        existing = pending.get(uid_val) or db.query(CalendarEvent).filter(
                             CalendarEvent.uid == uid_val,
                         ).first()
                         if existing:
@@ -196,7 +200,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                             existing.is_utc = row_is_utc
                             existing.rrule = rrule
                         else:
-                            db.add(CalendarEvent(
+                            new_ev = CalendarEvent(
                                 uid=uid_val,
                                 calendar_id=local_cal.id,
                                 summary=summary,
@@ -207,7 +211,9 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                                 all_day=all_day,
                                 is_utc=row_is_utc,
                                 rrule=rrule,
-                            ))
+                            )
+                            db.add(new_ev)
+                            pending[uid_val] = new_ev
                         result["events"] += 1
                 db.commit()
 

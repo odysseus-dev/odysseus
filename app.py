@@ -1,7 +1,22 @@
 # app.py — slim orchestrator
-from dotenv import load_dotenv
-load_dotenv()
 import os
+
+# Windows: force HuggingFace/fastembed to COPY model files instead of symlinking.
+# On a network-share/UNC data dir Windows can't follow HF's symlinks ([WinError
+# 1463]), so the ONNX embedding model fails to load. huggingface_hub reads this
+# at import time, so set it before anything pulls it in. (Mirrored in
+# src/embeddings.py for non-server entrypoints.)
+if os.name == "nt":
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
+from dotenv import load_dotenv
+# encoding="utf-8-sig" tolerates a UTF-8 BOM in .env — a common Windows gotcha
+# when the file is saved from Notepad. Without this, the first key parses as
+# "﻿AUTH_ENABLED" instead of "AUTH_ENABLED", so AUTH_ENABLED=false (etc.)
+# is silently ignored and the user is unexpectedly forced to log in (issue #142).
+# utf-8-sig reads plain UTF-8 (no BOM) identically, so this is safe everywhere.
+load_dotenv(encoding="utf-8-sig")
 import uuid
 
 import asyncio
@@ -54,7 +69,17 @@ app.add_middleware(
     allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["*"],
+    allow_headers=[
+        "Accept",
+        "Authorization",
+        "Content-Type",
+        "X-API-Key",
+        "X-Auth-Token",
+        "X-Odysseus-Internal-Token",
+        "X-Odysseus-Owner",
+        "X-Requested-With",
+        "X-TZ-Offset",
+    ],
 )
 
 # ========= SECURITY HEADERS MIDDLEWARE =========
@@ -160,6 +185,31 @@ if AUTH_ENABLED:
         _token_cache.update(new_map)
         app.state._token_cache_dirty = False
 
+    # Headers that prove a request was forwarded by a proxy/tunnel (cloudflared,
+    # nginx, Caddy, Tailscale Funnel, …). cloudflared connects to the app FROM
+    # 127.0.0.1, so without this check every tunneled request would look like
+    # loopback and could bypass auth.
+    _PROXY_FWD_HEADERS = (
+        "cf-connecting-ip", "cf-ray", "cf-visitor",
+        "x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded",
+    )
+
+    def _is_trusted_loopback(request: Request) -> bool:
+        """True ONLY for a DIRECT loopback connection with no proxy/tunnel
+        forwarding headers. A bare ``client.host in ('127.0.0.1','::1')`` check is
+        unsafe behind a Cloudflare tunnel / reverse proxy: those connect from
+        loopback, so a remote visitor would otherwise inherit local trust and
+        slip past LOCALHOST_BYPASS or spoof the internal-tool path. Odysseus's own
+        in-process agent loopback calls carry none of these headers, so they still
+        qualify."""
+        host = request.client.host if request.client else None
+        if host not in ("127.0.0.1", "::1"):
+            return False
+        for _h in _PROXY_FWD_HEADERS:
+            if request.headers.get(_h):
+                return False
+        return True
+
     class AuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
             path = request.url.path
@@ -172,26 +222,28 @@ if AUTH_ENABLED:
             try:
                 from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN as _ITT
                 _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
-                _client_host = request.client.host if request.client else None
-                if _hdr and _hdr == _ITT and _client_host in ("127.0.0.1", "::1"):
+                if _hdr and _hdr == _ITT and _is_trusted_loopback(request):
                     # Impersonation: when the agent's loopback call sets
-                    # X-Odysseus-Owner, attribute the request to that
-                    # user so notes/calendar/etc. land in their account
-                    # instead of being owned by "internal-tool" (which
-                    # made the agent's POSTs invisible to the user that
-                    # asked for them).
+                    # X-Odysseus-Owner, attribute the request to that user only
+                    # if they exist. Authorization checks remain separate; this
+                    # is just owner attribution for notes/calendar/etc.
                     _impersonate = (request.headers.get("X-Odysseus-Owner") or "").strip()
-                    request.state.current_user = _impersonate or "internal-tool"
+                    _auth_mgr = getattr(request.app.state, "auth_manager", None) or auth_manager
+                    if _impersonate and _impersonate in getattr(_auth_mgr, "users", {}):
+                        request.state.current_user = _impersonate
+                    else:
+                        request.state.current_user = "internal-tool"
                     request.state.api_token = False
                     return await call_next(request)
             except Exception:
                 pass
-            # Allow localhost requests (internal service calls from heartbeats etc.)
-            # Disable with LOCALHOST_BYPASS=false when exposing via reverse proxy / Tailscale Funnel
-            if LOCALHOST_BYPASS:
-                client_host = request.client.host if request.client else None
-                if client_host in ("127.0.0.1", "::1"):
-                    return await call_next(request)
+            # Allow DIRECT localhost requests (internal service calls from
+            # heartbeats etc.). Tunnel/proxy-forwarded requests are excluded by
+            # _is_trusted_loopback so LOCALHOST_BYPASS can't be abused over a
+            # Cloudflare tunnel / reverse proxy. Keep LOCALHOST_BYPASS=false for
+            # network-exposed deployments regardless.
+            if LOCALHOST_BYPASS and _is_trusted_loopback(request):
+                return await call_next(request)
             if not auth_manager.is_configured:
                 # No users yet — redirect to login for first-time setup
                 if not path.startswith("/api/"):
@@ -345,15 +397,26 @@ async def serve_generated_image(filename: str, request: Request):
 from services.youtube import init_youtube
 init_youtube()
 
-# ========= RAG (vector document RAG — DISABLED) =========
-# VectorRAG (ChromaDB-backed personal-document semantic search) is unused
-# (0 directories ever indexed) and its chromadb 1.4.1 / pydantic 2.12 client
-# can't even instantiate — it threw at init and cost ~30s of startup waiting on
-# the embedding probe. Disabled. All callers already guard on rag_available /
-# `if rag_manager`, so personal-doc routes degrade cleanly.
-rag_manager = None
-rag_available = False
-logger.info("Vector document RAG disabled (unused)")
+# ========= RAG (vector document RAG) =========
+# VectorRAG (ChromaDB-backed personal-document semantic search). Initialized
+# lazily via get_rag_manager() — returns None if ChromaDB isn't reachable
+# (no server running on the configured host:port), in which case personal-doc
+# routes return a clean 503 instead of busy-retrying every request.
+#
+# Note: this was previously hardcoded off because chromadb 1.4.1 / pydantic
+# 2.12 were mutually incompatible at the time. With the current pins
+# (chromadb 1.5.x + pydantic 2.13.x) the init works and Personal Docs
+# (POST /api/personal/add_directory etc.) is functional again.
+from src.rag_singleton import get_rag_manager
+rag_manager = get_rag_manager()
+rag_available = rag_manager is not None
+if rag_available:
+    logger.info("Vector document RAG initialized")
+else:
+    logger.info(
+        "Vector document RAG not available at startup "
+        "(ChromaDB may not be reachable yet — routes will retry lazily)"
+    )
 
 # ========= IMPORT CONFIG =========
 from src.config import config
@@ -600,7 +663,7 @@ app.include_router(setup_contacts_routes())
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
     """Read an HTML file and inject the CSP nonce into inline <script> tags."""
-    with open(file_path, "r") as f:
+    with open(file_path, "r", encoding="utf-8") as f:
         html = f.read()
     nonce = getattr(request.state, "csp_nonce", "")
     html = html.replace("{{CSP_NONCE}}", nonce)
@@ -669,6 +732,26 @@ async def get_version():
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+
+@app.get("/api/runtime")
+async def runtime_info() -> Dict[str, object]:
+    in_docker = os.path.exists("/.dockerenv")
+    if not in_docker:
+        try:
+            with open("/proc/1/cgroup", "r", encoding="utf-8", errors="ignore") as fh:
+                cg = fh.read()
+            in_docker = any(marker in cg for marker in ("docker", "containerd", "kubepods"))
+        except Exception:
+            in_docker = False
+    ollama_url = (
+        os.getenv("OLLAMA_BASE_URL")
+        or os.getenv("OLLAMA_URL")
+        or ("http://host.docker.internal:11434/v1" if in_docker else "http://127.0.0.1:11434/v1")
+    )
+    return {
+        "in_docker": in_docker,
+        "ollama_base_url": ollama_url,
+    }
 
 # ========= LIFECYCLE =========
 
@@ -778,7 +861,7 @@ async def startup_event():
         try:
             import json as _json
             auth_path = "data/auth.json"
-            with open(auth_path) as f:
+            with open(auth_path, encoding="utf-8") as f:
                 users = _json.load(f).get("users", {})
             owners.update(users.keys())
         except Exception as e:
@@ -825,7 +908,7 @@ async def startup_event():
     try:
         import json as _json
         auth_path = "data/auth.json"
-        with open(auth_path) as f:
+        with open(auth_path, encoding="utf-8") as f:
             users = _json.load(f).get("users", {})
         primary_owner = None
         for uname, udata in users.items():
@@ -896,38 +979,6 @@ async def startup_event():
                 logger.warning(f"Nightly skill audit failed: {e}")
 
     _startup_tasks.append(asyncio.create_task(_skill_audit_nightly_loop()))
-    # Auto-detect local Ollama instance — run in background to avoid blocking startup
-    async def _detect_ollama():
-        try:
-            import shutil
-            if not shutil.which("ollama"):
-                return
-            import httpx
-            async with httpx.AsyncClient() as client:
-                r = await client.get("http://localhost:11434/v1/models", timeout=3)
-                if r.status_code != 200:
-                    return
-            from core.database import SessionLocal, ModelEndpoint
-            db = SessionLocal()
-            try:
-                existing = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.base_url == "http://localhost:11434/v1"
-                ).first()
-                if not existing:
-                    ep = ModelEndpoint(
-                        id=str(uuid.uuid4())[:8],
-                        name="Ollama (local)",
-                        base_url="http://localhost:11434/v1",
-                        is_enabled=True,
-                    )
-                    db.add(ep)
-                    db.commit()
-                    logger.info("Auto-added Ollama endpoint (localhost:11434)")
-            finally:
-                db.close()
-        except Exception as e:
-            logger.debug(f"Ollama auto-detect: {e}")
-    _startup_tasks.append(asyncio.create_task(_detect_ollama()))
     logger.info("Application startup complete")
 
 @app.on_event("shutdown")

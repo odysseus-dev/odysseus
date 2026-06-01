@@ -452,9 +452,8 @@ import createResearchSynapse from './researchSynapse.js';
         } else {
           addMessage('assistant',
             'No chat session active. You can:\n\n' +
-            '- Pick a model from the sidebar to start a chat\n' +
-            '- Run `/setup` to configure an endpoint\n' +
-            '- Run `/new` to create a session manually\n' +
+            '- Open the model picker in the chat box and pick a model\n' +
+            '- Use the `+` button in the model picker to add a model endpoint\n' +
             '- Use `/help` to see all available commands');
           _releaseSendFlag();
           return;
@@ -462,9 +461,8 @@ import createResearchSynapse from './researchSynapse.js';
       } catch (e) {
         addMessage('assistant',
           'No chat session active. You can:\n\n' +
-          '- Pick a model from the sidebar to start a chat\n' +
-          '- Run `/setup` to configure an endpoint\n' +
-          '- Run `/new` to create a session manually\n' +
+          '- Open the model picker in the chat box and pick a model\n' +
+          '- Use the `+` button in the model picker to add a model endpoint\n' +
           '- Use `/help` to see all available commands');
         _releaseSendFlag();
         return;
@@ -1215,6 +1213,7 @@ import createResearchSynapse from './researchSynapse.js';
       }
 
       let _nextIsError = false;
+      let _streamSawDone = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1257,6 +1256,7 @@ import createResearchSynapse from './researchSynapse.js';
             }
 
             if (data === '[DONE]') {
+              _streamSawDone = true;
               // Always update background map if entry exists (even if user switched back)
               var bgDone = _backgroundStreams.get(streamSessionId);
               if (bgDone) {
@@ -2220,6 +2220,10 @@ import createResearchSynapse from './researchSynapse.js';
             }
           }
         }
+      }
+
+      if (!_streamSawDone) {
+        throw new Error('Stream closed before completion');
       }
 
       _renderStream();

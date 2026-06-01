@@ -4,18 +4,39 @@ import asyncio
 import json
 import logging
 import os
-import pty
-import fcntl
 import shlex
 import shutil
+import subprocess
 import uuid
 import tempfile
+from collections import namedtuple
 from pathlib import Path
 from typing import Dict, Any
+
+# POSIX-only: `pty`/`fcntl` transitively import `termios`, which does NOT exist
+# on Windows, so importing them unconditionally crashed app startup there
+# (ModuleNotFoundError: termios — issues #140/#92/#63/#149/#150). The PTY code
+# path is only reachable on POSIX; Windows uses pipe streaming + a detached-job
+# fallback for the tmux feature (see _generate_win_detached).
+try:
+    import fcntl
+    import pty
+except ImportError as exc:
+    fcntl = None
+    pty = None
+    _PTY_IMPORT_ERROR = exc
+else:
+    _PTY_IMPORT_ERROR = None
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from core.platform_compat import (
+    IS_WINDOWS,
+    detached_popen_kwargs,
+    find_bash,
+)
 
 
 def _require_admin(request: Request):
@@ -38,6 +59,38 @@ def _require_admin(request: Request):
 
 logger = logging.getLogger(__name__)
 
+PTY_SUPPORTED = pty is not None and fcntl is not None and hasattr(os, "setsid")
+
+
+DOCKER_IN_CONTAINER_HINT = (
+    "Not available inside the Odysseus container by design. The image ships no "
+    "docker CLI and no host socket is mounted. Run Docker-backed launches on a "
+    "remote server, where docker is checked over SSH. Mounting /var/run/docker.sock "
+    "into the container would grant it host-root access, so only do that if you "
+    "accept that risk."
+)
+
+
+def _running_in_container(dockerenv_path="/.dockerenv", cgroup_path="/proc/1/cgroup"):
+    if os.path.exists(dockerenv_path):
+        return True
+    try:
+        with open(cgroup_path, "r", encoding="utf-8") as fh:
+            contents = fh.read()
+    except OSError:
+        return False
+    return any(token in contents for token in ("docker", "containerd", "kubepods"))
+
+
+DockerRowStatus = namedtuple("DockerRowStatus", ["applicable", "install_hint"])
+
+
+def _docker_row_status(*, on_remote, in_container, installed, default_hint):
+    local_docker_unavailable = not on_remote and in_container and not installed
+    if local_docker_unavailable:
+        return DockerRowStatus(applicable=False, install_hint=DOCKER_IN_CONTAINER_HINT)
+    return DockerRowStatus(applicable=True, install_hint=default_hint)
+
 
 def _find_line_break(buf):
     """Find next line terminator in buffer. Returns (index, separator_length) or (-1, 0)."""
@@ -58,6 +111,7 @@ EXEC_TIMEOUT = 30  # seconds — shorter than agent's 60s
 STREAM_TIMEOUT = 120  # default for short commands
 MAX_OUTPUT = 200_000  # truncate limit
 TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "odysseus-tmux"
+PTY_UNSUPPORTED_ERROR = "pty_unsupported"
 
 
 class ShellExecRequest(BaseModel):
@@ -67,11 +121,25 @@ class ShellExecRequest(BaseModel):
     use_tmux: bool = False      # run in tmux session (survives browser disconnect)
 
 
+async def _create_shell(command: str, **kwargs):
+    """Spawn a shell subprocess for `command`.
+
+    POSIX: /bin/sh via create_subprocess_shell (unchanged behaviour).
+    Windows: prefer a real bash (Git Bash/WSL) so bash-syntax commands behave
+    the same as on Linux; fall back to cmd.exe when no bash is installed.
+    """
+    if IS_WINDOWS:
+        bash = find_bash()
+        if bash:
+            return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
+    return await asyncio.create_subprocess_shell(command, **kwargs)
+
+
 async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, Any]:
     """Run a shell command and return stdout/stderr/exit_code."""
     proc = None
     try:
-        proc = await asyncio.create_subprocess_shell(
+        proc = await _create_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -97,6 +165,14 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
 
 async def _generate_pty(cmd: str, timeout: int, request: Request):
     """Run command in a pseudo-TTY so tqdm/progress bars work natively."""
+    if not PTY_SUPPORTED:
+        msg = "PTY streaming is not supported on this platform"
+        if _PTY_IMPORT_ERROR:
+            msg += f": {_PTY_IMPORT_ERROR}"
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': msg, 'error': PTY_UNSUPPORTED_ERROR})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1, 'error': PTY_UNSUPPORTED_ERROR})}\n\n"
+        return
+
     loop = asyncio.get_event_loop()
     master_fd, slave_fd = pty.openpty()
 
@@ -336,6 +412,93 @@ async def _generate_tmux(cmd: str, request: Request):
         pass
 
 
+async def _generate_win_detached(cmd: str, request: Request):
+    """Windows stand-in for the tmux path (issues #84/#162).
+
+    tmux doesn't exist on Windows, so we run the command in a *detached* child
+    (DETACHED_PROCESS — survives browser disconnect, same as the tmux session)
+    that writes output to a log file, and tail that log over SSE. Prefers bash
+    (Git Bash) for command-syntax parity; falls back to cmd.exe. There's no
+    `tmux attach` equivalent, but the "keeps running if you disconnect" contract
+    holds, which is the point of the feature for long Cookbook downloads."""
+    TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    session_id = f"cookbook-{uuid.uuid4().hex[:8]}"
+    log_path = TMUX_LOG_DIR / f"{session_id}.log"
+    exit_path = TMUX_LOG_DIR / f"{session_id}.exit"
+
+    bash = find_bash()
+    if bash:
+        script_path = TMUX_LOG_DIR / f"{session_id}.sh"
+        script_path.write_text(
+            f"{cmd} > {shlex.quote(str(log_path))} 2>&1\n"
+            f"echo $? > {shlex.quote(str(exit_path))}\n",
+            encoding="utf-8",
+        )
+        argv = [bash, str(script_path)]
+    else:
+        script_path = TMUX_LOG_DIR / f"{session_id}.cmd"
+        # cmd.exe wrapper: run, redirect all output to the log, record exit code.
+        script_path.write_text(
+            "@echo off\r\n"
+            f'call {cmd} > "{log_path}" 2>&1\r\n'
+            f'echo %ERRORLEVEL%> "{exit_path}"\r\n',
+            encoding="utf-8",
+        )
+        argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
+
+    try:
+        subprocess.Popen(
+            argv,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            **detached_popen_kwargs(),
+        )
+    except Exception as e:
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': f'Failed to launch background job: {e}'})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
+        return
+
+    yield f"data: {json.dumps({'stream': 'stdout', 'data': f'Started background job: {session_id}'})}\n\n"
+
+    lines_sent = 0
+    exit_code = None
+    while True:
+        if await request.is_disconnected():
+            yield f"data: {json.dumps({'stream': 'stdout', 'data': f'Disconnected. Background job {session_id} continues running.'})}\n\n"
+            return
+        try:
+            if log_path.exists():
+                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                for line in lines[lines_sent:]:
+                    yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
+                lines_sent = len(lines)
+        except Exception as e:
+            logger.debug("win detached log read error: %s", e)
+
+        if exit_path.exists():
+            # Drain any final lines, then read the recorded exit code.
+            await asyncio.sleep(0.3)
+            try:
+                if log_path.exists():
+                    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    for line in lines[lines_sent:]:
+                        yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
+                    lines_sent = len(lines)
+                exit_code = int((exit_path.read_text(encoding="utf-8", errors="replace").strip() or "0"))
+            except Exception:
+                exit_code = 0
+            break
+        await asyncio.sleep(1.0)
+
+    yield f"data: {json.dumps({'exit_code': exit_code})}\n\n"
+    for p in (log_path, exit_path, script_path):
+        try:
+            p.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def setup_shell_routes() -> APIRouter:
     router = APIRouter(tags=["shell"])
 
@@ -374,22 +537,24 @@ def setup_shell_routes() -> APIRouter:
         )
 
         if use_tmux:
-            return StreamingResponse(
-                _generate_tmux(cmd, request),
-                media_type="text/event-stream",
-            )
+            # tmux is POSIX-only; Windows uses a detached-process + logfile tail
+            # that preserves the "survives disconnect" behaviour.
+            gen = _generate_win_detached(cmd, request) if IS_WINDOWS else _generate_tmux(cmd, request)
+            return StreamingResponse(gen, media_type="text/event-stream")
 
-        if use_pty:
+        if use_pty and not IS_WINDOWS:
             return StreamingResponse(
                 _generate_pty(cmd, timeout, request),
                 media_type="text/event-stream",
             )
+        # Windows has no PTY; fall through to pipe streaming below (output still
+        # streams line-by-line, just without live in-place progress-bar redraws).
 
         async def generate():
             proc = None
             reader_tasks = []
             try:
-                proc = await asyncio.create_subprocess_shell(
+                proc = await _create_shell(
                     cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
@@ -472,7 +637,7 @@ def setup_shell_routes() -> APIRouter:
         return StreamingResponse(generate(), media_type="text/event-stream")
 
     @router.get("/api/cookbook/packages")
-    async def list_packages(host: str | None = None, ssh_port: str | None = None, venv: str | None = None):
+    async def list_packages(request: Request, host: str | None = None, ssh_port: str | None = None, venv: str | None = None):
         """Check which optional packages are installed.
 
         Local-target packages are checked in-process. Remote-target packages
@@ -480,7 +645,14 @@ def setup_shell_routes() -> APIRouter:
         server over SSH, inside its venv — otherwise installing on a remote box
         never reflected because the check only ever looked at the local host.
         """
+        _require_admin(request)
         import importlib, shlex, json as _json
+        port_arg = ""
+        if ssh_port and str(ssh_port).strip() not in ("", "22"):
+            _port = str(ssh_port).strip()
+            if not _port.isdigit():
+                raise HTTPException(400, "Invalid ssh_port")
+            port_arg = f"-p {int(_port)} "
         packages = [
             # ── System ── OS binaries, not pip packages
             {"name": "tmux", "pip": "", "desc": "Required for Linux/Termux Cookbook background downloads and serves", "category": "System", "target": "remote", "kind": "system", "install_hint": "Run Cookbook server setup, or install tmux with apt/pacman/dnf/apk/zypper."},
@@ -491,7 +663,7 @@ def setup_shell_routes() -> APIRouter:
             {"name": "sglang", "pip": "sglang[all]", "desc": "Serve HF safetensors models via SGLang", "category": "LLM", "target": "remote"},
             {"name": "vllm", "pip": "vllm", "desc": "High-throughput LLM serving engine", "category": "LLM", "target": "remote"},
             # ── Image ── editor + diffusion model serving
-            {"name": "diffusers", "pip": "diffusers", "desc": "Image generation pipelines (SD, Flux)", "category": "Image", "target": "remote"},
+            {"name": "diffusers", "pip": "diffusers[torch]", "desc": "Image generation pipelines (SD, Flux) with PyTorch", "category": "Image", "target": "remote"},
             {"name": "rembg", "pip": "rembg[gpu]", "desc": "AI background removal for image editor", "category": "Image", "target": "local"},
             {"name": "realesrgan", "pip": "realesrgan", "desc": "AI denoise + upscale (Real-ESRGAN). Used by editor's Denoise and Upscale tools.", "category": "Image", "target": "local"},
             # ── Tools ──
@@ -520,9 +692,8 @@ def setup_shell_routes() -> APIRouter:
                     # the && short-circuits and every package reads as missing).
                     src = f". {act} && "
                 inner = f"{src}python3 -c {shlex.quote(py)}"
-                pf = f"-p {ssh_port} " if ssh_port and ssh_port not in ("", "22") else ""
                 ssh_cmd = (
-                    f"ssh -o ConnectTimeout=6 -o StrictHostKeyChecking=no {pf}"
+                    f"ssh -o ConnectTimeout=6 -o StrictHostKeyChecking=no {port_arg}"
                     f"{shlex.quote(host)} {shlex.quote(inner)}"
                 )
                 proc = await asyncio.create_subprocess_shell(
@@ -545,9 +716,8 @@ def setup_shell_routes() -> APIRouter:
                     qn = shlex.quote(name)
                     checks.append(f"if command -v {qn} >/dev/null 2>&1; then echo {qn}=1; else echo {qn}=0; fi")
                 inner = " ; ".join(checks)
-                pf = f"-p {ssh_port} " if ssh_port and ssh_port not in ("", "22") else ""
                 ssh_cmd = (
-                    f"ssh -o ConnectTimeout=6 -o StrictHostKeyChecking=no {pf}"
+                    f"ssh -o ConnectTimeout=6 -o StrictHostKeyChecking=no {port_arg}"
                     f"{shlex.quote(host)} {shlex.quote(inner)}"
                 )
                 proc = await asyncio.create_subprocess_shell(
@@ -563,20 +733,29 @@ def setup_shell_routes() -> APIRouter:
                 pass
 
         for pkg in packages:
-            if host and pkg.get("target") == "remote":
+            on_remote = bool(host and pkg.get("target") == "remote")
+            if on_remote:
                 pkg["installed"] = bool(remote_status.get(pkg["name"], False))
-                continue
-            if pkg.get("kind") == "system":
+            elif pkg.get("kind") == "system":
                 pkg["installed"] = shutil.which(pkg["name"]) is not None
-                continue
-            try:
-                if pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
-                    pkg["installed"] = True
-                    continue
-                importlib.import_module(pkg["name"])
+            elif pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
                 pkg["installed"] = True
-            except ImportError:
-                pkg["installed"] = False
+            else:
+                try:
+                    importlib.import_module(pkg["name"])
+                    pkg["installed"] = True
+                except ImportError:
+                    pkg["installed"] = False
+
+            if pkg["name"] == "docker":
+                status = _docker_row_status(
+                    on_remote=on_remote,
+                    in_container=_running_in_container() if not on_remote else False,
+                    installed=pkg["installed"],
+                    default_hint=pkg.get("install_hint"),
+                )
+                pkg["applicable"] = status.applicable
+                pkg["install_hint"] = status.install_hint
         return {"packages": packages}
 
     @router.post("/api/cookbook/packages/install")
@@ -590,9 +769,9 @@ def setup_shell_routes() -> APIRouter:
             return {"ok": False, "error": "No package specified"}
         # Validate against known packages to prevent arbitrary pip install
         known = {
-            "rembg[gpu]", "hf_transfer", "llama-cpp-python[server]", "sglang[all]", "diffusers",
+            "rembg[gpu]", "hf_transfer", "llama-cpp-python[server]", "sglang[all]", "diffusers", "diffusers[torch]",
             "TTS", "bark", "faster-whisper", "playwright", "realesrgan", "gfpgan",
-            "insightface", "onnxruntime-gpu", "onnxruntime", "hdbscan",
+            "insightface", "onnxruntime-gpu", "onnxruntime", "hdbscan", "vllm",
         }
         if pip_name not in known:
             return {"ok": False, "error": f"Unknown package: {pip_name}"}

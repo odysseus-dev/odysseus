@@ -6,8 +6,9 @@ import shutil
 import logging
 import asyncio
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Form
+from fastapi import APIRouter, HTTPException, Form, Depends
 from core.constants import BASE_DIR
+from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ def _load_custom_endpoint() -> dict:
     """Load the saved custom embedding endpoint, if any."""
     try:
         if os.path.exists(_ENDPOINT_FILE):
-            return json.loads(Path(_ENDPOINT_FILE).read_text())
+            return json.loads(Path(_ENDPOINT_FILE).read_text(encoding="utf-8"))
     except Exception:
         pass
     return {}
@@ -93,11 +94,11 @@ def _load_custom_endpoint() -> dict:
 
 def _save_custom_endpoint(data: dict):
     Path(_ENDPOINT_FILE).parent.mkdir(parents=True, exist_ok=True)
-    Path(_ENDPOINT_FILE).write_text(json.dumps(data, indent=2))
+    Path(_ENDPOINT_FILE).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def setup_embedding_routes():
-    router = APIRouter(prefix="/api/embeddings")
+    router = APIRouter(prefix="/api/embeddings", dependencies=[Depends(require_admin)])
 
     @router.get("/models")
     def list_models():

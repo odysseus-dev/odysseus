@@ -222,6 +222,19 @@ def _uid_exists(conn, uid: str) -> bool:
         return False
 
 
+def _imap_uid_search(conn, criteria: str):
+    return conn.uid("SEARCH", None, criteria)
+
+
+def _imap_uid_fetch(conn, uid_set: str | bytes, query: str):
+    return conn.uid("FETCH", _uid_bytes(uid_set), query)
+
+
+def _uid_from_fetch_meta(meta_b: bytes) -> str:
+    m = re.search(rb"\bUID\s+(\d+)\b", meta_b)
+    return m.group(1).decode() if m else ""
+
+
 def _smtp_ready(cfg: dict) -> bool:
     return bool(cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password"))
 
@@ -439,9 +452,13 @@ def setup_email_routes():
     _LIST_CACHE = {}  # key → (expires_at, response_dict)
     _LIST_TTL = 8.0
     _READ_CACHE = {}  # key → (expires_at, response_dict)
-    _READ_TTL = 60.0
+    _READ_TTL = 30 * 60.0
     _IMAP_POOL = {}   # account_id → (conn, last_used_at)
     _IMAP_IDLE_MAX = 60.0
+    _WARMING_READS = set()
+    _WARM_READ_LIMIT = 3
+    _WARM_MAX_BYTES = 128 * 1024
+    _WARM_RECENT_SECONDS = 7 * 24 * 60 * 60
     _pool_lock = _threading.Lock()
 
     def _pooled_connect(account_id, owner=""):
@@ -587,21 +604,21 @@ def setup_email_routes():
                 from_clause = f' FROM "{_safe}"'
 
             if filter_ == "unread":
-                status, data = conn.search(None, f"(UNSEEN{from_clause})")
+                status, data = _imap_uid_search(conn, f"(UNSEEN{from_clause})")
             elif filter_ == "favorites":
                 # Flagged/favorited emails (the star toggle sets the \Flagged flag).
-                status, data = conn.search(None, f"(FLAGGED{from_clause})")
+                status, data = _imap_uid_search(conn, f"(FLAGGED{from_clause})")
             elif filter_ == "unanswered":
-                status, data = conn.search(None, f"(UNSEEN UNANSWERED{from_clause})")
+                status, data = _imap_uid_search(conn, f"(UNSEEN UNANSWERED{from_clause})")
             elif filter_ == "undone":
                 # All emails NOT marked as answered/done (read or unread).
-                status, data = conn.search(None, f"(UNANSWERED{from_clause})")
+                status, data = _imap_uid_search(conn, f"(UNANSWERED{from_clause})")
             elif filter_ == "reminders":
                 # Prefer the Odysseus marker header, but include the subject
                 # fallback too. The fallback uses a distinct Odysseus prefix
                 # so ordinary emails containing "Reminder" don't get mixed in.
-                status, data = conn.search(
-                    None,
+                status, data = _imap_uid_search(
+                    conn,
                     f'(OR HEADER X-Odysseus-Kind "reminder" SUBJECT "Reminder (Odysseus):"{from_clause})',
                 )
             elif filter_ == "pending_30d":
@@ -609,13 +626,13 @@ def setup_email_routes():
                 # within the last 30 days. SINCE takes a DD-Mon-YYYY date.
                 from datetime import datetime as _dt, timedelta as _td
                 _since = (_dt.utcnow() - _td(days=30)).strftime("%d-%b-%Y")
-                status, data = conn.search(None, f'(UNANSWERED SINCE "{_since}"{from_clause})')
+                status, data = _imap_uid_search(conn, f'(UNANSWERED SINCE "{_since}"{from_clause})')
             elif filter_ == "stale_30d":
                 # "What's been sitting too long" — UNANSWERED + delivered
                 # MORE than 30 days ago. BEFORE excludes the cutoff date itself.
                 from datetime import datetime as _dt, timedelta as _td
                 _before = (_dt.utcnow() - _td(days=30)).strftime("%d-%b-%Y")
-                status, data = conn.search(None, f'(UNANSWERED BEFORE "{_before}"{from_clause})')
+                status, data = _imap_uid_search(conn, f'(UNANSWERED BEFORE "{_before}"{from_clause})')
             elif filter_ and filter_.startswith("tag:"):
                 # Tag-based filter — resolve UIDs from email_tags first, then
                 # ask IMAP for those messages by Message-ID. `tag:spam` reads
@@ -675,31 +692,30 @@ def setup_email_routes():
                 if not _tag_message_ids and not _tag_seq_fallback:
                     conn.logout()
                     return {"emails": [], "total": 0, "folder": folder}
-                # email_tags.uid historically stores the IMAP sequence number,
-                # not UID. Resolve by stable Message-ID so tag filters still
-                # work after sequence numbers shift. Fall back to old seq rows
-                # only when a row has no Message-ID.
+                # Prefer stable Message-ID rows. Older tag rows may have only
+                # numeric ids; those were sequence numbers historically, but
+                # may be real UIDs for newer rows. Treat them as UIDs only.
                 def _imap_search_quote(value: str) -> str:
                     return '"' + str(value or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
-                _seqs = set()
+                _uids = set()
                 for _mid in dict.fromkeys(_tag_message_ids):
                     if not _mid:
                         continue
-                    st_m, data_m = conn.search(None, f'(HEADER Message-ID {_imap_search_quote(_mid)}{from_clause})')
+                    st_m, data_m = _imap_uid_search(conn, f'(HEADER Message-ID {_imap_search_quote(_mid)}{from_clause})')
                     if st_m == "OK" and data_m and data_m[0]:
-                        _seqs.update(data_m[0].split())
-                for _seq in _tag_seq_fallback:
-                    if _seq:
-                        _seqs.add(str(_seq).encode())
-                if not _seqs:
+                        _uids.update(data_m[0].split())
+                for _uid in _tag_seq_fallback:
+                    if _uid:
+                        _uids.add(str(_uid).encode())
+                if not _uids:
                     conn.logout()
                     return {"emails": [], "total": 0, "folder": folder}
-                data = [b" ".join(sorted(_seqs, key=lambda x: int(x) if str(x, "ascii", "ignore").isdigit() else 0))]
+                data = [b" ".join(sorted(_uids, key=lambda x: int(x) if str(x, "ascii", "ignore").isdigit() else 0))]
                 status = "OK"
             elif from_clause:
-                status, data = conn.search(None, f"({from_clause.strip()})")
+                status, data = _imap_uid_search(conn, f"({from_clause.strip()})")
             else:
-                status, data = conn.search(None, "ALL")
+                status, data = _imap_uid_search(conn, "ALL")
 
             if status != "OK" or not data[0]:
                 conn.logout()
@@ -753,7 +769,7 @@ def setup_email_routes():
             if uid_list:
                 fetch_set = b",".join(uid_list)
                 try:
-                    status, msg_data = conn.fetch(fetch_set, "(FLAGS RFC822.HEADER RFC822.SIZE)")
+                    status, msg_data = _imap_uid_fetch(conn, fetch_set, "(UID FLAGS RFC822.HEADER RFC822.SIZE)")
                 except Exception as e:
                     logger.warning(f"Batch fetch failed, falling back to per-UID: {e}")
                     status, msg_data = "NO", []
@@ -815,8 +831,9 @@ def setup_email_routes():
                 for meta_b, raw_header in grouped:
                     try:
                         meta = meta_b.decode(errors="replace")
-                        seq_m = seq_re.match(meta_b)
-                        seq_num = seq_m.group(1).decode() if seq_m else ""
+                        uid_num = _uid_from_fetch_meta(meta_b)
+                        if not uid_num:
+                            continue
                         flag_m = re.search(r'FLAGS \(([^)]*)\)', meta)
                         flags = flag_m.group(1) if flag_m else ""
                         size_m = re.search(r'RFC822\.SIZE (\d+)', meta)
@@ -848,9 +865,9 @@ def setup_email_routes():
                         is_flagged = "\\Flagged" in flags
                         ct = msg.get("Content-Type", "")
                         has_attachments = "multipart/mixed" in ct.lower() or "multipart/related" in ct.lower()
-                        tag_entry = _tag_by_message_id.get(message_id.strip()) or _tag_by_uid.get(seq_num, {})
+                        tag_entry = _tag_by_message_id.get(message_id.strip()) or _tag_by_uid.get(uid_num, {})
                         emails.append({
-                            "uid": seq_num,
+                            "uid": uid_num,
                             "message_id": message_id.strip(),
                             "subject": subject,
                             "from_name": sender_name or sender_addr,
@@ -936,6 +953,7 @@ def setup_email_routes():
         if not cache_bust:
             cached = _list_cache_get(ck)
             if cached is not None:
+                _schedule_recent_email_warm(cached.get("emails") or [], folder, account_id, owner)
                 return cached
         result = await _asyncio.to_thread(
             _list_emails_sync, folder, limit, offset, filter, account_id, from_addr,
@@ -944,6 +962,7 @@ def setup_email_routes():
         if result and not result.get("error"):
             if offset == 0 and not from_addr and not has_attachments and filter in ("all", "unread", "unanswered", "undone"):
                 _record_email_received_events(owner, account_id, folder, result.get("emails") or [])
+                _schedule_recent_email_warm(result.get("emails") or [], folder, account_id, owner)
             _list_cache_put(ck, result)
         return result
 
@@ -1028,7 +1047,7 @@ def setup_email_routes():
                 q_escaped = q.replace('\\', '\\\\').replace('"', '\\"')
                 search_cmd = f'(OR FROM "{q_escaped}" TEXT "{q_escaped}")'
 
-                status, data = conn.search(None, search_cmd)
+                status, data = _imap_uid_search(conn, search_cmd)
                 if status != "OK" or not data[0]:
                     return {"emails": [], "total": 0, "query": q}
 
@@ -1039,7 +1058,7 @@ def setup_email_routes():
                 emails = []
                 for uid in uid_list:
                     try:
-                        status, msg_data = conn.fetch(uid, "(FLAGS RFC822.HEADER)")
+                        status, msg_data = _imap_uid_fetch(conn, uid, "(UID FLAGS RFC822.HEADER)")
                         if status != "OK":
                             continue
                         raw_header = None
@@ -1071,8 +1090,15 @@ def setup_email_routes():
                         ct = msg.get("Content-Type", "")
                         has_attachments = "multipart/mixed" in ct.lower() or "multipart/related" in ct.lower()
 
+                        stable_uid = ""
+                        for part in msg_data:
+                            if isinstance(part, tuple):
+                                meta_b = part[0] if isinstance(part[0], bytes) else str(part[0]).encode()
+                                stable_uid = _uid_from_fetch_meta(meta_b) or stable_uid
+                        if not stable_uid:
+                            continue
                         emails.append({
-                            "uid": uid.decode(),
+                            "uid": stable_uid,
                             "message_id": message_id.strip(),
                             "subject": subject,
                             "from_name": sender_name or sender_addr,
@@ -1097,7 +1123,7 @@ def setup_email_routes():
             logger.error(f"Search failed: {e}")
             return {"emails": [], "total": 0, "error": "Mail operation failed"}
 
-    def _read_email_sync(uid, folder, account_id, owner):
+    def _read_email_sync(uid, folder, account_id, owner, mark_seen=True):
         """Sync IMAP read — wrapped in to_thread by the async handler.
 
         Two-phase: read body in readonly to avoid races with concurrent reads
@@ -1113,7 +1139,7 @@ def setup_email_routes():
             with _imap(account_id, owner=owner) as conn:
                 conn.select(_q(folder), readonly=True)
                 _t_select = _t.monotonic() - _t0
-                status, msg_data = conn.fetch(uid.encode(), "(BODY.PEEK[])")
+                status, msg_data = _imap_uid_fetch(conn, uid, "(BODY.PEEK[])")
                 _t_fetch = _t.monotonic() - _t0
                 if status != "OK":
                     return {"error": f"Email UID {uid} not found"}
@@ -1136,14 +1162,15 @@ def setup_email_routes():
             parsed_date = email.utils.parsedate_to_datetime(date_str) if date_str else None
             attachments = _list_attachments_from_msg(msg)
 
-            # Set \Seen in a separate readwrite session so concurrent reads
-            # of the same UID don't fight over a shared SELECT state.
-            try:
-                with _imap(account_id, owner=owner) as conn2:
-                    conn2.select(_q(folder))
-                    conn2.store(uid.encode(), "+FLAGS", "\\Seen")
-            except Exception:
-                pass
+            if mark_seen:
+                # Set \Seen in a separate readwrite session so concurrent reads
+                # of the same UID don't fight over a shared SELECT state.
+                try:
+                    with _imap(account_id, owner=owner) as conn2:
+                        conn2.select(_q(folder))
+                        conn2.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Seen")
+                except Exception:
+                    pass
             _t_total = _t.monotonic() - _t0
             if _t_total > 2.0:
                 logger.warning(
@@ -1249,17 +1276,88 @@ def setup_email_routes():
             logger.error(f"Failed to read email {uid}: {e}")
             return {"error": "Mail operation failed"}
 
+    def _mark_email_seen_sync(uid, folder, account_id, owner):
+        try:
+            with _imap(account_id, owner=owner) as conn:
+                conn.select(_q(folder))
+                conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Seen")
+            _invalidate_list_cache(account_id, folder)
+        except Exception as e:
+            logger.debug(f"mark-seen after cached read failed uid={uid}: {e}")
+
     @router.get("/read/{uid}")
-    async def read_email_by_uid(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
-        """Read email body. Cached for 60s, sync IMAP work runs in a thread."""
+    async def read_email_by_uid(
+        uid: str,
+        folder: str = Query("INBOX"),
+        account_id: str | None = Query(None),
+        mark_seen: bool = Query(True),
+        owner: str = Depends(require_owner),
+    ):
+        """Read email body. Cached for 30m, sync IMAP work runs in a thread."""
         ck = _read_cache_key(account_id, folder, uid, owner=owner)
         cached = _read_cache_get(ck)
         if cached is not None:
+            if mark_seen:
+                try:
+                    _asyncio.create_task(_asyncio.to_thread(_mark_email_seen_sync, uid, folder, account_id, owner))
+                except RuntimeError:
+                    pass
             return cached
-        result = await _asyncio.to_thread(_read_email_sync, uid, folder, account_id, owner)
+        result = await _asyncio.to_thread(_read_email_sync, uid, folder, account_id, owner, mark_seen)
         if result and not result.get("error"):
             _read_cache_put(ck, result)
         return result
+
+    def _schedule_recent_email_warm(emails: list, folder: str, account_id: str | None, owner: str):
+        if not emails or folder == "__scheduled__":
+            return
+        now = _time.time()
+        selected = []
+        for em in emails:
+            uid = str((em or {}).get("uid") or "").strip()
+            if not uid:
+                continue
+            try:
+                epoch = float((em or {}).get("date_epoch") or 0)
+            except Exception:
+                epoch = 0
+            if epoch and now - epoch > _WARM_RECENT_SECONDS:
+                continue
+            try:
+                size = int((em or {}).get("size") or 0)
+            except Exception:
+                size = 0
+            if size > _WARM_MAX_BYTES:
+                continue
+            ck = _read_cache_key(account_id, folder, uid, owner=owner)
+            if _read_cache_get(ck) is not None or ck in _WARMING_READS:
+                continue
+            _WARMING_READS.add(ck)
+            selected.append((uid, ck))
+            if len(selected) >= _WARM_READ_LIMIT:
+                break
+        if not selected:
+            return
+
+        async def _warm():
+            for uid, ck in selected:
+                if _read_cache_get(ck) is not None:
+                    _WARMING_READS.discard(ck)
+                    continue
+                try:
+                    result = await _asyncio.to_thread(_read_email_sync, uid, folder, account_id, owner, False)
+                    if result and not result.get("error"):
+                        _read_cache_put(ck, result)
+                except Exception as e:
+                    logger.debug(f"email read warm skipped uid={uid}: {e}")
+                finally:
+                    _WARMING_READS.discard(ck)
+                    await _asyncio.sleep(0.05)
+
+        try:
+            _asyncio.create_task(_warm())
+        except RuntimeError:
+            pass
 
     @router.get("/attachments/{uid}")
     async def list_attachments(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
@@ -1267,7 +1365,7 @@ def setup_email_routes():
         try:
             with _imap(account_id, owner=owner) as conn:
                 conn.select(_q(folder), readonly=True)
-                status, msg_data = conn.fetch(uid.encode(), "(RFC822)")
+                status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
             if status != "OK":
                 return {"attachments": [], "error": "Email not found"}
             raw = msg_data[0][1]
@@ -1284,7 +1382,7 @@ def setup_email_routes():
         try:
             with _imap(account_id, owner=owner) as conn:
                 conn.select(_q(folder), readonly=True)
-                status, msg_data = conn.fetch(uid.encode(), "(RFC822)")
+                status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
             if status != "OK":
                 return {"error": "Email not found"}
             raw = msg_data[0][1]
@@ -1320,7 +1418,7 @@ def setup_email_routes():
         try:
             with _imap(account_id, owner=owner) as conn:
                 conn.select(_q(folder), readonly=True)
-                status, msg_data = conn.fetch(uid.encode(), "(RFC822)")
+                status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
             if status != "OK":
                 return {"error": "Email not found"}
             raw = msg_data[0][1]
@@ -1528,7 +1626,7 @@ def setup_email_routes():
         try:
             with _imap(account_id, owner=owner) as conn:
                 conn.select(_q(folder), readonly=True)
-                status, msg_data = conn.fetch(uid.encode(), "(RFC822)")
+                status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
             if status != "OK":
                 return {"error": "Email not found"}
             raw = msg_data[0][1]
@@ -2340,7 +2438,7 @@ def setup_email_routes():
                     def _fetch_atts():
                         with _imap(account_id, owner=owner) as conn:
                             conn.select(_q(folder), readonly=True)
-                            status, msg_data = conn.fetch(str(uid).encode(), "(BODY.PEEK[])")
+                            status, msg_data = _imap_uid_fetch(conn, str(uid), "(BODY.PEEK[])")
                             if status != "OK" or not msg_data or not msg_data[0]:
                                 return ""
                             raw = msg_data[0][1]
@@ -2736,7 +2834,7 @@ def setup_email_routes():
         if not path.exists():
             return {"total_unread": 0, "total_urgent": 0, "max_score": 0, "per_uid": {}}
         try:
-            data = _json.loads(path.read_text())
+            data = _json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return {"total_unread": 0, "total_urgent": 0, "max_score": 0, "per_uid": {}}
         # Drop `notified_uids` from the payload — it's an internal scheduler
