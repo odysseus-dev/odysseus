@@ -424,6 +424,31 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
     return {"reachable": False, "status_code": None, "error": last_error}
 
 
+
+def _model_endpoint_error_message(base_url: str, ping: Dict[str, Any] = None) -> str:
+    """Return a provider-aware error message for failed endpoint probes."""
+    ping = ping or {}
+    error = ping.get("error")
+    parsed = urlparse(base_url)
+    host = (parsed.hostname or "").lower()
+    is_ollama = parsed.port == 11434 or "ollama" in host or "ollama" in base_url.lower()
+
+    if is_ollama:
+        parts = ["No Ollama models found for that endpoint."]
+        if error:
+            parts.append(f"Last probe error: {error}.")
+        parts.append("Check that Ollama is running and that the base URL is correct.")
+        parts.append("For native/local installs, use http://localhost:11434/v1.")
+        parts.append("For Docker, use http://host.docker.internal:11434/v1 when Ollama runs on the host.")
+        parts.append("Run `ollama list` to confirm at least one model is installed.")
+        return " ".join(parts)
+
+    if error:
+        return f"No models found for that provider/key. Last probe error: {error}."
+
+    return "No models found for that provider/key."
+
+
 def setup_model_routes(model_discovery):
     router = APIRouter(prefix="/api")
 
@@ -999,7 +1024,7 @@ def setup_model_routes(model_discovery):
         if should_probe and not model_ids:
             ping = _ping_endpoint(base_url, api_key.strip() or None, timeout=_probe_timeout)
         if require_model_list and not model_ids:
-            raise HTTPException(400, "No models found for that provider/key")
+            raise HTTPException(400, _model_endpoint_error_message(base_url, ping))
 
         ep_id = str(uuid.uuid4())[:8]
         db = SessionLocal()
