@@ -10,20 +10,27 @@ from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, require_user
 
 
 def _verify_session_owner(request: Request, session_id: str):
-    """Verify the current user owns the session. Raises 404 if not."""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(403, "Authentication required")
+    """Verify the current user owns the session. Raises 404 if not.
+
+    Uses require_user (not get_current_user) so single-user / auth-disabled
+    mode works: require_user returns "" for a loopback caller when auth is
+    unconfigured (AUTH_ENABLED=false), and only raises 401 when auth IS
+    configured but the caller is unauthenticated. Previously this hard-403'd
+    whenever get_current_user was None, which broke chat entirely with
+    AUTH_ENABLED=false (the auth middleware never sets request.state.current_user
+    in that mode). Ownership is only enforced when there is an actual user.
+    """
+    user = require_user(request)
     db = SessionLocal()
     try:
         row = db.query(DbSession.owner).filter(DbSession.id == session_id).first()
         if not row:
             raise HTTPException(404, f"Session {session_id} not found")
-        if row.owner != user:
+        if user and row.owner != user:
             raise HTTPException(404, f"Session {session_id} not found")
     finally:
         db.close()
@@ -498,13 +505,20 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     @router.get("/sessions/archived")
     def list_archived_sessions(request: Request, search: str = "", offset: int = 0, limit: int = 20, sort: str = "recent", model: str = ""):
         """List archived sessions for the archive browser."""
-        user = get_current_user(request)
+        # require_user (not get_current_user + hard-raise) so single-user /
+        # auth-disabled mode works: returns "" for a loopback caller when auth
+        # is unconfigured (AUTH_ENABLED=false leaves current_user unset), and
+        # only raises 401 when auth IS configured but unauthenticated. The old
+        # `if not user: raise 403` broke the archive browser in the default
+        # single-user deployment.
+        user = require_user(request)
         db = SessionLocal()
         try:
             q = db.query(DbSession).filter(DbSession.archived == True)
-            if not user:
-                raise HTTPException(403, "Authentication required")
-            q = q.filter(DbSession.owner == user)
+            # Only owner-scope when there's an actual user; single-user mode
+            # (user == "") lists all archived sessions.
+            if user:
+                q = q.filter(DbSession.owner == user)
             if search:
                 safe_search = search.replace('%', r'\%').replace('_', r'\_')
                 q = q.filter(DbSession.name.ilike(f"%{safe_search}%", escape='\\'))
@@ -633,9 +647,13 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     
     @router.post("/sessions/save")
     def sessions_save_now(request: Request):
-        user = get_current_user(request)
-        if not user:
-            raise HTTPException(401, "Not authenticated")
+        # require_user (not get_current_user + hard-raise) so single-user /
+        # auth-disabled mode works: returns "" for a loopback caller when auth
+        # is unconfigured (AUTH_ENABLED=false leaves current_user unset), and
+        # only raises 401 when auth IS configured but unauthenticated. The old
+        # `if not user: raise 401` broke manual save in the default single-user
+        # deployment.
+        require_user(request)
         session_manager.save_sessions()
         return {"ok": True, "path": SESSIONS_FILE}
     

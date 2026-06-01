@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from core.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
 from core.database import Session as DbSession
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, require_user
 
 from routes.gallery_helpers import (
     GalleryPatch, _extract_exif, _image_to_dict, _owner_filter, _human_size,
@@ -650,9 +650,13 @@ def setup_gallery_routes() -> APIRouter:
     # of a flood of individual downloads).
     @router.post("/api/gallery/download-zip")
     async def gallery_download_zip(request: Request):
-        user = get_current_user(request)
-        if not user:
-            raise HTTPException(401, "Not authenticated")
+        # require_user (not get_current_user + hard-raise) so single-user /
+        # auth-disabled mode works: it returns "" for a loopback caller when
+        # auth is unconfigured (AUTH_ENABLED=false leaves current_user unset),
+        # and only raises 401 when auth IS configured but unauthenticated. The
+        # old `if not user: raise 401` broke bulk download in the default
+        # single-user deployment.
+        user = require_user(request)
         try:
             data = await request.json()
         except Exception:
@@ -662,10 +666,12 @@ def setup_gallery_routes() -> APIRouter:
             raise HTTPException(400, "No images specified")
         db = SessionLocal()
         try:
-            imgs = db.query(GalleryImage).filter(
-                GalleryImage.id.in_(ids),
-                GalleryImage.owner == user,
-            ).all()
+            q = db.query(GalleryImage).filter(GalleryImage.id.in_(ids))
+            # Only owner-scope when there's an actual user; single-user mode
+            # (user == "") sees all images, matching the rest of the app.
+            if user:
+                q = q.filter(GalleryImage.owner == user)
+            imgs = q.all()
             if not imgs:
                 raise HTTPException(404, "No images found")
             import io

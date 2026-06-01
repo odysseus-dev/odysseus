@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from src.endpoint_resolver import resolve_endpoint
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, require_user
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +49,17 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     router = APIRouter(tags=["research"])
 
     def _require_user(request: Request) -> str:
-        """All research endpoints require an authenticated user. Research
-        data isn't owner-scoped in the on-disk JSON yet, so we at least
-        block anonymous access. Multi-tenant deploys should additionally
-        verify the session belongs to this user."""
-        user = get_current_user(request)
-        if not user:
-            raise HTTPException(401, "Not authenticated")
-        return user
+        """Resolve the caller for research endpoints. Uses require_user so
+        single-user / auth-disabled mode works: it returns "" for a loopback
+        caller when auth is unconfigured (AUTH_ENABLED=false, where the
+        middleware never sets request.state.current_user), and only raises 401
+        when auth IS configured but the caller is unauthenticated. Previously
+        this hard-401'd whenever get_current_user was None, which broke all
+        research endpoints in the default single-user deployment.
+
+        Research data isn't owner-scoped in the on-disk JSON yet; multi-tenant
+        deploys should additionally verify the session belongs to this user."""
+        return require_user(request)
 
     def _owns_in_memory(session_id: str, user: str) -> bool:
         """Ownership check for an in-flight (in-memory) research task.

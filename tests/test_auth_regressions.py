@@ -103,10 +103,20 @@ def _build_research_router():
 
 
 def _fake_request(user=None):
-    """Cheap stand-in for fastapi.Request — only `request.state.current_user`
-    matters to `get_current_user`."""
+    """Cheap stand-in for fastapi.Request.
+
+    `_require_user` now routes through `src.auth_helpers.require_user`, which
+    reads `request.app.state.auth_manager`. We run in CONFIGURED-auth mode
+    (`is_configured=True`) so an anonymous caller (current_user=None) is
+    cleanly rejected with 401 rather than falling into the unconfigured
+    single-user "" path. When a `user` is supplied, `require_user`
+    short-circuits before touching app.state, so the configured stub is inert
+    for the authenticated/wrong-owner cases."""
     req = SimpleNamespace()
     req.state = SimpleNamespace(current_user=user)
+    # require_user inspects request.app.state.auth_manager.is_configured.
+    auth_mgr = SimpleNamespace(is_configured=True)
+    req.app = SimpleNamespace(state=SimpleNamespace(auth_manager=auth_mgr))
     # Some endpoints touch .client too — provide a benign default.
     req.client = SimpleNamespace(host="127.0.0.1")
     return req
