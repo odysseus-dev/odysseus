@@ -1742,6 +1742,12 @@ body.bg-pattern-sparkles {
       padding-left: max(0px, calc((100% - var(--chat-max)) / 2));
       padding-right: max(12px, calc((100% - var(--chat-max)) / 2 + 12px));
     }
+    /* Sortable Cookbook column headers had no visual cue, so users couldn't tell
+       a header was clickable (the Newest sort on the Model column was invisible).
+       Show a pointer + hover highlight, and underline the active sort column. */
+    .hwfit-header .hwfit-sortable { cursor: pointer; transition: color .12s; }
+    .hwfit-header .hwfit-sortable:hover { color: var(--fg); text-decoration: underline dotted; }
+    .hwfit-header .hwfit-sort-active { color: var(--fg); font-weight: 600; }
     /* Welcome screen — centered in available space above input bar */
     #welcome-screen {
       position:absolute;
