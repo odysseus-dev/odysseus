@@ -197,13 +197,13 @@ Or with JSON for fresh news:
 ```web_search
 {"query": "<your query>", "time_filter": "day"}
 ```
-Search the web for a SINGLE quick fact/lookup mid-task. For news / "today" / "latest" queries, pass `time_filter` ("day", "week", "month", or "year"). NOT for "research X" / "do research on X" / "look into X" requests — those mean a multi-source DEEP RESEARCH job: use `trigger_research` instead (it runs in the Deep Research sidebar and produces a full report). web_search = one quick query; trigger_research = a researched report.""",
+Search the web for a SINGLE quick fact/lookup mid-task. For news / "today" / "latest" queries, pass `time_filter` ("day", "week", "month", or "year"). NOT for "research X" / "do research on X" / "look into X" requests — those mean a multi-source DEEP RESEARCH job: use `trigger_research` instead (it runs in the Deep Research sidebar and produces a full report). web_search = one quick query; trigger_research = a researched report. When you state a fact drawn from the results, cite it inline as a markdown link [source](url) using the result's URL.""",
 
     "web_fetch": """\
 ```web_fetch
 <url or domain>
 ```
-Fetch and read the text content of a SPECIFIC URL the user names (e.g. "check example.com", "what does this page say <url>"). A bare domain like `example.com` works (defaults to https). Use this when you already have a concrete URL. For open-ended lookups use `web_search`, and for "research X" jobs use `trigger_research`.""",
+Fetch and read the text content of a SPECIFIC URL the user names (e.g. "check example.com", "what does this page say <url>"). A bare domain like `example.com` works (defaults to https). Use this when you already have a concrete URL. For open-ended lookups use `web_search`, and for "research X" jobs use `trigger_research`. When you use what the page says, cite it inline as a markdown link [title](url).""",
 
     "read_file": """\
 ```read_file
@@ -2026,12 +2026,12 @@ async def stream_agent_loop(
                 )
             desc, result = await _tool_task
 
-            # Extract structured web sources from web_search tool output.
-            # web_search returns {"output": ..., "exit_code": 0}; check "output"
-            # first so the <!-- SOURCES:…--> marker is found and stripped even
-            # when the result doesn't carry a "results" or "stdout" key.
-            _src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
-            if block.tool_type == "web_search" and _src_text:
+            # Extract structured web sources from web_search / web_fetch output.
+            # Track WHICH key holds the text so the stripped version is written
+            # back to the same key (avoids writing to a different field).
+            _src_key = next((k for k in ("output", "results", "stdout") if result.get(k)), None)
+            _src_text = result.get(_src_key) if _src_key else ""
+            if block.tool_type in ("web_search", "web_fetch") and _src_text:
                 _src_marker = "<!-- SOURCES:"
                 _src_idx = _src_text.find(_src_marker)
                 if _src_idx >= 0:
@@ -2041,13 +2041,7 @@ async def stream_agent_loop(
                             _extracted_sources = json.loads(_src_text[_src_idx + len(_src_marker):_src_end])
                             yield f'data: {json.dumps({"type": "web_sources", "data": _extracted_sources})}\n\n'
                             # Strip the marker from the result so it doesn't show in chat
-                            _clean = _src_text[:_src_idx].rstrip()
-                            if "output" in result:
-                                result["output"] = _clean
-                            elif "results" in result:
-                                result["results"] = _clean
-                            elif "stdout" in result:
-                                result["stdout"] = _clean
+                            result[_src_key] = _src_text[:_src_idx].rstrip()
                         except (json.JSONDecodeError, Exception):
                             pass
 

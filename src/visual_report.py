@@ -56,12 +56,44 @@ def _md_to_html(md_text: str) -> str:
             "toc": {"marker": "", "toc_depth": "2-3"},
         },
     )
-    # Make external links open in new tab
-    result = re.sub(
-        r'<a href="(https?://)',
-        r'<a target="_blank" rel="noopener noreferrer" href="\1',
-        result,
-    )
+    # Render external links as favicon "citation chips" (source name in a
+    # rounded pill with the site's favicon), and open them in a new tab.
+    import html as _html
+    from urllib.parse import urlparse
+
+    def _citation_chip(m):
+        url = m.group(1)
+        # Strip any HTML tags markdown emitted inside the link text — the report
+        # is built from untrusted scraped content, so a crafted source could
+        # otherwise smuggle markup (e.g. <img onerror=...>) into the chip. The
+        # remaining text keeps markdown's entity-escaping (no double-encoding).
+        text = re.sub(r"<[^>]+>", "", m.group(2)).strip()
+        try:
+            domain = urlparse(url).netloc
+            if domain.startswith("www."):
+                domain = domain[4:]
+        except Exception:
+            domain = ""
+        label = text
+        # Keep the chip compact: short publisher names are kept as-is, but long
+        # descriptive citation text or bare URLs collapse to the domain so the
+        # chip stays small and reads inline after the text.
+        if not label or label.lower().startswith(("http://", "https://")) or len(label) > 28:
+            label = domain or label
+        url_attr = _html.escape(url, quote=True)
+        dom_attr = _html.escape(domain, quote=True)
+        fav = ""
+        if domain:
+            fav = (
+                f'<img class="cite-favicon" src="https://www.google.com/s2/favicons?domain={dom_attr}&sz=64" '
+                f'alt="" loading="lazy" referrerpolicy="no-referrer">'
+            )
+        return (
+            f'<a class="cite-chip" target="_blank" rel="noopener noreferrer" href="{url_attr}">'
+            f'{fav}<span>{label}</span></a>'
+        )
+
+    result = re.sub(r'<a href="(https?://[^"]+)">(.*?)</a>', _citation_chip, result, flags=re.S)
     return result
 
 
@@ -661,6 +693,36 @@ body::after {{
 .content a:hover {{
   text-decoration-color: var(--accent);
   color: var(--accent-light);
+}}
+/* Inline citation chips: source name in a rounded pill with favicon. */
+.content a.cite-chip {{
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0.08em 0.6em 0.08em 0.45em;
+  margin: 0 0.12em;
+  border: 1px solid color-mix(in srgb, var(--text) 22%, transparent);
+  border-radius: 999px;
+  font-size: 0.8em;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--text) 72%, transparent);
+  text-decoration: none;
+  vertical-align: baseline;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}}
+.content a.cite-chip:hover {{
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--accent);
+  color: var(--accent-light);
+}}
+.content a.cite-chip .cite-favicon {{
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+  object-fit: cover;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
 }}
 .content ul, .content ol {{ margin: 0 0 1.1rem 1.6rem; }}
 .content li {{ margin-bottom: 0.4rem; }}

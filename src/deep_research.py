@@ -119,7 +119,7 @@ Requirements:
 - Each section should have multiple detailed paragraphs, not just bullet points
 - Synthesize and analyze the information — explain WHY things matter, draw comparisons, provide context
 - Include specific data points, numbers, and statistics from the evidence
-- Include source URLs as inline citations [like this](url)
+- CITE AS YOU WRITE: every factual claim, statistic, or quote must be followed by an inline markdown citation in the form [Source name](url), using ONLY the exact source URLs that appear in the evidence above. Never invent or guess a URL. If a claim has no supporting source in the evidence, say so rather than fabricating a citation.
 - Note where sources agree and where they disagree
 - Add a brief executive summary at the top
 - End with a clear conclusion that directly answers the question

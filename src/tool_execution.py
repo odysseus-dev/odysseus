@@ -524,6 +524,9 @@ async def _direct_fallback(
             output = header + text
             if len(output) > MAX_OUTPUT_CHARS:
                 output = output[:MAX_OUTPUT_CHARS] + "\n\n[...truncated]"
+            # Emit the fetched page as a source so it shows in the chat
+            # sources box (parity with web_search). Stripped before display.
+            output += "\n\n<!-- SOURCES:" + _json.dumps([{"url": url, "title": title or url}]) + " -->"
             return {"output": output, "exit_code": 0}
 
         # manage_memory / generate_image still live as MCP servers

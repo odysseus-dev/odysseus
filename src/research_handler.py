@@ -438,8 +438,15 @@ class ResearchHandler:
         return None
 
     @staticmethod
-    def _extract_sources(findings: list) -> list:
-        """Extract deduplicated [{url, title}] from findings, filtering low-quality ones."""
+    def _extract_sources(findings: list, report_text: str = "") -> list:
+        """Extract deduplicated [{url, title}] from findings, filtering low-quality ones.
+
+        When `report_text` is given and the report actually cites some of the
+        fetched URLs, return only the cited ones — this drops fetched-but-
+        irrelevant pages (e.g. junk search hits) that were never referenced.
+        Falls back to all non-low-quality findings when the report cites none,
+        so the sources list is never empty.
+        """
         seen = set()
         sources = []
         for f in findings:
@@ -453,6 +460,17 @@ class ResearchHandler:
                 if og_img:
                     entry["image"] = og_img
                 sources.append(entry)
+        if report_text:
+            import re as _re
+            # Match against the exact URLs present in the report (set
+            # membership), not a raw substring test — otherwise a root URL
+            # like https://site.com/ would falsely count as "cited" whenever
+            # it's a substring of a deeper cited URL on the same domain.
+            found = _re.findall(r'https?://[^\s)\]<>"\']+', report_text)
+            cited_set = {u.rstrip('/.,;:') for u in found}
+            cited = [s for s in sources if s["url"].rstrip('/.,;:') in cited_set]
+            if cited:
+                return cited
         return sources
 
     @staticmethod
@@ -516,7 +534,10 @@ class ResearchHandler:
             raw_findings = []
             researcher = entry.get("researcher")
             if researcher and researcher.findings:
-                sources = self._extract_sources(researcher.findings)
+                # Pass the report so sources can be narrowed to URLs the
+                # report actually cites (drops fetched-but-unused junk).
+                _report_text = entry.get("result") or entry.get("raw_report") or ""
+                sources = self._extract_sources(researcher.findings, _report_text)
                 raw_findings = self._extract_raw_findings(researcher.findings)
             entry["sources"] = sources
 
