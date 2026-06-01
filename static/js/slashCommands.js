@@ -1464,6 +1464,7 @@ function _parseTimeSpec(input) {
     const mer = (m[4] || '').toLowerCase();
     if (mer === 'pm' && hh < 12) hh += 12;
     if (mer === 'am' && hh === 12) hh = 0;
+    if (hh > 23) return null;
     d.setHours(hh, mm, 0, 0);
     return { date: d, rest: m[5].trim() };
   }
