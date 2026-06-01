@@ -2,6 +2,8 @@
 
 Thanks for helping. The project is moving quickly, so the best contributions are focused, easy to review, and easy to test.
 
+If you are new to the codebase, start with [docs/architecture.md](docs/architecture.md). It is the shortest map of the runtime layers, auth model, and where to place changes.
+
 ## Before You Start
 
 - Search existing issues and pull requests before opening a new one.
