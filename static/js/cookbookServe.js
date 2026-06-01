@@ -141,6 +141,54 @@ function _isActivelyServing(repoId) {
   } catch { return false; }
 }
 
+function _formatGgufSize(bytes) {
+  const n = Number(bytes || 0);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n >= 1024 ** 3) return `${(n / (1024 ** 3)).toFixed(1)} GB`;
+  if (n >= 1024 ** 2) return `${Math.round(n / (1024 ** 2))} MB`;
+  return `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
+function _ggufFilesForModel(model) {
+  return Array.isArray(model?.gguf_files)
+    ? model.gguf_files.filter(f => f && typeof f.rel_path === 'string' && f.rel_path)
+    : [];
+}
+
+function _runnableGgufFiles(model) {
+  const files = _ggufFilesForModel(model);
+  const primary = files.filter(f => (f.role || 'model') === 'model');
+  return primary.length ? primary : files;
+}
+
+function _ggufFileLabel(file) {
+  const base = (file.name || file.rel_path || '').split('/').pop();
+  const size = _formatGgufSize(file.size_bytes);
+  const quant = file.quant ? `${file.quant} ` : '';
+  const parts = Number(file.parts || 0);
+  const split = parts > 1 ? `, ${parts} parts` : '';
+  const role = file.role && file.role !== 'model' ? ` ${file.role}` : '';
+  return `${quant}${base}${size || split ? ` (${[size, split.replace(/^, /, '')].filter(Boolean).join(', ')})` : ''}${role}`;
+}
+
+function _shellPathExpr(path) {
+  const s = String(path || '');
+  if (s === '~') return '${HOME}';
+  if (s.startsWith('~/')) return '${HOME}' + _shellQuote(s.slice(1));
+  return _shellQuote(s);
+}
+
+function _selectedGgufExpr(model, repo, relPath) {
+  const rel = String(relPath || '').replace(/^\/+/, '');
+  if (!rel) return '';
+  if (model.is_local_dir && model.path) {
+    const base = String(model.path || '').replace(/\/+$/, '');
+    return `$(printf %s ${_shellPathExpr(`${base}/${repo}/${rel}`)})`;
+  }
+  const cacheRepo = repo.replace(/\//g, '--');
+  return `$(printf %s \${HOME}${_shellQuote(`/.cache/huggingface/hub/models--${cacheRepo}/snapshots/${rel}`)})`;
+}
+
 function _rerenderCachedModels() {
   const list = document.getElementById('hwfit-cached-list');
   const tagContainer = document.getElementById('serve-tags');
@@ -173,6 +221,8 @@ function _rerenderCachedModels() {
     if (m.path) {
       metaParts.push(`<span style="opacity:0.7;">${esc(m.path)}</span>`);
     }
+    const ggufCount = _runnableGgufFiles(m).length;
+    if (ggufCount > 1) metaParts.push(`${ggufCount} GGUFs`);
     if (m.status === 'downloading') {
       const _active = _isActivelyDownloading(m.repo_id);
       metaParts.push(`<span class="cookbook-dl-status" style="color:var(--accent,var(--red));">${_active ? 'downloading' : 'download stalled'}</span>`);
@@ -404,6 +454,14 @@ function _rerenderCachedModels() {
       const tpOpts = [1,2,4,8].map(n => `<option${defaultTp==String(n)?' selected':''}>${n}</option>`).join('');
       const dtypeOpts = ['auto','float16','bfloat16'].map(d => `<option value="${d}"${sv('dtype','auto')===d?' selected':''}>${d}</option>`).join('');
       const _l = (name, tip) => `<span>${name}<span class="hwfit-hint" title="${tip}">?</span></span>`;
+      const _ggufChoices = _runnableGgufFiles(m);
+      const _savedGguf = String(sv('gguf_file', '') || '');
+      const _defaultGguf = _ggufChoices.some(f => f.rel_path === _savedGguf)
+        ? _savedGguf
+        : (_ggufChoices[0]?.rel_path || '');
+      const _ggufOptions = _ggufChoices.map(f =>
+        `<option value="${esc(f.rel_path)}"${f.rel_path === _defaultGguf ? ' selected' : ''}>${esc(_ggufFileLabel(f))}</option>`
+      ).join('');
       // Build save slots
       const _allPresets = _loadPresets();
       const _repoShort = repo.split('/').pop();
@@ -444,6 +502,13 @@ function _rerenderCachedModels() {
       }
       panelHtml += `<label>${_l('GPUs','Toggle which GPUs to use')}<div class="cookbook-gpu-group">${_gpuBtnsHtml}</div><input type="hidden" class="hwfit-sf" data-field="gpus" value="${esc(defaultGpus)}" /></label>`;
       panelHtml += `</div>`;
+      if (_ggufChoices.length > 1) {
+        panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp">`;
+        panelHtml += `<label class="hwfit-backend-llamacpp">${_l('GGUF File','Choose the exact GGUF artifact to serve from this cached model folder.')}<select class="hwfit-sf hwfit-sf-wide" data-field="gguf_file">${_ggufOptions}</select></label>`;
+        panelHtml += `</div>`;
+      } else if (_defaultGguf) {
+        panelHtml += `<input type="hidden" class="hwfit-sf" data-field="gguf_file" value="${esc(_defaultGguf)}" />`;
+      }
       // Row 2: Core settings
       panelHtml += `<div class="hwfit-serve-row hwfit-backend-vllm hwfit-backend-sglang hwfit-backend-llamacpp">`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('TP','Tensor Parallelism — split model across N GPUs')}<select class="hwfit-sf" data-field="tp">${tpOpts}</select></label>`;
@@ -553,6 +618,8 @@ function _rerenderCachedModels() {
         const backend = f.backend || 'vllm';
         const serveModel = m.is_local_dir && m.path ? `${m.path}/${repo}` : repo;
         if (backend === 'llamacpp') {
+          const ggufChoices = _runnableGgufFiles(m);
+          const selectedGguf = ggufChoices.find(file => file.rel_path === f.gguf_file);
           // For multi-part GGUFs, llama.cpp requires the first split
           // (-00001-of-NNNNN.gguf). Prefer it (sorted, so UD-IQ4_XS/001 comes
           // before Q4_K_M/001 etc); fall back to any single GGUF sorted.
@@ -563,7 +630,9 @@ function _rerenderCachedModels() {
           // search the HF snapshots dir, so serving a GGUF from a custom dir works
           // instead of handing llama.cpp a directory (which fails).
           const _ldir = `"${m.path}/${repo}"`;
-          f._gguf_path = m.is_local_dir && m.path
+          f._gguf_path = selectedGguf
+            ? _selectedGgufExpr(m, repo, selectedGguf.rel_path)
+            : m.is_local_dir && m.path
             ? `$({ find ${_ldir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${_ldir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`
             : `$({ find ${dir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${dir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
         }

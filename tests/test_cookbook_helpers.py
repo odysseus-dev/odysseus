@@ -136,6 +136,11 @@ def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):
     plain = tmp_path / "Qwen3.6-27B"
     plain.mkdir()
     (plain / "Qwen3.6-27B-Q4_K_M.gguf").write_bytes(b"gguf")
+    (plain / "Qwen3.6-27B-Q5_K_M-00001-of-00003.gguf").write_bytes(b"part1")
+    (plain / "Qwen3.6-27B-Q5_K_M-00002-of-00003.gguf").write_bytes(b"part2")
+    (plain / "Qwen3.6-27B-Q5_K_M-00003-of-00003.gguf").write_bytes(b"part3")
+    (plain / "Qwen3.6-27B-Q6_K_XL.gguf").write_bytes(b"ggufgguf")
+    (plain / "mmproj-BF16.gguf").write_bytes(b"projector")
 
     hf_internal = tmp_path / "models--Qwen--Qwen3.6-27B"
     (hf_internal / "snapshots" / "abc").mkdir(parents=True)
@@ -154,3 +159,18 @@ def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):
     assert "models--Qwen--Qwen3.6-27B" not in by_repo
     assert by_repo["Qwen3.6-27B"]["is_local_dir"] is True
     assert by_repo["Qwen3.6-27B"]["is_gguf"] is True
+    ggufs = by_repo["Qwen3.6-27B"]["gguf_files"]
+    assert [f["rel_path"] for f in ggufs] == [
+        "Qwen3.6-27B-Q4_K_M.gguf",
+        "Qwen3.6-27B-Q5_K_M-00001-of-00003.gguf",
+        "Qwen3.6-27B-Q6_K_XL.gguf",
+        "mmproj-BF16.gguf",
+    ]
+    assert [f["role"] for f in ggufs] == ["model", "model", "model", "projector"]
+    assert ggufs[0]["quant"] == "Q4_K_M"
+    assert ggufs[1]["quant"] == "Q5_K_M"
+    assert ggufs[1]["split"] is True
+    assert ggufs[1]["parts"] == 3
+    assert ggufs[1]["size_bytes"] == len(b"part1part2part3")
+    assert ggufs[2]["quant"] == "Q6_K_XL"
+    assert ggufs[3]["quant"] == "BF16"

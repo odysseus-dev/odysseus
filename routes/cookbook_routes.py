@@ -719,6 +719,8 @@ def setup_cookbook_routes() -> APIRouter:
                     entry["backend"] = m.get("backend")
                 if m.get("is_ollama"):
                     entry["is_ollama"] = True
+                if isinstance(m.get("gguf_files"), list):
+                    entry["gguf_files"] = m["gguf_files"]
                 models.append(entry)
         except Exception as e:
             logger.warning(f"Failed to parse cached models: {e}")
