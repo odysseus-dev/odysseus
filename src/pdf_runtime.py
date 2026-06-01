@@ -2,7 +2,7 @@
 
 PDF_VIEWER_PYMUPDF_MISSING = (
     "PDF viewer requires PyMuPDF. Install optional PDF dependencies with "
-    "`pip install -r requirements-optional.txt` (PyMuPDF is AGPL-3.0)."
+    "`uv sync --extra pdf-forms` (PyMuPDF is AGPL-3.0)."
 )
 
 

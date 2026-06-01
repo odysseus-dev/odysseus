@@ -43,7 +43,7 @@ def get_chroma_client():
     except ImportError as e:
         raise RuntimeError(
             "ChromaDB integration is not installed. Install the optional "
-            "dependency with: pip install chromadb-client"
+            "dependency with: uv sync"
         ) from e
 
     host = os.getenv("CHROMADB_HOST", "localhost")

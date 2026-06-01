@@ -156,7 +156,7 @@ def main():
         import hf_transfer  # noqa: F401
         os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
     except ImportError:
-        print("HINT pip install hf_transfer for faster downloads", flush=True)
+        print("HINT uv pip install hf_transfer for faster downloads", flush=True)
 
     _patch_tqdm()
 

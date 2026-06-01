@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 _monitor_task = None
 POLL_INTERVAL_S = 5
 # The follow-up agent run is allowed a few rounds to actually continue the task
-# (e.g. after `pip install` finishes, run the transcription).
+# (e.g. after `uv pip install` finishes, run the transcription).
 _FOLLOWUP_MAX_ROUNDS = 12
 
 

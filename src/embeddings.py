@@ -107,7 +107,7 @@ class FastEmbedClient:
         except ImportError as e:
             raise RuntimeError(
                 "Local fastembed is not installed. Either install it "
-                "(pip install fastembed) or point the app at a remote "
+                "(`uv sync`) or point the app at a remote "
                 "embeddings server."
             ) from e
 
@@ -246,7 +246,7 @@ def get_embedding_client():
         logger.info(f"Using local FastEmbed: model={client.model}")
         return client
     except ImportError:
-        logger.error("fastembed not installed — run: pip install fastembed")
+        logger.error("fastembed not installed — run: uv sync")
     except Exception as e:
         logger.error(f"FastEmbed init failed: {e}")
 

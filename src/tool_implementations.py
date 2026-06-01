@@ -2453,8 +2453,8 @@ async def _cookbook_env_for_host(host: str) -> Dict[str, Any]:
     """Resolve env_prefix / gpus / platform / hf_token / ssh_port for a
     given host by looking it up in cookbook_state.env. The user
     configures these per-host in the Cookbook UI; without them, raw
-    `vllm serve …` fails with 'command not found' because vLLM lives
-    inside a venv that has to be sourced first.
+    `vllm serve ...` fails with 'command not found' because vLLM lives
+    inside an environment that has to be sourced first.
 
     Returns a dict with keys ready to drop into the /api/model/serve
     payload: env_prefix, gpus, platform, hf_token, ssh_port.
@@ -2703,7 +2703,7 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
         if "/api/email/accounts" in path:
             return {"error": "Don't use /api/email/accounts via app_api — it is owner-filtered in tool context and may return empty. Use the `list_email_accounts` email tool, then pass `account` to list_emails/read_email.", "exit_code": 1}
         if "/api/model/download" in path:
-            return {"error": "Don't POST /api/model/download directly — use the `download_model` tool (it resolves the server name, sets the venv env_prefix, and registers the task so it shows in the UI).", "exit_code": 1}
+            return {"error": "Don't POST /api/model/download directly — use the `download_model` tool (it resolves the server name, sets the env_prefix, and registers the task so it shows in the UI).", "exit_code": 1}
         if "/api/model/serve" in path:
             return {"error": "Don't POST /api/model/serve directly — use the `serve_model` or `serve_preset` tool (handles host resolution, env_prefix, and cookbook tracking).", "exit_code": 1}
         if "/api/research/start" in path:
@@ -2937,10 +2937,10 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
     payload = {"repo_id": repo_id, "cmd": cmd}
     if host:
         payload["remote_host"] = host
-    # Resolve per-host env settings (venv/conda activate, gpus,
+    # Resolve per-host env settings (uv/venv/conda activate, gpus,
     # hf_token, platform, ssh_port) from cookbook_state — same path
     # the UI uses. Without env_prefix, `vllm serve …` lands in a shell
-    # without the user's venv and fails 'command not found'.
+    # without the user's environment and fails 'command not found'.
     env_cfg = await _cookbook_env_for_host(host)
     if env_cfg.get("env_prefix"): payload["env_prefix"] = env_cfg["env_prefix"]
     if env_cfg.get("gpus"):       payload["gpus"]       = env_cfg["gpus"]

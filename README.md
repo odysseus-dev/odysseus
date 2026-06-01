@@ -70,15 +70,13 @@ only when you intentionally want LAN/reverse-proxy access.
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python setup.py
-python -m uvicorn app:app --host 127.0.0.1 --port 7000
+uv sync
+uv run setup.py
+uv run uvicorn app:app --host 127.0.0.1 --port 7000
 ```
-Requirements: Python 3.11+. Cookbook also needs `tmux` for background model
-downloads and serves. Use `--host 0.0.0.0` only when you intentionally want
-LAN/reverse-proxy access.
+Requirements: Python 3.11+ and [uv](https://docs.astral.sh/uv/). Cookbook also
+needs `tmux` for background model downloads and serves.
+Use `--host 0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
 
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
@@ -153,8 +151,8 @@ docker compose logs --tail=120 odysseus
 docker compose logs odysseus | grep -E 'ChromaDB|MemoryVectorStore|DEGRADED'
 ```
 
-**macOS details.** `start-macos.sh` installs Homebrew deps, creates the venv,
-runs setup, and starts uvicorn on port `7860` because AirPlay often holds
+**macOS details.** `start-macos.sh` installs Homebrew deps, syncs the uv
+environment, runs setup, and starts uvicorn on port `7860` because AirPlay often holds
 `7000`. It uses llama.cpp/Ollama for Metal. vLLM/SGLang are CUDA/ROCm-only and
 do not run on macOS. MLX-only models are not served by Odysseus.
 
@@ -162,7 +160,7 @@ do not run on macOS. MLX-only models are not served by Odysseus.
 
 ### Native Windows
 
-**One-command launcher** (creates the venv, installs deps, runs setup, starts the
+**One-command launcher** (syncs the uv environment, installs deps, runs setup, starts the
 server; safe to re-run):
 
 ```powershell
@@ -176,16 +174,14 @@ Or do it by hand:
 ```powershell
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
-python -m venv venv
-venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python setup.py
-python -m uvicorn app:app --host 127.0.0.1 --port 7000
+uv sync
+uv run setup.py
+uv run uvicorn app:app --host 127.0.0.1 --port 7000
 ```
 
-**Requirements:** Python 3.11+. The core app (chat, agent, memory, documents,
-email, calendar, deep research) runs fully native. For full **Cookbook** background
-model downloads and the agent shell tool, also install
+**Requirements:** Python 3.11+ and [uv](https://docs.astral.sh/uv/). The core
+app (chat, agent, memory, documents, email, calendar, deep research) runs fully
+native. For full **Cookbook** background model downloads and the agent shell tool, also install
 [Git for Windows](https://git-scm.com/download/win) (provides `bash.exe`).
 Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Windows,
 [Ollama](https://ollama.com/download) is the easiest path — point Odysseus at

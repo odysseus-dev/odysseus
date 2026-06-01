@@ -89,7 +89,7 @@ Bundled in `static/fonts/`:
 
 ## Python dependencies
 
-Core (`requirements.txt`) and optional (`requirements-optional.txt`):
+Core dependencies and optional extras are listed in `pyproject.toml`:
 
 | Package | License |
 |---|---|
@@ -146,8 +146,8 @@ concerns from earlier are resolved:
   removed entirely.
 - **PyMuPDF (AGPL-3.0)** is no longer a core dependency. It is **optional** and
   used *only* by the PDF form-filling feature (`src/pdf_forms.py` and the form
-  endpoints in `routes/document_routes.py`), lazy-imported and listed in
-  `requirements-optional.txt`. The MIT core runs without it. If you choose to
+  endpoints in `routes/document_routes.py`), lazy-imported and listed in the
+  `pdf-forms` optional extra. The MIT core runs without it. If you choose to
   install it, AGPL's network clause then applies to *that feature* for your
   deployment (Artifex also sells a commercial PyMuPDF license that lifts this).
 - **`caldav`** (Python lib) is **dual-licensed GPL-3.0-or-later OR Apache-2.0**.

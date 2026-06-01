@@ -23,7 +23,7 @@ from unittest.mock import MagicMock
 # Stub `core.auth` / `core.database` before importing the route module.
 # `routes.auth_routes` does `from core.auth import AuthManager`, and importing
 # any `core.*` submodule first runs `core/__init__.py`, which transitively
-# imports `src.llm_core` (hangs at import under the project venv) and the
+# imports `src.llm_core` (hangs at import under the project environment) and the
 # SQLAlchemy declarative models (metaclass blows up on a bare `core.database`
 # import / under the conftest's `sqlalchemy.*` MagicMock stubs). We only need
 # `AuthManager` as a type hint here — the handler is exercised with a MagicMock
