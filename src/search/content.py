@@ -62,9 +62,12 @@ def _public_http_url(url: str) -> bool:
     except ValueError:
         pass
     try:
-        return all(not _is_private_address(ip) for ip in _resolve_hostname_ips(host))
+        ips = _resolve_hostname_ips(host)
     except OSError:
         return False
+    # Fail closed: a hostname that resolves to nothing is treated as
+    # non-public (an empty all(...) would otherwise return True).
+    return bool(ips) and all(not _is_private_address(ip) for ip in ips)
 
 
 def _get_public_url(url: str, *, headers: dict, timeout: int) -> httpx.Response:
