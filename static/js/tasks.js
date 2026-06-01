@@ -700,7 +700,7 @@ function _renderList() {
       const runBtn = document.createElement('button');
       runBtn.className = 'task-status-badge task-run-now-badge task-card-run-btn';
       runBtn.title = 'Run now';
-      runBtn.style.cssText = 'position:relative;top:1px;margin-right:4px;';
+      runBtn.style.cssText = 'position:relative;top:2px;margin-right:4px;';
       runBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Run now</span>';
       runBtn.addEventListener('click', (e) => { e.stopPropagation(); _doRunNow(task.id); });
       actionsWrap.insertBefore(runBtn, menuBtn);

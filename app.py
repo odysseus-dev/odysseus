@@ -134,6 +134,8 @@ auth_manager = AuthManager()
 app.state.auth_manager = auth_manager
 AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
 LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
+if LOCALHOST_BYPASS:
+    logger.warning("LOCALHOST_BYPASS is enabled, loopback requests bypass authentication. Do not expose this instance to a network.")
 
 if AUTH_ENABLED:
     AUTH_EXEMPT_EXACT = {
@@ -818,7 +820,6 @@ async def startup_event():
             from src.tool_index import get_tool_index
             idx = await asyncio.to_thread(get_tool_index)
             if idx:
-                await asyncio.to_thread(idx.index_builtin_tools)
                 await asyncio.to_thread(idx.get_tools_for_query, "warmup", 8)
                 logger.info("[startup] Tool index pre-warmed")
         except Exception as e:

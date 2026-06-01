@@ -639,7 +639,8 @@ function _createEmailItem(em) {
 }
 
 async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
-  const wantsAiReply = mode === 'ai-reply';
+  const aiReplyMode = mode === 'ai-reply-fast' ? 'fast' : (mode === 'ai-reply-full' ? 'full' : '');
+  const wantsAiReply = mode === 'ai-reply' || !!aiReplyMode;
   let aiSuggestedBody = null;
   if (wantsAiReply) {
     // Fall through to reply-all (not plain reply) so the generated AI
@@ -696,7 +697,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
               message_id: data.message_id || '',
               uid: String(em.uid || ''),
               folder: _currentFolder,
-              fast: _shouldUseFastAiReply(data),
+              fast: aiReplyMode ? aiReplyMode === 'fast' : _shouldUseFastAiReply(data),
             }),
           });
           const result = await res.json();

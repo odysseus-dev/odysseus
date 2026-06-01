@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 from routes.cookbook_helpers import (
     _SSH_PORT_RE, _REMOTE_HOST_RE, _SESSION_ID_RE,
-    _validate_repo_id, _validate_include, _validate_remote_host, _validate_token,
+    _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_remote_host, _validate_token,
     _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
@@ -776,9 +776,11 @@ def setup_cookbook_routes() -> APIRouter:
         """Launch a model server in a tmux session (or PowerShell background process on Windows).
 
         `repo_id` is dual-purpose: a HuggingFace repo (`<org>/<name>`) for
-        model-serve commands, OR a bare pip package name when the cmd is a
-        `python -m pip install …`. We only enforce the strict HF format on
-        the model paths.
+        model-serve commands, a cached local-model id (the folder name reported
+        by `/api/model/cached`) for models scanned from a custom model dir, OR a
+        bare pip package name when the cmd is a `python -m pip install …`. We
+        keep strict validation, but serving local cached models must not require
+        a fake org/name wrapper.
         """
         require_admin(request)
         # Defence-in-depth: reject values that could break out of shell contexts.
@@ -807,7 +809,7 @@ def setup_cookbook_routes() -> APIRouter:
             ):
                 raise HTTPException(400, "Invalid pip package name")
         else:
-            _validate_repo_id(req.repo_id)
+            _validate_serve_model_id(req.repo_id)
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
         session_id = f"serve-{uuid.uuid4().hex[:8]}"
         remote = req.remote_host

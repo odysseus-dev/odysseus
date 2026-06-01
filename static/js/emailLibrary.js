@@ -115,6 +115,24 @@ function _syncReminderClearButton() {
   document.getElementById('email-reminders-clear-btn')?.classList.toggle('hidden', state._libFilter !== 'reminders');
 }
 
+function _renderAccountsLoading() {
+  const strip = document.getElementById('email-lib-accounts');
+  if (!strip) return;
+  strip.style.display = 'flex';
+  strip.innerHTML = '';
+  try {
+    const wp = spinnerModule.createWhirlpool(14);
+    wp.element.classList.add('email-accounts-loading-whirlpool');
+    const label = document.createElement('span');
+    label.className = 'email-accounts-loading-label';
+    label.textContent = 'Accounts';
+    strip.appendChild(wp.element);
+    strip.appendChild(label);
+  } catch (_) {
+    strip.textContent = 'Accounts...';
+  }
+}
+
 function _syncEmailReminderBellVisibility(enabled) {
   const btn = document.getElementById('email-reminder-btn');
   const wrap = document.querySelector('#email-lib-modal .email-search-wrap');
@@ -437,7 +455,7 @@ function _resetEmailListForFreshLoad() {
   state._libTotal = 0;
   _libLoadSeq += 1;
   const grid = document.getElementById('email-lib-grid');
-  if (grid) grid.innerHTML = '';
+  if (grid) _renderEmailLoading(grid);
   const stats = document.getElementById('email-lib-stats');
   if (stats) stats.textContent = 'Loading...';
 }
@@ -1063,6 +1081,7 @@ export function openEmailLibrary(opts = {}) {
   };
   document.addEventListener('keydown', state._libEscHandler, true);
 
+  _renderAccountsLoading();
   _loadAccounts();
   _loadFolders();
   _loadEmailReminderBellVisibility();
@@ -1296,9 +1315,7 @@ async function _doSearch() {
   }
   const grid = document.getElementById('email-lib-grid');
   if (!grid) return;
-  grid.innerHTML = '';
-  const sp = spinnerModule.createWhirlpool(28);
-  grid.appendChild(sp.element);
+  const sp = _renderEmailLoading(grid);
 
   try {
     const res = await fetch(`${API_BASE}/api/email/search?folder=${encodeURIComponent(state._libFolder)}${_acct()}&q=${encodeURIComponent(q)}&limit=100`);
@@ -1315,6 +1332,24 @@ async function _doSearch() {
     sp.destroy();
     grid.innerHTML = '<div class="email-loading">Search failed</div>';
   }
+}
+
+function _renderEmailLoading(grid) {
+  if (!grid) return null;
+  grid.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'email-loading email-loading-with-label';
+  let sp = null;
+  try {
+    sp = spinnerModule.createWhirlpool(28);
+    wrap.appendChild(sp.element);
+  } catch (_) {}
+  const label = document.createElement('div');
+  label.className = 'email-loading-label';
+  label.textContent = 'Loading emails';
+  wrap.appendChild(label);
+  grid.appendChild(wrap);
+  return sp;
 }
 
 // Refreshes the small accent-pill in the modal title with the unread count
@@ -1401,9 +1436,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
     const stats = document.getElementById('email-lib-stats');
     if (stats) stats.textContent = `${state._libTotal} emails`;
   } else {
-    grid.innerHTML = '';
-    sp = spinnerModule.createWhirlpool(28);
-    grid.appendChild(sp.element);
+    sp = _renderEmailLoading(grid);
   }
 
   try {
@@ -2015,8 +2048,8 @@ async function _toggleCardPreview(card, em) {
             <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">Forward</span></button>
           </div>
           <div class="email-reader-actions-row email-reader-actions-row-secondary">
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="AI Reply (suggest a draft)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/><path d="M14 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1z" fill="var(--accent-primary, var(--red))" stroke="none" transform="translate(2 0)"/></svg><span class="reader-btn-label">AI reply</span></button>
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span class="reader-btn-label">Summary</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply (suggest a draft)'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="from-sender" title="Search text in this thread"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span class="reader-btn-label">Search</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
               <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">More</span></button>
@@ -2067,28 +2100,7 @@ async function _toggleCardPreview(card, em) {
       _snapEmailModalToLeftSidebar(ev.currentTarget.closest('.modal'));
       if (state._onEmailClick) await state._onEmailClick({ email: em, emailData: data, mode: 'reply-all' });
     });
-    reader.querySelector('[data-act="ai-reply"]')?.addEventListener('click', async (ev) => {
-      ev.stopPropagation();
-      _snapEmailModalToLeftSidebar(ev.currentTarget.closest('.modal'));
-      const btn = ev.currentTarget;
-      btn.disabled = true;
-      const orig = btn.innerHTML;
-      // Use the app-wide whirlpool spinner for consistency.
-      let _wp = null;
-      try {
-        _wp = spinnerModule.createWhirlpool(14);
-        _wp.element.style.cssText = 'width:14px;height:14px;display:inline-block;vertical-align:middle;position:relative;top:-2px;';
-        btn.innerHTML = '';
-        btn.appendChild(_wp.element);
-      } catch (_) {}
-      try {
-        if (state._onEmailClick) await state._onEmailClick({ email: em, emailData: data, mode: 'ai-reply' });
-      } finally {
-        try { _wp && _wp.stop(); } catch (_) {}
-        btn.disabled = false;
-        btn.innerHTML = orig;
-      }
-    });
+    reader.querySelector('[data-act="ai-reply"]')?.addEventListener('click', (ev) => _handleAiReplyButton(ev, em, data));
     reader.querySelector('[data-act="forward"]')?.addEventListener('click', async (ev) => {
       ev.stopPropagation();
       if (state._onEmailClick) await state._onEmailClick({ email: em, emailData: data, mode: 'forward' });
@@ -3730,8 +3742,8 @@ async function _openEmailAsTab(em, folder) {
             <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">Forward</span></button>
           </div>
           <div class="email-reader-actions-row email-reader-actions-row-secondary">
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="AI Reply"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/><path d="M14 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1z" fill="var(--accent-primary, var(--red))" stroke="none" transform="translate(2 0)"/></svg><span class="reader-btn-label">AI reply</span></button>
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span class="reader-btn-label">Summary</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="from-sender" title="Search text in this thread"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span class="reader-btn-label">Search</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
               <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">More</span></button>
@@ -3758,11 +3770,7 @@ async function _openEmailAsTab(em, folder) {
       _snapEmailModalToLeftSidebar(ev.currentTarget.closest('.modal'));
       if (state._onEmailClick) await state._onEmailClick({ email: em, emailData: data, mode: 'reply-all' });
     });
-    reader.querySelector('[data-act="ai-reply"]')?.addEventListener('click', async (ev) => {
-      ev.stopPropagation();
-      _snapEmailModalToLeftSidebar(ev.currentTarget.closest('.modal'));
-      if (state._onEmailClick) await state._onEmailClick({ email: em, emailData: data, mode: 'ai-reply' });
-    });
+    reader.querySelector('[data-act="ai-reply"]')?.addEventListener('click', (ev) => _handleAiReplyButton(ev, em, data));
     reader.querySelector('[data-act="forward"]')?.addEventListener('click', async (ev) => {
       ev.stopPropagation();
       if (state._onEmailClick) await state._onEmailClick({ email: em, emailData: data, mode: 'forward' });
@@ -3885,8 +3893,8 @@ async function _openEmailWindow(em, folder) {
             <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">Forward</span></button>
           </div>
           <div class="email-reader-actions-row email-reader-actions-row-secondary">
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="AI Reply (suggest a draft)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/><path d="M14 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1z" fill="var(--accent-primary, var(--red))" stroke="none" transform="translate(2 0)"/></svg><span class="reader-btn-label">AI reply</span></button>
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span class="reader-btn-label">Summary</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply (suggest a draft)'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="from-sender" title="Search text in this thread"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span class="reader-btn-label">Search</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
               <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">More</span></button>
@@ -3914,11 +3922,7 @@ async function _openEmailWindow(em, folder) {
       _snapEmailModalToLeftSidebar(ev.currentTarget.closest('.modal'));
       if (state._onEmailClick) await state._onEmailClick({ email: em, emailData: data, mode: 'reply-all' });
     });
-    bodyEl.querySelector('[data-act="ai-reply"]')?.addEventListener('click', async (ev) => {
-      ev.stopPropagation();
-      _snapEmailModalToLeftSidebar(ev.currentTarget.closest('.modal'));
-      if (state._onEmailClick) await state._onEmailClick({ email: em, emailData: data, mode: 'ai-reply' });
-    });
+    bodyEl.querySelector('[data-act="ai-reply"]')?.addEventListener('click', (ev) => _handleAiReplyButton(ev, em, data));
     bodyEl.querySelector('[data-act="forward"]')?.addEventListener('click', async (ev) => {
       ev.stopPropagation();
       if (state._onEmailClick) await state._onEmailClick({ email: em, emailData: data, mode: 'forward' });
@@ -4665,6 +4669,88 @@ async function _bulkAction(action) {
 }
 
 // _extractName lives in ./emailLibrary/utils.js
+
+function _aiReplyIcon(data) {
+  const cachedSpark = data?.cached_ai_reply
+    ? '<path d="M14 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1z" fill="var(--accent-primary, var(--red))" stroke="none" transform="translate(2 0)"/>'
+    : '';
+  return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/>${cachedSpark}</svg>`;
+}
+
+function _summaryIcon(data) {
+  const fill = data?.cached_summary ? 'var(--accent-primary, var(--red))' : 'currentColor';
+  return `<svg width="14" height="14" viewBox="0 0 24 24" fill="${fill}"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>`;
+}
+
+async function _runAiReplyFromButton(btn, em, data, mode) {
+  _snapEmailModalToLeftSidebar(btn.closest('.modal'));
+  btn.disabled = true;
+  const orig = btn.innerHTML;
+  let wp = null;
+  try {
+    wp = spinnerModule.createWhirlpool(14);
+    wp.element.style.cssText = 'width:14px;height:14px;display:inline-block;vertical-align:middle;position:relative;top:-2px;';
+    btn.innerHTML = '';
+    btn.appendChild(wp.element);
+  } catch (_) {}
+  try {
+    if (state._onEmailClick) await state._onEmailClick({ email: em, emailData: data, mode });
+  } finally {
+    try { wp && wp.stop(); } catch (_) {}
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
+
+function _closeAiReplyChoice() {
+  document.querySelectorAll('.email-ai-reply-choice').forEach(el => el.remove());
+  document.removeEventListener('click', _closeAiReplyChoice, true);
+}
+
+function _showAiReplyChoice(btn, em, data) {
+  _closeAiReplyChoice();
+  const rect = btn.getBoundingClientRect();
+  const menu = document.createElement('div');
+  menu.className = 'email-ai-reply-choice';
+  menu.style.cssText = [
+    'position:fixed',
+    `left:${Math.max(8, Math.min(rect.left, window.innerWidth - 190))}px`,
+    `top:${Math.min(window.innerHeight - 96, rect.bottom + 6)}px`,
+    'z-index:10060',
+    'display:flex',
+    'gap:6px',
+    'padding:6px',
+    'background:var(--bg,#111)',
+    'border:1px solid var(--border,#333)',
+    'border-radius:7px',
+    'box-shadow:0 8px 24px rgba(0,0,0,.28)',
+  ].join(';');
+  menu.innerHTML = `
+    <button class="memory-toolbar-btn" data-mode="ai-reply-fast" title="Shorter, faster draft">Fast</button>
+    <button class="memory-toolbar-btn" data-mode="ai-reply-full" title="Uses the fuller reply context">Full</button>
+  `;
+  menu.addEventListener('click', async (ev) => {
+    const choice = ev.target.closest('[data-mode]');
+    if (!choice) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const mode = choice.getAttribute('data-mode') || 'ai-reply';
+    _closeAiReplyChoice();
+    await _runAiReplyFromButton(btn, em, data, mode);
+  });
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener('click', _closeAiReplyChoice, true), 0);
+}
+
+function _handleAiReplyButton(ev, em, data) {
+  ev.stopPropagation();
+  const btn = ev.currentTarget;
+  if (data?.cached_ai_reply) {
+    _runAiReplyFromButton(btn, em, data, 'ai-reply');
+    return;
+  }
+  _showAiReplyChoice(btn, em, data);
+}
 
 function _hasMultipleRecipients(data) {
   // Count distinct addresses in To + Cc (minus the current user). Empty

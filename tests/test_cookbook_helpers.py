@@ -12,6 +12,8 @@ from routes.cookbook_helpers import (
     _local_tooling_path_export,
     _safe_env_prefix,
     _validate_gpus,
+    _validate_repo_id,
+    _validate_serve_model_id,
     _validate_ssh_port,
 )
 
@@ -50,6 +52,19 @@ def test_validate_gpus_accepts_indexes_only():
     assert _validate_gpus("0,1,2") == "0,1,2"
     with pytest.raises(HTTPException):
         _validate_gpus("0; rm -rf /")
+
+
+def test_validate_repo_id_stays_strict_for_hf_downloads():
+    assert _validate_repo_id("Qwen/Qwen3-8B") == "Qwen/Qwen3-8B"
+    with pytest.raises(HTTPException):
+        _validate_repo_id("DeepSeek-R1-UD-IQ4_XS")
+
+
+def test_validate_serve_model_id_accepts_cached_local_model_names():
+    assert _validate_serve_model_id("Qwen/Qwen3-8B") == "Qwen/Qwen3-8B"
+    assert _validate_serve_model_id("DeepSeek-R1-UD-IQ4_XS") == "DeepSeek-R1-UD-IQ4_XS"
+    with pytest.raises(HTTPException):
+        _validate_serve_model_id("../escape")
 
 
 def test_local_tooling_path_export_prepends_interpreter_bin():

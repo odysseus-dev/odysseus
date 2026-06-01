@@ -3,6 +3,7 @@ Extracted from cookbook_routes.py; the routes module imports the symbols it need
 
 import logging
 import os
+import posixpath
 import re
 import shlex
 
@@ -15,6 +16,11 @@ logger = logging.getLogger(__name__)
 # HuggingFace repo IDs are <org>/<name>, both alphanumerics plus ._-
 # Rejecting anything else up front closes off shell-interpolation vectors.
 _REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+# Cached models scanned from a custom/local model dir are keyed by their leaf
+# folder name (no slash), e.g. `DeepSeek-R1-UD-IQ4_XS`. The serve command uses
+# the real on-disk path separately; this identifier is only for UI/task
+# bookkeeping, so serving should accept the same safe glyph set as repo IDs.
+_LOCAL_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # Include pattern is a glob: allow typical safe glyphs only.
 _INCLUDE_RE = re.compile(r"^[A-Za-z0-9._\-*?/\[\]]+$")
 # Remote host: user@host (optionally with :port-free hostname parts).
@@ -37,6 +43,14 @@ def _validate_repo_id(v: str | None) -> str:
     if not v or not _REPO_ID_RE.match(v):
         raise HTTPException(400, "Invalid repo_id — must be <org>/<name> using [A-Za-z0-9._-]")
     return v
+
+
+def _validate_serve_model_id(v: str | None) -> str:
+    if not v:
+        raise HTTPException(400, "repo_id is required")
+    if _REPO_ID_RE.match(v) or _LOCAL_MODEL_ID_RE.match(v):
+        return v
+    raise HTTPException(400, "Invalid repo_id — must be <org>/<name> or a cached local model id using [A-Za-z0-9._-]")
 
 
 def _validate_include(v: str | None) -> str | None:
@@ -112,7 +126,13 @@ def _local_tooling_path_export(executable: str) -> str:
     macOS, where the `pip --user` self-heal also misses (`pip` isn't a command,
     only `pip3`/`python3 -m pip`). Local runs only; meaningless over SSH.
     """
-    bin_dir = os.path.dirname(os.path.abspath(executable))
+    # This builds a bash snippet, so an explicit POSIX absolute path should keep
+    # POSIX semantics even when the app/tests run on Windows. Otherwise
+    # os.path.abspath("/opt/...") would incorrectly turn it into "D:\\opt\\...".
+    if executable.startswith("/"):
+        bin_dir = posixpath.dirname(executable)
+    else:
+        bin_dir = os.path.dirname(os.path.abspath(executable))
     # Escape for a double-quoted context: $PATH must still expand, but spaces
     # and shell metacharacters in the path must be preserved literally.
     esc = (

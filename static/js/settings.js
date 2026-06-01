@@ -1425,7 +1425,7 @@ async function initResearchSettings() {
     var tv = parseInt(tokensInput.value, 10);
     if (tv && tv >= 1024) payload.research_max_tokens = tv;
     var et = parseInt(extractTimeoutInput.value, 10);
-    if (et && et >= 15 && et <= 600) payload.research_extraction_timeout_seconds = et;
+    if (et && et >= 15 && et <= 3600) payload.research_extraction_timeout_seconds = et;
     var ec = parseInt(extractConcurrencyInput.value, 10);
     if (ec && ec >= 1 && ec <= 12) payload.research_extraction_concurrency = ec;
     try {

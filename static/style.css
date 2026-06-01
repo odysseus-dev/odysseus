@@ -1599,7 +1599,7 @@ body.bg-pattern-sparkles {
       margin: 0;
       border-radius: 4px;
       border: none;
-      line-height: 1;
+      line-height: 1.3;
       font-size: 13px;
       background: transparent;
       transition: background 0.08s;
@@ -32102,6 +32102,33 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
    inside #email-lib-accounts pack to the left as normal flex items. */
 .email-accounts-row > .memory-toolbar-btn { flex-shrink: 0; margin-left: auto; }
 #email-lib-accounts { justify-content: flex-start; }
+.email-accounts-loading-whirlpool {
+  width: 14px;
+  height: 14px;
+  margin: 3px 4px 0 1px;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.email-accounts-loading-label {
+  font-size: 10px;
+  opacity: 0.55;
+  position: relative;
+  top: 2px;
+  white-space: nowrap;
+}
+.email-loading-with-label {
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+}
+.email-loading-label {
+  font-size: 11px;
+  opacity: 0.6;
+}
 
 /* Refresh button now lives top-right in the modal header next to the close X.
    Borderless (matches the close X), and a fixed square box so the spin and the
