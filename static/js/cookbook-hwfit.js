@@ -48,6 +48,28 @@ let _removedHwChips = new Set();
 
 export let _gpuToggleTotal = 0; // real GPU count from first scan, never overridden
 
+function _firstGgufSource(model) {
+  const sources = Array.isArray(model?.gguf_sources) ? model.gguf_sources : [];
+  return sources.find(src => src && src.repo) || null;
+}
+
+function _looksLikeGgufRepo(model) {
+  const haystack = `${model?.quant_repo || ''} ${model?.repo_id || ''} ${model?.path || ''} ${model?.name || ''}`.toLowerCase();
+  return !!model?.is_gguf || haystack.includes('gguf') || haystack.includes('.gguf');
+}
+
+function _downloadSourceRepo(model, backend) {
+  if (backend === 'llamacpp') {
+    const ggufSource = _firstGgufSource(model);
+    if (ggufSource) return { repo: ggufSource.repo, kind: 'GGUF' };
+    if (_looksLikeGgufRepo(model)) {
+      const repo = model?.quant_repo || model?.repo_id || model?.name;
+      if (repo) return { repo, kind: 'GGUF' };
+    }
+  }
+  return { repo: model?.quant_repo || model?.name || '', kind: '' };
+}
+
 // Reset GPU-toggle state so the next scan re-renders the RAM/GPU buttons for a
 // (possibly different) server, WITHOUT clearing the markup now — clearing it made
 // the buttons flicker out and back in. The old buttons stay visible until the
@@ -847,13 +869,13 @@ export function _expandModelRow(row, modelData) {
   const isLlamaCpp = backend === 'llamacpp';
   const ctx = modelData.context || 8192;
 
-  const dlRepo = modelData.quant_repo || modelData.name;
-  const hfUrl = `https://huggingface.co/${dlRepo}`;
+  const dlSource = _downloadSourceRepo(modelData, backend);
+  const hfUrl = `https://huggingface.co/${dlSource.repo}`;
   let html = `<div class="hwfit-action-panel" data-model-name="${esc(modelData.name)}">`;
   html += `<div class="hwfit-panel-header">`;
-  html += `<span class="hwfit-panel-model">${esc(modelData.name)}${modelData.quant_repo ? ` <span style="opacity:0.5;font-size:10px;">(${esc(modelData.quant)})</span>` : ''}</span>`;
+  html += `<span class="hwfit-panel-model">${esc(modelData.name)}${dlSource.kind ? ` <span style="opacity:0.5;font-size:10px;">(${esc(dlSource.kind)} ${esc(modelData.quant || '')})</span>` : (modelData.quant_repo ? ` <span style="opacity:0.5;font-size:10px;">(${esc(modelData.quant)})</span>` : '')}</span>`;
   html += `<span class="hwfit-panel-badge">${esc(label)}</span>`;
-  html += `<a href="${esc(hfUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="View on HuggingFace">HF \u2197</a>`;
+  html += `<a href="${esc(hfUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="View download source on HuggingFace">HF \u2197</a>`;
   html += `</div>`;
   html += `<div class="hwfit-panel-actions">`;
   html += `<button class="cookbook-btn hwfit-dl-btn">Download</button>`;
