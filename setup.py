@@ -48,7 +48,7 @@ def create_default_admin():
     auth_path = os.path.join(DATA_DIR, "auth.json")
     if os.path.exists(auth_path):
         print("  [skip] auth.json already exists")
-        return
+        return "exists"
 
     try:
         import bcrypt
@@ -70,9 +70,11 @@ def create_default_admin():
         print(f"  [ok] Initial admin user created ({username})")
         print(f"        Temporary password: {password}")
         print(f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
+        return "created"
     except ImportError:
         print("  [warn] bcrypt not installed — skipping admin user creation")
         print("         Run: pip install bcrypt")
+        return "skipped"
 
 
 def create_env():
@@ -139,10 +141,14 @@ def main():
         print("         This is OK if dependencies aren't installed yet.")
 
     print("\n5. Creating initial admin...")
+
+    admin_status = "failed"
+
     try:
-        create_default_admin()
+        admin_status = create_default_admin()
     except Exception as e:
         print(f"  [warn] Admin creation failed: {e}")
+        admin_status = "failed"
 
     print("\n=== Setup complete ===")
     # start-macos.sh launches the server itself (on its own port) right after
@@ -151,7 +157,18 @@ def main():
         print(f"\nStart the server with:")
         print(f"  python -m uvicorn app:app --host 127.0.0.1 --port 7000")
         print(f"\nThen open http://localhost:7000")
-    print(f"Login with the admin username and temporary password printed above.\n")
+
+    # Cleaned, action-focused final instruction strings
+    if admin_status == "created":
+        print("Login with the admin username and temporary password printed above.\n")
+    elif admin_status == "exists":
+        print("Login with your existing admin credentials.\n")
+    elif admin_status == "skipped":
+        print("Admin creation did not happen: dependencies are missing.\nRun 'pip install bcrypt' and rerun setup.\n")
+    elif admin_status == "failed":
+        print("Admin creation did not happen: a system or file error occurred.\nCheck write permissions for the 'data' directory and rerun setup.\n")
+    else:  # handling "failed" or any unhandled edge case
+        print("Admin creation did not happen: a system or file error occurred.\nCheck write permissions for the 'data' directory and rerun setup.\n")
 
 
 if __name__ == "__main__":

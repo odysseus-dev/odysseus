@@ -2059,7 +2059,7 @@ class TaskScheduler:
                     "manage_calendar", "manage_notes", "manage_tasks", "manage_memory",
                     "list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "archive_email",
                     "mark_email_read", "delete_email", "resolve_contact",
-                    "search_chats", "web_search", "read_file",
+                    "search_chats", "web_search", "web_fetch", "read_file",
                     "create_document", "update_document", "edit_document",
                     "generate_image", "trigger_research",
                     "download_model", "serve_model", "list_served_models", "stop_served_model",
