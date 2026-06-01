@@ -1,6 +1,7 @@
 """Search package — drop-in replacement for the monolithic search_engine module."""
 
 from .core import (
+    atomic_web_search,
     comprehensive_web_search,
     get_search_config,
     invalidate_search_cache,
@@ -12,6 +13,7 @@ from .providers import searxng_search, searxng_search_api, PROVIDER_INFO
 from .analytics import get_search_stats, SearchEngineError, NetworkError, ParseError, RateLimitError
 
 __all__ = [
+    "atomic_web_search",
     "comprehensive_web_search",
     "fetch_webpage_content",
     "get_search_config",

@@ -49,21 +49,21 @@ FUNCTION_TOOL_SCHEMAS = [
             }
         }
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": "Quick single web lookup for a fact or current event mid-task. NOT for 'research X' / 'do research on X' — those are deep-research jobs; use trigger_research instead.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query"},
-                    "time_filter": {"type": "string", "enum": ["day", "week", "month", "year"], "description": "Optional freshness filter for news/latest/today queries"}
-                },
-                "required": ["query"]
-            }
-        }
-    },
+      {
+         "type": "function",
+         "function": {
+             "name": "web_search",
+             "description": "Quick single web lookup for a fact or current event mid-task. Returns a JSON array of results with citation indices. NOT for 'research X' / 'do research on X' — those are deep-research jobs; use trigger_research instead.",
+             "parameters": {
+                 "type": "object",
+                 "properties": {
+                     "query": {"type": "string", "description": "Search query"},
+                     "count": {"type": "integer", "description": "Number of results (default 5, max 20)"},
+                 },
+                 "required": ["query"]
+             }
+         }
+     },
     {
         "type": "function",
         "function": {
@@ -1058,7 +1058,7 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
     elif tool_type == "python":
         content = args.get("code", "")
     elif tool_type == "web_search":
-        content = args.get("query", "")
+        content = json.dumps({"query": args.get("query", ""), "count": args.get("count", 5)})
     elif tool_type == "read_file":
         content = args.get("path", "")
     elif tool_type == "write_file":

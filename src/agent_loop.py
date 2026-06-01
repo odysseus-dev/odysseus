@@ -193,11 +193,9 @@ Execute Python code. Use for computation, data processing, scripting. NOT for wr
 ```web_search
 <search query>
 ```
-Or with JSON for fresh news:
-```web_search
-{"query": "<your query>", "time_filter": "day"}
-```
-Search the web for a SINGLE quick fact/lookup mid-task. For news / "today" / "latest" queries, pass `time_filter` ("day", "week", "month", or "year"). NOT for "research X" / "do research on X" / "look into X" requests — those mean a multi-source DEEP RESEARCH job: use `trigger_research` instead (it runs in the Deep Research sidebar and produces a full report). web_search = one quick query; trigger_research = a researched report.""",
+Returns a JSON array of results: [{"index": 1, "title": "...", "link": "...", "snippet": "..."}, ...].
+Each result has a unique `index` you can cite in your response with [N] notation, e.g. "According to [1], the feature was released in April [2]."
+NOT for "research X" / "do research on X" / "look into X" requests — those mean a multi-source DEEP RESEARCH job: use `trigger_research` instead (it runs in the Deep Research sidebar and produces a full report). web_search = one quick query; trigger_research = a researched report.""",
 
     "web_fetch": """\
 ```web_fetch
@@ -1866,6 +1864,7 @@ async def stream_agent_loop(
         tool_results = []
         tool_result_texts = []  # plain text for native tool role messages
         budget_hit = False
+        _citation_index = 1
         for i, block in enumerate(tool_blocks):
             # --- Tool budget check ---
             if max_tool_calls > 0 and total_tool_calls >= max_tool_calls:
@@ -1903,6 +1902,7 @@ async def stream_agent_loop(
                         disabled_tools=disabled_tools,
                         owner=owner,
                         progress_cb=_push_progress,
+                        citation_index=_citation_index,
                     )
                 finally:
                     # Sentinel so the drainer knows to stop.
@@ -1920,25 +1920,19 @@ async def stream_agent_loop(
                 )
             desc, result = await _tool_task
 
-            # Extract structured web sources from web_search tool output
-            _src_text = result.get("results") or result.get("stdout") or ""
-            if block.tool_type == "web_search" and _src_text:
-                _src_marker = "<!-- SOURCES:"
-                _src_idx = _src_text.find(_src_marker)
-                if _src_idx >= 0:
-                    _src_end = _src_text.find(" -->", _src_idx)
-                    if _src_end >= 0:
-                        try:
-                            _extracted_sources = json.loads(_src_text[_src_idx + len(_src_marker):_src_end])
-                            yield f'data: {json.dumps({"type": "web_sources", "data": _extracted_sources})}\n\n'
-                            # Strip the marker from the result so it doesn't show in chat
-                            _clean = _src_text[:_src_idx].rstrip()
-                            if "results" in result:
-                                result["results"] = _clean
-                            elif "stdout" in result:
-                                result["stdout"] = _clean
-                        except (json.JSONDecodeError, Exception):
-                            pass
+            # Extract structured web sources from web_search/web_fetch tool output
+            _sources = result.get("sources") or []
+            _single_source = result.get("source")
+            if _sources:
+                yield f'data: {json.dumps({"type": "web_sources", "data": _sources})}\n\n'
+            elif _single_source:
+                yield f'data: {json.dumps({"type": "web_sources", "data": [_single_source]})}\n\n'
+
+            # Advance citation index for next tool call
+            if _sources:
+                _citation_index += len(_sources)
+            elif _single_source:
+                _citation_index += 1
 
             # Emit doc-specific event for document tools — the frontend
             # document panel handles this; no need to show content in chat.

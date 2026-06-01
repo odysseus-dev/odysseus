@@ -257,11 +257,12 @@ async def _call_mcp_tool(
     tool: str,
     content: str,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    citation_index: int = 1,
 ) -> Dict:
     """Route a legacy tool call through the MCP manager, with direct fallbacks."""
     mcp = get_mcp_manager()
     if not mcp:
-        return await _direct_fallback(tool, content, progress_cb=progress_cb) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1}
+        return await _direct_fallback(tool, content, progress_cb=progress_cb, citation_index=citation_index) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1}
 
     server_id, tool_name = _MCP_TOOL_MAP[tool]
     qualified = f"mcp__{server_id}__{tool_name}"
@@ -270,7 +271,7 @@ async def _call_mcp_tool(
 
     # If MCP server not connected, try direct fallback
     if isinstance(result, dict) and result.get("exit_code") == 1 and "not connected" in result.get("error", ""):
-        fallback = await _direct_fallback(tool, content, progress_cb=progress_cb)
+        fallback = await _direct_fallback(tool, content, progress_cb=progress_cb, citation_index=citation_index)
         if fallback:
             return fallback
 
@@ -297,6 +298,7 @@ async def _direct_fallback(
     tool: str,
     content: str,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    citation_index: int = 1,
 ) -> Optional[Dict]:
     """In-process execution path for the eight tools that used to live as
     stdio MCP servers under mcp_servers/. Those servers were deleted in
@@ -416,55 +418,41 @@ async def _direct_fallback(
             return {"output": f"Wrote {size} bytes to {path}", "exit_code": 0}
 
         if tool == "web_search":
-            from src.search import comprehensive_web_search
+            from src.search import atomic_web_search
             raw = content.strip()
             query = raw
-            time_filter = None
-            max_pages = 5
-            # Allow JSON-shaped args: {"query": "...", "time_filter": "day", "max_pages": 7}
+            count = 5
+            # Allow JSON-shaped args: {"query": "...", "count": 5}
             if raw.startswith("{"):
                 try:
                     parsed = _json.loads(raw)
                     if isinstance(parsed, dict) and "query" in parsed:
                         query = str(parsed.get("query", "")).strip()
-                        tf = parsed.get("time_filter") or parsed.get("freshness")
-                        if isinstance(tf, str) and tf.lower() in ("day", "week", "month", "year"):
-                            time_filter = tf.lower()
-                        mp = parsed.get("max_pages")
-                        if isinstance(mp, int) and 1 <= mp <= 10:
-                            max_pages = mp
+                        c = parsed.get("count")
+                        if isinstance(c, int) and 1 <= c <= 20:
+                            count = c
                 except _json.JSONDecodeError:
                     pass
             if not query:
                 query = raw.split("\n")[0].strip()
-            # Auto-detect freshness from query phrasing when not explicit
-            if time_filter is None:
-                q_lc = query.lower()
-                if any(kw in q_lc for kw in ("today", "latest", "breaking", "this morning", "right now", "currently")):
-                    time_filter = "day"
-                elif any(kw in q_lc for kw in ("this week", "past week", "recent news", "last few days")):
-                    time_filter = "week"
-                elif any(kw in q_lc for kw in ("this month", "past month")):
-                    time_filter = "month"
-                elif " news" in q_lc or q_lc.startswith("news ") or q_lc.endswith(" news"):
-                    time_filter = "week"
             loop = asyncio.get_running_loop()
-            text, sources = await asyncio.wait_for(
+            results = await asyncio.wait_for(
                 loop.run_in_executor(
                     None,
-                    lambda: comprehensive_web_search(
-                        query,
-                        max_pages=max_pages,
-                        time_filter=time_filter,
-                        return_sources=True,
-                    ),
+                    lambda: atomic_web_search(query, count=count, time_filter="latest"),
                 ),
-                timeout=30,
+                timeout=15,
             )
-            output = text[:MAX_OUTPUT_CHARS] if len(text) > MAX_OUTPUT_CHARS else text
-            if sources:
-                output += "\n\n<!-- SOURCES:" + _json.dumps(sources) + " -->"
-            return {"output": output, "exit_code": 0}
+            indexed = [
+                {"index": citation_index + i, "title": r.get("title", ""), "link": r.get("url", ""), "snippet": r.get("snippet", "")}
+                for i, r in enumerate(results)
+            ]
+            sources = [
+                {"index": citation_index + i, "title": r.get("title", ""), "url": r.get("url", "")}
+                for i, r in enumerate(results)
+            ]
+            output = _json.dumps(indexed, ensure_ascii=False)
+            return {"output": output, "exit_code": 0, "sources": sources}
 
         if tool == "web_fetch":
             # Lightweight single-URL fetch. Wraps the SSRF-safe fetcher used
@@ -538,6 +526,7 @@ async def execute_tool_block(
     disabled_tools: Optional[set] = None,
     owner: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    citation_index: int = 1,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -647,7 +636,7 @@ async def execute_tool_block(
     if tool in _MCP_TOOL_MAP:
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
-        result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)
+        result = await _call_mcp_tool(tool, content, progress_cb=progress_cb, citation_index=citation_index)
     elif tool == "create_document":
         title = content.split("\n")[0].strip()[:60]
         desc = f"create_document: {title}"
