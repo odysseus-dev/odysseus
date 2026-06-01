@@ -223,11 +223,20 @@ function _detectModelOptimizations(modelName) {
   return opts;
 }
 
-/** Detect the right vLLM tool-call-parser based on model name */
+/** Detect the right vLLM tool-call-parser based on model name.
+ *  Qwen tool-call formats split by generation:
+ *   - Qwen3-Coder           → qwen3_coder  (XML <tool_call> with named params)
+ *   - Qwen3 (non-coder)     → qwen3_xml    (reasoning/instruct, XML wrapper)
+ *   - Qwen2.5 / Qwen2 / 1.5 → hermes       (Qwen2.5 was trained on Hermes format)
+ *  Catching "qwen" first and labelling everything qwen3_xml breaks tool
+ *  calls on the Qwen2.5 line (the model emits hermes-style which the
+ *  qwen3_xml parser doesn't recognise, so the call leaks through as text).
+ */
 export function _detectToolParser(modelName) {
   const n = (modelName || '').toLowerCase();
   if (n.includes('qwen3') && n.includes('coder')) return 'qwen3_coder';
-  if (n.includes('qwen')) return 'qwen3_xml';
+  if (n.includes('qwen3')) return 'qwen3_xml';
+  if (n.includes('qwen')) return 'hermes';   // Qwen2.5 / Qwen2 / Qwen1.5
   if (n.includes('llama-4') || n.includes('llama4')) return 'llama4_json';
   if (n.includes('llama') || n.includes('nemotron')) return 'llama3_json';
   if (n.includes('mistral') || n.includes('mixtral')) return 'mistral';
