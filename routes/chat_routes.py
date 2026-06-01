@@ -51,6 +51,20 @@ def _auto_search_enabled() -> bool:
         return False
 
 
+# Explicit "go search" requests — the strongest signal. If the user literally
+# asks to search/look it up/google it, give the model the tool no matter the
+# topic ("minimax m3? search it up" has no topic keyword but is a clear ask).
+_EXPLICIT_SEARCH_RE = re.compile(
+    r"\b("
+    r"search (?:it|that|this|for|the web|online|up)|"
+    r"look (?:it|that|this) up|look up\b|look into\b|"
+    r"google (?:it|that|this)?|web ?search|"
+    r"can you (?:search|look it up|google)|"
+    r"find out|check online|check the web|see if .+ (?:online|on the web)"
+    r")\b",
+    re.IGNORECASE,
+)
+
 # Cheap signals that a message MIGHT need current/external info — used only to
 # decide whether to give the model the web_search tool (it still decides whether
 # to actually call it). Deliberately broad: a false positive just means the tool
@@ -70,11 +84,12 @@ _SEARCH_WORTHY_RE = re.compile(
 
 
 def _looks_search_worthy(text: str) -> bool:
-    """Heuristic: does this message plausibly need fresh/external facts?"""
+    """Heuristic: does this message plausibly need fresh/external facts, OR did
+    the user explicitly ask to search? Explicit requests always qualify."""
     t = (text or "").strip()
     if not t or len(t) > 4000:
         return False
-    return bool(_SEARCH_WORTHY_RE.search(t))
+    return bool(_EXPLICIT_SEARCH_RE.search(t) or _SEARCH_WORTHY_RE.search(t))
 
 # Track active streams for partial-save safety net
 _active_streams: Dict[str, dict] = {}
