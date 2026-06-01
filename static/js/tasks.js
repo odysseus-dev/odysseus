@@ -5,6 +5,7 @@
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
 import * as spinnerModule from './spinner.js';
+import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { sortModelIds } from './modelSort.js';
 
@@ -13,7 +14,6 @@ let _open = false;
 let _tasksCascadeNext = false;   // play the domino-in entrance on the next render
 let _tasks = [];
 let _tasksFetched = false;   // first-fetch sentinel — `false` → show loading row instead of "No tasks yet"
-let _escHandler = null;
 let _viewingRuns = null; // task id when viewing run history
 let _clockInterval = null;
 
@@ -2400,6 +2400,27 @@ export function openTasks(focusId) {
     </div>
   `;
   document.body.appendChild(modal);
+  Modals.register('tasks-modal', {
+    railBtnId: 'rail-tasks',
+    sidebarBtnId: 'tool-tasks-btn',
+    escapeFn: () => {
+      if (_viewingRuns) {
+        _viewingRuns = null;
+        _renderMainView();
+        return true;
+      }
+      const _modal = document.getElementById('tasks-modal');
+      const _addActive = _modal?.querySelector('.tasks-tab.active[data-tab="new"]');
+      const _formMounted = _modal?.querySelector('#task-form-name');
+      if (_addActive && _formMounted) {
+        _showPresetPicker();
+        return true;
+      }
+      return false;
+    },
+    closeFn: () => closeTasks(),
+    restoreFn: () => {},
+  });
 
   // Tab routing
   modal.querySelectorAll('.tasks-tab').forEach(btn => {
@@ -2436,28 +2457,6 @@ export function openTasks(focusId) {
     if (uiModule.isTouchInsideModal()) return;
     if (e.target === modal) closeTasks();
   });
-
-  _escHandler = (e) => {
-    if (e.key === 'Escape') {
-      if (_viewingRuns) {
-        _viewingRuns = null;
-        _renderMainView();
-        return;
-      }
-      // If we're on the "Add" tab inside the new-task form (preset already
-      // picked), step back to the preset picker instead of closing the modal.
-      // Detect by: Add tab active + the form's name input is mounted.
-      const _modal = document.getElementById('tasks-modal');
-      const _addActive = _modal?.querySelector('.tasks-tab.active[data-tab="new"]');
-      const _formMounted = _modal?.querySelector('#task-form-name');
-      if (_addActive && _formMounted) {
-        _showPresetPicker();
-        return;
-      }
-      closeTasks();
-    }
-  };
-  document.addEventListener('keydown', _escHandler);
 
   // Paint the scaffolding immediately so the modal-enter animation reveals a
   // populated shell (header/search/sort/empty list with a spinner row) instead
@@ -2510,10 +2509,7 @@ export function closeTasks() {
       modal.remove();
     }
   }
-  if (_escHandler) {
-    document.removeEventListener('keydown', _escHandler);
-    _escHandler = null;
-  }
+  Modals.unregister('tasks-modal');
   if (_clockInterval) {
     clearInterval(_clockInterval);
     _clockInterval = null;

@@ -1072,8 +1072,8 @@ if ('ontouchstart' in window || window.innerWidth <= 768) {
 
 // ── Global Escape arbiter: close exactly one thing per press ──
 // Priority: expanded library card → open chat thinking block → topmost modal.
-// Runs capture-phase + stopImmediatePropagation so per-modal ESC listeners
-// never also fire (which would otherwise close several modals at once).
+// Runs capture-phase + stopImmediatePropagation, then gives the topmost modal
+// one chance to consume ESC via ModalManager before falling back to close.
 if (!window._odyEscExpandGuard) {
   window._odyEscExpandGuard = true;
 
@@ -1103,15 +1103,6 @@ if (!window._odyEscExpandGuard) {
   }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
   document.querySelectorAll('.modal').forEach(_promote);
 
-  const pickTopModal = () => {
-    const modals = [...document.querySelectorAll('.modal')].filter(_isVisible);
-    if (!modals.length) return null;
-    return modals.reduce((top, m) =>
-      (parseInt(getComputedStyle(m).zIndex, 10) || 0) >= (parseInt(getComputedStyle(top).zIndex, 10) || 0)
-        ? m : top
-    );
-  };
-
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || e.defaultPrevented) return;
     const t = e.target;
@@ -1140,36 +1131,12 @@ if (!window._odyEscExpandGuard) {
       }
       return;
     }
-    const galleryEditor = document.getElementById('gallery-editor-container');
-    const galleryModal = galleryEditor?.closest('.modal');
-    const galleryEditing = !!(
-      galleryEditor &&
-      galleryModal &&
-      !galleryModal.classList.contains('hidden') &&
-      getComputedStyle(galleryEditor).display !== 'none' &&
-      galleryEditor.querySelector('.gallery-editor')
-    );
-    if (galleryEditing) {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      return;
-    }
-    const settingsModal = document.getElementById('settings-modal');
-    if (settingsModal && _isVisible(settingsModal)) {
-      const innerForm = settingsModal.querySelector('#unified-intg-form, #set-email-accounts-form');
-      if (innerForm && innerForm.style.display !== 'none' && innerForm.children.length > 0) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        innerForm.style.display = 'none';
-        innerForm.innerHTML = '';
-        return;
-      }
-    }
-    const topModal = pickTopModal();
+    const topModal = Modals.getTopmostModal();
     if (!topModal) return;
-    const closeBtn = topModal.querySelector('.close-btn, .modal-close-btn, [data-action="close"]');
     e.stopImmediatePropagation();
     e.preventDefault();
+    if (Modals.dispatchEscape(topModal, e)) return;
+    const closeBtn = topModal.querySelector('.close-btn, .modal-close-btn, [data-action="close"]');
     if (closeBtn) { try { closeBtn.click(); } catch {} }
     else { try { topModal.classList.add('hidden'); } catch {} }
   }, true);

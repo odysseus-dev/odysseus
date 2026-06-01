@@ -3188,6 +3188,12 @@ function openCalendar() {
   Modals.register('calendar-modal', {
     railBtnId: 'rail-calendar',
     sidebarBtnId: 'tool-calendar-btn',
+    escapeFn: () => {
+      const settings = document.getElementById('cal-settings-panel');
+      if (settings) { settings.remove(); return true; }
+      if (document.querySelector('.cal-form')) { _render(); return true; }
+      return false;
+    },
     closeFn: () => _doCloseCalendar(),
     restoreFn: () => {},
   });
@@ -3196,21 +3202,14 @@ function openCalendar() {
   _view = 'month';
   _scrollToTodayOnOpen = true;  // first render lands on today's row
   _escHandler = (e) => {
-    if (e.key === 'Escape') {
-      // Layer Esc: close the topmost calendar surface first, only fall through
-      // to closing the whole calendar when nothing else is on top.
-      const settings = document.getElementById('cal-settings-panel');
-      if (settings) { settings.remove(); return; }
-      if (document.querySelector('.cal-form')) { _render(); return; }
-      closeCalendar();
-    }
-    else if (e.key === 'ArrowLeft') document.getElementById('cal-prev')?.click();
+    if (!Modals.isTopmostModal('calendar-modal')) return;
+    if (e.key === 'ArrowLeft') document.getElementById('cal-prev')?.click();
     else if (e.key === 'ArrowRight') document.getElementById('cal-next')?.click();
     else if (e.key === 't' || e.key === 'T') document.getElementById('cal-today')?.click();
     // Cmd/Ctrl+Z is handled by the module-level `_calUndoBound` listener,
     // which consumes the shared `_calUndoStack`. Don't duplicate here.
   };
-  document.addEventListener('keydown', _escHandler);
+  document.addEventListener('keydown', _escHandler, true);
   const body = document.getElementById('cal-body');
   if (body) {
     body.innerHTML = '<div class="cal-loading"></div>';
@@ -3259,7 +3258,7 @@ function _doCloseCalendar() {
     _modal.style.display = 'none';
     _modal.classList.add('hidden');
   }
-  if (_escHandler) { document.removeEventListener('keydown', _escHandler); _escHandler = null; }
+  if (_escHandler) { document.removeEventListener('keydown', _escHandler, true); _escHandler = null; }
   // Drop any pending undo — closures captured event uids/state that may
   // no longer be valid by the time the user reopens. A reopened calendar
   // starts with a clean slate.

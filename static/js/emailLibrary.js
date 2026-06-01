@@ -651,6 +651,16 @@ export function openEmailLibrary(opts = {}) {
     Modals.register('email-lib-modal', {
       label: 'Email',
       icon: 'M2 4h20v16H2zM22 7l-9.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7',
+      escapeFn: () => {
+        if (state._selectMode) {
+          state._selectMode = false;
+          state._selectedUids.clear();
+          _updateBulkBar();
+          _renderGrid();
+          return true;
+        }
+        return false;
+      },
       closeFn: () => {
         const m = document.getElementById('email-lib-modal');
         if (m) m.classList.add('hidden');
@@ -1022,20 +1032,7 @@ export function openEmailLibrary(opts = {}) {
   state._libEscHandler = (e) => {
     const modal = document.getElementById('email-lib-modal');
     if (!modal || modal.classList.contains('hidden')) return;
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation?.();
-      if (state._selectMode) {
-        state._selectMode = false;
-        state._selectedUids.clear();
-        _updateBulkBar();
-        _renderGrid();
-        return;
-      }
-      closeEmailLibrary();
-      return;
-    }
+    if (!Modals.isTopmostModal(modal)) return;
     // Don't hijack arrows / delete while the user is typing somewhere.
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;

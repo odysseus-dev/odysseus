@@ -3,6 +3,7 @@
 
 import uiModule from './ui.js';
 import searchModule from './search.js';
+import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { clearDockSide } from './modalSnap.js';
 import { sortModelIds } from './modelSort.js';
@@ -82,23 +83,6 @@ function initClose() {
   modalEl.addEventListener('mousedown', e => {
     if (uiModule.isTouchInsideModal()) return;
     if (e.target === modalEl) close();
-  });
-  document.addEventListener('keydown', e => {
-    if (e.key !== 'Escape' || !modalEl || modalEl.classList.contains('hidden')) return;
-    // If an integration edit/add form is open inside the modal, close
-    // just that — don't dismiss the whole settings modal. (Pressing
-    // ESC mid-edit and losing the modal was a fast-typing footgun.)
-    const innerForm = modalEl.querySelector('#unified-intg-form, #set-email-accounts-form');
-    if (innerForm && innerForm.style.display !== 'none' && innerForm.children.length > 0) {
-      e.preventDefault();
-      e.stopPropagation();
-      innerForm.style.display = 'none';
-      innerForm.innerHTML = '';
-      return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-    close();
   });
 }
 
@@ -2092,6 +2076,23 @@ function initAccount() {
 
 function initAll() {
   modalEl = el('settings-modal');
+  if (modalEl && !Modals.isRegistered('settings-modal')) {
+    Modals.register('settings-modal', {
+      railBtnId: 'rail-settings',
+      sidebarBtnId: 'user-bar-settings',
+      escapeFn: (_e, modal) => {
+        const innerForm = modal?.querySelector('#unified-intg-form, #set-email-accounts-form');
+        if (innerForm && innerForm.style.display !== 'none' && innerForm.children.length > 0) {
+          innerForm.style.display = 'none';
+          innerForm.innerHTML = '';
+          return true;
+        }
+        return false;
+      },
+      closeFn: () => close(),
+      restoreFn: () => {},
+    });
+  }
   initTabs();
   initDrag();
   initClose();

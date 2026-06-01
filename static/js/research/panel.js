@@ -5,6 +5,7 @@ import * as jobs from './jobs.js';
 import themeModule from '../theme.js';
 import createResearchSynapse from '../researchSynapse.js';
 import spinnerModule from '../spinner.js';
+import * as Modals from '../modalManager.js';
 import { sortModelIds } from '../modelSort.js';
 
 // jobId -> { synapse, status } — survives across _renderJobs() rebuilds so
@@ -35,7 +36,6 @@ function _toggleSynapseMinimized() {
 }
 
 let _open = false;
-let _onDocKeydown = null;
 let _apiBase = '';
 let _endpoints = [];
 let _expandedJobId = null;
@@ -253,20 +253,16 @@ export function openPanel(focusJobId) {
 
   overlay.appendChild(pane);
   document.body.appendChild(overlay);
+  Modals.register('research-overlay', {
+    railBtnId: 'rail-research',
+    sidebarBtnId: 'tool-research-btn',
+    closeFn: () => closePanel(),
+    restoreFn: () => {},
+  });
 
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) closePanel();
   });
-
-  // Document-level ESC handler — overlay-only listener never fired because
-  // overlay isn't focused. Tracked in module scope so closePanel can detach.
-  _onDocKeydown = (e) => {
-    if (e.key === 'Escape' && _open) {
-      e.preventDefault();
-      closePanel();
-    }
-  };
-  document.addEventListener('keydown', _onDocKeydown);
 
   // Make the pane draggable by its header — same pattern as Library/Calendar.
   const paneHeader = pane.querySelector('.research-pane-header');
@@ -309,10 +305,7 @@ export function closePanel() {
   if (!_open) return;
   _open = false;
 
-  if (_onDocKeydown) {
-    document.removeEventListener('keydown', _onDocKeydown);
-    _onDocKeydown = null;
-  }
+  Modals.unregister('research-overlay');
 
   document.body.classList.remove('research-panel-view');
   const btn = document.getElementById('tool-research-btn');

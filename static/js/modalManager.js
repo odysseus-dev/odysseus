@@ -14,6 +14,7 @@
  *   // After building the modal element and adding it to the body:
  *   Modals.register('gallery-modal', {
  *     railBtnId: 'tool-gallery-btn',
+ *     escapeFn: () => { ...close an inner panel and return true, or return false... },
  *     restoreFn: () => { ...whatever the tool needs to do when un-hiding... },
  *     closeFn:   () => { ...full teardown — remove modal element etc... },
  *   });
@@ -28,7 +29,7 @@
 import { previewZoneAt, clearPreview, snapModalToZone } from './tileManager.js';
 import { suspendDock, resumeDock, clearRightDock, applyEdgeDock } from './modalSnap.js';
 
-const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized, restoreMinHeight }
+const _state = new Map(); // id -> { restoreFn, closeFn, escapeFn, railBtnId, isMinimized, restoreMinHeight }
 
 const _rememberedDockKey = (id) => `odysseus-modal-remembered-dock-${id}`;
 function _rememberDock(id, side) {
@@ -63,6 +64,57 @@ function _applyRememberedDock(id) {
 let _modalTopZ = 300;
 function _bringToFront(modal) {
   if (modal) modal.style.setProperty('z-index', String(++_modalTopZ), 'important');
+}
+
+function _isVisibleModal(modal) {
+  return !!(modal
+    && modal.classList?.contains('modal')
+    && !modal.classList.contains('hidden')
+    && getComputedStyle(modal).display !== 'none');
+}
+
+function _resolveModal(modalOrId) {
+  if (!modalOrId) return null;
+  if (typeof modalOrId === 'string') return document.getElementById(modalOrId);
+  return modalOrId.nodeType === 1 ? modalOrId : null;
+}
+
+export function getTopmostModal() {
+  const modals = [...document.querySelectorAll('.modal')].filter(_isVisibleModal);
+  if (!modals.length) return null;
+  return modals.reduce((top, modal) =>
+    (parseInt(getComputedStyle(modal).zIndex, 10) || 0) >= (parseInt(getComputedStyle(top).zIndex, 10) || 0)
+      ? modal : top
+  );
+}
+
+export function isTopmostModal(modalOrId) {
+  const modal = _resolveModal(modalOrId);
+  if (!_isVisibleModal(modal)) return false;
+  return getTopmostModal() === modal;
+}
+
+export function dispatchEscape(modalOrId, event) {
+  const modal = _resolveModal(modalOrId);
+  const id = modal?.id;
+  const escapeFn = id ? _state.get(id)?.escapeFn : null;
+  if (typeof escapeFn !== 'function') return false;
+  try {
+    return escapeFn(event, modal) !== false;
+  } catch (err) {
+    console.error('modal escapeFn failed:', err);
+    return false;
+  }
+}
+
+if (!window._odyModalFrontFocus) {
+  window._odyModalFrontFocus = true;
+  const _promoteEventModal = (e) => {
+    const modal = e.target?.closest?.('.modal');
+    if (_isVisibleModal(modal)) _bringToFront(modal);
+  };
+  document.addEventListener('pointerdown', _promoteEventModal, true);
+  document.addEventListener('focusin', _promoteEventModal, true);
 }
 
 function _emitModalOpened(id, modal) {
@@ -1119,7 +1171,7 @@ function _wireChipDrag(chip, dock) {
 // `unregister` — built-in labels stay for the lifetime of the page.
 const _customLabelIds = new Set();
 
-export function register(id, { restoreFn, closeFn, railBtnId, sidebarBtnId, label, icon } = {}) {
+export function register(id, { restoreFn, closeFn, escapeFn, railBtnId, sidebarBtnId, label, icon } = {}) {
   // railBtnId can be a single id or an array; we accept both rail and sidebar separately too.
   const btnIds = [];
   if (railBtnId) btnIds.push(...(Array.isArray(railBtnId) ? railBtnId : [railBtnId]));
@@ -1127,6 +1179,7 @@ export function register(id, { restoreFn, closeFn, railBtnId, sidebarBtnId, labe
   _state.set(id, {
     restoreFn: restoreFn || (() => {}),
     closeFn:   closeFn   || (() => {}),
+    escapeFn:  escapeFn  || null,
     btnIds,
     isMinimized: false,
     restoreMinHeight: '',
