@@ -8,6 +8,7 @@ These handle the actual execution logic for each tool type.
 import json
 import logging
 import os
+import posixpath
 import re
 from typing import Any, Dict, List, Optional
 
@@ -2585,6 +2586,11 @@ _APP_API_BLOCKLIST_PREFIXES = (
     "/api/tokens/",        # api token mgmt
     "/api/admin/",         # admin one-shots (wipe etc.)
     "/api/backup/restore", # destructive restore
+    "/api/shell/",         # shell exec / streaming — RCE vector
+    "/api/cookbook/",      # setup/kill-pid/packages — destructive
+    "/api/settings/",      # system settings
+    "/api/prefs/",         # security preferences
+    "/api/email/accounts", # owner-filtered bypass — use list_email_accounts
 )
 
 # (method, prefix) pairs to refuse specifically. Used for endpoints
@@ -2693,6 +2699,8 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
         return {"error": "path is required (e.g. '/api/cookbook/gpus')", "exit_code": 1}
     if not path.startswith("/"):
         path = "/" + path
+    # Normalize path to prevent double-slash and traversal bypasses
+    path = posixpath.normpath(path)
     if any(path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
         return {"error": f"Path blocked for safety: {path}. Auth/user/admin endpoints are off-limits via app_api.", "exit_code": 1}
 
