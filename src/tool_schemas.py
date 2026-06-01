@@ -110,6 +110,58 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "edit_file",
+            "description": "Exact-string replace in an existing file (the primary file-edit tool). Reads the file, replaces old_string with new_string. Pass old_string=\"\" to create a new file. old_string must uniquely identify the spot to change (add surrounding context) unless replace_all is set.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path to edit"},
+                    "old_string": {"type": "string", "description": "Exact text to replace. Empty string creates a new file from new_string."},
+                    "new_string": {"type": "string", "description": "Replacement text"},
+                    "replace_all": {"type": "boolean", "description": "Replace every occurrence instead of requiring a unique match (default false)"}
+                },
+                "required": ["path", "old_string", "new_string"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glob",
+            "description": "List files matching a glob pattern (e.g. '**/*.py'), newest-modified first. Use to find files by name/path before reading them.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Glob pattern, e.g. '**/*.py' or 'src/*.js'"},
+                    "path": {"type": "string", "description": "Directory to search in (default: current working directory)"}
+                },
+                "required": ["pattern"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "grep",
+            "description": "Search file contents with a regex. Returns matching files, matching lines, or per-file counts. Use to find where code/text lives across the project.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Regular expression to search for"},
+                    "path": {"type": "string", "description": "File or directory to search in (default: cwd)"},
+                    "glob": {"type": "string", "description": "Only search files matching this glob (e.g. '*.py')"},
+                    "output_mode": {"type": "string", "enum": ["files_with_matches", "content", "count"], "description": "files_with_matches (default) = list files; content = matching lines; count = matches per file"},
+                    "-i": {"type": "boolean", "description": "Case-insensitive match"},
+                    "-n": {"type": "boolean", "description": "Show line numbers in content mode (default true)"},
+                    "head_limit": {"type": "integer", "description": "Cap number of result lines (default 250)"}
+                },
+                "required": ["pattern"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_document",
             "description": "Create a new document in the editor panel. ALWAYS use this when the user asks to write, create, build, or generate code, scripts, programs, games, apps, or any substantial content (>15 lines). NEVER put large code blocks directly in chat — use this tool instead.",
             "parameters": {
@@ -1063,6 +1115,28 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         content = args.get("path", "")
     elif tool_type == "write_file":
         content = args.get("path", "") + "\n" + args.get("content", "")
+    elif tool_type == "edit_file":
+        # Serialize structured args into the same fenced format the local-model
+        # parser produces, so a single parser handles both call paths.
+        path_line = args.get("path", "")
+        if args.get("replace_all"):
+            path_line += " replace_all"
+        content = (
+            path_line + "\n"
+            + "<<<<<<< OLD\n"
+            + args.get("old_string", "") + "\n"
+            + "=======\n"
+            + args.get("new_string", "") + "\n"
+            + ">>>>>>> NEW"
+        )
+    elif tool_type == "glob":
+        content = args.get("pattern", "")
+        if args.get("path"):
+            content += "\n" + args["path"]
+    elif tool_type == "grep":
+        # Pass structured args as JSON; the grep parser detects the leading
+        # brace and reads them directly (more robust than a flags line).
+        content = json.dumps(args)
     elif tool_type == "create_document":
         parts = [args.get("title", "Untitled")]
         if args.get("language"):

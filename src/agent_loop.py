@@ -218,6 +218,34 @@ Read a file and return its contents.""",
 ```
 Write content to a file. First line is the path, rest is the content.""",
 
+    "edit_file": """\
+```edit_file
+<file path>
+<<<<<<< OLD
+old text to find (verbatim, exact)
+=======
+new text to replace it with
+>>>>>>> NEW
+```
+Exact-string replace inside an EXISTING file on disk (the primary way to edit a file — prefer this over rewriting the whole file with write_file). Line 1 is the path; the OLD block is the exact text to find, the NEW block is its replacement. The OLD text must match a UNIQUE spot — include enough surrounding context. To replace every occurrence, add ` replace_all` to the path line (e.g. `src/app.py replace_all`). To CREATE a new file, leave the OLD block empty and put the file body in NEW.""",
+
+    "glob": """\
+```glob
+<glob pattern>
+<optional directory>
+```
+List files matching a glob pattern (e.g. `**/*.py`, `src/*.js`), newest-modified first. Line 1 = pattern, optional line 2 = directory to search (defaults to the current directory). Use to locate files by name before reading/editing them.""",
+
+    "grep": """\
+```grep
+<regex pattern>
+```
+Or with options as JSON:
+```grep
+{"pattern": "<regex>", "glob": "*.py", "output_mode": "content", "-i": true}
+```
+Search file contents with a regular expression. `output_mode`: `files_with_matches` (default, lists files), `content` (matching lines as `path:line:text`), or `count` (matches per file). Options: `glob` (filter files), `path` (where to search), `-i` (case-insensitive), `-n` (line numbers in content mode). Use to find where code/text lives across the project.""",
+
     "create_document": """\
 ```create_document
 <title>

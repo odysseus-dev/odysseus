@@ -105,6 +105,16 @@ _TOOL_NAME_MAP = {
     "write": "write_file",
     "write_file": "write_file",
     "save": "write_file",
+    "edit_file": "edit_file",
+    "str_replace": "edit_file",
+    "str_replace_editor": "edit_file",
+    "replace_in_file": "edit_file",
+    "glob": "glob",
+    "find_files": "glob",
+    "glob_search": "glob",
+    "grep": "grep",
+    "search_files": "grep",
+    "ripgrep": "grep",
     "document": "update_document",
     "update_document": "update_document",
     "create_document": "create_document",
@@ -313,6 +323,10 @@ def _parse_tool_code_block(raw: str) -> Optional[ToolBlock]:
             content = xml_params.get("url", args_body)
         elif mapped in ("read_file", "write_file"):
             content = xml_params.get("path", xml_params.get("file_path", args_body))
+        elif mapped == "glob":
+            content = xml_params.get("pattern", args_body)
+        elif mapped == "grep":
+            content = xml_params.get("pattern", args_body)
         else:
             content = "\n".join(f"{k}: {v}" for k, v in xml_params.items()) if xml_params else args_body
         if content:

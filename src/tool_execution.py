@@ -12,6 +12,7 @@ import collections
 import json
 import logging
 import os
+import re
 import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
@@ -194,6 +195,9 @@ _MCP_TOOL_MAP = {
     "python":         ("python",     "python"),
     "read_file":      ("filesystem", "read_file"),
     "write_file":     ("filesystem", "write_file"),
+    "edit_file":      ("filesystem", "edit_file"),
+    "glob":           ("filesystem", "glob"),
+    "grep":           ("filesystem", "grep"),
     "web_search":     ("web_search", "web_search"),
     "web_fetch":      ("web_fetch",  "web_fetch"),
     "generate_image": ("image_gen",  "generate_image"),
@@ -235,6 +239,110 @@ def _parse_write_file(content: str) -> Dict:
     return {"path": lines[0].strip(), "content": lines[1] if len(lines) > 1 else ""}
 
 
+# Fenced markers for the edit_file conflict-style block.
+_EDIT_OLD_MARKER = "<<<<<<< OLD"
+_EDIT_SEP_MARKER = "======="
+_EDIT_NEW_MARKER = ">>>>>>> NEW"
+
+
+def _parse_edit_file(content: str) -> Dict:
+    """Parse the conflict-style edit_file block into structured args.
+
+    Format (path line first, then an OLD/=======/NEW conflict block):
+        <path> [replace_all]
+        <<<<<<< OLD
+        old text (verbatim)
+        =======
+        new text
+        >>>>>>> NEW
+
+    `replace_all` on the path line forces every-occurrence replacement.
+    An empty OLD block means create-new-file mode.
+    """
+    raw_lines = content.split("\n")
+    if not raw_lines:
+        return {"path": "", "old_string": "", "new_string": ""}
+    path_line = raw_lines[0].strip()
+    replace_all = False
+    # Trailing `replace_all` / `replace-all` marker on the path line.
+    m = re.match(r"^(.*?)[ \t]+(replace[_-]?all)\s*$", path_line, re.IGNORECASE)
+    if m:
+        path_line = m.group(1).strip()
+        replace_all = True
+    path = path_line.strip().strip('"').strip("'")
+
+    body = raw_lines[1:]
+    # Locate the conflict markers.
+    old_idx = sep_idx = new_idx = None
+    for i, ln in enumerate(body):
+        s = ln.strip()
+        if old_idx is None and s == _EDIT_OLD_MARKER:
+            old_idx = i
+        elif old_idx is not None and sep_idx is None and s == _EDIT_SEP_MARKER:
+            sep_idx = i
+        elif sep_idx is not None and new_idx is None and s == _EDIT_NEW_MARKER:
+            new_idx = i
+            break
+
+    if old_idx is not None and sep_idx is not None and new_idx is not None:
+        old_string = "\n".join(body[old_idx + 1:sep_idx])
+        new_string = "\n".join(body[sep_idx + 1:new_idx])
+    else:
+        # Markers missing/malformed — treat the whole remainder as new
+        # content for create-mode so the model still gets a useful error
+        # from the executor rather than a silent no-op.
+        old_string = ""
+        new_string = "\n".join(body)
+    return {
+        "path": path,
+        "old_string": old_string,
+        "new_string": new_string,
+        "replace_all": replace_all,
+    }
+
+
+def _parse_glob(content: str) -> Dict:
+    lines = content.strip().split("\n")
+    args = {"pattern": lines[0].strip() if lines else ""}
+    if len(lines) > 1 and lines[1].strip():
+        args["path"] = lines[1].strip()
+    return args
+
+
+def _parse_grep(content: str) -> Dict:
+    """Parse grep args. Accepts a JSON object (preferred, from the native
+    converter) or a plain pattern on the first line with an optional
+    `flags` line of CLI-style tokens (`-i`, `-n`, `glob=*.py`, etc.)."""
+    raw = content.strip()
+    if raw.startswith("{"):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict) and parsed.get("pattern"):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    lines = raw.split("\n")
+    args: Dict[str, Any] = {"pattern": lines[0].strip() if lines else ""}
+    if len(lines) > 1 and lines[1].strip():
+        # Second line: whitespace-separated flag tokens.
+        for tok in lines[1].split():
+            if tok in ("-i", "--ignore-case"):
+                args["-i"] = True
+            elif tok in ("-n", "--line-number"):
+                args["-n"] = True
+            elif tok in ("-l", "--files-with-matches"):
+                args["output_mode"] = "files_with_matches"
+            elif tok in ("-c", "--count"):
+                args["output_mode"] = "count"
+            elif tok.startswith("glob="):
+                args["glob"] = tok[len("glob="):]
+            elif tok.startswith("path="):
+                args["path"] = tok[len("path="):]
+            elif tok.startswith("mode="):
+                args["output_mode"] = tok[len("mode="):]
+    return args
+
+
 _MCP_ARG_PARSERS: Dict[str, callable] = {
     "bash":           lambda c: {"command": c},
     "python":         lambda c: {"code": c},
@@ -242,6 +350,9 @@ _MCP_ARG_PARSERS: Dict[str, callable] = {
     "web_fetch":      lambda c: {"url": c.split("\n")[0].strip()},
     "read_file":      lambda c: {"path": c.split("\n")[0].strip()},
     "write_file":     _parse_write_file,
+    "edit_file":      _parse_edit_file,
+    "glob":           _parse_glob,
+    "grep":           _parse_grep,
     "generate_image": _parse_generate_image,
     "manage_memory":  _parse_manage_memory,
 }
@@ -414,6 +525,255 @@ async def _direct_fallback(
             except OSError as e:
                 return {"error": f"write_file: {path}: {e}", "exit_code": 1}
             return {"output": f"Wrote {size} bytes to {path}", "exit_code": 0}
+
+        if tool == "edit_file":
+            args = _parse_edit_file(content)
+            path = (args.get("path") or "").strip()
+            old_string = args.get("old_string", "")
+            new_string = args.get("new_string", "")
+            replace_all = bool(args.get("replace_all"))
+            if not path:
+                return {"error": "edit_file: path required", "exit_code": 1}
+
+            def _edit():
+                exists = os.path.exists(path)
+                # Create-new-file mode: empty old_string.
+                if old_string == "":
+                    if exists:
+                        with open(path, "r", encoding="utf-8", errors="replace") as f:
+                            existing = f.read()
+                        if existing.strip():
+                            raise ValueError(
+                                f"edit_file: {path} already exists and is non-empty — "
+                                "use a non-empty old_string to edit it"
+                            )
+                    d = os.path.dirname(path)
+                    if d:
+                        os.makedirs(d, exist_ok=True)
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(new_string)
+                    return 1
+                # Edit mode: file must exist.
+                if not exists:
+                    raise FileNotFoundError(path)
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    data = f.read()
+                count = data.count(old_string)
+                if count == 0:
+                    raise ValueError(f"edit_file: old_string not found in {path}")
+                if count > 1 and not replace_all:
+                    raise ValueError(
+                        f"edit_file: old_string is not unique ({count} matches) — "
+                        "add more context or set replace_all"
+                    )
+                if new_string == old_string:
+                    raise ValueError("edit_file: new_string equals old_string — no change")
+                if replace_all:
+                    updated = data.replace(old_string, new_string)
+                    n = count
+                else:
+                    updated = data.replace(old_string, new_string, 1)
+                    n = 1
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(updated)
+                return n
+
+            try:
+                n = await asyncio.to_thread(_edit)
+            except FileNotFoundError:
+                return {"error": f"edit_file: {path}: not found", "exit_code": 1}
+            except PermissionError:
+                return {"error": f"edit_file: {path}: permission denied", "exit_code": 1}
+            except ValueError as e:
+                return {"error": str(e), "exit_code": 1}
+            except OSError as e:
+                return {"error": f"edit_file: {path}: {e}", "exit_code": 1}
+            return {"output": f"Edited {path} ({n} replacement(s))", "exit_code": 0}
+
+        if tool == "glob":
+            import glob as _glob
+            import shutil as _shutil
+            args = _parse_glob(content)
+            pattern = (args.get("pattern") or "").strip()
+            root = (args.get("path") or "").strip() or os.getcwd()
+            if not pattern:
+                return {"error": "glob: pattern required", "exit_code": 1}
+
+            def _do_glob():
+                matches: list[str] = []
+                # Prefer ripgrep for speed when available.
+                rg = _shutil.which("rg")
+                if rg:
+                    import subprocess
+                    try:
+                        out = subprocess.run(
+                            [rg, "--files", "--glob", pattern],
+                            cwd=root, capture_output=True, text=True, timeout=30,
+                        )
+                        if out.returncode in (0, 1):
+                            for line in out.stdout.splitlines():
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                full = os.path.join(root, line)
+                                matches.append(full)
+                    except (OSError, subprocess.SubprocessError):
+                        matches = []
+                if not matches:
+                    # Pure-Python fallback.
+                    pat = os.path.join(root, pattern)
+                    for p in _glob.glob(pat, recursive=True):
+                        if os.path.isfile(p):
+                            matches.append(p)
+                # Sort newest-mtime first; missing files sort last.
+                def _mtime(p):
+                    try:
+                        return os.stat(p).st_mtime
+                    except OSError:
+                        return 0.0
+                matches.sort(key=_mtime, reverse=True)
+                # De-dupe while preserving order.
+                seen = set()
+                uniq = []
+                for p in matches:
+                    rp = os.path.relpath(p, root)
+                    if rp in seen:
+                        continue
+                    seen.add(rp)
+                    uniq.append(rp)
+                return uniq
+
+            try:
+                results = await asyncio.to_thread(_do_glob)
+            except OSError as e:
+                return {"error": f"glob: {e}", "exit_code": 1}
+            if not results:
+                return {"output": "No files found", "exit_code": 0}
+            truncated = len(results) > 100
+            shown = results[:100]
+            body = "\n".join(shown)
+            if truncated:
+                body += f"\n... ({len(results)} matches, showing first 100)"
+            return {"output": body, "exit_code": 0}
+
+        if tool == "grep":
+            import shutil as _shutil
+            args = _parse_grep(content)
+            pattern = args.get("pattern") or ""
+            if not pattern:
+                return {"error": "grep: pattern required", "exit_code": 1}
+            search_path = (args.get("path") or "").strip() or os.getcwd()
+            file_glob = args.get("glob")
+            mode = args.get("output_mode") or "files_with_matches"
+            ignore_case = bool(args.get("-i"))
+            show_lines = args.get("-n")
+            if show_lines is None:
+                show_lines = True
+            try:
+                head_limit = int(args.get("head_limit") or 250)
+            except (TypeError, ValueError):
+                head_limit = 250
+            GREP_MAX_CHARS = 20_000
+
+            def _do_grep():
+                rg = _shutil.which("rg")
+                if rg:
+                    import subprocess
+                    cmd = [rg, "--no-heading", "--color", "never"]
+                    if ignore_case:
+                        cmd.append("-i")
+                    if file_glob:
+                        cmd += ["--glob", file_glob]
+                    if mode == "files_with_matches":
+                        cmd.append("-l")
+                    elif mode == "count":
+                        cmd.append("-c")
+                    else:  # content
+                        if show_lines:
+                            cmd.append("-n")
+                    cmd += [pattern, search_path]
+                    try:
+                        out = subprocess.run(
+                            cmd, capture_output=True, text=True, timeout=30,
+                        )
+                        if out.returncode in (0, 1):
+                            lines = [l for l in out.stdout.splitlines() if l.strip()]
+                            return lines
+                    except (OSError, subprocess.SubprocessError):
+                        pass
+                # Pure-Python fallback.
+                import fnmatch
+                flags = re.IGNORECASE if ignore_case else 0
+                try:
+                    rx = re.compile(pattern, flags)
+                except re.error as e:
+                    raise ValueError(f"grep: invalid regex: {e}")
+                results: list[str] = []
+                files_with: list[str] = []
+                counts: Dict[str, int] = {}
+                _search_is_file = os.path.isfile(search_path)
+
+                def _rel(p):
+                    # When searching a single file, show its basename rather
+                    # than relpath(file, file) which is just ".".
+                    if _search_is_file:
+                        return os.path.basename(p)
+                    return os.path.relpath(p, search_path)
+
+                def _iter_files():
+                    if os.path.isfile(search_path):
+                        yield search_path
+                        return
+                    for dirpath, dirnames, filenames in os.walk(search_path):
+                        # Exclude .git.
+                        dirnames[:] = [d for d in dirnames if d != ".git"]
+                        for fn in filenames:
+                            if file_glob and not fnmatch.fnmatch(fn, file_glob):
+                                continue
+                            yield os.path.join(dirpath, fn)
+
+                for fpath in _iter_files():
+                    try:
+                        with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                            matched_file = False
+                            for lineno, line in enumerate(f, 1):
+                                if rx.search(line):
+                                    matched_file = True
+                                    counts[fpath] = counts.get(fpath, 0) + 1
+                                    if mode == "content":
+                                        rel = _rel(fpath)
+                                        text = line.rstrip("\n")
+                                        if show_lines:
+                                            results.append(f"{rel}:{lineno}:{text}")
+                                        else:
+                                            results.append(f"{rel}:{text}")
+                            if matched_file:
+                                files_with.append(_rel(fpath))
+                    except (OSError, UnicodeError):
+                        continue
+
+                if mode == "files_with_matches":
+                    return files_with
+                if mode == "count":
+                    return [f"{_rel(p)}:{c}" for p, c in counts.items()]
+                return results
+
+            try:
+                lines = await asyncio.to_thread(_do_grep)
+            except ValueError as e:
+                return {"error": str(e), "exit_code": 1}
+            except OSError as e:
+                return {"error": f"grep: {e}", "exit_code": 1}
+            if not lines:
+                return {"output": "No matches found", "exit_code": 0}
+            truncated = len(lines) > head_limit
+            shown = lines[:head_limit]
+            body = "\n".join(shown)
+            if len(body) > GREP_MAX_CHARS:
+                body = body[:GREP_MAX_CHARS] + "\n... (output truncated)"
+            elif truncated:
+                body += f"\n... ({len(lines)} matches, showing first {head_limit})"
+            return {"output": body, "exit_code": 0}
 
         if tool == "web_search":
             from src.search import comprehensive_web_search
