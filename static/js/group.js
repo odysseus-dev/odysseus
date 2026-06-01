@@ -7,6 +7,7 @@ import chatRenderer from './chatRenderer.js';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { PROMPT_TEMPLATES, getAllPresets } from './presets.js';
+import { sortModelObjects } from './modelSort.js';
 
 let API_BASE = '';
 let _active = false;
@@ -55,7 +56,7 @@ function _initGroupTab() {
         result.push({ mid, display: display.split('/').pop(), url: item.url, endpointId: item.endpoint_id });
       });
     });
-    _modelsCache = result;
+    _modelsCache = sortModelObjects(result);
     return result;
   }
 
@@ -412,7 +413,7 @@ export async function showModelPicker() {
           result.push({ mid, display: display.split('/').pop(), url: item.url, endpointId: item.endpoint_id, epName: item.endpoint_name || '' });
         });
       });
-      _cachedModels = result;
+      _cachedModels = sortModelObjects(result);
       return result;
     }
 
@@ -487,10 +488,11 @@ export async function showModelPicker() {
         `;
         const sel = document.createElement('select');
         sel.style.cssText = 'font-size:11px;padding:3px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--fg);max-width:140px;';
-        sel.innerHTML = '<option value="">No character</option>';
+        let optsHtml = '<option value="">No character</option>';
         characters.forEach(c => {
-          sel.innerHTML += `<option value="${c.id}">${uiModule.esc(c.name)}</option>`;
+          optsHtml += `<option value="${c.id}">${uiModule.esc(c.name)}</option>`;
         });
+        sel.innerHTML = optsHtml;
         sel.addEventListener('change', () => {
           if (sel.value) {
             const ch = characters.find(c => c.id === sel.value);

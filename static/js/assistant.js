@@ -7,6 +7,7 @@
 
 import uiModule from './ui.js';
 import { selectSession } from './sessions.js';
+import { sortModelIds } from './modelSort.js';
 
 const API = '/api/assistant';
 
@@ -250,9 +251,8 @@ function _renderSettingsBody(body, data, tzList) {
       try {
         const models = await _fetchJSON(`/api/model-endpoints/${ep.id}/models`);
         let mHTML = '';
-        for (const m of (models.models || models || [])) {
-          const mid = typeof m === 'string' ? m : (m.id || m.name || '');
-          if (!mid) continue;
+        const modelIds = (models.models || models || []).map(m => typeof m === 'string' ? m : (m.id || m.name || '')).filter(Boolean);
+        for (const mid of sortModelIds(modelIds)) {
           const sel = mid === crew.model ? ' selected' : '';
           mHTML += `<option value="${_esc(mid)}"${sel}>${_esc(mid.split('/').pop())}</option>`;
         }

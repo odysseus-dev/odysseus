@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 for mod in [
     'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
     'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
-    'src.database', 'src.endpoint_resolver',
+    'src.database',
     'core.models', 'core.database',
 ]:
     if mod not in sys.modules:
@@ -18,6 +18,7 @@ from src.context_compactor import (
     COMPACT_THRESHOLD,
     SELF_SUMMARY_SYSTEM_PROMPT,
     SUMMARY_MAX_TOKENS,
+    trim_for_context,
 )
 
 
@@ -53,3 +54,33 @@ class TestSelfSummaryPrompt:
 
     def test_mentions_compactions(self):
         assert "Compactions so far" in SELF_SUMMARY_SYSTEM_PROMPT
+
+
+class TestTrimForContext:
+    def test_keeps_current_large_user_message_by_truncating(self):
+        huge = "A" * 20000
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": huge},
+        ]
+
+        trimmed = trim_for_context(messages, context_length=2048, reserve_tokens=512)
+
+        user_msgs = [m for m in trimmed if m.get("role") == "user"]
+        assert len(user_msgs) == 1
+        content = user_msgs[0]["content"]
+        assert "pasted message was too large" in content
+        assert content.startswith("A")
+        assert len(content) < len(huge)
+
+    def test_drops_older_messages_before_latest_user_paste(self):
+        huge = "B" * 12000
+        messages = [{"role": "system", "content": "You are helpful."}]
+        messages.extend({"role": "user", "content": f"old-{i} " + ("x" * 1000)} for i in range(8))
+        messages.append({"role": "user", "content": huge})
+
+        trimmed = trim_for_context(messages, context_length=2048, reserve_tokens=512)
+
+        assert trimmed[-1]["role"] == "user"
+        assert "pasted message was too large" in trimmed[-1]["content"]
+        assert "old-0" not in "\n".join(str(m.get("content", "")) for m in trimmed)

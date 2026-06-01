@@ -7,6 +7,7 @@ import logging
 import hashlib
 from fastapi import HTTPException
 from typing import Optional, Dict, List
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -140,17 +141,106 @@ ANTHROPIC_MODELS = [
     "claude-haiku-4-20250514", "claude-haiku-4", "claude-haiku-3-5-20241022", "claude-haiku-3-5",
 ]
 
+
+def _is_ollama_native_url(url: str) -> bool:
+    """Return True for native Ollama API URLs, including Ollama Cloud."""
+    try:
+        parsed = urlparse(url or "")
+    except Exception:
+        return False
+    host = parsed.hostname or ""
+    path = (parsed.path or "").rstrip("/")
+    if host.endswith("ollama.com"):
+        return True
+    local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or parsed.port == 11434
+    return local_ollama_host and (path == "/api" or path.startswith("/api/"))
+
+
+def _ollama_api_root(url: str) -> str:
+    """Return a native Ollama API root such as https://ollama.com/api."""
+    url = (url or "").strip().rstrip("/")
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    path = (parsed.path or "").rstrip("/")
+    if path.endswith("/api/chat"):
+        return url[: -len("/chat")]
+    if path.endswith("/api/tags"):
+        return url[: -len("/tags")]
+    if path.endswith("/api/generate"):
+        return url[: -len("/generate")]
+    if path.endswith("/api"):
+        return url
+    if host.endswith("ollama.com"):
+        root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
+        return root.rstrip("/") + "/api"
+    return url
+
+
+def _normalize_ollama_url(url: str) -> str:
+    """Ensure a native Ollama URL points at /api/chat."""
+    base = _ollama_api_root(url)
+    return base.rstrip("/") + "/chat"
+
+
+def _build_ollama_payload(
+    model: str,
+    messages: List[Dict],
+    temperature: float,
+    max_tokens: int,
+    stream: bool = False,
+    tools: Optional[List[Dict]] = None,
+) -> Dict:
+    payload: Dict = {
+        "model": model,
+        "messages": messages,
+        "stream": stream,
+    }
+    options: Dict = {}
+    if temperature is not None:
+        options["temperature"] = temperature
+    if max_tokens and max_tokens > 0:
+        options["num_predict"] = max_tokens
+    if options:
+        payload["options"] = options
+    if tools:
+        payload["tools"] = tools
+    return payload
+
+
+def _parse_ollama_response(data: dict) -> str:
+    message = data.get("message") or {}
+    return message.get("content") or data.get("response") or ""
+
+
 def _detect_provider(url: str) -> str:
     """Detect API provider from URL."""
-    if "anthropic.com" in (url or ""):
+    u = (url or "").lower()
+    if _is_ollama_native_url(url):
+        return "ollama"
+    if "anthropic.com" in u:
         return "anthropic"
+    if "openrouter.ai" in u:
+        return "openrouter"
+    if "groq.com" in u:
+        return "groq"
     return "openai"
+
+
+def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str, str]:
+    h = {"Content-Type": "application/json"}
+    if isinstance(headers, dict):
+        h.update(headers)
+    if provider == "openrouter":
+        h.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
+        h.setdefault("X-OpenRouter-Title", "Odysseus")
+    return h
 
 
 def _provider_label(url: str) -> str:
     """Human-friendly provider name for error messages."""
     u = (url or "").lower()
     if "anthropic.com" in u: return "Anthropic"
+    if "ollama.com" in u: return "Ollama Cloud"
     if "api.x.ai" in u or "x.ai/" in u: return "xAI"
     if "openai.com" in u: return "OpenAI"
     if "openrouter.ai" in u: return "OpenRouter"
@@ -160,6 +250,7 @@ def _provider_label(url: str) -> str:
     if "googleapis.com" in u or "generativelanguage" in u: return "Google"
     if "together.xyz" in u or "together.ai" in u: return "Together"
     if "fireworks.ai" in u: return "Fireworks"
+    if "ollama" in u or ":11434" in u: return "Ollama"
     if "localhost" in u or "127.0.0.1" in u: return "local endpoint"
     try:
         from urllib.parse import urlparse
@@ -356,6 +447,19 @@ def _parse_anthropic_response(data: dict) -> str:
             return block.get("text", "")
     return ""
 
+
+def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
+    """Strip Odysseus-only metadata before sending messages to providers."""
+    allowed = {"role", "content", "name", "tool_call_id", "tool_calls", "function_call"}
+    cleaned = []
+    for msg in messages or []:
+        if not isinstance(msg, dict):
+            continue
+        item = {k: v for k, v in msg.items() if k in allowed and v is not None}
+        if "role" in item and "content" in item:
+            cleaned.append(item)
+    return cleaned
+
 def _normalize_anthropic_url(url: str) -> str:
     """Ensure Anthropic URL points to /v1/messages."""
     url = url.rstrip("/")
@@ -367,16 +471,37 @@ def _normalize_anthropic_url(url: str) -> str:
 
 def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT, headers: Optional[Dict] = None) -> List[str]:
     """List available model IDs from an endpoint."""
-    if _detect_provider(base_chat_url) == "anthropic":
+    provider = _detect_provider(base_chat_url)
+    if provider == "anthropic":
         return list(ANTHROPIC_MODELS)
     try:
         h = {}
         if headers:
             h.update(headers)
-        r = httpx.get(base_chat_url.replace("/chat/completions", "/models"), headers=h, timeout=timeout)
+        if provider == "ollama":
+            models_url = _ollama_api_root(base_chat_url) + "/tags"
+        else:
+            models_url = base_chat_url.replace("/chat/completions", "/models")
+        r = httpx.get(models_url, headers=h, timeout=timeout)
         r.raise_for_status()
-        return [m.get("id") for m in (r.json().get("data") or []) if m.get("id")]
+        data = r.json()
+        model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+        if not model_ids:
+            model_ids = [
+                m.get("name") or m.get("model")
+                for m in (data.get("models") or [])
+                if m.get("name") or m.get("model")
+            ]
+        return model_ids
     except Exception:
+        try:
+            if ":11434" in base_chat_url or "ollama" in base_chat_url.lower():
+                root = base_chat_url.replace("/v1/chat/completions", "").replace("/chat/completions", "").rstrip("/")
+                r = httpx.get(root + "/api/tags", timeout=timeout)
+                r.raise_for_status()
+                return [m.get("name") or m.get("model") for m in (r.json().get("models") or []) if m.get("name") or m.get("model")]
+        except Exception:
+            pass
         return []
 
 def normalize_model_id(endpoint_url: str, requested: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT) -> Optional[str]:
@@ -397,7 +522,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None, 
              timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
-    h = {"Content-Type": "application/json"}
+    h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
     # double-encoded) — otherwise h.update() throws "dictionary update sequence
     # element #0 has length 1; 2 is required".
@@ -409,7 +534,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     if isinstance(headers, dict):
         h.update(headers)
 
-    messages_copy = [msg.copy() for msg in messages]
+    messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -435,6 +560,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
+    elif provider == "ollama":
+        target_url = _normalize_ollama_url(url)
+        payload = _build_ollama_payload(model, messages_copy, temperature, max_tokens, stream=False)
     else:
         target_url = url
         payload = {
@@ -456,6 +584,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     try:
         if provider == "anthropic":
             response = _parse_anthropic_response(data)
+        elif provider == "ollama":
+            response = _parse_ollama_response(data)
         else:
             response = data["choices"][0]["message"]["content"]
         _set_cached_response(cache_key, response)
@@ -517,7 +647,7 @@ async def llm_call_async(
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
-    messages_copy = [msg.copy() for msg in messages]
+    messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -542,11 +672,15 @@ async def llm_call_async(
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
-    else:
-        target_url = url
+    elif provider == "ollama":
+        target_url = _normalize_ollama_url(url)
         h = {"Content-Type": "application/json"}
         if headers:
             h.update(headers)
+        payload = _build_ollama_payload(model, messages_copy, temperature, max_tokens, stream=False)
+    else:
+        target_url = url
+        h = _provider_headers(provider, headers)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -582,6 +716,8 @@ async def llm_call_async(
             try:
                 if provider == "anthropic":
                     response = _parse_anthropic_response(data)
+                elif provider == "ollama":
+                    response = _parse_ollama_response(data)
                 else:
                     response = data["choices"][0]["message"]["content"]
                 _set_cached_response(cache_key, response)
@@ -614,7 +750,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
       - data: [DONE]                       — end of stream
     """
     provider = _detect_provider(url)
-    messages_copy = [msg.copy() for msg in messages]
+    messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
     # Some models (e.g. Qwen3.5) reject system messages that aren't first.
@@ -634,6 +770,12 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
+    elif provider == "ollama":
+        target_url = _normalize_ollama_url(url)
+        h = {"Content-Type": "application/json"}
+        if headers:
+            h.update(headers)
+        payload = _build_ollama_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
     else:
         target_url = url
         payload = {
@@ -641,16 +783,15 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             "messages": messages_copy,
             "temperature": temperature,
             "stream": True,
-            "stream_options": {"include_usage": True},
         }
+        if provider not in {"openrouter", "groq"}:
+            payload["stream_options"] = {"include_usage": True}
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
         if tools:
             payload["tools"] = tools
-        h = {"Content-Type": "application/json"}
-        if headers:
-            h.update(headers)
+        h = _provider_headers(provider, headers)
 
     # Short connect timeout: a reachable peer answers SYN in <100ms even on
     # Tailscale. 3s is plenty; 30s let one dead upstream wedge the UI.
@@ -660,6 +801,62 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         yield f'event: error\ndata: {json.dumps({"error": f"Upstream {_host_key(target_url)} unreachable (cooldown active)", "status": 503})}\n\n'
         return
     note_model_activity(target_url, model)
+
+    # ── Native Ollama streaming ──
+    if provider == "ollama":
+        _ollama_tool_calls: List[Dict] = []
+        try:
+            client = _get_http_client()
+            async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
+                _clear_host_dead(target_url)
+                if r.status_code != 200:
+                    raw = (await r.aread()).decode(errors="replace")
+                    friendly = _format_upstream_error(r.status_code, raw, target_url)
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    return
+                async for line in r.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        j = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    message = j.get("message") or {}
+                    thinking = message.get("thinking") or ""
+                    if thinking:
+                        yield f'data: {json.dumps({"delta": thinking, "thinking": True})}\n\n'
+                    content = message.get("content") or ""
+                    if content:
+                        yield f'data: {json.dumps({"delta": content})}\n\n'
+                    for tc in message.get("tool_calls") or []:
+                        fn = tc.get("function") or {}
+                        if fn.get("name"):
+                            _ollama_tool_calls.append({
+                                "id": tc.get("id") or f"call_{len(_ollama_tool_calls)}",
+                                "name": fn.get("name") or "",
+                                "arguments": json.dumps(fn.get("arguments") or {}),
+                            })
+                    if j.get("done"):
+                        if _ollama_tool_calls:
+                            yield f'data: {json.dumps({"type": "tool_calls", "calls": _ollama_tool_calls})}\n\n'
+                        if j.get("prompt_eval_count") is not None or j.get("eval_count") is not None:
+                            yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": j.get("prompt_eval_count", 0), "output_tokens": j.get("eval_count", 0)}})}\n\n'
+                        yield "data: [DONE]\n\n"
+                        return
+                yield "data: [DONE]\n\n"
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            _cooled = _mark_host_dead(target_url)
+            _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
+            logger.warning(f"Ollama stream connect to {target_url} failed: {e}{_tail}")
+            yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+        except httpx.ReadTimeout:
+            yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
+        except httpx.NetworkError:
+            yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
+        except Exception as e:
+            logger.error(f"Ollama stream error: {e}")
+            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+        return
 
     # ── Anthropic streaming ──
     if provider == "anthropic":

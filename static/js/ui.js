@@ -8,10 +8,40 @@ import themeModule from './theme.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
+let hoveredToggleCard = null;
 
 // Smooth scroll state
 let _scrollRafId = null;
 let _scrollBox = null;
+
+function _isTextEditingTarget(target) {
+  const el = target && target.nodeType === 1 ? target : target?.parentElement;
+  return !!(el && el.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]'));
+}
+
+function _initHoverCardSpaceToggle() {
+  if (document._odysseusHoverCardSpaceToggle) return;
+  document._odysseusHoverCardSpaceToggle = true;
+  document.addEventListener('pointerover', (e) => {
+    const card = e.target?.closest?.('#email-lib-modal .doclib-card, #doclib-modal .doclib-card, .email-reader-tab-modal .doclib-card, .email-window-modal .doclib-card');
+    if (card) hoveredToggleCard = card;
+  }, true);
+  document.addEventListener('pointerout', (e) => {
+    if (!hoveredToggleCard) return;
+    const next = e.relatedTarget;
+    if (!next || !hoveredToggleCard.contains(next)) hoveredToggleCard = null;
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space' || e.repeat || !hoveredToggleCard || !document.contains(hoveredToggleCard)) return;
+    if (_isTextEditingTarget(e.target)) return;
+    const blocked = e.target?.closest?.('button, a, input, textarea, select, [contenteditable="true"], [contenteditable=""], .recipient-chip, .doclib-card-dropdown, .email-card-dropdown');
+    if (blocked) return;
+    e.preventDefault();
+    hoveredToggleCard.click();
+  }, true);
+}
+
+_initHoverCardSpaceToggle();
 
 /**
  * Copy text to clipboard
@@ -104,18 +134,25 @@ export function showToast(msg, durationOrOpts) {
   toastEl.textContent = '';
   toastEl.classList.remove('error');
 
-  let duration = 1200, actionLabel = null, onAction = null, actionHint = null, actionIcon = null;
+  let duration = 1200, actionLabel = null, onAction = null, actionHint = null, actionIcon = null, leadingIcon = null;
   if (typeof durationOrOpts === 'object' && durationOrOpts) {
     duration = durationOrOpts.duration || 5000;
     actionLabel = durationOrOpts.action;
     onAction = durationOrOpts.onAction;
     actionHint = durationOrOpts.actionHint || null;
     actionIcon = durationOrOpts.actionIcon || null;
+    leadingIcon = durationOrOpts.leadingIcon || null;
   } else if (typeof durationOrOpts === 'number') {
     duration = durationOrOpts;
   }
 
   const textSpan = document.createElement('span');
+  if (leadingIcon === 'check') {
+    const icon = document.createElement('span');
+    icon.className = 'toast-checkmark';
+    icon.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+    toastEl.appendChild(icon);
+  }
   textSpan.textContent = msg;
   toastEl.appendChild(textSpan);
 
@@ -516,14 +553,15 @@ export function styledPrompt(message, {
   });
 }
 
+// Lookup table for esc(); hoisted out of the replace callback so it is
+// allocated once rather than per matched character.
+const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 /**
  * HTML-escape a string to prevent XSS.
  * Canonical implementation — other modules should use uiModule.esc() instead of local copies.
  */
 export function esc(s) {
-  return (s || '').replace(/[&<>"']/g, function(m) {
-    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
-  });
+  return (s || '').replace(/[&<>"']/g, (m) => _ESC_MAP[m]);
 }
 
 // ── Mobile: suppress synthetic click/mousedown on backdrop ──

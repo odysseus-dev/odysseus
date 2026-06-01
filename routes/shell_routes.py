@@ -4,14 +4,22 @@ import asyncio
 import json
 import logging
 import os
-import pty
-import fcntl
 import shlex
 import shutil
 import uuid
 import tempfile
 from pathlib import Path
 from typing import Dict, Any
+
+try:
+    import fcntl
+    import pty
+except ImportError as exc:
+    fcntl = None
+    pty = None
+    _PTY_IMPORT_ERROR = exc
+else:
+    _PTY_IMPORT_ERROR = None
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
@@ -38,6 +46,8 @@ def _require_admin(request: Request):
 
 logger = logging.getLogger(__name__)
 
+PTY_SUPPORTED = pty is not None and fcntl is not None and hasattr(os, "setsid")
+
 
 def _find_line_break(buf):
     """Find next line terminator in buffer. Returns (index, separator_length) or (-1, 0)."""
@@ -58,6 +68,7 @@ EXEC_TIMEOUT = 30  # seconds — shorter than agent's 60s
 STREAM_TIMEOUT = 120  # default for short commands
 MAX_OUTPUT = 200_000  # truncate limit
 TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "odysseus-tmux"
+PTY_UNSUPPORTED_ERROR = "pty_unsupported"
 
 
 class ShellExecRequest(BaseModel):
@@ -97,6 +108,14 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
 
 async def _generate_pty(cmd: str, timeout: int, request: Request):
     """Run command in a pseudo-TTY so tqdm/progress bars work natively."""
+    if not PTY_SUPPORTED:
+        msg = "PTY streaming is not supported on this platform"
+        if _PTY_IMPORT_ERROR:
+            msg += f": {_PTY_IMPORT_ERROR}"
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': msg, 'error': PTY_UNSUPPORTED_ERROR})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1, 'error': PTY_UNSUPPORTED_ERROR})}\n\n"
+        return
+
     loop = asyncio.get_event_loop()
     master_fd, slave_fd = pty.openpty()
 
@@ -472,7 +491,7 @@ def setup_shell_routes() -> APIRouter:
         return StreamingResponse(generate(), media_type="text/event-stream")
 
     @router.get("/api/cookbook/packages")
-    async def list_packages(host: str | None = None, ssh_port: str | None = None, venv: str | None = None):
+    async def list_packages(request: Request, host: str | None = None, ssh_port: str | None = None, venv: str | None = None):
         """Check which optional packages are installed.
 
         Local-target packages are checked in-process. Remote-target packages
@@ -480,7 +499,14 @@ def setup_shell_routes() -> APIRouter:
         server over SSH, inside its venv — otherwise installing on a remote box
         never reflected because the check only ever looked at the local host.
         """
+        _require_admin(request)
         import importlib, shlex, json as _json
+        port_arg = ""
+        if ssh_port and str(ssh_port).strip() not in ("", "22"):
+            _port = str(ssh_port).strip()
+            if not _port.isdigit():
+                raise HTTPException(400, "Invalid ssh_port")
+            port_arg = f"-p {int(_port)} "
         packages = [
             # ── System ── OS binaries, not pip packages
             {"name": "tmux", "pip": "", "desc": "Required for Linux/Termux Cookbook background downloads and serves", "category": "System", "target": "remote", "kind": "system", "install_hint": "Run Cookbook server setup, or install tmux with apt/pacman/dnf/apk/zypper."},
@@ -491,7 +517,7 @@ def setup_shell_routes() -> APIRouter:
             {"name": "sglang", "pip": "sglang[all]", "desc": "Serve HF safetensors models via SGLang", "category": "LLM", "target": "remote"},
             {"name": "vllm", "pip": "vllm", "desc": "High-throughput LLM serving engine", "category": "LLM", "target": "remote"},
             # ── Image ── editor + diffusion model serving
-            {"name": "diffusers", "pip": "diffusers", "desc": "Image generation pipelines (SD, Flux)", "category": "Image", "target": "remote"},
+            {"name": "diffusers", "pip": "diffusers[torch]", "desc": "Image generation pipelines (SD, Flux) with PyTorch", "category": "Image", "target": "remote"},
             {"name": "rembg", "pip": "rembg[gpu]", "desc": "AI background removal for image editor", "category": "Image", "target": "local"},
             {"name": "realesrgan", "pip": "realesrgan", "desc": "AI denoise + upscale (Real-ESRGAN). Used by editor's Denoise and Upscale tools.", "category": "Image", "target": "local"},
             # ── Tools ──
@@ -520,9 +546,8 @@ def setup_shell_routes() -> APIRouter:
                     # the && short-circuits and every package reads as missing).
                     src = f". {act} && "
                 inner = f"{src}python3 -c {shlex.quote(py)}"
-                pf = f"-p {ssh_port} " if ssh_port and ssh_port not in ("", "22") else ""
                 ssh_cmd = (
-                    f"ssh -o ConnectTimeout=6 -o StrictHostKeyChecking=no {pf}"
+                    f"ssh -o ConnectTimeout=6 -o StrictHostKeyChecking=no {port_arg}"
                     f"{shlex.quote(host)} {shlex.quote(inner)}"
                 )
                 proc = await asyncio.create_subprocess_shell(
@@ -545,9 +570,8 @@ def setup_shell_routes() -> APIRouter:
                     qn = shlex.quote(name)
                     checks.append(f"if command -v {qn} >/dev/null 2>&1; then echo {qn}=1; else echo {qn}=0; fi")
                 inner = " ; ".join(checks)
-                pf = f"-p {ssh_port} " if ssh_port and ssh_port not in ("", "22") else ""
                 ssh_cmd = (
-                    f"ssh -o ConnectTimeout=6 -o StrictHostKeyChecking=no {pf}"
+                    f"ssh -o ConnectTimeout=6 -o StrictHostKeyChecking=no {port_arg}"
                     f"{shlex.quote(host)} {shlex.quote(inner)}"
                 )
                 proc = await asyncio.create_subprocess_shell(
@@ -590,7 +614,7 @@ def setup_shell_routes() -> APIRouter:
             return {"ok": False, "error": "No package specified"}
         # Validate against known packages to prevent arbitrary pip install
         known = {
-            "rembg[gpu]", "hf_transfer", "llama-cpp-python[server]", "sglang[all]", "diffusers",
+            "rembg[gpu]", "hf_transfer", "llama-cpp-python[server]", "sglang[all]", "diffusers", "diffusers[torch]",
             "TTS", "bark", "faster-whisper", "playwright", "realesrgan", "gfpgan",
             "insightface", "onnxruntime-gpu", "onnxruntime", "hdbscan",
         }

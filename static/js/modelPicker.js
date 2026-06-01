@@ -3,6 +3,8 @@
 
 import { providerLogo } from './providers.js';
 import uiModule from './ui.js';
+import settingsModule from './settings.js';
+import { sortModelObjects } from './modelSort.js';
 
 const API_BASE = window.location.origin;
 
@@ -31,6 +33,20 @@ function _handlePickerKeydown(e, listEl, itemSelector, closeFn) {
 
 // Dependencies injected via initModelPicker()
 let _deps = null;
+let _autoSelectingDefault = false;
+
+function _modelExists(modelId, url) {
+  if (!modelId || !window.modelsModule || !window.modelsModule.getCachedItems) return false;
+  const items = window.modelsModule.getCachedItems() || [];
+  if (!items.length) return true;
+  const targetUrl = (url || '').replace(/\/+$/, '');
+  return items.some(item => {
+    if (item.offline) return false;
+    const itemUrl = (item.url || '').replace(/\/+$/, '');
+    const models = (item.models || []).concat(item.models_extra || []);
+    return models.includes(modelId) && (!targetUrl || itemUrl === targetUrl);
+  });
+}
 
 /**
  * Initialize the model picker dropdown.
@@ -52,6 +68,7 @@ function _initModelPickerDropdown() {
   const menu = document.getElementById('model-picker-menu');
   const search = document.getElementById('model-picker-search');
   const listEl = document.getElementById('model-picker-list');
+  const searchRow = menu ? menu.querySelector('.model-picker-search-row') : null;
   if (!wrap || !btn || !menu || !search || !listEl) return;
 
   function _close() {
@@ -74,6 +91,27 @@ function _initModelPickerDropdown() {
         search.value = '';
       }
     }, 200);
+  }
+
+  function _openPickerShortcut(kind) {
+    _close();
+    try {
+      if (kind === 'cookbook') {
+        if (window.cookbookModule && typeof window.cookbookModule.open === 'function') {
+          window.cookbookModule.open();
+        } else {
+          const btn = document.getElementById('tool-cookbook-btn') || document.getElementById('rail-cookbook');
+          if (btn) btn.click();
+          else location.hash = '#cookbook';
+        }
+      } else if (kind === 'settings') {
+        if (settingsModule && typeof settingsModule.open === 'function') settingsModule.open();
+      } else if (window.adminModule && typeof window.adminModule.open === 'function') {
+        window.adminModule.open('services');
+      } else if (settingsModule && typeof settingsModule.open === 'function') {
+        settingsModule.open('services');
+      }
+    } catch (_) {}
   }
 
   // Local endpoint health — only probed for LOCAL endpoints, since
@@ -119,13 +157,22 @@ function _initModelPickerDropdown() {
         });
       });
     });
-    return result;
+    return sortModelObjects(result);
   }
 
   function _populate(filter) {
     listEl.innerHTML = '';
     const all = _getAllModels();
     const q = (filter || '').toLowerCase();
+    const hasAnyModel = all.length > 0;
+    listEl.classList.toggle('is-empty', !hasAnyModel);
+    menu.classList.toggle('no-models', !hasAnyModel);
+    if (search) {
+      search.placeholder = hasAnyModel ? 'Search models…' : 'No models connected';
+    }
+    if (searchRow) {
+      searchRow.classList.toggle('searching', !!filter);
+    }
 
     // Load favorites
     const favs = (function() { try { return JSON.parse(localStorage.getItem('odysseus-model-favorites') || '[]'); } catch { return []; } })();
@@ -138,6 +185,8 @@ function _initModelPickerDropdown() {
       if (favs.includes(m.mid)) favModels.push(m);
       else restModels.push(m);
     });
+    sortModelObjects(favModels).forEach(function(m, i) { favModels[i] = m; });
+    sortModelObjects(restModels).forEach(function(m, i) { restModels[i] = m; });
 
     function _addSection(label) {
       const el = document.createElement('div');
@@ -192,7 +241,11 @@ function _initModelPickerDropdown() {
     if (listEl.children.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'model-switch-empty';
-      empty.textContent = 'No models available';
+      if (hasAnyModel) {
+        empty.textContent = 'No matching models';
+      } else {
+        return;
+      }
       listEl.appendChild(empty);
     }
   }
@@ -249,12 +302,62 @@ function _initModelPickerDropdown() {
     uiModule.showToast(`Using ${m.display}`);
   }
 
+  document.addEventListener('odysseus:auto-select-model', async (e) => {
+    const detail = (e && e.detail) || {};
+    const currentSessionId = _deps.getCurrentSessionId();
+    const sessions = _deps.getSessions();
+    const current = sessions.find(x => x.id === currentSessionId);
+    const pending = _deps.getPendingChat();
+    if ((current && current.model) || (pending && pending.modelId)) return;
+
+    if (window.modelsModule && window.modelsModule.refreshModels) {
+      try { await window.modelsModule.refreshModels(true); } catch (_) {}
+    }
+    const items = window.modelsModule && window.modelsModule.getCachedItems ? window.modelsModule.getCachedItems() : [];
+    const targetEndpointId = detail.endpointId ? String(detail.endpointId) : '';
+    const targetModel = detail.modelId || '';
+    let match = null;
+    for (const item of items) {
+      if (item.offline) continue;
+      if (targetEndpointId && String(item.endpoint_id || '') !== targetEndpointId) continue;
+      const models = (item.models || []).concat(item.models_extra || []);
+      const displays = (item.models_display || []).concat(item.models_extra_display || []);
+      const idx = targetModel ? models.indexOf(targetModel) : (models.length ? 0 : -1);
+      if (idx >= 0) {
+        match = {
+          mid: models[idx],
+          display: (displays[idx] || models[idx]).split('/').pop(),
+          url: item.url || detail.url || '',
+          endpointId: item.endpoint_id || detail.endpointId || '',
+          epName: item.endpoint_name || detail.endpointName || '',
+        };
+        break;
+      }
+    }
+    if (!match && detail.modelId && detail.url) {
+      match = {
+        mid: detail.modelId,
+        display: String(detail.modelId).split('/').pop(),
+        url: detail.url,
+        endpointId: detail.endpointId || '',
+        epName: detail.endpointName || '',
+      };
+    }
+    if (match) await _pick(match);
+  });
+
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
     if (menu.classList.contains('hidden') || menu.classList.contains('closing')) {
       // Force-clear any in-progress close animation
       menu.classList.remove('closing', 'hidden');
       _populate('');
+      if (window.modelsModule && window.modelsModule.refreshModels) {
+        window.modelsModule.refreshModels(true).then(() => {
+          if (!menu.classList.contains('hidden')) _populate(search.value || '');
+          updateModelPicker();
+        }).catch(() => {});
+      }
       // Kick off a local-endpoint probe — when it returns, re-render
       // the list so stale local servers get dimmed. Cloud entries
       // aren't probed; they stay visible.
@@ -275,6 +378,13 @@ function _initModelPickerDropdown() {
   search.addEventListener('keydown', (e) => {
     _handlePickerKeydown(e, listEl, '.model-switch-item', _close);
   });
+  const addModelsBtn = document.getElementById('model-picker-add-models-btn');
+  if (addModelsBtn) {
+    addModelsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _openPickerShortcut('models');
+    });
+  }
   document.addEventListener('click', (e) => {
     if (!menu.classList.contains('hidden') && !menu.contains(e.target) && e.target !== btn) {
       _close();
@@ -310,8 +420,15 @@ export function updateModelPicker() {
   let modelId = null;
   if (s && s.model) {
     modelId = s.model;
+    if (!_modelExists(modelId, s.endpoint_url || '')) {
+      modelId = null;
+    }
   } else if (_pendingChat && _pendingChat.modelId) {
     modelId = _pendingChat.modelId;
+    if (!_modelExists(modelId, _pendingChat.url || '')) {
+      _deps.setPendingChat(null);
+      modelId = null;
+    }
   }
   // SECURITY: deliberately NOT auto-injecting `odysseus-model-favorites[0]`
   // here. localStorage favorites are per-browser, not per-user, so on a
@@ -335,6 +452,27 @@ export function updateModelPicker() {
       if (fallback) {
         modelId = fallback.models[0];
         _deps.setPendingChat({ url: fallback.url, modelId, endpointId: fallback.endpoint_id });
+      }
+    }
+  }
+  if (!modelId && !_autoSelectingDefault && window.modelsModule && window.modelsModule.getCachedItems) {
+    const items = window.modelsModule.getCachedItems();
+    const first = items.find(item => !item.offline && ((item.models || []).length || (item.models_extra || []).length));
+    if (first) {
+      const models = (first.models || []).concat(first.models_extra || []);
+      modelId = models[0];
+      if (!currentSessionId) {
+        _deps.setPendingChat({ url: first.url, modelId, endpointId: first.endpoint_id });
+      } else {
+        if (s) { s.model = modelId; s.endpoint_url = first.url; }
+        _autoSelectingDefault = true;
+        const fd = new FormData();
+        fd.append('model', modelId);
+        fd.append('endpoint_url', first.url || '');
+        if (first.endpoint_id) fd.append('endpoint_id', first.endpoint_id);
+        fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd })
+          .catch(() => {})
+          .finally(() => { _autoSelectingDefault = false; });
       }
     }
   }

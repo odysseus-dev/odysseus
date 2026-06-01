@@ -265,12 +265,22 @@ async function _updateEvent(uid, data) {
   const merged = { ...(_allEvents[uid] || {}), ...data };
   const _preMergeBackup = _allEvents[uid];
   _allEvents[uid] = _optimisticEvent(merged, uid);
+  // For recurring events the uid is a compound "{base_uid}::{date}" —
+  // the backend resolves it to the base series row. After the update,
+  // other occurrences of the same series are stale. Wipe the cache so
+  // a re-fetch picks up fresh data (next render + prefetch handles it).
+  const isRecurring = uid.includes('::');
   fetch(`${API_BASE}/api/calendar/events/${encodeURIComponent(uid)}`, {
     method: 'PUT', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
   }).then(r => {
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    _saveCache && _saveCache();
+    if (isRecurring) {
+      _fetchedRanges = [];
+      localStorage.removeItem(LS_KEY);
+    } else {
+      _saveCache && _saveCache();
+    }
   }).catch((e) => {
     if (_preMergeBackup) _allEvents[uid] = _preMergeBackup;
     else delete _allEvents[uid];
@@ -283,11 +293,17 @@ async function _updateEvent(uid, data) {
 async function _deleteEvent(uid) {
   const backup = _allEvents[uid];
   delete _allEvents[uid];
+  const isRecurring = uid.includes('::');
   fetch(`${API_BASE}/api/calendar/events/${encodeURIComponent(uid)}`, {
     method: 'DELETE', credentials: 'same-origin',
   }).then(r => {
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    _saveCache && _saveCache();
+    if (isRecurring) {
+      _fetchedRanges = [];
+      localStorage.removeItem(LS_KEY);
+    } else {
+      _saveCache && _saveCache();
+    }
   }).catch((e) => {
     if (backup) _allEvents[uid] = backup;
     if (window.uiModule) window.uiModule.showError('Failed to delete event: ' + (e?.message || 'unknown'));
@@ -3082,8 +3098,16 @@ function _nowClock() {
   return new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 function _fmtTime(s) {
-  // Show the time as written in the ICS file (ignore UTC offset).
   if (!s || s.length < 16) return '';
+  // Tz-aware timestamps from CalDAV/import are stored as UTC instants and
+  // serialized with Z/offset. Display them in the browser's local timezone;
+  // legacy naive timestamps keep their written wall-clock time.
+  if (/[Zz]$|[+\-]\d{2}:?\d{2}$/.test(s)) {
+    const d = new Date(s);
+    if (!isNaN(d)) {
+      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+  }
   return s.slice(11, 16);
 }
 function _e(s) { return uiModule.esc ? uiModule.esc(s || '') : (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }

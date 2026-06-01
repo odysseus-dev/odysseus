@@ -54,7 +54,7 @@ class SearchConfig(BaseSettings):
     
     # Web search
     searxng_instance: str = Field(
-        default="http://localhost:8888",
+        default="http://localhost:8080",
         description="SearXNG instance URL (self-hosted)"
     )
     web_search_count: int = Field(default=10, description="Number of search results to retrieve")

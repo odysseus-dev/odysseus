@@ -539,7 +539,7 @@ export function mdToHtml(src) {
     s = s.replace(`___CODE_BLOCK_${index}___`, block);
   });
 
-  return s;
+  return svgifyEmoji(s);
 }
 
 /**

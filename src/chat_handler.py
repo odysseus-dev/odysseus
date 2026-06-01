@@ -15,7 +15,7 @@ from src.constants import (
     UPLOAD_DIR,
 )
 from core.models import ChatMessage
-from src.chat_helpers import extract_urls
+from src.chat_helpers import extract_urls, is_vision_model
 from src.document_processor import build_user_content, analyze_image_with_vl_result
 from src.youtube_handler import (
     is_youtube_url,
@@ -147,17 +147,7 @@ class ChatHandler:
         # Analyze images — skip if vision disabled, or if main model is vision-capable
         from src.settings import get_setting
         vision_enabled = get_setting("vision_enabled", True)
-        VISION_KEYWORDS = [
-            "gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-4-turbo", "gpt-4-vision",
-            "claude-sonnet", "claude-opus", "claude-haiku",
-            "gemini", "llava", "pixtral", "qwen2-vl", "qwen-vl", "qwen3-vl", "qwen3vl", "minicpm",
-        ]
-        main_model = (sess.model or "").lower()
-        main_is_vision = any(kw in main_model for kw in VISION_KEYWORDS)
-        # Also match models with "vl" in the name (e.g. Qwen3VL, InternVL, any *-VL-*)
-        if not main_is_vision:
-            import re
-            main_is_vision = bool(re.search(r'\dvl|vl\d|[-_]vl[-_.\d]|vl-', main_model))
+        main_is_vision = is_vision_model(sess.model or "")
 
         # Read uploads DB once and index by id (was read twice + linear-scanned per attachment)
         files_by_id: Dict[str, Dict] = {}
@@ -223,19 +213,22 @@ class ChatHandler:
                         if os.path.exists(_vcache):
                             try:
                                 with open(_vcache) as _vf:
-                                    vl_desc = _vf.read()
+                                    cached_desc = _vf.read().strip()
+                                if cached_desc and not cached_desc.startswith("["):
+                                    vl_desc = cached_desc
                             except Exception:
                                 vl_desc = None
                         if not vl_desc:
                             vl_result = analyze_image_with_vl_result(file_info["path"])
                             vl_desc = vl_result.get("text", "")
                             vl_model = vl_result.get("model", "")
-                            try:
-                                os.makedirs(os.path.join(UPLOAD_DIR, ".vision"), exist_ok=True)
-                                with open(_vcache, "w") as _vf:
-                                    _vf.write(vl_desc or "")
-                            except Exception:
-                                pass
+                            if vl_desc and not vl_desc.startswith("["):
+                                try:
+                                    os.makedirs(os.path.join(UPLOAD_DIR, ".vision"), exist_ok=True)
+                                    with open(_vcache, "w") as _vf:
+                                        _vf.write(vl_desc)
+                                except Exception:
+                                    pass
                         enhanced_message = f"{enhanced_message}\n\n[Image: {file_info['name']}]\n{vl_desc}"
                         # Surface the description to the client live so it renders as a
                         # collapsible "image description" on the user bubble (not just

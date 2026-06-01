@@ -32,10 +32,13 @@ class TestAppStructure:
         src_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "src")
         assert os.path.exists(src_path), "src directory should exist"
 
-    def test_env_file_exists(self):
-        """Test that .env file exists"""
-        env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
-        assert os.path.exists(env_path), ".env file should exist"
+    def test_env_file_is_optional_and_ignored(self):
+        """A fresh checkout should not require a private .env file."""
+        root = os.path.dirname(os.path.dirname(__file__))
+        gitignore_path = os.path.join(root, ".gitignore")
+        with open(gitignore_path, encoding="utf-8") as fh:
+            ignored = {line.strip() for line in fh}
+        assert ".env" in ignored, ".env should stay local and ignored"
 
     def test_env_example_exists(self):
         """Test that .env.example exists"""

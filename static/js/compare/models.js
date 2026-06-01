@@ -2,6 +2,7 @@
 import Storage from '../storage.js';
 import state from './state.js';
 import uiModule from '../ui.js';
+import { sortModelObjects } from '../modelSort.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -84,9 +85,9 @@ async function fetchModels() {
       });
     });
   }
-  state._fetchModelsCache = models;
+  state._fetchModelsCache = sortModelObjects(models);
   state._fetchModelsCacheTime = now;
-  return models;
+  return state._fetchModelsCache;
 }
 
 // ── Shuffle pool persistence ──

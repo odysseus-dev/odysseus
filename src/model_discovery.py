@@ -3,8 +3,10 @@ import json
 import time
 import httpx
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +77,11 @@ class ModelDiscovery:
 
     def _get_hosts(self) -> List[str]:
         """Get all hosts to scan, using env override, Tailscale, or default."""
-        import os
+        def _append_host(out: List[str], host: str) -> None:
+            host = (host or "").strip()
+            if not host or host in out:
+                return
+            out.append(host)
 
         # Manual override takes priority
         extra = os.getenv("LLM_HOSTS", "").strip()
@@ -84,6 +90,7 @@ class ModelDiscovery:
             # Always include the default host too
             if self.default_host not in hosts:
                 hosts.insert(0, self.default_host)
+            _append_host(hosts, "host.docker.internal")
             return hosts
 
         # Try Tailscale discovery
@@ -92,10 +99,23 @@ class ModelDiscovery:
             # Ensure default_host is included
             if self.default_host not in ts_hosts:
                 ts_hosts.insert(0, self.default_host)
+            _append_host(ts_hosts, "host.docker.internal")
             return ts_hosts
 
-        # Fallback to single host
-        return [self.default_host]
+        hosts = [self.default_host]
+        # Docker desktop/Linux compose maps this to the host machine. That is
+        # the common "I started Ollama normally on this computer" case.
+        _append_host(hosts, "host.docker.internal")
+        for env_name in ("OLLAMA_BASE_URL", "OLLAMA_URL"):
+            raw = os.getenv(env_name, "").strip()
+            if not raw:
+                continue
+            try:
+                parsed = urlparse(raw if "://" in raw else "http://" + raw)
+                _append_host(hosts, parsed.hostname or "")
+            except Exception:
+                pass
+        return hosts
 
     def _check_port(self, host: str, port: int) -> Optional[Dict[str, Any]]:
         """Check a single host:port for models."""
@@ -125,8 +145,10 @@ class ModelDiscovery:
 
         logger.info(f"Scanning {len(hosts)} hosts for models: {hosts}")
 
-        # Build list of (host, port) to check
-        targets = [(h, p) for h in hosts for p in range(8000, 8021)]
+        # Build list of (host, port) to check. 8000-8020 catches vLLM,
+        # llama.cpp, SGLang, and Cookbook serves; 11434 catches Ollama.
+        ports = list(range(8000, 8021)) + [11434]
+        targets = [(h, p) for h in hosts for p in ports]
 
         seen_models = set()  # dedupe by (port, model_ids) to avoid same machine via different IPs
 

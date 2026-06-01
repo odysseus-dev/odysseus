@@ -452,9 +452,8 @@ import createResearchSynapse from './researchSynapse.js';
         } else {
           addMessage('assistant',
             'No chat session active. You can:\n\n' +
-            '- Pick a model from the sidebar to start a chat\n' +
-            '- Run `/setup` to configure an endpoint\n' +
-            '- Run `/new` to create a session manually\n' +
+            '- Open the model picker in the chat box and pick a model\n' +
+            '- Use the `+` button in the model picker to add a model endpoint\n' +
             '- Use `/help` to see all available commands');
           _releaseSendFlag();
           return;
@@ -462,9 +461,8 @@ import createResearchSynapse from './researchSynapse.js';
       } catch (e) {
         addMessage('assistant',
           'No chat session active. You can:\n\n' +
-          '- Pick a model from the sidebar to start a chat\n' +
-          '- Run `/setup` to configure an endpoint\n' +
-          '- Run `/new` to create a session manually\n' +
+          '- Open the model picker in the chat box and pick a model\n' +
+          '- Use the `+` button in the model picker to add a model endpoint\n' +
           '- Use `/help` to see all available commands');
         _releaseSendFlag();
         return;

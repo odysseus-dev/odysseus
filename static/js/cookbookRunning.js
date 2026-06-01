@@ -2158,10 +2158,6 @@ async function _reconnectTask(el, task) {
               task._serveReady = true;
               _updateTask(task.sessionId, { _serveReady: true });
             }
-            if (!task._serveReady && task.ts && (Date.now() - task.ts) > 300000) {
-              task._serveReady = true;
-              _updateTask(task.sessionId, { _serveReady: true });
-            }
             if (info.phase) {
               badge.textContent = info.phase;
               // Always the green "running" style — loading/warming is the same
