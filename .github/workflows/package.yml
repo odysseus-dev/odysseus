@@ -378,6 +378,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Apply Windows packaging patches
+        run: .\scripts\ci\apply-patches.ps1 -Family windows -Target pyinstaller-static
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -396,6 +399,9 @@ jobs:
           $VERSION = (Select-String -Path pyproject.toml -Pattern '^version = "(.*)"').Matches.Groups[1].Value
           New-Item -ItemType Directory -Force artifacts | Out-Null
           Copy-Item dist/odysseus.exe "artifacts/odysseus-windows-$VERSION.exe"
+
+      - name: Smoke test Windows package
+        run: .\scripts\ci\smoke-windows-package.ps1 -ExePath .\dist\odysseus.exe
 
       - name: Finalize artifacts
         run: |

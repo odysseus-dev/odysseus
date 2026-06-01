@@ -1,0 +1,77 @@
+﻿diff --git a/app.py b/app.py
+index 0ff6e42..fd90e45 100644
+--- a/app.py
++++ b/app.py
+@@ -1,5 +1,7 @@
+ # app.py — slim orchestrator
+ import os
++import sys
++from pathlib import Path
+ 
+ # Windows: force HuggingFace/fastembed to COPY model files instead of symlinking.
+ # On a network-share/UNC data dir Windows can't follow HF's symlinks ([WinError
+@@ -323,7 +325,40 @@ else:
+     logger.info("Auth middleware disabled (set AUTH_ENABLED=true to enable)")
+ 
+ # ========= STATIC FILES =========
+-os.makedirs(STATIC_DIR, exist_ok=True)
++def _resolve_windows_static_dir() -> str:
++    """Resolve bundled static assets for PyInstaller Windows builds.
++
++    Source runs still use the repository's ./static directory. Frozen Windows
++    executables need to look inside the extracted PyInstaller bundle instead of
++    relying on the current working directory.
++    """
++    if not getattr(sys, "frozen", False):
++        os.makedirs(STATIC_DIR, exist_ok=True)
++        return "static"
++
++    candidates = []
++    meipass = getattr(sys, "_MEIPASS", None)
++    if meipass:
++        candidates.append(Path(meipass) / "static")
++
++    exe_dir = Path(sys.executable).resolve().parent
++    candidates.append(exe_dir / "static")
++    candidates.append(exe_dir / "_internal" / "static")
++
++    for candidate in candidates:
++        if candidate.is_dir():
++            return str(candidate)
++
++    searched = "\n".join(str(path) for path in candidates)
++    raise RuntimeError(
++        "Static directory not found for Windows bundle. Searched:\n"
++        f"{searched}"
++    )
++
++
++STATIC_FILES_DIR = (
++    _resolve_windows_static_dir() if os.name == "nt" else "static"
++)
+ 
+ 
+ class _RevalidatingStatic(StaticFiles):
+@@ -342,7 +377,7 @@ class _RevalidatingStatic(StaticFiles):
+         return resp
+ 
+ 
+-app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
++app.mount("/static", _RevalidatingStatic(directory=STATIC_FILES_DIR), name="static")
+ 
+ # ========= GENERATED IMAGES =========
+ @app.get("/api/generated-image/{filename}")
+@@ -1006,3 +1041,13 @@ async def shutdown_event():
+     except Exception as e:
+         logger.warning(f"MCP shutdown error: {e}")
+     logger.info("Application shutdown complete")
++
++if __name__ == "__main__" and os.name == "nt":
++    import uvicorn
++
++    uvicorn.run(
++        app,
++        host=os.getenv("ODYSSEUS_HOST", "127.0.0.1"),
++        port=int(os.getenv("ODYSSEUS_PORT", "7000")),
++        log_level=os.getenv("ODYSSEUS_LOG_LEVEL", "info"),
++    )
