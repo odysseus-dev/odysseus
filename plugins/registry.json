@@ -1,0 +1,17 @@
+{
+  "_comment": "Official Odysseus plugin registry. Submit a plugin by opening a PR that adds an entry here. Each plugin lives in its own repo (DokuWiki-InfoBox model); `download` is an https zip whose root contains the plugin's files (plugin.py + assets) and `sha256` of that zip is verified before install. The in-app Plugins -> Browse tab reads this file. Add more sources in the UI, or override the base with ODYSSEUS_PLUGIN_REGISTRY (comma-separated) for a fork/private registry. The bundled plugins/example is an in-tree template, not listed here.",
+  "version": 1,
+  "plugins": [
+    {
+      "id": "cloudflare_tunnel",
+      "name": "Cloudflare Tunnel",
+      "version": "1.0.1",
+      "author": "kanaru-dev",
+      "category": "Networking",
+      "description": "Expose Odysseus remotely over a Cloudflare tunnel (quick or named). Login is still required to reach the app.",
+      "homepage": "https://github.com/kanaru-dev/odysseus-plugin-cloudflare-tunnel",
+      "download": "https://github.com/kanaru-dev/odysseus-plugin-cloudflare-tunnel/releases/download/v1.0.1/cloudflare_tunnel-1.0.1.zip",
+      "sha256": "4dbce57eb8f8ea360de09696e4e44749952b09660a691c8bce78b414440f507b"
+    }
+  ]
+}

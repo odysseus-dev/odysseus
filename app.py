@@ -698,6 +698,11 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
+# Plugin system — admin API for drop-in plugins (Settings -> Plugins). The
+# plugins themselves are loaded in the startup event (see load_plugins below).
+from routes.plugin_routes import setup_plugin_routes
+app.include_router(setup_plugin_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
@@ -799,6 +804,14 @@ async def startup_event():
     global upload_cleanup_task
     logger.info("Application starting up...")
     webhook_manager.set_loop(asyncio.get_running_loop())
+    # Plugin system — load enabled drop-in plugins (they register routes / tools /
+    # background services via their setup(ctx)). Best-effort: a broken plugin is
+    # isolated and never blocks startup.
+    try:
+        from src.plugin_system import load_plugins
+        load_plugins(app)
+    except Exception as e:
+        logger.warning(f"Plugin system load skipped: {e}")
     # Wipe any leftover incognito sessions from previous process — they're
     # ephemeral by design and must not survive a restart.
     try:
@@ -1022,6 +1035,14 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     logger.info("Application shutting down...")
+    # Tear down plugins so their background services (tunnels, etc.) stop.
+    try:
+        from src.plugin_system import get_manager
+        mgr = get_manager()
+        if mgr:
+            mgr.shutdown_all()
+    except Exception as e:
+        logger.warning(f"Plugin shutdown skipped: {e}")
     if upload_cleanup_task:
         upload_cleanup_task.cancel()
         try:

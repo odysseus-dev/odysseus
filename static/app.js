@@ -1058,6 +1058,11 @@ function initializeEventListeners() {
     });
   }
 
+  const toolPluginsBtn = el('tool-plugins-btn');
+  if (toolPluginsBtn) {
+    toolPluginsBtn.addEventListener('click', () => settingsModule.open('plugins'));
+  }
+
   // Sidebar toggle
   const toggleSidebarOption = el('toggle-sidebar-option');
   if (toggleSidebarOption) {
@@ -1090,6 +1095,11 @@ function initializeEventListeners() {
     .then(d => {
       window._isAdmin = !!d.is_admin;
       if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
+      // Plugins entries (sidebar + rail) are admin-only — reveal for admins
+      ['tool-plugins-btn', 'rail-plugins'].forEach(id => {
+        const e = el(id);
+        if (e) e.style.display = d.is_admin ? '' : 'none';
+      });
       const userBarName = el('user-bar-name');
       const userBarAvatar = el('user-bar-avatar');
       if (userBarName && d.username) {
@@ -3450,6 +3460,7 @@ function startOdysseusApp() {
     'rail-notes':     'tool-notes-btn',
     'rail-memory':    'tool-memory-btn',
     'rail-theme':     'tool-theme-btn',
+    'rail-plugins':   'tool-plugins-btn',
     'rail-email':     'email-section-title',
   };
   Object.entries(_railToolMap).forEach(([railId, toolId]) => {

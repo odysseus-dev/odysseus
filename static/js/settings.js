@@ -34,8 +34,235 @@ function initTabs() {
       document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
       syncAppearanceOpacity(tab === 'appearance');
       if (tab === 'ai') refreshAiModelEndpoints();
+      if (tab === 'plugins') loadPlugins();
     });
   });
+}
+
+/* ── Plugins panel (drop-in plugin manager) ── */
+async function loadPlugins() {
+  const host = document.getElementById('plugins-list');
+  if (!host) return;
+  const rescan = document.getElementById('plugins-rescan-btn');
+  if (rescan && !rescan._wired) {
+    rescan._wired = true;
+    rescan.addEventListener('click', async () => {
+      rescan.disabled = true;
+      try { await fetch('/api/plugins/rescan', { method: 'POST', credentials: 'same-origin' }); } catch (_) {}
+      rescan.disabled = false; loadPlugins();
+    });
+  }
+  host.innerHTML = '<div class="adm-ep-inline-msg">Loading…</div>';
+  let plugins;
+  try {
+    const r = await fetch('/api/plugins', { credentials: 'same-origin' });
+    plugins = (await r.json()).plugins || [];
+  } catch (_) { host.innerHTML = '<div class="adm-ep-inline-msg">Failed to load plugins.</div>'; return; }
+  host.innerHTML = '';
+  host.appendChild(_pluginsToolbar('installed'));
+  if (!plugins.length) {
+    const m = document.createElement('div');
+    m.className = 'adm-ep-inline-msg';
+    m.innerHTML = 'No plugins installed. Drop a folder in <code>plugins/</code> and Rescan, or Browse the depot.';
+    host.appendChild(m);
+    return;
+  }
+  for (const p of plugins) host.appendChild(_pluginCard(p));
+}
+
+function _pluginsToolbar(active) {
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;gap:6px;margin-bottom:10px;';
+  const on = 'background:var(--accent,#3a6);color:#fff;';
+  bar.innerHTML = `
+    <button class="admin-btn-sm" data-view="installed" style="${active === 'installed' ? on : ''}">Installed</button>
+    <button class="admin-btn-sm" data-view="browse" style="${active === 'browse' ? on : ''}">Browse depot</button>`;
+  bar.querySelector('[data-view="installed"]').addEventListener('click', loadPlugins);
+  bar.querySelector('[data-view="browse"]').addEventListener('click', loadBrowse);
+  return bar;
+}
+
+async function loadBrowse() {
+  const host = document.getElementById('plugins-list');
+  if (!host) return;
+  host.innerHTML = '';
+  host.appendChild(_pluginsToolbar('browse'));
+  const loading = document.createElement('div');
+  loading.className = 'adm-ep-inline-msg';
+  loading.textContent = 'Loading depot…';
+  host.appendChild(loading);
+  let data;
+  try { data = await fetch('/api/plugins/registry', { credentials: 'same-origin' }).then(r => r.json()); }
+  catch (_) { loading.textContent = 'Could not reach the plugin registry.'; return; }
+  if (!data || !data.plugins) { loading.textContent = (data && data.detail) || 'Registry unavailable.'; return; }
+  loading.remove();
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
+  actions.innerHTML = `
+    <button class="admin-btn-sm" id="depot-install-url">Install from URL…</button>
+    <button class="admin-btn-sm" id="depot-add-source">Add registry…</button>`;
+  actions.querySelector('#depot-install-url').addEventListener('click', _installFromUrlPrompt);
+  actions.querySelector('#depot-add-source').addEventListener('click', _addSourcePrompt);
+  host.appendChild(actions);
+  if (!data.plugins.length) {
+    const m = document.createElement('div'); m.className = 'adm-ep-inline-msg';
+    m.textContent = 'No plugins available from the configured registries.'; host.appendChild(m);
+  } else {
+    for (const e of data.plugins) host.appendChild(_browseCard(e));
+  }
+  host.appendChild(_sourcesFooter(data.sources || []));
+}
+
+function _sourcesFooter(sources) {
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const box = document.createElement('div');
+  box.style.cssText = 'margin-top:12px;border-top:1px solid var(--border,#333);padding-top:8px;';
+  box.innerHTML = '<div class="admin-toggle-sub" style="margin-bottom:4px;">Registry sources</div>';
+  for (const s of sources) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:.8em;opacity:.9;margin:2px 0;';
+    const status = s.ok
+      ? `<span style="color:var(--accent,#3a6);white-space:nowrap;">✓ ${s.count} plugin(s)</span>`
+      : `<span style="color:var(--red,#e66);white-space:nowrap;">✗ ${esc(s.error || 'unreachable')}</span>`;
+    row.innerHTML = `<code style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(s.url)}</code>${status}<button class="admin-btn-sm depot-rm-source" style="padding:1px 6px;">Remove</button>`;
+    row.querySelector('.depot-rm-source').addEventListener('click', () => _removeSource(s.url));
+    box.appendChild(row);
+  }
+  return box;
+}
+
+async function _addSourcePrompt() {
+  const url = prompt('Registry URL (https, or http to localhost):');
+  if (!url) return;
+  try {
+    const r = await fetch('/api/plugins/registries', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: url.trim() }) });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'Could not add source'); return; }
+  } catch (_) {}
+  loadBrowse();
+}
+
+async function _removeSource(url) {
+  await fetch('/api/plugins/registries', { method: 'DELETE', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) }).catch(() => {});
+  loadBrowse();
+}
+
+async function _installFromUrlPrompt() {
+  const url = prompt('Plugin zip URL (https):');
+  if (!url) return;
+  const id = prompt('Install as plugin id (folder name):');
+  if (!id) return;
+  try {
+    const r = await fetch('/api/plugins/install', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: url.trim(), id: id.trim() }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { alert(d.detail || 'Install failed'); return; }
+    alert('Installed: ' + (d.id || id));
+    loadBrowse();
+  } catch (e) { alert('Install failed: ' + e.message); }
+}
+
+function _browseCard(e) {
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const card = document.createElement('div');
+  card.className = 'admin-card';
+  card.style.cssText = 'margin-bottom:10px;padding:12px 14px;';
+  let action;
+  if (e.installed && e.update_available) action = `<button class="admin-btn-sm depot-install" data-id="${esc(e.id)}" style="background:var(--accent,#3a6);color:#fff;">Update</button>`;
+  else if (e.installed) action = `<button class="admin-btn-sm" disabled style="opacity:.6;">Installed</button>`;
+  else action = `<button class="admin-btn-sm depot-install" data-id="${esc(e.id)}" style="background:var(--accent,#3a6);color:#fff;">Install</button>`;
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;">${esc(e.name || e.id)} <span style="opacity:.5;font-weight:normal;font-size:.85em;">v${esc(e.version || '')}</span>
+          <span style="opacity:.5;font-weight:normal;font-size:.8em;border:1px solid var(--border,#444);border-radius:6px;padding:1px 6px;margin-left:6px;">${esc(e.category || 'General')}</span></div>
+        <div class="admin-toggle-sub" style="margin-top:2px;">${esc(e.description || '')}${e.author ? (' — by ' + esc(e.author)) : ''}</div>
+        ${e.homepage ? `<div style="margin-top:5px;"><a href="${esc(e.homepage)}" target="_blank" rel="noopener" style="font-size:.82em;color:var(--accent,#6af);text-decoration:none;">${/github\.com/i.test(e.homepage) ? 'View on GitHub' : 'Learn more'} ↗</a></div>` : ''}
+      </div>${action}
+    </div>
+    <div class="depot-msg" style="margin-top:6px;font-size:.85em;"></div>`;
+  const btn = card.querySelector('.depot-install');
+  if (btn) btn.addEventListener('click', () => _installFromRegistry(e.id, card));
+  return card;
+}
+
+async function _installFromRegistry(id, card) {
+  const btn = card.querySelector('.depot-install');
+  const msg = card.querySelector('.depot-msg');
+  if (btn) { btn.disabled = true; btn.textContent = 'Installing…'; }
+  try {
+    const r = await fetch('/api/plugins/install', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || d.error || ('HTTP ' + r.status));
+    if (msg) { msg.style.color = 'var(--accent,#3a6)'; msg.textContent = 'Installed ✓ — opening Installed…'; }
+    setTimeout(loadPlugins, 700);   // jump to the Installed view so controls (e.g. Start tunnel) show without a manual Rescan
+  } catch (e) {
+    if (msg) { msg.style.color = 'var(--red,#e66)'; msg.textContent = String(e.message || e); }
+    if (btn) { btn.disabled = false; btn.textContent = 'Install'; }
+  }
+}
+
+function _pluginCard(p) {
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const card = document.createElement('div');
+  card.className = 'admin-card';
+  card.style.cssText = 'margin-bottom:10px;padding:12px 14px;';
+  const err = p.status === 'error' ? `<div class="adm-ep-inline-msg" style="color:var(--red,#e66);margin-top:6px;">Failed to load: ${esc(p.error || '').split('\n').pop()}</div>` : '';
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;">${esc(p.name)} <span style="opacity:.5;font-weight:normal;font-size:.85em;">v${esc(p.version)}</span>
+          <span style="opacity:.5;font-weight:normal;font-size:.8em;border:1px solid var(--border,#444);border-radius:6px;padding:1px 6px;margin-left:6px;">${esc(p.category)}</span></div>
+        <div class="admin-toggle-sub" style="margin-top:2px;">${esc(p.description)}${p.author ? ' — by ' + esc(p.author) : ''}</div>
+      </div>
+      <button class="admin-btn-sm plugin-toggle" data-id="${esc(p.id)}" data-enabled="${p.enabled ? '1' : '0'}"
+        style="min-width:78px;${p.enabled ? 'background:var(--accent,#3a6);color:#fff;' : ''}">${p.enabled ? 'Enabled' : 'Disabled'}</button>
+    </div>${err}
+    <div class="plugin-controls" data-id="${esc(p.id)}" style="margin-top:8px;"></div>`;
+  card.querySelector('.plugin-toggle').addEventListener('click', (e) => _togglePlugin(e.currentTarget));
+  // Per-plugin control surface (e.g. the Cloudflare tunnel's start/stop/URL).
+  if (p.id === 'cloudflare_tunnel' && p.enabled && p.status === 'loaded') {
+    _renderTunnelControls(card.querySelector('.plugin-controls'));
+  }
+  return card;
+}
+
+async function _togglePlugin(btn) {
+  const id = btn.dataset.id, on = btn.dataset.enabled === '1';
+  btn.disabled = true;
+  try {
+    await fetch(`/api/plugins/${encodeURIComponent(id)}/${on ? 'disable' : 'enable'}`, { method: 'POST', credentials: 'same-origin' });
+  } catch (_) {}
+  btn.disabled = false;
+  loadPlugins();
+}
+
+async function _renderTunnelControls(host) {
+  if (!host) return;
+  host.innerHTML = '<div class="adm-ep-inline-msg">Checking tunnel…</div>';
+  const get = async () => (await fetch('/api/plugins/cloudflare-tunnel/status', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})));
+  const paint = (s) => {
+    const running = s && s.running;
+    host.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <button class="admin-btn-sm" id="tunnel-toggle" style="${running ? 'background:var(--red,#c44);color:#fff;' : 'background:var(--accent,#3a6);color:#fff;'}">${running ? 'Stop tunnel' : 'Start tunnel'}</button>
+        <span style="font-size:.85em;opacity:.85;">
+          ${running && s.url ? `Public URL: <a href="${s.url}" target="_blank" rel="noopener" style="color:var(--accent,#6ab7ff);font-weight:600;">${s.url}</a> <span style="opacity:.55;">(may take a few seconds to come online)</span>`
+            : running ? (s && s.provisioning ? 'almost ready… (bringing the tunnel online)' : 'starting… (fetching public URL)')
+            : (s && s.error ? '<span style="color:var(--red,#e66)">' + String(s.error) + '</span>' : 'stopped — auth still required when started')}
+        </span>
+      </div>`;
+    host.querySelector('#tunnel-toggle').addEventListener('click', async (e) => {
+      const _t = e.currentTarget;
+      _t.disabled = true; _t.style.opacity = '0.6'; _t.textContent = running ? 'Stopping…' : 'Starting…';
+      const _port = Number(location.port) || (location.protocol === 'https:' ? 443 : 80);
+      await fetch(`/api/plugins/cloudflare-tunnel/${running ? 'stop' : 'start'}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ port: _port }) }).catch(() => {});
+      // poll a few times so the URL shows up after starting
+      for (let i = 0; i < 32; i++) { await new Promise(r => setTimeout(r, 2000)); const s2 = await get(); if (s2.url || s2.error || (!running && !s2.running)) { paint(s2); break; } paint(s2); }
+    });
+  };
+  paint(await get());
 }
 
 /* ── Dragging ── */
@@ -4343,6 +4570,7 @@ export function open(tab) {
   document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
   syncAppearanceOpacity(activeTab === 'appearance');
   if (activeTab === 'ai') refreshAiModelEndpoints();
+  if (activeTab === 'plugins') loadPlugins();
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }
