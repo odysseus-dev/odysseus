@@ -113,9 +113,57 @@ export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
 # vLLM and helper scripts land here because /app is the non-root user's HOME.
 export PATH="/app/.local/bin:$PATH"
 
-# Run first-time setup as the app user so data/ files get the right ownership.
-# setup.py is idempotent — skips auth.json / .env if they already exist.
-# || true so a setup failure never prevents the container from starting.
+# Optional SOPS-encrypted secrets at rest. When /app/secrets.env is
+# present it MUST be SOPS-encrypted (detected via the `sops_version`
+# trailing line). On encrypted, we exec via `sops exec-env` so secrets
+# enter the process as env vars JIT — plaintext never touches the
+# container filesystem. setup.py runs INSIDE the wrap so it sees
+# secrets like ODYSSEUS_ADMIN_PASSWORD (reviewer feedback on #236).
+# On plaintext, we refuse to start — a plaintext secrets.env in /app
+# is almost always a packaging mistake. See SECURITY.md ("Encrypting
+# Secrets At Rest") for the user-side workflow.
+SECRETS_FILE="/app/secrets.env"
+if [ -f "$SECRETS_FILE" ]; then
+    if ! grep -q '^sops_version' "$SECRETS_FILE"; then
+        echo "entrypoint: $SECRETS_FILE exists but is not SOPS-encrypted; refusing to start" >&2
+        echo "entrypoint: encrypt it with: sops -e -i secrets.env" >&2
+        exit 1
+    fi
+    if ! command -v sops >/dev/null 2>&1; then
+        echo "entrypoint: $SECRETS_FILE is SOPS-encrypted but 'sops' is not on PATH" >&2
+        exit 1
+    fi
+    if [ -z "${SOPS_AGE_KEY_FILE:-}" ] && [ -z "${SOPS_AGE_KEY:-}" ]; then
+        echo "entrypoint: $SECRETS_FILE is SOPS-encrypted but neither SOPS_AGE_KEY_FILE nor SOPS_AGE_KEY is set" >&2
+        exit 1
+    fi
+    # `sops exec-env` takes a single command string (passed to sh -c),
+    # not argv passthrough — so we single-quote each positional arg to
+    # preserve word boundaries when sh re-tokenises.
+    cmd=""
+    for a in "$@"; do
+        qa=$(printf '%s' "$a" | sed "s/'/'\\\\''/g")
+        cmd="$cmd '$qa'"
+    done
+    # Chain: setup.py inherits the SOPS-injected env (so
+    # ODYSSEUS_ADMIN_PASSWORD reaches it), then exec replaces the shell
+    # with the real app. setup.py failure is non-fatal via `|| true` as
+    # in the non-SOPS path below.
+    #
+    # --same-process: without it, `sops exec-env` fork/waits and stays as
+    # PID 1, so `docker stop`'s SIGTERM hits sops instead of uvicorn —
+    # graceful shutdown gets skipped. With it, sops execve's into
+    # `sh -c "<chain>"`, the chain's final `exec uvicorn` then replaces
+    # sh, and uvicorn ends up as PID 1 / the signal target — matching
+    # the no-SOPS branch's signal contract.
+    exec "$GOSU_BIN" "$PUID:$PGID" sops exec-env --same-process "$SECRETS_FILE" \
+        "$PYTHON_BIN /app/setup.py || true; exec$cmd"
+fi
+
+# No-SOPS path. Run first-time setup as the app user so data/ files get
+# the right ownership. setup.py is idempotent — skips auth.json / .env
+# if they already exist. || true so a setup failure never prevents the
+# container from starting.
 "$GOSU_BIN" "$PUID:$PGID" "$PYTHON_BIN" /app/setup.py || true
 
 # Drop root and run the actual app. `gosu` is preferred over `su` /
