@@ -89,7 +89,7 @@ class SkillsManager:
         if not os.path.exists(self.usage_file):
             return {}
         try:
-            with open(self.usage_file) as f:
+            with open(self.usage_file, encoding="utf-8") as f:
                 d = json.load(f)
             return d if isinstance(d, dict) else {}
         except Exception:
@@ -101,7 +101,7 @@ class SkillsManager:
             atomic_write_json(self.usage_file, usage, indent=2)
         except Exception:
             tmp = self.usage_file + ".tmp"
-            with open(tmp, "w") as f:
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(usage, f, indent=2)
             os.replace(tmp, self.usage_file)
 
@@ -148,7 +148,7 @@ class SkillsManager:
 
     def _read_skill(self, path: str) -> Optional[Skill]:
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 text = f.read()
             return Skill.from_markdown(text, path=path)
         except Exception as e:
@@ -221,7 +221,7 @@ class SkillsManager:
         # Legacy JSON entries — surfaced as draft, not editable from new flow
         if os.path.exists(self.legacy_file):
             try:
-                with open(self.legacy_file) as f:
+                with open(self.legacy_file, encoding="utf-8") as f:
                     legacy = json.load(f)
                 if isinstance(legacy, list):
                     for row in legacy:
@@ -461,7 +461,7 @@ class SkillsManager:
             sk = self._read_skill(path)
             if sk and sk.name == name:
                 try:
-                    with open(path) as f:
+                    with open(path, encoding="utf-8") as f:
                         return f.read()
                 except Exception:
                     return None
@@ -481,7 +481,7 @@ class SkillsManager:
             if not os.path.isfile(target):
                 return None
             try:
-                with open(target) as f:
+                with open(target, encoding="utf-8") as f:
                     return f.read()
             except Exception:
                 return None

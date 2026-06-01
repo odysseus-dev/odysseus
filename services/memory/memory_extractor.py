@@ -45,7 +45,7 @@ def _fingerprint_entries(entries) -> str:
 def _load_tidy_state(memory_manager) -> dict:
     path = _tidy_state_path(memory_manager)
     try:
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except (FileNotFoundError, json.JSONDecodeError):
@@ -57,7 +57,7 @@ def _save_tidy_state(memory_manager, owner: Optional[str], fingerprint: str) -> 
     state = _load_tidy_state(memory_manager)
     state[owner or ""] = {"fingerprint": fingerprint}
     try:
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2)
     except OSError as e:
         logger.warning(f"Could not persist tidy fingerprint: {e}")

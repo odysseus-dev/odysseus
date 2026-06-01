@@ -12,6 +12,7 @@ import collections
 import json
 import logging
 import os
+import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
@@ -348,7 +349,9 @@ async def _direct_fallback(
             # can't take the whole server down. -I = isolated mode (skip
             # user site, no PYTHONPATH inheritance) for hygiene.
             proc = await asyncio.create_subprocess_exec(
-                "python3", "-I", "-c", content,
+                # Use the running interpreter — there is no `python3.exe` on
+                # Windows, which made the agent's `python` tool fail there.
+                (sys.executable or "python"), "-I", "-c", content,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,

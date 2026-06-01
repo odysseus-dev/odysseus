@@ -148,7 +148,7 @@ def load_integrations() -> List[Dict[str, Any]]:
     if not os.path.exists(DATA_FILE):
         return []
     try:
-        with open(DATA_FILE, "r") as f:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, IOError) as exc:
         log.error("Failed to load integrations: %s", exc)
@@ -158,7 +158,7 @@ def load_integrations() -> List[Dict[str, Any]]:
 def save_integrations(integrations: List[Dict[str, Any]]) -> None:
     """Persist integrations list to disk."""
     _ensure_data_dir()
-    with open(DATA_FILE, "w") as f:
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(integrations, f, indent=2)
 
 
@@ -409,7 +409,7 @@ def migrate_from_settings() -> None:
         return
 
     try:
-        with open(settings_path, "r") as f:
+        with open(settings_path, "r", encoding="utf-8") as f:
             settings = json.load(f)
     except (json.JSONDecodeError, IOError):
         return
@@ -436,7 +436,7 @@ def migrate_from_settings() -> None:
     # Clear migrated keys
     settings.pop("miniflux_url", None)
     settings.pop("miniflux_api_key", None)
-    with open(settings_path, "w") as f:
+    with open(settings_path, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
 
     log.info("Migrated Miniflux integration from settings.json")

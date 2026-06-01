@@ -1013,7 +1013,7 @@ class TaskScheduler:
             from pathlib import Path as _P
             integrations_file = _P("data/integrations.json")
             if integrations_file.exists():
-                integrations = json.loads(integrations_file.read_text())
+                integrations = json.loads(integrations_file.read_text(encoding="utf-8"))
                 for integ in integrations:
                     if not integ.get("enabled"):
                         continue
@@ -1551,6 +1551,8 @@ class TaskScheduler:
             pass
 
         max_tokens = int(get_setting("research_max_tokens", 8192))
+        extraction_timeout = int(get_setting("research_extraction_timeout_seconds", 90) or 90)
+        extraction_concurrency = int(get_setting("research_extraction_concurrency", 3) or 3)
 
         researcher = DeepResearcher(
             llm_endpoint=endpoint_url,
@@ -1559,6 +1561,8 @@ class TaskScheduler:
             max_rounds=8,
             max_time=600,  # 10 min for scheduled research
             max_report_tokens=max_tokens,
+            extraction_timeout=extraction_timeout,
+            extraction_concurrency=extraction_concurrency,
         )
 
         started_ts = time.time()
@@ -1612,7 +1616,7 @@ class TaskScheduler:
                 "task_id": task.id,
                 "task_name": task.name,
             }
-            (RESEARCH_DATA_DIR / f"{session_id}.json").write_text(json.dumps(payload))
+            (RESEARCH_DATA_DIR / f"{session_id}.json").write_text(json.dumps(payload), encoding="utf-8")
             try:
                 from src.event_bus import fire_event
                 fire_event("research_completed", task.owner or None)

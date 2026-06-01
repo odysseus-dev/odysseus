@@ -2776,6 +2776,7 @@ import * as Modals from './modalManager.js';
   }
 
   async function _sendEmail() {
+    const sendDocId = activeDocId;
     const to = document.getElementById('doc-email-to')?.value?.trim();
     const cc = document.getElementById('doc-email-cc')?.value?.trim() || '';
     const bcc = document.getElementById('doc-email-bcc')?.value?.trim() || '';
@@ -2804,6 +2805,7 @@ import * as Modals from './modalManager.js';
     const _sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
     let sendSpinner = null;
     let origBtnHtml = '';
+    let detachedEmailDoc = null;
     if (btn) {
       btn.disabled = true;
       origBtnHtml = btn.innerHTML;
@@ -2822,8 +2824,12 @@ import * as Modals from './modalManager.js';
           onAction: () => { canceled = true; },
         });
       }
-      await _sleep(1200);
+      await _sleep(1000);
+      if (!canceled) detachedEmailDoc = _detachActiveEmailForBackground(sendDocId);
+      await _sleep(200);
       if (canceled) {
+        _restoreDetachedEmailDoc(detachedEmailDoc);
+        detachedEmailDoc = null;
         if (uiModule) uiModule.showToast('Send canceled');
         return;
       }
@@ -2832,6 +2838,7 @@ import * as Modals from './modalManager.js';
       if (uiModule) {
         uiModule.showToast('Message sent', {
           duration: 2200,
+          leadingIcon: 'check',
           action: 'Undo',
           actionHint: 'undo send',
           onAction: () => { undone = true; },
@@ -2839,10 +2846,12 @@ import * as Modals from './modalManager.js';
       }
       await _sleep(2200);
       if (undone) {
+        _restoreDetachedEmailDoc(detachedEmailDoc);
+        detachedEmailDoc = null;
         if (uiModule) uiModule.showToast('Send undone');
         return;
       }
-      if (uiModule) uiModule.showToast('Sending...', 15000);
+      if (uiModule) uiModule.showToast('Sending...', 2000);
 
       const activeAccountId = await _resolveComposeSendAccountId();
       const res = await fetch(`${API_BASE}/api/email/send`, {
@@ -2858,18 +2867,10 @@ import * as Modals from './modalManager.js';
       });
       const data = await res.json();
       if (data.success) {
-        // Satisfying send effect: fly the email doc upward with fade
-        const docPane = document.getElementById('doc-pane') || document.querySelector('.doc-pane');
-        const emailHeader = document.getElementById('doc-email-header');
-        const editorWrap = document.getElementById('doc-editor-wrap');
-        const target = emailHeader?.parentElement || docPane;
-        if (target) {
-          target.classList.add('email-send-fx');
-          setTimeout(() => target.classList.remove('email-send-fx'), 700);
-        }
         if (uiModule) {
           uiModule.showToast('Message sent', {
             duration: 7000,
+            leadingIcon: 'check',
             action: 'View Message',
             onAction: () => {
               import('./emailLibrary.js').then(mod => {
@@ -2908,22 +2909,31 @@ import * as Modals from './modalManager.js';
           // Tell the inbox to refresh so the answered state shows
           window.dispatchEvent(new CustomEvent('email-answered', { detail: { uid: sourceUid } }));
         }
-        // Delete the document after successful send
-        if (activeDocId) {
-          fetch(`${API_BASE}/api/document/${activeDocId}`, { method: 'DELETE' }).catch(() => {});
-          docs.delete(activeDocId);
-          const remaining = Array.from(docs.keys());
-          if (remaining.length > 0) {
-            switchToDoc(remaining[0]);
+        // Delete the compose document after successful send. It was usually
+        // already detached from the visible tabs so sending can finish in the
+        // background while the user continues in the next tab.
+        if (sendDocId) {
+          fetch(`${API_BASE}/api/document/${sendDocId}`, { method: 'DELETE' }).catch(() => {});
+          const wasActiveSentDoc = activeDocId === sendDocId;
+          docs.delete(sendDocId);
+          if (wasActiveSentDoc) {
+            activeDocId = null;
+            const nextId = _visibleDocIdsForCurrentSession().find(id => docs.has(id));
+            if (nextId) switchToDoc(nextId);
+            else closePanel();
           } else {
-            closePanel();
+            renderTabs();
           }
-          renderTabs();
+          _syncDocIndicator();
         }
       } else {
+        _restoreDetachedEmailDoc(detachedEmailDoc);
+        detachedEmailDoc = null;
         if (uiModule) uiModule.showError(data.error || 'Failed to send');
       }
     } catch (e) {
+      _restoreDetachedEmailDoc(detachedEmailDoc);
+      detachedEmailDoc = null;
       if (uiModule) uiModule.showError(e?.message ? `Failed to send email: ${e.message}` : 'Failed to send email');
     } finally {
       if (sendSpinner) sendSpinner.destroy();
@@ -2984,6 +2994,48 @@ import * as Modals from './modalManager.js';
     if (!activeDocId) return;
     // Just close — the Draft button handles saving explicitly
     _closeWithoutDeleting(true);
+  }
+
+  function _visibleDocIdsForCurrentSession() {
+    const curSession = sessionModule?.getCurrentSessionId() || '';
+    const ids = [];
+    for (const [id, doc] of docs) {
+      if (doc.sessionId && curSession && doc.sessionId !== curSession) continue;
+      ids.push(id);
+    }
+    return ids;
+  }
+
+  function _detachActiveEmailForBackground(docId) {
+    if (!docId || !docs.has(docId)) return null;
+    saveCurrentToMap();
+    const doc = docs.get(docId);
+    const snapshot = { id: docId, doc: { ...doc } };
+    saveDocument({ silent: true }).catch(() => {});
+
+    const visibleBefore = _visibleDocIdsForCurrentSession();
+    const idx = visibleBefore.indexOf(docId);
+    docs.delete(docId);
+    if (activeDocId === docId) activeDocId = null;
+
+    const remaining = visibleBefore.filter(id => id !== docId && docs.has(id));
+    const nextId = remaining[idx] || remaining[idx - 1] || remaining[0] || null;
+    if (nextId) {
+      switchToDoc(nextId);
+    } else {
+      closePanel();
+    }
+    renderTabs();
+    _syncDocIndicator();
+    return snapshot;
+  }
+
+  function _restoreDetachedEmailDoc(snapshot) {
+    if (!snapshot || !snapshot.id || !snapshot.doc) return;
+    if (!docs.has(snapshot.id)) docs.set(snapshot.id, snapshot.doc);
+    _ensureDocPaneMounted();
+    switchToDoc(snapshot.id);
+    _syncDocIndicator();
   }
 
   function _closeWithoutDeleting(deleteDoc = false) {

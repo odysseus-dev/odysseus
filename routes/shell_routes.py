@@ -6,11 +6,17 @@ import logging
 import os
 import shlex
 import shutil
+import subprocess
 import uuid
 import tempfile
 from pathlib import Path
 from typing import Dict, Any
 
+# POSIX-only: `pty`/`fcntl` transitively import `termios`, which does NOT exist
+# on Windows, so importing them unconditionally crashed app startup there
+# (ModuleNotFoundError: termios — issues #140/#92/#63/#149/#150). The PTY code
+# path is only reachable on POSIX; Windows uses pipe streaming + a detached-job
+# fallback for the tmux feature (see _generate_win_detached).
 try:
     import fcntl
     import pty
@@ -24,6 +30,12 @@ else:
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from core.platform_compat import (
+    IS_WINDOWS,
+    detached_popen_kwargs,
+    find_bash,
+)
 
 
 def _require_admin(request: Request):
@@ -78,11 +90,25 @@ class ShellExecRequest(BaseModel):
     use_tmux: bool = False      # run in tmux session (survives browser disconnect)
 
 
+async def _create_shell(command: str, **kwargs):
+    """Spawn a shell subprocess for `command`.
+
+    POSIX: /bin/sh via create_subprocess_shell (unchanged behaviour).
+    Windows: prefer a real bash (Git Bash/WSL) so bash-syntax commands behave
+    the same as on Linux; fall back to cmd.exe when no bash is installed.
+    """
+    if IS_WINDOWS:
+        bash = find_bash()
+        if bash:
+            return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
+    return await asyncio.create_subprocess_shell(command, **kwargs)
+
+
 async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, Any]:
     """Run a shell command and return stdout/stderr/exit_code."""
     proc = None
     try:
-        proc = await asyncio.create_subprocess_shell(
+        proc = await _create_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -355,6 +381,93 @@ async def _generate_tmux(cmd: str, request: Request):
         pass
 
 
+async def _generate_win_detached(cmd: str, request: Request):
+    """Windows stand-in for the tmux path (issues #84/#162).
+
+    tmux doesn't exist on Windows, so we run the command in a *detached* child
+    (DETACHED_PROCESS — survives browser disconnect, same as the tmux session)
+    that writes output to a log file, and tail that log over SSE. Prefers bash
+    (Git Bash) for command-syntax parity; falls back to cmd.exe. There's no
+    `tmux attach` equivalent, but the "keeps running if you disconnect" contract
+    holds, which is the point of the feature for long Cookbook downloads."""
+    TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    session_id = f"cookbook-{uuid.uuid4().hex[:8]}"
+    log_path = TMUX_LOG_DIR / f"{session_id}.log"
+    exit_path = TMUX_LOG_DIR / f"{session_id}.exit"
+
+    bash = find_bash()
+    if bash:
+        script_path = TMUX_LOG_DIR / f"{session_id}.sh"
+        script_path.write_text(
+            f"{cmd} > {shlex.quote(str(log_path))} 2>&1\n"
+            f"echo $? > {shlex.quote(str(exit_path))}\n",
+            encoding="utf-8",
+        )
+        argv = [bash, str(script_path)]
+    else:
+        script_path = TMUX_LOG_DIR / f"{session_id}.cmd"
+        # cmd.exe wrapper: run, redirect all output to the log, record exit code.
+        script_path.write_text(
+            "@echo off\r\n"
+            f'call {cmd} > "{log_path}" 2>&1\r\n'
+            f'echo %ERRORLEVEL%> "{exit_path}"\r\n',
+            encoding="utf-8",
+        )
+        argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
+
+    try:
+        subprocess.Popen(
+            argv,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            **detached_popen_kwargs(),
+        )
+    except Exception as e:
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': f'Failed to launch background job: {e}'})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
+        return
+
+    yield f"data: {json.dumps({'stream': 'stdout', 'data': f'Started background job: {session_id}'})}\n\n"
+
+    lines_sent = 0
+    exit_code = None
+    while True:
+        if await request.is_disconnected():
+            yield f"data: {json.dumps({'stream': 'stdout', 'data': f'Disconnected. Background job {session_id} continues running.'})}\n\n"
+            return
+        try:
+            if log_path.exists():
+                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                for line in lines[lines_sent:]:
+                    yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
+                lines_sent = len(lines)
+        except Exception as e:
+            logger.debug("win detached log read error: %s", e)
+
+        if exit_path.exists():
+            # Drain any final lines, then read the recorded exit code.
+            await asyncio.sleep(0.3)
+            try:
+                if log_path.exists():
+                    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    for line in lines[lines_sent:]:
+                        yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
+                    lines_sent = len(lines)
+                exit_code = int((exit_path.read_text(encoding="utf-8", errors="replace").strip() or "0"))
+            except Exception:
+                exit_code = 0
+            break
+        await asyncio.sleep(1.0)
+
+    yield f"data: {json.dumps({'exit_code': exit_code})}\n\n"
+    for p in (log_path, exit_path, script_path):
+        try:
+            p.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def setup_shell_routes() -> APIRouter:
     router = APIRouter(tags=["shell"])
 
@@ -393,22 +506,24 @@ def setup_shell_routes() -> APIRouter:
         )
 
         if use_tmux:
-            return StreamingResponse(
-                _generate_tmux(cmd, request),
-                media_type="text/event-stream",
-            )
+            # tmux is POSIX-only; Windows uses a detached-process + logfile tail
+            # that preserves the "survives disconnect" behaviour.
+            gen = _generate_win_detached(cmd, request) if IS_WINDOWS else _generate_tmux(cmd, request)
+            return StreamingResponse(gen, media_type="text/event-stream")
 
-        if use_pty:
+        if use_pty and not IS_WINDOWS:
             return StreamingResponse(
                 _generate_pty(cmd, timeout, request),
                 media_type="text/event-stream",
             )
+        # Windows has no PTY; fall through to pipe streaming below (output still
+        # streams line-by-line, just without live in-place progress-bar redraws).
 
         async def generate():
             proc = None
             reader_tasks = []
             try:
-                proc = await asyncio.create_subprocess_shell(
+                proc = await _create_shell(
                     cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,

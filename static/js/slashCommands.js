@@ -47,13 +47,14 @@ const SETUP_PROVIDER_URLS = {
   deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/v1' },
   openai: { name: 'OpenAI', url: 'https://api.openai.com/v1' },
   openrouter: { name: 'OpenRouter', url: 'https://openrouter.ai/api/v1' },
+  ollama: { name: 'Ollama Cloud', url: 'https://ollama.com/api' },
   xai: { name: 'xAI', url: 'https://api.x.ai/v1' },
   anthropic: { name: 'Anthropic', url: 'https://api.anthropic.com/v1' },
   groq: { name: 'Groq', url: 'https://api.groq.com/openai/v1' },
   gemini: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
   google: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
 };
-const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'xai', 'anthropic', 'groq', 'gemini'];
+const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini'];
 const SETUP_PROVIDER_HINT = SETUP_PROVIDER_NAMES.slice(0, -1).join(', ') + ', or ' + SETUP_PROVIDER_NAMES[SETUP_PROVIDER_NAMES.length - 1];
 const SETUP_LOCAL_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>';
 const SETUP_API_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
@@ -67,6 +68,8 @@ function _setupProviderFromInput(input) {
     openai: 'openai',
     chatgpt: 'openai',
     openrouter: 'openrouter',
+    ollama: 'ollama',
+    ollamacloud: 'ollama',
     anthropic: 'anthropic',
     claude: 'anthropic',
     groq: 'groq',
@@ -84,6 +87,7 @@ function _extractSetupProviderCredential(input) {
   const providerAliases = [
     ['deepseek ai', 'deepseek'], ['deepseek', 'deepseek'],
     ['open router', 'openrouter'], ['openrouter', 'openrouter'],
+    ['ollama cloud', 'ollama'], ['ollama', 'ollama'],
     ['open ai', 'openai'], ['openai', 'openai'], ['chatgpt', 'openai'],
     ['anthropic', 'anthropic'], ['claude', 'anthropic'],
     ['groq', 'groq'],
@@ -488,8 +492,13 @@ function detectProvider(input) {
     for (const suffix of ['/models', '/chat/completions', '/completions', '/v1/messages']) {
       if (url.endsWith(suffix)) url = url.slice(0, -suffix.length).replace(/\/+$/, '');
     }
+    url = url.replace(/\/api\/(chat|tags|generate)\/?$/i, '/api');
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname.endsWith('ollama.com')) url = 'https://ollama.com/api';
+    } catch(e) {}
     // Add /v1 if bare host:port
-    if (/^https?:\/\/[^/]+$/.test(url) && !url.includes('api.')) url += '/v1';
+    if (/^https?:\/\/[^/]+$/.test(url) && !url.includes('api.') && !url.includes('ollama.com')) url += '/v1';
     return { base_url: url, api_key: '', name: '' };
   }
   // Known key patterns
@@ -505,6 +514,13 @@ function detectProvider(input) {
     return { ambiguous: true, api_key: input };
   }
   return null;
+}
+
+function setupChatUrlForEndpoint(detected) {
+  const base = (detected.base_url || '').replace(/\/+$/, '');
+  if (detected.name === 'Anthropic') return base.replace(/\/v1$/, '') + '/v1/messages';
+  if (base.includes('ollama.com')) return 'https://ollama.com/api/chat';
+  return base + '/chat/completions';
 }
 
 async function connectDetectedSetupEndpoint(detected) {
@@ -555,7 +571,7 @@ async function connectDetectedSetupEndpoint(detected) {
       await typewriterReply(`Found ${count} model${count > 1 ? 's' : ''} on ${providerLabel}. Starting a chat...`);
       if (modelsModule) await modelsModule.refreshModels(true);
       const firstModel = data.models[0];
-      const chatUrl = detected.base_url + (detected.name === 'Anthropic' ? '/v1/messages' : '/chat/completions');
+      const chatUrl = setupChatUrlForEndpoint(detected);
       if (sessionModule) {
         await sessionModule.createDirectChat(chatUrl, firstModel, data.id);
       }

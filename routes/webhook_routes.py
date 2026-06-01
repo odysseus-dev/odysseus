@@ -157,6 +157,7 @@ def setup_webhook_routes(
         "groq": "https://api.groq.com/openai/v1",
         "together": "https://api.together.xyz/v1",
         "openrouter": "https://openrouter.ai/api/v1",
+        "ollama": "https://ollama.com/api",
         "fireworks": "https://api.fireworks.ai/inference/v1",
     }
 
@@ -203,6 +204,7 @@ def setup_webhook_routes(
         from core.models import ChatMessage
         from src.llm_core import llm_call_async
         from core.database import ModelEndpoint
+        from src.endpoint_resolver import build_chat_url, build_headers, build_models_url, normalize_base
 
         message = body.message.strip()
         if not message:
@@ -244,7 +246,8 @@ def setup_webhook_routes(
                     "Could not auto-detect provider. Pass base_url (e.g. 'https://api.deepseek.com/v1') "
                     "or provider ('deepseek', 'openai', 'groq', etc.)")
 
-            endpoint_url = base_url + "/chat/completions"
+            base_url = normalize_base(base_url)
+            endpoint_url = build_chat_url(base_url)
 
             if not session_manager:
                 raise HTTPException(500, "Session manager not available")
@@ -254,7 +257,7 @@ def setup_webhook_routes(
                 session_id=sid, name="API Chat", endpoint_url=endpoint_url,
                 model=model, owner=token_owner,
             )
-            sess.headers = {"Authorization": f"Bearer {api_key}"}
+            sess.headers = build_headers(api_key, base_url)
             session_manager.save_sessions()
             session_id = sid
 
@@ -271,18 +274,26 @@ def setup_webhook_routes(
                     "No session, api_key, or configured endpoints. "
                     "Pass api_key + model, or configure an endpoint in Admin.")
 
-            endpoint_url = ep.base_url.rstrip("/") + "/chat/completions"
+            base_url = normalize_base(ep.base_url)
+            endpoint_url = build_chat_url(base_url)
             model = body.model or "auto"
             api_key = ep.api_key
 
             if model == "auto":
                 try:
                     async with httpx.AsyncClient(timeout=5) as client:
-                        models_url = ep.base_url.rstrip("/") + "/models"
-                        hdrs = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+                        models_url = build_models_url(base_url)
+                        hdrs = build_headers(api_key, base_url)
                         resp = await client.get(models_url, headers=hdrs)
                         resp.raise_for_status()
-                        ids = [m.get("id") for m in (resp.json().get("data") or []) if m.get("id")]
+                        data = resp.json()
+                        ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+                        if not ids:
+                            ids = [
+                                m.get("name") or m.get("model")
+                                for m in (data.get("models") or [])
+                                if m.get("name") or m.get("model")
+                            ]
                         model = ids[0] if ids else "auto"
                 except Exception:
                     raise HTTPException(500, "Could not discover models from endpoint")
@@ -296,7 +307,7 @@ def setup_webhook_routes(
                 model=model, owner=token_owner,
             )
             if api_key:
-                sess.headers = {"Authorization": f"Bearer {api_key}"}
+                sess.headers = build_headers(api_key, base_url)
                 session_manager.save_sessions()
             session_id = sid
 

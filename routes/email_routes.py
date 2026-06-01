@@ -456,7 +456,8 @@ def setup_email_routes():
     _IMAP_POOL = {}   # account_id → (conn, last_used_at)
     _IMAP_IDLE_MAX = 60.0
     _WARMING_READS = set()
-    _WARM_READ_LIMIT = 24
+    _WARM_READ_LIMIT = 3
+    _WARM_MAX_BYTES = 128 * 1024
     _WARM_RECENT_SECONDS = 7 * 24 * 60 * 60
     _pool_lock = _threading.Lock()
 
@@ -1322,9 +1323,16 @@ def setup_email_routes():
                 epoch = 0
             if epoch and now - epoch > _WARM_RECENT_SECONDS:
                 continue
+            try:
+                size = int((em or {}).get("size") or 0)
+            except Exception:
+                size = 0
+            if size > _WARM_MAX_BYTES:
+                continue
             ck = _read_cache_key(account_id, folder, uid, owner=owner)
             if _read_cache_get(ck) is not None or ck in _WARMING_READS:
                 continue
+            _WARMING_READS.add(ck)
             selected.append((uid, ck))
             if len(selected) >= _WARM_READ_LIMIT:
                 break
@@ -1334,8 +1342,8 @@ def setup_email_routes():
         async def _warm():
             for uid, ck in selected:
                 if _read_cache_get(ck) is not None:
+                    _WARMING_READS.discard(ck)
                     continue
-                _WARMING_READS.add(ck)
                 try:
                     result = await _asyncio.to_thread(_read_email_sync, uid, folder, account_id, owner, False)
                     if result and not result.get("error"):
@@ -2826,7 +2834,7 @@ def setup_email_routes():
         if not path.exists():
             return {"total_unread": 0, "total_urgent": 0, "max_score": 0, "per_uid": {}}
         try:
-            data = _json.loads(path.read_text())
+            data = _json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return {"total_unread": 0, "total_urgent": 0, "max_score": 0, "per_uid": {}}
         # Drop `notified_uids` from the payload — it's an internal scheduler

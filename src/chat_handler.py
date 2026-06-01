@@ -154,7 +154,7 @@ class ChatHandler:
         if att_ids:
             uploads_db_path = os.path.join(UPLOAD_DIR, "uploads.json")
             try:
-                with open(uploads_db_path, "r") as f:
+                with open(uploads_db_path, "r", encoding="utf-8") as f:
                     _all_files = json.load(f)
                 files_by_id = {fi["id"]: fi for fi in _all_files.values() if "id" in fi}
             except (FileNotFoundError, json.JSONDecodeError):
@@ -193,7 +193,7 @@ class ChatHandler:
                         _vcache = os.path.join(UPLOAD_DIR, ".vision", att_id + ".txt")
                         if os.path.exists(_vcache):
                             try:
-                                with open(_vcache) as _vf:
+                                with open(_vcache, encoding="utf-8") as _vf:
                                     _vtext = _vf.read().strip()
                                 if _vtext:
                                     enhanced_message += f"\n[User-corrected caption / OCR for this image — treat as authoritative]:\n{_vtext}"
@@ -212,7 +212,7 @@ class ChatHandler:
                         vl_model = get_setting("vision_model", "") or ""
                         if os.path.exists(_vcache):
                             try:
-                                with open(_vcache) as _vf:
+                                with open(_vcache, encoding="utf-8") as _vf:
                                     cached_desc = _vf.read().strip()
                                 if cached_desc and not cached_desc.startswith("["):
                                     vl_desc = cached_desc
@@ -225,7 +225,7 @@ class ChatHandler:
                             if vl_desc and not vl_desc.startswith("["):
                                 try:
                                     os.makedirs(os.path.join(UPLOAD_DIR, ".vision"), exist_ok=True)
-                                    with open(_vcache, "w") as _vf:
+                                    with open(_vcache, "w", encoding="utf-8") as _vf:
                                         _vf.write(vl_desc)
                                 except Exception:
                                     pass

@@ -68,7 +68,7 @@ class AuthManager:
     def _load(self):
         try:
             if os.path.exists(self.auth_path):
-                with open(self.auth_path, "r") as f:
+                with open(self.auth_path, "r", encoding="utf-8") as f:
                     self._config = json.load(f)
                 logger.info("Auth config loaded")
             else:
@@ -82,7 +82,7 @@ class AuthManager:
         """Load persisted session tokens from disk, pruning expired ones."""
         try:
             if os.path.exists(self._sessions_path):
-                with open(self._sessions_path, "r") as f:
+                with open(self._sessions_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 now = time.time()
                 self._sessions = {k: v for k, v in data.items() if v.get("expiry", 0) > now}

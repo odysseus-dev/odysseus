@@ -19,12 +19,22 @@ GPU_BANDWIDTH = {
     "6950 xt": 576, "6900 xt": 512, "6800 xt": 512, "6800": 512, "6700 xt": 384, "6600 xt": 256, "6600": 224,
     "mi300x": 5300, "mi300": 5300, "mi250x": 3277, "mi250": 3277, "mi210": 1638, "mi100": 1229,
     "9070 xt": 624, "9070": 488,
+    # Apple Silicon unified-memory bandwidth (GB/s). Keyed off the chip name
+    # reported by sysctl machdep.cpu.brand_string (e.g. "Apple M4 Max"). Listed
+    # before the bare "m_" keys matters less than length-sorting (done below),
+    # which guarantees "m4 max" is tried before "m4".
+    "m1 ultra": 800, "m1 max": 400, "m1 pro": 200, "m1": 68,
+    "m2 ultra": 800, "m2 max": 400, "m2 pro": 200, "m2": 100,
+    "m3 ultra": 800, "m3 max": 300, "m3 pro": 150, "m3": 100,
+    "m4 max": 410, "m4 pro": 273, "m4": 120,
 }
 
 # Pre-sort keys by length descending for correct substring matching
 _BW_KEYS_SORTED = sorted(GPU_BANDWIDTH.keys(), key=len, reverse=True)
 
-FALLBACK_K = {"cuda": 220, "rocm": 180, "cpu_x86": 70, "cpu_arm": 90}
+# metal: backstop for Apple Silicon chips not in GPU_BANDWIDTH (e.g. a future
+# M5) — the named chips above take the accurate bandwidth path instead.
+FALLBACK_K = {"cuda": 220, "rocm": 180, "metal": 150, "cpu_x86": 70, "cpu_arm": 90}
 
 USE_CASE_WEIGHTS = {
     "general":    (0.45, 0.30, 0.15, 0.10),
@@ -411,17 +421,28 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     # If user picked a prequantized format (AWQ/FP8/GPTQ), filter to only those models
     filter_native = quant and any(quant.startswith(p) for p in ("AWQ-", "GPTQ-", "FP8"))
 
-    # MLX-quantized models only run on Apple Silicon (Metal). Exclude them on
-    # every other backend (CUDA / ROCm / CPU) so Linux/Windows users don't see
-    # unrunnable suggestions.
     system_backend = (system.get("backend") or "").lower()
     apple_silicon = system_backend in ("mps", "metal", "apple")
 
     for m in models:
         native_q = m.get("quantization", "")
 
-        # Drop MLX models on non-Apple hardware
-        if not apple_silicon and native_q.startswith("mlx-"):
+        # MLX-quantized models need the MLX runtime (mlx_lm), which Odysseus
+        # doesn't generate serve commands for — only llama.cpp/Ollama (Metal)
+        # and vLLM/SGLang (CUDA). MLX repos ship no GGUF alternative, so they're
+        # unrunnable on every backend we support. Always drop them, on Apple
+        # Silicon too, so the Cookbook never recommends a model it can't serve.
+        if native_q.startswith("mlx-"):
+            continue
+
+        # On Apple Silicon the only serving engines are llama.cpp and Ollama,
+        # both GGUF-only (vLLM/SGLang are CUDA/ROCm and don't run on macOS). So
+        # a model is Metal-servable ONLY if it ships a real GGUF. Drop everything
+        # else — raw safetensors repos (which the catalog still tags with a
+        # default GGUF quant) and vLLM-only AWQ/GPTQ/FP8 builds alike. Without
+        # this the Cookbook recommends models the Mac can't run; on CUDA these
+        # stay visible because vLLM serves safetensors directly.
+        if apple_silicon and not (m.get("is_gguf") or m.get("gguf_sources")):
             continue
 
         # Format filter: AWQ tab → only AWQ models, FP8 tab → only FP8 models

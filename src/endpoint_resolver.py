@@ -101,6 +101,9 @@ def normalize_base(url: str) -> str:
     for suffix in ["/models", "/chat/completions", "/completions", "/v1/messages"]:
         if url.endswith(suffix):
             url = url[: -len(suffix)].rstrip("/")
+    for suffix in ["/chat", "/tags", "/generate"]:
+        if url.endswith("/api" + suffix):
+            url = url[: -len(suffix)].rstrip("/")
     return url
 
 
@@ -110,6 +113,20 @@ def _anthropic_api_root(base: str) -> str:
     host = urlparse(base).hostname or ""
     if host.endswith("anthropic.com") and base.endswith("/v1"):
         return base[:-3].rstrip("/")
+    return base
+
+
+def _ollama_api_root(base: str) -> str:
+    """Return the native Ollama API root, adding /api for ollama.com hosts."""
+    base = (base or "").strip().rstrip("/")
+    parsed = urlparse(base)
+    host = parsed.hostname or ""
+    path = (parsed.path or "").rstrip("/")
+    if path.endswith("/api"):
+        return base
+    if host.endswith("ollama.com"):
+        root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
+        return root.rstrip("/") + "/api"
     return base
 
 
@@ -124,7 +141,21 @@ def build_chat_url(base: str) -> str:
         return base
     if provider == "anthropic" or host.endswith("anthropic.com"):
         return _anthropic_api_root(base) + "/v1/messages"
+    if provider == "ollama" or host.endswith("ollama.com"):
+        return _ollama_api_root(base) + "/chat"
     return base + "/chat/completions"
+
+
+def build_models_url(base: str) -> str:
+    """Return the provider-specific model-list endpoint URL for a base."""
+    base = resolve_url(base)
+    provider = _detect_provider(base)
+    host = urlparse(base).hostname or ""
+    if provider == "anthropic" or host.endswith("anthropic.com"):
+        return _anthropic_api_root(base) + "/v1/models"
+    if provider == "ollama" or host.endswith("ollama.com"):
+        return _ollama_api_root(base) + "/tags"
+    return base + "/models"
 
 
 def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:

@@ -402,14 +402,25 @@ function _acct() {
 // results and __scheduled__ are deliberately not cached.
 const _libListCache = new Map();
 const _LIB_CACHE_MAX = 24;
+let _libPrewarmTimer = null;
+let _libPrewarmPromise = null;
+let _libLastPrewarmAt = 0;
 
-function _libCacheKey() {
+function _libCacheKeyFor(accountId, folder, filter, hasAttachments) {
   return [
+    accountId || '',
+    folder || '',
+    filter || '',
+    hasAttachments ? 1 : 0,
+  ].join('|');
+}
+function _libCacheKey() {
+  return _libCacheKeyFor(
     state._libAccountId || '',
     state._libFolder || '',
     state._libFilter || '',
-    state._libHasAttachments ? 1 : 0,
-  ].join('|');
+    state._libHasAttachments
+  );
 }
 function _libCacheGet(key) { return _libListCache.get(key) || null; }
 function _libCachePut(key, value) {
@@ -420,6 +431,48 @@ function _libCachePut(key, value) {
     const oldest = _libListCache.keys().next().value;
     _libListCache.delete(oldest);
   }
+}
+
+export function prewarmEmailLibrary({ delay = 2500 } = {}) {
+  if (_libPrewarmTimer || _libPrewarmPromise) return;
+  const elapsed = Date.now() - _libLastPrewarmAt;
+  if (elapsed >= 0 && elapsed < 60000) return;
+  _libPrewarmTimer = setTimeout(() => {
+    _libPrewarmTimer = null;
+    _libPrewarmPromise = _prewarmDefaultEmailView()
+      .catch(() => {})
+      .finally(() => { _libPrewarmPromise = null; });
+  }, Math.max(0, Number(delay) || 0));
+}
+
+async function _prewarmDefaultEmailView() {
+  if (state._libOpen) return;
+  _libLastPrewarmAt = Date.now();
+  const folder = 'INBOX';
+  const filter = 'all';
+  const accountId = state._libAccountId || '';
+  const ck = _libCacheKeyFor(accountId, folder, filter, false);
+  if (_libCacheGet(ck)) return;
+
+  // The accounts request is cheap and warms the account strip for first open.
+  // Then the list request warms both the client cache and the backend IMAP/read
+  // cache. Failure stays silent: no configured mail should not nag on app boot.
+  try {
+    const accountsRes = await fetch(`${API_BASE}/api/email/accounts`, { credentials: 'same-origin' });
+    if (accountsRes.ok) {
+      const accountsData = await accountsRes.json().catch(() => ({}));
+      if (Array.isArray(accountsData.accounts)) state._libAccounts = accountsData.accounts;
+    }
+  } catch (_) {}
+
+  const accountQS = accountId ? `&account_id=${encodeURIComponent(accountId)}` : '';
+  const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folder)}${accountQS}&limit=100&offset=0&filter=${filter}`, {
+    credentials: 'same-origin',
+  });
+  if (!res.ok) return;
+  const data = await res.json().catch(() => null);
+  if (!data || data.error) return;
+  _libCachePut(ck, { emails: data.emails || [], total: data.total || 0 });
 }
 function _libCacheWriteBack() {
   // After a local mutation that already updated state._libEmails
@@ -1820,12 +1873,24 @@ function _prefetchAdjacentEmails(card, count = 3) {
 
 async function _toggleCardPreview(card, em) {
   const grid = card.closest('.doclib-grid');
+  const gridRect = grid?.getBoundingClientRect?.();
+  const modal = document.getElementById('email-lib-modal');
+  const modalContent = card.closest('.modal-content');
+  const modalRect = modalContent?.getBoundingClientRect?.();
+  const currentRect = card.getBoundingClientRect();
+  const stableOpenHeight = Math.max(
+    currentRect.height || 0,
+    (modalRect?.height || 0) - 84,
+    Math.min(Math.max(260, window.innerHeight * 0.56), gridRect?.height || window.innerHeight)
+  );
 
   // Already expanded — collapse
   if (card.classList.contains('email-card-expanded')) {
     card.classList.remove('email-card-expanded');
     card.classList.remove('doclib-card-expanded');
-    document.getElementById('email-lib-modal')?.classList.remove('email-reading');
+    card.style.minHeight = '';
+    modal?.classList.remove('email-reading');
+    modal?.style.removeProperty('--email-reading-modal-min-h');
     const reader = card.querySelector('.email-card-reader');
     if (reader) reader.remove();
     return;
@@ -1836,6 +1901,7 @@ async function _toggleCardPreview(card, em) {
     grid.querySelectorAll('.email-card-expanded').forEach(c => {
       c.classList.remove('email-card-expanded');
       c.classList.remove('doclib-card-expanded');
+      c.style.minHeight = '';
       const r = c.querySelector('.email-card-reader');
       if (r) r.remove();
     });
@@ -1843,6 +1909,7 @@ async function _toggleCardPreview(card, em) {
 
   card.classList.add('email-card-expanded');
   card.classList.add('doclib-card-expanded');
+  card.style.minHeight = `${Math.round(stableOpenHeight)}px`;
   if (!em.is_read) {
     _syncEmailReadState(em.uid, true);
     fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' })
@@ -1851,11 +1918,15 @@ async function _toggleCardPreview(card, em) {
   // Class hook on the modal so the header-hide / padding rules work on
   // browsers without :has() support (Firefox mobile) — the :has() versions
   // below stay as the desktop path.
-  document.getElementById('email-lib-modal')?.classList.add('email-reading');
+  if (modal && modalRect?.height) {
+    modal.style.setProperty('--email-reading-modal-min-h', `${Math.round(modalRect.height)}px`);
+  }
+  modal?.classList.add('email-reading');
 
   // Show loading reader with whirlpool spinner
   const reader = document.createElement('div');
-  reader.className = 'email-card-reader';
+  reader.className = 'email-card-reader email-card-reader-loading';
+  reader.style.minHeight = `${Math.max(180, Math.round(stableOpenHeight - 70))}px`;
   const loadingWrap = document.createElement('div');
   loadingWrap.style.cssText = 'padding:20px;display:flex;justify-content:center;align-items:center;flex:1;';
   const sp = spinnerModule.createWhirlpool(28);
@@ -1935,6 +2006,8 @@ async function _toggleCardPreview(card, em) {
       ${attsHtml}
       <div class="email-reader-body${data.body_html ? ' html-body' : ''}">${_renderEmailBody(data)}</div>
     `;
+    reader.classList.remove('email-card-reader-loading');
+    reader.style.minHeight = '';
 
     // Attachment header click toggles fold/unfold (same UX as the summary).
     const attsWrap = reader.querySelector('.email-reader-atts-wrap');

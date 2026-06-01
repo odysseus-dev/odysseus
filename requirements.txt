@@ -3,8 +3,8 @@ uvicorn
 python-multipart
 python-dotenv
 httpx
-pydantic
-pydantic-settings
+pydantic>=2.0
+pydantic-settings>=2.0
 SQLAlchemy
 pypdf
 beautifulsoup4
@@ -23,6 +23,10 @@ youtube-transcript-api
 markdown
 # Calendar .ics import/export (routes/calendar_routes.py).
 icalendar
+# Recurrence rule expansion for calendar events (routes/calendar_routes.py).
+# Imported directly as dateutil.rrule — make it explicit even though caldav
+# pulls it in transitively.
+python-dateutil
 # CalDAV sync (src/caldav_sync.py). Handles PROPFIND discovery + REPORT
 # fetch across Radicale, Nextcloud, Apple, Fastmail; we'd be reinventing
 # the protocol without it.
