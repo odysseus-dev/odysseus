@@ -1,5 +1,6 @@
 """Regression tests for task-result delivery into chat sessions (issue #326)."""
 import asyncio
+import sys
 import types as _types
 
 import pytest
@@ -10,6 +11,13 @@ if not isinstance(sqlalchemy, _types.ModuleType):
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
+_core_db = sys.modules.get("core.database")
+if _core_db is not None and not hasattr(_core_db, "Base"):
+    sys.modules.pop("core.database", None)
+    _core_pkg = sys.modules.get("core")
+    if _core_pkg is not None and getattr(_core_pkg, "database", None) is _core_db:
+        delattr(_core_pkg, "database")
 
 from core.database import Base, Session as DbSession
 from src.task_scheduler import TaskScheduler

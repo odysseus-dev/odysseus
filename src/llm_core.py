@@ -195,6 +195,16 @@ def _normalize_ollama_url(url: str) -> str:
     return base.rstrip("/") + "/chat"
 
 
+def _normalize_openai_chat_url(url: str) -> str:
+    """Ensure an OpenAI-compatible base URL points at /chat/completions."""
+    base = (url or "").strip().rstrip("/")
+    if base.endswith("/chat/completions") or base.endswith("/completions"):
+        return base
+    if base.endswith("/models"):
+        base = base[: -len("/models")].rstrip("/")
+    return base + "/chat/completions"
+
+
 def _build_ollama_payload(
     model: str,
     messages: List[Dict],
@@ -494,7 +504,13 @@ def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT,
         if provider == "ollama":
             models_url = _ollama_api_root(base_chat_url) + "/tags"
         else:
-            models_url = base_chat_url.replace("/chat/completions", "/models")
+            base = base_chat_url.rstrip("/")
+            if base.endswith("/chat/completions"):
+                models_url = base[: -len("/chat/completions")] + "/models"
+            elif base.endswith("/models"):
+                models_url = base
+            else:
+                models_url = base + "/models"
         r = httpx.get(models_url, headers=h, timeout=timeout)
         r.raise_for_status()
         data = r.json()
@@ -577,7 +593,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         target_url = _normalize_ollama_url(url)
         payload = _build_ollama_payload(model, messages_copy, temperature, max_tokens, stream=False)
     else:
-        target_url = url
+        target_url = _normalize_openai_chat_url(url)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -692,7 +708,7 @@ async def llm_call_async(
             h.update(headers)
         payload = _build_ollama_payload(model, messages_copy, temperature, max_tokens, stream=False)
     else:
-        target_url = url
+        target_url = _normalize_openai_chat_url(url)
         h = _provider_headers(provider, headers)
         payload = {
             "model": model,
@@ -790,7 +806,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             h.update(headers)
         payload = _build_ollama_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
     else:
-        target_url = url
+        target_url = _normalize_openai_chat_url(url)
         payload = {
             "model": model,
             "messages": messages_copy,

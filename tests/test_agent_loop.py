@@ -2,7 +2,16 @@
 Uses mock imports to avoid loading the full app stack."""
 
 import sys
+import importlib.util
 from unittest.mock import MagicMock
+
+
+def _has_module(mod_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(mod_name) is not None
+    except (ImportError, ValueError):
+        return False
+
 
 # Mock heavy dependencies before importing
 for mod in [
@@ -12,7 +21,7 @@ for mod in [
     'src.agent_tools',
     'core.models', 'core.database',
 ]:
-    if mod not in sys.modules:
+    if mod not in sys.modules and not _has_module(mod):
         sys.modules[mod] = MagicMock()
 
 from src.agent_loop import _detect_admin_intent, _compute_final_metrics

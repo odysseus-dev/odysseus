@@ -1710,7 +1710,10 @@ class TaskScheduler:
                 *([DbSession.owner == owner] if owner else []),
             ).order_by(DbSession.created_at.desc()).first()
             if recent:
-                return recent.endpoint_url, recent.model
+                endpoint_url = recent.endpoint_url if isinstance(recent.endpoint_url, str) else None
+                model = recent.model if isinstance(recent.model, str) else None
+                if endpoint_url or model:
+                    return endpoint_url, model
         except Exception:
             pass
         return None, None

@@ -27,7 +27,14 @@ from .exceptions import (
     WebSearchError,
 )
 from .models import Session, ChatMessage
-from .session_manager import SessionManager
+
+
+def __getattr__(name):
+    if name == "SessionManager":
+        from .session_manager import SessionManager
+
+        return SessionManager
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     # LLM

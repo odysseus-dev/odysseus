@@ -25,6 +25,8 @@ import os
 import sys
 import textwrap
 import types
+import json
+import importlib.util
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -33,12 +35,19 @@ import pytest
 
 # ── module-load stubbing (matches other tests in this repo) ──────────
 # Stub heavy deps so importing the skills manager doesn't pull DB / FastAPI.
+def _has_module(mod_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(mod_name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
 for _mod in [
     "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext",
     "sqlalchemy.ext.declarative", "src.database",
     "core.atomic_io",  # we'll patch atomic_write_text below
 ]:
-    if _mod not in sys.modules:
+    if _mod not in sys.modules and not _has_module(_mod):
         sys.modules[_mod] = MagicMock()
 
 
@@ -50,7 +59,7 @@ def _fake_atomic_write_text(path, content, **kw):
 _fake_core = types.ModuleType("core.atomic_io")
 _fake_core.atomic_write_text = _fake_atomic_write_text
 _fake_core.atomic_write_json = lambda p, d, **kw: Path(p).write_text(
-    "{}", encoding="utf-8"
+    json.dumps(d, indent=kw.get("indent")), encoding="utf-8"
 )
 sys.modules["core.atomic_io"] = _fake_core
 
