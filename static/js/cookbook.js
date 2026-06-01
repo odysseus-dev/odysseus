@@ -1449,7 +1449,7 @@ function _renderRecipes() {
   html += '<select class="cookbook-field-input hwfit-sort" id="hwfit-sort" style="display:none">';
   html += '<option value="score">Score</option><option value="vram">VRAM</option>';
   html += '<option value="speed">Speed</option><option value="params">Params</option>';
-  html += '<option value="context">Context</option></select>';
+  html += '<option value="context">Context</option><option value="newest">Newest</option></select>';
   html += '</div>';
   html += '<div class="hwfit-manual-panel hidden" id="hwfit-manual-panel">';
   html += '<span class="hwfit-manual-note" style="font-size:10px;opacity:0.6;width:100%;margin-bottom:2px;">Simulator — these values REPLACE detected hardware.</span>';

@@ -122,3 +122,60 @@ def test_detect_amd_reports_family(monkeypatch):
     assert info["backend"] == "rocm"
     assert info["gpu_family"] == "rdna"
     assert info["gpu_arch"] == "gfx1200"
+
+
+def test_consumer_amd_cards_have_real_bandwidth():
+    """Consumer AMD cards must be in the bandwidth table so speed estimates use
+    real VRAM bandwidth, not the crude rocm FALLBACK_K constant. The RX 9060 XT
+    was missing entirely, so its estimates fell back to the constant and were off."""
+    from services.hwfit.fit import _lookup_bandwidth
+    for name, expected_min in [
+        ("AMD Radeon RX 9060 XT", 300),
+        ("AMD Radeon RX 9070 XT", 600),
+        ("AMD Radeon RX 7900 XTX", 900),
+    ]:
+        bw = _lookup_bandwidth(name)
+        assert bw and bw >= expected_min, f"{name}: {bw} GB/s (expected >= {expected_min})"
+
+
+def test_9060xt_speed_estimate_is_realistic():
+    """Calibration guard: a small MoE fully on a 9060 XT at Q4 should estimate in
+    a believable range, not the absurd numbers the missing-bandwidth fallback gave.
+    Measured reference: DeepSeek-Coder-V2-Lite Q4 ~60-86 t/s on this card."""
+    from services.hwfit.fit import _estimate_speed
+    model = {"name": "DeepSeek-Coder-V2-Lite-Instruct", "parameter_count": "16B",
+             "is_moe": True, "active_parameters": 2_400_000_000}
+    sys = {"backend": "rocm", "gpu_name": "AMD Radeon RX 9060 XT", "gpu_vram_gb": 15.9}
+    tps = _estimate_speed(model, "Q4_K_M", "gpu", sys)
+    assert 40 <= tps <= 130, f"unrealistic estimate: {tps} t/s"
+
+
+def test_offload_is_slower_than_full_gpu():
+    """Partial CPU offload must estimate slower than the same model fully on GPU,
+    and heavier offload slower than lighter — the blend model, not a flat halving."""
+    from services.hwfit.fit import _estimate_speed
+    model = {"name": "X", "parameter_count": "35B", "is_moe": True,
+             "active_parameters": 3_000_000_000}
+    sys = {"backend": "rocm", "gpu_name": "AMD Radeon RX 9060 XT", "gpu_vram_gb": 15.9}
+    full = _estimate_speed(model, "Q4_K_M", "gpu", sys)
+    light = _estimate_speed(model, "Q4_K_M", "cpu_offload", sys, offload_frac=0.2)
+    heavy = _estimate_speed(model, "Q4_K_M", "cpu_offload", sys, offload_frac=0.6)
+    assert full > light > heavy, (full, light, heavy)
+
+
+def test_sort_by_newest_orders_by_release_date():
+    """sort='newest' orders results by release_date descending (newest first),
+    with undated models sorted last."""
+    sys = {"backend": "rocm", "gpu_name": "AMD Radeon RX 9060 XT", "gpu_vram_gb": 15.9,
+           "gpu_family": "rdna", "gpu_count": 1, "available_ram_gb": 22.0, "total_ram_gb": 31.0}
+    res = rank_models(sys, sort="newest", limit=50)
+    dated = [r.get("release_date") for r in res if r.get("release_date")]
+    # dates present must be in descending order
+    assert dated == sorted(dated, reverse=True), "release dates not descending"
+    # any undated entries must come after all dated ones
+    seen_blank = False
+    for r in res:
+        if not r.get("release_date"):
+            seen_blank = True
+        elif seen_blank:
+            assert False, "a dated model appeared after an undated one"

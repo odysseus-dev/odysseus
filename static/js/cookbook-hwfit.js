@@ -517,11 +517,23 @@ export async function _hwfitFetch(fresh = false) {
       const sortSel = document.getElementById('hwfit-sort');
       const sortKey = sortSel?.value || 'score';
       const asc = sortSel?.dataset.reverse === '1';   // reversed → ascending (lowest first)
-      const field = { score: 'score', vram: 'required_gb', speed: 'speed_tps', params: 'params_b', context: 'context' }[sortKey] || 'score';
-      data.models.sort((a, b) => {
-        const av = Number(a[field]) || 0, bv = Number(b[field]) || 0;
-        return asc ? av - bv : bv - av;
-      });
+      if (sortKey === 'newest') {
+        // release_date is an ISO-ish string ("2026-05-30"); compare as strings
+        // (chronological). Newest first by default; missing dates sort last.
+        data.models.sort((a, b) => {
+          const ad = a.release_date || '', bd = b.release_date || '';
+          if (ad === bd) return 0;
+          if (!ad) return 1;        // a undated → after b
+          if (!bd) return -1;       // b undated → after a
+          return asc ? (ad < bd ? -1 : 1) : (ad < bd ? 1 : -1);
+        });
+      } else {
+        const field = { score: 'score', vram: 'required_gb', speed: 'speed_tps', params: 'params_b', context: 'context' }[sortKey] || 'score';
+        data.models.sort((a, b) => {
+          const av = Number(a[field]) || 0, bv = Number(b[field]) || 0;
+          return asc ? av - bv : bv - av;
+        });
+      }
     }
     _hwfitRenderList(list, data.models);
     // Persist this result so the next page load can paint it instantly.
@@ -718,7 +730,9 @@ export const _fitColors = { perfect: 'var(--green, #50fa7b)', good: 'var(--yello
 
 export const _hwfitColumns = [
   { key: 'score', label: 'Fit',    cls: 'hwfit-fit' },
-  { key: null,    label: 'Model',  cls: 'hwfit-name' },
+  // Model header sorts by release date (newest first) — the catalog carries
+  // release_date for ~97% of models, so "sort by new" needs no new data.
+  { key: 'newest', label: 'Model',  cls: 'hwfit-name' },
   { key: 'params',label: 'Param', cls: 'hwfit-c-params' },
   { key: null,    label: 'Quant',  cls: 'hwfit-c-quant' },
   { key: 'vram',  label: 'VRAM',   cls: 'hwfit-c-vram' },
@@ -779,7 +793,8 @@ export function _hwfitRenderList(el, models) {
     const dlDot = (_cachedModelIds && (_cachedModelIds.has(m.name) || [..._cachedModelIds].some(id => id === m.name?.split('/').pop()))) ? '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>' : '';
     html += `<div class="hwfit-row" data-model="${esc(m.name)}">`;
     html += `<span class="hwfit-col hwfit-fit" style="color:${fitColor}">${esc(fitLabel)}</span>`;
-    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(m.name?.split('/').pop() || m.name)}${moeBadge}${imgBadge}${dlDot}</span>`;
+    const _relTitle = m.release_date ? ` title="Released ${esc(m.release_date)}"` : '';
+    html += `<span class="hwfit-col hwfit-name"${_relTitle}>${modelLogo(m.name)}${esc(m.name?.split('/').pop() || m.name)}${moeBadge}${imgBadge}${dlDot}</span>`;
     html += `<span class="hwfit-col hwfit-c-params">${esc(pcount)}</span>`;
     html += `<span class="hwfit-col hwfit-c-quant">${esc(m.quant || '?')}</span>`;
     html += `<span class="hwfit-col hwfit-c-vram">${vramLabel}</span>`;

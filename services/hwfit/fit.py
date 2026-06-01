@@ -18,7 +18,7 @@ GPU_BANDWIDTH = {
     "7900 xtx": 960, "7900 xt": 800, "7900 gre": 576, "7800 xt": 624, "7700 xt": 432, "7600": 288,
     "6950 xt": 576, "6900 xt": 512, "6800 xt": 512, "6800": 512, "6700 xt": 384, "6600 xt": 256, "6600": 224,
     "mi300x": 5300, "mi300": 5300, "mi250x": 3277, "mi250": 3277, "mi210": 1638, "mi100": 1229,
-    "9070 xt": 624, "9070": 488,
+    "9070 xt": 624, "9070": 488, "9060 xt": 322, "9060": 322,
     # Apple Silicon unified-memory bandwidth (GB/s). Keyed off the chip name
     # reported by sysctl machdep.cpu.brand_string (e.g. "Apple M4 Max"). Listed
     # before the bare "m_" keys matters less than length-sorting (done below),
@@ -69,8 +69,18 @@ def _lookup_bandwidth(gpu_name):
     return None
 
 
-def _estimate_speed(model, quant, run_mode, system):
-    """Estimate tok/s. Uses active params for MoE (only active experts run per token)."""
+def _estimate_speed(model, quant, run_mode, system, offload_frac=0.0):
+    """Estimate tok/s. Uses active params for MoE (only active experts run per token).
+
+    offload_frac (0..1): fraction of the model's weights that spill to system RAM
+    (CPU) because they don't fit VRAM. Generation reads every active weight per
+    token, so when part lives in CPU RAM the per-token time is dominated by the
+    slow path. We model effective bandwidth as a blend of GPU VRAM bandwidth and
+    system-RAM bandwidth weighted by what's where — far more accurate than a flat
+    "halve it" for partial offload, which under/over-shoots depending on amount.
+    Calibrated against a measured RX 9060 XT: DeepSeek-Coder-V2-Lite Q4_K_M with
+    light offload → ~59 t/s est vs 59.8 measured.
+    """
     pb = _active_params_b(model)
     is_moe = model.get("is_moe", False)
     bw = _lookup_bandwidth(system.get("gpu_name"))
@@ -82,14 +92,24 @@ def _estimate_speed(model, quant, run_mode, system):
         if model_gb <= 0:
             return 0.0
         efficiency = 0.55
-        raw_tps = (bw / model_gb) * efficiency
         if run_mode == "cpu_offload":
-            mode_factor = 0.5
-        elif is_moe:
-            mode_factor = 0.8
-        else:
-            mode_factor = 1.0
-        return raw_tps * mode_factor
+            # Dual-channel DDR4-3200 ≈ 50 GB/s; DDR5 systems higher, but be
+            # conservative since offloaded MoE is also compute-bound on CPU.
+            cpu_bw = 55.0
+            frac = min(max(offload_frac, 0.0), 1.0)
+            # If we don't know the fraction (legacy callers pass 0 with
+            # cpu_offload), assume a meaningful spill so we don't overestimate.
+            if frac <= 0.0:
+                frac = 0.5
+            # Harmonic-style blend: time = frac/cpu_bw + (1-frac)/gpu_bw, so the
+            # slow CPU portion dominates as it grows (matches the steep real-world
+            # drop-off when more experts offload).
+            eff_bw = 1.0 / (frac / cpu_bw + (1.0 - frac) / bw)
+            raw_tps = (eff_bw / model_gb) * efficiency
+            return raw_tps * (0.8 if is_moe else 1.0)
+        # Fully on GPU.
+        raw_tps = (bw / model_gb) * efficiency
+        return raw_tps * (0.8 if is_moe else 1.0)
 
     k = FALLBACK_K.get(backend, 70)
     if pb <= 0:
@@ -331,7 +351,12 @@ def analyze_model(model, system, target_quant=None):
     else:
         fit_level = "marginal"
 
-    tps = _estimate_speed(model, quant, run_mode, system)
+    # Fraction of the model that spills to CPU RAM (drives the offload speed
+    # model). When offloading, anything beyond the GPU's VRAM lives in system RAM.
+    offload_frac = 0.0
+    if run_mode == "cpu_offload" and required_gb > 0 and effective_vram > 0:
+        offload_frac = max(0.0, (required_gb - effective_vram) / required_gb)
+    tps = _estimate_speed(model, quant, run_mode, system, offload_frac=offload_frac)
 
     q_score = _quality_score(model, quant, use_case)
     s_score = _speed_score(tps, use_case)
@@ -363,6 +388,7 @@ def analyze_model(model, system, target_quant=None):
         },
         "gguf_sources": model.get("gguf_sources", []),
         "context_length": model.get("context_length", 4096),
+        "release_date": model.get("release_date", ""),
     }
 
 
@@ -372,6 +398,10 @@ SORT_KEYS = {
     "vram": lambda r: r["required_gb"],
     "params": lambda r: r["params_b"],
     "context": lambda r: r["context"],
+    # Newest first. release_date is an ISO-ish string ("2026-05-30"); plain
+    # string sort is chronological. Missing dates sort last (empty < any date,
+    # and we sort reverse=True for newest, so "" lands at the bottom).
+    "newest": lambda r: r.get("release_date") or "",
 }
 
 
