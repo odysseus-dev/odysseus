@@ -208,24 +208,28 @@ def resolve_endpoint(
     except Exception:
         return fallback_url, fallback_model, fallback_headers
 
-    ep_id = (get_user_setting(f"{setting_prefix}_endpoint_id", owner or "", settings.get(f"{setting_prefix}_endpoint_id", "")) or "").strip()
-    model = (get_user_setting(f"{setting_prefix}_model", owner or "", settings.get(f"{setting_prefix}_model", "")) or "").strip()
+    owner_str = owner or ""
+    def _stg(key: str) -> str:
+        return (get_user_setting(key, owner_str, settings.get(key, "")) or "").strip()
+
+    ep_id = _stg(f"{setting_prefix}_endpoint_id")
+    model = _stg(f"{setting_prefix}_model")
 
     # Unset Utility means "same as Default Chat Model". This keeps background
     # features usable out of the box and lets users override Utility only when
     # they explicitly want a separate cheaper/faster model.
     if setting_prefix == "utility" and not ep_id:
-        ep_id = (get_user_setting("default_endpoint_id", owner or "", settings.get("default_endpoint_id", "")) or "").strip()
-        model = (get_user_setting("default_model", owner or "", settings.get("default_model", "")) or "").strip()
+        ep_id = _stg("default_endpoint_id")
+        model = _stg("default_model")
 
     # Fall back to utility model for task/research/auto-naming if not specifically configured.
     # If Utility itself is unset, the block above makes that resolve to Default Chat.
     if not ep_id and setting_prefix != "utility":
-        ep_id = (get_user_setting("utility_endpoint_id", owner or "", settings.get("utility_endpoint_id", "")) or "").strip()
-        model = (get_user_setting("utility_model", owner or "", settings.get("utility_model", "")) or "").strip()
+        ep_id = _stg("utility_endpoint_id")
+        model = _stg("utility_model")
         if not ep_id:
-            ep_id = (get_user_setting("default_endpoint_id", owner or "", settings.get("default_endpoint_id", "")) or "").strip()
-            model = (get_user_setting("default_model", owner or "", settings.get("default_model", "")) or "").strip()
+            ep_id = _stg("default_endpoint_id")
+            model = _stg("default_model")
 
     if not ep_id:
         return fallback_url, fallback_model, fallback_headers
@@ -309,7 +313,8 @@ def resolve_utility_fallback_candidates(owner: Optional[str] = None) -> list:
     try:
         from src.settings import get_user_setting, load_settings
         settings = load_settings()
-        if not (get_user_setting("utility_endpoint_id", owner or "", settings.get("utility_endpoint_id", "")) or "").strip():
+        utility_ep = (get_user_setting("utility_endpoint_id", owner or "", settings.get("utility_endpoint_id", "")) or "").strip()
+        if not utility_ep:
             return _resolve_fallback_candidates("default_model_fallbacks", owner=owner)
     except Exception:
         pass
