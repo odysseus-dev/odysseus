@@ -300,6 +300,67 @@ def test_require_admin_allows_when_auth_explicitly_disabled(monkeypatch):
     assert require_admin(_Req()) is None
 
 
+def test_internal_tool_owner_header_validates_against_auth_config(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from fastapi import Request
+    from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
+    from core.auth import AuthManager
+    import app as app_module
+
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(json.dumps({
+        "users": {
+            "alice": {
+                "password_hash": "unused",
+                "created": 0,
+                "is_admin": False,
+                "privileges": {},
+            },
+            "admin": {
+                "password_hash": "unused",
+                "created": 0,
+                "is_admin": True,
+                "privileges": {},
+            },
+        }
+    }))
+
+    test_auth_mgr = AuthManager(str(auth_path))
+    monkeypatch.setattr(app_module, "auth_manager", test_auth_mgr)
+    monkeypatch.setattr(app_module.app.state, "auth_manager", test_auth_mgr)
+
+    request = SimpleNamespace()
+    request.headers = {
+        INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN,
+        "X-Odysseus-Owner": "alice",
+    }
+    request.client = SimpleNamespace(host="127.0.0.1")
+    request.state = SimpleNamespace()
+    request.url = SimpleNamespace(path="/api/test")
+
+    async def call_next(req):
+        return "ok"
+
+    middleware = app_module.AuthMiddleware(app_module.app)
+    result = app_module.asyncio.run(middleware.dispatch(request, call_next))
+    assert result == "ok"
+    assert request.state.current_user == "alice"
+    assert request.state.api_token is False
+
+    request.headers["X-Odysseus-Owner"] = "admin"
+    request.state = SimpleNamespace()
+    result = app_module.asyncio.run(middleware.dispatch(request, call_next))
+    assert result == "ok"
+    assert request.state.current_user == "internal-tool"
+
+    request.headers["X-Odysseus-Owner"] = "doesnotexist"
+    request.state = SimpleNamespace()
+    result = app_module.asyncio.run(middleware.dispatch(request, call_next))
+    assert result == "ok"
+    assert request.state.current_user == "internal-tool"
+
+
 def test_auth_manager_migrates_legacy_admin_role(tmp_path):
     """Old setup.py wrote role='admin'; startup must turn that into is_admin."""
     sys.modules.pop("core.auth", None)

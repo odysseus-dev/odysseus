@@ -185,13 +185,15 @@ if AUTH_ENABLED:
                 _client_host = request.client.host if request.client else None
                 if _hdr and _hdr == _ITT and _client_host in ("127.0.0.1", "::1"):
                     # Impersonation: when the agent's loopback call sets
-                    # X-Odysseus-Owner, attribute the request to that
-                    # user so notes/calendar/etc. land in their account
-                    # instead of being owned by "internal-tool" (which
-                    # made the agent's POSTs invisible to the user that
-                    # asked for them).
-                    _impersonate = (request.headers.get("X-Odysseus-Owner") or "").strip()
-                    request.state.current_user = _impersonate or "internal-tool"
+                    # X-Odysseus-Owner, attribute the request to that user
+                    # only if they exist and are not an admin. Otherwise
+                    # preserve the internal-tool identity.
+                    _impersonate = (request.headers.get("X-Odysseus-Owner") or "").strip().lower()
+                    _auth_mgr = getattr(request.app.state, "auth_manager", None) or auth_manager
+                    if _impersonate and _impersonate in _auth_mgr.users and not _auth_mgr.is_admin(_impersonate):
+                        request.state.current_user = _impersonate
+                    else:
+                        request.state.current_user = "internal-tool"
                     request.state.api_token = False
                     return await call_next(request)
             except Exception:
