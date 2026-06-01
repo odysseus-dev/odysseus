@@ -39,12 +39,10 @@ function _modelExists(modelId, url) {
   if (!modelId || !window.modelsModule || !window.modelsModule.getCachedItems) return false;
   const items = window.modelsModule.getCachedItems() || [];
   if (!items.length) return true;
-  const targetUrl = (url || '').replace(/\/+$/, '');
   return items.some(item => {
     if (item.offline) return false;
-    const itemUrl = (item.url || '').replace(/\/+$/, '');
     const models = (item.models || []).concat(item.models_extra || []);
-    return models.includes(modelId) && (!targetUrl || itemUrl === targetUrl);
+    return models.includes(modelId);
   });
 }
 
@@ -457,22 +455,44 @@ export function updateModelPicker() {
   }
   if (!modelId && !_autoSelectingDefault && window.modelsModule && window.modelsModule.getCachedItems) {
     const items = window.modelsModule.getCachedItems();
-    const first = items.find(item => !item.offline && ((item.models || []).length || (item.models_extra || []).length));
-    if (first) {
-      const models = (first.models || []).concat(first.models_extra || []);
-      modelId = models[0];
-      if (!currentSessionId) {
-        _deps.setPendingChat({ url: first.url, modelId, endpointId: first.endpoint_id });
-      } else {
-        if (s) { s.model = modelId; s.endpoint_url = first.url; }
-        _autoSelectingDefault = true;
-        const fd = new FormData();
-        fd.append('model', modelId);
-        fd.append('endpoint_url', first.url || '');
-        if (first.endpoint_id) fd.append('endpoint_id', first.endpoint_id);
-        fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd })
-          .catch(() => {})
-          .finally(() => { _autoSelectingDefault = false; });
+    // Prefer user's configured default chat model over first available
+    if (window.__odysseusDefaultChat && window.__odysseusDefaultChat.model && !currentSessionId) {
+      const defaultModel = window.__odysseusDefaultChat.model;
+      const defaultUrl = window.__odysseusDefaultChat.endpoint_url || '';
+      const defaultEpId = window.__odysseusDefaultChat.endpoint_id || '';
+      let matches = items.filter(item => !item.offline && (
+        ((item.models || []).concat(item.models_extra || [])).includes(defaultModel) &&
+        (!defaultUrl || (item.url || '').replace(/\/+$/, '') === defaultUrl.replace(/\/+$/, ''))
+      ));
+      if (!matches.length && defaultModel) {
+        matches = items.filter(item => !item.offline && (
+          ((item.models || []).concat(item.models_extra || [])).includes(defaultModel)
+        ));
+      }
+      if (matches.length) {
+        modelId = defaultModel;
+        const match = matches[0];
+        _deps.setPendingChat({ url: defaultUrl || match.url, modelId, endpointId: defaultEpId || match.endpoint_id });
+      }
+    }
+    if (!modelId) {
+      const first = items.find(item => !item.offline && ((item.models || []).length || (item.models_extra || []).length));
+      if (first) {
+        const models = (first.models || []).concat(first.models_extra || []);
+        modelId = models[0];
+        if (!currentSessionId) {
+          _deps.setPendingChat({ url: first.url, modelId, endpointId: first.endpoint_id });
+        } else {
+          if (s) { s.model = modelId; s.endpoint_url = first.url; }
+          _autoSelectingDefault = true;
+          const fd = new FormData();
+          fd.append('model', modelId);
+          fd.append('endpoint_url', first.url || '');
+          if (first.endpoint_id) fd.append('endpoint_id', first.endpoint_id);
+          fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd })
+            .catch(() => {})
+            .finally(() => { _autoSelectingDefault = false; });
+        }
       }
     }
   }

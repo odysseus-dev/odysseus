@@ -457,6 +457,9 @@ async function initDefaultChat() {
     var settings = await res.json();
     if (settings.default_endpoint_id) epSel.value = settings.default_endpoint_id;
     refreshModels(settings.default_model || '');
+    if (modelSel.value !== (settings.default_model || '')) {
+      await saveDefault();
+    }
     _fallbacks = Array.isArray(settings.default_model_fallbacks)
       ? settings.default_model_fallbacks.map(function(f) {
           return { endpoint_id: (f && f.endpoint_id) || '', model: (f && f.model) || '' };
@@ -476,6 +479,18 @@ async function initDefaultChat() {
           default_model_fallbacks: clean
         })
       });
+      // Refresh cached default chat so model picker picks up the change immediately
+      try {
+        const dcRes = await fetch('/api/default-chat');
+        const dc = await dcRes.json();
+        window.__odysseusDefaultChat = dc;
+        if (window.modelsModule && window.modelsModule.refreshModels) {
+          await window.modelsModule.refreshModels(true);
+        }
+        if (dc.model && dc.endpoint_url && window.sessionModule) {
+          window.sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
+        }
+      } catch (_) {}
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
@@ -491,8 +506,12 @@ async function initDefaultChat() {
   });
 
   _registerAiEndpointRefresh(function(endpoints) {
+    var prevModel = modelSel.value;
     _endpoints = endpoints;
     refreshEndpointOptions(epSel.value, modelSel.value);
+    if (modelSel.value !== prevModel) {
+      saveDefault();
+    }
   });
 }
 

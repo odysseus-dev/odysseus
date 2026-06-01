@@ -1275,9 +1275,13 @@ def setup_model_routes(model_discovery):
             chat_url = build_chat_url(base)
             if not model and getattr(ep, "cached_models", None):
                 try:
-                    models = _json.loads(ep.cached_models) if isinstance(ep.cached_models, str) else ep.cached_models
-                    if models:
-                        model = models[0]
+                    all_models = _json.loads(ep.cached_models) if isinstance(ep.cached_models, str) else ep.cached_models
+                    hidden = set()
+                    if getattr(ep, "hidden_models", None):
+                        hidden = set(_json.loads(ep.hidden_models) if isinstance(ep.hidden_models, str) else ep.hidden_models)
+                    visible_models = [m for m in all_models if m not in hidden]
+                    if visible_models:
+                        model = visible_models[0]
                 except Exception:
                     pass
             return {"endpoint_id": ep.id, "endpoint_url": chat_url, "model": model}
@@ -1311,6 +1315,13 @@ def setup_model_routes(model_discovery):
                     ep.name = body["name"].strip() or ep.name
                 if "model_type" in body and isinstance(body["model_type"], str):
                     ep.model_type = body["model_type"].strip() or ep.model_type
+                if "api_key" in body:
+                    v = body["api_key"]
+                    ep.api_key = v.strip() if isinstance(v, str) and v.strip() else None
+                    _invalidate_models_cache()
+                if "base_url" in body and isinstance(body["base_url"], str):
+                    ep.base_url = body["base_url"].strip()
+                    _invalidate_models_cache()
             else:
                 ep.is_enabled = not ep.is_enabled
             db.commit()
@@ -1321,6 +1332,8 @@ def setup_model_routes(model_discovery):
                 "supports_tools": ep.supports_tools,
                 "name": ep.name,
                 "model_type": ep.model_type,
+                "base_url": ep.base_url,
+                "has_key": bool(ep.api_key),
             }
         finally:
             db.close()
@@ -1380,8 +1393,6 @@ def setup_model_routes(model_discovery):
         rows = db.query(DbSession).filter(DbSession.endpoint_url.isnot(None)).all()
         for row in rows:
             if _session_uses_endpoint_url(row.endpoint_url or "", base_url):
-                row.endpoint_url = ""
-                row.model = ""
                 row.headers = {}
                 row.updated_at = datetime.utcnow()
                 cleared += 1
@@ -1399,8 +1410,6 @@ def setup_model_routes(model_discovery):
         try:
             for sess in list(getattr(manager, "sessions", {}).values()):
                 if _session_uses_endpoint_url(getattr(sess, "endpoint_url", "") or "", base_url):
-                    sess.endpoint_url = ""
-                    sess.model = ""
                     sess.headers = {}
                     cleared += 1
         except Exception:

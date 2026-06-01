@@ -12,6 +12,9 @@ let modalEl = null;
 // the endpoints list can flash a glow on that row. Cleared once the
 // animation fires.
 let _recentlyAddedEpId = null;
+// When editing an endpoint, store its id so the Add/Save button knows
+// to PATCH instead of POST. Cleared after save or cancel.
+let _editingEpId = null;
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
@@ -423,6 +426,7 @@ async function loadEndpoints() {
             </div>
             <div style="display:flex;gap:4px;align-items:center;">
               <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
+              <button class="admin-btn-sm" data-adm-edit-ep="${ep.id}" data-adm-ep-name="${esc(ep.name)}" data-adm-ep-base-url="${esc(ep.base_url)}" data-adm-ep-type="${esc(ep.model_type || 'llm')}" data-adm-ep-has-key="${ep.has_key ? '1' : '0'}">Edit</button>
               <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
             </div>
@@ -509,6 +513,55 @@ async function loadEndpoints() {
           .then(() => _refreshAfterEndpointChange(epId))
           .then(() => loadEndpoints())
           .catch(() => loadEndpoints());
+      });
+    });
+    queryAll('[data-adm-edit-ep]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const epId = btn.dataset.admEditEp;
+        const epName = btn.dataset.admEpName || '';
+        const epBaseUrl = btn.dataset.admEpBaseUrl || '';
+        const epType = btn.dataset.admEpType || 'llm';
+        const hasKey = btn.dataset.admEpHasKey === '1';
+
+        // Expand the API add section and scroll to it
+        const section = document.getElementById('adm-add-api');
+        if (section) {
+          section.classList.remove('collapsed');
+          const toggle = section.querySelector('.adm-section-toggle');
+          if (toggle) toggle.setAttribute('aria-expanded', 'true');
+        }
+        const formEl = document.getElementById('adm-add-api');
+        if (formEl) formEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        // Fill the form with endpoint details
+        const urlInput = el('adm-epUrl');
+        const apiKeyInput = el('adm-epApiKey');
+        const epTypeSelect = el('adm-epType');
+
+        if (urlInput) urlInput.value = epBaseUrl;
+        if (epTypeSelect) epTypeSelect.value = epType;
+
+        // Show key-hint in the password field
+        if (apiKeyInput) {
+          apiKeyInput.value = '';
+          apiKeyInput.placeholder = hasKey ? 'Key is set — enter new to replace' : 'API key';
+        }
+
+        // Store the editing ID and switch button to Save mode
+        _editingEpId = epId;
+        const addBtn = el('adm-epAddBtn');
+        if (addBtn) addBtn.textContent = 'Save';
+
+        // Show a cancel button
+        const msg = _endpointMsg('api');
+        if (msg) {
+          msg.innerHTML = `<span style="opacity:0.6">Editing ${esc(epName)}</span> <button class="admin-btn-sm" id="adm-epCancelEditBtn" style="margin-left:6px;font-size:10px;">Cancel</button>`;
+          const cancelBtn = msg.querySelector('#adm-epCancelEditBtn');
+          if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => _cancelEndpointEdit(), { once: true });
+          }
+        }
       });
     });
     // Clear the just-added marker now that the row has been rendered
@@ -632,6 +685,31 @@ async function _saveEpModelState(epId, panel) {
       settingsModule.refreshAiModelEndpoints();
     }
   } catch (e) { /* silent */ }
+}
+
+function _endpointMsg(kind) {
+  return el(kind === 'local' ? 'adm-epLocalMsg' : 'adm-epApiMsg') || el('adm-epMsg');
+}
+
+function _cancelEndpointEdit() {
+  _editingEpId = null;
+  const addBtn = el('adm-epAddBtn');
+  if (addBtn) addBtn.textContent = 'Add';
+  const urlInput = el('adm-epUrl');
+  const apiKeyInput = el('adm-epApiKey');
+  const providerSelect = el('adm-epProvider');
+  const epTypeSelect = el('adm-epType');
+  if (urlInput) { urlInput.value = ''; urlInput.style.display = ''; }
+  if (apiKeyInput) { apiKeyInput.value = ''; apiKeyInput.placeholder = 'API key'; }
+  if (providerSelect) providerSelect.value = '';
+  if (epTypeSelect) epTypeSelect.value = 'llm';
+  const msg = _endpointMsg('api');
+  if (msg) { msg.textContent = ''; msg.className = ''; }
+  const picker = el('adm-provider-picker');
+  if (picker) {
+    const ev = new Event('change', { bubbles: true });
+    providerSelect.dispatchEvent(ev);
+  }
 }
 
 function initEndpointForm() {
@@ -761,10 +839,6 @@ function initEndpointForm() {
     msg.className = 'admin-error';
   }
 
-  function _endpointMsg(kind) {
-    return el(kind === 'local' ? 'adm-epLocalMsg' : 'adm-epApiMsg') || el('adm-epMsg');
-  }
-
   let apiTestController = null;
   const apiTestBtn = el('adm-epApiTestBtn');
   const apiCancelTestBtn = el('adm-epApiCancelTestBtn');
@@ -820,45 +894,74 @@ function initEndpointForm() {
     const rawUrl = (urlInput.value || provider.value).trim();
     const apiKey = el('adm-epApiKey').value.trim();
     if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
-    if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
+    if (!_editingEpId && provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
     // Normalize URL (fix typos, add /v1, strip wrong paths)
     const url = provider.value && rawUrl === provider.value ? rawUrl : _normalizeBaseUrl(rawUrl);
     const btn = el('adm-epAddBtn');
-    btn.disabled = true; btn.textContent = 'Adding...';
+    btn.disabled = true;
+    btn.textContent = _editingEpId ? 'Saving...' : 'Adding...';
     try {
-      const fd = new FormData();
-      fd.append('base_url', url);
-      if (apiKey) fd.append('api_key', apiKey);
-      if (provider.value && provider.selectedOptions && provider.selectedOptions[0]) {
-        fd.append('name', provider.selectedOptions[0].textContent.trim());
-      }
-      const epType = el('adm-epType');
-      if (epType) fd.append('model_type', epType.value);
-      if (provider.value && /openrouter\.ai|ollama\.com/i.test(provider.value)) fd.append('require_models', 'true');
-      else fd.append('skip_probe', 'false');
-      const res = await fetch('/api/model-endpoints', { method: 'POST', body: fd, credentials: 'same-origin' });
-      const d = await res.json();
-      if (res.ok) {
-        const count = d.models ? d.models.length : 0;
-        urlInput.value = ''; urlInput.style.display = '';
-        el('adm-epApiKey').value = ''; provider.value = '';
-        if (epType) epType.value = 'llm';
-        if (d.id) _recentlyAddedEpId = String(d.id);
-        await loadEndpoints();
-        await _selectAddedModelInChat(d);
-        if (!d.online) {
-          msg.textContent = 'Added (endpoint offline — will retry on next load)';
-          msg.className = 'admin-error';
-        } else if (d.status === 'empty') {
-          msg.textContent = 'Added — endpoint reachable, no models found';
-          msg.className = 'admin-success';
-        } else {
-          msg.textContent = `Added — found ${count} model${count !== 1 ? 's' : ''}`;
-          msg.className = 'admin-success';
+      if (_editingEpId) {
+        // PATCH (edit) existing endpoint
+        const body = { base_url: url };
+        if (apiKey) body.api_key = apiKey;
+        if (provider.value && provider.selectedOptions && provider.selectedOptions[0]) {
+          body.name = provider.selectedOptions[0].textContent.trim();
         }
-      } else { msg.textContent = d.detail || 'Failed'; msg.className = 'admin-error'; }
+        const epType = el('adm-epType');
+        if (epType) body.model_type = epType.value;
+        const res = await fetch(`/api/model-endpoints/${_editingEpId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          credentials: 'same-origin',
+        });
+        const d = await res.json();
+        if (res.ok) {
+          _cancelEndpointEdit();
+          msg.textContent = 'Saved';
+          msg.className = 'admin-success';
+          await loadEndpoints();
+        } else {
+          msg.textContent = d.detail || 'Failed to save';
+          msg.className = 'admin-error';
+        }
+      } else {
+        // POST (create) new endpoint
+        const fd = new FormData();
+        fd.append('base_url', url);
+        if (apiKey) fd.append('api_key', apiKey);
+        if (provider.value && provider.selectedOptions && provider.selectedOptions[0]) {
+          fd.append('name', provider.selectedOptions[0].textContent.trim());
+        }
+        const epType = el('adm-epType');
+        if (epType) fd.append('model_type', epType.value);
+        if (provider.value && /openrouter\.ai|ollama\.com/i.test(provider.value)) fd.append('require_models', 'true');
+        else fd.append('skip_probe', 'false');
+        const res = await fetch('/api/model-endpoints', { method: 'POST', body: fd, credentials: 'same-origin' });
+        const d = await res.json();
+        if (res.ok) {
+          const count = d.models ? d.models.length : 0;
+          urlInput.value = ''; urlInput.style.display = '';
+          el('adm-epApiKey').value = ''; provider.value = '';
+          if (epType) epType.value = 'llm';
+          if (d.id) _recentlyAddedEpId = String(d.id);
+          await loadEndpoints();
+          await _selectAddedModelInChat(d);
+          if (!d.online) {
+            msg.textContent = 'Added (endpoint offline — will retry on next load)';
+            msg.className = 'admin-error';
+          } else if (d.status === 'empty') {
+            msg.textContent = 'Added — endpoint reachable, no models found';
+            msg.className = 'admin-success';
+          } else {
+            msg.textContent = `Added — found ${count} model${count !== 1 ? 's' : ''}`;
+            msg.className = 'admin-success';
+          }
+        } else { msg.textContent = d.detail || 'Failed'; msg.className = 'admin-error'; }
+      }
     } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
-    btn.disabled = false; btn.textContent = 'Add';
+    btn.disabled = false; btn.textContent = _editingEpId ? 'Save' : 'Add';
   });
 
   // Local "Add" button — sibling form for self-hosted base URLs.

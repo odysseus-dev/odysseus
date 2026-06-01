@@ -96,6 +96,58 @@ def _clear_orphaned_session_endpoint(sess) -> bool:
         db.close()
 
 
+def _resolve_empty_session_model(sess, session_id: str) -> bool:
+    """If the session has no model, resolve from the matching ModelEndpoint
+    row using cached_models (filtered by hidden_models) so the user's model
+    visibility settings are respected. Returns True if a model was resolved."""
+    if sess.model or not sess.endpoint_url:
+        return False
+    domain = sess.endpoint_url.split("//")[1].split("/")[0] if "//" in sess.endpoint_url else ""
+    if not domain:
+        return False
+    db = SessionLocal()
+    try:
+        ep = db.query(ModelEndpoint).filter(
+            ModelEndpoint.base_url.contains(domain),
+            ModelEndpoint.is_enabled == True
+        ).first()
+        if not ep:
+            return False
+        model_ids = []
+        if ep.cached_models:
+            try:
+                model_ids = json.loads(ep.cached_models) if isinstance(ep.cached_models, str) else ep.cached_models
+            except Exception:
+                pass
+        if not model_ids:
+            return False
+        hidden = set()
+        if ep.hidden_models:
+            try:
+                hidden = set(json.loads(ep.hidden_models)) if isinstance(ep.hidden_models, str) else set(ep.hidden_models)
+            except Exception:
+                pass
+        visible = [m for m in model_ids if m not in hidden]
+        if not visible:
+            return False
+        _NON_CHAT = ("text-embedding", "embedding", "tts-", "whisper",
+                     "text-moderation", "moderation-", "dall-e", "rerank")
+        chat_ids = [m for m in visible if not any(p in m.lower() for p in _NON_CHAT)]
+        model_to_use = (chat_ids or visible)[0]
+        sess.model = model_to_use
+        db.query(DBSession).filter(DBSession.id == session_id).update(
+            {"model": model_to_use}
+        )
+        db.commit()
+        logger.info(f"Resolved empty session model to {model_to_use} for session {session_id}")
+        return True
+    except Exception:
+        db.rollback()
+        return False
+    finally:
+        db.close()
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -289,6 +341,11 @@ def setup_chat_routes(
 
         # Ensure session has auth headers
         resolve_session_auth(sess, session)
+
+        # Fallback: if session model was cleared (e.g. endpoint deleted and
+        # recreated), probe the endpoint and pick the first chat model.
+        if not sess.model:
+            _resolve_empty_session_model(sess, session)
 
         # Check for research_pending BEFORE mode persist overwrites it
         do_research = str(use_research).lower() == "true"
