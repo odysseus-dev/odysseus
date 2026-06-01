@@ -317,7 +317,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
         yield f"data: {json.dumps({'exit_code': -1, 'error': PTY_UNSUPPORTED_ERROR})}\n\n"
         return
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     master_fd, slave_fd = pty.openpty()
 
     # Set master to non-blocking
@@ -735,10 +735,11 @@ def setup_shell_routes() -> APIRouter:
                 ]
 
                 finished = 0
-                deadline = (asyncio.get_event_loop().time() + timeout) if timeout else None
+                loop = asyncio.get_running_loop()
+                deadline = (loop.time() + timeout) if timeout else None
                 while finished < 2:
                     if deadline:
-                        remaining = deadline - asyncio.get_event_loop().time()
+                        remaining = deadline - loop.time()
                         if remaining <= 0:
                             raise asyncio.TimeoutError()
                         wait = min(remaining, 2.0)

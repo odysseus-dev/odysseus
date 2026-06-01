@@ -38,7 +38,7 @@ async def _cached(key: Tuple, ttl: float, fetch: Callable[[], Awaitable[Any]]) -
             pending = fut
             owner = False
         else:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             fut = loop.create_future()
             _shared_cache_pending[key] = fut
             pending = fut
