@@ -1,7 +1,6 @@
 # src/chat_handler.py
 """Handler for chat endpoint operations."""
 import os
-import json
 import asyncio
 import logging
 from typing import Dict, List, Optional, Any
@@ -149,23 +148,22 @@ class ChatHandler:
         vision_enabled = get_setting("vision_enabled", True)
         main_is_vision = is_vision_model(sess.model or "")
 
-        # Read uploads DB once and index by id (was read twice + linear-scanned per attachment)
+        # Resolve uploads once with the session owner. Attachment IDs are
+        # bearer-like references; never trust them without an owner check.
         files_by_id: Dict[str, Dict] = {}
+        owner = getattr(sess, "owner", None)
         if att_ids:
-            uploads_db_path = os.path.join(UPLOAD_DIR, "uploads.json")
-            try:
-                with open(uploads_db_path, "r") as f:
-                    _all_files = json.load(f)
-                files_by_id = {fi["id"]: fi for fi in _all_files.values() if "id" in fi}
-            except (FileNotFoundError, json.JSONDecodeError):
-                pass
+            for att_id in att_ids:
+                fi = self.upload_handler.resolve_upload(att_id, owner=owner)
+                if fi:
+                    files_by_id[att_id] = fi
 
             for att_id in att_ids:
                 fi = files_by_id.get(att_id)
                 if fi:
                     attachment_meta.append({
                         "id": fi["id"],
-                        "name": fi["name"],
+                        "name": fi.get("name") or fi.get("original_name") or fi["id"],
                         "mime": fi.get("mime", ""),
                         "size": fi.get("size", 0),
                         "width": fi.get("width"),
@@ -193,7 +191,7 @@ class ChatHandler:
                         _vcache = os.path.join(UPLOAD_DIR, ".vision", att_id + ".txt")
                         if os.path.exists(_vcache):
                             try:
-                                with open(_vcache) as _vf:
+                                with open(_vcache, encoding="utf-8") as _vf:
                                     _vtext = _vf.read().strip()
                                 if _vtext:
                                     enhanced_message += f"\n[User-corrected caption / OCR for this image — treat as authoritative]:\n{_vtext}"
@@ -212,7 +210,7 @@ class ChatHandler:
                         vl_model = get_setting("vision_model", "") or ""
                         if os.path.exists(_vcache):
                             try:
-                                with open(_vcache) as _vf:
+                                with open(_vcache, encoding="utf-8") as _vf:
                                     cached_desc = _vf.read().strip()
                                 if cached_desc and not cached_desc.startswith("["):
                                     vl_desc = cached_desc
@@ -225,7 +223,7 @@ class ChatHandler:
                             if vl_desc and not vl_desc.startswith("["):
                                 try:
                                     os.makedirs(os.path.join(UPLOAD_DIR, ".vision"), exist_ok=True)
-                                    with open(_vcache, "w") as _vf:
+                                    with open(_vcache, "w", encoding="utf-8") as _vf:
                                         _vf.write(vl_desc)
                                 except Exception:
                                     pass
@@ -242,6 +240,8 @@ class ChatHandler:
             enhanced_message, att_ids, UPLOAD_DIR, self.upload_handler,
             session_id=getattr(sess, "id", None),
             auto_opened_docs=auto_opened_docs,
+            owner=owner,
+            resolved_uploads=files_by_id,
         )
 
         # Strip image_url entries for text-only models (VL description is already in the text)

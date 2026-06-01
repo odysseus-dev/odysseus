@@ -173,7 +173,7 @@ def _entry_from_modelinfo(mi, overrides):
 
 
 def main():
-    with open(DATA_PATH) as f:
+    with open(DATA_PATH, encoding="utf-8") as f:
         catalog = json.load(f)
     by_name = {m["name"]: m for m in catalog}
     existing = set(by_name)
@@ -214,12 +214,12 @@ def main():
         return
 
     # Backup + merge
-    with open(DATA_PATH + ".bak", "w") as f:
+    with open(DATA_PATH + ".bak", "w", encoding="utf-8") as f:
         json.dump(catalog, f, indent=2)
     for name, entry in to_add.items():
         by_name[name] = entry
     merged = list(by_name.values())
-    with open(DATA_PATH, "w") as f:
+    with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(merged, f, indent=2)
 
     print(f"\nAdded/updated {len(to_add)} models. Catalog now {len(merged)} (was {len(catalog)}).")

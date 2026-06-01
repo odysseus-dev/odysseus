@@ -117,7 +117,7 @@ def load_model():
     cls_name_from_index = ""
     if model_index.exists():
         try:
-            idx = json.loads(model_index.read_text())
+            idx = json.loads(model_index.read_text(encoding="utf-8"))
             cls_name_from_index = idx.get("_class_name", "")
             if hasattr(diffusers, cls_name_from_index):
                 pipeline_cls = getattr(diffusers, cls_name_from_index)

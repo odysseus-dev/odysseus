@@ -1952,7 +1952,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_calendar tool calls: list/create/update/delete calendar events (local SQLite)."""
     from datetime import datetime, timedelta
     from core.database import SessionLocal, CalendarCal, CalendarEvent, Note
-    from routes.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user
+    from routes.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid
     import uuid as _uuid
 
     try:
@@ -2317,7 +2317,11 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             uid = args.get("uid")
             if not uid:
                 return {"error": "uid is required", "exit_code": 1}
-            ev = _event_query().filter(CalendarEvent.uid == uid).first()
+            try:
+                base_uid = _resolve_base_uid(uid)
+            except ValueError as e:
+                return {"error": str(e), "exit_code": 1}
+            ev = _event_query().filter(CalendarEvent.uid == base_uid).first()
             if not ev:
                 return {"error": f"Event {uid} not found", "exit_code": 1}
             if args.get("summary") is not None:
@@ -2346,7 +2350,11 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             uid = args.get("uid")
             if not uid:
                 return {"error": "uid is required", "exit_code": 1}
-            ev = _event_query().filter(CalendarEvent.uid == uid).first()
+            try:
+                base_uid = _resolve_base_uid(uid)
+            except ValueError as e:
+                return {"error": str(e), "exit_code": 1}
+            ev = _event_query().filter(CalendarEvent.uid == base_uid).first()
             if not ev:
                 return {"error": f"Event {uid} not found", "exit_code": 1}
             db.delete(ev)
@@ -3631,7 +3639,7 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
 
     def _load(p):
         try:
-            return _json.loads(p.read_text())
+            return _json.loads(p.read_text(encoding="utf-8"))
         except Exception:
             return None
 
@@ -3866,7 +3874,7 @@ def _load_vault_config() -> Dict:
     p = Path("data/vault.json")
     if p.exists():
         try:
-            return json.loads(p.read_text())
+            return json.loads(p.read_text(encoding="utf-8"))
         except Exception:
             pass
     return {}
@@ -4019,13 +4027,13 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
     cfg = {}
     if p.exists():
         try:
-            cfg = json.loads(p.read_text())
+            cfg = json.loads(p.read_text(encoding="utf-8"))
         except Exception:
             pass
     cfg["session"] = session
     from datetime import datetime as _dt
     cfg["unlocked_at"] = _dt.utcnow().isoformat()
-    p.write_text(json.dumps(cfg, indent=2))
+    p.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     try:
         import os as _os
         _os.chmod(str(p), 0o600)

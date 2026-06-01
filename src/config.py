@@ -1,7 +1,18 @@
+import os
 from pathlib import Path
 from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
+
+# Cross-platform OS flag, exposed here so callers can `from src.config import
+# IS_WINDOWS`. Defined locally (a trivial `os.name == "nt"`) rather than imported
+# from core.platform_compat, to keep this dependency-light config module from
+# dragging in the whole core/__init__ + llm_core import chain. The platform
+# *helper functions* (safe_chmod, pid_alive, find_bash, ...) live solely in
+# core.platform_compat — that remains their single source of truth. Keep platform
+# branches as small inline `if IS_WINDOWS:` deltas (never parallel *_windows.py
+# files) so they stay easy to integrate with upstream changes.
+IS_WINDOWS = os.name == "nt"
 
 class DataConfig(BaseSettings):
     """Configuration for data storage and file handling."""

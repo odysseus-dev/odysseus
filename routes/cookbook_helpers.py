@@ -102,6 +102,28 @@ def _shell_path(p: str) -> str:
     return '"' + p + '"'
 
 
+def _local_tooling_path_export(executable: str) -> str:
+    """Bash line prepending the running interpreter's bin dir to PATH.
+
+    When Odysseus runs from a virtualenv, that bin dir holds the tools the
+    cookbook runners shell out to (`hf`, `python`). tmux runners start from a
+    fresh login shell with the venv NOT activated, so without this they can't
+    find `hf` and downloads fail with "hf: command not found" — notably on
+    macOS, where the `pip --user` self-heal also misses (`pip` isn't a command,
+    only `pip3`/`python3 -m pip`). Local runs only; meaningless over SSH.
+    """
+    bin_dir = os.path.dirname(os.path.abspath(executable))
+    # Escape for a double-quoted context: $PATH must still expand, but spaces
+    # and shell metacharacters in the path must be preserved literally.
+    esc = (
+        bin_dir.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("$", "\\$")
+        .replace("`", "\\`")
+    )
+    return f'export PATH="{esc}:$PATH"'
+
+
 def _ps_squote(v: str) -> str:
     """Escape a value for PowerShell single-quoted string interpolation.
     Belt-and-suspenders on top of _validate_token's regex — if the regex
