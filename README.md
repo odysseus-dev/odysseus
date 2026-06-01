@@ -250,6 +250,10 @@ Key settings:
 
 Odysseus auto-registers a few built-in MCP servers at startup. The npx-based ones (currently the browser server, `@playwright/mcp`) only start when their npm package is already in the local npx cache. If a package isn't cached, that server is skipped with a startup log message explaining what to do, so a fresh install does not block on a multi-minute npm download or hang if Playwright system deps are missing.
 
+Odysseus also ships a built-in YoutubeDownloader MCP server that talks to the local YoutubeDownloader web service. The YoutubeDownloader service must be installed and running on the same device as Odysseus. It uses `http://127.0.0.1:49156` by default; set `YTDL_BASE_URL` if your YoutubeDownloader service is running elsewhere.
+
+Get YoutubeDownloader here: [YoutubeDownloader](https://github.com/LorenBll/YoutubeDownloader).
+
 To enable the browser MCP (page navigation, screenshots, vision), run once:
 
 ```bash
