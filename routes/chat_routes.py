@@ -307,6 +307,13 @@ def setup_chat_routes(
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
         incognito = str(form_data.get("incognito", "")).lower() == "true"
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
+        openui_mode = str(form_data.get("openui_mode", "")).lower() == "true"
+        if openui_mode:
+            chat_mode = "chat"
+            use_web = None
+            use_research = None
+            allow_bash = None
+            allow_web_search = None
         # Did the USER explicitly pick agent mode? (vs. us auto-escalating
         # below). Skill extraction should only learn from real agent sessions,
         # not chats we quietly promoted for a notes/calendar intent.
@@ -319,7 +326,7 @@ def setup_chat_routes(
         # its way through a plain chat request (and fail, especially with the
         # shell disabled).
         auto_escalated = False
-        if chat_mode == "chat" and isinstance(message, str) and _message_needs_tools(message):
+        if not openui_mode and chat_mode == "chat" and isinstance(message, str) and _message_needs_tools(message):
             chat_mode = "agent"
             auto_escalated = True
             logger.info("chat→agent auto-escalation: message matched tool-intent pattern")
@@ -418,6 +425,23 @@ def setup_chat_routes(
         )
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope
+
+        if openui_mode:
+            try:
+                from routes.document_routes import _openui_system_prompt
+                ctx.messages.insert(0, {
+                    "role": "system",
+                    "content": (
+                        _openui_system_prompt()
+                        + "\n\nYou are answering inline inside the Odysseus chat feed. "
+                        + "Return only valid OpenUI Lang, with a root component. "
+                        + "Do not wrap the response in Markdown fences and do not add explanatory prose. "
+                        + "Design the UI as a polished, compact generative interface suitable for screen recording."
+                    ),
+                })
+            except Exception:
+                logger.exception("Failed to load OpenUI system prompt")
+                raise HTTPException(500, "OpenUI prompt is not available. Run npm run build:openui.")
 
         # Query active document — prefer explicit ID from frontend, fall back to session lookup
         active_doc = None
@@ -709,7 +733,7 @@ def setup_chat_routes(
                 _fallback_candidates = []
 
             # Send model name early so the frontend can show it during streaming
-            _model_suffix = "Research" if do_research else None
+            _model_suffix = "OpenUI" if openui_mode else ("Research" if do_research else None)
             _model_info = {"type": "model_info", "model": sess.model}
             if _model_suffix:
                 _model_info["suffix"] = _model_suffix
@@ -851,6 +875,7 @@ def setup_chat_routes(
                                     used_memories=ctx.used_memories,
                                     do_research=do_research,
                                     incognito=incognito,
+                                    openui=openui_mode,
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
@@ -866,7 +891,7 @@ def setup_chat_routes(
                 except (asyncio.CancelledError, GeneratorExit):
                     if full_response:
                         logger.info("Client disconnected mid-stream (chat mode) for session %s, saving partial (%d chars)", session, len(full_response))
-                        _stopped_content, _stopped_md = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
+                        _stopped_content, _stopped_md = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model, "openui": openui_mode})
                         sess.add_message(ChatMessage("assistant", _stopped_content, metadata=_stopped_md))
                         if not incognito:
                             session_manager.save_sessions()

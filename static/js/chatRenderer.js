@@ -863,18 +863,132 @@ export function buildFindingsBox(findings, expanded) {
   var FINDINGS_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';
   var arrow = expanded ? 'down' : 'right';
   var expandedClass = expanded ? ' expanded' : '';
-  return '<div class="sources-section">'
-    + '<div class="sources-header" data-sources-id="' + id + '" onclick="window.toggleSources(\'' + id + '\')">'
-    + '<div class="sources-header-left">' + FINDINGS_ICON + '<span>' + count + ' Raw collected findings</span></div>'
-    + '<span class="sources-toggle" id="' + id + '-toggle" data-arrow="' + arrow + '"></span>'
-    + '</div>'
-    + '<div class="sources-content' + expandedClass + '" id="' + id + '">'
-    + '<div class="sources-content-inner">' + lines + '</div>'
-    + '</div></div>';
+	  return '<div class="sources-section">'
+	    + '<div class="sources-header" data-sources-id="' + id + '" onclick="window.toggleSources(\'' + id + '\')">'
+	    + '<div class="sources-header-left">' + FINDINGS_ICON + '<span>' + count + ' Raw collected findings</span></div>'
+	    + '<span class="sources-toggle" id="' + id + '-toggle" data-arrow="' + arrow + '"></span>'
+	    + '</div>'
+	    + '<div class="sources-content' + expandedClass + '" id="' + id + '">'
+	    + '<div class="sources-content-inner">' + lines + '</div>'
+	    + '</div></div>';
+	}
+
+let _openUIRendererPromise = null;
+
+export function isOpenUIResponse(content, metadata = {}) {
+  if (metadata?.openui) return true;
+  const text = String(content || '').trim();
+  if (!text) return false;
+  const unfenced = text
+    .replace(/^```(?:openui|openui-lang|python|py)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+  return /\broot\s*=/.test(unfenced)
+    && /\b(Stack|VStack|HStack|Grid|Card|Button|Text|TextContent|Image|Badge|Icon)\s*\(/.test(unfenced);
 }
 
-/** Append report button + continue research prompt. */
-export function appendReportButton(container, sessionId) {
+function normalizeOpenUIResponse(content) {
+  return String(content || '')
+    .trim()
+    .replace(/^```(?:openui|openui-lang|python|py)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+}
+
+function ensureOpenUIStyles() {
+  if (document.querySelector('link[data-openui-renderer-style]')) return;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = '/static/vendor/openui-renderer.css';
+  link.dataset.openuiRendererStyle = 'true';
+  document.head.appendChild(link);
+}
+
+async function loadOpenUIRenderer() {
+  if (!_openUIRendererPromise) {
+    _openUIRendererPromise = import('/static/vendor/openui-renderer.js');
+  }
+  return _openUIRendererPromise;
+}
+
+/**
+ * Render partial OpenUI-lang into `host` while the LLM is still streaming.
+ * Reuses a single mount across deltas so the React root updates in place
+ * (no flicker / remount) and the streaming parser can tolerate partial code.
+ */
+export function renderOpenUIStreaming(host, response) {
+  if (!host) return;
+  ensureOpenUIStyles();
+  let mount = host._openuiStreamMount;
+  if (!mount || !host.contains(mount)) {
+    host.innerHTML = '';
+    const frame = document.createElement('div');
+    frame.className = 'inline-openui-response inline-openui-streaming';
+    mount = document.createElement('div');
+    mount.className = 'inline-openui-mount';
+    frame.appendChild(mount);
+    host.appendChild(frame);
+    host._openuiStreamMount = mount;
+  }
+  const source = normalizeOpenUIResponse(response);
+  loadOpenUIRenderer()
+    .then((mod) => mod.renderOpenUI(mount, source, { isStreaming: true }))
+    .catch((err) => console.warn('OpenUI stream render failed:', err));
+}
+
+export function renderOpenUIInBody(body, response, options = {}) {
+  if (!body) return;
+  const source = normalizeOpenUIResponse(response);
+
+  // Tear down any streaming root left behind by renderOpenUIStreaming so we
+  // don't leak detached React roots when we rebuild the final frame below.
+  const prevMounts = body.querySelectorAll('.inline-openui-mount');
+  if (prevMounts.length) {
+    loadOpenUIRenderer()
+      .then((mod) => prevMounts.forEach((m) => { try { mod.unmountOpenUI(m); } catch (_e) {} }))
+      .catch(() => {});
+  }
+
+  body.innerHTML = options.sourcesPrefix || '';
+
+  const frame = document.createElement('div');
+  frame.className = 'inline-openui-response';
+  const mount = document.createElement('div');
+  mount.className = 'inline-openui-mount';
+  mount.innerHTML = '<div class="inline-openui-loading">Composing interface...</div>';
+  frame.appendChild(mount);
+  body.appendChild(frame);
+
+  if (options.findingsSuffix) {
+    const suffix = document.createElement('div');
+    suffix.innerHTML = options.findingsSuffix;
+    while (suffix.firstChild) body.appendChild(suffix.firstChild);
+  }
+
+  // Capture live form state on `body` so a later re-render of this same
+  // message rehydrates the values the user entered (in-memory, session scope).
+  const onState = (state) => { body._openuiState = state; };
+
+  ensureOpenUIStyles();
+  loadOpenUIRenderer()
+    .then((mod) => mod.renderOpenUI(mount, source, {
+      isStreaming: false,
+      initialState: body._openuiState,
+      onState,
+    }))
+    .catch((err) => {
+      console.error('OpenUI inline render failed:', err);
+      mount.innerHTML = '<div class="inline-openui-error">OpenUI render failed.</div>';
+      const details = document.createElement('details');
+      details.className = 'inline-openui-source';
+      details.innerHTML = '<summary>Source</summary><pre><code></code></pre>';
+      details.querySelector('code').textContent = source;
+      frame.appendChild(details);
+    });
+}
+
+	/** Append report button + continue research prompt. */
+	export function appendReportButton(container, sessionId) {
   _appendReportButton(container, sessionId);
   _appendContinuePrompt(container);
 }
@@ -2048,11 +2162,13 @@ export function addMessage(role, content, modelName, metadata) {
     if (role === 'assistant' && metadata?.rag_sources?.length) {
       findingsSuffix += buildRagSourcesBox(metadata.rag_sources);
     }
-    // If thinking is stored in metadata (not in text), reconstruct the full display
-    if (role === 'assistant' && metadata?.thinking) {
-      const thinkTime = metadata.thinking_time || null;
-      const thinkHtml = markdownModule.processWithThinking(
-        '<think' + (thinkTime ? ` time="${thinkTime}"` : '') + '>' + metadata.thinking + '</think>\n\n' + text
+	    if (role === 'assistant' && isOpenUIResponse(text, metadata)) {
+	      renderOpenUIInBody(b, text, { sourcesPrefix, findingsSuffix });
+	    // If thinking is stored in metadata (not in text), reconstruct the full display
+	    } else if (role === 'assistant' && metadata?.thinking) {
+	      const thinkTime = metadata.thinking_time || null;
+	      const thinkHtml = markdownModule.processWithThinking(
+	        '<think' + (thinkTime ? ` time="${thinkTime}"` : '') + '>' + metadata.thinking + '</think>\n\n' + text
       );
       b.innerHTML = sourcesPrefix + thinkHtml + findingsSuffix;
     } else {
@@ -2275,6 +2391,9 @@ const chatRenderer = {
   stripToolBlocks,
   buildSourcesBox,
   buildFindingsBox,
+  isOpenUIResponse,
+  renderOpenUIInBody,
+  renderOpenUIStreaming,
   appendReportButton,
   buildImageBubble,
   hideWelcomeScreen,

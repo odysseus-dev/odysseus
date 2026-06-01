@@ -664,6 +664,7 @@ def save_assistant_response(
     do_research: bool = False,
     tool_events: list = None,
     incognito: bool = False,
+    openui: bool = False,
 ):
     """Add assistant response to session history. In incognito mode, keeps in-memory context but skips DB persistence."""
     md = dict(last_metrics) if last_metrics else {}
@@ -682,6 +683,8 @@ def save_assistant_response(
         md["research_clarification"] = True
     if tool_events:
         md["tool_events"] = tool_events
+    if openui:
+        md["openui"] = True
 
     # Extract thinking into metadata (don't pollute message content with <think> tags)
     _think_info = _extract_thinking_meta(full_response)

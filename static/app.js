@@ -1588,6 +1588,7 @@ function initializeEventListeners() {
     bash: { role: 'Shell Access', text: 'Gives the AI access to a sandboxed shell for running commands, installing packages, and executing scripts. Use with caution.' },
     builder: { role: 'Tool Builder', text: 'Create custom mini-apps and tools the AI can use. Describe what you need and the AI will build a tool you can reuse across conversations.' },
     research: { role: 'Deep Research', text: 'Multi-round web search with source analysis. Takes longer but produces comprehensive, well-sourced answers. Your next message will trigger a deep research cycle.' },
+    openui: { role: 'OpenUI', text: 'The next assistant replies as an interactive OpenUI surface rendered inline in chat.' },
   };
   function _showToolSplash(key) {
     const splash = _toolSplashes[key];
@@ -1665,6 +1666,31 @@ function initializeEventListeners() {
         overflowDocBtn.classList.add('active');
         const st = loadToggleState(); st.doc = true; saveToggleState(st);
       }
+    });
+  }
+
+  const overflowOpenUiBtn = el('overflow-openui-btn');
+  if (overflowOpenUiBtn) {
+    const openuiChk = el('openui-toggle');
+    const savedOpenUI = !!loadToggleState().openui;
+    if (openuiChk) openuiChk.checked = savedOpenUI;
+    overflowOpenUiBtn.classList.toggle('active', savedOpenUI);
+    overflowOpenUiBtn.addEventListener('click', () => {
+      document.getElementById('overflow-menu')?.classList.add('hidden');
+      if (!openuiChk) return;
+      openuiChk.checked = !openuiChk.checked;
+      overflowOpenUiBtn.classList.toggle('active', openuiChk.checked);
+      const st = loadToggleState();
+      st.openui = openuiChk.checked;
+      saveToggleState(st);
+      if (openuiChk.checked) {
+        const resChk = el('research-toggle');
+        if (resChk && resChk.checked) _syncResearchIndicator(false);
+        const chatBtn = el('mode-chat-btn');
+        if (chatBtn && !chatBtn.classList.contains('active')) chatBtn.click();
+        _showToolSplash('openui');
+      }
+      if (uiModule?.showToast) uiModule.showToast(`OpenUI responses ${openuiChk.checked ? 'on' : 'off'}`, 1800);
     });
   }
 

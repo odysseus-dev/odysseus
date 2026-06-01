@@ -172,6 +172,9 @@ import createResearchSynapse from './researchSynapse.js';
   var displayMetrics = chatRenderer.displayMetrics;
   var hideWelcomeScreen = chatRenderer.hideWelcomeScreen;
   var showWelcomeScreen = chatRenderer.showWelcomeScreen;
+  var isOpenUIResponse = chatRenderer.isOpenUIResponse;
+  var renderOpenUIInBody = chatRenderer.renderOpenUIInBody;
+  var renderOpenUIStreaming = chatRenderer.renderOpenUIStreaming;
 
   /**
    * Update submit button state
@@ -734,6 +737,9 @@ import createResearchSynapse from './researchSynapse.js';
       const fd = new FormData();
       fd.append('message', _finalMsgWithInject);
       fd.append('session', streamSessionId);
+      const openuiChk = el('openui-toggle');
+      const openuiMode = !!(openuiChk && openuiChk.checked);
+      if (openuiMode) fd.append('openui_mode', 'true');
       if (ids.length) fd.append('attachments', JSON.stringify(ids));
       // Auto-save & send active doc ID so the backend sees latest content
       if (documentModule && documentModule.isPanelOpen() && documentModule.getCurrentDocId()) {
@@ -749,6 +755,7 @@ import createResearchSynapse from './researchSynapse.js';
         isAgentMode = true;
       }
       fd.append('mode', isAgentMode ? 'agent' : 'chat');
+      if (openuiMode) fd.set('mode', 'chat');
       if (el('web-toggle').checked) {
         if (isAgentMode) {
           fd.append('allow_web_search', 'true');
@@ -782,7 +789,7 @@ import createResearchSynapse from './researchSynapse.js';
       currentAbort = abortCtrl;
 
       const _tState = Storage.loadToggleState();
-      const _isAgent = (_tState.mode || 'chat') === 'agent';
+      const _isAgent = !openuiMode && (_tState.mode || 'chat') === 'agent';
 
       // Timeout: 6 min for research and agent mode, 3 min otherwise
       const timeoutMs = el('research-toggle').checked || _isAgent ? RESEARCH_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
@@ -1103,6 +1110,24 @@ import createResearchSynapse from './researchSynapse.js';
         let dt = stripToolBlocks(roundText);
         const bodyEl = roundHolder.querySelector('.body');
         const contentEl = _ensureStreamLayout(bodyEl);
+        if (openuiMode) {
+          contentEl.style.minHeight = '';
+          contentEl._prevTextLen = 0;
+          // Stream the partial OpenUI surface live. Throttle re-parses to every
+          // ~24 chars so we don't thrash the React renderer on each token.
+          const _ouSrc = dt;
+          if (_ouSrc && _ouSrc.trim()) {
+            const _lastLen = contentEl._openuiLastLen || 0;
+            if (!contentEl._openuiStreamMount || (_ouSrc.length - _lastLen) >= 24) {
+              contentEl._openuiLastLen = _ouSrc.length;
+              renderOpenUIStreaming(contentEl, _ouSrc);
+            }
+          } else if (!contentEl._openuiStreamMount) {
+            contentEl.innerHTML = '<div class="inline-openui-loading">Composing OpenUI interface...</div>';
+          }
+          uiModule.scrollHistory();
+          return;
+        }
 
         // If thinking was already collapsed in-place, only render the reply portion
         let liveReply = contentEl.querySelector('.live-reply-content');
@@ -2335,59 +2360,66 @@ import createResearchSynapse from './researchSynapse.js';
           // Preserve sources expanded state before final render
           var _wasExpanded = _sourcesExpanded || !!(_body4 && _body4.querySelector('.sources-content.expanded'));
 
-          // If thinking was collapsed in-place during streaming, preserve it
-          var _liveReplyEl = _body4 && _body4.querySelector('.live-reply-content');
-          var _extracted = _liveReplyEl ? markdownModule.extractThinkingBlocks(finalDisplay) : null;
-          var _finalReply = '';
-          if (_liveReplyEl) {
-            // Try standard extraction first (for native <think> tags)
-            if (_extracted?.thinkingBlocks?.length) {
-              _finalReply = (_extracted.content || '').trim();
-            } else {
-              // Non-tag thinking: extract reply from raw text
-              // Handle garbled <think> tag: "Thinking: reasoning\n<think>reply"
-              const _garbledMatch = finalDisplay.match(/^[\s\S]+?<think(?:ing)?>\s*([\s\S]*?)(?:<\/think(?:ing)?>)?\s*$/i);
-              if (_garbledMatch && _garbledMatch[1].trim()) {
-                _finalReply = _garbledMatch[1].trim();
+          if (openuiMode && isOpenUIResponse(finalDisplay, { openui: true })) {
+            renderOpenUIInBody(_body4, finalDisplay, {
+              sourcesPrefix: _sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded) : '',
+              findingsSuffix: _findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '',
+            });
+          } else {
+            // If thinking was collapsed in-place during streaming, preserve it
+            var _liveReplyEl = _body4 && _body4.querySelector('.live-reply-content');
+            var _extracted = _liveReplyEl ? markdownModule.extractThinkingBlocks(finalDisplay) : null;
+            var _finalReply = '';
+            if (_liveReplyEl) {
+              // Try standard extraction first (for native <think> tags)
+              if (_extracted?.thinkingBlocks?.length) {
+                _finalReply = (_extracted.content || '').trim();
               } else {
-                // Pure non-tag: find reply boundary by prefix patterns
-                const _rs2 = ['Hey', 'Hi ', 'Hi!', 'Hello', 'Sure', 'Yes', 'No ', 'No,', 'Yo', 'OK', 'Here', 'Absolutely', 'Of course', 'Great', 'Alright', 'Thanks', 'Welcome', 'Good ', "I'm happy", "I'd be"];
-                const _fr = (finalDisplay || '').trimStart();
-                if (markdownModule.startsWithReasoningPrefix(_fr)) {
-                  const _fLines = _fr.split('\n');
-                  for (let _fi = 1; _fi < _fLines.length; _fi++) {
-                    const _fl = _fLines[_fi].trim();
-                    if (!_fl) continue;
-                    if (_rs2.some(rp => _fl.startsWith(rp))) { _finalReply = _fLines.slice(_fi).join('\n'); break; }
-                  }
-                  // Within-line check
-                  if (!_finalReply) {
-                    for (const rp of _rs2) {
-                      const rx = new RegExp('[.!?]\\s*(' + rp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')');
-                      const m = rx.exec(_fr);
-                      if (m && m.index > 20) { _finalReply = _fr.slice(m.index + 1).trim(); break; }
+                // Non-tag thinking: extract reply from raw text
+                // Handle garbled <think> tag: "Thinking: reasoning\n<think>reply"
+                const _garbledMatch = finalDisplay.match(/^[\s\S]+?<think(?:ing)?>\s*([\s\S]*?)(?:<\/think(?:ing)?>)?\s*$/i);
+                if (_garbledMatch && _garbledMatch[1].trim()) {
+                  _finalReply = _garbledMatch[1].trim();
+                } else {
+                  // Pure non-tag: find reply boundary by prefix patterns
+                  const _rs2 = ['Hey', 'Hi ', 'Hi!', 'Hello', 'Sure', 'Yes', 'No ', 'No,', 'Yo', 'OK', 'Here', 'Absolutely', 'Of course', 'Great', 'Alright', 'Thanks', 'Welcome', 'Good ', "I'm happy", "I'd be"];
+                  const _fr = (finalDisplay || '').trimStart();
+                  if (markdownModule.startsWithReasoningPrefix(_fr)) {
+                    const _fLines = _fr.split('\n');
+                    for (let _fi = 1; _fi < _fLines.length; _fi++) {
+                      const _fl = _fLines[_fi].trim();
+                      if (!_fl) continue;
+                      if (_rs2.some(rp => _fl.startsWith(rp))) { _finalReply = _fLines.slice(_fi).join('\n'); break; }
+                    }
+                    // Within-line check
+                    if (!_finalReply) {
+                      for (const rp of _rs2) {
+                        const rx = new RegExp('[.!?]\\s*(' + rp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')');
+                        const m = rx.exec(_fr);
+                        if (m && m.index > 20) { _finalReply = _fr.slice(m.index + 1).trim(); break; }
+                      }
                     }
                   }
                 }
               }
             }
-          }
-          if (_liveReplyEl && _finalReply) {
-            // Render reply into the live-reply container (thinking bar already showing)
-            var _replyHtml = markdownModule.mdToHtml(markdownModule.squashOutsideCode(_finalReply));
-            _liveReplyEl.innerHTML = _replyHtml;
-            _liveReplyEl.classList.remove('live-reply-content');
-            if (_sourcesData) {
-              var _srcEl = document.createElement('div');
-              _srcEl.innerHTML = _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded);
-              _body4.insertBefore(_srcEl.firstChild || _srcEl, _body4.firstChild);
+            if (_liveReplyEl && _finalReply) {
+              // Render reply into the live-reply container (thinking bar already showing)
+              var _replyHtml = markdownModule.mdToHtml(markdownModule.squashOutsideCode(_finalReply));
+              _liveReplyEl.innerHTML = _replyHtml;
+              _liveReplyEl.classList.remove('live-reply-content');
+              if (_sourcesData) {
+                var _srcEl = document.createElement('div');
+                _srcEl.innerHTML = _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded);
+                _body4.insertBefore(_srcEl.firstChild || _srcEl, _body4.firstChild);
+              }
+              if (_findingsData) _body4.insertAdjacentHTML('beforeend', chatRenderer.buildFindingsBox(_findingsData));
+            } else {
+              // Full re-render (reply empty or no live-reply container)
+              _body4.innerHTML = (_sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded) : '')
+                + markdownModule.processWithThinking(markdownModule.squashOutsideCode(finalDisplay))
+                + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '');
             }
-            if (_findingsData) _body4.insertAdjacentHTML('beforeend', chatRenderer.buildFindingsBox(_findingsData));
-          } else {
-            // Full re-render (reply empty or no live-reply container)
-            _body4.innerHTML = (_sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded) : '')
-              + markdownModule.processWithThinking(markdownModule.squashOutsideCode(finalDisplay))
-              + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '');
           }
         } else if (_sourcesHtml) {
           var _body4b = roundHolder.querySelector('.body');
@@ -3139,6 +3171,50 @@ import createResearchSynapse from './researchSynapse.js';
    * Initialize event listeners
    */
   export function initListeners() {
+    // OpenUI form/action submit → next user turn. The renderer dispatches this
+    // when a Button fires @ToAssistant (type "continue_conversation"); we send
+    // the action's label + the entered form values as a new user message so the
+    // LLM actually sees what the user typed (the saved openui-lang carries no
+    // values). @OpenUrl ("open_url") is handled by the renderer itself — skip it.
+    if (!window._openuiActionBound) {
+      window._openuiActionBound = true;
+      // Flatten OpenUI form state into clean "- field: value" lines for the LLM.
+      // Shape: { formName: { field: { value, componentType } }, $var: value }.
+      // Prefer the form that fired the action; unwrap {value}; skip $bindings
+      // and empty fields so the model gets a tidy summary, not noisy JSON.
+      const _openuiFormLines = (formState, formName) => {
+        if (!formState || typeof formState !== 'object') return [];
+        let scope = formState;
+        if (formName && formState[formName] && typeof formState[formName] === 'object') {
+          scope = formState[formName];
+        }
+        const lines = [];
+        for (const [key, raw] of Object.entries(scope)) {
+          if (key.charAt(0) === '$') continue; // reactive binding, not a field
+          let val = (raw && typeof raw === 'object' && 'value' in raw) ? raw.value : raw;
+          if (val === undefined || val === null || val === '') continue;
+          if (typeof val === 'object') {
+            try { val = JSON.stringify(val); } catch (_e) { val = String(val); }
+          }
+          lines.push(`- ${key}: ${val}`);
+        }
+        return lines;
+      };
+      window.addEventListener('odysseus-openui-action', (ev) => {
+        const detail = ev && ev.detail;
+        if (!detail || detail.type === 'open_url') return;
+        if (isStreaming) return; // don't interrupt an in-flight turn
+        let text = (detail.humanFriendlyMessage || '').trim() || 'Continue';
+        const lines = _openuiFormLines(detail.formState, detail.formName);
+        if (lines.length) text += `\n\nSubmitted values:\n${lines.join('\n')}`;
+        const messageInput = uiModule.el('message');
+        if (!messageInput) return;
+        messageInput.value = text;
+        const submitBtn = document.querySelector('.send-btn');
+        if (submitBtn) submitBtn.click();
+      });
+    }
+
     // Global event delegation for copy-code buttons
     document.addEventListener('click', (e) => {
       const btn = e.target.closest('.copy-code');
