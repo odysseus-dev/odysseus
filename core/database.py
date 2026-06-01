@@ -367,6 +367,76 @@ class ModelEndpoint(TimestampMixin, Base):
     # the endpoint to that user (admins always see everything).
     owner = Column(String, nullable=True, index=True)
 
+
+class EndpointOAuthToken(TimestampMixin, Base):
+    """OAuth credentials for a ChatGPT-subscription (codex) model endpoint.
+
+    One row per OAuth `ModelEndpoint` (1:1 via the unique `endpoint_id`). The
+    access + refresh tokens are Fernet-encrypted at rest (EncryptedText) — they
+    are bearer credentials to the user's ChatGPT subscription and must never sit
+    plaintext in the DB file, nor be logged. `account_id` (the JWT
+    `chatgpt_account_id` claim) is an identifier, not a secret, but is likewise
+    never logged. Refresh is single-flighted in `auth.resolve` keyed on
+    `endpoint_id`; `expires_at` drives refresh-on-expiry (120s skew).
+    """
+    __tablename__ = "endpoint_oauth_tokens"
+
+    id = Column(String, primary_key=True, index=True)
+    # 1:1 with the owning endpoint. CASCADE: deleting the endpoint drops its tokens.
+    endpoint_id = Column(String, ForeignKey("model_endpoints.id", ondelete="CASCADE"),
+                         nullable=False, unique=True, index=True)
+    # Owner-scoped: OAuth endpoints belong to the connecting user (NULL only for a
+    # deliberately-shared admin endpoint, which is not the default).
+    owner = Column(String, nullable=True, index=True)
+    provider_id = Column(String, nullable=False, default="openai-codex")
+    access_token = Column(EncryptedText, nullable=True)    # Bearer, encrypted at rest
+    refresh_token = Column(EncryptedText, nullable=True)   # rotated on refresh, encrypted at rest
+    account_id = Column(String, nullable=True)             # chatgpt_account_id (never logged)
+    expires_at = Column(DateTime, nullable=True)           # access-token expiry (UTC)
+    last_refresh_at = Column(DateTime, nullable=True)
+    # active | needs_relogin | quota | error  — surfaced to status endpoints (no token values)
+    status = Column(String, nullable=False, default="active")
+    last_error_redacted = Column(Text, nullable=True)      # redacted; never contains token material
+
+    # Many-to-one so the unit of work flushes the endpoint INSERT before the
+    # token's — SQLite enforces the FK at insert time (PRAGMA foreign_keys=ON).
+    endpoint = relationship("ModelEndpoint", foreign_keys=[endpoint_id])
+
+
+class CodexLoginAttempt(TimestampMixin, Base):
+    """In-flight device-code login attempt for a codex OAuth endpoint.
+
+    Created (PENDING) when a user starts `connect`; a background task polls
+    auth.openai.com until authorized/expired. `device_auth_id` (the device_code
+    poll secret) is Fernet-encrypted; `user_code` / `verification_uri` are
+    user-facing display values (not secret). The PKCE verifier is never stored —
+    the device-auth service returns it in the poll response and it is forwarded
+    to the token exchange in the same iteration. Status endpoints expose state
+    only — never the encrypted field.
+    """
+    __tablename__ = "codex_login_attempts"
+
+    id = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    # The PENDING endpoint this attempt will activate once authorized. SET NULL
+    # (not CASCADE): an attempt is a log row, so cleaning up a failed pending
+    # endpoint must not erase the attempt's terminal status before the UI reads it.
+    endpoint_id = Column(String, ForeignKey("model_endpoints.id", ondelete="SET NULL"),
+                         nullable=True, index=True)
+    device_auth_id = Column(EncryptedText, nullable=True)  # device_code poll secret, encrypted
+    user_code = Column(String, nullable=True)              # user-facing display code
+    verification_uri = Column(String, nullable=True)       # user-facing verification URL
+    # pending | authorized | expired | error | cancelled
+    status = Column(String, nullable=False, default="pending")
+    expires_at = Column(DateTime, nullable=True)
+    interval = Column(Integer, nullable=False, default=5)  # poll interval (seconds)
+    last_error_redacted = Column(Text, nullable=True)
+
+    # Many-to-one so the unit of work flushes the endpoint INSERT before the
+    # attempt's (connect creates both in one commit) under enforced FKs.
+    endpoint = relationship("ModelEndpoint", foreign_keys=[endpoint_id])
+
+
 class McpServer(TimestampMixin, Base):
     """Admin-configured MCP (Model Context Protocol) tool servers."""
     __tablename__ = "mcp_servers"

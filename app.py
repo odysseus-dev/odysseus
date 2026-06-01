@@ -588,6 +588,10 @@ app.include_router(setup_embedding_routes())
 from routes.model_routes import setup_model_routes
 app.include_router(setup_model_routes(model_discovery))
 
+# OpenAI-Codex (ChatGPT-subscription) OAuth — owner-scoped connect/status/disconnect
+from routes.codex_oauth_routes import setup_codex_oauth_routes
+app.include_router(setup_codex_oauth_routes())
+
 # TTS
 from routes.tts_routes import setup_tts_routes
 app.include_router(setup_tts_routes(tts_service))
