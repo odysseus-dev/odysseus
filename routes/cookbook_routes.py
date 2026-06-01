@@ -672,11 +672,14 @@ def setup_cookbook_routes() -> APIRouter:
                 cwd=str(Path.home()),
             )
         else:
-            # LOCAL scan: run the interpreter directly. `python3` isn't a thing on
-            # Windows (it's `python`/`py`), and shell single-quoting of the path
-            # doesn't survive cmd.exe — so resolve the interpreter and exec it
-            # with the script path as an argv element (no shell quoting needed).
-            local_py = (
+            # LOCAL scan: use sys.executable (the venv Python Odysseus is already
+            # running under) — it's guaranteed real Python on all platforms.
+            # Falling back to which_tool on Windows risks hitting the Microsoft
+            # Store stub alias for "python3"/"python", which prints
+            # "Python was not found; run without arguments to install from the
+            # Microsoft Store" and exits 9009, producing empty stdout and a
+            # JSON parse error. sys.executable bypasses PATH entirely.
+            local_py = sys.executable or (
                 which_tool("python3") or which_tool("python")
                 or which_tool("py") or "python"
             )
