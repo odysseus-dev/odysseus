@@ -12,7 +12,7 @@ import json
 import logging
 import uuid
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +238,7 @@ def get_model_spec_from_content(content: str) -> str:
     return get_first_line(content, 60)
 
 
-def resolve_panel(name: str) -> Optional[str]:
+def resolve_panel(name: Optional[str]) -> Optional[str]:
     """Resolve panel alias to canonical name.
 
     Args:
@@ -259,7 +259,7 @@ def resolve_panel(name: str) -> Optional[str]:
     return None
 
 
-def resolve_toggle(name: str) -> Optional[str]:
+def resolve_toggle(name: Optional[str]) -> Optional[str]:
     """Resolve toggle alias to canonical name.
 
     Args:
@@ -519,7 +519,7 @@ async def _image_download_and_save(
 # Pipeline helpers
 # ---------------------------------------------------------------------------
 
-def _pipeline_parse_steps(content: str):
+def _pipeline_parse_steps(content: str) -> Tuple[Optional[List[Dict]], Optional[Dict]]:
     """Parse pipeline steps from JSON or pipe-delimited line format.
 
     Returns:
@@ -610,38 +610,34 @@ def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
     else:
         model_name = spec
 
-    db = SessionLocal()
-    try:
+    with get_db_session() as db:
         query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
         if target_endpoint_name:
             query = query.filter(ModelEndpoint.name.ilike(f"%{target_endpoint_name}%"))
         endpoints = query.all()
 
-        if not endpoints:
-            raise ValueError("No enabled endpoints found" +
-                             (f" matching '{target_endpoint_name}'" if target_endpoint_name else ""))
+    if not endpoints:
+        raise ValueError(
+            "No enabled endpoints found"
+            + (f" matching '{target_endpoint_name}'" if target_endpoint_name else "")
+        )
 
-        for ep in endpoints:
-            base = _normalize_base(ep.base_url)
-            provider = _detect_provider(base)
-            headers = build_headers(ep.api_key, base)
+    for ep in endpoints:
+        base = _normalize_base(ep.base_url)
+        provider = _detect_provider(base)
+        headers = build_headers(ep.api_key, base)
 
-            model_ids = _fetch_endpoint_model_ids(base, headers, provider, ANTHROPIC_MODELS)
+        model_ids = _fetch_endpoint_model_ids(base, headers, provider, ANTHROPIC_MODELS)
+        model_ids = [m for m in model_ids if m != "(endpoint offline)"]
 
-            # Filter out the offline sentinel so we don't match it
-            model_ids = [m for m in model_ids if m != "(endpoint offline)"]
+        for mid in model_ids:
+            if mid.lower() == model_name.lower():
+                return build_chat_url(base), mid, headers
+        for mid in model_ids:
+            if model_name.lower() in mid.lower() or mid.lower() in model_name.lower():
+                return build_chat_url(base), mid, headers
 
-            # Exact match first, then partial match
-            for mid in model_ids:
-                if mid.lower() == model_name.lower():
-                    return build_chat_url(base), mid, headers
-            for mid in model_ids:
-                if model_name.lower() in mid.lower() or mid.lower() in model_name.lower():
-                    return build_chat_url(base), mid, headers
-
-        raise ValueError(f"Model '{spec}' not found on any configured endpoint")
-    finally:
-        db.close()
+    raise ValueError(f"Model '{spec}' not found on any configured endpoint")
 
 
 # ---------------------------------------------------------------------------
@@ -890,7 +886,6 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
 
     Output includes a relative "last active" timestamp per row so the
     agent can answer "open my last chat" without guessing from titles.
-    The most-recent session is always first in the list.
 
     Content = optional filter keyword (matches session name).
     """
@@ -900,76 +895,105 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
     keyword = content.strip().lower() if content.strip() else None
 
     try:
-        from core.database import SessionLocal, Session as DbSession
-        from datetime import datetime, timezone
+        from core.database import Session as DbSession
+        from datetime import datetime
 
-        # Pull every session's last_accessed from the DB so we can sort
-        # by recency. In-memory sessions hold name + model + msg_count;
-        # the DB row holds the timestamps.
-        db = SessionLocal()
-        try:
+        with get_db_session() as db:
             db_rows = {r.id: r for r in db.query(DbSession).all()}
-        finally:
-            db.close()
 
-        # SECURITY: scope to the caller's sessions. Passing None returned
-        # every user's sessions, which the agent tool then exposed via the
-        # "list my chats" reply.
+        # SECURITY: scope to the caller's sessions only
         sessions = _session_manager.get_sessions_for_user(owner)
         rows = []
         for sid, sess in sessions.items():
             if keyword and keyword not in (sess.name or "").lower():
                 continue
             db_row = db_rows.get(sid)
-            # Prefer last_accessed; fall back to updated_at, then created_at.
-            ts = None
-            if db_row:
-                ts = getattr(db_row, 'last_accessed', None) or getattr(db_row, 'updated_at', None) or getattr(db_row, 'created_at', None)
+            ts = _session_best_timestamp(db_row)
             rows.append((ts, sid, sess))
 
-        # Sort by timestamp DESC; rows without a timestamp sink to the bottom.
         rows.sort(key=lambda r: r[0] or datetime.min, reverse=True)
-
-        def _rel(ts):
-            if not ts:
-                return 'never'
-            now = datetime.utcnow()
-            try:
-                if ts.tzinfo is not None:
-                    now = datetime.now(timezone.utc)
-                diff = (now - ts).total_seconds()
-            except Exception:
-                return 'unknown'
-            if diff < 60: return 'just now'
-            if diff < 3600: return f'{int(diff / 60)}m ago'
-            if diff < 86400: return f'{int(diff / 3600)}h ago'
-            if diff < 86400 * 7: return f'{int(diff / 86400)}d ago'
-            return ts.strftime('%Y-%m-%d')
 
         lines = []
         for i, (ts, sid, sess) in enumerate(rows):
             if i >= SESSION_LIST_DISPLAY_LIMIT:
-                lines.append(f"... and {len(rows) - SESSION_LIST_DISPLAY_LIMIT} more (showing first {SESSION_LIST_DISPLAY_LIMIT})")
+                lines.append(
+                    f"... and {len(rows) - SESSION_LIST_DISPLAY_LIMIT} more "
+                    f"(showing first {SESSION_LIST_DISPLAY_LIMIT})"
+                )
                 break
             safe_name = (sess.name or "Untitled").replace("[", "\\[").replace("]", "\\]")
             msg_count = getattr(sess, "message_count", 0) or 0
             model = getattr(sess, "model", "unknown")
             marker = " ← most recent" if i == 0 else ""
-            lines.append(f"- **[{safe_name}](#session-{sid})** (id: `{sid}`, model: {model}, {msg_count} msgs, last active {_rel(ts)}){marker}")
+            lines.append(
+                f"- **[{safe_name}](#session-{sid})** "
+                f"(id: `{sid}`, model: {model}, {msg_count} msgs, "
+                f"last active {_session_relative_time(ts)}){marker}"
+            )
 
         if not lines:
-            return {"results": "No sessions found" + (f" matching '{keyword}'" if keyword else "") + "."}
+            suffix = f" matching '{keyword}'" if keyword else ""
+            return {"results": f"No sessions found{suffix}."}
 
         return {
             "results": (
                 f"Found {len(rows)} session(s), sorted most-recent first:\n"
                 + "\n".join(lines)
-                + "\n\nAssistant: when replying to the user, preserve the chat-title markdown links exactly as shown, e.g. `[Chat](#session-id)`. Do not rewrite this as a plain, non-clickable table."
+                + "\n\nAssistant: when replying to the user, preserve the chat-title markdown links "
+                "exactly as shown, e.g. `[Chat](#session-id)`. Do not rewrite as a plain table."
             )
         }
     except Exception as e:
         logger.error(f"list_sessions failed: {e}")
         return {"error": str(e)}
+
+
+def _session_best_timestamp(db_row) -> Optional[object]:
+    """Return the most informative timestamp from a DB session row, or None."""
+    if not db_row:
+        return None
+    return (
+        getattr(db_row, "last_accessed", None)
+        or getattr(db_row, "updated_at", None)
+        or getattr(db_row, "created_at", None)
+    )
+
+
+def _session_relative_time(ts) -> str:
+    """Convert a datetime to a human-readable relative string (e.g. '5m ago').
+
+    Args:
+        ts: datetime object (naive or tz-aware), or None
+
+    Returns:
+        Relative string like 'just now', '5m ago', '2h ago', '3d ago',
+        a date string for older entries, or 'never' if ts is None.
+    """
+    from datetime import datetime, timezone
+
+    if ts is None:
+        return "never"
+
+    try:
+        # Always use tz-aware comparison; make naive datetimes UTC-aware
+        if getattr(ts, "tzinfo", None) is not None:
+            now = datetime.now(timezone.utc)
+        else:
+            ts = ts.replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+        diff = (now - ts).total_seconds()
+    except Exception:
+        return "unknown"
+
+    if diff < 60:
+        return "just now"
+    if diff < 3600:
+        return f"{int(diff / 60)}m ago"
+    if diff < 86400:
+        return f"{int(diff / 3600)}h ago"
+    if diff < 86400 * 7:
+        return f"{int(diff / 86400)}d ago"
+    return ts.strftime("%Y-%m-%d")
 
 
 async def do_send_to_session(content: str, session_id: Optional[str] = None) -> Dict:
@@ -1147,7 +1171,7 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
         return {"error": str(e)}
 
 
-def _parse_manage_session_input(content: str):
+def _parse_manage_session_input(content: str) -> Tuple[str, str, Optional[str], str]:
     """Parse do_manage_session content from JSON or line format.
 
     Returns:
@@ -1235,15 +1259,11 @@ async def _dispatch_session_action(
 
 def _session_action_view(target_sid: str, query_fn, action: str) -> Dict:
     """Return a clickable link so the user can navigate to the session."""
-    from src.database import SessionLocal
-    db = SessionLocal()
-    try:
+    with get_db_session() as db:
         db_sess = query_fn(db).first()
         if not db_sess:
             return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
         name = db_sess.name or target_sid
-    finally:
-        db.close()
     return {
         "action": action,
         "session_id": target_sid,
@@ -1658,82 +1678,100 @@ async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
       Line 1: action (list|add_directory|remove_directory)
       Line 2: directory path (for add/remove)
     """
-    lines = content.strip().split("\n")
+    lines = content.strip().split("\n") if content.strip() else []
     if not lines:
         return {"error": "No action specified"}
+
     action = lines[0].strip().lower()
 
-    if action == "list":
-        if not _personal_docs_manager:
-            return {"results": "Personal docs manager not available. RAG may not be configured."}
-        try:
-            files = []
-            if hasattr(_personal_docs_manager, 'index'):
-                files = _personal_docs_manager.index or []
-            dirs = []
-            if hasattr(_personal_docs_manager, 'get_indexed_directories'):
-                dirs = _personal_docs_manager.get_indexed_directories()
+    _HANDLERS = {
+        "list": _rag_action_list,
+        "add_directory": _rag_action_add_directory,
+        "remove_directory": _rag_action_remove_directory,
+    }
 
-            result_lines = []
-            if dirs:
-                result_lines.append(f"**Indexed directories ({len(dirs)}):**")
-                for d in dirs:
-                    result_lines.append(f"  - `{d}`")
-            if files:
-                result_lines.append(f"\n**Indexed files ({len(files)}):**")
-                for f in files[:50]:
-                    name = f.get("name", str(f)) if isinstance(f, dict) else str(f)
-                    result_lines.append(f"  - {name}")
-                if len(files) > 50:
-                    result_lines.append(f"  ... and {len(files) - 50} more")
+    handler = _HANDLERS.get(action)
+    if not handler:
+        valid = ", ".join(sorted(_HANDLERS))
+        return {"error": f"Unknown action '{action}'. Use: {valid}"}
 
-            if not result_lines:
-                return {"results": "No files or directories indexed in RAG."}
-            return {"results": "\n".join(result_lines)}
-        except Exception as e:
-            return {"error": str(e)}
+    return handler(lines)
 
-    elif action == "add_directory":
-        if len(lines) < 2:
-            return {"error": "add_directory needs line 2: directory path"}
-        directory = lines[1].strip()
 
-        import os
-        directory = os.path.expanduser(directory)
-        if not os.path.isdir(directory):
-            return {"error": f"Directory not found: {directory}"}
+def _rag_action_list(lines: list) -> Dict:
+    """List all indexed RAG files and directories."""
+    if not _personal_docs_manager:
+        return {"results": "Personal docs manager not available. RAG may not be configured."}
+    try:
+        files = getattr(_personal_docs_manager, "index", None) or []
+        dirs = []
+        if hasattr(_personal_docs_manager, "get_indexed_directories"):
+            dirs = _personal_docs_manager.get_indexed_directories()
 
-        if not _rag_manager:
-            return {"error": "RAG manager not available"}
+        result_lines = []
+        if dirs:
+            result_lines.append(f"**Indexed directories ({len(dirs)}):**")
+            result_lines.extend(f"  - `{d}`" for d in dirs)
+        if files:
+            result_lines.append(f"\n**Indexed files ({len(files)}):**")
+            for f in files[:50]:
+                name = f.get("name", str(f)) if isinstance(f, dict) else str(f)
+                result_lines.append(f"  - {name}")
+            if len(files) > 50:
+                result_lines.append(f"  ... and {len(files) - 50} more")
 
-        try:
-            result = _rag_manager.index_personal_documents(directory)
-            indexed = result.get("indexed", 0) if isinstance(result, dict) else 0
-            return {"action": "add_directory", "directory": directory,
-                    "results": f"Directory '{directory}' added to RAG index ({indexed} files indexed)"}
-        except Exception as e:
-            return {"error": f"Failed to index directory: {e}"}
+        if not result_lines:
+            return {"results": "No files or directories indexed in RAG."}
+        return {"results": "\n".join(result_lines)}
+    except Exception as e:
+        return {"error": str(e)}
 
-    elif action == "remove_directory":
-        if len(lines) < 2:
-            return {"error": "remove_directory needs line 2: directory path"}
-        directory = lines[1].strip()
 
-        if not _personal_docs_manager:
-            return {"error": "Personal docs manager not available"}
+def _rag_action_add_directory(lines: list) -> Dict:
+    """Index a directory into RAG."""
+    import os
 
-        try:
-            if hasattr(_personal_docs_manager, 'remove_directory'):
-                _personal_docs_manager.remove_directory(directory)
-            if _rag_manager and hasattr(_rag_manager, 'rebuild_index'):
-                _rag_manager.rebuild_index()
-            return {"action": "remove_directory", "directory": directory,
-                    "results": f"Directory '{directory}' removed from RAG index"}
-        except Exception as e:
-            return {"error": f"Failed to remove directory: {e}"}
+    if len(lines) < 2 or not lines[1].strip():
+        return {"error": "add_directory needs line 2: directory path"}
+    directory = os.path.expanduser(lines[1].strip())
 
-    else:
-        return {"error": f"Unknown action '{action}'. Use: list, add_directory, remove_directory"}
+    if not os.path.isdir(directory):
+        return {"error": f"Directory not found: {directory}"}
+    if not _rag_manager:
+        return {"error": "RAG manager not available"}
+
+    try:
+        result = _rag_manager.index_personal_documents(directory)
+        indexed = result.get("indexed", 0) if isinstance(result, dict) else 0
+        return {
+            "action": "add_directory",
+            "directory": directory,
+            "results": f"Directory '{directory}' added to RAG index ({indexed} files indexed)",
+        }
+    except Exception as e:
+        return {"error": f"Failed to index directory: {e}"}
+
+
+def _rag_action_remove_directory(lines: list) -> Dict:
+    """Remove a directory from the RAG index and rebuild."""
+    if len(lines) < 2 or not lines[1].strip():
+        return {"error": "remove_directory needs line 2: directory path"}
+    if not _personal_docs_manager:
+        return {"error": "Personal docs manager not available"}
+
+    directory = lines[1].strip()
+    try:
+        if hasattr(_personal_docs_manager, "remove_directory"):
+            _personal_docs_manager.remove_directory(directory)
+        if _rag_manager and hasattr(_rag_manager, "rebuild_index"):
+            _rag_manager.rebuild_index()
+        return {
+            "action": "remove_directory",
+            "directory": directory,
+            "results": f"Directory '{directory}' removed from RAG index",
+        }
+    except Exception as e:
+        return {"error": f"Failed to remove directory: {e}"}
 
 
 # ---------------------------------------------------------------------------

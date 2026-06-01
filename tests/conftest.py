@@ -34,3 +34,12 @@ if "src.database" not in sys.modules:
     _db.Session = MagicMock()
     _db.GalleryImage = MagicMock()
     sys.modules["src.database"] = _db
+
+# Also stub core.database so tests don't try to open the real SQLite file.
+# do_list_sessions imports Session from core.database at call time.
+if "core.database" not in sys.modules:
+    _coredb = types.ModuleType("core.database")
+    _coredb.SessionLocal = MagicMock()
+    _coredb.Session = MagicMock()
+    _coredb.Base = MagicMock()
+    sys.modules["core.database"] = _coredb
