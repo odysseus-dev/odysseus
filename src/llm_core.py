@@ -5,6 +5,7 @@ import time
 import json
 import logging
 import hashlib
+import threading
 from fastapi import HTTPException
 from typing import Optional, Dict, List
 from urllib.parse import urlparse
@@ -56,6 +57,12 @@ DEAD_HOST_COOLDOWN = 20.0
 _HOST_FAIL_THRESHOLD = 2
 _dead_hosts: Dict[str, float] = {}
 _host_fails: Dict[str, int] = {}
+# Guards the two maps above. The synchronous llm_call() runs inside FastAPI's
+# threadpool (sync routes such as /sessions/auto-sort) while llm_call_async()
+# runs on the event loop, so these maps are mutated from multiple OS threads.
+# Without the lock the get()+1+set on _host_fails is a read-modify-write that
+# loses failure counts under concurrent connect errors (issue #659).
+_host_health_lock = threading.Lock()
 _model_activity: Dict[str, float] = {}
 
 def _model_activity_key(url: str, model: str) -> str:
@@ -81,13 +88,14 @@ def _host_key(url: str) -> str:
 
 def _is_host_dead(url: str) -> bool:
     key = _host_key(url)
-    exp = _dead_hosts.get(key)
-    if exp is None:
-        return False
-    if time.time() >= exp:
-        _dead_hosts.pop(key, None)
-        return False
-    return True
+    with _host_health_lock:
+        exp = _dead_hosts.get(key)
+        if exp is None:
+            return False
+        if time.time() >= exp:
+            _dead_hosts.pop(key, None)
+            return False
+        return True
 
 def _mark_host_dead(url: str) -> bool:
     """Record a connect failure. Only actually cools the host after
@@ -95,17 +103,19 @@ def _mark_host_dead(url: str) -> bool:
     is now cooled (so callers can log accurately), False if it's still
     within its allowed-failure grace."""
     key = _host_key(url)
-    n = _host_fails.get(key, 0) + 1
-    _host_fails[key] = n
-    if n >= _HOST_FAIL_THRESHOLD:
-        _dead_hosts[key] = time.time() + DEAD_HOST_COOLDOWN
-        return True
-    return False
+    with _host_health_lock:
+        n = _host_fails.get(key, 0) + 1
+        _host_fails[key] = n
+        if n >= _HOST_FAIL_THRESHOLD:
+            _dead_hosts[key] = time.time() + DEAD_HOST_COOLDOWN
+            return True
+        return False
 
 def _clear_host_dead(url: str) -> None:
     key = _host_key(url)
-    _dead_hosts.pop(key, None)
-    _host_fails.pop(key, None)
+    with _host_health_lock:
+        _dead_hosts.pop(key, None)
+        _host_fails.pop(key, None)
 
 
 # Shared async HTTP client. Reusing one client keeps connections warm:
@@ -130,7 +140,10 @@ def _set_cached_response(cache_key: str, response: str) -> None:
     if len(_response_cache) > 128:
         keys_to_remove = list(_response_cache.keys())[:64]
         for key in keys_to_remove:
-            del _response_cache[key]
+            # pop(), not del: another thread (sync llm_call runs in FastAPI's
+            # threadpool) may have already evicted the same snapshotted key,
+            # and del would raise KeyError mid-eviction (issue #659).
+            _response_cache.pop(key, None)
     _response_cache[cache_key] = response
 
 # ── Anthropic native API adapter ──

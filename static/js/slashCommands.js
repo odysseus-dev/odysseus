@@ -1464,6 +1464,7 @@ function _parseTimeSpec(input) {
     const mer = (m[4] || '').toLowerCase();
     if (mer === 'pm' && hh < 12) hh += 12;
     if (mer === 'am' && hh === 12) hh = 0;
+    if (hh > 23 || mm > 59) return null;
     d.setHours(hh, mm, 0, 0);
     return { date: d, rest: m[5].trim() };
   }
@@ -1477,9 +1478,9 @@ function _parseTimeSpec(input) {
     const mer = (m[3] || '').toLowerCase();
     if (mer === 'pm' && hh < 12) hh += 12;
     if (mer === 'am' && hh === 12) hh = 0;
-    // Require an hour <= 23 and either a minute field or am/pm to avoid
-    // eating plain numbers like "3 apples".
-    if (hh > 23) return null;
+    // Require a valid hour/minute and either a minute field or am/pm to
+    // avoid eating plain numbers like "3 apples".
+    if (hh > 23 || mm > 59) return null;
     if (m[2] == null && !mer) return null;
     d.setHours(hh, mm, 0, 0);
     if (d.getTime() <= now.getTime()) d.setDate(d.getDate() + 1);
