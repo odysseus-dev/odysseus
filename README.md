@@ -85,6 +85,45 @@ heavy part and depends on the model, runtime, GPU, and VRAM, so small hosts can
 connect to API or remote model servers instead. Use `--host 0.0.0.0` only when
 you intentionally want LAN/reverse-proxy access.
 
+### Nix / NixOS / nix-darwin
+
+The flake provides a dev shell, a NixOS module, and a nix-darwin module.
+
+**Dev shell** (all platforms):
+```bash
+nix develop
+python setup.py
+uvicorn app:app --host 127.0.0.1 --port 7000
+```
+
+**NixOS** — add to your system flake:
+```nix
+inputs.odysseus.url = "github:pewdiepie-archdaemon/odysseus";
+
+# In configuration.nix
+imports = [ inputs.odysseus.nixosModules.default ];
+services.odysseus = {
+  enable = true;
+  environmentFile = "/run/secrets/odysseus-env";
+};
+```
+
+**nix-darwin (macOS)** — add to your darwin flake:
+```nix
+inputs.odysseus.url = "github:pewdiepie-archdaemon/odysseus";
+
+# In darwin-configuration.nix
+imports = [ inputs.odysseus.darwinModules.default ];
+services.odysseus = {
+  enable = true;
+  environmentFile = "/run/secrets/odysseus-env";
+};
+```
+
+All mutable data lives under `/var/lib/odysseus/data` by default. Override with
+`services.odysseus.dataDir`. The package bundles all Python dependencies via nixpkgs,
+so no venv or pip is used at runtime.
+
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
 M-series Mac, run Odysseus natively:
@@ -337,6 +376,7 @@ Key settings:
 | `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
 | `EMBEDDING_URL` | -- | OpenAI-compatible embeddings endpoint |
+| `ODYSSEUS_DATA_DIR` | `./data` | Root directory for all mutable app data (DB, uploads, vectors, etc.). Override when the source tree is read-only (e.g. Nix store) or when data must live on a separate volume. |
 
 ### Built-in MCP servers (optional setup)
 
@@ -362,8 +402,13 @@ docs/      landing page (index.html) + preview clips
 ```
 
 ## Data
-All user data lives in `data/` (gitignored): `app.db` (sessions, messages, documents),
+All user data lives in `data/` (gitignored) by default: `app.db` (sessions, messages, documents),
 `memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/`, `settings.json`.
+
+Set the `ODYSSEUS_DATA_DIR` environment variable to move the data root elsewhere.
+This is required when the source tree lives on a read-only filesystem (e.g. the Nix
+store) or when you want data on a separate volume. The NixOS and nix-darwin modules
+set it automatically to `/var/lib/odysseus/data`.
 
 ## Star History
 
