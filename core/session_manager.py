@@ -204,7 +204,10 @@ class SessionManager:
 
             db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
             if db_session:
-                db_session.message_count = len(self.sessions.get(session_id, {}).history) if session_id in self.sessions else 0
+                if session_id in self.sessions:
+                    db_session.message_count = len(self.sessions[session_id].history)
+                else:
+                    db_session.message_count = 0
                 _now = datetime.now(timezone.utc)
                 db_session.last_accessed = _now
                 # Clean "last conversation" timestamp — only bumped here on a
@@ -252,6 +255,7 @@ class SessionManager:
 
             # Update in-memory
             session.history = session.history[:keep_count]
+            session._history = session.history[:keep_count]
 
             logger.info(f"Truncated session {session_id} to {keep_count} messages")
             return True
@@ -294,6 +298,7 @@ class SessionManager:
 
             db.commit()
             session.history = list(messages)
+            session._history = list(messages)
             session.message_count = len(messages)
             logger.info("Replaced session %s history with %d messages", session_id, len(messages))
             return True
