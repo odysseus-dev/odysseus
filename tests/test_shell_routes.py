@@ -3,6 +3,7 @@
 import builtins
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -319,3 +320,40 @@ class TestRejectCrossSite:
 
     def test_missing_header_allowed(self):
         assert _reject_cross_site(self._req({})) is None
+
+
+class TestProbeLocalPackages:
+    async def test_reports_present_and_absent_names(self):
+        from routes.shell_routes import _probe_local_packages
+
+        details = await _probe_local_packages(["json", "no_such_pkg_xyz"])
+
+        assert _package_installed_from_probe("json", details["json"]) is True
+        assert _package_installed_from_probe("no_such_pkg_xyz", details["no_such_pkg_xyz"]) is False
+
+    async def test_sees_module_added_after_our_interpreter_started(self, tmp_path):
+        from routes.shell_routes import _probe_local_packages
+
+        (tmp_path / "freshmod_xyz.py").write_text("x = 1\n")
+        assert "freshmod_xyz" not in sys.modules
+        assert str(tmp_path) not in sys.path
+
+        env = {**os.environ, "PYTHONPATH": str(tmp_path)}
+        details = await _probe_local_packages(["freshmod_xyz"], env=env)
+
+        assert _package_installed_from_probe("freshmod_xyz", details["freshmod_xyz"]) is True
+        assert "freshmod_xyz" not in sys.modules
+
+    async def test_returns_empty_when_subprocess_cannot_run(self):
+        from routes.shell_routes import _probe_local_packages
+
+        details = await _probe_local_packages(
+            ["json"], executable="/nonexistent/python-binary"
+        )
+
+        assert details == {}
+
+    async def test_no_names_skips_subprocess(self):
+        from routes.shell_routes import _probe_local_packages
+
+        assert await _probe_local_packages([], executable="/nonexistent/python-binary") == {}

@@ -8,6 +8,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import uuid
 import tempfile
 from collections import namedtuple
@@ -234,6 +235,43 @@ def probe(n):
 
 print(json.dumps({{n: probe(n) for n in names}}))
 """
+
+
+async def _probe_local_packages(names: list[str], *, executable=None, env=None) -> dict:
+    """Run the package probe against the local interpreter, in a fresh subprocess.
+
+    The Cookbook server is long-running, so a package a user pip-installs while
+    it is up is invisible to this process's import caches. A throwaway
+    interpreter sees it, and never imports heavy deps (torch, vllm) into the
+    server. Returns the same {name: probe} shape as the remote SSH probe so the
+    caller can reuse `_package_installed_from_probe`; an empty dict signals the
+    caller to fall back to an in-process check.
+    """
+    names = list(names)
+    if not names:
+        return {}
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            executable or sys.executable, "-c", _package_probe_script(names),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        out, _err = await asyncio.wait_for(proc.communicate(), timeout=12)
+        for line in reversed(out.decode("utf-8", errors="replace").splitlines()):
+            line = line.strip()
+            if line.startswith("{"):
+                return json.loads(line)
+        return {}
+    except Exception:
+        if proc is not None:
+            try:
+                proc.kill()
+                await proc.wait()
+            except ProcessLookupError:
+                pass
+        return {}
 
 
 def _find_line_break(buf):
@@ -868,6 +906,12 @@ def setup_shell_routes() -> APIRouter:
             except Exception:
                 pass
 
+        local_names = [
+            p["name"] for p in packages
+            if not (host and p.get("target") == "remote") and p.get("kind") != "system"
+        ]
+        local_details = await _probe_local_packages(local_names)
+
         for pkg in packages:
             on_remote = bool(host and pkg.get("target") == "remote")
             if on_remote:
@@ -880,6 +924,13 @@ def setup_shell_routes() -> APIRouter:
                         pkg["status_note"] = note
             elif pkg.get("kind") == "system":
                 pkg["installed"] = shutil.which(pkg["name"]) is not None
+            elif isinstance(local_details.get(pkg["name"]), dict):
+                probe = local_details[pkg["name"]]
+                pkg["installed"] = _package_installed_from_probe(pkg["name"], probe)
+                pkg["details"] = probe
+                note = _package_status_note(pkg["name"], probe)
+                if note:
+                    pkg["status_note"] = note
             elif pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
                 pkg["installed"] = True
                 pkg["status_note"] = f"native llama-server: {shutil.which('llama-server')}"
