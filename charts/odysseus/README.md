@@ -13,6 +13,9 @@ helm install odysseus ./charts/odysseus \
   --set image.tag=latest
 ```
 
+The GitHub Actions image workflow publishes `latest` from `main` and publishes
+version tags whenever a Git tag is pushed.
+
 For local testing with the default ClusterIP service:
 
 ```bash
