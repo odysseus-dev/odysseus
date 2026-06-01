@@ -3082,8 +3082,16 @@ function _nowClock() {
   return new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 function _fmtTime(s) {
-  // Show the time as written in the ICS file (ignore UTC offset).
   if (!s || s.length < 16) return '';
+  // Tz-aware timestamps from CalDAV/import are stored as UTC instants and
+  // serialized with Z/offset. Display them in the browser's local timezone;
+  // legacy naive timestamps keep their written wall-clock time.
+  if (/[Zz]$|[+\-]\d{2}:?\d{2}$/.test(s)) {
+    const d = new Date(s);
+    if (!isNaN(d)) {
+      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+  }
   return s.slice(11, 16);
 }
 function _e(s) { return uiModule.esc ? uiModule.esc(s || '') : (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
