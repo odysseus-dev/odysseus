@@ -239,19 +239,32 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
 def _provider_label(url: str) -> str:
     """Human-friendly provider name for error messages."""
     u = (url or "").lower()
-    if "anthropic.com" in u: return "Anthropic"
-    if "ollama.com" in u: return "Ollama Cloud"
-    if "api.x.ai" in u or "x.ai/" in u: return "xAI"
-    if "openai.com" in u: return "OpenAI"
-    if "openrouter.ai" in u: return "OpenRouter"
-    if "groq.com" in u: return "Groq"
-    if "mistral.ai" in u: return "Mistral"
-    if "deepseek.com" in u: return "DeepSeek"
-    if "googleapis.com" in u or "generativelanguage" in u: return "Google"
-    if "together.xyz" in u or "together.ai" in u: return "Together"
-    if "fireworks.ai" in u: return "Fireworks"
-    if "ollama" in u or ":11434" in u: return "Ollama"
-    if "localhost" in u or "127.0.0.1" in u: return "local endpoint"
+    if "anthropic.com" in u:
+        return "Anthropic"
+    if "ollama.com" in u:
+        return "Ollama Cloud"
+    if "api.x.ai" in u or "x.ai/" in u:
+        return "xAI"
+    if "openai.com" in u:
+        return "OpenAI"
+    if "openrouter.ai" in u:
+        return "OpenRouter"
+    if "groq.com" in u:
+        return "Groq"
+    if "mistral.ai" in u:
+        return "Mistral"
+    if "deepseek.com" in u:
+        return "DeepSeek"
+    if "googleapis.com" in u or "generativelanguage" in u:
+        return "Google"
+    if "together.xyz" in u or "together.ai" in u:
+        return "Together"
+    if "fireworks.ai" in u:
+        return "Fireworks"
+    if "ollama" in u or ":11434" in u:
+        return "Ollama"
+    if "localhost" in u or "127.0.0.1" in u:
+        return "local endpoint"
     try:
         from urllib.parse import urlparse
         host = urlparse(url).hostname or "provider"

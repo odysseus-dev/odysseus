@@ -200,7 +200,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(500, "Failed to generate secret")
         uri = auth_manager.totp_get_provisioning_uri(user, secret)
         # Generate QR code as base64 PNG
-        import qrcode, io, base64
+        import qrcode
+        import io
+        import base64
         qr = qrcode.make(uri, box_size=6, border=2)
         buf = io.BytesIO()
         qr.save(buf, format="PNG")

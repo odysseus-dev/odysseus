@@ -13,11 +13,9 @@ Features:
 4. Shows progress during processing and final statistics
 """
 
-import os
 import logging
 import sys
 from pathlib import Path
-from typing import List, Tuple
 
 # Configure logging for the script
 logging.basicConfig(

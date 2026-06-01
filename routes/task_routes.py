@@ -1072,7 +1072,8 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
         from src.text_helpers import strip_think as _strip_think
-        import json as _json, re as _re
+        import json as _json
+        import re as _re
         from datetime import datetime as _dt
 
         body = await request.json()

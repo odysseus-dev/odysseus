@@ -5,7 +5,7 @@ routes/calendar_routes using the same stub-friendly import pattern
 as test_null_owner_gates.py. No live DB or FastAPI test client needed.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest

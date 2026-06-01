@@ -69,7 +69,7 @@ def create_default_admin():
             json.dump(auth_data, f, indent=2)
         print(f"  [ok] Initial admin user created ({username})")
         print(f"        Temporary password: {password}")
-        print(f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
+        print("        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
         return "created"
     except ImportError:
         print("  [warn] bcrypt not installed — skipping admin user creation")
@@ -103,7 +103,7 @@ def check_deps():
             missing.append(mod)
     if missing:
         print(f"\n  [warn] Missing packages: {', '.join(missing)}")
-        print(f"         Run: pip install -r requirements.txt")
+        print("         Run: pip install -r requirements.txt")
     else:
         print("  [ok] All core dependencies installed")
 
@@ -154,9 +154,9 @@ def main():
     # start-macos.sh launches the server itself (on its own port) right after
     # this, so suppress the manual hint there to avoid a contradictory URL.
     if not os.getenv("ODYSSEUS_SKIP_RUN_HINT"):
-        print(f"\nStart the server with:")
-        print(f"  python -m uvicorn app:app --host 127.0.0.1 --port 7000")
-        print(f"\nThen open http://localhost:7000")
+        print("\nStart the server with:")
+        print("  python -m uvicorn app:app --host 127.0.0.1 --port 7000")
+        print("\nThen open http://localhost:7000")
 
     # Cleaned, action-focused final instruction strings
     if admin_status == "created":

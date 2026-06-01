@@ -281,7 +281,7 @@ def resolve_endpoint(
     try:
         ep = db.query(ModelEndpoint).filter(
             ModelEndpoint.id == ep_id,
-            ModelEndpoint.is_enabled == True,
+            ModelEndpoint.is_enabled == True,  # noqa: E712
         )
         if owner:
             from src.auth_helpers import owner_filter

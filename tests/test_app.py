@@ -54,7 +54,7 @@ class TestImports:
 
     def test_constants_importable(self):
         """Test that constants module is importable"""
-        from src.constants import BASE_DIR, STATIC_DIR, SESSIONS_FILE, MEMORY_FILE
+        from src.constants import BASE_DIR, STATIC_DIR
 
         assert BASE_DIR is not None
         assert STATIC_DIR is not None
@@ -69,9 +69,6 @@ class TestImports:
         """Test that exceptions module is importable"""
         from src.exceptions import (
             SessionNotFoundError,
-            InvalidFileUploadError,
-            LLMServiceError,
-            WebSearchError,
         )
 
         # These should be exception classes

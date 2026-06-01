@@ -96,7 +96,8 @@ def _sniff_doc_language(text: str) -> str:
     """Best-effort detect a document's language from its content when the model
     didn't specify one. Defaults to 'markdown' (prose). Recognizes the common
     markup/code types the editor supports so e.g. an SVG isn't saved as markdown."""
-    import json as _json, re as _re2
+    import json as _json
+    import re as _re2
     s = (text or "").strip()
     if not s:
         return "markdown"
@@ -176,7 +177,8 @@ async def do_create_document(content_block: str, session_id: Optional[str] = Non
       1) Line-based: line 1 = title, line 2 (optional) = language, rest = content
       2) XML-like tags: <title>...</title><language>...</language><content>...</content>
     Some models mix them — strip any XML-style tags and fall back to line parsing."""
-    import uuid, re as _re
+    import uuid
+    import re as _re
     from src.database import SessionLocal, Document, DocumentVersion, Session as DbSession
 
     raw = content_block or ""
@@ -1297,7 +1299,9 @@ async def do_manage_tokens(content: str, owner: Optional[str] = None) -> Dict:
             return {"response": f"{len(items)} API tokens", "tokens": items, "exit_code": 0}
 
         elif action == "create":
-            import uuid as _uuid, secrets, bcrypt
+            import uuid as _uuid
+            import secrets
+            import bcrypt
             from datetime import datetime
             name = args.get("name", "API Token")
             raw_token = secrets.token_urlsafe(32)
@@ -2808,7 +2812,6 @@ def _scan_running_model_processes() -> List[Dict[str, Any]]:
     [] on other platforms or if /proc isn't accessible. Each match returns
     a dict shaped like a cookbook task so the caller can merge cleanly.
     """
-    import os
     if not os.path.isdir("/proc"):
         return []
     out: List[Dict[str, Any]] = []

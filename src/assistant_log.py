@@ -6,11 +6,8 @@ Any part of the codebase can call log_to_assistant() to surface events,
 notifications, and results in the assistant's unified activity feed.
 """
 
-import json
 import re
-import uuid
 import logging
-from datetime import datetime
 from typing import Optional
 
 logger = logging.getLogger(__name__)

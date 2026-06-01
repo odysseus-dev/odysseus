@@ -231,7 +231,8 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/gallery/ai-upscale")
     async def gallery_ai_upscale(request: Request):
         """AI upscale using img2img with the diffusion server."""
-        import base64, httpx
+        import base64
+        import httpx
 
         require_privilege(request, "can_generate_images")
         form = await request.form()
@@ -274,7 +275,8 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/gallery/style-transfer")
     async def gallery_style_transfer(request: Request):
         """Style transfer using img2img with the diffusion server."""
-        import base64, httpx
+        import base64
+        import httpx
 
         require_privilege(request, "can_generate_images")
         form = await request.form()
@@ -961,7 +963,8 @@ def setup_gallery_routes() -> APIRouter:
             # So we convert the incoming PNG mask into an alpha-channel PNG.
             if not api_key:
                 raise HTTPException(400, "OpenAI endpoint has no api_key stored — edit it in Endpoints settings.")
-            import base64, io
+            import base64
+            import io
             try:
                 from PIL import Image
             except ImportError:
@@ -1095,7 +1098,8 @@ def setup_gallery_routes() -> APIRouter:
         original and regenerates `strength` fraction. With strength ~0.4
         you get edge blending + lighting unification while keeping the
         composition recognisable."""
-        import httpx, base64 as _b64
+        import httpx
+        import base64 as _b64
         require_privilege(request, "can_generate_images")
         body = await request.json()
 
@@ -1284,7 +1288,8 @@ def setup_gallery_routes() -> APIRouter:
         amount = body.get("amount", 50) / 100.0
 
         from PIL import Image, ImageFilter
-        import base64, io
+        import base64
+        import io
 
         img_bytes = base64.b64decode(image_b64)
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -1313,7 +1318,8 @@ def setup_gallery_routes() -> APIRouter:
             strength = 0.5
         strength = max(0.0, min(1.0, strength))
         try:
-            import base64, io
+            import base64
+            import io
             from PIL import Image
             import numpy as np
         except ImportError as e:
@@ -1363,7 +1369,8 @@ def setup_gallery_routes() -> APIRouter:
             scale = 2
         scale = 2 if scale not in (2, 4) else scale
         try:
-            import base64, io
+            import base64
+            import io
             from PIL import Image
             import numpy as np
         except ImportError as e:
@@ -1415,7 +1422,8 @@ def setup_gallery_routes() -> APIRouter:
         hint_b64 = body.get("hint_mask")
 
         from PIL import Image
-        import base64, io
+        import base64
+        import io
 
         img_bytes = base64.b64decode(image_b64)
         img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
@@ -1497,7 +1505,10 @@ def setup_gallery_routes() -> APIRouter:
         if not image_b64:
             raise HTTPException(400, "No image provided")
 
-        import base64, io, tempfile, os
+        import base64
+        import io
+        import tempfile
+        import os
         from PIL import Image, ImageFilter, ImageEnhance
         import numpy as np
 
@@ -1663,7 +1674,8 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/gallery/{image_id}/ai-tag")
     async def ai_tag_image(request: Request, image_id: str):
         """Send image to vision model for auto-tagging."""
-        import base64, httpx
+        import base64
+        import httpx
         from pathlib import Path
 
         user = get_current_user(request)

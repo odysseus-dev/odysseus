@@ -21,7 +21,7 @@ import sys
 import os
 import os.path
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server

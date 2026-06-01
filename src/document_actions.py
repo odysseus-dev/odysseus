@@ -82,7 +82,7 @@ async def run_document_tidy(owner: str) -> str:
       fingerprint (ignoring volatile upload/annotation ids). The most complete
       copy (longest real content, then most recent) is kept; the rest deleted.
     """
-    from core.database import SessionLocal, Document, Session as DbSession
+    from core.database import SessionLocal, Document
 
     db = SessionLocal()
     try:
@@ -107,7 +107,6 @@ async def run_document_tidy(owner: str) -> str:
             stripped = re.sub(r"^#{1,6}\s+", "", content, flags=re.MULTILINE)  # headers
             stripped = re.sub(r"[*_`>\-=]+", "", stripped)  # markdown chars
             stripped = re.sub(r"\s+", " ", stripped).strip()
-            real_len = len(stripped)
 
             # Detect emails-saved-as-documents (quote chains with no original content)
             lines = [ln for ln in content.split("\n") if ln.strip()]

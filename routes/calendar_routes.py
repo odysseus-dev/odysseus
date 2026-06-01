@@ -3,13 +3,12 @@
 import logging
 import uuid
 from datetime import datetime, date, timedelta
-from typing import Optional, List, Tuple
+from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy import or_, and_
-from dateutil.rrule import rrulestr, rruleset
-from dateutil.rrule import DAILY, WEEKLY, MONTHLY, YEARLY
+from dateutil.rrule import rrulestr
 
 from core.database import SessionLocal, CalendarCal, CalendarEvent
 from src.auth_helpers import get_current_user

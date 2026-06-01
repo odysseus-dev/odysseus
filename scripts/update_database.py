@@ -16,9 +16,8 @@ Usage:
 
 import sqlite3
 import os
-from datetime import datetime
 from sqlalchemy import create_engine, inspect, text
-from database import DATABASE_URL, SessionLocal, Base
+from database import DATABASE_URL, SessionLocal
 
 
 def check_column_exists(engine, table_name, column_name):
@@ -204,10 +203,6 @@ Usage:
     python update_database.py
 """
 
-import os
-from datetime import datetime
-from sqlalchemy import create_engine, text
-from database import DATABASE_URL, SessionLocal
 
 
 def update_database():

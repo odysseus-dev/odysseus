@@ -50,7 +50,7 @@ async def archive_inactive_sessions(
     db = SessionLocal()
     try:
         q = db.query(DbSession).filter(
-            DbSession.last_accessed < cutoff_date, DbSession.archived == False
+            DbSession.last_accessed < cutoff_date, DbSession.archived == False  # noqa: E712
         )
         q = _apply_owner_filter(q, DbSession, owner)
         sessions_to_archive = q.all()
@@ -107,9 +107,9 @@ async def cleanup_old_sessions(
         }
 
         base_query = db.query(DbSession).filter(
-            DbSession.archived == True,
+            DbSession.archived == True,  # noqa: E712
             DbSession.last_accessed < cutoff_date,
-            DbSession.is_important == False,
+            DbSession.is_important == False,  # noqa: E712
             DbSession.message_count < CleanupConfig.MIN_MESSAGES_TO_KEEP,
         )
         base_query = _apply_owner_filter(base_query, DbSession, owner)
@@ -198,7 +198,7 @@ async def get_cleanup_preview(owner: Optional[str] = None) -> Dict[str, Any]:
     db = SessionLocal()
     try:
         archive_q = db.query(DbSession).filter(
-            DbSession.last_accessed < cutoff_archive, DbSession.archived == False
+            DbSession.last_accessed < cutoff_archive, DbSession.archived == False  # noqa: E712
         )
         archive_q = _apply_owner_filter(archive_q, DbSession, owner)
         archive_candidates = archive_q.all()
@@ -224,9 +224,9 @@ async def get_cleanup_preview(owner: Optional[str] = None) -> Dict[str, Any]:
         }
 
         base_query = db.query(DbSession).filter(
-            DbSession.archived == True,
+            DbSession.archived == True,  # noqa: E712
             DbSession.last_accessed < cutoff_delete,
-            DbSession.is_important == False,
+            DbSession.is_important == False,  # noqa: E712
             DbSession.message_count < CleanupConfig.MIN_MESSAGES_TO_KEEP,
         )
         base_query = _apply_owner_filter(base_query, DbSession, owner)

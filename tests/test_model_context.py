@@ -1,6 +1,5 @@
 """Tests for model_context.py — local endpoint detection, token estimation, known model lookup."""
 
-import pytest
 
 from src.model_context import _is_local_endpoint, estimate_tokens, _lookup_known
 

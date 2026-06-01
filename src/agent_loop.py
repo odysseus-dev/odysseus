@@ -14,7 +14,7 @@ import time
 import logging
 from typing import AsyncGenerator, List, Dict, Optional, Set
 
-from src.llm_core import stream_llm, stream_llm_with_fallback
+from src.llm_core import stream_llm_with_fallback
 from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
@@ -554,7 +554,8 @@ def _build_system_prompt(
     # Skills UI takes effect without a restart (busts the prompt cache).
     # Hash the full dict so content edits (not just key add/remove) bust it.
     try:
-        import hashlib as _hl, json as _json
+        import hashlib as _hl
+        import json as _json
         _ov_sig = _hl.sha256(_json.dumps(get_builtin_overrides() or {}, sort_keys=True).encode()).hexdigest()
     except Exception:
         _ov_sig = ""

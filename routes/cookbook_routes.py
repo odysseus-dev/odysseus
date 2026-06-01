@@ -1871,7 +1871,7 @@ def setup_cookbook_routes() -> APIRouter:
                     status = "error"
                 elif has_exit and "unrecognized arguments" in lower:
                     status = "error"
-                elif has_error and not ("application startup complete" in lower):
+                elif has_error and "application startup complete" not in lower:
                     status = "error"
                 elif task_type == "download" and ("100%" in full_snapshot or "DOWNLOAD_OK" in full_snapshot):
                     # Only download tasks treat 100% as "completed".

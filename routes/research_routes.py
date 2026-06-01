@@ -339,7 +339,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                         privs = auth_mgr.get_privileges(tool_owner) or {}
                         if not privs.get("can_use_research", True):
                             raise HTTPException(
-                                403, f"Your account is not allowed to can use research."
+                                403, "Your account is not allowed to can use research."
                             )
                     except HTTPException:
                         raise

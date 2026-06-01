@@ -11,7 +11,6 @@ Pattern under test (multi-tenant deploy):
   or whose owner is "bob".
 """
 
-import os
 import sys
 import types
 import pytest

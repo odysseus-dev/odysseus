@@ -26,7 +26,7 @@ import asyncio
 import hashlib
 import logging
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 

@@ -12,7 +12,6 @@ from pydantic import BaseModel
 
 from core.database import Document, DocumentVersion
 from core.database import Session as DbSession
-from src.upload_handler import UploadHandler
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +201,6 @@ def _assert_pdf_marker_upload_owned(
 
 def _derive_title(content: str) -> str:
     """Derive a title from document content."""
-    import re
     text = content.strip()
     if not text:
         return "Untitled"

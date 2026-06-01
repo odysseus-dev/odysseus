@@ -17,7 +17,6 @@ from datetime import datetime
 from fastapi import APIRouter, Query, Depends, Response
 from typing import List, Dict, Optional
 
-from src.auth_helpers import require_user
 from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)

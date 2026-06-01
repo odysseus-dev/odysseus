@@ -285,7 +285,7 @@ def _parse_plaintext(text: str) -> list[dict[str, Any]] | None:
         base_levels.append(n)
         stripped_lines.append(re.sub(r"^(?:>\s?)+", "", line) if n > 0 else line)
 
-    has_quotes = any(l > 0 for l in base_levels)
+    has_quotes = any(lvl > 0 for lvl in base_levels)
     has_attrib = bool(
         _WROTE_LINE_RE.search(text)
         or _ORIG_RE.search(text)

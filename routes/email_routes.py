@@ -47,7 +47,7 @@ from routes.email_helpers import (
     _fetch_sender_thread_context, _pre_retrieve_context,
     _EMAIL_REPLY_SYS_PROMPT_BASE, _POOL_HOOKS,
     SendEmailRequest, ExtractStyleRequest,
-    ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
+    COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
     attachment_extract_dir,
 )
 from routes.email_pollers import _start_poller

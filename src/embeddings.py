@@ -132,7 +132,8 @@ class FastEmbedClient:
         # which load fine). Best-effort; only ever removes a verifiably dead link.
         if os.name == "nt":
             try:
-                import glob, shutil
+                import glob
+                import shutil
                 for _onnx in glob.glob(os.path.join(cache_dir, "**", "*.onnx"), recursive=True):
                     if os.path.islink(_onnx) and not os.path.exists(_onnx):
                         _root = _onnx
