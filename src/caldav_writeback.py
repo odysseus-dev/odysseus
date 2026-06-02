@@ -93,11 +93,14 @@ def push_event(calendars, local_cal_id: str, ev: dict, *, delete: bool = False) 
     Returns ``{"ok": bool, ...}``. ``calendars`` is the discovered caldav
     calendar list (injected so this is unit-testable with fakes).
     """
+    uid = (ev or {}).get("uid") if isinstance(ev, dict) else None
+    if not uid:
+        return {"ok": False, "error": "event uid is required"}
+
     remote = find_remote_calendar(calendars, local_cal_id)
     if remote is None:
         return {"ok": False, "error": "remote calendar not found"}
 
-    uid = ev["uid"]
     try:
         existing = remote.event_by_uid(uid)
     except Exception:
