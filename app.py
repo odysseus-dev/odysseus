@@ -596,6 +596,10 @@ app.include_router(setup_calendar_routes())
 from routes.shell_routes import setup_shell_routes
 app.include_router(setup_shell_routes())
 
+# PTY (real interactive terminal over WebSocket; ConPTY on Windows)
+from routes.pty_routes import setup_pty_routes
+app.include_router(setup_pty_routes())
+
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes
 app.include_router(setup_cookbook_routes())

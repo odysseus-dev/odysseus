@@ -1,5 +1,9 @@
 fastapi
 uvicorn
+# WebSocket transport for uvicorn. Plain `uvicorn` ships no WS implementation,
+# so /ws/pty (routes/pty_routes.py — the real interactive ConPTY terminal)
+# silently fails to connect on a clean install without this. Required, not optional.
+websockets
 python-multipart
 python-dotenv
 httpx
@@ -37,5 +41,8 @@ mcp
 pyotp
 qrcode[pil]
 croniter
+# Real interactive terminal (routes/pty_routes.py). Windows uses pywinpty
+# (ConPTY pseudoconsole); POSIX uses the stdlib pty module (no extra dep).
+pywinpty; sys_platform == "win32"
 pytest
 pytest-asyncio
