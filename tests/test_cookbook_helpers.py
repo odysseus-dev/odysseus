@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 
@@ -11,11 +12,13 @@ from routes.cookbook_helpers import (
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
     _llama_cpp_rebuild_cmd,
+    _git_bash_path,
     _local_tooling_path_export,
     _pip_install_attempt,
     _pip_install_fallback_chain,
     _ollama_bind_from_cmd,
     _safe_env_prefix,
+    _user_shell_path_bootstrap,
     _venv_safe_local_pip_install_cmd,
     _validate_gpus,
     _validate_repo_id,
@@ -258,6 +261,21 @@ def test_pip_install_attempt_surfaces_stderr_on_failure():
     assert "nonexistent" in combined.lower() or result.returncode != 0
 
 
+def test_git_bash_path_converts_windows_drive_prefix():
+    assert _git_bash_path(r"C:\Users\me\venv\Scripts") == "/c/Users/me/venv/Scripts"
+
+
+def test_local_tooling_path_export_normalizes_windows_paths_for_bash(monkeypatch):
+    monkeypatch.setattr(os, "name", "nt")
+    line = _local_tooling_path_export(r"C:\Users\me\venv\Scripts\python.exe")
+    assert line == 'export PATH="/c/Users/me/venv/Scripts:$PATH"'
+
+
+def test_user_shell_bootstrap_aliases_python3_for_windows_bash_wrapper():
+    script = "\n".join(_user_shell_path_bootstrap())
+    assert 'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }' in script
+
+
 def test_serve_preflight_failure_keeps_tmux_pane_visible():
     """Dependency preflight failures should remain visible in tmux output.
 
@@ -288,6 +306,18 @@ def test_serve_runner_preserves_command_exit_code():
     assert "ODYSSEUS_CMD_EXIT=$?" in script
     assert 'echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="' in script
     assert 'echo "=== Process exited with code $? ==="' not in script
+
+
+def test_serve_runner_can_emit_download_ok_marker():
+    runner_lines = ["python -m pip install hf_transfer"]
+    _append_serve_exit_code_lines(
+        runner_lines,
+        keep_shell_open=False,
+        emit_download_ok=True,
+    )
+    script = "\n".join(runner_lines)
+
+    assert 'if [ "$ODYSSEUS_CMD_EXIT" -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; fi' in script
 
 
 def test_validate_serve_cmd_accepts_vllm_kv_cache_dtype():
