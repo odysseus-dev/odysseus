@@ -4442,6 +4442,7 @@ async function initGitHubIntegration() {
   let _defaultBriefing = '';  // captured from a fresh-state GET; used by "Reset to default"
   let _rawMode = false;       // when true, show the raw textarea instead of sections
   let _introText = '';        // the intro paragraph before the first section header
+  let _lastBriefingText = ''; // last-known full briefing text from server
 
   // ── Structured briefing editor ──
   // Parses the briefing text into sections by ALL-CAPS header lines and renders
@@ -4524,7 +4525,7 @@ async function initGitHubIntegration() {
   }
 
   function _collectBriefingText() {
-    if (_rawMode) return briefingTa.value;
+    if (_rawMode) { _lastBriefingText = briefingTa.value; return briefingTa.value; }
     const parts = [];
     if (_introText) parts.push(_introText);
     if (briefingEditor) {
@@ -4532,7 +4533,9 @@ async function initGitHubIntegration() {
         parts.push(ta.dataset.header + '\n' + ta.value.trim());
       });
     }
-    return parts.join('\n\n') + '\n';
+    const text = parts.join('\n\n') + '\n';
+    if (text.trim()) _lastBriefingText = text;
+    return text;
   }
 
   function _setRawMode(on) {
@@ -4541,7 +4544,10 @@ async function initGitHubIntegration() {
     if (briefingTa) briefingTa.style.display = on ? '' : 'none';
     if (briefingRaw) briefingRaw.textContent = on ? 'Section edit' : 'Raw edit';
     if (on) {
-      briefingTa.value = _collectBriefingText();
+      // Reconstruct from section editor if it has content; otherwise use
+      // the last-known full text (handles first-load / empty-editor cases).
+      const collected = _collectBriefingText();
+      briefingTa.value = (collected && collected.trim()) ? collected : _lastBriefingText;
     } else {
       _renderSections(briefingTa.value);
     }
@@ -4602,8 +4608,8 @@ async function initGitHubIntegration() {
       if (rotate) rotate.open = false;
       if (patInRotate) patInRotate.value = '';
     }
-    // Populate the structured briefing editor (or raw textarea if in raw mode)
     if (typeof info.briefing === 'string') {
+      _lastBriefingText = info.briefing;
       if (_rawMode) {
         briefingTa.value = info.briefing;
       } else {
