@@ -1872,6 +1872,9 @@ export function _renderRunningTab() {
 
     const terminalDiag = _terminalServeDiagnosis(task, task.output || '');
     if (terminalDiag) _showDiagnosis(el, terminalDiag, task.output || '');
+    if (!terminalDiag && (task.status === 'error' || task.status === 'crashed') && task._backendDiagnosis) {
+      _showDiagnosis(el, task._backendDiagnosis, task.output || '');
+    }
 
     const _uptimeEl = el.querySelector('.cookbook-task-uptime');
     if (_uptimeEl && (task.type === 'serve' || task.type === 'download') && task.status === 'running') {
@@ -3356,6 +3359,12 @@ async function _pollBackgroundStatus() {
             updates.output = `${previous ? `${previous}\n` : ''}${tail}`.slice(-5000);
           }
         }
+        if (live.diagnosis && !task._diagnosisDismissed) {
+          updates._backendDiagnosis = live.diagnosis;
+        }
+        if (live.cmd && !task.payload?._cmd) {
+          updates.payload = { ...(task.payload || {}), _cmd: live.cmd };
+        }
         if (Object.keys(updates).length) {
           Object.assign(task, updates);
           changed = true;
@@ -3364,6 +3373,12 @@ async function _pollBackgroundStatus() {
       if (changed) {
         _saveTasks(localTasks);
         _renderRunningTab();
+        for (const task of localTasks) {
+          if (!task._backendDiagnosis) continue;
+          const el = document.querySelector(`[data-session-id="${CSS.escape(task.sessionId)}"]`);
+          if (!el || el.querySelector('.cookbook-diagnosis')) continue;
+          _showDiagnosis(el, task._backendDiagnosis, task.output || '');
+        }
         completedDeps.forEach(t => _refreshDepsAfterInstall(t));
       }
     } catch (_) { /* non-fatal: background status should never break polling */ }
