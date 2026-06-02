@@ -914,6 +914,7 @@ export function initThemeUI() {
       const result = saveCustomTheme(slug, colors, opts);
       if (result === 'limit') { saveError.textContent = 'Max ' + MAX_CUSTOM_THEMES + ' custom themes. Delete one first.'; saveError.style.display = 'block'; return; }
       save(slug, colors, opts);
+      initThemeUI();
       newNameInput.value = '';
       _flashAutosaved('Theme saved');
       uiModule.showToast?.('Theme saved');
