@@ -753,6 +753,8 @@ def setup_chat_routes(
                                     "usage_source": "estimated",
                                 }
                                 yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
+                            if not full_response:
+                                yield f'data: {json.dumps({"delta": "[No response generated — the model may have hit a context limit or the endpoint timed out.]"})}\n\n'
                             if full_response:
                                 _saved_id = save_assistant_response(
                                     sess, session_manager, session, full_response, last_metrics,
@@ -855,6 +857,8 @@ def setup_chat_routes(
                         elif chunk.startswith("event: "):
                             yield chunk
                         elif chunk == "data: [DONE]\n\n":
+                            if not full_response:
+                                yield f'data: {json.dumps({"delta": "[No response generated — the model may have hit a context limit or the endpoint timed out.]"})}\n\n'
                             if full_response:
                                 _saved_id = save_assistant_response(
                                     sess, session_manager, session, full_response, last_metrics,

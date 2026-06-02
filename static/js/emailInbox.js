@@ -377,6 +377,24 @@ function _populateFolderSelect(select, folders) {
   }
 }
 
+function _normalizeSubject(subj) {
+  return (subj || '').replace(/^(re|fwd?|fw):\s*/gi, '').trim().toLowerCase();
+}
+
+function _groupThreads(emails) {
+  const threads = new Map();
+  for (const em of emails) {
+    const key = _normalizeSubject(em.subject);
+    if (!threads.has(key)) threads.set(key, []);
+    threads.get(key).push(em);
+  }
+  // Sort each thread by date (oldest first)
+  for (const [, msgs] of threads) {
+    msgs.sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+  }
+  return threads;
+}
+
 function _renderList() {
   const list = document.getElementById('email-list');
   if (!list) return;
@@ -398,8 +416,46 @@ function _renderList() {
     return;
   }
 
-  for (const em of _emails) {
-    list.appendChild(_createEmailItem(em));
+  // Group by thread
+  const threads = _groupThreads(_emails);
+  for (const [, msgs] of threads) {
+    // Show the latest email in the thread, with count badge
+    const latest = msgs[msgs.length - 1];
+    const item = _createEmailItem(latest);
+    if (msgs.length > 1) {
+      const badge = document.createElement('span');
+      badge.className = 'email-thread-count';
+      badge.textContent = msgs.length;
+      badge.title = `${msgs.length} messages in thread`;
+      badge.style.cssText = 'background:var(--red);color:#fff;border-radius:10px;padding:1px 6px;font-size:11px;margin-left:6px;';
+      const subjectEl = item.querySelector('.email-item-subject');
+      if (subjectEl) subjectEl.appendChild(badge);
+      // Click to expand/collapse thread
+      item.style.cursor = 'pointer';
+      let expanded = false;
+      let replyEls = [];
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('button') || e.target.closest('a')) return;
+        expanded = !expanded;
+        if (expanded) {
+          // Show older messages in thread
+          for (let i = msgs.length - 2; i >= 0; i--) {
+            const reply = _createEmailItem(msgs[i]);
+            reply.style.marginLeft = '24px';
+            reply.style.opacity = '0.8';
+            reply.className += ' email-thread-reply';
+            item.parentNode.insertBefore(reply, item.nextSibling);
+            replyEls.push(reply);
+          }
+          badge.textContent = '▾ ' + msgs.length;
+        } else {
+          replyEls.forEach(el => el.remove());
+          replyEls = [];
+          badge.textContent = msgs.length;
+        }
+      });
+    }
+    list.appendChild(item);
   }
 
   const loadMore = document.getElementById('email-load-more');
