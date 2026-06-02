@@ -1,0 +1,130 @@
+name: Issue Template Check
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: write
+
+jobs:
+  check-template:
+    name: Validate issue body
+    runs-on: ubuntu-latest
+    # Skip issues opened by bots
+    if: ${{ github.event.issue.user.type != 'Bot' && github.event.issue.user.login != 'github-actions[bot]' }}
+    steps:
+      - name: Check issue body and post feedback
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body || '';
+            const issueNumber = context.payload.issue.number;
+            const COMMENT_MARKER = '<!-- issue-template-check-bot -->';
+
+            // ── Detect which template (if any) was used ───────────────────────────
+            const isBugReport    = /#+\s+Steps to Reproduce/i.test(body);
+            const isFeatureReq   = /#+\s+Proposed Solution/i.test(body);
+            const hasAnyTemplate = isBugReport || isFeatureReq;
+
+            const issues = [];
+
+            // ── 0. Bypassed the template entirely ────────────────────────────────
+            if (!hasAnyTemplate) {
+              issues.push(
+                '**No template used.** Please close this issue and re-open it using one of the provided templates ' +
+                '([Bug Report](https://github.com/' + context.repo.owner + '/' + context.repo.repo + '/issues/new?template=bug_report.yml) · ' +
+                '[Feature Request](https://github.com/' + context.repo.owner + '/' + context.repo.repo + '/issues/new?template=feature_request.yml)). ' +
+                'Free-form issues are hard to triage and may be closed without action.'
+              );
+              // No point running further checks if there's no structure at all
+            } else {
+              // ── 1. Duplicate-search prerequisite must be checked ───────────────
+              if (!/- \[x\] I searched \[open issues\]/i.test(body)) {
+                issues.push(
+                  '**Prerequisites checklist** — please confirm you searched existing issues and discussions ' +
+                  'by checking the first prerequisite box. This prevents duplicate reports.'
+                );
+              }
+
+              if (isBugReport) {
+                // ── 2a. Bug: Steps to Reproduce must be filled in ───────────────
+                const stepsMatch = body.match(/#+\s+Steps to Reproduce\s*\n([\s\S]*?)(?=\n##|$)/i);
+                const stepsText = (stepsMatch?.[1] ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
+                if (!stepsText || stepsText.split('\n').filter(l => /\S/.test(l)).length < 2) {
+                  issues.push('**Steps to Reproduce** — provide at least two numbered steps that reliably trigger the bug. Vague steps make it impossible to verify a fix.');
+                }
+
+                // ── 2b. Bug: Expected + Actual must be filled in ────────────────
+                const expectedMatch = body.match(/#+\s+Expected Behaviour\s*\n([\s\S]*?)(?=\n##|$)/i);
+                const expectedText = (expectedMatch?.[1] ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
+                if (!expectedText || expectedText.length < 10) {
+                  issues.push('**Expected Behaviour** — describe what should have happened.');
+                }
+
+                const actualMatch = body.match(/#+\s+Actual Behaviour\s*\n([\s\S]*?)(?=\n##|$)/i);
+                const actualText = (actualMatch?.[1] ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
+                if (!actualText || actualText.length < 10) {
+                  issues.push('**Actual Behaviour** — describe what actually happened, including any error messages.');
+                }
+              }
+
+              if (isFeatureReq) {
+                // ── 3a. Feature: Problem section must be filled in ──────────────
+                const problemMatch = body.match(/#+\s+Problem or Motivation\s*\n([\s\S]*?)(?=\n##|$)/i);
+                const problemText = (problemMatch?.[1] ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
+                if (!problemText || problemText.length < 20) {
+                  issues.push('**Problem or Motivation** — explain the specific problem this solves or the use case it enables. "It would be nice" is not sufficient.');
+                }
+
+                // ── 3b. Feature: Solution section must be filled in ─────────────
+                const solutionMatch = body.match(/#+\s+Proposed Solution\s*\n([\s\S]*?)(?=\n##|$)/i);
+                const solutionText = (solutionMatch?.[1] ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
+                if (!solutionText || solutionText.length < 20) {
+                  issues.push('**Proposed Solution** — describe the specific behaviour or change you want to see.');
+                }
+              }
+            }
+
+            // ── Build comment body ────────────────────────────────────────────────
+            const commentBody = issues.length === 0
+              ? `${COMMENT_MARKER}\n✅ **Issue template check passed.** Thanks for the well-structured report — it helps us triage faster.`
+              : `${COMMENT_MARKER}
+⚠️ **Issue template check — action needed**
+
+Thanks for taking the time to open this — we really appreciate it.
+To keep the issue tracker useful for the maintainer and for other users, we need a few things filled in:
+
+${issues.map(i => `- ${i}`).join('\n')}
+
+Please edit this issue to address the points above.
+If this is a **security vulnerability**, please [close this issue](https://github.com/${context.repo.owner}/${context.repo.repo}/issues/${issueNumber}) and report it privately via [GitHub Security Advisories](https://github.com/${context.repo.owner}/${context.repo.repo}/security/advisories/new) — see [SECURITY.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${context.payload.repository.default_branch}/SECURITY.md).
+
+---
+*This comment updates automatically when you edit the issue.*`;
+
+            // Find and update or create the bot comment
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+
+            const existing = comments.find(c => (c.body ?? '').includes(COMMENT_MARKER));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: commentBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: commentBody,
+              });
+            }

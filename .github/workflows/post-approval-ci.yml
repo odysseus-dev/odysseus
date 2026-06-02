@@ -1,0 +1,287 @@
+name: Post-Approval CI
+
+# Runs when a reviewer submits an approval on a PR.
+# All jobs run in parallel once the approval gate passes.
+# A summary comment is posted (and updated on re-runs) on the PR.
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+# Cancel any previous run for the same PR when a new approval comes in.
+concurrency:
+  group: post-approval-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# ── Python tests ────────────────────────────────────────────────────────────
+jobs:
+  python-tests:
+    name: Python — Test suite
+    if: github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m pytest tests/ -x -q --tb=short --junit-xml=test-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results.xml
+          retention-days: 7
+
+  # ── Python syntax ──────────────────────────────────────────────────────────
+  python-syntax:
+    name: Python — Syntax check
+    if: github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check all .py files compile
+        run: |
+          find . -name "*.py" \
+            ! -path "./.git/*" \
+            ! -path "./venv/*" \
+            ! -path "./.venv/*" \
+            -print0 \
+          | xargs -0 -r python -m py_compile
+
+  # ── Security: known CVEs in dependencies ─────────────────────────────────
+  security-cve:
+    name: Security — Dependency CVEs (pip-audit)
+    if: github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit core dependencies
+        run: pip-audit -r requirements.txt --skip-editable
+
+      - name: Audit optional dependencies (warn only)
+        # Don't fail the build for optional deps — just surface the info.
+        run: pip-audit -r requirements-optional.txt --skip-editable || true
+
+  # ── Security: static code analysis ────────────────────────────────────────
+  security-sast:
+    name: Security — SAST (bandit)
+    if: github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install bandit
+        run: pip install bandit
+
+      - name: Run bandit (medium + high severity only)
+        # -ll = only medium and high severity; -ii = only medium and high confidence.
+        # Scans all first-party Python source directories.
+        run: |
+          SCAN_PATHS=()
+          for p in app.py routes core services src mcp_servers companion; do
+            if [ -e "$p" ]; then
+              SCAN_PATHS+=("$p")
+            fi
+          done
+
+          if [ ${#SCAN_PATHS[@]} -eq 0 ]; then
+            echo "No configured Python source paths found; skipping bandit scan."
+            exit 0
+          fi
+
+          bandit -r "${SCAN_PATHS[@]}" \
+            -ll -ii \
+            --format txt \
+            --exit-zero \
+            -o bandit-report.txt
+          cat bandit-report.txt
+          # Fail if any HIGH severity issues are found.
+          bandit -r "${SCAN_PATHS[@]}" \
+            --severity-level high --confidence-level medium \
+            --quiet
+
+      - name: Upload bandit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.txt
+          retention-days: 7
+
+  # ── Docker config validation ───────────────────────────────────────────────
+  docker-validate:
+    name: Docker — Compose config
+    if: github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Validate base compose config
+        run: docker compose config --quiet
+
+      - name: Validate NVIDIA GPU overlay
+        run: docker compose -f docker-compose.yml -f docker/gpu.nvidia.yml config --quiet
+
+      - name: Validate AMD GPU overlay
+        run: docker compose -f docker-compose.yml -f docker/gpu.amd.yml config --quiet
+
+  # ── JavaScript syntax ──────────────────────────────────────────────────────
+  js-syntax:
+    name: JS — Syntax check
+    if: github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Check all .js files for syntax errors
+        run: |
+          if [ ! -d static/js ]; then
+            echo "static/js not present; skipping JS syntax check."
+            exit 0
+          fi
+
+          find static/js -name "*.js" -print0 \
+          | xargs -0 -r -I{} node --check {}
+
+  # ── Summary comment ────────────────────────────────────────────────────────
+  summarize:
+    name: Post CI summary
+    permissions:
+      issues: write
+      pull-requests: write
+    needs:
+      - python-tests
+      - python-syntax
+      - security-cve
+      - security-sast
+      - docker-validate
+      - js-syntax
+    # Always run the summary, even when a job fails, so the PR comment is
+    # always updated. But skip entirely if the review wasn't an approval
+    # (which would have caused all needs to be skipped).
+    if: always() && github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const results = {
+              'Python — Test suite':              '${{ needs.python-tests.result }}',
+              'Python — Syntax check':            '${{ needs.python-syntax.result }}',
+              'Security — Dependency CVEs':       '${{ needs.security-cve.result }}',
+              'Security — SAST (bandit)':         '${{ needs.security-sast.result }}',
+              'Docker — Compose config':          '${{ needs.docker-validate.result }}',
+              'JS — Syntax check':                '${{ needs.js-syntax.result }}',
+            };
+
+            const icon = r =>
+              r === 'success'  ? '✅' :
+              r === 'failure'  ? '❌' :
+              r === 'skipped'  ? '⏭️' : '⚠️';
+
+            const allPassed = Object.values(results).every(r => r === 'success');
+
+            const rows = Object.entries(results)
+              .map(([name, result]) => `| ${icon(result)} | ${name} | \`${result}\` |`)
+              .join('\n');
+
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const approver = context.payload.review.user.login;
+            const sha = context.payload.pull_request.head.sha.slice(0, 7);
+
+            const MARKER = '<!-- post-approval-ci-summary -->';
+
+            const body = allPassed
+              ? `${MARKER}
+            ## ✅ Post-Approval CI — all checks passed
+
+            Approved by @${approver} · commit \`${sha}\` · [Full run](${runUrl})
+
+            | | Check | Result |
+            |---|---|---|
+            ${rows}`
+              : `${MARKER}
+            ## ❌ Post-Approval CI — one or more checks failed
+
+            Approved by @${approver} · commit \`${sha}\` · [Full run](${runUrl})
+
+            | | Check | Result |
+            |---|---|---|
+            ${rows}
+
+            > **This PR should not be merged until all checks pass.**
+            > Fix the failures above and request a re-review.`;
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+
+            const existing = comments.find(c => (c.body ?? '').includes(MARKER));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body,
+              });
+            }
+
+            if (!allPassed) {
+              core.setFailed('One or more post-approval CI checks failed. See the PR comment for details.');
+            }

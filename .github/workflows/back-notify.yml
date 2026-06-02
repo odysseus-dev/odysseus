@@ -1,0 +1,187 @@
+name: Notify Existing Submissions (One-Time Backfill)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run — log what would be commented without posting anything"
+        type: boolean
+        default: true
+      skip_structured:
+        description: "Skip issues/PRs that already look like they used a template"
+        type: boolean
+        default: true
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  backfill:
+    name: Comment on existing open issues and PRs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post backfill comments
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const dryRun       = ${{ inputs.dry_run }};
+            const skipStructured = ${{ inputs.skip_structured }};
+
+            const ISSUE_MARKER = '<!-- issue-template-check-bot -->';
+            const PR_MARKER    = '<!-- pr-template-check-bot -->';
+            const BACKFILL_MARKER = '<!-- backfill-notification-bot -->';
+
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+
+            // ── Helper: does this body look like it used one of our templates? ───
+            function looksStructured(body) {
+              if (!body) return false;
+              return (
+                /##\s+Steps to Reproduce/i.test(body) ||
+                /##\s+Proposed Solution/i.test(body)  ||
+                /##\s+Summary/i.test(body)            ||
+                /##\s+Linked Issue/i.test(body)
+              );
+            }
+
+            // ── Helper: search open items already containing our backfill marker ─
+            async function fetchPreNotifiedNumbers(kind) {
+              const q = `repo:${owner}/${repo} is:open ${kind} in:comments "backfill-notification-bot"`;
+              const items = await github.paginate(github.rest.search.issuesAndPullRequests, {
+                q,
+                per_page: 100,
+              });
+              return new Set(items.map(item => item.number));
+            }
+
+            // ── Helper: has the bot already commented? (fast precheck + fallback) ─
+            async function alreadyCommented(issueNumber, preNotifiedNumbers) {
+              if (preNotifiedNumbers.has(issueNumber)) {
+                return true;
+              }
+
+              // Fallback guard: check only recent comments to avoid duplicate posts.
+              const { data: comments } = await github.rest.issues.listComments({
+                owner,
+                repo,
+                issue_number: issueNumber,
+                per_page: 100,
+              });
+
+              return comments.some(c => (c.body ?? '').includes(BACKFILL_MARKER));
+            }
+
+            // ── Helper: post or log a comment ────────────────────────────────────
+            async function postComment(issueNumber, body) {
+              if (dryRun) {
+                core.info(`[DRY RUN] Would comment on #${issueNumber}`);
+                return;
+              }
+              await github.rest.issues.createComment({ owner, repo, issue_number: issueNumber, body });
+              // Respect secondary rate limit — 1 write per second is safe
+              await new Promise(r => setTimeout(r, 1000));
+            }
+
+            // ── Messages ─────────────────────────────────────────────────────────
+            const issueMessage = `${BACKFILL_MARKER}
+👋 **A quick note from the Odysseus team — and a big thank you**
+
+We are genuinely blown away by the response to Odysseus. The volume of issues, pull requests, and ideas from the community has been incredible and we are grateful for every one of them.
+
+To make it easier for the maintainers to work through everything, we have introduced structured issue templates that make reports and proposals much faster to triage. Going forward, all new issues must use a template.
+
+**Would you mind re-opening this as a new issue using the correct template?**
+- 🐛 [Bug Report](https://github.com/${owner}/${repo}/issues/new?template=bug_report.yml)
+- 💡 [Feature Request](https://github.com/${owner}/${repo}/issues/new?template=feature_request.yml)
+- ❓ [Question / Setup Help](https://github.com/${owner}/${repo}/discussions/categories/q-a) ← use Discussions, not Issues
+- 🔒 Security vulnerability → [GitHub Security Advisories](https://github.com/${owner}/${repo}/security/advisories/new) (private — please do not post vulnerabilities as public issues)
+
+Feel free to close this issue once you have re-opened it with the template. **Thank you again** — every report and idea genuinely helps.`;
+
+            const prMessage = `${BACKFILL_MARKER}
+👋 **A quick note from the Odysseus team — and a big thank you**
+
+We are genuinely blown away by the number of contributors jumping in. Thank you for the time you have put into this.
+
+To help the maintainers review pull requests consistently and efficiently, we have introduced a [PR template](https://github.com/${owner}/${repo}/blob/main/.github/PULL_REQUEST_TEMPLATE.md) with required sections. Going forward, all PRs need to follow this structure.
+
+**Could you update this PR's description to match the template?** Key things we need:
+- A clear **summary** of what changed and why
+- A linked issue number (\`Fixes #NNN\` or \`Part of #NNN\`)
+- Confirmation you searched for duplicates
+- Test coverage info (what tests you added, or why they don't apply)
+- Step-by-step **how to test** instructions for the reviewer
+
+You can copy the template from [PULL_REQUEST_TEMPLATE.md](https://github.com/${owner}/${repo}/blob/main/.github/PULL_REQUEST_TEMPLATE.md) and paste it into the PR description, then fill in your details.
+
+**Thank you again** — we want to make sure your work gets the attention it deserves.`;
+
+            // ── Precompute open items already notified by backfill marker ─────────
+            core.info('Precomputing already-notified open issues and PRs...');
+            const preNotifiedIssues = await fetchPreNotifiedNumbers('is:issue');
+            const preNotifiedPRs = await fetchPreNotifiedNumbers('is:pr');
+            core.info(`Precomputed marker matches: ${preNotifiedIssues.size} issues, ${preNotifiedPRs.size} PRs`);
+
+            // ── Process all open issues (non-PR) ─────────────────────────────────
+            core.info('Fetching open issues...');
+            const allIssues = await github.paginate(
+              github.rest.issues.listForRepo,
+              { owner, repo, state: 'open', per_page: 100 }
+            );
+
+            let issueCount = 0, issueSkipped = 0;
+            for (const issue of allIssues) {
+              // PRs also appear in the issues endpoint — skip them here
+              if (issue.pull_request) continue;
+
+              if (skipStructured && looksStructured(issue.body)) {
+                core.info(`Issue #${issue.number} looks structured — skipping.`);
+                issueSkipped++;
+                continue;
+              }
+
+              if (await alreadyCommented(issue.number, preNotifiedIssues)) {
+                core.info(`Issue #${issue.number} already notified — skipping.`);
+                issueSkipped++;
+                continue;
+              }
+
+              core.info(`Commenting on issue #${issue.number}: ${issue.title}`);
+              await postComment(issue.number, issueMessage);
+              issueCount++;
+            }
+
+            // ── Process all open pull requests ────────────────────────────────────
+            core.info('Fetching open pull requests...');
+            const allPRs = await github.paginate(
+              github.rest.pulls.list,
+              { owner, repo, state: 'open', per_page: 100 }
+            );
+
+            let prCount = 0, prSkipped = 0;
+            for (const pr of allPRs) {
+              if (skipStructured && looksStructured(pr.body)) {
+                core.info(`PR #${pr.number} looks structured — skipping.`);
+                prSkipped++;
+                continue;
+              }
+
+              if (await alreadyCommented(pr.number, preNotifiedPRs)) {
+                core.info(`PR #${pr.number} already notified — skipping.`);
+                prSkipped++;
+                continue;
+              }
+
+              core.info(`Commenting on PR #${pr.number}: ${pr.title}`);
+              await postComment(pr.number, prMessage);
+              prCount++;
+            }
+
+            // ── Summary ───────────────────────────────────────────────────────────
+            const mode = dryRun ? 'DRY RUN' : 'LIVE';
+            core.info('');
+            core.info(`=== Backfill complete (${mode}) ===`);
+            core.info(`Issues: ${issueCount} commented, ${issueSkipped} skipped`);
+            core.info(`PRs:    ${prCount} commented, ${prSkipped} skipped`);
