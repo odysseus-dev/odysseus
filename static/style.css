@@ -35071,10 +35071,29 @@ body.theme-frosted .modal {
   transform: scale(0.98);
   background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
 }
+/* Three-item case: place one row left-aligned at the top, two on the bottom
+ * row. Without this, default grid auto-flow would put the lonely button on
+ * the bottom-left and the first two on top, which looks like a stranded
+ * leftover. By pinning items 2 and 3 to row 2, item 1 naturally lands at
+ * (col 1, row 1) and stays left-aligned at half width. */
+.chat-shortcuts-bar:has(> .chat-shortcut-row:nth-child(3):last-child) > .chat-shortcut-row:nth-child(2) {
+  grid-column: 1;
+  grid-row: 2;
+}
+.chat-shortcuts-bar:has(> .chat-shortcut-row:nth-child(3):last-child) > .chat-shortcut-row:nth-child(3) {
+  grid-column: 2;
+  grid-row: 2;
+}
 /* Single-column on narrow viewports so titles aren't crushed. */
 @media (max-width: 480px) {
   .chat-shortcuts-bar {
     grid-template-columns: 1fr;
+  }
+  /* On narrow viewports the 3-item special case becomes a normal stack. */
+  .chat-shortcuts-bar:has(> .chat-shortcut-row:nth-child(3):last-child) > .chat-shortcut-row:nth-child(2),
+  .chat-shortcuts-bar:has(> .chat-shortcut-row:nth-child(3):last-child) > .chat-shortcut-row:nth-child(3) {
+    grid-column: auto;
+    grid-row: auto;
   }
 }
 
