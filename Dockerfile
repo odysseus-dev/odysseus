@@ -11,6 +11,8 @@ FROM --platform=linux/arm64 ubuntu:22.04
 RUN apt-get clean && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
     build-essential \
     cmake \
     curl \
@@ -20,6 +22,8 @@ RUN apt-get clean && \
     openssh-client \
     gosu \
     && rm -rf /var/lib/apt/lists/*
+
+RUN ln -s /usr/bin/python3 /usr/bin/python && ln -s /usr/bin/pip3 /usr/bin/pip
 
 WORKDIR /app
 
