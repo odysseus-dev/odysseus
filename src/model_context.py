@@ -189,14 +189,26 @@ def _lookup_known(model: str) -> Optional[int]:
     Picks the LONGEST matching key so a short key never shadows a more specific
     one. Without this, 'o1' (200k) precedes 'o1-mini' (128k) in the table and a
     first-match return would report o1-mini's window as 200k.
+
+    Matching is hyphen-insensitive: the table keys are hyphenated (``llama-3.2``,
+    ``gemma-3``, ``phi-4``) but Ollama reports the same models without the hyphen
+    (``llama3.2``, ``gemma3``, ``phi4``). A plain ``key in name`` substring check
+    missed those, so the caller fell back to ``DEFAULT_CONTEXT`` (e.g. ``phi4`` →
+    128000 instead of phi-4's 16000) — which, combined with passing ``num_ctx``
+    to Ollama, over-allocates the KV cache and can OOM a small-context model.
     """
     name = model.lower()
     basename = name.split("/")[-1] if "/" in name else name
     basename = basename.split(":")[0]  # strip :free, :extended etc.
+    # De-hyphenate both sides so unhyphenated Ollama names match hyphenated keys.
+    name_n = name.replace("-", "")
+    basename_n = basename.replace("-", "")
     best_key: Optional[str] = None
     best_ctx: Optional[int] = None
     for key, ctx in KNOWN_CONTEXT_WINDOWS.items():
-        if key in basename or key in name:
+        key_n = key.replace("-", "")
+        if key_n in basename_n or key_n in name_n:
+            # Compare ORIGINAL key lengths so the longest-match invariant holds.
             if best_key is None or len(key) > len(best_key):
                 best_key, best_ctx = key, ctx
     return best_ctx

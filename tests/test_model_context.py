@@ -164,3 +164,52 @@ class TestGetContextLength:
         assert first == 200000
         assert second == 200000
         assert len(calls) == 1
+
+
+class TestLookupKnownHyphenInsensitive:
+    """Ollama reports model names without the hyphens the table keys use
+    (`llama3.2` vs `llama-3.2`, `phi4` vs `phi-4`). `_lookup_known` must match
+    both; otherwise these models fall back to DEFAULT_CONTEXT and over-allocate
+    the KV cache once `num_ctx` is sent to Ollama.
+    """
+
+    @pytest.mark.parametrize("ollama_name, hyphenated_key", [
+        ("phi4", "phi-4"),
+        ("gemma3:4b", "gemma-3"),
+        ("gemma2:9b", "gemma-2"),
+        ("llama3.2:latest", "llama-3.2"),
+        ("llama3.1:8b", "llama-3.1"),
+        ("llama3.3", "llama-3.3"),
+    ])
+    def test_unhyphenated_ollama_name_matches_hyphenated_key(self, ollama_name, hyphenated_key):
+        ctx = _lookup_known(ollama_name)
+        assert ctx is not None, f"{ollama_name!r} should resolve, not fall back to DEFAULT"
+        # Resolves to the same window as its hyphenated table key.
+        assert ctx == _lookup_known(hyphenated_key)
+
+    def test_phi4_resolves_to_real_window_not_default(self):
+        # The headline regression: `phi4` used to miss and fall back to
+        # DEFAULT_CONTEXT (128000) — an 8x over-allocation for a 16k model.
+        assert _lookup_known("phi4") == 16000
+        assert _lookup_known("phi4") != model_context.DEFAULT_CONTEXT
+
+    def test_specific_known_windows(self):
+        assert _lookup_known("gemma3:4b") == 128000
+        assert _lookup_known("llama3.2:latest") == 131072
+
+    def test_already_unhyphenated_keys_unchanged(self):
+        # qwen keys were already unhyphenated and must keep working.
+        assert _lookup_known("qwen3:8b") == 131072
+        assert _lookup_known("qwen2.5:7b") == 131072
+        # deepseek-r1 carries the hyphen in both the table and the Ollama name.
+        assert _lookup_known("deepseek-r1:7b") == 64000
+
+    def test_longest_match_invariant_preserved(self):
+        # o1-mini must still win over o1 after de-hyphenation (not report 200k).
+        assert _lookup_known("o1-mini") == _lookup_known("o1mini")
+        assert _lookup_known("o1-mini") != _lookup_known("o1")
+        # gpt-4o-mini must not be shadowed by gpt-4o / gpt-4.
+        assert _lookup_known("gpt-4o-mini") == _lookup_known("gpt4omini")
+
+    def test_unknown_model_returns_none(self):
+        assert _lookup_known("totally-unknown-model-xyz") is None
