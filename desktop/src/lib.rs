@@ -18,7 +18,7 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn detect_repo_dir() -> PathBuf {
-        // Resolve repo dir relative to the executable location
+        // Priority 1: resolve relative to the executable location
         let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|p| p.to_path_buf()))
@@ -35,7 +35,7 @@ impl AppConfig {
                 }
             });
 
-        // Walk up looking for app.py (the Odysseus repo root)
+        // Walk up from exe/bundle looking for app.py
         let mut check = macos_bundle.unwrap_or_else(|| exe_dir.clone());
         loop {
             if check.join("app.py").exists() {
@@ -46,7 +46,15 @@ impl AppConfig {
             }
         }
 
-        // Fallback: current working directory
+        // Priority 2: home-directory clone (~/odysseus/)
+        if let Some(home) = dirs::home_dir() {
+            let home_repo = home.join("odysseus");
+            if home_repo.join("app.py").exists() {
+                return home_repo;
+            }
+        }
+
+        // Priority 3: current working directory
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
 }
@@ -195,6 +203,14 @@ pub fn run() {
             // Build tray
             let _tray = tray::build_tray(app.handle())?;
 
+            // Restore checkbox states from saved config
+            let auto_start = app.state::<Mutex<AppConfig>>()
+                .lock().unwrap().auto_start;
+            let minimize_tray = app.state::<Mutex<AppConfig>>()
+                .lock().unwrap().minimize_to_tray;
+            tray::set_auto_start_checked(app.handle(), auto_start);
+            tray::set_minimize_tray_checked(app.handle(), minimize_tray);
+
             // Register global hotkey
             use tauri_plugin_global_shortcut::GlobalShortcutExt;
             app.global_shortcut().on_shortcut("Ctrl+Shift+O", |app, _shortcut, _event| {
@@ -235,7 +251,7 @@ pub fn run() {
 }
 
 /// Path to the persisted config file.
-fn get_config_path() -> PathBuf {
+pub(crate) fn get_config_path() -> PathBuf {
     let config_dir = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("com.odysseus.desktop");
@@ -245,7 +261,7 @@ fn get_config_path() -> PathBuf {
 
 /// Persisted config structure.
 #[derive(serde::Serialize, serde::Deserialize, Default)]
-struct SavedConfig {
+pub(crate) struct SavedConfig {
     port: Option<u16>,
     python_path: Option<String>,
     minimize_to_tray: Option<bool>,
@@ -259,8 +275,7 @@ fn load_config(path: &PathBuf) -> Option<SavedConfig> {
 }
 
 /// Save config to disk (called on config changes).
-#[allow(dead_code)]
-fn save_config(path: &PathBuf, config: &SavedConfig) {
+pub(crate) fn save_config(path: &PathBuf, config: &SavedConfig) {
     if let Ok(json) = serde_json::to_string_pretty(config) {
         let _ = std::fs::write(path, json);
     }

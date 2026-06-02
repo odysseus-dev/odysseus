@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 use tauri::{
     AppHandle, Emitter, Manager,
-    menu::{MenuBuilder, MenuItem, MenuItemBuilder, CheckMenuItemBuilder},
+    menu::{CheckMenuItem, MenuBuilder, MenuItem, MenuItemBuilder, CheckMenuItemBuilder},
     tray::{TrayIcon, TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent},
     Wry,
 };
@@ -9,6 +9,8 @@ use tauri::{
 /// Menu items that need runtime updates.
 pub struct TrayState {
     pub server_status: MenuItem<Wry>,
+    pub auto_start: CheckMenuItem<Wry>,
+    pub minimize_tray: CheckMenuItem<Wry>,
 }
 
 /// Build and return the system tray menu and icon.
@@ -64,14 +66,17 @@ pub fn build_tray(app: &AppHandle<Wry>) -> tauri::Result<TrayIcon<Wry>> {
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
         .expect("Tray icon must be 32x32 PNG");
 
-    // Store server_status so we can update it later
+    // Store menu items so we can update them at runtime
     app.manage(Mutex::new(TrayState {
         server_status: server_status.clone(),
+        auto_start: auto_start.clone(),
+        minimize_tray: minimize_tray.clone(),
     }));
 
     let tray = TrayIconBuilder::new()
         .icon(icon)
         .menu(&menu)
+        .show_menu_on_left_click(false)
         .tooltip("Odysseus")
         .on_menu_event(|app, event| {
             log::info!("Tray menu event: {}", event.id().as_ref());
@@ -103,6 +108,74 @@ pub fn build_tray(app: &AppHandle<Wry>) -> tauri::Result<TrayIcon<Wry>> {
                         .lock().unwrap()
                         .port;
                     let _ = open::that(format!("http://127.0.0.1:{}", port));
+                }
+                "auto_start" => {
+                    use tauri_plugin_autostart::ManagerExt;
+
+                    // Toggle the checkbox
+                    let new_checked = {
+                        let state = app.state::<Mutex<TrayState>>();
+                        let guard = state.lock().unwrap();
+                        let current = guard.auto_start.is_checked().unwrap_or(false);
+                        let new_val = !current;
+                        guard.auto_start.set_checked(new_val).ok();
+                        new_val
+                    };
+
+                    // Enable/disable OS-level auto-launch
+                    if new_checked {
+                        app.autolaunch().enable().ok();
+                    } else {
+                        app.autolaunch().disable().ok();
+                    }
+
+                    // Update in-memory config
+                    if let Some(cfg) = app.try_state::<Mutex<super::AppConfig>>() {
+                        cfg.lock().unwrap().auto_start = new_checked;
+                    }
+
+                    // Persist config to disk
+                    let config_path = super::get_config_path();
+                    if let Some(cfg) = app.try_state::<Mutex<super::AppConfig>>() {
+                        let guard = cfg.lock().unwrap();
+                        let saved = super::SavedConfig {
+                            port: Some(guard.port),
+                            python_path: guard.python_path.clone(),
+                            minimize_to_tray: Some(guard.minimize_to_tray),
+                            auto_start: Some(guard.auto_start),
+                        };
+                        drop(guard);
+                        super::save_config(&config_path, &saved);
+                    }
+                }
+                "minimize_tray" => {
+                    let new_checked = {
+                        let state = app.state::<Mutex<TrayState>>();
+                        let guard = state.lock().unwrap();
+                        let current = guard.minimize_tray.is_checked().unwrap_or(false);
+                        let new_val = !current;
+                        guard.minimize_tray.set_checked(new_val).ok();
+                        new_val
+                    };
+
+                    // Update in-memory config
+                    if let Some(cfg) = app.try_state::<Mutex<super::AppConfig>>() {
+                        cfg.lock().unwrap().minimize_to_tray = new_checked;
+                    }
+
+                    // Persist config to disk
+                    let config_path = super::get_config_path();
+                    if let Some(cfg) = app.try_state::<Mutex<super::AppConfig>>() {
+                        let guard = cfg.lock().unwrap();
+                        let saved = super::SavedConfig {
+                            port: Some(guard.port),
+                            python_path: guard.python_path.clone(),
+                            minimize_to_tray: Some(guard.minimize_to_tray),
+                            auto_start: Some(guard.auto_start),
+                        };
+                        drop(guard);
+                        super::save_config(&config_path, &saved);
+                    }
                 }
                 "about" => {
                     let _ = app.emit("show-about", ());
@@ -145,5 +218,21 @@ pub fn set_server_status(app: &AppHandle<Wry>, running: bool) {
             "Server: ● Stopped"
         };
         let _ = item.server_status.set_text(text);
+    }
+}
+
+/// Set the auto-start checkbox checked state.
+pub fn set_auto_start_checked(app: &AppHandle<Wry>, checked: bool) {
+    if let Some(state) = app.try_state::<Mutex<TrayState>>() {
+        let guard = state.lock().unwrap();
+        let _ = guard.auto_start.set_checked(checked);
+    }
+}
+
+/// Set the minimize-to-tray checkbox checked state.
+pub fn set_minimize_tray_checked(app: &AppHandle<Wry>, checked: bool) {
+    if let Some(state) = app.try_state::<Mutex<TrayState>>() {
+        let guard = state.lock().unwrap();
+        let _ = guard.minimize_tray.set_checked(checked);
     }
 }

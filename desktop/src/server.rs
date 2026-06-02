@@ -7,6 +7,12 @@ use log::info;
 use reqwest::Client;
 use tokio::time::sleep;
 
+// Suppress console window for child processes on Windows
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 /// Result type for server operations.
 pub type ServerResult<T> = Result<T, ServerError>;
 
@@ -186,8 +192,8 @@ impl ServerManager {
             .append(true)
             .open(self.repo_dir.join("logs").join("desktop-server.log"))?;
 
-        let child = Command::new(&python)
-            .arg("-m")
+        let mut cmd = Command::new(&python);
+        cmd.arg("-m")
             .arg("uvicorn")
             .arg("app:app")
             .arg("--host")
@@ -198,8 +204,12 @@ impl ServerManager {
             .arg("warning")
             .current_dir(&self.repo_dir)
             .stdout(Stdio::from(log_file.try_clone()?))
-            .stderr(Stdio::from(log_file))
-            .spawn()?;
+            .stderr(Stdio::from(log_file));
+
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        let child = cmd.spawn()?;
 
         self.child = Some(child);
         Ok(())

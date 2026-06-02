@@ -109,3 +109,4 @@ tools/gen-key/target/
 # Superpowers skill docs (generated)
 docs/superpowers/
 desktop/gen/
+py_rust_stemmers-0.1.8/
