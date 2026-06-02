@@ -206,12 +206,16 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     exit code is preserved (no ``| tail`` masking) and the last 5 lines of
     pip output appear in the Cookbook log on failure.
     """
+    from core.platform_compat import IS_WINDOWS
     upgrade_flag = " -U" if upgrade else ""
     # Shell-quote the package spec: an extras spec like ``llama-cpp-python[server]``
     # contains brackets that bash would treat as a glob, so it must be quoted
     # before being embedded in the install command. Plain names (e.g.
     # ``huggingface_hub``) are returned unchanged by ``shlex.quote``.
     pkg = shlex.quote(package)
+    if IS_WINDOWS and "llama-cpp-python" in package:
+        pkg += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
+
     base = _pip_install_attempt(f"{python_cmd} install -q{upgrade_flag} {pkg}")
     user = _pip_install_attempt(f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {pkg}")
     # Derive the python executable for the venv detection check.
@@ -525,6 +529,7 @@ def _validate_serve_cmd(v: str | None) -> str | None:
     # Backticks and raw newlines are never legitimate here.
     if any(c in v for c in ("`", "\n", "\r")):
         raise HTTPException(400, "Invalid characters in cmd")
+
     # Known GGUF launcher prelude → validate the serve invocation(s) it guards.
     m = _GGUF_PRELUDE_RE.match(v)
     if m:
@@ -533,9 +538,19 @@ def _validate_serve_cmd(v: str | None) -> str | None:
         for part in rest.split("||"):
             _check_serve_binary(part.strip())
         return v
+
     # Otherwise: a single invocation — no shell metacharacters allowed.
+    # Temporarily replace safe $(printf %s ...) expressions with a placeholder
+    # to avoid triggering the metacharacter/command-injection checks.
+    cleaned_v = v
+    printf_matches = list(re.finditer(r"\$\(\s*printf\s+%s\s+([^\n()]*?)\)", v))
+    for match in printf_matches:
+        inner = match.group(1)
+        if not any(c in inner for c in (";", "&&", "||", "$(", "`")):
+            cleaned_v = cleaned_v.replace(match.group(0), "/placeholder/safe/path.gguf")
+
     # (`$(` was the original intent; bare `$` is fine for shell-safe paths.)
-    if any(c in v for c in (";", "&&", "||", "$(")):
+    if any(c in cleaned_v for c in (";", "&&", "||", "$(")):
         raise HTTPException(400, "Invalid characters in cmd")
     _check_serve_binary(v)
     return v

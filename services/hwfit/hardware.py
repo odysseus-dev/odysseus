@@ -539,6 +539,7 @@ def _detect_windows():
             "backend": d.get("gpu_backend", "cpu_x86"),
             "homogeneous": True,
             "gpu_error": None,
+            "platform": "windows",
         }
         # PowerShell only reports aggregate GPU info, not per-card detail, so we
         # can't tell a mixed box from a uniform one here — assume one homogeneous
