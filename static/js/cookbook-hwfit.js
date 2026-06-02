@@ -519,6 +519,11 @@ export async function _hwfitFetch(fresh = false) {
       const asc = sortSel?.dataset.reverse === '1';   // reversed → ascending (lowest first)
       const field = { score: 'score', vram: 'required_gb', speed: 'speed_tps', params: 'params_b', context: 'context' }[sortKey] || 'score';
       data.models.sort((a, b) => {
+        if (sortKey === 'fit') {
+          const rank = { perfect: 4, good: 3, marginal: 2, too_tight: 1, no_fit: 0 };
+          const av = rank[a.fit_level] || 0, bv = rank[b.fit_level] || 0;
+          return asc ? av - bv : bv - av;
+        }
         const av = Number(a[field]) || 0, bv = Number(b[field]) || 0;
         return asc ? av - bv : bv - av;
       });
@@ -717,7 +722,7 @@ function _wireManualHardwareControls(el) {
 export const _fitColors = { perfect: 'var(--green, #50fa7b)', good: 'var(--yellow, #f1fa8c)', marginal: 'var(--orange, #ffb86c)', too_tight: 'var(--red, #ff5555)' };
 
 export const _hwfitColumns = [
-  { key: 'score', label: 'Fit',    cls: 'hwfit-fit' },
+  { key: 'fit', label: 'Fit',    cls: 'hwfit-fit' },
   { key: null,    label: 'Model',  cls: 'hwfit-name' },
   { key: 'params',label: 'Param', cls: 'hwfit-c-params' },
   { key: null,    label: 'Quant',  cls: 'hwfit-c-quant' },

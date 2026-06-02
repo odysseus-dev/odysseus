@@ -1434,7 +1434,7 @@ function _renderRecipes() {
   html += '<button type="button" class="hwfit-gpu-btn" id="hwfit-rescan" title="Re-scan hardware" style="flex-shrink:0;position:relative;top:-3px;left:-1px;">↻ RESCAN</button>';
   html += '<button type="button" class="hwfit-gpu-btn hwfit-hw-manual-btn" id="hwfit-hw-manual-btn" title="Set hardware manually" style="flex-shrink:0;position:relative;top:-3px;left:-1px;">EDIT</button>';
   html += '<select class="cookbook-field-input hwfit-sort" id="hwfit-sort" style="display:none">';
-  html += '<option value="score">Score</option><option value="vram">VRAM</option>';
+  html += '<option value="fit">Fit</option><option value="score">Score</option><option value="vram">VRAM</option>';
   html += '<option value="speed">Speed</option><option value="params">Params</option>';
   html += '<option value="context">Context</option></select>';
   html += '</div>';
