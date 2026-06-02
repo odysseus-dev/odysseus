@@ -1448,8 +1448,6 @@ async def stream_agent_loop(
     except Exception as _e:
         logger.debug(f"endpoint supports_tools lookup failed: {_e}")
     _model_supports_tools = any(kw in _model_lc for kw in (
-        # "deepseek" intentionally omitted: deepseek-r1 on Ollama returns HTTP 400
-        # for tool calls. Cloud API (api.deepseek.com) is caught by _API_HOSTS above.
         "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
         "qwen3", "qwen2.5", "mixtral", "mistral", "llama-3.1", "llama-3.2",
         "llama-3.3", "llama-4",
@@ -1458,10 +1456,20 @@ async def stream_agent_loop(
         # with the per-endpoint flag above.
         "minimax", "kimi", "yi-", "phi-3", "phi-4", "command-r",
         "glm-4", "internlm", "hermes",
+        # deepseek-v2/v3/chat support tools via the cloud API; deepseek-r1
+        # (reasoning model) does not — handled by the blocklist below.
+        "deepseek-v", "deepseek-chat",
+    ))
+    # Models known to reject tool schemas at the Ollama/local level even when
+    # the endpoint URL would otherwise enable native function calling.
+    # The per-endpoint supports_tools flag (True/False) always takes priority
+    # and can override this list for users who know their setup.
+    _model_no_tools = any(kw in _model_lc for kw in (
+        "deepseek-r1",
     ))
     if _endpoint_supports is True:
         _is_api_model = True
-    elif _endpoint_supports is False:
+    elif _endpoint_supports is False or _model_no_tools:
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
