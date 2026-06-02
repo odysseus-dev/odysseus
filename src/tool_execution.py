@@ -788,7 +788,7 @@ async def execute_tool_block(
             result = {"error": "MCP manager not available", "exit_code": 1}
     else:
         desc = f"unknown: {tool}"
-        result = {"error": f"Unknown tool type: {tool}"}
+        result = {"error": f"Unknown tool type: {tool}", "exit_code": 1}
 
     logger.info(f"Tool executed: {desc} -> exit_code={result.get('exit_code', 'n/a')}")
     return desc, result

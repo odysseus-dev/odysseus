@@ -2161,6 +2161,13 @@ async def stream_agent_loop(
         # Separator in accumulated response
         full_response += "\n\n"
 
+    # If the response is completely empty and no tools were executed,
+    # yield a fallback message so the user is not left hanging.
+    if not full_response.strip() and not tool_events:
+        _error_msg = "The model returned an empty response. Please try again or switch to a different model."
+        yield f'data: {json.dumps({"delta": _error_msg})}\n\n'
+        full_response = _error_msg
+
     # --- Final metrics ---
     total_duration = time.time() - total_start
     metrics = _compute_final_metrics(

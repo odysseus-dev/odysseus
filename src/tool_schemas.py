@@ -1074,6 +1074,7 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         return None
 
     tool_type = _TOOL_NAME_MAP.get(name, name)
+
     # Allow MCP tools through (namespaced as mcp__serverid__toolname)
     if tool_type.startswith("mcp__"):
         content = json.dumps(args) if args else "{}"
@@ -1093,7 +1094,13 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
     elif tool_type == "python":
         content = args.get("code", "")
     elif tool_type == "web_search":
-        content = args.get("query", "")
+        queries = args.get("queries")
+        if isinstance(queries, list) and queries:
+            content = str(queries[0])
+        elif queries:
+            content = str(queries)
+        else:
+            content = args.get("query", "")
     elif tool_type == "read_file":
         content = args.get("path", "")
     elif tool_type == "write_file":
