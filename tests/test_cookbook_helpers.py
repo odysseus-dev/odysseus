@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from routes.cookbook_helpers import (
     _cached_model_scan_script,
+    _append_llama_cpp_linux_accel_build_lines,
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
     _local_tooling_path_export,
@@ -295,6 +296,26 @@ def test_ollama_serve_rejects_unsafe_bind_values():
         == ("127.0.0.1", "11434")
     )
 
+
+def test_llama_cpp_linux_bootstrap_prefers_rocm_before_cuda():
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+    script = "\n".join(runner_lines)
+
+    assert 'command -v hipconfig &>/dev/null || [ -d /opt/rocm ] || [ -n "$ROCM_PATH" ] || [ -n "$HIP_PATH" ]' in script
+    assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON' in script
+    assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON' in script
+    assert script.index('DGGML_HIP=ON') < script.index('DGGML_CUDA=ON')
+    assert 'ROCm/HIP detected — building llama-server with HIP support' in script
+
+
+def test_llama_cpp_linux_bootstrap_keeps_cpu_fallback_when_no_gpu_toolchain():
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+    script = "\n".join(runner_lines)
+
+    assert 'WARNING: no HIP/CUDA toolchain found — building llama-server for CPU only.' in script
+    assert 'Install ROCm for AMD GPUs or vLLM/CUDA tooling for NVIDIA' in script
 
 def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):
     """Custom download dirs may sit inside the HF hub cache and contain plain

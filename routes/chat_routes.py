@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 # Track active streams for partial-save safety net
 _active_streams: Dict[str, dict] = {}
+_IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")
 
 
 def _stream_set(session_id: str, **fields) -> None:
@@ -96,6 +97,59 @@ def _clear_orphaned_session_endpoint(sess) -> bool:
         return False
     finally:
         db.close()
+
+
+def _endpoint_cache_contains_model(endpoint, model: str) -> bool:
+    """Return True when a populated endpoint model cache includes ``model``.
+
+    Empty/malformed caches are treated as unknown rather than a negative match
+    so older image endpoints without cached models still work.
+    """
+    raw = getattr(endpoint, "cached_models", None)
+    if not raw:
+        return True
+    try:
+        models = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return True
+    if not isinstance(models, list) or not models:
+        return True
+    wanted = (model or "").strip()
+    return wanted in {str(item).strip() for item in models}
+
+
+def _is_image_generation_session(sess) -> bool:
+    """Whether this chat session should bypass text chat and generate images.
+
+    Model-name prefixes are explicit image models. Endpoint type is only used
+    when the current session endpoint actually matches that image endpoint, and
+    when a populated endpoint model cache includes the selected model. This
+    prevents an image endpoint on the same host from misrouting ordinary text
+    models into the image-generation path.
+    """
+    model = (getattr(sess, "model", "") or "").strip()
+    if any(model.lower().startswith(prefix) for prefix in _IMAGE_MODEL_PREFIXES):
+        return True
+
+    endpoint_url = (getattr(sess, "endpoint_url", "") or "").strip()
+    if not endpoint_url:
+        return False
+
+    db = SessionLocal()
+    try:
+        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        for endpoint in endpoints:
+            if (getattr(endpoint, "model_type", None) or "llm") != "image":
+                continue
+            if not _session_url_matches_endpoint(endpoint_url, getattr(endpoint, "base_url", "") or ""):
+                continue
+            if _endpoint_cache_contains_model(endpoint, model):
+                return True
+    except Exception:
+        return False
+    finally:
+        db.close()
+    return False
 
 
 def _recover_empty_session_model(sess, session_id: str) -> bool:
@@ -726,28 +780,7 @@ def setup_chat_routes(
                 _model_info["character_name"] = ctx.preset.character_name
             yield f'data: {json.dumps(_model_info)}\n\n'
 
-            # Detect image models and route directly to image generation
-            _IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")
-            _is_image_model = any(sess.model.lower().startswith(p) for p in _IMAGE_MODEL_PREFIXES)
-
-            # Also check if the endpoint is registered as an image-type endpoint
-            if not _is_image_model:
-                try:
-                    from src.endpoint_resolver import normalize_base as _nb
-                    _ep_base = _nb(sess.endpoint_url)
-                    _db = SessionLocal()
-                    try:
-                        _is_image_model = _db.query(ModelEndpoint).filter(
-                            ModelEndpoint.model_type == "image",
-                            ModelEndpoint.is_enabled == True,
-                            ModelEndpoint.base_url.contains(_ep_base.split("://")[-1].split("/")[0]),
-                        ).first() is not None
-                    finally:
-                        _db.close()
-                except Exception:
-                    pass
-
-            if _is_image_model:
+            if _is_image_generation_session(sess):
                 from src.settings import get_setting
                 if not get_setting("image_gen_enabled", True):
                     yield f'data: {json.dumps({"delta": "Image generation is disabled by the administrator."})}\n\n'
@@ -823,6 +856,15 @@ def setup_chat_routes(
                                         pct = min(round((last_metrics["input_tokens"] / ctx.context_length) * 100, 1), 100.0)
                                         last_metrics["context_percent"] = pct
                                         last_metrics["context_length"] = ctx.context_length
+                                    # The frontend reads `tokens_per_second`; the raw usage event
+                                    # carries the backend's true gen speed as `gen_tps` (llama.cpp
+                                    # timings). Map it through so this direct-chat path shows real
+                                    # t/s instead of "n/a" → falling back to a bare token count.
+                                    if last_metrics.get("gen_tps") and not last_metrics.get("tokens_per_second"):
+                                        last_metrics["tokens_per_second"] = last_metrics["gen_tps"]
+                                        last_metrics["tps_source"] = "backend"
+                                    # Wall-clock response time for the stats popup ("Time").
+                                    last_metrics.setdefault("response_time", round(time.time() - _chat_start, 2))
                                     yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             except json.JSONDecodeError:
                                 yield chunk

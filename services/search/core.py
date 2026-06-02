@@ -106,6 +106,47 @@ def _build_provider_chain(primary: str) -> List[str]:
 
 
 # ----------------------------------------------------------------------
+# Atomic search — no ranking, no caching, no content fetch
+# ----------------------------------------------------------------------
+def atomic_web_search(query: str, count: int = 5, time_filter: str = None) -> List[dict]:
+    """Perform a raw web search using configured provider with retry.
+
+    Returns results as-is from the provider: [{title, url, snippet, age?}].
+    No ranking, no caching, no content fetching. Used by the agent
+    web_search tool for clean, composable output.
+    """
+    settings = _get_search_settings()
+    search_provider = settings.get("search_provider", "searxng")
+
+    if search_provider == "disabled":
+        logger.info("Search is disabled via admin settings")
+        return []
+
+    provider_chain = _build_provider_chain(search_provider)
+
+    results: List[dict] = []
+    for provider_name in provider_chain:
+        for attempt in range(2):
+            try:
+                logger.info(f"Atomic search: {provider_name} (attempt {attempt + 1})")
+                results = _call_provider(provider_name, query, count, time_filter)
+                if results:
+                    logger.info(f"Atomic search: {provider_name} succeeded with {len(results)} results")
+                    break
+            except (NetworkError, ParseError, RateLimitError) as e:
+                error_logger.error(f"Atomic search: {provider_name} error (attempt {attempt + 1}): {e}")
+            except Exception as e:
+                error_logger.error(f"Atomic search: unexpected error during {provider_name} (attempt {attempt + 1}): {e}")
+        if results:
+            break
+
+    if not results:
+        logger.error(f"All search providers failed for atomic query: {query}")
+
+    return results
+
+
+# ----------------------------------------------------------------------
 # Unified search with caching and retry
 # ----------------------------------------------------------------------
 def searxng_search_results(query: str, count: int = 10, time_filter: str = None) -> list[dict]:

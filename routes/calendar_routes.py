@@ -12,7 +12,7 @@ from dateutil.rrule import rrulestr, rruleset
 from dateutil.rrule import DAILY, WEEKLY, MONTHLY, YEARLY
 
 from core.database import SessionLocal, CalendarCal, CalendarEvent
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, require_user
 
 logger = logging.getLogger(__name__)
 
@@ -28,16 +28,17 @@ _SINGLE_USER_MODE = _os.environ.get("ODYSSEUS_SINGLE_USER", "1") != "0"
 
 
 def _require_user(request: Request) -> str:
-    """Return the authenticated user. In multi-user mode an unauthenticated
-    request raises 401; in single-user mode it falls through to
-    FALLBACK_OWNER. Prevents the silent cross-user data write that would
-    happen if a request slipped past auth middleware in a real deployment."""
-    u = get_current_user(request)
-    if u:
-        return u
-    if _SINGLE_USER_MODE:
-        return FALLBACK_OWNER
-    raise HTTPException(401, "Authentication required")
+    """Return the authenticated user. Uses require_user so AUTH_ENABLED=false
+    and single-user mode both work: require_user returns "" when auth is
+    disabled or unconfigured, and only raises 401 when auth is configured but
+    the caller is unauthenticated. Falls back to FALLBACK_OWNER for calendar
+    writes so data isn't stored under an empty owner in single-user mode."""
+    user = require_user(request)
+    if user:
+        return user
+    # require_user returned "" — auth is off or unconfigured (single-user).
+    # Use FALLBACK_OWNER so calendar rows have a stable owner for filtering.
+    return FALLBACK_OWNER
 
 
 def _get_or_404_calendar(db, cal_id: str, owner: str) -> CalendarCal:

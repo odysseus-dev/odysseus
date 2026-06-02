@@ -964,6 +964,11 @@ import createResearchSynapse from './researchSynapse.js';
         return;
       }
 
+      // Mark the chat log busy while streaming so screen readers wait for the
+      // settled response instead of announcing every token. Cleared in finally.
+      const _chatLog = document.getElementById('chat-history');
+      if (_chatLog) _chatLog.setAttribute('aria-busy', 'true');
+
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -2702,6 +2707,9 @@ import createResearchSynapse from './researchSynapse.js';
       }
     } finally {
       clearProcessingProbe();
+      // Streaming done — let screen readers announce the settled response.
+      const _chatLogDone = document.getElementById('chat-history');
+      if (_chatLogDone) _chatLogDone.setAttribute('aria-busy', 'false');
       // Always clean up research tracking regardless of background state
       _researchingStreamIds.delete(streamSessionId);
       if (_researchingStreamIds.size === 0) {

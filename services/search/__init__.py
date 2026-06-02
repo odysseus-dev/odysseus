@@ -1,6 +1,7 @@
 """Search service — web search with SearXNG."""
 
 from .core import (
+    atomic_web_search,
     comprehensive_web_search,
     get_search_config,
     invalidate_search_cache,
@@ -18,6 +19,7 @@ __all__ = [
     "SearchResult",
     "SearchResponse",
     # Low-level functions (for backwards compat)
+    "atomic_web_search",
     "comprehensive_web_search",
     "fetch_webpage_content",
     "get_search_config",

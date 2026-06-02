@@ -234,9 +234,14 @@ def resolve_endpoint(
     ep_id = _stg(f"{setting_prefix}_endpoint_id")
     model = _stg(f"{setting_prefix}_model")
 
-    # Unset Utility means "same as Default Chat Model". This keeps background
-    # features usable out of the box and lets users override Utility only when
-    # they explicitly want a separate cheaper/faster model.
+    # If the specific endpoint is not configured, but the caller provided a 
+    # valid fallback (e.g. the active session model), use that immediately.
+    # This prevents background tasks from jumping to the global default_model
+    # when the user is mid-conversation with a different model.
+    if not ep_id and fallback_url and fallback_model:
+        return fallback_url, fallback_model, fallback_headers
+
+    # Unset Utility means "same as Default Chat Model".
     if setting_prefix == "utility" and not ep_id:
         ep_id = _stg("default_endpoint_id")
         model = _stg("default_model")

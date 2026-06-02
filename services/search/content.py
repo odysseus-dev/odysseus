@@ -1,5 +1,6 @@
 """Webpage content fetching with caching, PDF extraction, and summarization helpers."""
 
+import copy
 import io
 import ipaddress
 import json
@@ -113,6 +114,28 @@ def _extract_meta(soup: BeautifulSoup) -> dict:
     if kw_tag and kw_tag.get("content"):
         keywords = kw_tag["content"].strip()
     return {"description": description, "keywords": keywords}
+
+
+def _extract_og_image(soup: BeautifulSoup) -> str:
+    """Extract the best representative image URL from meta tags.
+
+    Only returns absolute http(s) URLs -- skips relative paths and data URIs.
+    """
+    candidates = []
+    for prop in ("og:image", "og:image:url", "og:image:secure_url"):
+        tag = soup.find("meta", attrs={"property": prop})
+        if tag and tag.get("content", "").strip():
+            candidates.append(tag["content"].strip())
+    tag = soup.find("meta", attrs={"name": "twitter:image"})
+    if tag and tag.get("content", "").strip():
+        candidates.append(tag["content"].strip())
+    tag = soup.find("meta", attrs={"name": "thumbnail"})
+    if tag and tag.get("content", "").strip():
+        candidates.append(tag["content"].strip())
+    for url in candidates:
+        if url.startswith(("https://", "http://")) and not url.endswith((".svg", ".ico")):
+            return url
+    return ""
 
 
 def _extract_lists(soup: BeautifulSoup) -> List[List[str]]:
@@ -275,10 +298,12 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
     title_tag = soup.find("title")
     title_text = title_tag.get_text(strip=True) if title_tag else ""
     meta_info = _extract_meta(soup)
+    og_image = _extract_og_image(soup)
     js_rendered = _detect_js_frameworks(soup)
     js_message = "Page appears to be rendered by a JavaScript framework; content may be incomplete." if js_rendered else ""
 
-    # Main textual content (heuristic)
+    # Main textual content (heuristic): prefer semantic / "content"-classed
+    # containers to skip nav/footer/boilerplate; tuned for article pages.
     main_content = ""
     content_areas = soup.find_all(
         ["main", "article", "section", "div"],
@@ -287,12 +312,23 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
     if content_areas:
         for area in content_areas[:3]:
             main_content += area.get_text(separator=" ", strip=True) + " "
-    if not main_content:
+    main_content = re.sub(r"\s+", " ", main_content).strip()
+
+    # If the heuristic finds only a tiny wrapper, fall back to body text with
+    # obvious boilerplate stripped so UI/deep-research search results do not
+    # look empty for app/landing pages.
+    THIN_CONTENT_CHARS = 600
+    if len(main_content) < THIN_CONTENT_CHARS:
         body = soup.find("body")
         if body:
-            main_content = body.get_text(separator=" ", strip=True)
-
-    main_content = re.sub(r"\s+", " ", main_content).strip()[:8000]
+            body_copy = copy.copy(body)
+            for noise in body_copy.find_all(
+                ["script", "style", "noscript", "template", "nav", "header", "footer", "aside"]
+            ):
+                noise.extract()
+            body_text = re.sub(r"\s+", " ", body_copy.get_text(separator=" ", strip=True)).strip()
+            if len(body_text) > len(main_content):
+                main_content = body_text
 
     result = {
         "url": url,
@@ -303,6 +339,7 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
         "code_blocks": _extract_code_blocks(soup),
         "meta_description": meta_info.get("description", ""),
         "meta_keywords": meta_info.get("keywords", ""),
+        "og_image": og_image,
         "js_rendered": js_rendered,
         "js_message": js_message,
         "success": True,

@@ -132,7 +132,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
     import sqlite3 as _sql3
     import requests as _req
     from src.endpoint_resolver import resolve_endpoint
-    from src.llm_core import _uses_max_completion_tokens
+    from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
 
     settings = _load_settings()
     auto_sum = settings.get("email_auto_summarize", False)
@@ -355,6 +355,9 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                         "temperature": 0.3,
                         "stream": False,
                     }
+                    # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
+                    if _restricts_temperature(model):
+                        payload.pop("temperature", None)
                     try:
                         # Use to_thread so this sync HTTP call doesn't freeze
                         # the entire event loop while the LLM thinks (240s).
@@ -806,6 +809,9 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                             "temperature": 0.1,
                             "stream": False,
                         }
+                        # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
+                        if _restricts_temperature(model):
+                            payload.pop("temperature", None)
                         # to_thread keeps the event loop responsive during the LLM call
                         resp = await asyncio.to_thread(
                             _req.post, url, json=payload, headers=req_headers, timeout=120

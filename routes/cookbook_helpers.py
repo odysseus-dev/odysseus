@@ -487,7 +487,48 @@ def _append_serve_exit_code_lines(runner_lines: list[str], *, keep_shell_open: b
         runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="; exec "${SHELL:-/bin/bash}"')
     else:
         runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="')
+        runner_lines.append('exit "$ODYSSEUS_CMD_EXIT"')
 
+
+def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
+    """Append Linux llama.cpp build lines that prefer ROCm/HIP when available.
+
+    Cookbook already detects AMD GPUs elsewhere, but the llama.cpp bootstrap used
+    to hard-wire CUDA on Linux. That made ROCm hosts attempt a CUDA configure and
+    fail with "CUDA Toolkit not found" instead of building with HIP.
+    """
+    # Detect pip-installed nvcc (from vLLM/nvidia CUDA wheels) and put it on PATH
+    # so cmake's CUDA configure can find it. We keep this after the ROCm/HIP
+    # check — a machine with both stacks should honor the native HIP toolchain on
+    # AMD hosts instead of accidentally preferring a stray nvcc wheel.
+    runner_lines.append('    for _cudir in ~/.local/lib/python*/site-packages/nvidia/cu13 ~/.local/lib/python*/site-packages/nvidia/cu12 ~/.local/lib/python*/site-packages/nvidia/cuda_nvcc; do')
+    runner_lines.append('      [ -x "$_cudir/bin/nvcc" ] && export CUDA_HOME="$_cudir" && export PATH="$_cudir/bin:$PATH" && break')
+    runner_lines.append('    done')
+    # rm -rf build so a prior poisoned CMakeCache.txt (e.g. from a failed CUDA
+    # or HIP attempt) doesn't cause the next configure to reuse stale settings.
+    runner_lines.append('    cd ~/llama.cpp && rm -rf build')
+    runner_lines.append('    if command -v hipconfig &>/dev/null || [ -d /opt/rocm ] || [ -n "$ROCM_PATH" ] || [ -n "$HIP_PATH" ]; then')
+    runner_lines.append('      if command -v hipconfig &>/dev/null; then')
+    runner_lines.append('        export HIPCXX="${HIPCXX:-$(hipconfig -l)/clang}"')
+    runner_lines.append('        export HIP_PATH="${HIP_PATH:-$(hipconfig -R)}"')
+    runner_lines.append('      fi')
+    runner_lines.append('      echo "[odysseus] ROCm/HIP detected — building llama-server with HIP support..."')
+    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON \\\\')
+    runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\\\')
+    runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('    elif command -v nvcc &>/dev/null; then')
+    runner_lines.append('      echo "[odysseus] CUDA nvcc found — building llama-server with CUDA (GPU) support..."')
+    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON \\\\')
+    runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\\\')
+    runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('    else')
+    runner_lines.append('      echo "[odysseus] WARNING: no HIP/CUDA toolchain found — building llama-server for CPU only."')
+    runner_lines.append('      echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
+    runner_lines.append('      echo "[odysseus]   Install ROCm for AMD GPUs or vLLM/CUDA tooling for NVIDIA, then re-launch this serve task."')
+    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release \\\\')
+    runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\\\')
+    runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('    fi')
 
 class ModelDownloadRequest(BaseModel):
     repo_id: str

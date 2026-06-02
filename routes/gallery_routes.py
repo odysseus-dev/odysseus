@@ -1707,7 +1707,7 @@ def setup_gallery_routes() -> APIRouter:
                 return {"error": "No vision-capable endpoint configured"}
 
             # Call vision model — format differs between Anthropic and OpenAI
-            from src.llm_core import _detect_provider
+            from src.llm_core import _detect_provider, _restricts_temperature, _uses_max_completion_tokens
             provider = _detect_provider(chat_url)
             tag_prompt = (
                 "Analyze this photo. Return ONLY a comma-separated list of tags. "
@@ -1732,6 +1732,7 @@ def setup_gallery_routes() -> APIRouter:
                     }],
                 }
             else:
+                _tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model_name) else "max_tokens"
                 payload = {
                     "model": model_name,
                     "messages": [{
@@ -1741,9 +1742,12 @@ def setup_gallery_routes() -> APIRouter:
                             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
                         ],
                     }],
-                    "max_tokens": 200,
+                    _tok_key: 200,
                     "temperature": 0.3,
                 }
+                # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
+                if _restricts_temperature(model_name):
+                    payload.pop("temperature", None)
 
             h = {"Content-Type": "application/json"}
             if headers:
