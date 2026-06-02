@@ -1140,13 +1140,9 @@ def _fetch_sender_thread_context(sender_addr: str,
     if exclude_uid:
         seen_uids.add((exclude_folder or "INBOX", str(exclude_uid)))
 
+    conn = None
     try:
         conn = _imap_connect(account_id, owner=owner)
-    except Exception as e:
-        logger.warning(f"sender-thread-context: imap connect failed: {e}")
-        return ""
-
-    try:
         for folder in ["INBOX", "Sent", "Archive", "Drafts"]:
             if len(blocks) >= limit:
                 break
@@ -1213,11 +1209,14 @@ def _fetch_sender_thread_context(sender_addr: str,
                 if atts_text:
                     lines.append(atts_text)
                 blocks.append("\n".join(lines))
+    except Exception as e:
+        logger.warning(f"sender-thread-context: imap failed: {e}")
     finally:
-        try: conn.close()
-        except Exception: pass
-        try: conn.logout()
-        except Exception: pass
+        if conn:
+            try: conn.close()
+            except Exception: pass
+            try: conn.logout()
+            except Exception: pass
 
     if not blocks:
         return ""
@@ -1320,6 +1319,7 @@ def _pre_retrieve_context(
         if not terms_list:
             return context_snippets, terms_list
 
+        ctx_conn = None
         try:
             ctx_conn = _imap_connect(account_id, owner=owner)
             for folder in ["INBOX", "Sent", "Archive", "Drafts"]:
@@ -1356,12 +1356,12 @@ def _pre_retrieve_context(
                     except Exception as _e:
                         logger.warning(f"  search {folder} {term!r} failed: {_e}")
                         continue
-            try:
-                ctx_conn.logout()
-            except Exception:
-                pass
         except Exception as _e:
             logger.warning(f"IMAP context search failed: {_e}")
+        finally:
+            if ctx_conn:
+                try: ctx_conn.logout()
+                except Exception: pass
 
         try:
             from routes.contacts_routes import _fetch_contacts
