@@ -29,6 +29,7 @@ import * as Modals from './modalManager.js';
   let _htmlPreviewActive = false;   // true when inline HTML preview iframe is showing
   let _emailAccountsCache = null;
   let _emailAccountsCacheAt = 0;
+  let _emailHeaderManualExpandUntil = 0;
 
   // Diff mode state
   let _diffModeActive = false;
@@ -152,6 +153,8 @@ import * as Modals from './modalManager.js';
       addDocToTabs,
       syncDocIndicator: _syncDocIndicator,
     });
+    _maybeOpenDocFromHash();
+    window.addEventListener('hashchange', _maybeOpenDocFromHash);
   }
 
   /** Update overflow-doc-btn accent indicator, toolbar indicator, and session list icon */
@@ -1106,6 +1109,16 @@ import * as Modals from './modalManager.js';
     });
   }
 
+  async function _pdfResponseErrorMessage(res) {
+    const text = await res.text().catch(() => '');
+    try {
+      const data = JSON.parse(text);
+      if (typeof data?.detail === 'string') return data.detail;
+      if (data?.detail) return JSON.stringify(data.detail);
+    } catch (_) {}
+    return text || res.statusText || `HTTP ${res.status}`;
+  }
+
   async function _renderPdfPane() {
     const pane = document.getElementById('doc-pdf-view');
     if (!pane || !activeDocId) return;
@@ -1118,7 +1131,7 @@ import * as Modals from './modalManager.js';
     let data;
     try {
       const res = await fetch(`${API_BASE}/api/document/${docId}/render-pages`);
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw new Error(await _pdfResponseErrorMessage(res));
       data = await res.json();
     } catch (e) {
       pane.innerHTML = `<div style="color:#fbb;padding:40px;text-align:center;">Failed to load PDF view: ${_escHtml(e.message || String(e))}</div>`;
@@ -2296,6 +2309,95 @@ import * as Modals from './modalManager.js';
     return r && r.style.display !== 'none' ? r : null;
   }
 
+  function _captureEmailBodyFocusState() {
+    const rich = _emailRichbodyActive();
+    const ta = document.getElementById('doc-editor-textarea');
+    const active = document.activeElement;
+    if (rich && (active === rich || rich.contains(active))) {
+      const sel = window.getSelection();
+      const range = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+      return {
+        type: 'rich',
+        range: range && rich.contains(range.commonAncestorContainer) ? range.cloneRange() : null,
+      };
+    }
+    if (ta && active === ta) {
+      return {
+        type: 'textarea',
+        start: ta.selectionStart,
+        end: ta.selectionEnd,
+      };
+    }
+    return null;
+  }
+
+  function _restoreEmailBodyFocusState(state) {
+    if (!state) return;
+    requestAnimationFrame(() => {
+      if (state.type === 'rich') {
+        const rich = _emailRichbodyActive();
+        if (!rich) return;
+        rich.focus({ preventScroll: true });
+        if (state.range) {
+          const sel = window.getSelection();
+          if (sel) {
+            sel.removeAllRanges();
+            sel.addRange(state.range);
+          }
+        }
+      } else if (state.type === 'textarea') {
+        const ta = document.getElementById('doc-editor-textarea');
+        if (!ta) return;
+        ta.focus({ preventScroll: true });
+        if (Number.isFinite(state.start) && Number.isFinite(state.end)) {
+          try { ta.setSelectionRange(state.start, state.end); } catch (_) {}
+        }
+      }
+    });
+  }
+
+  function _stripEmailReplyQuoteText(text) {
+    const original = String(text || '');
+    if (!original) return { body: '', stripped: false };
+    const lines = original.split('\n');
+    const quoteIdx = lines.findIndex(line =>
+      /^-{5,}\s*Previous message\s*-{5,}$/i.test(line.trim())
+      || /^On .+ wrote:\s*$/i.test(line.trim())
+    );
+    if (quoteIdx <= 0) return { body: original.trim(), stripped: false };
+    const body = lines.slice(0, quoteIdx).join('\n').trim();
+    return { body, stripped: !!body };
+  }
+
+  function _emailReplyOwnText(text) {
+    return _stripEmailReplyQuoteText(text).body;
+  }
+
+  function _setEmailBodyText(textarea, value) {
+    if (!textarea) return;
+    textarea.value = value || '';
+    syncHighlighting();
+    const rich = _emailRichbodyActive();
+    if (rich) rich.innerHTML = _emailBodyToHtml(textarea.value);
+  }
+
+  async function _streamEmailBodyText(textarea, value) {
+    if (!textarea) return;
+    const finalText = String(value || '');
+    const maxFrames = 90;
+    const chunk = Math.max(8, Math.ceil(finalText.length / maxFrames));
+    textarea.value = '';
+    const rich = _emailRichbodyActive();
+    if (rich) rich.innerHTML = '';
+    for (let i = 0; i < finalText.length; i += chunk) {
+      const next = finalText.slice(0, i + chunk);
+      textarea.value = next;
+      if (rich) rich.innerHTML = _emailBodyToHtml(next);
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+    _setEmailBodyText(textarea, finalText);
+  }
+
   function _focusEmailBodyEnd() {
     const target = _emailRichbodyActive() || document.getElementById('doc-editor-textarea');
     if (!target) return;
@@ -2313,6 +2415,48 @@ import * as Modals from './modalManager.js';
       const len = target.value.length;
       target.setSelectionRange(len, len);
     }
+  }
+
+  function _syncEmailHeaderSummary() {
+    const to = document.getElementById('doc-email-to')?.value?.trim() || 'No recipient';
+    const subject = document.getElementById('doc-email-subject')?.value?.trim() || 'No subject';
+    const cc = document.getElementById('doc-email-cc')?.value?.trim() || '';
+    const bcc = document.getElementById('doc-email-bcc')?.value?.trim() || '';
+    const summary = document.getElementById('doc-email-collapse-summary');
+    if (!summary) return;
+    const extras = [];
+    if (cc) extras.push('Cc');
+    if (bcc) extras.push('Bcc');
+    summary.textContent = `${to} · ${subject}${extras.length ? ` · ${extras.join('/')}` : ''}`;
+    summary.title = summary.textContent;
+  }
+
+  function _setEmailHeaderCollapsed(collapsed, { manual = true } = {}) {
+    const header = document.getElementById('doc-email-header');
+    const btn = document.getElementById('doc-email-collapse-btn');
+    if (!header) return;
+    if (window.innerWidth > 768) collapsed = false;
+    header.classList.toggle('doc-email-header-collapsed', !!collapsed);
+    if (btn) {
+      btn.setAttribute('aria-expanded', String(!collapsed));
+      btn.title = collapsed ? 'Show email fields' : 'Hide email fields';
+    }
+    const doc = activeDocId && docs.get(activeDocId);
+    if (doc && manual) doc._emailHeaderCollapsed = !!collapsed;
+    if (manual && !collapsed) _emailHeaderManualExpandUntil = Date.now() + 1400;
+    _syncEmailHeaderSummary();
+  }
+
+  function _shouldAutoCollapseEmailHeader() {
+    return window.innerWidth <= 768;
+  }
+
+  function _maybeAutoCollapseEmailHeader() {
+    const doc = activeDocId && docs.get(activeDocId);
+    if (!doc || doc.language !== 'email') return;
+    if (Date.now() < _emailHeaderManualExpandUntil) return;
+    if (document.activeElement?.closest?.('#doc-email-fields')) return;
+    if (_shouldAutoCollapseEmailHeader()) _setEmailHeaderCollapsed(true, { manual: false });
   }
 
   function _showEmailFields(doc) {
@@ -2353,6 +2497,7 @@ import * as Modals from './modalManager.js';
     const textarea = document.getElementById('doc-editor-textarea');
     if (toInput) toInput.value = fields.to;
     if (subjectInput) subjectInput.value = fields.subject;
+    _setEmailHeaderCollapsed(!!(doc && doc._emailHeaderCollapsed), { manual: false });
     if (subjectInput && !subjectInput._emailTabBodyBound) {
       subjectInput._emailTabBodyBound = true;
       subjectInput.addEventListener('keydown', (e) => {
@@ -2494,6 +2639,7 @@ import * as Modals from './modalManager.js';
     if (ccRow) ccRow.style.display = hasCcBcc ? '' : 'none';
     if (bccRow) bccRow.style.display = hasCcBcc ? '' : 'none';
     if (ccToggle) ccToggle.style.display = hasCcBcc ? 'none' : '';
+    _syncEmailHeaderSummary();
   }
 
   async function _uploadComposeFiles(files) {
@@ -2776,6 +2922,7 @@ import * as Modals from './modalManager.js';
   }
 
   async function _sendEmail() {
+    const sendDocId = activeDocId;
     const to = document.getElementById('doc-email-to')?.value?.trim();
     const cc = document.getElementById('doc-email-cc')?.value?.trim() || '';
     const bcc = document.getElementById('doc-email-bcc')?.value?.trim() || '';
@@ -2784,15 +2931,21 @@ import * as Modals from './modalManager.js';
     const references = document.getElementById('doc-email-references')?.value?.trim();
     const sourceUid = document.getElementById('doc-email-source-uid')?.value?.trim();
     const sourceFolder = document.getElementById('doc-email-source-folder')?.value?.trim() || 'INBOX';
-    const body = document.getElementById('doc-editor-textarea')?.value?.trim();
     // WYSIWYG: the rich body's HTML becomes the email's HTML part (server
     // sanitizes it). `body` (plain text mirror) stays the text/plain fallback.
     const _rich = _emailRichbodyActive();
+    if (_rich) _syncEmailRichbody(_rich);
+    const textarea = document.getElementById('doc-editor-textarea');
+    const body = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
     const bodyHtml = _rich ? _rich.innerHTML : null;
     const doc = docs.get(activeDocId);
     const attachments = (doc?._composeAtts || []).map(a => a.token);
     if (!to || !body) {
       if (uiModule) uiModule.showError('To and body are required');
+      return;
+    }
+    if (inReplyTo && !_emailReplyOwnText(body)) {
+      if (uiModule) uiModule.showError('Reply body is empty');
       return;
     }
     // Warn if body mentions attachments but none are actually attached
@@ -2804,6 +2957,7 @@ import * as Modals from './modalManager.js';
     const _sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
     let sendSpinner = null;
     let origBtnHtml = '';
+    let detachedEmailDoc = null;
     if (btn) {
       btn.disabled = true;
       origBtnHtml = btn.innerHTML;
@@ -2817,36 +2971,26 @@ import * as Modals from './modalManager.js';
       let canceled = false;
       if (uiModule) {
         uiModule.showToast('Sending', {
-          duration: 1200,
+          duration: 3200,
+          leadingIcon: 'spinner',
           action: 'Cancel',
           onAction: () => { canceled = true; },
         });
       }
-      await _sleep(1200);
+      await _sleep(3000);
+      if (!canceled) detachedEmailDoc = _detachActiveEmailForBackground(sendDocId);
+      await _sleep(200);
       if (canceled) {
+        _restoreDetachedEmailDoc(detachedEmailDoc);
+        detachedEmailDoc = null;
         if (uiModule) uiModule.showToast('Send canceled');
         return;
       }
 
-      let undone = false;
-      if (uiModule) {
-        uiModule.showToast('Message sent', {
-          duration: 2200,
-          action: 'Undo',
-          actionHint: 'undo send',
-          onAction: () => { undone = true; },
-        });
-      }
-      await _sleep(2200);
-      if (undone) {
-        if (uiModule) uiModule.showToast('Send undone');
-        return;
-      }
-      if (uiModule) uiModule.showToast('Sending...', 15000);
-
       const activeAccountId = await _resolveComposeSendAccountId();
       const res = await fetch(`${API_BASE}/api/email/send`, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to, cc: cc || null, bcc: bcc || null, subject, body, body_html: bodyHtml,
@@ -2856,20 +3000,18 @@ import * as Modals from './modalManager.js';
           wait_for_delivery: true,
         }),
       });
-      const data = await res.json();
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (_) {
+        data = { success: false, error: `Send failed (${res.status})` };
+      }
+      if (!res.ok && data && !data.error) data.error = `Send failed (${res.status})`;
       if (data.success) {
-        // Satisfying send effect: fly the email doc upward with fade
-        const docPane = document.getElementById('doc-pane') || document.querySelector('.doc-pane');
-        const emailHeader = document.getElementById('doc-email-header');
-        const editorWrap = document.getElementById('doc-editor-wrap');
-        const target = emailHeader?.parentElement || docPane;
-        if (target) {
-          target.classList.add('email-send-fx');
-          setTimeout(() => target.classList.remove('email-send-fx'), 700);
-        }
         if (uiModule) {
           uiModule.showToast('Message sent', {
             duration: 7000,
+            leadingIcon: 'check',
             action: 'View Message',
             onAction: () => {
               import('./emailLibrary.js').then(mod => {
@@ -2908,22 +3050,31 @@ import * as Modals from './modalManager.js';
           // Tell the inbox to refresh so the answered state shows
           window.dispatchEvent(new CustomEvent('email-answered', { detail: { uid: sourceUid } }));
         }
-        // Delete the document after successful send
-        if (activeDocId) {
-          fetch(`${API_BASE}/api/document/${activeDocId}`, { method: 'DELETE' }).catch(() => {});
-          docs.delete(activeDocId);
-          const remaining = Array.from(docs.keys());
-          if (remaining.length > 0) {
-            switchToDoc(remaining[0]);
+        // Delete the compose document after successful send. It was usually
+        // already detached from the visible tabs so sending can finish in the
+        // background while the user continues in the next tab.
+        if (sendDocId) {
+          fetch(`${API_BASE}/api/document/${sendDocId}`, { method: 'DELETE' }).catch(() => {});
+          const wasActiveSentDoc = activeDocId === sendDocId;
+          docs.delete(sendDocId);
+          if (wasActiveSentDoc) {
+            activeDocId = null;
+            const nextId = _visibleDocIdsForCurrentSession().find(id => docs.has(id));
+            if (nextId) switchToDoc(nextId);
+            else closePanel();
           } else {
-            closePanel();
+            renderTabs();
           }
-          renderTabs();
+          _syncDocIndicator();
         }
       } else {
+        _restoreDetachedEmailDoc(detachedEmailDoc);
+        detachedEmailDoc = null;
         if (uiModule) uiModule.showError(data.error || 'Failed to send');
       }
     } catch (e) {
+      _restoreDetachedEmailDoc(detachedEmailDoc);
+      detachedEmailDoc = null;
       if (uiModule) uiModule.showError(e?.message ? `Failed to send email: ${e.message}` : 'Failed to send email');
     } finally {
       if (sendSpinner) sendSpinner.destroy();
@@ -2941,8 +3092,10 @@ import * as Modals from './modalManager.js';
     const subject = document.getElementById('doc-email-subject')?.value?.trim();
     const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim();
     const references = document.getElementById('doc-email-references')?.value?.trim();
-    const body = document.getElementById('doc-editor-textarea')?.value?.trim();
     const _rich = _emailRichbodyActive();
+    if (_rich) _syncEmailRichbody(_rich);
+    const textarea = document.getElementById('doc-editor-textarea');
+    const body = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
     const bodyHtml = _rich ? _rich.innerHTML : null;
     const btn = document.getElementById('doc-email-draft-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
@@ -2986,6 +3139,51 @@ import * as Modals from './modalManager.js';
     _closeWithoutDeleting(true);
   }
 
+  function _visibleDocIdsForCurrentSession() {
+    const curSession = sessionModule?.getCurrentSessionId() || '';
+    const ids = [];
+    for (const [id, doc] of docs) {
+      if (doc.sessionId && curSession && doc.sessionId !== curSession) continue;
+      ids.push(id);
+    }
+    return ids;
+  }
+
+  function _detachActiveEmailForBackground(docId) {
+    if (!docId || !docs.has(docId)) return null;
+    saveCurrentToMap();
+    const doc = docs.get(docId);
+    const snapshot = { id: docId, doc: { ...doc } };
+    const wasActive = activeDocId === docId;
+    if (wasActive) saveDocument({ silent: true }).catch(() => {});
+
+    const visibleBefore = _visibleDocIdsForCurrentSession();
+    const idx = visibleBefore.indexOf(docId);
+    docs.delete(docId);
+    if (wasActive) activeDocId = null;
+
+    if (wasActive) {
+      const remaining = visibleBefore.filter(id => id !== docId && docs.has(id));
+      const nextId = remaining[idx] || remaining[idx - 1] || remaining[0] || null;
+      if (nextId) {
+        switchToDoc(nextId);
+      } else {
+        closePanel();
+      }
+    }
+    renderTabs();
+    _syncDocIndicator();
+    return snapshot;
+  }
+
+  function _restoreDetachedEmailDoc(snapshot) {
+    if (!snapshot || !snapshot.id || !snapshot.doc) return;
+    if (!docs.has(snapshot.id)) docs.set(snapshot.id, snapshot.doc);
+    _ensureDocPaneMounted();
+    switchToDoc(snapshot.id);
+    _syncDocIndicator();
+  }
+
   function _closeWithoutDeleting(deleteDoc = false) {
     if (!activeDocId) return;
     if (deleteDoc) {
@@ -3012,6 +3210,32 @@ import * as Modals from './modalManager.js';
     const textarea = document.getElementById('doc-editor-textarea');
     if (!textarea) return;
     const currentBody = textarea.value || '';
+    const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim() || '';
+    const sourceUid = document.getElementById('doc-email-source-uid')?.value?.trim() || '';
+    const sourceFolder = document.getElementById('doc-email-source-folder')?.value?.trim() || 'INBOX';
+    const cleanAiReplyText = (text) => {
+      if (!text) return '';
+      let t = String(text);
+      const open = /<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+/i;
+      const close = /<<<\s*END\s*>>+/i;
+      const m = open.exec(t);
+      if (m) {
+        const rest = t.slice(m.index + m[0].length);
+        const c = close.exec(rest);
+        t = c ? rest.slice(0, c.index) : rest;
+      }
+      return t
+        .replace(/<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+/gi, '')
+        .replace(/<<<\s*END\s*>>+/gi, '')
+        .trim();
+    };
+    const shouldUseFastAiReply = () => {
+      const text = `${subject}\n${currentBody}`.toLowerCase();
+      if (/\b(attach(?:ed|ment)?|pdf|document|contract|invoice|receipt|quote|estimate|proposal|question|questions|details|schedule|booking|reservation|meeting|calendar|availability|confirm|confirmation|review|sign|signature)\b/.test(text)) {
+        return false;
+      }
+      return currentBody.length < 2500;
+    };
 
     // Use the current chat model
     let currentModel = '';
@@ -3034,22 +3258,24 @@ import * as Modals from './modalManager.js';
           original_body: currentBody,
           model: currentModel,
           session_id: currentSessionId,
+          message_id: inReplyTo,
+          uid: sourceUid,
+          folder: sourceFolder,
+          fast: shouldUseFastAiReply(),
         }),
       });
       const data = await res.json();
       if (data.success && data.reply) {
+        const cleanReply = cleanAiReplyText(data.reply);
         const lines = currentBody.split('\n');
         const quoteIdx = lines.findIndex(l => l.startsWith('On ') && l.includes(' wrote:'));
+        let newBody = '';
         if (quoteIdx > 0) {
-          const newBody = data.reply + '\n\n' + lines.slice(quoteIdx).join('\n');
-          textarea.value = newBody;
+          newBody = cleanReply + '\n\n' + lines.slice(quoteIdx).join('\n');
         } else {
-          textarea.value = data.reply + (currentBody ? '\n\n' + currentBody : '');
+          newBody = cleanReply + (currentBody ? '\n\n' + currentBody : '');
         }
-        syncHighlighting();
-        // Mirror into the WYSIWYG rich body if it's the active editor.
-        const _rb = _emailRichbodyActive();
-        if (_rb) _rb.innerHTML = _emailBodyToHtml(textarea.value);
+        await _streamEmailBodyText(textarea, newBody);
         if (uiModule) uiModule.showToast(`AI draft inserted (${data.model_used || 'AI'})`);
       } else {
         if (uiModule) uiModule.showError(data.error || 'Failed to generate reply');
@@ -3068,12 +3294,21 @@ import * as Modals from './modalManager.js';
     const subject = document.getElementById('doc-email-subject')?.value?.trim();
     const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim();
     const references = document.getElementById('doc-email-references')?.value?.trim();
-    const body = document.getElementById('doc-editor-textarea')?.value?.trim();
+    const _rich = _emailRichbodyActive();
+    if (_rich) _syncEmailRichbody(_rich);
+    const body = (_rich
+      ? (_rich.innerText || _rich.textContent || '')
+      : (document.getElementById('doc-editor-textarea')?.value || '')
+    ).trim();
     const doc = docs.get(activeDocId);
     const attachments = (doc?._composeAtts || []).map(a => a.token);
 
     if (!to || !body) {
       if (uiModule) uiModule.showError('To and body are required');
+      return;
+    }
+    if (inReplyTo && !_emailReplyOwnText(body)) {
+      if (uiModule) uiModule.showError('Reply body is empty');
       return;
     }
     if (attachments.length === 0 && _bodyMentionsAttachment(body)) {
@@ -3608,25 +3843,31 @@ import * as Modals from './modalManager.js';
       </div>
       <div class="doc-tab-bar" id="doc-tab-bar"></div>
       <div id="doc-email-header" class="doc-email-header" style="display:none">
-        <div class="email-field" style="position:relative">
-          <label>To</label>
-          <input type="text" id="doc-email-to" placeholder="recipient@example.com" autocomplete="off" />
-          <div id="doc-email-to-suggestions" class="email-autocomplete" style="display:none"></div>
-          <button type="button" id="doc-email-show-cc" class="email-cc-toggle" title="Show Cc/Bcc">Cc</button>
+        <button type="button" id="doc-email-collapse-btn" class="doc-email-collapse-btn" title="Hide email fields" aria-expanded="true">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg>
+          <span id="doc-email-collapse-summary" class="doc-email-collapse-summary">No recipient · No subject</span>
+        </button>
+        <div id="doc-email-fields" class="doc-email-fields">
+          <div class="email-field" style="position:relative">
+            <label>To</label>
+            <input type="text" id="doc-email-to" placeholder="recipient@example.com" autocomplete="off" />
+            <div id="doc-email-to-suggestions" class="email-autocomplete" style="display:none"></div>
+            <button type="button" id="doc-email-show-cc" class="email-cc-toggle" title="Show Cc/Bcc">Cc</button>
+          </div>
+          <div class="email-field" id="doc-email-cc-row" style="display:none;position:relative">
+            <label>Cc</label>
+            <input type="text" id="doc-email-cc" placeholder="cc@example.com" autocomplete="off" />
+            <div id="doc-email-cc-suggestions" class="email-autocomplete" style="display:none"></div>
+          </div>
+          <div class="email-field" id="doc-email-bcc-row" style="display:none;position:relative">
+            <label>Bcc</label>
+            <input type="text" id="doc-email-bcc" placeholder="bcc@example.com" autocomplete="off" />
+            <div id="doc-email-bcc-suggestions" class="email-autocomplete" style="display:none"></div>
+          </div>
+          <div class="email-field"><label>Subject</label><input type="text" id="doc-email-subject" placeholder="Subject" /></div>
+          <div id="doc-email-attachments" class="email-attachments" style="display:none"></div>
+          <div id="doc-email-compose-atts" class="email-compose-atts" style="display:none"></div>
         </div>
-        <div class="email-field" id="doc-email-cc-row" style="display:none;position:relative">
-          <label>Cc</label>
-          <input type="text" id="doc-email-cc" placeholder="cc@example.com" autocomplete="off" />
-          <div id="doc-email-cc-suggestions" class="email-autocomplete" style="display:none"></div>
-        </div>
-        <div class="email-field" id="doc-email-bcc-row" style="display:none;position:relative">
-          <label>Bcc</label>
-          <input type="text" id="doc-email-bcc" placeholder="bcc@example.com" autocomplete="off" />
-          <div id="doc-email-bcc-suggestions" class="email-autocomplete" style="display:none"></div>
-        </div>
-        <div class="email-field"><label>Subject</label><input type="text" id="doc-email-subject" placeholder="Subject" /></div>
-        <div id="doc-email-attachments" class="email-attachments" style="display:none"></div>
-        <div id="doc-email-compose-atts" class="email-compose-atts" style="display:none"></div>
         <input type="hidden" id="doc-email-in-reply-to" />
         <input type="hidden" id="doc-email-references" />
         <input type="hidden" id="doc-email-source-uid" />
@@ -4168,6 +4409,33 @@ import * as Modals from './modalManager.js';
     });
     document.getElementById('doc-email-ai-reply-btn')?.addEventListener('click', _aiReply);
 
+    const collapseBtn = document.getElementById('doc-email-collapse-btn');
+    if (collapseBtn && !collapseBtn._emailCollapseWired) {
+      collapseBtn._emailCollapseWired = true;
+      collapseBtn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const focusState = _captureEmailBodyFocusState();
+        const header = document.getElementById('doc-email-header');
+        const nextCollapsed = !header?.classList.contains('doc-email-header-collapsed');
+        _setEmailHeaderCollapsed(nextCollapsed);
+        if (!nextCollapsed) _restoreEmailBodyFocusState(focusState);
+      });
+      collapseBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+    }
+    ['doc-email-to', 'doc-email-cc', 'doc-email-bcc', 'doc-email-subject'].forEach(id => {
+      document.getElementById(id)?.addEventListener('input', _syncEmailHeaderSummary);
+      document.getElementById(id)?.addEventListener('focus', () => _setEmailHeaderCollapsed(false, { manual: false }));
+    });
+    document.getElementById('doc-email-richbody')?.addEventListener('focus', _maybeAutoCollapseEmailHeader);
+    if (window.visualViewport && !window._docEmailViewportCollapseBound) {
+      window._docEmailViewportCollapseBound = true;
+      window.visualViewport.addEventListener('resize', _maybeAutoCollapseEmailHeader);
+    }
+
     // Split-button caret toggles the send-options menu (drops up).
     document.getElementById('doc-email-send-caret')?.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -4210,11 +4478,13 @@ import * as Modals from './modalManager.js';
 
     // Cc/Bcc toggle
     document.getElementById('doc-email-show-cc')?.addEventListener('click', () => {
+      _setEmailHeaderCollapsed(false, { manual: false });
       const ccRow = document.getElementById('doc-email-cc-row');
       const bccRow = document.getElementById('doc-email-bcc-row');
       if (ccRow) ccRow.style.display = '';
       if (bccRow) bccRow.style.display = '';
       document.getElementById('doc-email-show-cc').style.display = 'none';
+      _syncEmailHeaderSummary();
     });
 
     // Autocomplete for To / Cc / Bcc — typed fragment after the last
@@ -5618,6 +5888,41 @@ import * as Modals from './modalManager.js';
     }));
   }
 
+  export async function replaceEmailReplyBody(docId, replyText) {
+    const doc = docs.get(docId);
+    if (!doc) return;
+    const fields = _parseEmailHeader(doc.content || '');
+    const lines = String(fields.body || '').split('\n');
+    const quoteIdx = lines.findIndex(line =>
+      /^-{5,}\s*Previous message\s*-{5,}$/i.test(line.trim())
+      || /^On .+ wrote:\s*$/i.test(line.trim())
+    );
+    const quote = quoteIdx >= 0 ? lines.slice(quoteIdx).join('\n') : '';
+    const ownText = _emailReplyOwnText(fields.body || '');
+    if (ownText && !/^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText)) {
+      if (uiModule) uiModule.showToast('AI reply ready, but draft was edited');
+      return;
+    }
+    const body = String(replyText || '').trim() + (quote ? `\n\n${quote}` : '');
+    doc.content = _buildEmailContent(
+      fields.to,
+      fields.subject,
+      fields.inReplyTo,
+      fields.references,
+      body,
+      fields.sourceUid,
+      fields.sourceFolder,
+      fields.cc,
+      fields.bcc,
+    );
+    if (activeDocId === docId) {
+      const textarea = document.getElementById('doc-editor-textarea');
+      if (textarea) await _streamEmailBodyText(textarea, body);
+    }
+    clearTimeout(_autoSaveDebounce);
+    _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
+  }
+
   // Force the panel into a genuinely-open state. `isOpen` can be true while the
   // pane was torn down by another full-screen view (e.g. opening a doc from the
   // email modal): in that case openPanel() early-returns and nothing mounts, so
@@ -5638,14 +5943,29 @@ import * as Modals from './modalManager.js';
     }
     try {
       const res = await fetch(`${API_BASE}/api/document/${docId}`);
-      if (!res.ok) throw new Error('Not found');
+      if (!res.ok) throw new Error(res.status === 404 ? 'Not found' : `HTTP ${res.status}`);
       const doc = await res.json();
       addDocToTabs(doc, doc.session_id);
       _ensureDocPaneMounted();
       switchToDoc(doc.id);
     } catch (e) {
       console.error('Failed to load document:', e);
+      if (uiModule) {
+        const msg = e.message === 'Not found'
+          ? 'Document not found — try opening it from the Library.'
+          : 'Could not open document.';
+        uiModule.showError(msg);
+      }
     }
+  }
+
+  // Deep-link: #document-<id> opens that document on load / URL-bar nav.
+  // Clicks on in-chat document anchors are handled separately (they call
+  // preventDefault, so they don't change the hash); this covers refresh
+  // and pasted/typed document URLs, which previously did nothing.
+  function _maybeOpenDocFromHash() {
+    const m = (window.location.hash || '').match(/^#document-(.+)$/);
+    if (m) loadDocument(m[1]);
   }
 
   /** Open panel and ensure a document exists, creating a session if needed */

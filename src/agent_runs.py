@@ -15,6 +15,7 @@ Durability scope: in-memory, survives as long as the server process runs (tab
 close / navigation / refresh). It does NOT survive a server restart.
 """
 import asyncio
+import json
 import logging
 from typing import AsyncGenerator, Dict, Optional
 
@@ -39,6 +40,17 @@ _RUNS: Dict[str, _Run] = {}
 # replay the result. After this, the run is evicted to bound memory — without
 # it, every session that ever streamed kept its entire event log forever.
 _EVICT_GRACE_S = 180
+
+
+def _publish(run: _Run, ev: str) -> None:
+    """Append one SSE event and fan it out to every live subscriber."""
+    run.buffer.append(ev)
+    seq = len(run.buffer) - 1
+    for q in list(run.subscribers):
+        try:
+            q.put_nowait((seq, ev))
+        except Exception:
+            pass
 
 
 def _schedule_evict(session_id: str) -> None:
@@ -93,13 +105,7 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
             pass
     try:
         async for ev in agen:
-            run.buffer.append(ev)
-            seq = len(run.buffer) - 1
-            for q in list(run.subscribers):
-                try:
-                    q.put_nowait((seq, ev))
-                except Exception:
-                    pass
+            _publish(run, ev)
         if run.status == "running":
             run.status = "done"
     except asyncio.CancelledError:
@@ -113,6 +119,12 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
     except Exception as e:
         logger.error("[agent-run] %s failed: %s", session_id, e, exc_info=True)
         run.status = "error"
+        _publish(
+            run,
+            "event: error\n"
+            f"data: {json.dumps({'error': 'Agent run failed before completion.', 'status': 500})}\n\n",
+        )
+        _publish(run, "data: [DONE]\n\n")
     finally:
         # Wake every subscriber with the end sentinel so their SSE closes.
         for q in list(run.subscribers):

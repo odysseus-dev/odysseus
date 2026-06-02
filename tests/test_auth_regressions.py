@@ -84,6 +84,83 @@ _ensure_stub("src.endpoint_resolver",
 
 from fastapi import HTTPException
 
+# ---------------------------------------------------------------------------
+# Auth routes -- open signup setter
+# ---------------------------------------------------------------------------
+
+def _auth_route_endpoint(path: str, method: str):
+    from routes.auth_routes import setup_auth_routes
+
+    auth_manager = MagicMock()
+    router = setup_auth_routes(auth_manager)
+    for route in router.routes:
+        if getattr(route, "path", "") == path and method in getattr(route, "methods", set()):
+            return auth_manager, route.endpoint
+    raise AssertionError(f"{method} {path} route not registered")
+
+
+def _fake_auth_request(token="session-token"):
+    from routes.auth_routes import SESSION_COOKIE
+
+    req = SimpleNamespace()
+    req.cookies = {SESSION_COOKIE: token}
+    req.client = SimpleNamespace(host="127.0.0.1")
+    return req
+
+
+def test_set_signup_enabled_true_is_idempotent():
+    from routes.auth_routes import SetOpenRegistrationRequest
+
+    auth, target = _auth_route_endpoint("/api/auth/open-signup", "PUT")
+    auth.get_username_for_token.return_value = "admin"
+    auth.is_admin.return_value = True
+
+    request = _fake_auth_request()
+    auth.signup_enabled = False
+
+    out = asyncio.run(target(body=SetOpenRegistrationRequest(enabled=True),request=request))
+
+    assert out == {"ok": True, "signup_enabled": True}
+    assert auth.signup_enabled is True
+
+    out = asyncio.run(target(body=SetOpenRegistrationRequest(enabled=True), request=request))
+
+    assert out == {"ok": True, "signup_enabled": True}
+    assert auth.signup_enabled is True
+
+def test_set_signup_enabled_false_is_idempotent():
+    from routes.auth_routes import SetOpenRegistrationRequest
+
+    auth, target = _auth_route_endpoint("/api/auth/open-signup", "PUT")
+    auth.get_username_for_token.return_value = "admin"
+    auth.is_admin.return_value = True
+
+    request = _fake_auth_request()
+    auth.signup_enabled = True
+
+    out = asyncio.run(target(body=SetOpenRegistrationRequest(enabled=False), request=request))
+
+    assert out == {"ok": True, "signup_enabled": False}
+    assert auth.signup_enabled is False
+
+    out = asyncio.run(target(body=SetOpenRegistrationRequest(enabled=False), request=request))
+
+    assert out == {"ok": True, "signup_enabled": False}
+    assert auth.signup_enabled is False
+
+def test_set_signup_enabled_requires_admin():
+    from routes.auth_routes import SetOpenRegistrationRequest
+
+    auth, target = _auth_route_endpoint("/api/auth/open-signup", "PUT")
+    auth.get_username_for_token.return_value = "bob"
+    auth.is_admin.return_value = False
+    auth.signup_enabled = False
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(target(body=SetOpenRegistrationRequest(enabled=True), request=_fake_auth_request()))
+
+    assert exc.value.status_code == 403
+    assert auth.signup_enabled is False
 
 # ---------------------------------------------------------------------------
 # Research endpoints — `_require_user` rejects anonymous
@@ -177,6 +254,35 @@ def test_research_delete_rejects_anonymous():
     assert exc.value.status_code == 401
 
 
+def test_research_spinoff_rejects_anonymous():
+    """spinoff must 401 before reading any research data."""
+    from routes.research_routes import setup_research_routes
+    rh = MagicMock()
+    router = setup_research_routes(rh, session_manager=MagicMock())
+    target = next(r.endpoint for r in router.routes if getattr(r, "path", "") == "/api/research/spinoff/{session_id}")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(target(session_id="x", request=_fake_request(user=None)))
+    assert exc.value.status_code == 401
+
+
+def test_research_spinoff_rejects_wrong_owner():
+    """A user must not be able to spin off (and thereby read) another user's
+    research report. The ownership gate must 404 before any data is read or a
+    new session is created. Regression for the cross-user disclosure IDOR."""
+    from routes.research_routes import setup_research_routes
+    sm = MagicMock()
+    rh = MagicMock()
+    rh._active_tasks = {"x": {"owner": "alice"}}
+    rh.get_result.return_value = "TOP SECRET REPORT"
+    router = setup_research_routes(rh, session_manager=sm)
+    target = next(r.endpoint for r in router.routes if getattr(r, "path", "") == "/api/research/spinoff/{session_id}")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(target(session_id="x", request=_fake_request(user="bob")))
+    assert exc.value.status_code == 404
+    # The attacker must never get a session created on their behalf.
+    sm.create_session.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # pop_notifications owner filter
 # ---------------------------------------------------------------------------
@@ -226,7 +332,7 @@ def test_admin_only_actions_set_contains_shell_runners():
     # `_ADMIN_ONLY_ACTIONS` is a closure constant. Easiest pin: re-read
     # the source and check for the three risky entries + the admin gate
     # wording.
-    src = open(task_routes.__file__).read()
+    src = open(task_routes.__file__, encoding="utf-8").read()
     assert '"run_local"' in src
     assert '"run_script"' in src
     assert '"ssh_command"' in src
@@ -249,8 +355,8 @@ def test_ship_paused_housekeeping_stays_paused_by_default():
     from routes import task_routes
     from src import task_scheduler
 
-    route_src = open(task_routes.__file__).read()
-    scheduler_src = open(task_scheduler.__file__).read()
+    route_src = open(task_routes.__file__, encoding="utf-8").read()
+    scheduler_src = open(task_scheduler.__file__, encoding="utf-8").read()
     assert '"ship_paused": True' in scheduler_src
     assert 'defs.get("ship_paused")' in scheduler_src
     assert 'defs.get("ship_paused")' in route_src
@@ -259,5 +365,5 @@ def test_ship_paused_housekeeping_stays_paused_by_default():
 def test_task_payload_exposes_crew_member_id_for_ui_category():
     from routes import task_routes
 
-    src = open(task_routes.__file__).read()
+    src = open(task_routes.__file__, encoding="utf-8").read()
     assert '"crew_member_id"' in src

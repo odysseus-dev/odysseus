@@ -150,16 +150,23 @@
     color: var(--fg); font-size: 0.95rem; font-family: 'Fira Code', monospace;
   }
   input:focus { outline: none; border-color: var(--red); }
+  /* Clear, visible focus ring for keyboard users on every focusable control. */
+  input:focus-visible, a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--red);
+    outline-offset: 2px;
+  }
   button {
     width: 100%;
     /* Asymmetric vertical padding nudges the label 1px down while keeping
        the button's total height the same as 0.7rem all-around. */
     padding: calc(0.7rem + 1px) 0.7rem calc(0.7rem - 1px);
     border: none; border-radius: 6px;
-    background: var(--red); color: #fff; font-size: 1rem; cursor: pointer;
+    /* Darken the brand red slightly so #fff label text clears the WCAG AA
+       4.5:1 contrast threshold (plain --red #e06c75 only reaches ~3.2:1). */
+    background: color-mix(in srgb, var(--red) 78%, #000); color: #fff; font-size: 1rem; cursor: pointer;
     font-weight: 600; font-family: 'Fira Code', monospace;
   }
-  button:hover { background: color-mix(in srgb, var(--red) 85%, black); }
+  button:hover { background: color-mix(in srgb, var(--red) 66%, black); }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   .error { color: #e55; font-size: 0.85rem; margin-bottom: 0.75rem; display: none; }
   .toggle { text-align: center; margin-top: calc(1rem + 4px); font-size: 0.85rem; color: color-mix(in srgb, var(--fg) 50%, transparent); }
@@ -185,7 +192,17 @@
     align-items: center; justify-content: center;
     font-size: 0; margin: 0; color: transparent;
   }
-  .remember-toggle .remember-check { display: none; }
+  /* Visually hide the native checkbox but keep it in the accessibility tree
+     and keyboard-focusable (display:none would drop it from tab order). It
+     overlays the dot so a click/tap still toggles it. */
+  .remember-toggle .remember-check {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%; margin: 0;
+    opacity: 0; cursor: pointer;
+  }
+  .remember-toggle .remember-check:focus-visible + .remember-dot {
+    outline: 2px solid var(--red); outline-offset: 2px;
+  }
   .remember-toggle .remember-dot {
     display: block; width: 10px; height: 10px; min-width: 10px; min-height: 10px;
     border-radius: 50%;
@@ -223,21 +240,21 @@
 </style>
 </head>
 <body>
-<div class="card">
-  <div class="logo">
-    <svg class="logo-boat" viewBox="0 0 32 32"><path d="M16 4L16 22L6 22Z" fill="currentColor"/><path d="M16 8L16 22L24 22Z" fill="currentColor" opacity="0.6"/><path d="M4 24Q10 20 16 24Q22 28 28 24" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg><span>Odysseus</span>
-  </div>
+<main class="card">
+  <h1 class="logo">
+    <svg class="logo-boat" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M16 4L16 22L6 22Z" fill="currentColor"/><path d="M16 8L16 22L24 22Z" fill="currentColor" opacity="0.6"/><path d="M4 24Q10 20 16 24Q22 28 28 24" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg><span>Odysseus</span>
+  </h1>
   <p class="setup-note" id="setupNote" style="display:none"></p>
 
-  <div class="error" id="error"></div>
+  <div class="error" id="error" role="alert" aria-live="assertive"></div>
 
   <form id="authForm" autocomplete="on">
     <label for="username">Username</label>
     <div class="pw-wrapper">
       <input id="username" name="username" type="text" required autofocus autocomplete="username">
       <label class="remember-toggle" id="rememberToggle" title="Remember me">
-        <input type="checkbox" class="remember-check" id="remember" checked>
-        <span class="remember-dot"></span>
+        <input type="checkbox" class="remember-check" id="remember" checked aria-label="Remember me">
+        <span class="remember-dot" aria-hidden="true"></span>
       </label>
     </div>
 
@@ -266,9 +283,9 @@
     <span id="toggleText">Don't have an account? </span>
     <a id="toggleLink" href="#">Sign up</a>
   </div>
-</div>
+</main>
 
-<div class="version-label" id="version-label"></div>
+<footer class="version-label" id="version-label"></footer>
 
 <script nonce="{{CSP_NONCE}}">
 (async () => {
@@ -468,7 +485,7 @@
         form._totpMode = true;
         const totpWrap = document.createElement('div');
         totpWrap.style.cssText = 'margin-top:12px;';
-        totpWrap.innerHTML = '<label style="font-size:0.85em;opacity:0.7;display:block;margin-bottom:4px;">2FA Code</label><input type="text" id="totp-input" placeholder="Enter 6-digit code" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:10px 12px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:8px;font-size:14px;box-sizing:border-box;text-align:center;letter-spacing:4px;">';
+        totpWrap.innerHTML = '<label for="totp-input" style="font-size:0.85em;opacity:0.7;display:block;margin-bottom:4px;">2FA Code</label><input type="text" id="totp-input" placeholder="Enter 6-digit code" aria-label="Two-factor authentication code" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:10px 12px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:8px;font-size:14px;box-sizing:border-box;text-align:center;letter-spacing:4px;">';
         const formEl = submitBtn.parentElement;
         formEl.insertBefore(totpWrap, submitBtn);
         const totpInput = document.getElementById('totp-input');

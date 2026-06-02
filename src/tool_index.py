@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Tools that are ALWAYS included regardless of retrieval results.
 # These are the most commonly needed and should never be missing.
 ALWAYS_AVAILABLE = frozenset({
-    "bash", "python", "web_search", "read_file",
+    "bash", "python", "web_search", "web_fetch", "read_file",
     "api_call",  # For configured integrations (Miniflux, Gitea, Linkding, etc.)
     # The two genuinely AMBIENT cookbook tools — "what's running" and
     # "kill it" can be asked any time without prior cookbook context,
@@ -62,9 +62,10 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "bash": "Run shell commands on the server. Install packages, check files, git operations, curl, system info, process management, networking.",
     "python": "Execute Python code for computation, data processing, math, scripting, parsing, API calls. Not for writing code for the user.",
     "web_search": "Quick single web lookup for a fact, current event, or doc mid-task. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.",
+    "web_fetch": "Fetch and read the text content of a specific URL/website the user names (e.g. 'check example.com', 'open this link'). Use when you have a concrete URL; for open-ended lookups use web_search instead.",
     "read_file": "Read a file from disk and return its contents. View source code, config files, logs.",
     "write_file": "Write content to a file on disk. Create new files, save output, update configs.",
-    "create_document": "Create a new document in the editor panel. For code, articles, text content longer than 15 lines. Specify title, language, and content.",
+    "create_document": "Create a new document in the editor panel. For code, articles, text content longer than 15 lines, unless an already-open document/email draft is the obvious target. If an email compose draft is open, edit that draft instead of creating another document.",
     "edit_document": "Preferred tool for editing an existing document — targeted find-and-replace. Use for any small change: add a function, fix a bug, tweak a section, rename things.",
     "update_document": "Replace the entire active document content. ONLY for full rewrites (>50% changed). Do not use for small edits — use edit_document instead.",
     "suggest_document": "Suggest changes to the active document with explanations. For code review, proofreading, feedback requests.",
@@ -430,10 +431,14 @@ class ToolIndex:
         base = set(always_include or ALWAYS_AVAILABLE)
         retrieved = self.retrieve(query, k=k)
         base.update(retrieved)
-        # Keyword-based force-include for common intents
+        # Keyword-based force-include for common intents. Match on word
+        # boundaries, not raw substrings, so short hints like "fix", "line",
+        # "serve", "reply" or "unread" don't fire inside unrelated words
+        # ("prefix", "deadline"/"online", "observe"/"reserve", "replying",
+        # "unreadable"). Same word-boundary matching used in topic_analyzer.
         ql = query.lower()
         for keywords, tools in self._KEYWORD_HINTS.items():
-            if any(kw in ql for kw in keywords):
+            if any(re.search(rf"\b{re.escape(kw)}\b", ql) for kw in keywords):
                 base.update(tools)
         # Structural scheduling-intent detection — typo-resilient (the literal
         # keyword "every day" misses "every dya"). Catches "every <word>",

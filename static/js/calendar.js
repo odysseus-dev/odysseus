@@ -7,11 +7,13 @@ import spinnerModule from './spinner.js';
 import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { attachColorPicker } from './colorPicker.js';
+import { bindMenuDismiss } from './escMenuStack.js';
 import {
   WEEKDAYS, MONTHS, MON_SHORT,
   CAL_PALETTE, CAL_COLORS, _CAL_CUSTOM_GRADIENT, _TYPE_PALETTE,
   _trashIcon, _moreIcon, _bellIcon,
   _isCalBgImage, _calBgImageUrl, _calBgCss,
+  _calReadableTextColor,
   _ds, _addDays, _shiftDT, _tzOffset, _localDateOf,
 } from './calendar/utils.js';
 
@@ -116,7 +118,10 @@ async function _fetchEvents(start, end, force) {
   const hasCache = Object.keys(_allEvents).length > 0;
   if (hasCache) _events = _filterPool(start, end);
   const fetchPromise = fetch(`${API_BASE}/api/calendar/events?start=${start}&end=${end}`, { credentials: 'same-origin' })
-    .then(r => r.json())
+    .then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
     .then(data => {
       // On first fetch after cache load, replace pool entirely to avoid
       // stale/duplicate UIDs from a previous backend (e.g. CalDAV → SQLite)
@@ -154,7 +159,10 @@ function _prefetchAdjacent() {
   for (const [s, e] of ranges) {
     if (_rangeIsCached(s, e)) continue;
     fetch(`${API_BASE}/api/calendar/events?start=${s}&end=${e}`, { credentials: 'same-origin' })
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
       .then(d => {
         (d.events || []).forEach(ev => { _allEvents[ev.uid] = ev; });
         _fetchedRanges.push([s, e]);
@@ -265,12 +273,22 @@ async function _updateEvent(uid, data) {
   const merged = { ...(_allEvents[uid] || {}), ...data };
   const _preMergeBackup = _allEvents[uid];
   _allEvents[uid] = _optimisticEvent(merged, uid);
+  // For recurring events the uid is a compound "{base_uid}::{date}" —
+  // the backend resolves it to the base series row. After the update,
+  // other occurrences of the same series are stale. Wipe the cache so
+  // a re-fetch picks up fresh data (next render + prefetch handles it).
+  const isRecurring = uid.includes('::');
   fetch(`${API_BASE}/api/calendar/events/${encodeURIComponent(uid)}`, {
     method: 'PUT', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
   }).then(r => {
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    _saveCache && _saveCache();
+    if (isRecurring) {
+      _fetchedRanges = [];
+      localStorage.removeItem(LS_KEY);
+    } else {
+      _saveCache && _saveCache();
+    }
   }).catch((e) => {
     if (_preMergeBackup) _allEvents[uid] = _preMergeBackup;
     else delete _allEvents[uid];
@@ -283,11 +301,17 @@ async function _updateEvent(uid, data) {
 async function _deleteEvent(uid) {
   const backup = _allEvents[uid];
   delete _allEvents[uid];
+  const isRecurring = uid.includes('::');
   fetch(`${API_BASE}/api/calendar/events/${encodeURIComponent(uid)}`, {
     method: 'DELETE', credentials: 'same-origin',
   }).then(r => {
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    _saveCache && _saveCache();
+    if (isRecurring) {
+      _fetchedRanges = [];
+      localStorage.removeItem(LS_KEY);
+    } else {
+      _saveCache && _saveCache();
+    }
   }).catch((e) => {
     if (backup) _allEvents[uid] = backup;
     if (window.uiModule) window.uiModule.showError('Failed to delete event: ' + (e?.message || 'unknown'));
@@ -348,6 +372,10 @@ function _calColor(ev) {
   return c?.color || 'var(--accent)';
 }
 
+function _calEventFg(ev) {
+  return _calReadableTextColor(_calColor(ev));
+}
+
 // Extra inline style for an event row when the event has a custom BG image.
 // Returns '' for normal solid-color events.
 function _calItemBgStyle(ev) {
@@ -404,9 +432,10 @@ function _clampDropdown(dropdown, anchorRect) {
 }
 
 function _showEventMoreMenu(ev, anchor) {
-  document.querySelectorAll('.cal-event-dropdown').forEach(d => d.remove());
+  document.querySelectorAll('.cal-event-dropdown').forEach(d => { if (typeof d._dismiss === 'function') d._dismiss(); else d.remove(); });
   const dropdown = document.createElement('div');
   dropdown.className = 'cal-event-dropdown';
+  let closeMenu = () => dropdown.remove();
   const rect = anchor.getBoundingClientRect();
   dropdown.style.cssText = `position:fixed;z-index:10001;min-width:180px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;left:0px;visibility:hidden;`;
 
@@ -421,12 +450,12 @@ function _showEventMoreMenu(ev, anchor) {
   const _editIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
 
   dropdown.appendChild(_item(_editIcon, 'Edit', () => {
-    dropdown.remove();
+    closeMenu();
     _showEventForm(ev);
   }));
 
   dropdown.appendChild(_item(_trashIcon, 'Delete', async () => {
-    dropdown.remove();
+    closeMenu();
     const name = ev.summary ? `"${ev.summary}"` : 'this event';
     const ok = await uiModule.styledConfirm(`Delete ${name}?`, { confirmText: 'Delete', danger: true });
     if (!ok) return;
@@ -437,14 +466,7 @@ function _showEventMoreMenu(ev, anchor) {
   dropdown._anchorRect = rect;
   _clampDropdown(dropdown, rect);
   dropdown.style.visibility = '';
-  const close = (ev2) => {
-    if (!dropdown.contains(ev2.target) && ev2.target !== anchor) {
-      dropdown.remove();
-      document.removeEventListener('click', close, true);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close, true), 10);
-}
+  closeMenu = bindMenuDismiss(dropdown, () => dropdown.remove(), (ev2) => !dropdown.contains(ev2.target) && ev2.target !== anchor);}
 
 async function _createEventReminder(ev, dueDate) {
   // Store the reminder as an absolute UTC instant (with the Z suffix) so the
@@ -958,7 +980,7 @@ async function _renderMonth() {
       const startColInt = Math.round(startCol);
       const endColInt = Math.round(endCol);
       const span = endColInt - startColInt + 1;
-      h += `<div class="cal-multiday" style="--col:${startColInt};--span:${span};--slot:${barSlot};background:${_calColor(md)}" draggable="true" data-uid="${_e(md.uid)}" title="${_e(md.summary)}">${_e(md.summary)}</div>`;
+      h += `<div class="cal-multiday" style="--col:${startColInt};--span:${span};--slot:${barSlot};background:${_calColor(md)};--cal-event-fg:${_calEventFg(md)}" draggable="true" data-uid="${_e(md.uid)}" title="${_e(md.summary)}">${_e(md.summary)}</div>`;
       barSlot++;
     }
     h += '</div>';
@@ -1124,7 +1146,7 @@ async function _renderWeek() {
     // All-day strip
     colsHtml += `<div class="cal-wk-allday">`;
     for (const ev of allDayEvents) {
-      colsHtml += `<div class="cal-wk-allday-event" data-uid="${_e(ev.uid)}" style="background:${_calColor(ev)};" title="${_e(ev.summary)}">${_e(ev.summary)}</div>`;
+      colsHtml += `<div class="cal-wk-allday-event" data-uid="${_e(ev.uid)}" style="background:${_calColor(ev)};--cal-event-fg:${_calEventFg(ev)};" title="${_e(ev.summary)}">${_e(ev.summary)}</div>`;
     }
     colsHtml += `</div>`;
     // Hour-grid body
@@ -3082,8 +3104,16 @@ function _nowClock() {
   return new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 function _fmtTime(s) {
-  // Show the time as written in the ICS file (ignore UTC offset).
   if (!s || s.length < 16) return '';
+  // Tz-aware timestamps from CalDAV/import are stored as UTC instants and
+  // serialized with Z/offset. Display them in the browser's local timezone;
+  // legacy naive timestamps keep their written wall-clock time.
+  if (/[Zz]$|[+\-]\d{2}:?\d{2}$/.test(s)) {
+    const d = new Date(s);
+    if (!isNaN(d)) {
+      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+  }
   return s.slice(11, 16);
 }
 function _e(s) { return uiModule.esc ? uiModule.esc(s || '') : (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }

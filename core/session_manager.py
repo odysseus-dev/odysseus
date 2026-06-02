@@ -20,6 +20,30 @@ from .models import Session, ChatMessage
 logger = logging.getLogger(__name__)
 
 
+def _message_timestamp_iso(value: Optional[datetime]) -> Optional[str]:
+    """Return a stable ISO timestamp for chat message metadata."""
+    if not value:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _parse_msg_content(raw):
+    """Parse message content from DB — deserialises JSON arrays back to lists
+    (multimodal content with image/audio attachments)."""
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str) and raw.startswith('[{') and '"type"' in raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list) and all(isinstance(p, dict) for p in parsed):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return raw
+
+
 class SessionManager:
     """
     Manages chat sessions with database persistence.
@@ -107,9 +131,10 @@ class SessionManager:
                 meta = json.loads(db_msg.meta_data) if db_msg.meta_data else {}
                 if meta is None: meta = {}
                 meta['_db_id'] = db_msg.id
+                meta.setdefault('timestamp', _message_timestamp_iso(db_msg.timestamp))
                 history.append(ChatMessage(
                     role=db_msg.role,
-                    content=db_msg.content,
+                    content=_parse_msg_content(db_msg.content),
                     metadata=meta,
                 ))
         else:
@@ -121,9 +146,10 @@ class SessionManager:
                 meta = json.loads(db_msg.meta_data) if db_msg.meta_data else {}
                 if meta is None: meta = {}
                 meta['_db_id'] = db_msg.id
+                meta.setdefault('timestamp', _message_timestamp_iso(db_msg.timestamp))
                 history.append(ChatMessage(
                     role=db_msg.role,
-                    content=db_msg.content,
+                    content=_parse_msg_content(db_msg.content),
                     metadata=meta,
                 ))
 
@@ -177,12 +203,23 @@ class SessionManager:
         db = SessionLocal()
         try:
             msg_id = str(uuid.uuid4())
+            msg_time = datetime.utcnow()
+            if message.metadata is None:
+                message.metadata = {}
+            message.metadata.setdefault('timestamp', _message_timestamp_iso(msg_time))
+            # Multimodal content (image/audio attachments) is a list — serialize
+            # to JSON so the Text column can store it.  On reload, _db_to_session
+            # detects the JSON-array prefix and parses it back.
+            _content = message.content
+            if isinstance(_content, list):
+                _content = json.dumps(_content)
             db_message = DbChatMessage(
                 id=msg_id,
                 session_id=session_id,
                 role=message.role,
-                content=message.content,
-                meta_data=json.dumps(message.metadata) if message.metadata else None
+                content=_content,
+                meta_data=json.dumps(message.metadata) if message.metadata else None,
+                timestamp=msg_time,
             )
             db.add(db_message)
 
@@ -199,8 +236,6 @@ class SessionManager:
             db.commit()
 
             # Store DB ID on the in-memory message for edit/delete by ID
-            if message.metadata is None:
-                message.metadata = {}
             message.metadata['_db_id'] = msg_id
 
             logger.debug(f"Persisted message to session {session_id}")
@@ -308,10 +343,46 @@ class SessionManager:
             if not cached.history and getattr(cached, "message_count", 0) > 0:
                 self._load_session_from_db(session_id)
 
+        # Keep model/endpoint metadata fresh. Endpoint deletion can clear the
+        # DB row while a session object is still cached in RAM.
+        self.sync_session_metadata(session_id)
+
         # Update last_accessed
         self._touch_session(session_id)
 
         return self.sessions[session_id]
+
+    def sync_session_metadata(self, session_id: str) -> bool:
+        """Refresh non-message session fields from the DB into the cached object."""
+        session = self.sessions.get(session_id)
+        if session is None:
+            return False
+        db = SessionLocal()
+        try:
+            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+            if db_session is None:
+                return False
+            headers = db_session.headers
+            if isinstance(headers, str):
+                try:
+                    headers = json.loads(headers)
+                except json.JSONDecodeError:
+                    headers = {}
+            session.name = db_session.name
+            session.endpoint_url = db_session.endpoint_url or ""
+            session.model = db_session.model or ""
+            session.headers = headers or {}
+            session.rag = db_session.rag
+            session.archived = db_session.archived
+            session.owner = getattr(db_session, "owner", None)
+            session.is_important = getattr(db_session, "is_important", False) or False
+            session.message_count = getattr(db_session, "message_count", session.message_count) or 0
+            return True
+        except Exception as e:
+            logger.error(f"Error syncing session metadata {session_id}: {e}")
+            return False
+        finally:
+            db.close()
 
     def _load_session_from_db(self, session_id: str):
         """Hydrate a single session (with messages) from the database."""
@@ -416,11 +487,17 @@ class SessionManager:
             db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
             if db_session:
                 db.delete(db_session)
+
+            # Drop the in-memory copy even when there is no DB row. A "ghost"
+            # session lives only here (never persisted, or its row was removed
+            # out-of-band); without this it can never be cleared and keeps
+            # 404ing on every operation (issue #1044).
+            removed_in_memory = self.sessions.pop(session_id, None) is not None
+
+            if db_session or removed_in_memory:
+                # Commit the document-detach / message-delete above (a no-op when
+                # the ghost had no rows) together with the session delete.
                 db.commit()
-
-                if session_id in self.sessions:
-                    del self.sessions[session_id]
-
                 logger.info(f"Deleted session {session_id}")
                 return True
             return False

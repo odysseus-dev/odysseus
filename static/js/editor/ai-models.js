@@ -25,6 +25,7 @@
  * }} deps
  */
 import { state } from './state.js';
+import { sortModelIds } from '../modelSort.js';
 
 // Heuristic classifier on a model id + endpoint name. A model can be:
 //   - gen: text-to-image generation
@@ -106,7 +107,7 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
       for (const ep of endpoints) {
         if (!ep.is_enabled) continue;
         const hasListedModels = Array.isArray(ep.models) && ep.models.length;
-        const models = hasListedModels ? ep.models : [''];
+        const models = hasListedModels ? sortModelIds(ep.models) : [''];
         const isImageEndpoint = (ep.model_type || '').toLowerCase() === 'image';
         // Image/inpaint endpoints can be called by URL even when their
         // /models cache is still empty, so don't strand a freshly served

@@ -47,13 +47,14 @@ const SETUP_PROVIDER_URLS = {
   deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/v1' },
   openai: { name: 'OpenAI', url: 'https://api.openai.com/v1' },
   openrouter: { name: 'OpenRouter', url: 'https://openrouter.ai/api/v1' },
+  ollama: { name: 'Ollama Cloud', url: 'https://ollama.com/api' },
   xai: { name: 'xAI', url: 'https://api.x.ai/v1' },
   anthropic: { name: 'Anthropic', url: 'https://api.anthropic.com/v1' },
   groq: { name: 'Groq', url: 'https://api.groq.com/openai/v1' },
   gemini: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
   google: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
 };
-const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'xai', 'anthropic', 'groq', 'gemini'];
+const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini'];
 const SETUP_PROVIDER_HINT = SETUP_PROVIDER_NAMES.slice(0, -1).join(', ') + ', or ' + SETUP_PROVIDER_NAMES[SETUP_PROVIDER_NAMES.length - 1];
 const SETUP_LOCAL_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>';
 const SETUP_API_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
@@ -67,6 +68,8 @@ function _setupProviderFromInput(input) {
     openai: 'openai',
     chatgpt: 'openai',
     openrouter: 'openrouter',
+    ollama: 'ollama',
+    ollamacloud: 'ollama',
     anthropic: 'anthropic',
     claude: 'anthropic',
     groq: 'groq',
@@ -84,6 +87,7 @@ function _extractSetupProviderCredential(input) {
   const providerAliases = [
     ['deepseek ai', 'deepseek'], ['deepseek', 'deepseek'],
     ['open router', 'openrouter'], ['openrouter', 'openrouter'],
+    ['ollama cloud', 'ollama'], ['ollama', 'ollama'],
     ['open ai', 'openai'], ['openai', 'openai'], ['chatgpt', 'openai'],
     ['anthropic', 'anthropic'], ['claude', 'anthropic'],
     ['groq', 'groq'],
@@ -99,6 +103,24 @@ function _extractSetupProviderCredential(input) {
     return { provider, credential };
   }
   return null;
+}
+
+function _normalizeSetupBaseUrl(raw) {
+  let u = (raw || '').trim();
+  u = u.replace(/^https?:\/(?!\/)/, m => m + '/');
+  u = u.replace(/^htp:/, 'http:').replace(/^htps:/, 'https:');
+  if (!/^https?:\/\//i.test(u)) u = 'http://' + u;
+  u = u.replace(/\/+$/, '');
+  u = u.replace(/\/v1\/(models|chat\/completions|completions|messages)\/?$/i, '/v1');
+  u = u.replace(/\/(models|chat\/completions|completions|v1\/messages)\/?$/i, '');
+  u = u.replace(/\/v1\/v1$/i, '/v1');
+  if (!u.includes('api.') && !u.includes('openrouter') && !u.endsWith('/v1')) {
+    try {
+      const parsed = new URL(u);
+      if (!parsed.pathname || parsed.pathname === '/') u += '/v1';
+    } catch (_) {}
+  }
+  return u;
 }
 
 function _clearSetupGuideMessages() {
@@ -134,8 +156,8 @@ function _setupReply(text, remember = true) {
 
 function _showSetupEndpointChoices() {
   const providers = SETUP_PROVIDER_NAMES.map(name =>
-    '<span>' + name + '</span>'
-  ).join(', ');
+    '<span class="setup-clickable-provider" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Click to setup ' + name + '">' + name + '</span>'
+  ).join(' ');
   return slashReply(
     '<div class="setup-guide-no-censor" style="display:grid;gap:10px;">' +
       '<div>' +
@@ -144,14 +166,14 @@ function _showSetupEndpointChoices() {
       '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%);">' +
         '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_LOCAL_ICON + 'Local setup</div>' +
         '<div>Paste endpoint URL in chat (example):</div>' +
-        '<pre style="margin:4px 0 0;"><code>http://localhost:11434/v1</code></pre>' +
+        '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://localhost:11434/v1</code></pre>' +
         '<div style="margin-top:4px;">or</div>' +
-        '<pre style="margin:2px 0 0;"><code>http://llm-host.local:8000/v1</code></pre>' +
+        '<pre style="margin:2px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://llm-host.local:8000/v1</code></pre>' +
       '</div>' +
       '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%);">' +
         '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_API_ICON + 'API setup</div>' +
         '<div>Paste provider name then API key (example):</div>' +
-        '<pre style="margin:4px 0 0;"><code>deepseek sk-...</code></pre>' +
+        '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">deepseek sk-...</code></pre>' +
         '<div style="margin-top:8px;font-size:1em;"><span>Supported providers:</span><br>' + providers + '</div>' +
       '</div>' +
     '</div>'
@@ -183,7 +205,9 @@ function _showSetupEndpointChoicesStreamed(options = {}) {
       text: 'deepseek sk-...',
       copyText: 'deepseek sk-...',
     },
-    { kind: 'p', html: '<strong>Supported providers:</strong><br>' + SETUP_PROVIDER_NAMES.join(', ') },
+    { kind: 'p', html: '<strong>Supported providers:</strong><br>' + SETUP_PROVIDER_NAMES.map(name =>
+      '<span class="setup-clickable-provider" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Click to setup ' + name + '">' + name + '</span>'
+    ).join(' ') },
   ];
   return typewriterBlocksReply(blocks, { gap: '4px', bodyClass: 'setup-guide-no-censor', interval: 3 });
 }
@@ -370,10 +394,36 @@ function typewriterBlocksReply(blocks, options = {}) {
         pre.style.margin = '0';
         const code = document.createElement('code');
         pre.appendChild(code);
+        const useBtn = document.createElement('button');
+        useBtn.type = 'button';
+        useBtn.className = 'use-code';
+        useBtn.title = 'Use in Chat';
+        useBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>';
+        const copyText = block.copyText || block.text || '';
+        const useNow = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          let text = copyText;
+          if (text.includes('sk-...')) {
+            text = text.replace('sk-...', 'sk-');
+          }
+          const messageInput = document.getElementById('message');
+          if (messageInput) {
+            messageInput.value = text;
+            messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+            messageInput.focus();
+            messageInput.setSelectionRange(text.length, text.length);
+          }
+          useBtn.classList.add('used');
+          setTimeout(() => useBtn.classList.remove('used'), 1200);
+        };
+        useBtn.addEventListener('pointerdown', useNow);
+        useBtn.addEventListener('click', useNow);
+        pre.appendChild(useBtn);
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'copy-code';
-        const copyText = block.copyText || block.text || '';
         btn.setAttribute('data-code', copyText);
         btn.title = 'Copy';
         btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
@@ -470,8 +520,13 @@ function detectProvider(input) {
     for (const suffix of ['/models', '/chat/completions', '/completions', '/v1/messages']) {
       if (url.endsWith(suffix)) url = url.slice(0, -suffix.length).replace(/\/+$/, '');
     }
+    url = url.replace(/\/api\/(chat|tags|generate)\/?$/i, '/api');
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname.endsWith('ollama.com')) url = 'https://ollama.com/api';
+    } catch(e) {}
     // Add /v1 if bare host:port
-    if (/^https?:\/\/[^/]+$/.test(url) && !url.includes('api.')) url += '/v1';
+    if (/^https?:\/\/[^/]+$/.test(url) && !url.includes('api.') && !url.includes('ollama.com')) url += '/v1';
     return { base_url: url, api_key: '', name: '' };
   }
   // Known key patterns
@@ -487,6 +542,13 @@ function detectProvider(input) {
     return { ambiguous: true, api_key: input };
   }
   return null;
+}
+
+function setupChatUrlForEndpoint(detected) {
+  const base = (detected.base_url || '').replace(/\/+$/, '');
+  if (detected.name === 'Anthropic') return base.replace(/\/v1$/, '') + '/v1/messages';
+  if (base.includes('ollama.com')) return 'https://ollama.com/api/chat';
+  return base + '/chat/completions';
 }
 
 async function connectDetectedSetupEndpoint(detected) {
@@ -537,7 +599,7 @@ async function connectDetectedSetupEndpoint(detected) {
       await typewriterReply(`Found ${count} model${count > 1 ? 's' : ''} on ${providerLabel}. Starting a chat...`);
       if (modelsModule) await modelsModule.refreshModels(true);
       const firstModel = data.models[0];
-      const chatUrl = detected.base_url + (detected.name === 'Anthropic' ? '/v1/messages' : '/chat/completions');
+      const chatUrl = setupChatUrlForEndpoint(detected);
       if (sessionModule) {
         await sessionModule.createDirectChat(chatUrl, firstModel, data.id);
       }
@@ -823,7 +885,7 @@ async function _cmdSessionNew(args, ctx) {
     } catch (e) { /* ignore */ }
   }
   if (!endpointUrl || !model) {
-    slashReply('No model available — pick one from the sidebar or run <code>/setup</code> to configure an endpoint');
+    slashReply('No model available — open the model picker and use the <code>+</code> button to add a model endpoint.');
     return true;
   }
 
@@ -1132,22 +1194,6 @@ async function _cmdToggleSidebar(args, ctx) {
   return true;
 }
 
-// ── Mode ──
-
-async function _cmdMode(args, ctx) {
-  const mode = (args[0] || '').toLowerCase();
-  if (mode !== 'agent' && mode !== 'chat') {
-    slashReply(`Current mode: ${Storage.getToggle('mode', 'chat')}. Usage: /mode &lt;agent|chat&gt;`);
-    return true;
-  }
-  const ab = document.getElementById('mode-agent-btn'), cb = document.getElementById('mode-chat-btn');
-  if (ab && cb) { ab.classList.toggle('active', mode === 'agent'); cb.classList.toggle('active', mode === 'chat'); }
-  Storage.setToggle('mode', mode);
-  document.querySelectorAll('[data-mode-tool]').forEach(b => { b.style.display = mode === 'agent' ? '' : 'none'; });
-  await typewriterReply(`Mode: ${mode}`);
-  return true;
-}
-
 // ── Settings ──
 
 async function _cmdOpen(args, ctx) {
@@ -1179,9 +1225,15 @@ async function _cmdOpen(args, ctx) {
       notes: ['tool-notes-btn', 'rail-notes'],
       tasks: ['tool-tasks-btn', 'rail-tasks'],
       library: ['tool-library-btn', 'rail-archive'],
+      documents: ['tool-library-btn', 'rail-archive'],
+      docs: ['tool-library-btn', 'rail-archive'],
       archive: ['tool-library-btn', 'rail-archive'],
+      brain: ['tool-memory-btn', 'rail-memory'],
+      memory: ['tool-memory-btn', 'rail-memory'],
+      memories: ['tool-memory-btn', 'rail-memory'],
       research: ['tool-research-btn', 'rail-research'],
       compare: ['tool-compare-btn', 'rail-compare'],
+      theme: ['tool-theme-btn', 'rail-theme'],
     };
     const ids = targets[target];
     if (ids && clickFirst(...ids)) return true;
@@ -1190,6 +1242,53 @@ async function _cmdOpen(args, ctx) {
   }
   slashReply(`I don't know how to open "${ctx.esc(target)}" yet.`);
   return true;
+}
+
+async function _cmdToolPanel(tool, args, ctx) {
+  const target = String(tool || '').toLowerCase();
+  const rest = (args || []).join(' ').trim();
+  if (target === 'cookbook') {
+    const sub = (args[0] || '').toLowerCase();
+    if (sub === 'serve') {
+      const query = args.slice(1).join(' ').trim();
+      try {
+        if (cookbookModule && typeof cookbookModule.open === 'function') {
+          await cookbookModule.open({ tab: 'Serve', serveSearch: query });
+          if (query) {
+            try {
+              const mod = await import('./cookbookServe.js');
+              if (mod && typeof mod.openServePanelForRepo === 'function') {
+                setTimeout(() => { mod.openServePanelForRepo(query).catch(() => {}); }, 80);
+              }
+            } catch (_) {}
+          }
+        } else {
+          document.getElementById('tool-cookbook-btn')?.click();
+        }
+      } catch (e) {
+        slashReply(`Could not open Cookbook Serve${e?.message ? `: ${ctx.esc(e.message)}` : ''}`);
+      }
+      return true;
+    }
+    if (sub === 'download' || sub === 'scan') {
+      await cookbookModule?.open?.({ tab: 'Download', usecase: args.slice(1).join(' ').trim() || undefined });
+      return true;
+    }
+    await cookbookModule?.open?.({ tab: 'Download', usecase: rest || undefined });
+    return true;
+  }
+  if (target === 'email') {
+    const btn = document.getElementById('rail-email') || document.getElementById('email-section-title');
+    if (btn) btn.click();
+    else slashReply('Could not open Email.');
+    return true;
+  }
+  if (target === 'settings') {
+    if (settingsModule && typeof settingsModule.open === 'function') settingsModule.open(rest || undefined);
+    else document.getElementById('user-bar-settings')?.click();
+    return true;
+  }
+  return _cmdOpen([target], ctx);
 }
 
 async function _cmdSettings(args, ctx) {
@@ -1360,17 +1459,17 @@ async function _cmdMemorySearch(args, ctx) {
   return true;
 }
 
-// ── Note (quick memory shortcut) ──
+// ── Note (quick Notes shortcut) ──
 
 async function _cmdNote(args, ctx) {
   const text = args.join(' ');
   if (!text) { slashReply('Usage: /note Your note here'); return true; }
-  const res = await fetch(`${API_BASE}/api/memory/add`, {
+  const res = await fetch(`${API_BASE}/api/notes`, {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, category: 'note', source: 'user' })
+    body: JSON.stringify({ title: text, content: '', note_type: 'note', source: 'slash' })
   });
-  if (res.ok) await typewriterReply(`Note saved: ${ctx.esc(text)}`);
+  if (res.ok) await typewriterReply(`Note added: ${ctx.esc(text)}`);
   else slashReply('Failed to save note');
   return true;
 }
@@ -1430,6 +1529,7 @@ function _parseTimeSpec(input) {
     const mer = (m[4] || '').toLowerCase();
     if (mer === 'pm' && hh < 12) hh += 12;
     if (mer === 'am' && hh === 12) hh = 0;
+    if (hh > 23 || mm > 59) return null;
     d.setHours(hh, mm, 0, 0);
     return { date: d, rest: m[5].trim() };
   }
@@ -1443,9 +1543,9 @@ function _parseTimeSpec(input) {
     const mer = (m[3] || '').toLowerCase();
     if (mer === 'pm' && hh < 12) hh += 12;
     if (mer === 'am' && hh === 12) hh = 0;
-    // Require an hour <= 23 and either a minute field or am/pm to avoid
-    // eating plain numbers like "3 apples".
-    if (hh > 23) return null;
+    // Require a valid hour/minute and either a minute field or am/pm to
+    // avoid eating plain numbers like "3 apples".
+    if (hh > 23 || mm > 59) return null;
     if (m[2] == null && !mer) return null;
     d.setHours(hh, mm, 0, 0);
     if (d.getTime() <= now.getTime()) d.setDate(d.getDate() + 1);
@@ -1503,36 +1603,6 @@ async function _cmdEvent(args, ctx) {
   } else {
     const err = await res.text().catch(() => '');
     slashReply(`Failed to create event${err ? `: ${ctx.esc(err.slice(0,200))}` : ''}`);
-  }
-  return true;
-}
-
-async function _cmdRemind(args, ctx) {
-  // Accepts "/remind me at 15:00 to call mom", "/remind in 30m check oven",
-  // "/remind tomorrow 9am standup". Shares _parseTimeSpec with /event — the
-  // parser strips "me", "at", "in", "to" stop words.
-  const raw = args.join(' ').trim();
-  if (!raw) { slashReply('Usage: /remind me at 15:00 to call mom  ·  /remind in 30m check oven'); return true; }
-  const parsed = _parseTimeSpec(raw);
-  if (!parsed || !parsed.rest) { slashReply(`Could not parse time from: ${ctx.esc(raw)}`); return true; }
-  const start = parsed.date;
-  const end = new Date(start.getTime() + 30 * 60 * 1000); // reminders default to 30m block
-  const body = {
-    summary: parsed.rest,
-    dtstart: _toLocalIso(start),
-    dtend: _toLocalIso(end),
-    all_day: false,
-  };
-  const res = await fetch(`${API_BASE}/api/calendar/events`, {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (res.ok) {
-    await typewriterReply(`Reminder set: ${ctx.esc(parsed.rest)} — ${start.toLocaleString()}`);
-  } else {
-    const err = await res.text().catch(() => '');
-    slashReply(`Failed to set reminder${err ? `: ${ctx.esc(err.slice(0,200))}` : ''}`);
   }
   return true;
 }
@@ -4668,15 +4738,39 @@ function _clearSetupCommandInput() {
 async function _cmdSetup(args, ctx) {
   _hideWelcomeScreen();
   _clearSetupCommandInput();
+  const topic = (args[0] || '').trim().toLowerCase();
+  const topicArgs = args.slice(1);
+  const provider = _setupProviderFromInput(topic);
+  if (provider) {
+    _clearSetupGuideMessages();
+    const credential = topicArgs.join(' ').trim();
+    if (credential) {
+      await connectDetectedSetupEndpoint({ base_url: provider.url, api_key: credential, name: provider.name });
+    } else {
+      pendingSetupProvider = provider;
+      setupMode = 'endpoint-key-for-provider';
+      await _setupReply(`Paste your ${provider.name} API key.`);
+    }
+    return true;
+  }
+  if (topic === 'local') {
+    _clearSetupGuideMessages();
+    const rawUrl = topicArgs.join(' ').trim();
+    if (rawUrl) {
+      const normalized = _normalizeSetupBaseUrl(rawUrl);
+      await connectDetectedSetupEndpoint({ base_url: normalized, api_key: '', name: 'Local' });
+    } else {
+      setupMode = 'endpoint-provider-first';
+      await _setupReply('Paste your local endpoint URL, for example http://100.x.x.x:11434/v1.');
+    }
+    return true;
+  }
 
   // Check if models are already configured
   const modelsBox = document.getElementById('models');
   const hasModels = modelsBox && modelsBox.querySelector('.models-row');
 
   if (hasModels) {
-    const topic = (args[0] || '').trim().toLowerCase();
-    const topicArgs = args.slice(1);
-
     if (!topic) {
       _clearSetupGuideMessages();
       return _showSetupEndpointGuide();
@@ -5260,7 +5354,7 @@ async function _cmdHelp(args, ctx) {
       categories[cat].push(`  ${usage.padEnd(21)}${desc}`);
     }
   }
-  const order = ['Getting started', 'Tours', 'Settings', 'Memory', 'Productivity', 'AI Tools'];
+  const order = ['Getting started', 'Tours', 'Chats', 'Settings', 'Memory', 'Productivity', 'AI Tools'];
   let lines = [];
   for (const cat of order) {
     if (categories[cat] && categories[cat].length) {
@@ -5278,7 +5372,7 @@ async function _cmdHelp(args, ctx) {
     }
   }
   lines.push('Tip: /<command> --help for details');
-  lines.push('Unix aliases: /rm /mv /cd /ls /cp /cat /man /stat /tar /mkdir /curl /df /fsck /bind /status');
+  lines.push('Shortcuts: /new /rename /fork /web /bash /memories /forget');
   slashReply(`<pre style="line-height:1.7">${lines.join('\n')}</pre>`);
   return true;
 }
@@ -5286,29 +5380,28 @@ async function _cmdHelp(args, ctx) {
 // ── Command registry ──────────────────────────────────────────────
 // Each top-level key is a command group.  Flat commands have a handler
 // directly; grouped commands use `subs`.  `default` is the sub run
-// when the command is invoked bare (e.g. `/session` -> list).
+// when the command is invoked bare (e.g. `/chats` -> info).
 
 const COMMANDS = {
-  session: {
-    alias: ['s'],
-    category: 'Session',
-    hidden: true,
+  chats: {
+    alias: ['chat', 'session', 'sessions', 's'],
+    category: 'Chats',
     help: 'Manage chat sessions',
     default: 'info',
     subs: {
-      'new':         { handler: _cmdSessionNew,         alias: ['create','mkdir'], help: 'Create new session',          usage: '/session new [name]' },
-      'delete':      { handler: _cmdSessionDelete,      alias: ['del','rm'],  help: 'Delete session',                 usage: '/session delete [id]' },
-      'archive':     { handler: _cmdSessionArchive,     alias: ['tar'],       help: 'Archive session',                usage: '/session archive [id]' },
-      'rename':      { handler: _cmdSessionRename,      alias: ['mv'],        help: 'Rename current session',         usage: '/session rename Name' },
-      'important':   { handler: _cmdSessionImportant,   alias: ['star'],      help: 'Mark as important',              usage: '/session important' },
-      'unimportant': { handler: _cmdSessionUnimportant, alias: ['unstar'],    help: 'Unmark important',               usage: '/session unimportant' },
-      'fork':        { handler: _cmdSessionFork,        alias: ['cp'],        help: 'Fork session (keep first N msgs)', usage: '/session fork [N]' },
-      'truncate':    { handler: _cmdSessionTruncate,    alias: [],            help: 'Delete older messages, keep last N', usage: '/session truncate N' },
-      'switch':      { handler: _cmdSessionSwitch,      alias: ['goto','cd'], help: 'Switch to session by name/id',   usage: '/session switch name' },
-      'sort':        { handler: _cmdSessionSort,        alias: [],            help: 'Auto-sort into folders',         usage: '/session sort' },
-      'info':        { handler: _cmdSessionInfo,        alias: ['stat'],      help: 'Show session details',           usage: '/session info' },
-      'clear':       { handler: _cmdSessionClear,       alias: [],            help: 'Clear chat display',             usage: '/session clear' },
-      'export':      { handler: _cmdSessionExport,      alias: ['cat'],       help: 'Download as markdown',           usage: '/session export' }
+      'new':         { handler: _cmdSessionNew,         alias: ['create','mkdir'], help: 'Create new chat',             usage: '/chats new [name]' },
+      'delete':      { handler: _cmdSessionDelete,      alias: ['del','rm'],       help: 'Delete chat',                 usage: '/chats delete [id]' },
+      'archive':     { handler: _cmdSessionArchive,     alias: ['tar'],            help: 'Archive chat',                usage: '/chats archive [id]' },
+      'rename':      { handler: _cmdSessionRename,      alias: ['mv'],             help: 'Rename current chat',         usage: '/chats rename Name' },
+      'favorite':    { handler: _cmdSessionImportant,   alias: ['pin','important'], help: 'Mark as favorite',          usage: '/chats favorite' },
+      'unfavorite':  { handler: _cmdSessionUnimportant, alias: ['unpin','unimportant'], help: 'Unmark favorite',       usage: '/chats unfavorite' },
+      'fork':        { handler: _cmdSessionFork,        alias: ['cp'],             help: 'Fork chat (keep first N msgs)', usage: '/chats fork [N]' },
+      'truncate':    { handler: _cmdSessionTruncate,    alias: [],                 help: 'Delete older messages, keep last N', usage: '/chats truncate N' },
+      'switch':      { handler: _cmdSessionSwitch,      alias: ['goto','cd'],      help: 'Switch to chat by name/id',    usage: '/chats switch name' },
+      'sort':        { handler: _cmdSessionSort,        alias: [],                 help: 'Auto-sort into folders',      usage: '/chats sort' },
+      'info':        { handler: _cmdSessionInfo,        alias: ['stat'],           help: 'Show chat details',           usage: '/chats info' },
+      'clear':       { handler: _cmdSessionClear,       alias: [],                 help: 'Clear chat display',          usage: '/chats clear' },
+      'export':      { handler: _cmdSessionExport,      alias: ['cat'],            help: 'Download as markdown',        usage: '/chats export' }
     }
   },
   toggle: {
@@ -5358,14 +5451,6 @@ const COMMANDS = {
     noUserBubble: true,
     usage: '/todo Your task  ·  /todo list',
   },
-  remind: {
-    alias: ['rem'],
-    category: 'Productivity',
-    help: 'Create a note reminder',
-    handler: _cmdRemind,
-    noUserBubble: true,
-    usage: '/remind me at 15:00 to call mom  ·  /remind in 30m check oven',
-  },
   event: {
     alias: ['ev'],
     category: 'Productivity',
@@ -5377,9 +5462,9 @@ const COMMANDS = {
   setup: {
     alias: ['su', 'seutp'],
     category: 'Getting started',
-    help: 'Quick endpoint setup wizard',
+    help: 'Add local or API model endpoints',
     handler: _cmdSetup,
-    usage: '/setup'
+    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup endpoint'
   },
   demo: {
     alias: ['tour'],
@@ -5465,13 +5550,6 @@ const COMMANDS = {
     handler: _cmdPrompt,
     usage: '/prompt'
   },
-  mode: {
-    alias: [],
-    category: 'Settings',
-    help: 'Switch agent/chat mode',
-    handler: _cmdMode,
-    usage: '/mode agent|chat'
-  },
   theme: {
     alias: [],
     category: 'Settings',
@@ -5493,6 +5571,69 @@ const COMMANDS = {
     help: 'Open a tool panel',
     handler: _cmdOpen,
     usage: '/open Cookbook'
+  },
+  cookbook: {
+    alias: ['cook'],
+    category: 'Tools',
+    help: 'Open Cookbook; use "serve" to jump to model serving',
+    handler: (args, ctx) => _cmdToolPanel('cookbook', args, ctx),
+    usage: '/cookbook  ·  /cookbook serve qwen'
+  },
+  email: {
+    alias: ['mail', 'inbox'],
+    category: 'Tools',
+    help: 'Open Email',
+    handler: (args, ctx) => _cmdToolPanel('email', args, ctx),
+    usage: '/email'
+  },
+  notes: {
+    alias: [],
+    category: 'Tools',
+    help: 'Open Notes',
+    handler: (args, ctx) => _cmdToolPanel('notes', args, ctx),
+    usage: '/notes'
+  },
+  tasks: {
+    alias: [],
+    category: 'Tools',
+    help: 'Open Tasks',
+    handler: (args, ctx) => _cmdToolPanel('tasks', args, ctx),
+    usage: '/tasks'
+  },
+  brain: {
+    alias: ['memories'],
+    category: 'Tools',
+    help: 'Open Brain',
+    handler: (args, ctx) => _cmdToolPanel('brain', args, ctx),
+    usage: '/brain'
+  },
+  library: {
+    alias: ['docs', 'documents'],
+    category: 'Tools',
+    help: 'Open Library',
+    handler: (args, ctx) => _cmdToolPanel('library', args, ctx),
+    usage: '/library'
+  },
+  gallery: {
+    alias: ['photos'],
+    category: 'Tools',
+    help: 'Open Gallery',
+    handler: (args, ctx) => _cmdToolPanel('gallery', args, ctx),
+    usage: '/gallery'
+  },
+  research: {
+    alias: [],
+    category: 'Tools',
+    help: 'Open Deep Research',
+    handler: (args, ctx) => _cmdToolPanel('research', args, ctx),
+    usage: '/research'
+  },
+  compare: {
+    alias: [],
+    category: 'Tools',
+    help: 'Open Compare',
+    handler: (args, ctx) => _cmdToolPanel('compare', args, ctx),
+    usage: '/compare'
   },
   models: {
     alias: ['model'],
@@ -5533,14 +5674,6 @@ const COMMANDS = {
     help: 'Compact older chat messages',
     handler: _cmdCompact,
     usage: '/compact'
-  },
-  tts: {
-    alias: ['speak'],
-    category: 'Utility',
-    hidden: true,
-    help: 'Text-to-speech',
-    handler: _cmdTts,
-    usage: '/tts text'
   },
   sh: {
     alias: ['exec', 'run', 'shell'],
@@ -5592,26 +5725,28 @@ const COMMANDS = {
 // ── Legacy aliases ────────────────────────────────────────────────
 // Maps old flat command names to { parent, sub } so `/new` still works.
 
-const LEGACY_ALIASES = {
-  'new':         { parent: 'session', sub: 'new' },
-  'create':      { parent: 'session', sub: 'new' },
-  'delete':      { parent: 'session', sub: 'delete' },
-  'del':         { parent: 'session', sub: 'delete' },
-  'archive':     { parent: 'session', sub: 'archive' },
-  'rename':      { parent: 'session', sub: 'rename' },
-  'important':   { parent: 'session', sub: 'important' },
-  'star':        { parent: 'session', sub: 'important' },
-  'unimportant': { parent: 'session', sub: 'unimportant' },
-  'unstar':      { parent: 'session', sub: 'unimportant' },
-  'fork':        { parent: 'session', sub: 'fork' },
-  'truncate':    { parent: 'session', sub: 'truncate' },
-  'sessions':    { parent: 'session', sub: 'info' },
-  'switch':      { parent: 'session', sub: 'switch' },
-  'goto':        { parent: 'session', sub: 'switch' },
-  'sort':        { parent: 'session', sub: 'sort' },
-  'info':        { parent: 'session', sub: 'info' },
-  'clear':       { parent: 'session', sub: 'clear' },
-  'export':      { parent: 'session', sub: 'export' },
+export const LEGACY_ALIASES = {
+  'new':         { parent: 'chats', sub: 'new' },
+  'create':      { parent: 'chats', sub: 'new' },
+  'delete':      { parent: 'chats', sub: 'delete' },
+  'del':         { parent: 'chats', sub: 'delete' },
+  'archive':     { parent: 'chats', sub: 'archive' },
+  'rename':      { parent: 'chats', sub: 'rename' },
+  'favorite':    { parent: 'chats', sub: 'favorite' },
+  'important':   { parent: 'chats', sub: 'favorite' },
+  'star':        { parent: 'chats', sub: 'favorite' },
+  'unfavorite':  { parent: 'chats', sub: 'unfavorite' },
+  'unimportant': { parent: 'chats', sub: 'unfavorite' },
+  'unstar':      { parent: 'chats', sub: 'unfavorite' },
+  'fork':        { parent: 'chats', sub: 'fork' },
+  'truncate':    { parent: 'chats', sub: 'truncate' },
+  'sessions':    { parent: 'chats', sub: 'info' },
+  'switch':      { parent: 'chats', sub: 'switch' },
+  'goto':        { parent: 'chats', sub: 'switch' },
+  'sort':        { parent: 'chats', sub: 'sort' },
+  'info':        { parent: 'chats', sub: 'info' },
+  'clear':       { parent: 'chats', sub: 'clear' },
+  'export':      { parent: 'chats', sub: 'export' },
   'web':         { parent: 'toggle', sub: 'web' },
   'bash':        { parent: 'toggle', sub: 'bash' },
   'research':    { parent: 'toggle', sub: 'research' },
@@ -5620,14 +5755,14 @@ const LEGACY_ALIASES = {
   'memories':    { parent: 'memory', sub: 'list' },
   'forget':      { parent: 'memory', sub: 'delete' },
   // Linux-style aliases
-  'rm':          { parent: 'session', sub: 'delete' },
-  'mv':          { parent: 'session', sub: 'rename' },
-  'cd':          { parent: 'session', sub: 'switch' },
-  'cp':          { parent: 'session', sub: 'fork' },
-  'cat':         { parent: 'session', sub: 'export' },
-  'stat':        { parent: 'session', sub: 'info' },
-  'tar':         { parent: 'session', sub: 'archive' },
-  'mkdir':       { parent: 'session', sub: 'new' },
+  'rm':          { parent: 'chats', sub: 'delete' },
+  'mv':          { parent: 'chats', sub: 'rename' },
+  'cd':          { parent: 'chats', sub: 'switch' },
+  'cp':          { parent: 'chats', sub: 'fork' },
+  'cat':         { parent: 'chats', sub: 'export' },
+  'stat':        { parent: 'chats', sub: 'info' },
+  'tar':         { parent: 'chats', sub: 'archive' },
+  'mkdir':       { parent: 'chats', sub: 'new' },
   'status':      { parent: 'toggle', sub: '_show' }
 };
 
@@ -5865,6 +6000,60 @@ async function handleSlashCommand(input) {
 export function initSlashCommands(deps) {
   API_BASE = deps.apiBase || '';
   if (deps.isStreaming) _isStreamingFn = deps.isStreaming;
+
+  // Global delegation for onboarding and setup clicks
+  document.addEventListener('click', (e) => {
+    // 1. Check for clicking the "/setup" trigger link on the welcome screen
+    const trigger = e.target.closest('.setup-trigger-link');
+    if (trigger) {
+      e.preventDefault();
+      const messageInput = document.getElementById('message');
+      if (messageInput) {
+        messageInput.value = '/setup';
+        messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+        messageInput.focus();
+        const chatForm = document.getElementById('chat-form');
+        if (chatForm) {
+          chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        }
+      }
+      return;
+    }
+
+    // 2. Check for clicking a clickable provider inside the setup guide
+    const providerEl = e.target.closest('.setup-clickable-provider');
+    if (providerEl) {
+      e.preventDefault();
+      const providerName = providerEl.textContent.trim();
+      const messageInput = document.getElementById('message');
+      if (messageInput) {
+        const text = providerName + ' sk-';
+        messageInput.value = text;
+        messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+        messageInput.focus();
+        messageInput.setSelectionRange(text.length, text.length);
+      }
+      return;
+    }
+
+    // 3. Check for clicking a clickable code block inside the setup guide
+    const codeEl = e.target.closest('.setup-clickable-code');
+    if (codeEl) {
+      e.preventDefault();
+      let text = codeEl.textContent.trim();
+      if (text.includes('sk-...')) {
+        text = text.replace('sk-...', 'sk-');
+      }
+      const messageInput = document.getElementById('message');
+      if (messageInput) {
+        messageInput.value = text;
+        messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+        messageInput.focus();
+        messageInput.setSelectionRange(text.length, text.length);
+      }
+      return;
+    }
+  });
 }
 
 /**
@@ -5892,7 +6081,7 @@ export function clearSetupMode(preservePendingState = false) {
   }
 }
 
-export { handleSlashCommand, handleSetupInput, handleSetupWizard, slashReply, typewriterReply };
+export { handleSlashCommand, handleSetupInput, handleSetupWizard, slashReply, typewriterReply, COMMANDS };
 
 const slashCommands = {
   initSlashCommands,

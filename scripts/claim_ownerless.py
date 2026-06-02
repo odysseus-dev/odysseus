@@ -29,7 +29,7 @@ def main():
         if not os.path.exists(path):
             print(f"  {label}: not found, skipping")
             continue
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             entries = json.load(f)
         count = 0
         for e in entries:
@@ -37,7 +37,7 @@ def main():
                 e["owner"] = owner
                 count += 1
         if count:
-            with open(path, "w") as f:
+            with open(path, "w", encoding="utf-8") as f:
                 json.dump(entries, f, ensure_ascii=False, indent=2)
         print(f"  {label}: claimed {count} entries")
 
@@ -58,10 +58,12 @@ def main():
         count = db.query(Session).filter(Session.owner == None).update({"owner": owner})
         print(f"  sessions: claimed {count}")
 
-        # Documents
-        count = db.query(Document).filter(Document.session_id.in_(
-            db.query(Session.id).filter(Session.owner == owner)
-        )).update({"session_id": Document.session_id}, synchronize_session=False)
+        # Documents (have their own owner column; claim the ownerless ones,
+        # mirroring the sessions/gallery/comparisons blocks). The old query set
+        # session_id to itself — a no-op — and never set owner, so ownerless
+        # documents stayed ownerless and invisible in the user's Library.
+        count = db.query(Document).filter(Document.owner == None).update({"owner": owner})
+        print(f"  documents: claimed {count}")
 
         # Gallery
         if GalleryImage:

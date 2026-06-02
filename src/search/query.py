@@ -15,7 +15,10 @@ def _detect_question_type(query: str) -> Optional[str]:
     """Return the leading question word if present (who, what, when, where, why, how)."""
     q = query.strip().lower()
     for word in ("who", "what", "when", "where", "why", "how"):
-        if q.startswith(word):
+        # Require a whole-word match: a bare prefix mis-flags ordinary queries
+        # like "whatsapp pricing" (-> what) or "however ..." (-> how), which
+        # then get spurious boost terms OR-appended in enhance_query.
+        if q == word or q.startswith(word + " "):
             return word
     return None
 
@@ -29,7 +32,7 @@ def _extract_entities(query: str) -> Dict[str, List[str]]:
         cleaned = re.sub(rf"^{qtype}\b", "", cleaned, flags=re.I).strip()
     for token in re.findall(r"\b[A-Z][a-zA-Z]+\b", cleaned):
         entities["names"].append(token)
-    for year in re.findall(r"\b(19|20)\d{2}\b", cleaned):
+    for year in re.findall(r"\b(?:19|20)\d{2}\b", cleaned):
         entities["dates"].append(year)
     month_day_year = re.findall(
         r"\b(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+\d{1,2},?\s*\d{4}\b",

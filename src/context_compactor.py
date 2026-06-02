@@ -6,7 +6,7 @@ Summarizes older messages via the same LLM, preserving key context.
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from src.model_context import get_context_length, estimate_tokens
 from src.llm_core import llm_call_async
@@ -95,6 +95,55 @@ def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
     return out
 
 
+def _message_text_token_estimate(text: str) -> int:
+    return int(len(text) * 0.3) + 4
+
+
+def _truncate_text_to_token_budget(text: str, token_budget: int) -> str:
+    """Trim a too-large current user message instead of dropping it entirely."""
+    if token_budget <= 32:
+        return "[Current user message omitted: it exceeded the model context window.]"
+
+    # Match src.model_context.estimate_tokens' rough chars * 0.3 estimate.
+    max_chars = max(200, int((token_budget - 16) / 0.3))
+    if len(text) <= max_chars:
+        return text
+
+    notice = (
+        "\n\n[Notice: the pasted message was too large for this model's context "
+        "window, so Odysseus kept the beginning and end.]"
+    )
+    keep_chars = max(200, max_chars - len(notice))
+    head_len = max(100, int(keep_chars * 0.7))
+    tail_len = max(80, keep_chars - head_len)
+    return text[:head_len].rstrip() + notice + "\n\n" + text[-tail_len:].lstrip()
+
+
+def _truncate_message_to_token_budget(msg: Dict[str, Any], token_budget: int) -> Dict[str, Any]:
+    """Return a copy of msg whose text content fits inside token_budget."""
+    out = dict(msg)
+    content = out.get("content", "")
+    if isinstance(content, str):
+        out["content"] = _truncate_text_to_token_budget(content, token_budget)
+        return out
+
+    if isinstance(content, list):
+        remaining = token_budget
+        new_content = []
+        for item in content:
+            if not isinstance(item, dict) or item.get("type") != "text":
+                new_content.append(item)
+                continue
+            text = item.get("text", "")
+            truncated = _truncate_text_to_token_budget(text, remaining)
+            cloned = dict(item)
+            cloned["text"] = truncated
+            new_content.append(cloned)
+            remaining -= _message_text_token_estimate(truncated)
+        out["content"] = new_content
+    return out
+
+
 def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: int = 512) -> List[Dict]:
     """Trim system messages to fit within context_length.
 
@@ -153,19 +202,31 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
             if estimate_tokens(trimmed) <= budget:
                 return _sanitize_tool_messages(essential_system + protected_msgs + convo_msgs)
 
-    # Still too big — drop older conversation turns BUT protect the last 10.
+    # Still too big — drop older conversation turns BUT always keep the current
+    # user turn. If a pasted message alone exceeds the model context, truncate
+    # that message with a visible notice instead of dropping it; otherwise the
+    # model appears to "ignore" large pastes because it never receives them.
     # Hermes-style: recent context matters more than old context.
     PROTECT_RECENT = 10
-    if len(convo_msgs) > PROTECT_RECENT:
-        old_msgs = convo_msgs[:-PROTECT_RECENT]
-        recent_msgs = convo_msgs[-PROTECT_RECENT:]
+    current_msg = convo_msgs[-1:] if convo_msgs else []
+    prior_convo = convo_msgs[:-1] if convo_msgs else []
+    if len(prior_convo) >= PROTECT_RECENT:
+        old_msgs = prior_convo[:-(PROTECT_RECENT - 1)]
+        recent_msgs = prior_convo[-(PROTECT_RECENT - 1):] + current_msg
         while old_msgs and estimate_tokens(essential_system + old_msgs + recent_msgs) > budget:
             old_msgs.pop(0)
         convo_msgs = old_msgs + recent_msgs
     else:
-        # Not enough messages to split — just trim from front
-        while convo_msgs and estimate_tokens(essential_system + convo_msgs) > budget:
-            convo_msgs.pop(0)
+        convo_msgs = prior_convo + current_msg
+        while prior_convo and estimate_tokens(essential_system + prior_convo + current_msg) > budget:
+            prior_convo.pop(0)
+        convo_msgs = prior_convo + current_msg
+
+    # If the current message itself is too large, shrink only that message.
+    if current_msg and estimate_tokens(essential_system + protected_msgs + convo_msgs) > budget:
+        prefix = essential_system + protected_msgs + convo_msgs[:-1]
+        available_for_current = max(64, budget - estimate_tokens(prefix))
+        convo_msgs[-1] = _truncate_message_to_token_budget(convo_msgs[-1], available_for_current)
 
     result = _sanitize_tool_messages(essential_system + protected_msgs + convo_msgs)
     logger.info(f"Trimmed to {estimate_tokens(result)} tokens ({len(result)} messages)")
@@ -260,8 +321,12 @@ async def maybe_compact(
 
     compacted = system_msgs + [summary_msg] + recent
 
-    # Update session history to match
-    _update_session_history(session, split_point, summary)
+    # Update session history to match. Pass len(system_msgs) so the
+    # recent_history slice in _update_session_history uses the correct
+    # offset — session.history INCLUDES the system messages, but
+    # split_point is indexed against convo_msgs which does NOT. Without
+    # this, the slice drops the leading system message(s).
+    _update_session_history(session, split_point, summary, system_msg_count=len(system_msgs))
 
     new_used = estimate_tokens(compacted)
     logger.info(
@@ -272,22 +337,34 @@ async def maybe_compact(
     return compacted, context_length, True
 
 
-def _update_session_history(session, split_point: int, summary: str):
-    """Update the in-memory session history after compaction."""
+def _update_session_history(session, split_point: int, summary: str,
+                            system_msg_count: int = 0):
+    """Update the in-memory session history after compaction.
+
+    `split_point` is the index in `convo_msgs` (system-stripped). The
+    in-memory `session.history` includes leading system messages, so the
+    actual recent-history slice starts at `system_msg_count + split_point`.
+    Prepending `session.history[:system_msg_count]` to the new history
+    preserves persona, preset, and RAG system messages that would
+    otherwise be dropped.
+    """
     if not session or not hasattr(session, "history"):
         return
 
-    if split_point >= len(session.history):
+    effective_split = system_msg_count + split_point
+    if effective_split >= len(session.history):
         return
 
-    # Keep the recent messages, prepend summary
-    recent_history = session.history[split_point:]
+    # Keep the recent messages, prepend summary AND the leading system
+    # messages so the system prompt survives compaction.
+    system_prefix = list(session.history[:system_msg_count])
+    recent_history = session.history[effective_split:]
     summary_msg = ChatMessage(
         role="system",
         content=f"[Conversation summary]\n{summary}",
         metadata={"compacted": True, "summarized_count": split_point},
     )
-    new_history = [summary_msg] + recent_history
+    new_history = system_prefix + [summary_msg] + recent_history
     try:
         from core import models as _core_models
         manager = getattr(_core_models, "_session_manager", None)

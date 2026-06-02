@@ -3,13 +3,16 @@
 """Document routes — CRUD for living documents with version history."""
 
 import logging
-from typing import Dict, Any, Optional
+import os
+import re
+from typing import Any, Dict, Optional
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import Document, DocumentVersion
 from core.database import Session as DbSession
+from src.upload_handler import UploadHandler
 
 logger = logging.getLogger(__name__)
 
@@ -126,41 +129,75 @@ def _slug(name: str) -> str:
 _PDF_RENDER_SCALE = 2.0
 
 
-def _locate_upload(upload_dir: str, file_id: str):
-    """Find an upload by its filename ID.
-
-    Lookup order:
-      1. Direct hit at `upload_dir/file_id` (very small deployments).
-      2. The `uploads.json` index that `UploadHandler.save_upload` maintains —
-         maps file_hash → metadata containing the full path. O(1) once loaded.
-      3. Fallback: `os.walk` the date-bucketed tree. Slow on large stores;
-         only triggers for legacy uploads recorded before the index existed.
-
-    `followlinks=False` keeps a stray symlink loop in `data/uploads/` from
-    spinning the walker into infinite recursion.
-    """
-    import os
-    import json as _json
-    direct = os.path.join(upload_dir, file_id)
-    if os.path.exists(direct):
-        return direct
-    # O(1) via uploads.json
+def _upload_path_inside(upload_dir: str, path: str) -> bool:
+    base = os.path.realpath(upload_dir)
+    p = os.path.realpath(path)
     try:
-        idx_path = os.path.join(upload_dir, "uploads.json")
-        if os.path.exists(idx_path):
-            with open(idx_path, "r") as f:
-                idx = _json.load(f)
-            for meta in (idx.values() if isinstance(idx, dict) else []):
-                if meta.get("id") == file_id:
-                    p = meta.get("path")
-                    if p and os.path.exists(p):
-                        return p
+        return os.path.commonpath([base, p]) == base
     except Exception:
-        pass
-    for root, _dirs, files in os.walk(upload_dir, followlinks=False):
-        if file_id in files:
-            return os.path.join(root, file_id)
-    return None
+        return False
+
+
+def _resolve_user_upload_path(
+    upload_handler: Any,
+    upload_id: str,
+    owner: Optional[str],
+    auth_manager=None,
+) -> Optional[str]:
+    """Resolve an upload id to a filesystem path the caller may read."""
+    if upload_handler is None:
+        return None
+    resolved = upload_handler.resolve_upload(
+        upload_id,
+        owner=owner,
+        auth_manager=auth_manager,
+    )
+    if not resolved:
+        return None
+    path = resolved.get("path")
+    upload_dir = getattr(upload_handler, "upload_dir", None)
+    if path and upload_dir and not _upload_path_inside(upload_dir, path):
+        logger.warning("Upload path outside upload directory: %s", path)
+        return None
+    return path
+
+
+def _locate_upload(
+    upload_dir: str,
+    file_id: str,
+    owner: Optional[str] = None,
+    auth_manager=None,
+    upload_handler: Any = None,
+):
+    """Find an upload by its filename ID via UploadHandler.resolve_upload."""
+    if upload_handler is None:
+        from src.upload_handler import UploadHandler
+
+        base_dir = os.path.dirname(os.path.abspath(upload_dir))
+        upload_handler = UploadHandler(base_dir, upload_dir)
+    return _resolve_user_upload_path(upload_handler, file_id, owner, auth_manager)
+
+
+def _assert_pdf_marker_upload_owned(
+    request: Request,
+    content: str,
+    user: Optional[str],
+    upload_handler: Any,
+) -> None:
+    """Reject document content whose pdf_source marker points at another user's upload."""
+    if upload_handler is None:
+        return
+    from src.pdf_form_doc import find_source_upload_id
+
+    upload_id = find_source_upload_id(content or "")
+    if not upload_id:
+        return
+    auth_manager = getattr(getattr(request.app, "state", None), "auth_manager", None)
+    if not _resolve_user_upload_path(upload_handler, upload_id, user, auth_manager):
+        raise HTTPException(
+            400,
+            "Document PDF marker references an upload you do not own",
+        )
 
 
 def _derive_title(content: str) -> str:

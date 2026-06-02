@@ -11,6 +11,7 @@ import dragSortModule from './dragSort.js';
 import spinnerModule from './spinner.js';
 import { modelColor } from './chatRenderer.js';
 import { providerLogo } from './providers.js';
+import { sortModelIds } from './modelSort.js';
 
 let API_BASE = '';
 let _cachedItems = []; // cached /api/models items for model-switch dropdown
@@ -553,7 +554,7 @@ export async function refreshModels(force = false) {
       box.appendChild(noModels);
       // No endpoints yet: keep the welcome screen focused on first setup.
       const welcomeSub = document.getElementById('welcome-sub');
-      if (welcomeSub) welcomeSub.innerHTML = 'Type <span style="color:var(--accent,var(--red));font-weight:600">/setup</span> to get started.';
+      if (welcomeSub) welcomeSub.innerHTML = 'Type <span class="setup-trigger-link" style="color:var(--accent,var(--red));font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to launch setup">/setup</span> to get started.';
       const welcomeTip = document.getElementById('welcome-tip');
       if (welcomeTip) welcomeTip.textContent = 'Type /setup, then choose Local models or API.';
     } else {
@@ -603,7 +604,7 @@ export async function refreshProviders() {
 
     if (openai) {
       const models = (openai.items?.[0]?.models) || [];
-      models.forEach(m => {
+      sortModelIds(models).forEach(m => {
         const opt = document.createElement('option');
         opt.value = m;
         opt.textContent = m;

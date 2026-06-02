@@ -12,16 +12,21 @@ rag_instance = None
 _last_attempt = 0.0
 _RETRY_INTERVAL = 30  # seconds between re-init attempts
 
+
 def get_rag_manager():
-    """Disabled: vector document RAG (VectorRAG/ChromaDB) is unused and its
-    client is incompatible with the installed pydantic. Return None so personal-
-    doc routes fall back to non-vector behavior instead of re-attempting (and
-    re-hanging on) a broken ChromaDB init every 30s."""
-    return None
+    """Lazy ChromaDB-backed VectorRAG initializer.
 
+    Returns the VectorRAG instance on first successful init, None if ChromaDB
+    isn't reachable / available. Failed init attempts are throttled to once
+    per _RETRY_INTERVAL seconds so a missing ChromaDB doesn't busy-retry on
+    every request — callers (personal-doc routes etc.) get None back and
+    return a clean 503 to the user instead.
 
-def _get_rag_manager_legacy():
-    """Original lazy initializer, kept for reference / easy re-enable."""
+    Historical note: this used to be hardcoded to ``return None`` with a
+    comment about chromadb 1.4.1 / pydantic 2.12 being mutually incompatible.
+    That compat issue is resolved in current pinned versions
+    (chromadb 1.5.x + pydantic 2.13.x), so the real initializer is back.
+    """
     global rag_instance, _last_attempt
 
     if rag_instance is not None:
@@ -29,7 +34,7 @@ def _get_rag_manager_legacy():
 
     now = time.monotonic()
     if now - _last_attempt < _RETRY_INTERVAL:
-        return None  # too soon to retry
+        return None  # too soon to retry — last attempt failed
 
     _last_attempt = now
 

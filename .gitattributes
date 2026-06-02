@@ -1,0 +1,27 @@
+# Normalize line endings so a Windows checkout (git core.autocrlf=true) can't
+# corrupt shell-script shebangs. A CRLF `#!/bin/sh\r` makes the kernel look for
+# an interpreter literally named "/bin/sh\r", producing the Docker startup error
+# "exec /usr/local/bin/entrypoint.sh: no such file or directory" (issues #150, #77).
+* text=auto
+
+# Shell scripts must stay LF on every platform (run by sh/bash, incl. in Docker).
+*.sh   text eol=lf
+*.bash text eol=lf
+entrypoint.sh text eol=lf
+docker/entrypoint.sh text eol=lf
+
+# Windows-native scripts stay CRLF.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets — never normalize.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.pdf  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
