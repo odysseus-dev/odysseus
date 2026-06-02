@@ -226,8 +226,8 @@ def setup_chat_routes(
         message = form_data.get("message")
         session = form_data.get("session")
         attachments = form_data.get("attachments")
-        use_web = form_data.get("use_web")
-        use_research = form_data.get("use_research")
+        use_web = str(form_data.get("use_web", "")).lower() == "true"
+        use_research = str(form_data.get("use_research", "")).lower() == "true"
         time_filter = form_data.get("time_filter")
         preset_id = form_data.get("preset_id")
         allow_bash = form_data.get("allow_bash")
@@ -291,7 +291,7 @@ def setup_chat_routes(
         resolve_session_auth(sess, session)
 
         # Check for research_pending BEFORE mode persist overwrites it
-        do_research = str(use_research).lower() == "true"
+        do_research = use_research
         if not do_research:
             if get_session_mode(session) == 'research_pending':
                 do_research = True
@@ -783,6 +783,23 @@ def setup_chat_routes(
                         if not incognito:
                             session_manager.save_sessions()
                     raise
+                except Exception as _chat_err:
+                    # Unexpected error during chat streaming (network drop,
+                    # provider error, etc.). Save partial and yield error.
+                    logger.error("Chat stream error for session %s: %s", session, _chat_err, exc_info=True)
+                    try:
+                        if full_response:
+                            _stopped_c, _stopped_m = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
+                            sess.add_message(ChatMessage("assistant", _stopped_c, metadata=_stopped_m))
+                            if not incognito:
+                                session_manager.save_sessions()
+                    except Exception:
+                        logger.exception("Failed to save partial response on chat error (session %s)", session)
+                    try:
+                        yield f'event: error\ndata: {json.dumps({"error": str(_chat_err), "status": 500})}\n\n'
+                        yield "data: [DONE]\n\n"
+                    except Exception:
+                        pass
                 finally:
                     _active_streams.pop(session, None)
             else:
@@ -879,6 +896,25 @@ def setup_chat_routes(
                     except Exception:
                         logger.exception("Failed to save partial response on disconnect (session %s)", session)
                     raise
+                except Exception as _agent_err:
+                    # Unexpected error during agent streaming (tool failure,
+                    # parsing error, etc.). Save partial response and yield
+                    # a proper error event so the frontend can display it
+                    # instead of silently closing the stream.
+                    logger.error("Agent stream error for session %s: %s", session, _agent_err, exc_info=True)
+                    try:
+                        if full_response:
+                            _stopped_content3, _stopped_md3 = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
+                            sess.add_message(ChatMessage("assistant", _stopped_content3, metadata=_stopped_md3))
+                            if not incognito:
+                                session_manager.save_sessions()
+                    except Exception:
+                        logger.exception("Failed to save partial response on agent error (session %s)", session)
+                    try:
+                        yield f'event: error\ndata: {json.dumps({"error": str(_agent_err), "status": 500})}\n\n'
+                        yield "data: [DONE]\n\n"
+                    except Exception:
+                        pass
                 finally:
                     _active_streams.pop(session, None)
 
