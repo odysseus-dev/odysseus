@@ -40,6 +40,29 @@ from routes.document_helpers import (
 )
 
 
+def _get_session_or_404(db, session_id: str, user: Optional[str]) -> DbSession:
+    """Fetch a session by id, enforcing owner-scope. Mirrors
+    `routes/calendar_routes.py:_get_or_404_calendar`.
+
+    The legacy `if sess.owner and sess.owner != user` check silently let
+    any authenticated user read or write any session whose `owner IS
+    NULL` (a real shape — `scripts/claim_ownerless.py` exists to backfill
+    them, and #1288 just merged to fix a no-op in that script). The
+    fail-closed `sess.owner is None or sess.owner != user` form closes
+    that gap, and returning 404 with the same message as the not-found
+    path prevents probing for the existence of other tenants' sessions.
+    The leading `if user and ...` short-circuit preserves single-user
+    mode (AUTH_ENABLED=false / localhost installs) where the middleware
+    leaves current_user unset.
+    """
+    sess = db.query(DbSession).filter(DbSession.id == session_id).first()
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    if user and (sess.owner is None or sess.owner != user):
+        raise HTTPException(404, "Session not found")
+    return sess
+
+
 def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     router = APIRouter(tags=["documents"])
 
@@ -69,17 +92,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # the doc is owner-stamped, so it lives in the library on its own.
             session = None
             if req.session_id:
-                session = db.query(DbSession).filter(DbSession.id == req.session_id).first()
-                if not session:
-                    raise HTTPException(404, "Session not found")
-                # Match the lenient ownership model the rest of the app uses
-                # (see _owner_filter): only block when an AUTHENTICATED user is
-                # writing into a DIFFERENT user's session. In single-user /
-                # unconfigured / localhost-bypass mode the middleware leaves
-                # current_user unset (None), and those sessions are already
-                # served freely everywhere else.
-                if user and session.owner and session.owner != user:
-                    raise HTTPException(403, "Cannot create document in another user's session")
+                # Fail closed on null-owner sessions — see
+                # _get_session_or_404 and the equivalent gate in
+                # routes/calendar_routes.py:_get_or_404_calendar.
+                session = _get_session_or_404(db, req.session_id, user)
 
             doc_id = str(uuid.uuid4())
             ver_id = str(uuid.uuid4())
@@ -172,11 +188,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         if session_id:
             db = SessionLocal()
             try:
-                sess = db.query(DbSession).filter(DbSession.id == session_id).first()
-                if not sess:
-                    raise HTTPException(404, "Session not found")
-                if user and sess.owner and sess.owner != user:
-                    raise HTTPException(403, "Cannot import into another user's session")
+                # Fail closed on null-owner sessions — see
+                # _get_session_or_404.
+                sess = _get_session_or_404(db, session_id, user)
             finally:
                 db.close()
 
@@ -360,15 +374,15 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         try:
             if not user:
                 raise HTTPException(403, "Authentication required")
-            session = db.query(DbSession).filter(DbSession.id == session_id).first()
-            # v2 review HIGH-9: raise 403 explicitly when the caller
-            # can't see this session, instead of returning [] which the
-            # UI treats identically to "no docs" and silently masks
-            # auth failures.
-            if not session:
-                raise HTTPException(404, "Session not found")
-            if user and session.owner and session.owner != user:
-                raise HTTPException(403, "Access denied")
+            # v2 review HIGH-9: raise an explicit auth error when the
+            # caller can't see this session, instead of returning []
+            # which the UI treats identically to "no docs" and silently
+            # masks auth failures. The helper returns 404 with a
+            # uniform "Session not found" message (same as the not-found
+            # path) so probing can't distinguish "exists but forbidden"
+            # from "missing". See _get_session_or_404 and
+            # routes/calendar_routes.py:_get_or_404_calendar.
+            session = _get_session_or_404(db, session_id, user)
             docs = db.query(Document).filter(
                 Document.session_id == session_id
             ).order_by(Document.created_at.desc()).all()
