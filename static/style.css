@@ -1804,6 +1804,15 @@ body.bg-pattern-sparkles {
       max-height: 60px;
       overflow: hidden;
     }
+    /* The tip is a full sentence that wraps to 4-5 lines on narrow phones,
+       where the welcome block shrink-wraps small; the shared 60px ceiling
+       (sized for the one-line sub/version) clipped its last line. Give the tip
+       a taller ceiling so it isn't truncated. Kept above the max-height:650px
+       block below so that rule's max-height:0 still collapses it on short
+       viewports. */
+    #welcome-screen .welcome-tip {
+      max-height: 120px;
+    }
     @media (max-height: 650px) {
       #welcome-screen { top: 28%; }
       #welcome-screen .welcome-tip { opacity: 0; max-height: 0; margin: 0; }
