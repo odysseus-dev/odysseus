@@ -250,6 +250,25 @@ def _github_is_active(owner: str | None) -> bool:
         return False
 
 
+def _fetch_github_briefing(owner: str | None) -> str | None:
+    """Return the user's GitHub briefing with editing-prompt comments stripped,
+    or None if the integration isn't set up / enabled / has no briefing. Safe to
+    call unconditionally; failures return None so chat never breaks."""
+    try:
+        from core.database import SessionLocal as _SL, GitHubIntegration as _GI
+        from routes.github_routes import strip_briefing_prompts
+    except Exception:
+        return None
+    try:
+        with _SL() as db:
+            row = db.query(_GI).filter_by(owner=owner or "").first()
+        if not row or not row.enabled or not row.briefing:
+            return None
+        return strip_briefing_prompts(row.briefing) or None
+    except Exception:
+        return None
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -497,6 +516,13 @@ def setup_chat_routes(
         # text here, and build_chat_context layers it onto the preface. Empty
         # in the base path.
         _extra_prompts: list[str] = []
+
+        # GitHub briefing: when GitHub is on for this turn, append the user's
+        # (comment-stripped) briefing so the agent works to their standards.
+        if str(allow_github).lower() == "true":
+            _gh_brief = _fetch_github_briefing(getattr(sess, "owner", None) or "")
+            if _gh_brief:
+                _extra_prompts.append(_gh_brief)
 
         # Build shared context (stream path uses enhanced_message for context preface)
         ctx = await build_chat_context(
