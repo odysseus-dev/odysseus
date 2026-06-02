@@ -80,6 +80,8 @@ def get_mcp_manager():
 # Helpers (kept here — used by sub-modules)
 # ---------------------------------------------------------------------------
 def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
+    if not isinstance(text, str):
+        return text
     if len(text) > limit:
         return text[:limit] + f"\n... (truncated, {len(text)} chars total)"
     return text
