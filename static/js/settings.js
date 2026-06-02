@@ -2594,6 +2594,7 @@ async function initEmailAccountsSettings() {
     const _providerOptions = Object.entries(PROVIDERS)
       .map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`)
       .join('');
+    const _smtpSecurity = (acct) => acct?.smtp_security || ((parseInt(acct?.smtp_port || 465) === 587) ? 'starttls' : 'ssl');
     formEl.innerHTML = `
       <h3 style="font-size:12px;margin:0 0 8px">${isEdit ? 'Edit Account' : 'New Account'}</h3>
       <div class="settings-col">
@@ -2609,6 +2610,7 @@ async function initEmailAccountsSettings() {
         <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
         <div class="settings-row"><label class="settings-label">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com, smtp.migadu.com. Leave blank to make this account read-only.')}</label><input id="eaf-smtp-host" class="settings-input" value="${esc(a.smtp_host || '')}"></div>
         <div class="settings-row"><label class="settings-label">Port${_hint('465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs.')}</label><input id="eaf-smtp-port" class="settings-input" type="number" value="${esc(a.smtp_port || 465)}" style="max-width:100px"></div>
+        <div class="settings-row"><label class="settings-label">Security${_hint('SSL for port 465, STARTTLS for port 587, or None for local SMTP bridges such as Proton Mail Bridge.')}</label><select id="eaf-smtp-security" class="settings-select"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option><option value="none">None</option></select></div>
         <div class="settings-row"><label class="settings-label">Same as IMAP${_hint('Use the IMAP username and password for SMTP too (this is right for almost every provider). Turn off to enter separate SMTP credentials.')}</label><label class="admin-switch"><input type="checkbox" id="eaf-smtp-same" ${(!isEdit || (a.smtp_user && a.imap_user && a.smtp_user === a.imap_user)) ? 'checked' : ''}><span class="admin-slider"></span></label></div>
         <div class="settings-row eaf-smtp-creds"><label class="settings-label">Username${_hint('Usually the same as your IMAP username (your email address).')}</label><input id="eaf-smtp-user" class="settings-input" value="${esc(a.smtp_user || '')}"></div>
         <div class="settings-row eaf-smtp-creds"><label class="settings-label">Password${_hint('Your SMTP password — often the same as your IMAP password.')}</label><input id="eaf-smtp-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_smtp_password ? '(unchanged)' : ''}"></div>
@@ -2635,7 +2637,9 @@ async function initEmailAccountsSettings() {
       el('eaf-imap-starttls').checked = !!p.imap.starttls;
       el('eaf-smtp-host').value = p.smtp.host;
       el('eaf-smtp-port').value = p.smtp.port;
+      el('eaf-smtp-security').value = p.smtp.security || ((parseInt(p.smtp.port || 465) === 587) ? 'starttls' : 'ssl');
     });
+    el('eaf-smtp-security').value = _smtpSecurity(a);
 
     // "Same as IMAP" toggle — hide the SMTP creds rows when on. The save
     // handler copies the IMAP user/password into SMTP at submit time.
@@ -2659,6 +2663,7 @@ async function initEmailAccountsSettings() {
         imap_starttls: el('eaf-imap-starttls').checked,
         smtp_host: el('eaf-smtp-host').value.trim(),
         smtp_port: parseInt(el('eaf-smtp-port').value) || 465,
+        smtp_security: el('eaf-smtp-security').value,
         smtp_user: el('eaf-smtp-user').value.trim(),
       };
       if (el('eaf-imap-pass').value) body.imap_password = el('eaf-imap-pass').value;
@@ -3681,6 +3686,7 @@ async function initUnifiedIntegrations() {
     };
     const _providerOptions = Object.entries(PROVIDERS)
       .map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
+    const _smtpSecurity = (acct) => acct?.smtp_security || ((parseInt(acct?.smtp_port || 465) === 587) ? 'starttls' : 'ssl');
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
         <h2 style="font-size:13px">${isEdit ? 'Edit' : 'Add'} Email Account</h2>
@@ -3698,6 +3704,7 @@ async function initUnifiedIntegrations() {
           <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
           <div class="settings-row"><label class="settings-label">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com. Leave blank to make this account read-only.')}</label><input id="uf-smtp-host" class="settings-input" placeholder="smtp.example.com"></div>
           <div class="settings-row"><label class="settings-label">Port${_hint('465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs.')}</label><input id="uf-smtp-port" class="settings-input" type="number" placeholder="465" style="max-width:100px"></div>
+          <div class="settings-row"><label class="settings-label">Security${_hint('SSL for port 465, STARTTLS for port 587, or None for local SMTP bridges such as Proton Mail Bridge.')}</label><select id="uf-smtp-security" class="settings-select"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option><option value="none">None</option></select></div>
           <div class="settings-row"><label class="settings-label">Same as IMAP${_hint('Use the IMAP username and password for SMTP too (right for almost every provider). Turn off to enter separate SMTP credentials.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-smtp-same" checked><span class="admin-slider"></span></label></div>
           <div class="settings-row uf-smtp-creds"><label class="settings-label">Username${_hint('Usually the same as your IMAP username (your email address).')}</label><input id="uf-smtp-user" class="settings-input"></div>
           <div class="settings-row uf-smtp-creds"><label class="settings-label">Password${_hint('Your SMTP password — often the same as your IMAP password.')}</label><input id="uf-smtp-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
@@ -3824,6 +3831,7 @@ async function initUnifiedIntegrations() {
       el('uf-imap-starttls').checked = !!p.imap.starttls;
       el('uf-smtp-host').value = p.smtp.host;
       el('uf-smtp-port').value = p.smtp.port;
+      el('uf-smtp-security').value = p.smtp.security || ((parseInt(p.smtp.port || 465) === 587) ? 'starttls' : 'ssl');
       if (p.emailEx) {
         el('uf-email-from').placeholder = p.emailEx;
         el('uf-imap-user').placeholder = p.emailEx;
@@ -3849,6 +3857,7 @@ async function initUnifiedIntegrations() {
       el('uf-imap-starttls').checked = existing.imap_starttls !== false;
       el('uf-smtp-host').value = existing.smtp_host || '';
       el('uf-smtp-port').value = existing.smtp_port || 465;
+      el('uf-smtp-security').value = _smtpSecurity(existing);
       el('uf-smtp-user').value = existing.smtp_user || '';
       el('uf-email-default').checked = !!existing.is_default;
       // If the saved SMTP user matches the IMAP user, keep the "Same as
@@ -3860,6 +3869,7 @@ async function initUnifiedIntegrations() {
     } else {
       el('uf-imap-port').value = 993;
       el('uf-smtp-port').value = 465;
+      el('uf-smtp-security').value = 'ssl';
     }
     el('uf-email-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
 
@@ -3895,6 +3905,7 @@ async function initUnifiedIntegrations() {
         imap_starttls: el('uf-imap-starttls').checked,
         smtp_host: el('uf-smtp-host').value.trim(),
         smtp_port: parseInt(el('uf-smtp-port').value) || 465,
+        smtp_security: el('uf-smtp-security').value,
         smtp_user: el('uf-smtp-user').value.trim(),
         is_default: el('uf-email-default').checked,
       };

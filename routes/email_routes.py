@@ -40,7 +40,7 @@ from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
     _q, _attach_compose_uploads, _cleanup_compose_uploads,
     _load_settings, _save_settings, _get_email_config,
-    _send_smtp_message,
+    _send_smtp_message, _smtp_security_mode,
     _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
     _extract_attachment_text, _list_attachments_from_msg,
     _extract_attachment_to_disk, _extract_html, _extract_text,
@@ -2146,6 +2146,7 @@ def setup_email_routes():
         _from = cfg["from_address"]
         _smtp_host = cfg["smtp_host"]
         _smtp_port = cfg["smtp_port"]
+        _smtp_security = cfg.get("smtp_security")
         _smtp_user = cfg["smtp_user"]
         _smtp_pw = cfg["smtp_password"]
         _recipients = list(recipients)
@@ -2163,6 +2164,7 @@ def setup_email_routes():
                     {
                         "smtp_host": _smtp_host,
                         "smtp_port": _smtp_port,
+                        "smtp_security": _smtp_security,
                         "smtp_user": _smtp_user,
                         "smtp_password": _smtp_pw,
                     },
@@ -2820,7 +2822,7 @@ def setup_email_routes():
                 db.add(row)
             field_map = {
                 "smtp_host": "smtp_host", "smtp_port": "smtp_port", "smtp_user": "smtp_user",
-                "imap_host": "imap_host", "imap_port": "imap_port", "imap_user": "imap_user",
+                "smtp_security": "smtp_security", "imap_host": "imap_host", "imap_port": "imap_port", "imap_user": "imap_user",
                 "imap_starttls": "imap_starttls", "email_from": "from_address",
             }
             for in_key, col_name in field_map.items():
@@ -2902,6 +2904,7 @@ def setup_email_routes():
                     "imap_starttls": bool(r.imap_starttls),
                     "smtp_host": r.smtp_host or "",
                     "smtp_port": int(r.smtp_port or 465),
+                    "smtp_security": _smtp_security_mode({"smtp_security": getattr(r, "smtp_security", ""), "smtp_port": r.smtp_port}),
                     "smtp_user": r.smtp_user or "",
                     "from_address": r.from_address or "",
                     "has_imap_password": bool(r.imap_password),
@@ -2934,6 +2937,7 @@ def setup_email_routes():
                 imap_starttls=bool(data.get("imap_starttls", True)),
                 smtp_host=(data.get("smtp_host") or "").strip(),
                 smtp_port=int(data.get("smtp_port") or 465),
+                smtp_security=_smtp_security_mode({"smtp_security": data.get("smtp_security"), "smtp_port": data.get("smtp_port") or 465}),
                 smtp_user=(data.get("smtp_user") or "").strip(),
                 smtp_password=_enc(data.get("smtp_password") or ""),
                 from_address=(data.get("from_address") or "").strip(),
@@ -2977,6 +2981,8 @@ def setup_email_routes():
             for key in ("imap_port", "smtp_port"):
                 if data.get(key) not in (None, ""):
                     setattr(row, key, int(data[key]))
+            if "smtp_security" in data:
+                row.smtp_security = _smtp_security_mode({"smtp_security": data.get("smtp_security"), "smtp_port": data.get("smtp_port") or row.smtp_port})
             for key in ("imap_starttls", "enabled"):
                 if key in data:
                     setattr(row, key, bool(data[key]))
@@ -3061,6 +3067,7 @@ def setup_email_routes():
                     "imap_starttls": bool(row.imap_starttls),
                     "smtp_host": row.smtp_host or "",
                     "smtp_port": row.smtp_port or 465,
+                    "smtp_security": _smtp_security_mode({"smtp_security": getattr(row, "smtp_security", ""), "smtp_port": row.smtp_port}),
                     "smtp_user": row.smtp_user or "",
                     "smtp_password": _decrypt(row.smtp_password or ""),
                 }
@@ -3112,14 +3119,16 @@ def setup_email_routes():
         smtp_host = (body.get("smtp_host") or "").strip()
         if smtp_host:
             smtp_port = int(body.get("smtp_port") or 465)
+            smtp_security = _smtp_security_mode({"smtp_security": body.get("smtp_security"), "smtp_port": smtp_port})
             smtp_user = (body.get("smtp_user") or imap_user).strip()
             smtp_pass = body.get("smtp_password") or imap_pass
             try:
-                if smtp_port == 587:
-                    smtp = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
-                    smtp.starttls()
-                else:
+                if smtp_security == "ssl":
                     smtp = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10)
+                else:
+                    smtp = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
+                    if smtp_security == "starttls":
+                        smtp.starttls()
                 try:
                     smtp.login(smtp_user, smtp_pass)
                     smtp_result = {"ok": True}
