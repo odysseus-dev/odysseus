@@ -1,7 +1,21 @@
-use_default_settings: true
+doi_resolvers:
+  oadoi.org: "https://oadoi.org/"
+  doi.org: "https://doi.org/"
+  doai.io: "https://dissem.in/"
+
+default_doi_resolver: "oadoi.org"
+
+use_default_settings:
+  engines:
+    remove:
+      - ahmia
+      - torch
+      - radio browser
 
 server:
   secret_key: "__SEARXNG_SECRET__"
+  limiter: false
+  public_instance: false
 
 search:
   formats:
