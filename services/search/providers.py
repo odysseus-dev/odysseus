@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from typing import List, Optional
+from urllib.parse import urljoin, urlparse, parse_qs
 
 import httpx
 from bs4 import BeautifulSoup
@@ -299,6 +300,25 @@ def _brave_search_impl(query: str, count: int, time_filter: Optional[str] = None
 
 def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
     """Search using DuckDuckGo via the duckduckgo-search library. No API key needed."""
+    def _resolve_url(raw: str) -> str:
+        """Resolve DuckDuckGo redirect URL to the actual destination URL."""
+        if not raw:
+            return raw
+        resolved = raw
+        if resolved.startswith("//"):
+            resolved = "https:" + resolved
+        elif resolved.startswith("/"):
+            resolved = urljoin("https://html.duckduckgo.com", resolved)
+        try:
+            parsed = urlparse(resolved)
+            if "duckduckgo.com" in (parsed.hostname or "") and parsed.path.rstrip("/") == "/l":
+                qs = parse_qs(parsed.query)
+                if "uddg" in qs:
+                    return qs["uddg"][0]
+        except Exception:
+            pass
+        return resolved
+
     def _html_fallback() -> List[dict]:
         try:
             response = httpx.get(
@@ -314,7 +334,7 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
                 link = result.select_one(".result__a")
                 if not link:
                     continue
-                url = link.get("href", "")
+                url = _resolve_url(link.get("href", ""))
                 if not url:
                     continue
                 snippet_el = result.select_one(".result__snippet")

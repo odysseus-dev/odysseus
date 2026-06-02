@@ -220,7 +220,7 @@ function initNameDropdown() {
       if (!charName || charName === '__default__') return;
       const match = userTemplates.find(t => t.name === charName);
       const isBuiltin = PROMPT_TEMPLATES.some(t => t.name === charName);
-      if (!await window.styledConfirm(`Delete "${charName}"?\n\nThis will remove the character and all its memories.`, { confirmText: 'Delete', danger: true })) return;
+      if (!await window.styledConfirm(`Delete "${charName}"?\n\nThis will remove the persona and all its memories.`, { confirmText: 'Delete', danger: true })) return;
       try {
         // Delete saved template if exists
         if (match) {
@@ -296,7 +296,7 @@ function _populateCharSelect() {
   const select = document.getElementById('char-template-select');
   if (!select) return;
   const currentVal = select.value;
-  select.innerHTML = '<option value="__default__">Default (no character)</option>';
+  select.innerHTML = '<option value="__default__">Default (no persona)</option>';
 
   const savedNames = new Set(userTemplates.map(t => t.name));
   if (userTemplates.length) {
@@ -437,7 +437,7 @@ function initSaveAsTemplate() {
 
     let name = nameInput ? nameInput.value.trim() : '';
     if (!name) {
-      name = prompt('Enter a name for this character:');
+      name = prompt('Enter a name for this persona:');
       if (!name || !name.trim()) return;
       name = name.trim();
       if (nameInput) nameInput.value = name;
@@ -616,7 +616,7 @@ export function openCustomPresetModal() {
     } else {
       // Character/persona tab. "Save & " prefix when the user edited a template,
       // so it's clear the edit is being saved on start.
-      label = changed ? 'Save & Start Character' : 'Start Character';
+      label = changed ? 'Save & Start Persona' : 'Start Persona';
     }
     btn.textContent = label;
     // Show a "Cancel" button next to Start when the active tab's feature is
@@ -708,7 +708,7 @@ export function openCustomPresetModal() {
       const notice = document.createElement('div');
       notice.id = 'char-lock-notice';
       notice.style.cssText = 'font-size:11px;color:var(--color-muted);text-align:center;padding:6px;margin-bottom:8px;border:1px dashed var(--border);border-radius:6px;';
-      notice.textContent = 'Persistent chat — character is locked. Style, temperature, and memory can still be changed.';
+      notice.textContent = 'Persistent chat — persona is locked. Style, temperature, and memory can still be changed.';
       modal.querySelector('.modal-body').prepend(notice);
     }
   } else {
@@ -825,7 +825,7 @@ export async function saveCustomPreset(showToast, showError) {
 
       if (showToast) {
         // The Inject tab is a plain tuned "prompt" chat, not a persona — say so.
-        showToast(_isInjectStart ? 'Prompt saved' : 'Character saved');
+        showToast(_isInjectStart ? 'Prompt saved' : 'Persona saved');
       }
       const modal = document.getElementById('custom-preset-modal');
       if (modal) {
@@ -962,7 +962,7 @@ function _syncCharIndicator() {
     if (hasChar) {
       if (iconEl) iconEl.innerHTML = _AVATAR;
       if (nameSpan) nameSpan.textContent = custom.character_name;
-      btn.title = `Character: ${custom.character_name} — click to configure`;
+      btn.title = `Persona: ${custom.character_name} — click to configure`;
     } else {
       // Inject/tuning chat — syringe tag labeled "Prompt" to match the
       // window identity, no persona name.

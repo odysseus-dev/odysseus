@@ -37,8 +37,8 @@ from routes.cookbook_helpers import (
     _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
-    _append_serve_exit_code_lines, _cached_model_scan_script,
-    ModelDownloadRequest, ServeRequest,
+    _append_serve_exit_code_lines, _cached_model_scan_script, _ollama_bind_from_cmd,
+    _pip_install_fallback_chain, ModelDownloadRequest, ServeRequest,
 )
 
 _HF_TOKEN_STATUS_SNIPPET = (
@@ -149,6 +149,15 @@ def setup_cookbook_routes() -> APIRouter:
                 [{"label": "clear Cookbook GPU selection or choose available GPUs", "op": "settings", "field": "gpus", "value": ""}],
             ),
             (
+                r"Failed to infer device type|NVML Shared Library Not Found|No module named 'amdsmi'|platform is not available",
+                "vLLM could not find a supported GPU (CUDA or ROCm). "
+                "This machine may have integrated or unsupported graphics only.",
+                [
+                    {"label": "switch to llama.cpp (CPU/Metal, works without a discrete GPU)", "op": "manual"},
+                    {"label": "switch to Ollama (CPU/Metal, works without a discrete GPU)", "op": "manual"},
+                ],
+            ),
+            (
                 r"vllm.*command not found|No module named vllm|ERROR: vLLM is not installed",
                 "vLLM is not installed or not in PATH on this server.",
                 [{"label": "install vLLM in Cookbook Dependencies", "op": "dependency", "package": "vllm"}],
@@ -162,6 +171,11 @@ def setup_cookbook_routes() -> APIRouter:
                 r"llama-server.*command not found|llama\.cpp.*not found|No module named.*llama_cpp|No module named 'starlette_context'|git: command not found|cmake: command not found",
                 "llama.cpp / llama-cpp-python dependencies are missing.",
                 [{"label": "install llama.cpp dependencies or llama-cpp-python[server]", "op": "dependency", "package": "llama-cpp-python[server]"}],
+            ),
+            (
+                r"No GGUF found on this host|no \.gguf file|No GGUF file found",
+                "No GGUF file found for this model on this host. The llama.cpp backend needs a .gguf file.",
+                [{"label": "download a GGUF build of this model (repo name usually ends in -GGUF, file like Q4_K_M.gguf)", "op": "manual"}],
             ),
             (
                 r"No module named 'torch'|No module named torch|No module named 'diffusers'|No module named diffusers",
@@ -432,12 +446,12 @@ def setup_cookbook_routes() -> APIRouter:
         # throughput. Retries set disable_hf_transfer to fall back to the plain,
         # slower-but-reliable downloader (resumes cleanly from the .incomplete files).
         # Use `python3 -m pip` not `pip` — macOS has no bare `pip` command.
-        lines.append("command -v hf >/dev/null 2>&1 || python3 -m pip install --user --break-system-packages -q -U huggingface_hub 2>/dev/null || python3 -m pip install -q -U huggingface_hub 2>/dev/null")
+        lines.append(f"command -v hf >/dev/null 2>&1 || {_pip_install_fallback_chain('huggingface_hub', upgrade=True)}")
         if req.disable_hf_transfer:
             lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
             lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
         else:
-            lines.append("python3 -c 'import hf_transfer' 2>/dev/null || python3 -m pip install --user --break-system-packages -q hf_transfer 2>/dev/null || python3 -m pip install -q hf_transfer 2>/dev/null")
+            lines.append(f"python3 -c 'import hf_transfer' 2>/dev/null || {_pip_install_fallback_chain('hf_transfer')}")
             lines.append("python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
             lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
 
@@ -533,8 +547,8 @@ def setup_cookbook_routes() -> APIRouter:
             runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
             # Install hf CLI + hf_transfer best-effort so future runs get the fast path.
             # Use --break-system-packages on PEP-668 systems (Arch, newer Debian) so it doesn't bail.
-            runner_lines.append("command -v hf >/dev/null 2>&1 || pip install --user --break-system-packages -q -U huggingface_hub 2>/dev/null || pip install -q -U huggingface_hub 2>/dev/null")
-            runner_lines.append("python3 -c 'import hf_transfer' 2>/dev/null || pip install --user --break-system-packages -q hf_transfer 2>/dev/null || pip install -q hf_transfer 2>/dev/null")
+            runner_lines.append(f"command -v hf >/dev/null 2>&1 || {_pip_install_fallback_chain('huggingface_hub', python_cmd='pip', upgrade=True)}")
+            runner_lines.append(f"python3 -c 'import hf_transfer' 2>/dev/null || {_pip_install_fallback_chain('hf_transfer', python_cmd='pip')}")
             runner_lines.append("python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
             runner_lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
             # Surface whether the HF token actually reached THIS server, so a gated
@@ -672,11 +686,14 @@ def setup_cookbook_routes() -> APIRouter:
                 cwd=str(Path.home()),
             )
         else:
-            # LOCAL scan: run the interpreter directly. `python3` isn't a thing on
-            # Windows (it's `python`/`py`), and shell single-quoting of the path
-            # doesn't survive cmd.exe — so resolve the interpreter and exec it
-            # with the script path as an argv element (no shell quoting needed).
-            local_py = (
+            # LOCAL scan: use sys.executable (the venv Python Odysseus is already
+            # running under) — it's guaranteed real Python on all platforms.
+            # Falling back to which_tool on Windows risks hitting the Microsoft
+            # Store stub alias for "python3"/"python", which prints
+            # "Python was not found; run without arguments to install from the
+            # Microsoft Store" and exits 9009, producing empty stdout and a
+            # JSON parse error. sys.executable bypasses PATH entirely.
+            local_py = sys.executable or (
                 which_tool("python3") or which_tool("python")
                 or which_tool("py") or "python"
             )
@@ -710,6 +727,12 @@ def setup_cookbook_routes() -> APIRouter:
                     entry["is_local_dir"] = True
                 if m.get("is_gguf"):
                     entry["is_gguf"] = True
+                if m.get("backend"):
+                    entry["backend"] = m.get("backend")
+                if m.get("is_ollama"):
+                    entry["is_ollama"] = True
+                if isinstance(m.get("gguf_files"), list):
+                    entry["gguf_files"] = m["gguf_files"]
                 models.append(entry)
         except Exception as e:
             logger.warning(f"Failed to parse cached models: {e}")
@@ -901,6 +924,7 @@ def setup_cookbook_routes() -> APIRouter:
             # Show whether the HF token reached this server (masked) — a gated
             # model vLLM has to download will be denied without it.
             runner_lines.append(_HF_TOKEN_STATUS_SNIPPET)
+            handled_ollama_serve = False
             # Auto-install inference engine if missing
             if "llama_cpp" in req.cmd or "llama-server" in req.cmd:
                 # Prefer the NATIVE llama-server binary — its minja templating
@@ -952,13 +976,23 @@ def setup_cookbook_routes() -> APIRouter:
                 # failed CUDA attempt) doesn't cause the next configure to reuse
                 # stale settings and silently produce a CPU-only binary.
                 runner_lines.append('    cd ~/llama.cpp && rm -rf build')
+                runner_lines.append('    _ody_has_cuda_runtime=0')
                 runner_lines.append('    if command -v nvcc &>/dev/null; then')
+                runner_lines.append('      for _cudalib in "${CUDA_HOME:-}/lib64"/libcudart.so* "${CUDA_HOME:-}/lib"/libcudart.so* /usr/local/cuda/lib64/libcudart.so* /usr/lib*/libcudart.so*; do')
+                runner_lines.append('        [ -e "$_cudalib" ] && _ody_has_cuda_runtime=1 && break')
+                runner_lines.append('      done')
+                runner_lines.append('    fi')
+                runner_lines.append('    if command -v nvcc &>/dev/null && [ "$_ody_has_cuda_runtime" = "1" ]; then')
                 runner_lines.append('      echo "[odysseus] CUDA nvcc found — building llama-server with CUDA (GPU) support..."')
                 runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON \\')
                 runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\')
                 runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
                 runner_lines.append('    else')
-                runner_lines.append('      echo "[odysseus] WARNING: nvcc not found — building llama-server for CPU only."')
+                runner_lines.append('      if command -v nvcc &>/dev/null; then')
+                runner_lines.append('        echo "[odysseus] WARNING: nvcc found but CUDA runtime library was not found — building llama-server for CPU only."')
+                runner_lines.append('      else')
+                runner_lines.append('        echo "[odysseus] WARNING: nvcc not found — building llama-server for CPU only."')
+                runner_lines.append('      fi')
                 runner_lines.append('      echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
                 runner_lines.append('      echo "[odysseus]   To get a GPU build, first install vLLM via Cookbook -> Dependencies"')
                 runner_lines.append('      echo "[odysseus]   (its CUDA wheels include nvcc), then re-launch this serve task."')
@@ -970,21 +1004,62 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  # If the native build failed, fall back to the Python bindings.')
                 runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
                 runner_lines.append('    echo "llama-server build failed — installing Python bindings as fallback..."')
-                runner_lines.append('    pip install --user --break-system-packages -q llama-cpp-python 2>/dev/null || pip install -q llama-cpp-python 2>/dev/null || true')
+                runner_lines.append(f"    {_pip_install_fallback_chain('llama-cpp-python', python_cmd='pip')} || true")
+                runner_lines.append('  fi')
+                runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
+                runner_lines.append('    echo "ERROR: llama.cpp serving is not available after install/build attempts."')
+                runner_lines.append('    ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('  fi')
                 runner_lines.append('fi')
             elif "ollama" in req.cmd:
-                # Ollama manages its own model store and HTTP server. Just make
-                # sure the binary exists and the daemon is up before running the
-                # command (the natural serving engine on Apple Silicon / Metal).
+                handled_ollama_serve = True
+                _ollama_default_host = "0.0.0.0" if remote else "127.0.0.1"
+                _ollama_host, _ollama_port = _ollama_bind_from_cmd(
+                    req.cmd,
+                    default_host=_ollama_default_host,
+                )
+                # Ollama can be a host binary, a system service, or a Docker
+                # container. If the HTTP API is already reachable, the model is
+                # already served and we should not require a host `ollama` CLI.
+                runner_lines.append(f'ODYSSEUS_OLLAMA_HOST={_bash_squote(_ollama_host)}')
+                runner_lines.append(f'ODYSSEUS_OLLAMA_PORT="{_ollama_port}"')
+                runner_lines.append('ODYSSEUS_OLLAMA_URL=""')
+                runner_lines.append('for _ody_ollama_port in "$ODYSSEUS_OLLAMA_PORT" 11434; do')
+                runner_lines.append('  [ -z "$_ody_ollama_port" ] && continue')
+                runner_lines.append('  for _ody_ollama_host in 127.0.0.1 localhost host.docker.internal; do')
+                runner_lines.append('    _ody_ollama_url="http://${_ody_ollama_host}:${_ody_ollama_port}"')
+                runner_lines.append('    if curl -sf "$_ody_ollama_url/api/tags" >/dev/null 2>&1; then')
+                runner_lines.append('      ODYSSEUS_OLLAMA_URL="$_ody_ollama_url"')
+                runner_lines.append('      ODYSSEUS_OLLAMA_PORT="$_ody_ollama_port"')
+                runner_lines.append('      break 2')
+                runner_lines.append('    fi')
+                runner_lines.append('  done')
+                runner_lines.append('done')
+                runner_lines.append('if [ -n "$ODYSSEUS_OLLAMA_URL" ]; then')
+                runner_lines.append('  if [ "$ODYSSEUS_OLLAMA_PORT" != "' + _ollama_port + '" ]; then')
+                runner_lines.append('    echo "[odysseus] Selected Ollama port ' + _ollama_port + ' was not reachable; using running Ollama on port ${ODYSSEUS_OLLAMA_PORT}."')
+                runner_lines.append('  fi')
+                runner_lines.append('  echo "[odysseus] Ollama API ready on port ${ODYSSEUS_OLLAMA_PORT}: ${ODYSSEUS_OLLAMA_URL}"')
+                runner_lines.append('  echo "[odysseus] This task is monitoring an existing Ollama server; stopping it here will not stop an external Docker/system service."')
+                runner_lines.append('  exec bash -i')
+                runner_lines.append('fi')
                 runner_lines.append('if ! command -v ollama &>/dev/null; then')
-                runner_lines.append('  echo "ERROR: Ollama not found. Install it (macOS: brew install ollama, or https://ollama.com/download), then launch again."')
-                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+                runner_lines.append('  echo "ERROR: Ollama not found and no Ollama API is reachable on 127.0.0.1, localhost, or host.docker.internal (ports ${ODYSSEUS_OLLAMA_PORT}/11434)."')
+                runner_lines.append('  echo "Install Ollama, start an Ollama service/container on this server, or pick the port where it is already listening."')
+                runner_lines.append('  echo')
+                runner_lines.append('  echo "=== Process exited with code 127 ==="')
+                runner_lines.append('  exec bash -i')
                 runner_lines.append('fi')
-                runner_lines.append('if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then')
-                runner_lines.append('  echo "Starting ollama server..."; (ollama serve >/dev/null 2>&1 &)')
-                runner_lines.append('  for _ in 1 2 3 4 5 6 7 8 9 10; do curl -sf http://localhost:11434/api/tags >/dev/null 2>&1 && break; sleep 1; done')
-                runner_lines.append('fi')
+                runner_lines.append('ODYSSEUS_OLLAMA_URL="http://${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}"')
+                if remote and _ollama_host in ("0.0.0.0", "::"):
+                    runner_lines.append('echo "[odysseus] WARNING: remote Ollama will bind to ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT} so Odysseus can reach it from this host."')
+                    runner_lines.append('echo "[odysseus] Ollama has no built-in authentication; expose this only on a trusted LAN/VPN or provide an explicit OLLAMA_HOST with your own access controls."')
+                runner_lines.append('echo "Starting ollama server on ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}..."')
+                runner_lines.append('OLLAMA_HOST="${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}" ollama serve')
+                runner_lines.append('_ody_exit=$?')
+                runner_lines.append('echo')
+                runner_lines.append('echo "=== Process exited with code ${_ody_exit} ==="')
+                runner_lines.append('exec bash -i')
             elif "vllm serve" in req.cmd:
                 # vLLM is CUDA/ROCm-only and does not run on macOS at all.
                 runner_lines.append('if [ "$(uname -s)" = "Darwin" ]; then')
@@ -996,34 +1071,40 @@ def setup_cookbook_routes() -> APIRouter:
                 # find the `vllm` CLI ("command not found"). Mirrors llama.cpp above.
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! command -v vllm &>/dev/null; then')
-                runner_lines.append('  echo "ERROR: vLLM is not installed. Open Cookbook -> Dependencies and install vllm on this server, then launch again."')
+                runner_lines.append('  echo "ERROR: vLLM is not installed."')
                 runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
             elif "sglang.launch_server" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
-                runner_lines.append('if ! python3 -c "import sglang" 2>/dev/null; then')
-                runner_lines.append('  echo "ERROR: SGLang is not installed. Open Cookbook -> Dependencies and install sglang on this server, then launch again."')
+                runner_lines.append('if ! command -v sglang &>/dev/null; then')
+                runner_lines.append('  echo "ERROR: SGLang is not installed."')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+                runner_lines.append('elif ! ODYSSEUS_SGLANG_IMPORT_ERROR="$(python3 -c "import sglang" 2>&1)"; then')
+                runner_lines.append('  echo "ERROR: SGLang is installed but failed to import."')
+                runner_lines.append('  printf "%s\\n" "$ODYSSEUS_SGLANG_IMPORT_ERROR"')
                 runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
             elif "scripts/diffusion_server.py" in req.cmd or ".diffusion_server.py" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
-                runner_lines.append('if ! python3 -c "import torch, diffusers" 2>/dev/null; then')
-                runner_lines.append('  echo "ERROR: Diffusion serving requires PyTorch + diffusers. Open Cookbook -> Dependencies and install diffusers on this server, then launch again."')
+                runner_lines.append('if ! ODYSSEUS_DIFFUSION_IMPORT_ERROR="$(python3 -c "import torch, diffusers" 2>&1)"; then')
+                runner_lines.append('  echo "ERROR: Diffusion serving requires PyTorch + diffusers."')
+                runner_lines.append('  printf "%s\\n" "$ODYSSEUS_DIFFUSION_IMPORT_ERROR"')
                 runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
 
-            _append_serve_preflight_exit_lines(
-                runner_lines,
-                keep_shell_open=not local_windows,
-            )
-            runner_lines.append(req.cmd)
-            if local_windows:
-                # Detached background process — no interactive shell to keep open.
-                # Print the exit marker the status poller looks for, then stop.
-                _append_serve_exit_code_lines(runner_lines, keep_shell_open=False)
-            else:
-                # Keep shell open after exit so user can see errors
-                _append_serve_exit_code_lines(runner_lines, keep_shell_open=True)
+            if not handled_ollama_serve:
+                _append_serve_preflight_exit_lines(
+                    runner_lines,
+                    keep_shell_open=not local_windows,
+                )
+                runner_lines.append(req.cmd)
+                if local_windows:
+                    # Detached background process — no interactive shell to keep open.
+                    # Print the exit marker the status poller looks for, then stop.
+                    _append_serve_exit_code_lines(runner_lines, keep_shell_open=False)
+                else:
+                    # Keep shell open after exit so user can see errors
+                    _append_serve_exit_code_lines(runner_lines, keep_shell_open=True)
 
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
             runner_path.write_text("\n".join(runner_lines) + "\n", encoding="utf-8")
@@ -1320,9 +1401,16 @@ def setup_cookbook_routes() -> APIRouter:
             total_mb = max(0, int(total_bytes / (1024 * 1024)))
             used_mb = max(0, min(total_mb, int(used_bytes / (1024 * 1024))))
             free_mb = max(0, total_mb - used_mb)
+            # GTT = the system-RAM pool the GPU pages into when VRAM is full.
+            # On a discrete card a large gtt_used means the model spilled past
+            # VRAM into RAM over PCIe — much slower. Surface it so the UI can
+            # warn "spilling to RAM" instead of the user wondering why it's slow.
+            gtt_used_raw = await _gpu_read_file(f"{base}/mem_info_gtt_used", host, ssh_port)
+            gtt_used_mb = max(0, int(int(gtt_used_raw) / (1024 * 1024))) if (gtt_used_raw and gtt_used_raw.isdigit()) else 0
             gpus.append({
                 "index": len(gpus), "name": name, "uuid": entry,
                 "free_mb": free_mb, "total_mb": total_mb, "used_mb": used_mb,
+                "gtt_used_mb": gtt_used_mb,
                 "util_pct": 0, "busy": bool(total_mb and (free_mb / total_mb) < 0.85),
                 "processes": [], "backend": "rocm", "source": "amd-sysfs",
                 "unified_memory": unified,
@@ -1423,6 +1511,46 @@ def setup_cookbook_routes() -> APIRouter:
 
         if gpus:
             return {"ok": True, "gpus": gpus, "backend": "cuda", "source": "nvidia-smi"}
+
+        # Local Apple Silicon / Metal fallback. macOS has no nvidia-smi and no
+        # Linux /sys/class/drm tree, but services.hwfit.hardware already knows
+        # how to size the shared unified-memory GPU budget. Keep this route in
+        # sync so Cookbook's GPU picker doesn't show "nvidia-smi not found" on
+        # native Mac launches.
+        if not host and sys.platform == "darwin":
+            try:
+                from services.hwfit.hardware import detect_system
+                info = detect_system(fresh=True)
+                backend = str(info.get("backend") or "").lower()
+                if backend in {"metal", "mps", "apple"} and info.get("gpu_count", 0) > 0:
+                    total_mb = int(float(info.get("gpu_vram_gb") or info.get("total_ram_gb") or 0) * 1024)
+                    free_mb = int(float(info.get("available_ram_gb") or 0) * 1024)
+                    if total_mb and (free_mb <= 0 or free_mb > total_mb):
+                        free_mb = total_mb
+                    used_mb = max(0, total_mb - max(0, free_mb))
+                    return {
+                        "ok": True,
+                        "gpus": [{
+                            "index": 0,
+                            "name": info.get("gpu_name") or info.get("cpu_name") or "Apple Silicon GPU",
+                            "uuid": "apple-metal-0",
+                            "free_mb": max(0, free_mb),
+                            "total_mb": max(0, total_mb),
+                            "used_mb": used_mb,
+                            "util_pct": 0,
+                            "busy": bool(total_mb and (free_mb / total_mb) < 0.5),
+                            "processes": [],
+                            "backend": "metal",
+                            "source": "apple-metal",
+                            "unified_memory": True,
+                        }],
+                        "backend": "metal",
+                        "source": "apple-metal",
+                        "fallback_from": "nvidia-smi",
+                        "nvidia_error": nvidia_error,
+                    }
+            except Exception as e:
+                logger.warning("Apple Metal GPU fallback failed: %s", e)
 
         amd_gpus = await _probe_amd_sysfs(host, ssh_port)
         if amd_gpus:
@@ -1861,14 +1989,21 @@ def setup_cookbook_routes() -> APIRouter:
             # persists after the process exits, so a finished download still has a
             # snapshot to classify (DOWNLOAD_OK / exit marker) — evaluate it even
             # when the PID is gone instead of blindly reporting "stopped".
+            download_zero_files = False
             status = "unknown"
             if is_alive or (local_win_task and full_snapshot):
                 lower = full_snapshot.lower()
-                has_exit = "=== process exited with code" in lower
+                exit_match = re.search(r"=== process exited with code\s+(-?\d+)", full_snapshot, re.I)
+                has_exit = exit_match is not None
+                exit_code = int(exit_match.group(1)) if exit_match else None
                 has_error = "error" in lower or "failed" in lower or "traceback" in lower
                 if has_exit and task_type == "serve":
                     # Serve tasks that exit are always errors — they should run indefinitely
                     status = "error"
+                elif has_exit and task_type == "download":
+                    # Dependency installs are tracked as download tasks but only
+                    # emit the generic runner exit marker, not HF download markers.
+                    status = "completed" if exit_code == 0 else "error"
                 elif has_exit and "unrecognized arguments" in lower:
                     status = "error"
                 elif has_error and not ("application startup complete" in lower):
@@ -1877,7 +2012,11 @@ def setup_cookbook_routes() -> APIRouter:
                     # Only download tasks treat 100% as "completed".
                     # Serve tasks log 100%|██████| during inference progress
                     # (diffusion sampling, etc.) — that's "running", not done.
-                    status = "completed"
+                    if re.search(r"Fetching\s+0\s+files", full_snapshot, re.IGNORECASE):
+                        status = "error"
+                        download_zero_files = True
+                    else:
+                        status = "completed"
                 elif "application startup complete" in lower:
                     status = "ready"
                 elif not is_alive:
@@ -1897,6 +2036,8 @@ def setup_cookbook_routes() -> APIRouter:
             diagnosis = _diagnose_serve_output(full_snapshot) if task_type == "serve" and full_snapshot else None
             if diagnosis and status in {"running", "unknown", "stopped"}:
                 status = "error"
+            if download_zero_files:
+                diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
             output_tail = "\n".join(full_snapshot.splitlines()[-12:]) if full_snapshot else ""
 
             results.append({

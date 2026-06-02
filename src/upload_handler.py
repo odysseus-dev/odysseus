@@ -128,7 +128,8 @@ class UploadHandler:
     def is_document_file(self, filename: str, content_type: str = None) -> bool:
         """Check if a file is a document based on extension or content type."""
         document_extensions = {
-            '.pdf', '.docx', '.txt', '.py', '.js', '.html', '.htm', 
+            '.pdf', '.docx', '.xlsx', '.pptx', '.xls', '.epub',
+            '.txt', '.py', '.js', '.html', '.htm',
             '.css', '.json', '.md', '.csv', '.log', '.xml', '.yml', 
             '.yaml', '.sql', '.sh', '.bash', '.c', '.cpp', '.h', 
             '.java', '.go', '.rs', '.php', '.rb', '.ts', '.jsx', '.tsx'
@@ -136,6 +137,10 @@ class UploadHandler:
         document_mime_types = {
             'application/pdf', 
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/vnd.ms-excel',
+            'application/epub+zip',
             'text/plain'
         }
         

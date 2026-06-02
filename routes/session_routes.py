@@ -11,12 +11,12 @@ from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, effective_user
 
 
 def _verify_session_owner(request: Request, session_id: str):
     """Verify the current user owns the session. Raises 404 if not."""
-    user = get_current_user(request)
+    user = effective_user(request)
     if not user:
         raise HTTPException(403, "Authentication required")
     db = SessionLocal()
@@ -63,7 +63,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     
     @router.get("/sessions")
     def list_sessions(request: Request):
-        user = get_current_user(request)
+        user = effective_user(request)
         # Lazy purge: incognito sessions are ephemeral by design — wipe leftovers
         # from the DB and session_manager so they vanish on the next page refresh.
         # BUT: skip sessions that were created within the last 10 minutes.
@@ -217,7 +217,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 model_to_use = found
         
         sid = str(uuid.uuid4())
-        user = get_current_user(request)
+        user = effective_user(request)
         session = session_manager.create_session(
             session_id=sid,
             name=name or "",
@@ -499,7 +499,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     @router.get("/sessions/archived")
     def list_archived_sessions(request: Request, search: str = "", offset: int = 0, limit: int = 20, sort: str = "recent", model: str = ""):
         """List archived sessions for the archive browser."""
-        user = get_current_user(request)
+        user = effective_user(request)
         db = SessionLocal()
         try:
             q = db.query(DbSession).filter(DbSession.archived == True)
@@ -635,7 +635,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     
     @router.post("/sessions/save")
     def sessions_save_now(request: Request):
-        user = get_current_user(request)
+        user = effective_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
         session_manager.save_sessions()
@@ -651,7 +651,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         if not OPENAI_API_KEY:
             raise HTTPException(400, "Server missing OPENAI_API_KEY")
         sid = str(uuid.uuid4())
-        user = get_current_user(request)
+        user = effective_user(request)
         session = session_manager.create_session(
             session_id=sid,
             name="",
@@ -791,7 +791,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         users can clean junk without spending tokens.
         """
         from src.llm_core import llm_call
-        user = get_current_user(request)
+        user = effective_user(request)
         user_sessions = session_manager.get_sessions_for_user(user)
 
         # Delete empty and throwaway sessions before sorting

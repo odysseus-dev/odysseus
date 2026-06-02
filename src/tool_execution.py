@@ -373,7 +373,7 @@ async def _direct_fallback(
             return {"output": output or "(no output)", "exit_code": rc or 0}
 
         if tool == "read_file":
-            path = content.split("\n", 1)[0].strip()
+            path = os.path.expanduser(content.split("\n", 1)[0].strip())
             if not path:
                 return {"error": "read_file: path required", "exit_code": 1}
             try:
@@ -395,7 +395,7 @@ async def _direct_fallback(
 
         if tool == "write_file":
             lines = content.split("\n", 1)
-            path = lines[0].strip()
+            path = os.path.expanduser(lines[0].strip())
             body = lines[1] if len(lines) > 1 else ""
             if not path:
                 return {"error": "write_file: path required", "exit_code": 1}
@@ -502,6 +502,11 @@ async def _direct_fallback(
                 )
             except asyncio.TimeoutError:
                 return {"error": f"web_fetch: timed out fetching {url}", "exit_code": 1}
+            except Exception as e:
+                # Direct URL fetches can hit bot protection / auth walls
+                # (e.g. eBay 403). Treat that as a tool failure the model can
+                # reason around, not an uncaught chat-stream 500.
+                return {"error": f"web_fetch: {url}: {e}", "exit_code": 1}
             err = result.get("error")
             text = (result.get("content") or "").strip()
             title = result.get("title") or ""
@@ -651,15 +656,15 @@ async def execute_tool_block(
     elif tool == "create_document":
         title = content.split("\n")[0].strip()[:60]
         desc = f"create_document: {title}"
-        result = await do_create_document(content, session_id=session_id)
+        result = await do_create_document(content, session_id=session_id, owner=owner)
     elif tool == "update_document":
         desc = f"update_document: {content.split(chr(10))[0][:60]}"
-        result = await do_update_document(content)
+        result = await do_update_document(content, owner=owner)
     elif tool == "edit_document":
-        result = await do_edit_document(content)
+        result = await do_edit_document(content, owner=owner)
         desc = f"edit_document: {result.get('title', '')}"
     elif tool == "suggest_document":
-        result = await do_suggest_document(content)
+        result = await do_suggest_document(content, owner=owner)
         desc = f"suggest_document: {result.get('count', 0)} suggestions"
     elif tool == "search_chats":
         query = content.split("\n")[0].strip()
@@ -783,7 +788,7 @@ async def execute_tool_block(
             result = {"error": "MCP manager not available", "exit_code": 1}
     else:
         desc = f"unknown: {tool}"
-        result = {"error": f"Unknown tool type: {tool}"}
+        result = {"error": f"Unknown tool type: {tool}", "exit_code": 1}
 
     logger.info(f"Tool executed: {desc} -> exit_code={result.get('exit_code', 'n/a')}")
     return desc, result

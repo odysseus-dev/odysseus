@@ -26,6 +26,25 @@ MAX_MESSAGE_LEN = 32_000
 from core.middleware import require_admin as _require_admin
 
 
+def _caller_owns_session(sess_owner, caller) -> bool:
+    """Strict session-ownership gate for the token-authenticated sync-chat
+    endpoint (`POST /api/v1/chat`).
+
+    Mirrors ``_verify_session_owner`` in session_routes.py and the null-owner
+    gates in notes/calendar/gallery: a caller may resume a session ONLY when
+    its owner matches them exactly. A null/empty session owner (legacy or
+    migrated rows) is deliberately NOT resumable by an arbitrary token — the
+    old ``sess_owner and sess_owner != caller`` form skipped the check whenever
+    ``sess_owner`` was falsy, so any chat-scoped token (e.g. a paired mobile
+    device) could resume such a session, inject a message, and read back its
+    history and reuse the owner's endpoint credentials. Fail closed: an
+    unresolvable caller also returns False.
+    """
+    if not caller:
+        return False
+    return sess_owner == caller
+
+
 def setup_webhook_routes(
     webhook_manager: WebhookManager,
     auth_manager,
@@ -228,8 +247,11 @@ def setup_webhook_routes(
                 _tok_user = token_owner or getattr(request.state, "user", None) or _gcu(request)
             except Exception:
                 _tok_user = None
+            # Strict ownership (see _caller_owns_session): fail closed so a
+            # null-owner / cross-owner session can't be resumed by an arbitrary
+            # chat-scoped token.
             _sess_owner = getattr(sess, "owner", None)
-            if _tok_user and _sess_owner and _sess_owner != _tok_user:
+            if not _caller_owns_session(_sess_owner, _tok_user):
                 raise HTTPException(404, "Session not found")
 
         # --- Case 2: Direct API key + model (no pre-configured endpoint needed) ---

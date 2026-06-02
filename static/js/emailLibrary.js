@@ -532,6 +532,15 @@ function _publishActiveAccount() {
       || accts.find(a => a && a.is_default)
       || accts[0];
     window._myEmailAddress = (active && (active.from_address || active.imap_user)) || '';
+    // Also publish every configured address so reply-all can exclude all of
+    // the user's own mailboxes, not just the active one (multi-account users
+    // were getting their other addresses added to Cc).
+    const all = [];
+    for (const a of accts) {
+      if (a && a.from_address) all.push(a.from_address);
+      if (a && a.imap_user) all.push(a.imap_user);
+    }
+    window._myEmailAddresses = all;
   } catch (_) {}
 }
 

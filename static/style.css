@@ -265,7 +265,9 @@ body.bg-pattern-sparkles {
       transform: translateY(calc(-50% - 2px));
       font-size: 0.75em;
       line-height: 1;
-      color: color-mix(in srgb, var(--fg) 40%, transparent);
+      /* 70% mix keeps the chat title clearly above the WCAG AA 4.5:1
+         contrast threshold (40% only reached ~2.8:1). */
+      color: color-mix(in srgb, var(--fg) 70%, transparent);
       white-space: nowrap;
       display: flex;
       align-items: center;
@@ -1251,21 +1253,21 @@ body.bg-pattern-sparkles {
        for ~700ms), the .list-item children cascade in one after another,
        same feel as the chat input's tools menu. Each row springs in
        from a tiny offset below + scaled-down, staggered by nth-child. */
-    .section.section-just-expanded .list-item {
+    .section.section-just-expanded :is(.list-item, .models-row) {
       animation: section-domino-in 0.36s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
     }
-    .section.section-just-expanded .list-item:nth-child(1)  { animation-delay: 0.04s; }
-    .section.section-just-expanded .list-item:nth-child(2)  { animation-delay: 0.08s; }
-    .section.section-just-expanded .list-item:nth-child(3)  { animation-delay: 0.12s; }
-    .section.section-just-expanded .list-item:nth-child(4)  { animation-delay: 0.16s; }
-    .section.section-just-expanded .list-item:nth-child(5)  { animation-delay: 0.20s; }
-    .section.section-just-expanded .list-item:nth-child(6)  { animation-delay: 0.24s; }
-    .section.section-just-expanded .list-item:nth-child(7)  { animation-delay: 0.28s; }
-    .section.section-just-expanded .list-item:nth-child(8)  { animation-delay: 0.32s; }
-    .section.section-just-expanded .list-item:nth-child(9)  { animation-delay: 0.36s; }
-    .section.section-just-expanded .list-item:nth-child(10) { animation-delay: 0.40s; }
-    .section.section-just-expanded .list-item:nth-child(11) { animation-delay: 0.44s; }
-    .section.section-just-expanded .list-item:nth-child(12) { animation-delay: 0.48s; }
+    .section.section-just-expanded :is(.list-item, .models-row):nth-child(1)  { animation-delay: 0.04s; }
+    .section.section-just-expanded :is(.list-item, .models-row):nth-child(2)  { animation-delay: 0.08s; }
+    .section.section-just-expanded :is(.list-item, .models-row):nth-child(3)  { animation-delay: 0.12s; }
+    .section.section-just-expanded :is(.list-item, .models-row):nth-child(4)  { animation-delay: 0.16s; }
+    .section.section-just-expanded :is(.list-item, .models-row):nth-child(5)  { animation-delay: 0.20s; }
+    .section.section-just-expanded :is(.list-item, .models-row):nth-child(6)  { animation-delay: 0.24s; }
+    .section.section-just-expanded :is(.list-item, .models-row):nth-child(7)  { animation-delay: 0.28s; }
+    .section.section-just-expanded :is(.list-item, .models-row):nth-child(8)  { animation-delay: 0.32s; }
+    .section.section-just-expanded :is(.list-item, .models-row):nth-child(9)  { animation-delay: 0.36s; }
+    .section.section-just-expanded :is(.list-item, .models-row):nth-child(10) { animation-delay: 0.40s; }
+    .section.section-just-expanded :is(.list-item, .models-row):nth-child(11) { animation-delay: 0.44s; }
+    .section.section-just-expanded :is(.list-item, .models-row):nth-child(12) { animation-delay: 0.48s; }
     @keyframes section-domino-in {
       0%   { opacity: 0; transform: translateY(8px) translateX(-4px) scale(0.92); }
       60%  { opacity: 1; }
@@ -1279,21 +1281,21 @@ body.bg-pattern-sparkles {
        nth-last-child so the BOTTOM item leaves first and the cascade
        rolls upward — mirrors the "stacked deck" feeling of the open
        animation reversed. */
-    .section.section-just-collapsing .list-item {
+    .section.section-just-collapsing :is(.list-item, .models-row) {
       animation: section-domino-out 0.22s ease-in forwards;
     }
-    .section.section-just-collapsing .list-item:nth-last-child(1)  { animation-delay: 0.00s; }
-    .section.section-just-collapsing .list-item:nth-last-child(2)  { animation-delay: 0.025s; }
-    .section.section-just-collapsing .list-item:nth-last-child(3)  { animation-delay: 0.05s; }
-    .section.section-just-collapsing .list-item:nth-last-child(4)  { animation-delay: 0.075s; }
-    .section.section-just-collapsing .list-item:nth-last-child(5)  { animation-delay: 0.10s; }
-    .section.section-just-collapsing .list-item:nth-last-child(6)  { animation-delay: 0.125s; }
-    .section.section-just-collapsing .list-item:nth-last-child(7)  { animation-delay: 0.15s; }
-    .section.section-just-collapsing .list-item:nth-last-child(8)  { animation-delay: 0.175s; }
-    .section.section-just-collapsing .list-item:nth-last-child(9)  { animation-delay: 0.20s; }
-    .section.section-just-collapsing .list-item:nth-last-child(10) { animation-delay: 0.225s; }
-    .section.section-just-collapsing .list-item:nth-last-child(11) { animation-delay: 0.25s; }
-    .section.section-just-collapsing .list-item:nth-last-child(12) { animation-delay: 0.275s; }
+    .section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(1)  { animation-delay: 0.00s; }
+    .section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(2)  { animation-delay: 0.025s; }
+    .section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(3)  { animation-delay: 0.05s; }
+    .section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(4)  { animation-delay: 0.075s; }
+    .section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(5)  { animation-delay: 0.10s; }
+    .section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(6)  { animation-delay: 0.125s; }
+    .section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(7)  { animation-delay: 0.15s; }
+    .section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(8)  { animation-delay: 0.175s; }
+    .section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(9)  { animation-delay: 0.20s; }
+    .section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(10) { animation-delay: 0.225s; }
+    .section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(11) { animation-delay: 0.25s; }
+    .section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(12) { animation-delay: 0.275s; }
     @keyframes section-domino-out {
       0%   { opacity: 1; transform: translateY(0)   translateX(0)   scale(1); }
       100% { opacity: 0; transform: translateY(6px) translateX(-3px) scale(0.94); }
@@ -1742,6 +1744,12 @@ body.bg-pattern-sparkles {
       padding-left: max(0px, calc((100% - var(--chat-max)) / 2));
       padding-right: max(12px, calc((100% - var(--chat-max)) / 2 + 12px));
     }
+    /* Sortable Cookbook column headers had no visual cue, so users couldn't tell
+       a header was clickable (the Newest sort on the Model column was invisible).
+       Show a pointer + hover highlight, and underline the active sort column. */
+    .hwfit-header .hwfit-sortable { cursor: pointer; transition: color .12s; }
+    .hwfit-header .hwfit-sortable:hover { color: var(--fg); text-decoration: underline dotted; }
+    .hwfit-header .hwfit-sort-active { color: var(--fg); font-weight: 600; }
     /* Welcome screen — centered in available space above input bar */
     #welcome-screen {
       position:absolute;
@@ -2550,7 +2558,9 @@ body.bg-pattern-sparkles {
       background: none;
       border: 1px solid transparent;
       border-radius: 4px;
-      color: color-mix(in srgb, var(--fg) 40%, transparent);
+      /* 65% mix lifts the model label above the WCAG AA 4.5:1 threshold
+         against the dark chat-bar (40% only reached ~2.9:1). */
+      color: color-mix(in srgb, var(--fg) 65%, transparent);
       cursor: pointer;
       white-space: nowrap;
       transition: background 0.15s, color 0.15s, border-color 0.15s;
@@ -2710,6 +2720,149 @@ body.bg-pattern-sparkles {
       letter-spacing: 0.05em;
       opacity: 0.4;
       padding: 6px 8px 2px;
+    }
+    .model-picker-list .mp-section-label:first-child {
+      padding-top: 2px;
+    }
+    /* Model name takes the slack so the endpoint label + favorite dot sit on the right. */
+    .model-picker-list .model-switch-item .mp-model-name {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .model-picker-list .model-switch-item .model-switch-ep {
+      flex: 0 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 0.9em;
+      opacity: 0.45;
+    }
+    /* Keyboard navigation highlight (Arrow keys in the search box). */
+    .model-picker-list .model-switch-item.kb-active {
+      background: color-mix(in srgb, var(--red) 14%, transparent);
+    }
+    /* Inline favorite dot — always visible (works on touch), active when on. */
+    .model-picker-list .mp-fav-dot {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 24px;
+      margin: -5px -8px -5px 8px;
+      padding: 0;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      color: color-mix(in srgb, var(--fg) 22%, transparent);
+      font-family: inherit;
+      font-size: 13px;
+      line-height: 1;
+      transition: color 0.15s ease, opacity 0.15s ease, transform 0.12s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .model-picker-list .mp-fav-dot:hover {
+      color: color-mix(in srgb, var(--fg) 68%, transparent);
+    }
+    .model-picker-list .mp-fav-dot:focus-visible {
+      outline: none;
+      color: color-mix(in srgb, var(--fg) 68%, transparent);
+    }
+    .model-picker-list .mp-fav-dot.active {
+      color: var(--accent, var(--red));
+      opacity: 1;
+    }
+    .model-picker-list .mp-fav-dot.active:hover {
+      color: var(--accent, var(--red));
+      opacity: 0.72;
+    }
+    .model-picker-list .mp-fav-dot.pulse {
+      animation: mpFavPulse 0.32s ease-out;
+    }
+    @keyframes mpFavPulse {
+      0% { text-shadow: 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 0%, transparent); }
+      45% { text-shadow: 0 0 10px color-mix(in srgb, var(--accent, var(--red)) 60%, transparent); }
+      100% { text-shadow: 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 0%, transparent); }
+    }
+    /* First-run hint when a large catalog has no Recent/Favorites yet. */
+    .model-picker-list .mp-empty-hint {
+      flex-direction: column;
+      gap: 2px;
+      padding: 14px 8px;
+      text-align: center;
+    }
+    .model-picker-list .mp-empty-hint .mp-empty-title {
+      font-size: 1.05em;
+      color: color-mix(in srgb, var(--fg) 70%, transparent);
+    }
+    .model-picker-list .mp-empty-hint .mp-empty-sub {
+      font-size: 0.92em;
+      opacity: 0.7;
+    }
+    /* Provider group headers */
+    .model-picker-list .mp-provider-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      cursor: pointer;
+      font-size: 0.78em;
+      font-weight: 500;
+      color: var(--fg);
+      border-radius: 4px;
+      user-select: none;
+    }
+    .model-picker-list .mp-provider-header:hover {
+      background: color-mix(in srgb, var(--fg) 6%, transparent);
+    }
+    .model-picker-list .mp-provider-chevron {
+      display: inline-flex;
+      opacity: 0.4;
+      transition: transform 0.2s, opacity 0.15s;
+      flex-shrink: 0;
+    }
+    .model-picker-list .mp-provider-header:hover .mp-provider-chevron {
+      opacity: 0.7;
+    }
+    .model-picker-list .mp-provider-chevron.collapsed {
+      transform: rotate(-90deg);
+    }
+    .model-picker-list .mp-provider-name { flex: 1; }
+    .model-picker-list .mp-provider-count { font-size: 0.85em; opacity: 0.4; }
+    /* Domino expand (15% faster than sidebar) */
+    .mp-provider-group.mp-just-expanded .model-switch-item {
+      animation: mp-domino-in 0.31s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
+    }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(1)  { animation-delay: 0.035s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(2)  { animation-delay: 0.07s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(3)  { animation-delay: 0.105s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(4)  { animation-delay: 0.14s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(5)  { animation-delay: 0.175s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(6)  { animation-delay: 0.21s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(7)  { animation-delay: 0.245s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(8)  { animation-delay: 0.28s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(9)  { animation-delay: 0.315s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(10) { animation-delay: 0.35s; }
+    @keyframes mp-domino-in {
+      0%   { opacity: 0; transform: translateY(6px) scale(0.94); }
+      60%  { opacity: 1; }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    /* Comfortable touch targets on phones / narrow screens. */
+    @media (hover: none) and (pointer: coarse), (max-width: 768px) {
+      .model-picker-list .model-switch-item {
+        padding-top: 8px;
+        padding-bottom: 8px;
+      }
+      .model-picker-list .mp-fav-dot {
+        width: 30px;
+        height: 30px;
+        margin: -7px -8px -7px 8px;
+      }
     }
     /* Overflow "+" menu */
     .overflow-wrapper {
@@ -3367,6 +3520,33 @@ body.bg-pattern-sparkles {
       color: var(--accent-primary, var(--red));
       border-color: var(--accent-primary, var(--red));
       background: color-mix(in srgb, var(--accent-primary, var(--red)) 12%, var(--bg));
+    }
+    pre .use-code {
+      position:absolute; right:42px; top:6px;
+      background:var(--bg); color:var(--fg);
+      border:1px solid var(--border); border-radius:6px;
+      width:28px; height:28px; padding:0; cursor:pointer;
+      opacity:0; transition: opacity .15s, color .15s, border-color .15s;
+      display:flex; align-items:center; justify-content:center;
+    }
+    pre .use-code.bottom { top:auto; bottom:6px; }
+    pre:hover .use-code { opacity:0.7; }
+    pre .use-code:hover { opacity:1; }
+    pre .use-code.used {
+      opacity: 1;
+      color: var(--color-save-green, #4caf50);
+      border-color: var(--color-save-green, #4caf50);
+      background: color-mix(in srgb, var(--color-save-green, #4caf50) 18%, var(--bg));
+      animation: code-copy-pulse 0.36s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .setup-trigger-link, .setup-clickable-provider, .setup-clickable-code {
+      transition: color 0.15s ease, opacity 0.15s ease;
+    }
+    .setup-trigger-link:hover,
+    .setup-clickable-provider:hover,
+    .setup-clickable-code:hover {
+      color: var(--accent, var(--red)) !important;
+      opacity: 0.9;
     }
 
     /* Tapping the code body (not a button) toggles the overlay buttons off so
@@ -4596,6 +4776,21 @@ body.bg-pattern-sparkles {
       background-color: inherit;
     }
     .modal-header:active { cursor:grabbing; }
+    /* Edge/corner window resize (windowResize.js). While a resize is in
+       progress, suppress text selection and force the active resize cursor
+       across the whole document so it does not flicker as the pointer passes
+       over child elements mid-drag. */
+    body.window-resizing-active { user-select:none !important; }
+    body.window-resizing-active * { cursor:inherit !important; }
+    /* Suppress only TRANSITIONS while resizing so the edge tracks the cursor
+       crisply. We deliberately do NOT toggle `animation` here: toggling
+       animation off→on re-triggers the modal open-animation (a scale-in) on
+       mouseup, which both mis-measures the final size and visibly "pops" the
+       window. windowResize.js instead kills the one-shot open animation inline
+       once, in begin(). */
+    .window-resizing {
+      transition:none !important;
+    }
     /* Cookbook's modal-content is var(--bg) (inline) instead of the default
        var(--panel), so its sticky header — which defaults to var(--panel) —
        read as a different-coloured band. Match the header to the cookbook
@@ -5223,19 +5418,20 @@ body.bg-pattern-sparkles {
     #compare-model-overlay .modal-header h4 {
       pointer-events: none;
     }
-    /* Compare modal sizes to content — the global .modal-content max-height
-       + .modal-body overflow combo makes BOTH the outer card and the inner
-       body scrollable, so even when the content fits the viewport you get
-       a stray vertical scrollbar. Drop the cap and disable inner scroll
-       here; if the viewport is genuinely tiny the modal still won't exceed
-       it because it's centered and the parent .modal flex layout shrinks. */
+    /* Compare model selector: keep manually-resized/tiny windows contained.
+       Picker dropdowns are appended to document.body, so the card itself can
+       clip and scroll without cropping the dropdown list. */
     #compare-model-overlay .modal-content {
-      max-height: none;
-      overflow: visible;
+      display: flex;
+      flex-direction: column;
+      max-height: min(720px, calc(100dvh - 48px));
+      overflow: hidden;
+      min-height: 180px;
     }
     #compare-model-overlay .modal-body {
-      overflow: visible;
-      flex: 0 0 auto;
+      overflow: auto;
+      flex: 1 1 auto;
+      min-height: 0;
     }
     .vis-hint {
       font-size: 10px;
@@ -6815,6 +7011,8 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .compare-mode-tabs {
       display: flex;
       gap: 4px;
+      flex-wrap: wrap;
+      min-width: 0;
     }
     /* Type tabs match Mode toggles 1:1 (same flex column layout, same metrics) */
     .compare-mode-tab {
@@ -9574,6 +9772,69 @@ details a:hover {
   min-height: 0;
 }
 .memory-tab-panel.hidden { display: none; }
+/* Browse: bounded flex column so #memory-list gets remaining height (not 0px).
+   height:min(78vh,max-content) gives a definite cap when long, natural height
+   when short. flex-basis:auto (not 0) on the list avoids collapse in auto-sized
+   parents. Toolbar siblings are flex-shrink:0; only #memory-list grows. */
+#memory-modal .memory-modal-content:has(
+  .memory-tab-panel[data-memory-panel="browse"]:not(.hidden)
+) {
+  display: flex;
+  flex-direction: column;
+  max-height: 78vh;
+  height: min(78vh, max-content);
+  overflow: hidden;
+}
+#memory-modal .memory-modal-content:has(
+  .memory-tab-panel[data-memory-panel="browse"]:not(.hidden)
+) .modal-header,
+#memory-modal .memory-modal-content:has(
+  .memory-tab-panel[data-memory-panel="browse"]:not(.hidden)
+) .memory-tabs {
+  flex: 0 0 auto;
+}
+#memory-modal .memory-modal-content:has(
+  .memory-tab-panel[data-memory-panel="browse"]:not(.hidden)
+) .memory-modal-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+#memory-modal .memory-tab-panel[data-memory-panel="browse"] {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+#memory-modal .memory-tab-panel[data-memory-panel="browse"] > .admin-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+#memory-modal .memory-tab-panel[data-memory-panel="browse"] > .admin-card > *:not(#memory-list):not(#memory-suggestions-body) {
+  flex: 0 0 auto;
+}
+#memory-modal .memory-tab-panel[data-memory-panel="browse"] #memory-list:not(.hidden),
+#memory-modal .memory-tab-panel[data-memory-panel="browse"] #memory-suggestions-body:not(.hidden) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+#memory-modal .memory-tab-panel[data-memory-panel="browse"] #memory-suggestions-body:not(.hidden) .memory-suggestions-header {
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+}
+#memory-modal .memory-tab-panel[data-memory-panel].hidden {
+  display: none;
+}
 /* Settings cards dim + mute when their toggle is OFF (matches the
    .memory-toolbar-toggle "off" treatment elsewhere). */
 #memory-modal .memory-tab-panel[data-memory-panel="settings"] .admin-card {
@@ -9610,7 +9871,8 @@ details a:hover {
   margin: 0;
   font-size: 11px;
   line-height: 1.5;
-  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  /* 65% keeps this description text above WCAG AA 4.5:1 (50% was ~3.9:1). */
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
 }
 
 .memory-add-row {
@@ -9999,6 +10261,12 @@ textarea.memory-add-input {
   height: 20px;
   min-height: 0;
   box-sizing: border-box;
+  position: relative;
+  top: -4px;
+}
+.task-state-badge svg {
+  position: relative;
+  top: -1px;
 }
 .task-status-badge:hover {
   filter: brightness(1.08) saturate(1.15);
@@ -11151,6 +11419,17 @@ textarea.memory-add-input {
 }
 #doc-language-icon:empty { display: none; }
 #doc-language-icon svg { display: block; }
+
+/* Visually hidden but available to assistive tech (screen readers, axe).
+   Use for content that should be announced/structural but not painted —
+   e.g. the persistent page <h1>. */
+.a11y-visually-hidden {
+  position: absolute !important;
+  width: 1px !important; height: 1px !important;
+  padding: 0 !important; margin: -1px !important;
+  overflow: hidden !important; clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important; border: 0 !important;
+}
 
 /* ── Custom language type picker (replaces visible chrome of native <select>
    — <option>s can't render SVG). Hidden select stays as the source of truth. */
@@ -12929,7 +13208,9 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   font-weight: 500;
 }
 .admin-toggle-sub {
-  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  /* 65% mix keeps this helper text above WCAG AA 4.5:1 on the dark panel
+     (50% only reached ~3.9:1). */
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
   font-size: 11px;
   margin-top: 2px;
 }
@@ -16092,6 +16373,30 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .gallery-modal-content:has(#gallery-editor-container[style*="flex"]) {
   height: 92vh;
 }
+/* Photo-detail view sizing (issue #314).
+   The detail view is rendered as a `position:absolute; inset:0` overlay
+   *inside* `.gallery-images-container`, painted over the photo grid. Because
+   it's absolutely positioned it can't contribute to the container's height —
+   the container (and therefore the overlay's `inset:0` box) collapses to the
+   height of the grid sitting behind it. When the library only has a few
+   photos that grid is short, so the detail view is crushed: the image is
+   clipped and the metadata sidebar (`overflow-y:auto`) is squeezed into a
+   tiny, internally-scrolling strip. (With a large library the grid is tall,
+   which is why it looked fine in the demo video but cramped for users with
+   few photos.)
+   Fix: when the detail view is open, hide the grid-view siblings and drop the
+   overlay into normal flow. The container — and the window, up to its 92vh
+   max-height — then sizes to the detail's own content (image + metadata), so
+   nothing is clipped or squeezed regardless of how many photos exist. Scoped
+   via the detail element's inline `display:flex` so the grid / albums views
+   keep sizing to their own content. Works on both desktop and the mobile
+   full-screen sheet. */
+#gallery-images-container:has(> #gallery-detail[style*="flex"]) > *:not(#gallery-detail) {
+  display: none !important;
+}
+#gallery-images-container:has(> #gallery-detail[style*="flex"]) > #gallery-detail {
+  position: static;
+}
 /* Containing block for the photo-detail overlay — keeps it inside the body
    so it sits below the modal header and the tab strip instead of covering them. */
 .gallery-images-container { position: relative; }
@@ -17773,8 +18078,12 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-gpu-clear:disabled { opacity: 0.4; cursor: wait; }
 /* GPU probe popup — per-GPU process list with kill buttons */
 .cookbook-gpu-popup {
-  position: absolute;
-  z-index: 240;
+  /* Fixed positioning (relative to viewport) so we never get pulled into
+     a scrolling/transform stacking context from an ancestor. Z-index has
+     to clear the cookbook modal (260) and the rest of the high-z UI
+     layers (themed-confirm and various overlays sit around 9000-10000). */
+  position: fixed;
+  z-index: 10010;
   min-width: 280px;
   max-width: 420px;
   background: var(--panel, #1a1a1a);
@@ -18764,7 +19073,7 @@ body.gallery-selecting .gallery-dl-btn,
   align-items: center;
   gap: 3px;
   position: relative;
-  top: 2px;
+  top: 0;
   cursor: pointer;
   padding: 1px 6px 1px 4px;
   border-radius: 9px;
@@ -18773,22 +19082,17 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .cookbook-task-check svg { flex-shrink: 0; }
 .cookbook-task-check:hover { background: color-mix(in srgb, var(--red, #ff5555) 18%, transparent); }
-/* Shows "done" (green) normally; on hover the icon + label swap to a red ✕ /
-   "clear" to reveal it's a dismiss action. */
+/* Terminal task clear pill. */
 .cookbook-task-done-label,
 .cookbook-task-clear-label {
   font-size: 9px;
   line-height: 1;
   text-transform: lowercase;
 }
-.cookbook-task-done-label { color: var(--green, #50fa7b); }
-.cookbook-task-clear-label { display: none; color: var(--red, #ff5555); }
-.cookbook-task-check:hover .cookbook-task-done-label { display: none; }
-.cookbook-task-check:hover .cookbook-task-clear-label { display: inline; }
-/* Default: show the green check. On hover: swap to a red ✕ to signal "clear". */
-.cookbook-task-clear-ico { display: none; }
-.cookbook-task-check:hover .cookbook-task-check-ico { display: none; }
-.cookbook-task-check:hover .cookbook-task-clear-ico { display: inline; }
+.cookbook-task-done-label { color: var(--red, #ff5555); }
+.cookbook-task-clear-label { display: none; }
+.cookbook-task-check-ico { display: none; }
+.cookbook-task-clear-ico { display: inline; }
 /* "Serve" button on a finished download — green pill matching the "running" /
    finished badge (it sits next to the green FINISHED chip + check). */
 .cookbook-task-serve-btn {
@@ -19332,16 +19636,135 @@ body.gallery-selecting .gallery-dl-btn,
   border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
   border-radius: 6px;
 }
+.cookbook-diag-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  position: relative;
+  top: -4px;
+  margin-bottom: -4px;
+}
+.cookbook-diag-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-error);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-right: auto;
+}
+.cookbook-diag-fold:hover {
+  background: transparent;
+  color: var(--color-error);
+  opacity: 0.85;
+}
+.cookbook-diag-chevron {
+  display: inline-block;
+  width: 10px;
+  font-size: 10px;
+}
+.cookbook-diag-copy {
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  padding: 0 2px;
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cookbook-diag-copy:hover {
+  background: transparent;
+  color: var(--fg);
+}
+.cookbook-diag-copy.copied {
+  color: var(--green, #50fa7b);
+}
+.cookbook-diag-copy svg {
+  display: block;
+}
+.cookbook-diag-dismiss {
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  padding: 0;
+  width: 16px;
+  height: 18px;
+  min-height: 18px;
+  line-height: 16px;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  top: -2px;
+}
+.cookbook-diag-dismiss:hover {
+  background: transparent;
+  color: var(--color-error);
+}
+.cookbook-diag-body {
+  margin-top: 7px;
+}
 .cookbook-diag-message {
   font-size: 12px;
   font-weight: 600;
   color: var(--color-error);
+  margin-bottom: 4px;
+  margin-left: 2px;
+  user-select: text;
+}
+.cookbook-diag-suggestion {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--fg-muted);
   margin-bottom: 8px;
+  margin-left: 2px;
+  user-select: text;
 }
 .cookbook-diag-fixes {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+.cookbook-diag-actions {
+  position: relative;
+  display: inline-flex;
+}
+.cookbook-diag-action-trigger {
+  font-size: 11px;
+  padding: 4px 10px;
+  min-height: 24px;
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--color-error) 40%, transparent);
+  color: var(--fg);
+}
+.cookbook-diag-action-trigger:hover {
+  border-color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+}
+.cookbook-diag-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  min-width: 180px;
+  z-index: 80;
+}
+.cookbook-diag-menu button {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  white-space: nowrap;
 }
 .cookbook-diag-btn {
   font-size: 11px;
@@ -19847,6 +20270,19 @@ body.gallery-selecting .gallery-dl-btn,
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  /* Cap chip width so a long label (e.g. heterogeneous GPU group
+     "1× RTX 4090 + 1× RTX 3060") wraps to the next row instead of
+     overflowing the modal. Full text stays in the tooltip. */
+  max-width: 100%;
+}
+.hwfit-hw-chip-toggle {
+  /* Allow the chip body to truncate with an ellipsis when the chip
+     itself is capped at its container's width. Without this, the
+     toggle button keeps its intrinsic width and pushes the × button
+     off-screen on narrow viewports. */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .hwfit-hw-chip button,
 .hwfit-hw-chip-dismiss,
@@ -20108,6 +20544,22 @@ body.gallery-selecting .gallery-dl-btn,
   padding: 0;
   container-type: inline-size;
   container-name: settings-modal;
+}
+
+/* Issue #208 — anchor the Settings window to the TOP of the chat area instead
+   of vertically centering it. The base .modal uses `align-items:center`, so a
+   centered window grows and shrinks around its own midpoint when you switch
+   between tabs whose content differs in height (Add Models vs. Shortcuts,
+   etc.). That makes the in-modal nav rail — and the whole window — appear to
+   jump up and down between pages. Pinning the top edge keeps the nav rail and
+   surrounding layout visually stable; the panel only ever grows downward.
+   Desktop only: on mobile the panel is a full-height bottom sheet that is
+   already top-stable, and a margin there would push it past the viewport. The
+   drag/dock code clears this margin (sets inline margin:0) the moment a window
+   is dragged, so moving the window still works exactly as before. */
+@media (min-width: 769px) {
+  #settings-modal { align-items: flex-start; }
+  #settings-modal .settings-modal-content { margin-top: 7vh; }
 }
 
 .settings-modal-content .modal-header {
@@ -20567,6 +21019,20 @@ body:not(.welcome-ready) #welcome-screen {
      title still reads in dark mode. Lightness stays adaptive. */
   color: hsl(var(--cat-hue) 60% 60%);
 }
+.task-log-task-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-right: -3px;
+}
+.task-log-task-icon svg {
+  top: 0 !important;
+  opacity: 0.46 !important;
+}
+.task-log-row-head .task-ai-mark {
+  top: 0;
+  margin-left: -4px;
+}
 .task-log-repeat {
   font-size: 10px;
   font-weight: 500;
@@ -20621,7 +21087,7 @@ body:not(.welcome-ready) #welcome-screen {
   justify-content: center;
   cursor: pointer;
   position: relative;
-  top: -2px;
+  top: -3px;
 }
 .task-log-stop:hover {
   opacity: 1;
@@ -20640,6 +21106,7 @@ body:not(.welcome-ready) #welcome-screen {
 .task-log-row.is-skipped .task-log-row-head { padding: 0; }
 .task-log-row.is-skipped .task-log-name { font-weight: 500; }
 .task-log-row.is-skipped .task-log-skipped-reason {
+  flex: 1 1 auto;
   margin-left: 6px;
   font-style: italic;
   opacity: 0.85;
@@ -20807,7 +21274,7 @@ body:not(.welcome-ready) #welcome-screen {
 }
 .task-log-clear-cache svg {
   position: relative;
-  top: 2px;
+  top: 0;
 }
 /* Activity filter chips — toggle-out model: ON by default (solid),
    click to toggle OFF (dimmed + strikethrough) to hide that group. */
@@ -20941,6 +21408,13 @@ a.chat-link[href^="#research-"] {
    the click when hitting the inner glyph). */
 .task-card .memory-item-actions .memory-item-btn svg { pointer-events: none; }
 .task-card .task-builtin-badge { position: relative; top: -4px; }
+.task-ai-mark {
+  flex: 0 0 auto;
+  color: var(--accent, var(--red));
+  opacity: 0.78;
+  position: relative;
+  top: -4px;
+}
 /* Per-card select checkbox rides up to the title line. The "All" checkbox is
    #tasks-select-all (not .memory-select-cb), so it stays put. */
 .task-card .memory-select-cb { position: relative; top: -4px; }
@@ -20949,6 +21423,29 @@ a.chat-link[href^="#research-"] {
   .task-dropdown { min-width: 160px !important; padding: 6px !important; }
   .task-dropdown button { font-size: 13px !important; padding: 10px 12px !important; gap: 10px !important; }
   .task-dropdown button svg { width: 15px !important; height: 15px !important; }
+  .task-card .task-status-badge {
+    padding-left: 5px;
+    padding-right: 5px;
+    gap: 2px;
+    letter-spacing: 0.15px;
+  }
+  .task-card .task-state-badge {
+    width: 20px;
+    min-width: 20px;
+    height: 20px;
+    min-height: 20px;
+    padding-left: 0;
+    padding-right: 0;
+    box-sizing: border-box;
+    justify-content: center;
+  }
+  .task-card .task-state-badge .task-state-label {
+    display: none;
+  }
+  .task-card .task-card-run-btn {
+    margin-right: 1px !important;
+    top: 0;
+  }
 }
 
 .task-card-header {
@@ -28106,9 +28603,6 @@ body.notes-view .chat-container { flex: 1; min-width: 0; }
   body.notes-view .hamburger-btn {
     display: none !important;
   }
-  body.notes-view #notes-close-btn {
-    display: inline-flex !important;
-  }
 }
 /* ── Mobile notes UX ────────────────────────────────────
    Tiles become read-only previews on touch ≤768px wide.
@@ -29699,7 +30193,9 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 }
 .notes-empty-msg {
   text-align: center;
-  opacity: 0.4;
+  /* 0.4 dropped this empty-state text to ~2.8:1; 0.65 keeps it readable
+     (WCAG AA) while staying visibly secondary. */
+  opacity: 0.65;
   padding: 30px 20px;
   font-size: 11px;
 }
@@ -34455,4 +34951,69 @@ body.theme-frosted .modal {
   color: var(--fg);
   background-color: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
   transform: translateX(1px);
+}
+
+/* Slash command autocomplete popup, anchored to the message composer */
+.slash-autocomplete-popup {
+  position: fixed;
+  z-index: 9000;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  font-size: 13px;
+  color: var(--fg, #e6e6e6);
+  overflow-y: auto;
+  padding: 4px 0;
+  display: none;
+}
+.slash-ac-cat {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted, #888);
+  padding: 6px 10px 2px;
+  opacity: 0.7;
+}
+.slash-ac-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.slash-ac-row:hover { background-color: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent); }
+.slash-ac-row-sel  { background-color: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent); }
+.slash-ac-token {
+  font-family: 'Fira Code', ui-monospace, monospace;
+  color: var(--accent, var(--red));
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.slash-ac-help {
+  color: var(--fg);
+  opacity: 0.85;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.slash-ac-usage {
+  color: var(--fg-muted, #888);
+  font-family: 'Fira Code', ui-monospace, monospace;
+  font-size: 11px;
+  opacity: 0.55;
+  flex-shrink: 0;
+}
+.slash-ac-empty {
+  padding: 10px;
+  color: var(--fg-muted, #888);
+  font-style: italic;
+}
+.slash-ac-empty code {
+  font-family: 'Fira Code', ui-monospace, monospace;
+  color: var(--accent, var(--red));
 }

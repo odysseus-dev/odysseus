@@ -296,3 +296,23 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
 
         assert _probe_endpoint("https://api.anthropic.com/v1") == ANTHROPIC_MODELS
+
+def test_ollama_endpoint_error_message_includes_troubleshooting():
+    msg = model_routes._model_endpoint_error_message(
+        "http://localhost:11434/v1",
+        {"error": "Connection refused"},
+    )
+
+    assert "No Ollama models found" in msg
+    assert "Connection refused" in msg
+    assert "http://localhost:11434/v1" in msg
+    assert "ollama list" in msg
+
+
+def test_generic_endpoint_error_message_preserves_probe_error():
+    msg = model_routes._model_endpoint_error_message(
+        "https://api.example.com/v1",
+        {"error": "HTTP 401"},
+    )
+
+    assert msg == "No models found for that provider/key. Last probe error: HTTP 401."

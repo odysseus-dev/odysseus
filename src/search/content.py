@@ -130,9 +130,9 @@ def _extract_og_image(soup: BeautifulSoup) -> str:
     tag = soup.find("meta", attrs={"name": "thumbnail"})
     if tag and tag.get("content", "").strip():
         candidates.append(tag["content"].strip())
-    # Return first absolute https URL
+    # Return first absolute http(s) URL
     for url in candidates:
-        if url.startswith("https://") and not url.endswith((".svg", ".ico")):
+        if url.startswith(("https://", "http://")) and not url.endswith((".svg", ".ico")):
             return url
     return ""
 
