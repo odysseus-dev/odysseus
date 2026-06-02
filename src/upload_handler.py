@@ -50,7 +50,7 @@ class UploadHandler:
         self.max_upload_size = 10 * 1024 * 1024  # 10MB
         self.max_concurrent_uploads = 3
         self.cleanup_days = 30
-        self.upload_rate_limit = 5  # Max 5 uploads per minute per IP
+        self.upload_rate_limit = 10  # Match frontend MAX_FILES (fileHandler.js)
         self.upload_rate_window = 60  # 60 seconds
         
         # Track upload rates
