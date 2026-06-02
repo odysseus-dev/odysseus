@@ -1831,6 +1831,7 @@ function initializeEventListeners() {
         if (ownerWrap) ownerWrap.appendChild(menu);  // restore from <body> portal
       }, 400);
     }
+    window.closeOverflowMenu = closeOverflowMenu;
     // Close menu when clicking any item inside it. preventDefault on pointerdown
     // so tapping an item (e.g. Attach files) doesn't steal focus from the message
     // box — keeps the mobile keyboard up.

@@ -2219,7 +2219,13 @@ async function _cmdDemo(args, ctx) {
       advanceOnClick: true, pulseNext: true, afterDelay: 2200 },
     { sel: '#message',            text: 'Write your prompt here. Drag and drop files to attach them. <b>/prompt</b> for random prompt, <b>/help</b> for more.',
       finishLabel: true,
-      before() { document.getElementById('overflow-menu')?.classList.add('hidden'); } },
+      before() {
+        if (typeof window.closeOverflowMenu === 'function') {
+          window.closeOverflowMenu();
+        } else {
+          document.getElementById('overflow-menu')?.classList.add('hidden');
+        }
+      } },
   ];
 
   let i = 0;
