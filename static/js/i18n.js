@@ -1,4 +1,5 @@
 import {
+  createTranslationObserver,
   LANGUAGE_STORAGE_KEY,
   installLanguageSelectors,
   loadCatalog,
@@ -14,6 +15,7 @@ const state = {
   locale: 'en',
   messages: {},
 };
+let translationObserver = null;
 
 function storedLocale() {
   try {
@@ -37,6 +39,15 @@ function translatePage() {
   translateRoot(document, state.messages);
 }
 
+function translateNode(node) {
+  translateRoot(node, state.messages);
+}
+
+function installLiveTranslations() {
+  translationObserver?.disconnect?.();
+  translationObserver = createTranslationObserver(document, () => state.messages);
+}
+
 async function applyLocale(locale) {
   const available = state.locales.map((item) => item.code);
   state.locale = normalizeLocale(locale, available);
@@ -53,6 +64,7 @@ export async function initI18n() {
     state.locales = await loadLocales();
     const initial = storedLocale() || browserLocale();
     await applyLocale(initial);
+    installLiveTranslations();
   } catch (err) {
     console.warn('[i18n] Falling back to English source strings', err);
   }
@@ -62,6 +74,7 @@ window.OdysseusI18n = {
   init: initI18n,
   setLocale: applyLocale,
   t: (msgid) => lookup(state.messages, msgid),
+  translateNode,
   translatePage,
 };
 

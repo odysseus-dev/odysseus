@@ -1,4 +1,16 @@
 export const LANGUAGE_STORAGE_KEY = 'odysseus-language';
+export const I18N_SELECTOR = [
+  '[data-i18n]',
+  '[data-i18n-placeholder]',
+  '[data-i18n-title]',
+  '[data-i18n-aria-label]',
+].join(',');
+export const I18N_ATTRIBUTE_NAMES = [
+  'data-i18n',
+  'data-i18n-placeholder',
+  'data-i18n-title',
+  'data-i18n-aria-label',
+];
 
 export function lookup(messages = {}, msgid = '') {
   return messages[msgid] || msgid;
@@ -29,15 +41,45 @@ export function translateElement(element, messages = {}) {
   }
 }
 
+function hasI18nAttributes(element) {
+  return Boolean(element?.hasAttribute)
+    && I18N_ATTRIBUTE_NAMES.some((attribute) => element.hasAttribute(attribute));
+}
+
 export function translateRoot(root, messages = {}) {
-  if (!root?.querySelectorAll) return;
-  const selector = [
-    '[data-i18n]',
-    '[data-i18n-placeholder]',
-    '[data-i18n-title]',
-    '[data-i18n-aria-label]',
-  ].join(',');
-  root.querySelectorAll(selector).forEach((element) => translateElement(element, messages));
+  if (!root) return;
+  if (hasI18nAttributes(root)) translateElement(root, messages);
+  if (root.querySelectorAll) {
+    root.querySelectorAll(I18N_SELECTOR).forEach((element) => translateElement(element, messages));
+  }
+}
+
+export function createTranslationObserver(documentRef, messagesGetter) {
+  const Observer = documentRef?.defaultView?.MutationObserver || globalThis.MutationObserver;
+  if (!documentRef?.body || !Observer) return null;
+
+  const observer = new Observer((mutations) => {
+    const messages = messagesGetter();
+    const seen = new Set();
+    const translateNode = (node) => {
+      if (node?.nodeType !== 1 || seen.has(node)) return;
+      seen.add(node);
+      translateRoot(node, messages);
+    };
+
+    mutations.forEach((mutation) => {
+      if (mutation.type === 'attributes') translateNode(mutation.target);
+      mutation.addedNodes?.forEach(translateNode);
+    });
+  });
+
+  observer.observe(documentRef.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: I18N_ATTRIBUTE_NAMES,
+  });
+  return observer;
 }
 
 export async function loadCatalog(locale, fetcher = fetch) {
