@@ -15,7 +15,7 @@ def _detect_question_type(query: str) -> Optional[str]:
     """Return the leading question word if present (who, what, when, where, why, how)."""
     q = query.strip().lower()
     for word in ("who", "what", "when", "where", "why", "how"):
-        if q.startswith(word):
+        if q == word or q.startswith(word + " "):
             return word
     return None
 
