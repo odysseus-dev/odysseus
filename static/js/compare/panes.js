@@ -7,6 +7,7 @@ import {
   ICON_PLAY, ICON_CODE, SEND_SVG,
 } from './icons.js';
 import { _clearProbeWaves } from './probe.js';
+import { backendStopSession } from './backendStop.js';
 import Storage from '../storage.js';
 import uiModule from '../ui.js';
 import spinnerModule from '../spinner.js';
@@ -35,17 +36,10 @@ function _slotChar(i) { return state._parallel ? String.fromCharCode(65 + i) : S
 
 // ── Stop / reroll ──
 
-// Aborting the fetch only closes the SSE reader on the client; the run is
-// detached server-side, so the model keeps generating tokens upstream (e.g. in
-// LM Studio) until we tell the backend to cancel it (issue #1508). Mirror the
-// main chat Stop button: POST /api/chat/stop/<sid> for the pane's session.
+// Cancel the detached server-side run for a pane's session (issue #1508) —
+// see backendStop.js. Shared with index.js (close) and stream.js (idle timeout).
 function _backendStopPane(paneIdx) {
-  const sid = state._paneSessionIds && state._paneSessionIds[paneIdx];
-  if (sid) {
-    fetch(`/api/chat/stop/${encodeURIComponent(sid)}`, {
-      method: 'POST', credentials: 'same-origin',
-    }).catch(() => {});
-  }
+  backendStopSession(state._paneSessionIds && state._paneSessionIds[paneIdx]);
 }
 
 function stopAll() {

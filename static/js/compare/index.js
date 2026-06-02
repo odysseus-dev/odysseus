@@ -30,6 +30,7 @@ import {
 } from './panes.js';
 import { handleVote, buildVoteBar, addFinishBadge, spawnConfetti, _saveVote, registerCompareActions } from './vote.js';
 import { showScoreboard } from './scoreboard.js';
+import { backendStopSession } from './backendStop.js';
 
 // ── External dependency imports ──
 import Storage from '../storage.js';
@@ -116,8 +117,13 @@ async function toggleMode() {
 // ────────────────────────────────────────────────────────────────────────────
 
 async function deactivate(teardown) {
-  // Abort any in-flight streams
-  state._abortControllers.forEach(ac => { if (ac) ac.abort(); });
+  // Abort any in-flight streams. Aborting only drops the client SSE reader, so
+  // also cancel each pane's detached run server-side — otherwise closing compare
+  // mid-stream leaves the model generating (issue #1508). _paneSessionIds is
+  // still populated here; it's cleared further down.
+  state._abortControllers.forEach((ac, i) => {
+    if (ac) { ac.abort(); backendStopSession(state._paneSessionIds[i]); }
+  });
   state._abortControllers = [];
 
   // Move sessions to compare folder if saving

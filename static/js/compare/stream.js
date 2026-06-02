@@ -6,6 +6,7 @@ import markdownModule from '../markdown.js';
 import spinnerModule from '../spinner.js';
 import uiModule from '../ui.js';
 import presetsModule from '../presets.js';
+import { backendStopSession } from './backendStop.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -156,10 +157,13 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
   // Long generations (SVG, big code) are fine as long as the stream stays
   // active. opts.timeout may still tighten this for specific paths.
   const effectiveTimeout = opts.timeout || state._timeout;
-  let timeoutId = setTimeout(() => { timedOut = true; ac.abort(); }, effectiveTimeout * 1000);
+  // ac.abort() only drops the client SSE reader; also cancel the detached run
+  // server-side or the model keeps generating after an idle timeout (#1508).
+  const _onIdleTimeout = () => { timedOut = true; ac.abort(); backendStopSession(sessionId); };
+  let timeoutId = setTimeout(_onIdleTimeout, effectiveTimeout * 1000);
   const _resetIdleTimeout = () => {
     clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => { timedOut = true; ac.abort(); }, effectiveTimeout * 1000);
+    timeoutId = setTimeout(_onIdleTimeout, effectiveTimeout * 1000);
   };
 
   // Live timer
