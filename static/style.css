@@ -3585,6 +3585,7 @@ body.bg-pattern-sparkles {
     /* Tapping the code body (not a button) toggles the overlay buttons off so
        they stop covering the text on touch screens. Tap again to bring back. */
     pre.buttons-hidden .copy-code,
+    pre.buttons-hidden .download-code,
     pre.buttons-hidden .edit-code,
     pre.buttons-hidden .run-code { opacity:0 !important; pointer-events:none !important; }
 
@@ -3612,7 +3613,7 @@ body.bg-pattern-sparkles {
 
     /* Run code button — positioned left of edit button */
     pre .run-code {
-      position:absolute; right:78px; top:6px;
+      position:absolute; right:114px; top:6px;
       background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius:6px;
       width:28px; height:28px; padding:0; cursor:pointer;
