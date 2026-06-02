@@ -13,6 +13,7 @@ from dateutil.rrule import DAILY, WEEKLY, MONTHLY, YEARLY
 
 from core.database import SessionLocal, CalendarCal, CalendarEvent
 from src.auth_helpers import get_current_user, require_user
+from src.upload_limits import read_upload_limited
 
 logger = logging.getLogger(__name__)
 
@@ -1005,9 +1006,7 @@ def setup_calendar_routes() -> APIRouter:
         owner = _require_user(request)
         db = SessionLocal()
         try:
-            content = await file.read()
-            if len(content) > _ICS_MAX_BYTES:
-                raise HTTPException(413, f"ICS file too large (max {_ICS_MAX_BYTES // (1024*1024)} MB)")
+            content = await read_upload_limited(file, _ICS_MAX_BYTES, "ICS file")
             try:
                 cal_data = iCal.from_ical(content)
             except Exception as e:

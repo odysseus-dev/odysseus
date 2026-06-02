@@ -29,8 +29,11 @@ from src.llm_core import llm_call_async
 from services.memory.memory_extractor import audit_memories
 from src.auth_helpers import get_current_user, require_user
 from src.endpoint_resolver import resolve_endpoint
+from src.upload_limits import read_upload_limited
 
 logger = logging.getLogger(__name__)
+
+MEMORY_IMPORT_MAX_BYTES = int(os.getenv("ODYSSEUS_MEMORY_IMPORT_MAX_BYTES", str(10 * 1024 * 1024)))
 
 def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionManager, memory_vector=None):
     """Set up memory-related routes."""
@@ -338,8 +341,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         if not endpoint_url or not model:
             raise HTTPException(400, "No LLM model configured. Set a default model in Settings.")
 
-        # Read file content
-        content = await file.read()
+        content = await read_upload_limited(file, MEMORY_IMPORT_MAX_BYTES, "Memory import")
         filename = file.filename or "upload"
         _, ext = os.path.splitext(filename.lower())
 
