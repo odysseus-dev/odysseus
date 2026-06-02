@@ -313,34 +313,31 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db.close()
         # Switch model/endpoint mid-session
         if model is not None and endpoint_url is not None:
+            from src.endpoint_resolver import build_headers
+            from core.database import ModelEndpoint
+            new_headers = {}
             if endpoint_id:
-                from core.database import ModelEndpoint
                 _db = SessionLocal()
                 try:
                     ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
                     if not ep:
                         raise HTTPException(400, "Model endpoint no longer exists")
+                    if ep.api_key:
+                        new_headers = build_headers(ep.api_key, ep.base_url)
                 finally:
                     _db.close()
             session.model = model
             session.endpoint_url = endpoint_url
-            # Update auth headers from the endpoint's stored API key
-            if endpoint_id:
-                _db = SessionLocal()
-                try:
-                    ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
-                    if ep and ep.api_key:
-                        from src.endpoint_resolver import build_headers
-                        session.headers = build_headers(ep.api_key, ep.base_url)
-                finally:
-                    _db.close()
-            # Persist to DB
+            # Always replace headers so stale keys from the previous provider never leak
+            session.headers = new_headers
+            # Persist model, endpoint, and headers to DB
             db = SessionLocal()
             try:
                 db_session = db.query(DbSession).filter(DbSession.id == sid).first()
                 if db_session:
                     db_session.model = model
                     db_session.endpoint_url = endpoint_url
+                    db_session.headers = new_headers
                     db_session.updated_at = datetime.utcnow()
                     db.commit()
             finally:
