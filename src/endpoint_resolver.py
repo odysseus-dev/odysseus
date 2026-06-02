@@ -12,7 +12,7 @@ from typing import Optional, Tuple, Dict
 from urllib.parse import urlparse, urlunparse
 
 from src.database import SessionLocal, ModelEndpoint
-from src.llm_core import _detect_provider
+from src.llm_core import _detect_provider, _host_match
 
 logger = logging.getLogger(__name__)
 
@@ -145,8 +145,7 @@ def normalize_base(url: str) -> str:
 def _anthropic_api_root(base: str) -> str:
     """Return Anthropic's API root, preserving /v1 for OpenAI-compatible APIs elsewhere."""
     base = (base or "").strip().rstrip("/")
-    host = urlparse(base).hostname or ""
-    if host.endswith("anthropic.com") and base.endswith("/v1"):
+    if _host_match(base, "anthropic.com") and base.endswith("/v1"):
         return base[:-3].rstrip("/")
     return base
 
@@ -155,11 +154,10 @@ def _ollama_api_root(base: str) -> str:
     """Return the native Ollama API root, adding /api for ollama.com hosts."""
     base = (base or "").strip().rstrip("/")
     parsed = urlparse(base)
-    host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
     if path.endswith("/api"):
         return base
-    if host.endswith("ollama.com"):
+    if _host_match(base, "ollama.com"):
         root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
         return root.rstrip("/") + "/api"
     return base
@@ -169,10 +167,9 @@ def build_chat_url(base: str) -> str:
     """Return the correct chat endpoint URL for a given base."""
     base = resolve_url(base)
     provider = _detect_provider(base)
-    host = urlparse(base).hostname or ""
-    if provider == "anthropic" or host.endswith("anthropic.com"):
+    if provider == "anthropic":
         return _anthropic_api_root(base) + "/v1/messages"
-    if provider == "ollama" or host.endswith("ollama.com"):
+    if provider == "ollama":
         return _ollama_api_root(base) + "/chat"
     return base + "/chat/completions"
 
@@ -181,10 +178,9 @@ def build_models_url(base: str) -> str:
     """Return the provider-specific model-list endpoint URL for a base."""
     base = resolve_url(base)
     provider = _detect_provider(base)
-    host = urlparse(base).hostname or ""
-    if provider == "anthropic" or host.endswith("anthropic.com"):
+    if provider == "anthropic":
         return _anthropic_api_root(base) + "/v1/models"
-    if provider == "ollama" or host.endswith("ollama.com"):
+    if provider == "ollama":
         return _ollama_api_root(base) + "/tags"
     return base + "/models"
 
@@ -231,24 +227,28 @@ def resolve_endpoint(
     except Exception:
         return fallback_url, fallback_model, fallback_headers
 
-    ep_id = (get_user_setting(f"{setting_prefix}_endpoint_id", owner or "", settings.get(f"{setting_prefix}_endpoint_id", "")) or "").strip()
-    model = (get_user_setting(f"{setting_prefix}_model", owner or "", settings.get(f"{setting_prefix}_model", "")) or "").strip()
+    owner_str = owner or ""
+    def _stg(key: str) -> str:
+        return (get_user_setting(key, owner_str, settings.get(key, "")) or "").strip()
+
+    ep_id = _stg(f"{setting_prefix}_endpoint_id")
+    model = _stg(f"{setting_prefix}_model")
 
     # Unset Utility means "same as Default Chat Model". This keeps background
     # features usable out of the box and lets users override Utility only when
     # they explicitly want a separate cheaper/faster model.
     if setting_prefix == "utility" and not ep_id:
-        ep_id = (get_user_setting("default_endpoint_id", owner or "", settings.get("default_endpoint_id", "")) or "").strip()
-        model = (get_user_setting("default_model", owner or "", settings.get("default_model", "")) or "").strip()
+        ep_id = _stg("default_endpoint_id")
+        model = _stg("default_model")
 
     # Fall back to utility model for task/research/auto-naming if not specifically configured.
     # If Utility itself is unset, the block above makes that resolve to Default Chat.
     if not ep_id and setting_prefix != "utility":
-        ep_id = (get_user_setting("utility_endpoint_id", owner or "", settings.get("utility_endpoint_id", "")) or "").strip()
-        model = (get_user_setting("utility_model", owner or "", settings.get("utility_model", "")) or "").strip()
+        ep_id = _stg("utility_endpoint_id")
+        model = _stg("utility_model")
         if not ep_id:
-            ep_id = (get_user_setting("default_endpoint_id", owner or "", settings.get("default_endpoint_id", "")) or "").strip()
-            model = (get_user_setting("default_model", owner or "", settings.get("default_model", "")) or "").strip()
+            ep_id = _stg("default_endpoint_id")
+            model = _stg("default_model")
 
     if not ep_id:
         return fallback_url, fallback_model, fallback_headers
@@ -342,7 +342,8 @@ def resolve_utility_fallback_candidates(owner: Optional[str] = None) -> list:
     try:
         from src.settings import get_user_setting, load_settings
         settings = load_settings()
-        if not (get_user_setting("utility_endpoint_id", owner or "", settings.get("utility_endpoint_id", "")) or "").strip():
+        utility_ep = (get_user_setting("utility_endpoint_id", owner or "", settings.get("utility_endpoint_id", "")) or "").strip()
+        if not utility_ep:
             return _resolve_fallback_candidates("default_model_fallbacks", owner=owner)
     except Exception:
         pass

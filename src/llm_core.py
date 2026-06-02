@@ -163,7 +163,7 @@ def _is_ollama_native_url(url: str) -> bool:
         return False
     host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
-    if host.endswith("ollama.com"):
+    if _host_match(url, "ollama.com"):
         return True
     local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or parsed.port == 11434
     return local_ollama_host and (path == "/api" or path.startswith("/api/"))
@@ -173,7 +173,6 @@ def _ollama_api_root(url: str) -> str:
     """Return a native Ollama API root such as https://ollama.com/api."""
     url = (url or "").strip().rstrip("/")
     parsed = urlparse(url)
-    host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
     if path.endswith("/api/chat"):
         return url[: -len("/chat")]
@@ -183,7 +182,7 @@ def _ollama_api_root(url: str) -> str:
         return url[: -len("/generate")]
     if path.endswith("/api"):
         return url
-    if host.endswith("ollama.com"):
+    if _host_match(url, "ollama.com"):
         root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
         return root.rstrip("/") + "/api"
     return url
@@ -225,16 +224,43 @@ def _parse_ollama_response(data: dict) -> str:
     return message.get("content") or data.get("response") or ""
 
 
+def _host_match(url: str, *domains: str) -> bool:
+    """Return True if url's hostname equals any of `domains` or is a subdomain of one.
+
+    Used by helpers that want "is this Anthropic?" / "is this OpenRouter?"
+    style checks. Prefer this over substring matching on the URL: the
+    substring form gives wrong answers for unrelated paths or query strings
+    that happen to contain the domain text.
+    """
+    if not url:
+        return False
+    try:
+        # rstrip(".") so a fully-qualified host with a trailing dot
+        # ("api.anthropic.com.") still matches "anthropic.com".
+        host = (urlparse(url).hostname or "").lower().rstrip(".")
+    except Exception:
+        return False
+    if not host:
+        return False
+    return any(host == d or host.endswith("." + d) for d in domains)
+
+
 def _detect_provider(url: str) -> str:
-    """Detect API provider from URL."""
-    u = (url or "").lower()
+    """Detect the API provider from a configured endpoint URL.
+
+    Matches on hostname (exact or subdomain) rather than substring, so a URL
+    that merely contains a provider's domain in its path or query — or a
+    look-alike host such as ``anthropic.com.example`` — is not misclassified.
+    Unknown hosts fall back to the OpenAI-compatible default, which the
+    majority of providers implement.
+    """
     if _is_ollama_native_url(url):
         return "ollama"
-    if "anthropic.com" in u:
+    if _host_match(url, "anthropic.com"):
         return "anthropic"
-    if "openrouter.ai" in u:
+    if _host_match(url, "openrouter.ai"):
         return "openrouter"
-    if "groq.com" in u:
+    if _host_match(url, "groq.com"):
         return "groq"
     return "openai"
 
@@ -251,26 +277,27 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
 
 def _provider_label(url: str) -> str:
     """Human-friendly provider name for error messages."""
-    u = (url or "").lower()
-    if "anthropic.com" in u: return "Anthropic"
-    if "ollama.com" in u: return "Ollama Cloud"
-    if "api.x.ai" in u or "x.ai/" in u: return "xAI"
-    if "openai.com" in u: return "OpenAI"
-    if "openrouter.ai" in u: return "OpenRouter"
-    if "groq.com" in u: return "Groq"
-    if "mistral.ai" in u: return "Mistral"
-    if "deepseek.com" in u: return "DeepSeek"
-    if "googleapis.com" in u or "generativelanguage" in u: return "Google"
-    if "together.xyz" in u or "together.ai" in u: return "Together"
-    if "fireworks.ai" in u: return "Fireworks"
-    if "ollama" in u or ":11434" in u: return "Ollama"
-    if "localhost" in u or "127.0.0.1" in u: return "local endpoint"
+    if not url:
+        return "provider"
+    if _host_match(url, "anthropic.com"): return "Anthropic"
+    if _host_match(url, "ollama.com"): return "Ollama Cloud"
+    if _host_match(url, "x.ai"): return "xAI"
+    if _host_match(url, "openai.com"): return "OpenAI"
+    if _host_match(url, "openrouter.ai"): return "OpenRouter"
+    if _host_match(url, "groq.com"): return "Groq"
+    if _host_match(url, "mistral.ai"): return "Mistral"
+    if _host_match(url, "deepseek.com"): return "DeepSeek"
+    if _host_match(url, "googleapis.com"): return "Google"
+    if _host_match(url, "together.xyz", "together.ai"): return "Together"
+    if _host_match(url, "fireworks.ai"): return "Fireworks"
+    if _is_ollama_native_url(url): return "Ollama"
     try:
-        from urllib.parse import urlparse
-        host = urlparse(url).hostname or "provider"
-        return host
+        host = (urlparse(url).hostname or "").lower()
     except Exception:
         return "provider"
+    if host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+        return "local endpoint"
+    return host or "provider"
 
 
 def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:

@@ -14,60 +14,17 @@ from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from core.database import SessionLocal, ModelEndpoint, Session as DbSession
 from core.middleware import require_admin
-from src.llm_core import _detect_provider, ANTHROPIC_MODELS
+from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
-from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
+from src.endpoint_resolver import (
+    normalize_base as _normalize_base,
+    build_chat_url,
+    build_models_url,
+    build_headers,
+)
 from src.auth_helpers import owner_filter
 
 logger = logging.getLogger(__name__)
-
-
-def _anthropic_api_root(base: str) -> str:
-    """Return Anthropic's API root without duplicating /v1."""
-    base = (base or "").strip().rstrip("/")
-    host = urlparse(base).hostname or ""
-    if host.endswith("anthropic.com") and base.endswith("/v1"):
-        return base[:-3].rstrip("/")
-    return base
-
-
-def _ollama_api_root(base: str) -> str:
-    """Return Ollama's native API root without depending on deferred imports."""
-    base = (base or "").strip().rstrip("/")
-    parsed = urlparse(base)
-    host = parsed.hostname or ""
-    path = (parsed.path or "").rstrip("/")
-    if path.endswith("/api"):
-        return base
-    if host.endswith("ollama.com"):
-        root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
-        return root.rstrip("/") + "/api"
-    return base
-
-
-def _models_url(base: str) -> str:
-    """Return provider-specific model-list URL for route-local probing."""
-    provider = _detect_provider(base)
-    host = urlparse(base).hostname or ""
-    if provider == "anthropic" or host.endswith("anthropic.com"):
-        return _anthropic_api_root(base) + "/v1/models"
-    if provider == "ollama" or host.endswith("ollama.com"):
-        return _ollama_api_root(base) + "/tags"
-    return base.rstrip("/") + "/models"
-
-
-def _provider_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
-    """Build provider auth headers without depending on import-time stubs."""
-    if not api_key:
-        return {}
-    provider = _detect_provider(base)
-    host = urlparse(base).hostname or ""
-    if provider == "anthropic" or host.endswith("anthropic.com"):
-        return {
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        }
-    return {"Authorization": f"Bearer {api_key}"}
 
 
 # ── Curated model lists per provider ──
@@ -122,31 +79,35 @@ _PROVIDER_CURATED = {
     ],
 }
 
-# Map URL substrings → curated-list keys for providers whose _detect_provider()
+# Map hostnames → curated-list keys for providers whose _detect_provider()
 # returns a generic value (e.g. "openai") but deserve their own curated list.
 # "openrouter" is a sentinel meaning "no curation — show all models as curated".
-_URL_TO_CURATED = {
-    "z.ai": "zai",
-    "api.deepseek.com": "deepseek",
-    "api.groq.com": "groq",
-    "api.mistral.ai": "mistral",
-    "api.together.xyz": "together",
-    "api.fireworks.ai": "fireworks",
-    "generativelanguage.googleapis.com": "google",
-    "api.x.ai": "xai",
-    "openrouter.ai": "openrouter",
-    "ollama.com": "ollama",
-}
+# Entries are matched by hostname equality or subdomain suffix (via _host_match),
+# so e.g. "deepseek.com" covers api.deepseek.com without matching the substring
+# inside an unrelated URL.
+_HOST_TO_CURATED = (
+    ("z.ai", "zai"),
+    ("deepseek.com", "deepseek"),
+    ("groq.com", "groq"),
+    ("mistral.ai", "mistral"),
+    ("together.xyz", "together"),
+    ("together.ai", "together"),
+    ("fireworks.ai", "fireworks"),
+    ("googleapis.com", "google"),
+    ("x.ai", "xai"),
+    ("openrouter.ai", "openrouter"),
+    ("ollama.com", "ollama"),
+)
 
 
 def _match_provider_curated(base_url: str, provider: str) -> str:
     """Return the curated-list key for a given endpoint.
 
-    Checks the base URL against _URL_TO_CURATED first, then falls back
-    to the raw provider string from _detect_provider().
+    Matches the base URL's hostname against known providers; falls back to
+    the raw provider string from _detect_provider().
     """
-    for substring, key in _URL_TO_CURATED.items():
-        if substring in (base_url or ""):
+    for domain, key in _HOST_TO_CURATED:
+        if _host_match(base_url, domain):
             return key
     return provider
 
@@ -235,12 +196,12 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
     elif provider == "ollama":
         from src.llm_core import _build_ollama_payload
         target_url = build_chat_url(base)
-        h = _provider_headers(api_key, base)
+        h = build_headers(api_key, base)
         h["Content-Type"] = "application/json"
         payload = _build_ollama_payload(model_id, messages, 0.0, 5, stream=False, tools=_test_tools)
     else:
         target_url = build_chat_url(base)
-        h = _provider_headers(api_key, base)
+        h = build_headers(api_key, base)
         h["Content-Type"] = "application/json"
         from src.llm_core import _uses_max_completion_tokens
         _max_key = "max_completion_tokens" if _uses_max_completion_tokens(model_id) else "max_tokens"
@@ -308,7 +269,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     base = resolve_url(_normalize_base(base_url))
     if _detect_provider(base) == "anthropic":
         # Try Anthropic's /v1/models endpoint first
-        url = _anthropic_api_root(base) + "/v1/models"
+        url = build_models_url(base)
         headers = {"anthropic-version": "2023-06-01"}
         if api_key:
             headers["x-api-key"] = api_key
@@ -331,8 +292,8 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
                 return []
             logger.warning(f"Anthropic /v1/models failed, using hardcoded list: {e}")
         return list(ANTHROPIC_MODELS)
-    url = _models_url(base)
-    headers = _provider_headers(api_key, base)
+    url = build_models_url(base)
+    headers = build_headers(api_key, base)
     try:
         r = httpx.get(url, headers=headers, timeout=timeout)
         r.raise_for_status()
@@ -746,8 +707,8 @@ def setup_model_routes(model_discovery):
                     entry["error"] = str(e)
                     entry["model_count"] = 0
             else:
-                url = _models_url(base)
-                headers = _provider_headers(ep.api_key, base)
+                url = build_models_url(base)
+                headers = build_headers(ep.api_key, base)
                 try:
                     t0 = _time.time()
                     r = httpx.get(url, headers=headers, timeout=5)
@@ -971,11 +932,6 @@ def setup_model_routes(model_discovery):
         shared: str = Form("true"),
     ):
         require_admin(request)
-        base_url = base_url.strip().rstrip("/")
-        # Normalize: strip trailing /models, /chat/completions, /v1/messages etc to get clean base
-        for suffix in ["/models", "/chat/completions", "/completions", "/v1/messages"]:
-            if base_url.endswith(suffix):
-                base_url = base_url[:-len(suffix)].rstrip("/")
         base_url = _normalize_base(base_url)
         if not base_url:
             raise HTTPException(400, "Base URL is required")
@@ -1085,10 +1041,7 @@ def setup_model_routes(model_discovery):
         api_key: str = Form(""),
     ):
         require_admin(request)
-        base_url = base_url.strip().rstrip("/")
-        for suffix in ["/models", "/chat/completions", "/completions", "/v1/messages"]:
-            if base_url.endswith(suffix):
-                base_url = base_url[:-len(suffix)].rstrip("/")
+        base_url = _normalize_base(base_url)
         if not base_url:
             raise HTTPException(400, "Base URL is required")
         from src.endpoint_resolver import resolve_url
