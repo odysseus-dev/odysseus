@@ -884,7 +884,7 @@ def setup_shell_routes() -> APIRouter:
         """Check which optional packages are installed.
 
         Local-target packages are checked in-process. Remote-target packages
-        (vllm, sglang, llama_cpp, diffusers, hf_transfer) are checked on the SELECTED
+        (vllm, sglang, llama_cpp, diffusers, hf_xet) are checked on the SELECTED
         server over SSH, inside its venv — otherwise installing on a remote box
         never reflected because the check only ever looked at the local host.
         """
@@ -908,7 +908,7 @@ def setup_shell_routes() -> APIRouter:
             {"name": "tmux", "pip": "", "desc": "Required for Linux/Termux Cookbook background downloads and serves", "category": "System", "target": "remote", "kind": "system", "install_hint": "Run Cookbook server setup, or install tmux with apt/pacman/dnf/apk/zypper."},
             {"name": "docker", "pip": "", "desc": "Required only for Docker-backed launch commands", "category": "System", "target": "remote", "kind": "system", "install_hint": "Install Docker on the selected server and allow this user to run docker."},
             # ── LLM ── installs on GPU servers for model serving/downloading
-            {"name": "hf_transfer", "pip": "hf_transfer", "desc": "Fast model downloads from HuggingFace", "category": "LLM", "target": "remote"},
+            {"name": "hf_xet", "pip": "hf_xet", "desc": "Fast model downloads from HuggingFace (Xet)", "category": "LLM", "target": "remote"},
             {"name": "llama_cpp", "pip": "llama-cpp-python[server]", "desc": "Serve GGUF models via llama.cpp", "category": "LLM", "target": "remote"},
             {"name": "sglang", "pip": "sglang[all]", "desc": "Serve HF safetensors models via SGLang", "category": "LLM", "target": "remote"},
             {"name": "vllm", "pip": "vllm", "desc": "High-throughput LLM serving engine", "category": "LLM", "target": "remote"},
@@ -1043,7 +1043,7 @@ def setup_shell_routes() -> APIRouter:
             return {"ok": False, "error": "No package specified"}
         # Validate against known packages to prevent arbitrary pip install
         known = {
-            "rembg[gpu]", "hf_transfer", "llama-cpp-python[server]", "sglang[all]", "diffusers", "diffusers[torch]",
+            "rembg[gpu]", "hf_xet", "hf_transfer", "llama-cpp-python[server]", "sglang[all]", "diffusers", "diffusers[torch]",
             "TTS", "bark", "faster-whisper", "playwright", "realesrgan", "gfpgan",
             "insightface", "onnxruntime-gpu", "onnxruntime", "hdbscan", "vllm",
         }
