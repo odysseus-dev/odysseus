@@ -35017,3 +35017,24 @@ body.theme-frosted .modal {
   font-family: 'Fira Code', ui-monospace, monospace;
   color: var(--accent, var(--red));
 }
+
+/* ── iOS Safari zoom prevention ──────────────────────────────────────
+   iOS Safari auto-zooms the viewport when a focused form control has
+   font-size < 16px and does NOT reset on blur, leaving the page stuck
+   zoomed-in. Bump text-entry controls to 16px on touch devices only.
+   Excludes <select> and date/time inputs (they open native pickers and
+   don't trigger the zoom). Desktop sizing is unaffected.
+   See: https://github.com/pewdiepie-archdaemon/odysseus/issues/1317 */
+@media (hover: none) and (pointer: coarse) {
+  input[type="text"],
+  input[type="password"],
+  input[type="email"],
+  input[type="url"],
+  input[type="search"],
+  input[type="number"],
+  input[type="tel"],
+  input:not([type]),
+  textarea {
+    font-size: 16px !important;
+  }
+}
