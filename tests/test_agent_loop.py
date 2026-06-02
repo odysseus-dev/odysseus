@@ -19,6 +19,9 @@ from src.agent_loop import (
     _detect_admin_intent,
     _compute_final_metrics,
     _append_tool_results,
+    _default_input_budget,
+    _resolve_input_token_budget,
+    DEFAULT_INPUT_TOKEN_HARD_MAX,
 )
 
 
@@ -416,3 +419,243 @@ class TestWebSearchSourcesKeyLookup:
         src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
         assert src_text != ""
         assert "SOURCES" in src_text
+
+
+# ---------------------------------------------------------------------------
+# _default_input_budget — pure helper: ctx -> 85%-of-ctx capped at hard_max
+# ---------------------------------------------------------------------------
+
+class TestDefaultInputBudget:
+    """Pure helper: takes context_length and hard_max, returns a budget."""
+
+    def test_large_context_caps_at_hard_max_default(self):
+        """1M-context model should not blow past the function's default ceiling."""
+        assert _default_input_budget(1_000_000) == DEFAULT_INPUT_TOKEN_HARD_MAX
+
+    def test_custom_hard_max_overrides_default(self):
+        """The hard_max argument lets callers shift the cap up or down."""
+        assert _default_input_budget(1_000_000, hard_max=500_000) == 500_000
+        assert _default_input_budget(1_000_000, hard_max=50_000) == 50_000
+
+    def test_medium_context_uses_85_percent(self):
+        """128K model → 85% = 108800, under default hard_max so uncapped."""
+        assert _default_input_budget(128_000) == int(128_000 * 0.85)
+
+    def test_small_context_uses_85_percent(self):
+        """8K model → 85% = 6800. Slightly more than the historical 6000."""
+        assert _default_input_budget(8_000) == int(8_000 * 0.85)
+
+    def test_zero_context_falls_through_to_6000(self):
+        """get_context_length returning 0 = unknown; preserve historical fallback."""
+        assert _default_input_budget(0) == 6000
+
+    def test_negative_context_falls_through_to_6000(self):
+        """Defensive: negative ctx values are ignored, not multiplied."""
+        assert _default_input_budget(-1) == 6000
+
+    def test_none_context_falls_through_to_6000(self):
+        """None gets the same fallback as 0/unknown."""
+        assert _default_input_budget(None) == 6000  # type: ignore[arg-type]
+
+    def test_does_not_exceed_context_length(self):
+        """The returned budget must always leave room inside the context window."""
+        for ctx in (4_000, 32_000, 128_000, 200_000, 1_000_000):
+            assert _default_input_budget(ctx) < ctx, f"budget >= ctx for ctx={ctx}"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_input_token_budget — full semantic resolver
+#
+# Per-PR-review semantics from #1190:
+#   * unset/None  → auto (adaptive, capped by agent_input_token_hard_max)
+#   * 0           → explicit disable, preserves no-soft-trim escape hatch
+#   * >0          → explicit cap, bounded by context_length when known
+#   * malformed   → treated as unset/auto
+#
+# These tests monkeypatch get_setting directly on src.agent_loop so they
+# exercise the real resolver without standing up the full settings stack.
+# ---------------------------------------------------------------------------
+
+class TestResolveInputTokenBudget:
+    """Settings → effective budget mapping with full semantics."""
+
+    @staticmethod
+    def _patch_settings(monkeypatch, values):
+        """Helper: stub get_setting on src.agent_loop to return ``values[key]``."""
+        from src import agent_loop
+        def fake(key, default=None):
+            return values.get(key, default)
+        monkeypatch.setattr(agent_loop, "get_setting", fake)
+
+    # ---- unset / None / "auto" → adaptive default ---------------------
+
+    def test_unset_uses_adaptive_default(self, monkeypatch):
+        self._patch_settings(monkeypatch, {})  # nothing set
+        # 1M ctx → adaptive returns DEFAULT_INPUT_TOKEN_HARD_MAX
+        assert _resolve_input_token_budget(1_000_000) == DEFAULT_INPUT_TOKEN_HARD_MAX
+
+    def test_empty_string_is_unset(self, monkeypatch):
+        self._patch_settings(monkeypatch, {"agent_input_token_budget": ""})
+        assert _resolve_input_token_budget(128_000) == int(128_000 * 0.85)
+
+    def test_literal_auto_string_is_unset(self, monkeypatch):
+        self._patch_settings(monkeypatch, {"agent_input_token_budget": "auto"})
+        assert _resolve_input_token_budget(128_000) == int(128_000 * 0.85)
+
+    def test_negative_is_treated_as_unset(self, monkeypatch):
+        self._patch_settings(monkeypatch, {"agent_input_token_budget": -1})
+        assert _resolve_input_token_budget(128_000) == int(128_000 * 0.85)
+
+    def test_malformed_string_is_treated_as_unset(self, monkeypatch):
+        self._patch_settings(monkeypatch, {"agent_input_token_budget": "not-a-number"})
+        assert _resolve_input_token_budget(128_000) == int(128_000 * 0.85)
+
+    # ---- explicit 0 → DISABLED (preserves existing escape hatch) ------
+
+    def test_explicit_zero_disables_soft_trim(self, monkeypatch):
+        """0 must return 0 — the caller's `if soft_budget > 0` then skips trim."""
+        self._patch_settings(monkeypatch, {"agent_input_token_budget": 0})
+        assert _resolve_input_token_budget(1_000_000) == 0
+
+    def test_explicit_zero_disables_even_when_ctx_unknown(self, monkeypatch):
+        self._patch_settings(monkeypatch, {"agent_input_token_budget": 0})
+        assert _resolve_input_token_budget(0) == 0
+
+    def test_explicit_zero_as_string_disables(self, monkeypatch):
+        """Settings stored as strings still parse to int 0."""
+        self._patch_settings(monkeypatch, {"agent_input_token_budget": "0"})
+        assert _resolve_input_token_budget(1_000_000) == 0
+
+    # ---- explicit > 0 → use as cap, bounded by context length ----------
+
+    def test_explicit_positive_uses_user_value(self, monkeypatch):
+        self._patch_settings(monkeypatch, {"agent_input_token_budget": 50_000})
+        assert _resolve_input_token_budget(1_000_000) == 50_000
+
+    def test_explicit_positive_bounded_by_context_length(self, monkeypatch):
+        """User asked for 500K but model only has 32K — we can't claim more."""
+        self._patch_settings(monkeypatch, {"agent_input_token_budget": 500_000})
+        assert _resolve_input_token_budget(32_000) == 32_000
+
+    def test_explicit_positive_ignored_when_ctx_unknown(self, monkeypatch):
+        """If context_length is 0 (unknown), don't pretend we can bound."""
+        self._patch_settings(monkeypatch, {"agent_input_token_budget": 50_000})
+        assert _resolve_input_token_budget(0) == 50_000
+
+    def test_explicit_positive_preserves_existing_6000_user_configs(self, monkeypatch):
+        """The user who explicitly stored 6000 keeps exactly 6000."""
+        self._patch_settings(monkeypatch, {"agent_input_token_budget": 6000})
+        assert _resolve_input_token_budget(1_000_000) == 6000
+
+    # ---- agent_input_token_hard_max setting overrides function default -
+
+    def test_hard_max_setting_lowers_auto_ceiling(self, monkeypatch):
+        self._patch_settings(monkeypatch, {"agent_input_token_hard_max": 50_000})
+        assert _resolve_input_token_budget(1_000_000) == 50_000
+
+    def test_hard_max_setting_raises_auto_ceiling(self, monkeypatch):
+        self._patch_settings(monkeypatch, {"agent_input_token_hard_max": 800_000})
+        # 1M ctx → 850K adaptive, capped at 800K
+        assert _resolve_input_token_budget(1_000_000) == 800_000
+
+    def test_hard_max_setting_zero_falls_back_to_default(self, monkeypatch):
+        """Defensive: a 0 hard_max would otherwise zero out the budget."""
+        self._patch_settings(monkeypatch, {"agent_input_token_hard_max": 0})
+        assert _resolve_input_token_budget(1_000_000) == DEFAULT_INPUT_TOKEN_HARD_MAX
+
+    def test_hard_max_setting_malformed_falls_back_to_default(self, monkeypatch):
+        self._patch_settings(monkeypatch, {"agent_input_token_hard_max": "huge"})
+        assert _resolve_input_token_budget(1_000_000) == DEFAULT_INPUT_TOKEN_HARD_MAX
+
+    def test_hard_max_does_not_apply_to_explicit_budget(self, monkeypatch):
+        """User's explicit budget is not capped by hard_max — they chose it."""
+        self._patch_settings(monkeypatch, {
+            "agent_input_token_budget": 500_000,
+            "agent_input_token_hard_max": 100_000,
+        })
+        # 500_000 is user's choice; only bounded by ctx (here 1M, so passes through)
+        assert _resolve_input_token_budget(1_000_000) == 500_000
+
+
+# ---------------------------------------------------------------------------
+# DEFAULT_SETTINGS registration — both new keys must be persistable through
+# the standard /api/auth/settings + manage_settings paths, which only accept
+# keys that exist in DEFAULT_SETTINGS.
+# ---------------------------------------------------------------------------
+
+class TestDefaultSettingsRegistration:
+    """Without these, admins can't save the new keys through the normal API."""
+
+    def test_agent_input_token_budget_is_registered(self):
+        from src.settings import DEFAULT_SETTINGS
+        assert "agent_input_token_budget" in DEFAULT_SETTINGS
+
+    def test_agent_input_token_budget_default_is_auto(self):
+        """The default must trigger the adaptive path, not the explicit-6000
+        cap that used to dominate the old behavior."""
+        from src.settings import DEFAULT_SETTINGS
+        assert DEFAULT_SETTINGS["agent_input_token_budget"] == "auto"
+
+    def test_agent_input_token_hard_max_is_registered(self):
+        from src.settings import DEFAULT_SETTINGS
+        assert "agent_input_token_hard_max" in DEFAULT_SETTINGS
+
+    def test_agent_input_token_hard_max_default_value(self):
+        """Default ceiling matches the module-level constant in agent_loop."""
+        from src.settings import DEFAULT_SETTINGS
+        assert DEFAULT_SETTINGS["agent_input_token_hard_max"] == DEFAULT_INPUT_TOKEN_HARD_MAX
+
+    def test_auto_default_routes_to_adaptive_branch(self, tmp_path, monkeypatch):
+        """A brand-new install (no saved settings) goes through the auto branch
+        because DEFAULT_SETTINGS provides 'auto'."""
+        # Point SETTINGS_FILE at an empty temp location so load_settings hits
+        # the FileNotFoundError → dict(DEFAULT_SETTINGS) path.
+        from src import settings as _s
+        monkeypatch.setattr(_s, "SETTINGS_FILE", str(tmp_path / "settings.json"))
+        monkeypatch.setattr(_s, "_settings_cache", None)
+        # Now resolve through the real get_setting (not the stubbed one).
+        from src import agent_loop
+        # Re-bind agent_loop.get_setting to the real one in case prior tests stubbed it.
+        monkeypatch.setattr(agent_loop, "get_setting", _s.get_setting)
+        assert _resolve_input_token_budget(1_000_000) == DEFAULT_INPUT_TOKEN_HARD_MAX
+
+    def test_existing_explicit_6000_in_saved_file_is_preserved(self, tmp_path, monkeypatch):
+        """Users who saved 6000 explicitly before this change keep exactly 6000."""
+        from src import settings as _s
+        import json
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps({"agent_input_token_budget": 6000}))
+        monkeypatch.setattr(_s, "SETTINGS_FILE", str(settings_file))
+        monkeypatch.setattr(_s, "_settings_cache", None)
+        from src import agent_loop
+        monkeypatch.setattr(agent_loop, "get_setting", _s.get_setting)
+        assert _resolve_input_token_budget(1_000_000) == 6000
+
+
+# ---------------------------------------------------------------------------
+# manage_settings alias map — friendly names must resolve to the canonical
+# setting key so users can `set hard max to 50000` via the agent.
+# ---------------------------------------------------------------------------
+
+class TestSettingsAliases:
+    """Verify the friendly aliases registered in src/tool_implementations.py."""
+
+    def _alias_map(self):
+        """Extract the alias map without executing the full manage_settings tool.
+
+        The alias dict is defined as a local in the tool's `_resolve` closure
+        (src/tool_implementations.py ~1520). Grep the source to validate
+        registration instead of importing — keeps this test fast and avoids
+        pulling the full app stack."""
+        from pathlib import Path
+        src = Path("src/tool_implementations.py").read_text()
+        return src
+
+    def test_token_budget_alias_registered(self):
+        assert '"token budget": "agent_input_token_budget"' in self._alias_map()
+
+    def test_input_budget_alias_registered(self):
+        assert '"input budget": "agent_input_token_budget"' in self._alias_map()
+
+    def test_hard_max_alias_registered(self):
+        assert '"hard max": "agent_input_token_hard_max"' in self._alias_map()

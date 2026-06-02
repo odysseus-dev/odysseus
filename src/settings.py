@@ -95,7 +95,23 @@ DEFAULT_SETTINGS = {
     # Tune via Settings or by editing data/settings.json.
     "research_run_timeout_seconds": 1800,
     "agent_max_tool_calls": 0,
-    "agent_input_token_budget": 6000,
+    # Soft cap on input tokens per agent turn. Special values:
+    #   "auto" (default) — derive ~85% of the model's discovered context window,
+    #     capped at `agent_input_token_hard_max` below. Best for users on
+    #     long-context models who would otherwise be silently capped at 6000.
+    #   0 — disable the soft trim entirely (no cap). Use this if you want to
+    #     rely solely on the model's own context limit. Plaintext prompts that
+    #     exceed the window will be trimmed by Ollama / the provider instead.
+    #   <positive int> — hard explicit cap. Still bounded by the model's
+    #     discovered context_length when known. Preserves any value you have
+    #     already saved (e.g. an existing 6000 stays exactly 6000).
+    "agent_input_token_budget": "auto",
+    # Ceiling for the "auto" branch above. Limits per-turn cost on premium
+    # API models with very large windows (some advertise 1M+ context). Lower
+    # this if you want to be cost-paranoid; raise it (or set very high) if
+    # you want the auto budget to use the full model context. Has no effect
+    # when `agent_input_token_budget` is an explicit positive number.
+    "agent_input_token_hard_max": 200000,
     "agent_stream_timeout_seconds": 300,
     "task_endpoint_id": "",
     "task_model": "",

@@ -17,6 +17,78 @@ from typing import AsyncGenerator, List, Dict, Optional, Set
 from src.llm_core import stream_llm, stream_llm_with_fallback
 from src.model_context import estimate_tokens
 from src.settings import get_setting
+
+
+# Default ceiling used when `agent_input_token_hard_max` is unset. Caps the
+# auto-derived budget so a 1M-context model doesn't quietly spend a fortune
+# per turn on premium API providers. Override via the setting if you want
+# unlimited or a different ceiling.
+DEFAULT_INPUT_TOKEN_HARD_MAX = 200_000
+
+
+def _default_input_budget(context_length: int, hard_max: int = DEFAULT_INPUT_TOKEN_HARD_MAX) -> int:
+    """Adaptive default for the agent input token budget when the user hasn't
+    explicitly set one.
+
+    Returns 85% of the discovered context window (reserving headroom for
+    response + tool overhead), capped at ``hard_max``. Falls through to the
+    historical 6000 default when ``context_length`` is unknown (0, None, or
+    negative), so behavior is unchanged for endpoints where context discovery
+    fails.
+    """
+    if context_length and context_length > 0:
+        return min(int(context_length * 0.85), hard_max)
+    return 6000
+
+
+def _resolve_input_token_budget(context_length: int) -> int:
+    """Resolve the effective ``agent_input_token_budget`` for this call.
+
+    Semantics (matches maintainer guidance in PR #1190 review):
+
+    * **Unset / None**: auto — derive from ``context_length`` capped at the
+      ``agent_input_token_hard_max`` setting (or its default ceiling).
+    * **0**: explicit "no soft trim" — preserves the existing escape-hatch
+      for deployments that want the compactor disabled.
+    * **>0**: explicit cap. Still bounded by ``context_length`` when known
+      so we never claim more headroom than the model actually has.
+    * **Malformed / negative**: treated the same as unset (auto).
+
+    Returns the budget the caller should pass to ``trim_for_context``. A
+    return value of ``0`` is the explicit-disable sentinel; the caller's
+    ``if soft_budget > 0`` check skips trimming in that case.
+    """
+    raw = get_setting("agent_input_token_budget", None)
+
+    if raw is None or raw == "" or raw == "auto":
+        return _auto_budget(context_length)
+
+    try:
+        configured = int(raw)
+    except (TypeError, ValueError):
+        return _auto_budget(context_length)
+
+    if configured == 0:
+        return 0  # explicit disable — preserve historical semantics
+    if configured > 0:
+        if context_length and context_length > 0:
+            return min(configured, context_length)
+        return configured
+    # configured < 0 — treat as unset/auto
+    return _auto_budget(context_length)
+
+
+def _auto_budget(context_length: int) -> int:
+    """Look up the configurable hard max and return the adaptive default."""
+    hard_max_raw = get_setting("agent_input_token_hard_max", DEFAULT_INPUT_TOKEN_HARD_MAX)
+    try:
+        hard_max = int(hard_max_raw) if hard_max_raw not in (None, "", "auto") else DEFAULT_INPUT_TOKEN_HARD_MAX
+    except (TypeError, ValueError):
+        hard_max = DEFAULT_INPUT_TOKEN_HARD_MAX
+    if hard_max <= 0:
+        hard_max = DEFAULT_INPUT_TOKEN_HARD_MAX
+    return _default_input_budget(context_length, hard_max)
+
 from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner
 from src.agent_tools import (
@@ -1478,7 +1550,12 @@ async def stream_agent_loop(
     try:
         from src.context_compactor import trim_for_context
 
-        soft_budget = int(get_setting("agent_input_token_budget", 6000) or 0)
+        # Resolve the effective input-token budget. See
+        # _resolve_input_token_budget for the full semantics — short version:
+        # unset → auto (adaptive, capped at agent_input_token_hard_max),
+        # 0     → explicit disable (no soft trim — preserved escape hatch),
+        # >0    → explicit cap, bounded by context_length when known.
+        soft_budget = _resolve_input_token_budget(context_length)
         if soft_budget > 0:
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
