@@ -1,9 +1,10 @@
-"""CalDAV → local SQLite sync.
+"""CalDAV ↔ local SQLite sync.
 
 The Settings UI lets users save CalDAV credentials, but the original
 sync path was removed when calendar storage was migrated to SQLite.
-This module re-wires that gap as a one-way pull (remote → local),
-called on calendar open and from a periodic scheduler loop.
+This module re-wires that gap as a two-way sync: pull (remote → local)
+on calendar open and periodic scheduler, push (local → remote) on
+event create/update/delete via the API routes.
 
 Design notes:
 - We use the `caldav` lib so PROPFIND discovery + REPORT XML work
@@ -260,3 +261,173 @@ async def sync_caldav(owner: str) -> dict:
     except Exception as e:
         logger.exception("CalDAV sync raised")
         return {"calendars": 0, "events": 0, "deleted": 0, "errors": [str(e)[:200]]}
+
+
+# ---------------------------------------------------------------------------
+# Write-back: push local changes to remote CalDAV server
+# ---------------------------------------------------------------------------
+
+def _get_caldav_creds(owner: str) -> tuple[str, str, str] | None:
+    """Return (url, username, password) for the owner's CalDAV config,
+    or None if not configured."""
+    from routes.prefs_routes import _load_for_user
+
+    cfg = (_load_for_user(owner) or {}).get("caldav", {}) or {}
+    url = (cfg.get("url") or "").strip()
+    user = (cfg.get("username") or "").strip()
+    pw = cfg.get("password") or ""
+    if not (url and user and pw):
+        return None
+    return url, user, pw
+
+
+def _find_remote_calendar(client, cal_id: str):
+    """Locate the remote CalDAV calendar whose URL hashes to `cal_id`."""
+    try:
+        principal = client.principal()
+        for remote_cal in principal.calendars():
+            if _stable_cal_id(str(remote_cal.url)) == cal_id:
+                return remote_cal
+    except Exception as e:
+        logger.warning("CalDAV calendar discovery failed: %s", e)
+    return None
+
+
+def _build_vcal(uid: str, summary: str, description: str, location: str,
+                dtstart: datetime, dtend: datetime, all_day: bool,
+                rrule: str = "") -> str:
+    """Build a minimal iCalendar VCALENDAR string for a single VEVENT."""
+    def _fmt(dt: datetime, all_day: bool) -> str:
+        if all_day:
+            return dt.strftime("%Y%m%d")
+        return dt.strftime("%Y%m%dT%H%M%SZ")
+
+    start_str = _fmt(dtstart, all_day)
+    end_str = _fmt(dtend, all_day)
+    dt_param = ";VALUE=DATE" if all_day else ""
+
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Odysseus//CalDAV Push//EN",
+        "BEGIN:VEVENT",
+        f"UID:{uid}",
+        f"DTSTART{dt_param}:{start_str}",
+        f"DTEND{dt_param}:{end_str}",
+        f"SUMMARY:{summary}",
+    ]
+    if description:
+        lines.append(f"DESCRIPTION:{description}")
+    if location:
+        lines.append(f"LOCATION:{location}")
+    if rrule:
+        lines.append(f"RRULE:{rrule}")
+    lines += ["END:VEVENT", "END:VCALENDAR"]
+    return "\r\n".join(lines)
+
+
+def _push_create_blocking(owner: str, cal_id: str, uid: str,
+                          summary: str, description: str, location: str,
+                          dtstart: datetime, dtend: datetime,
+                          all_day: bool, rrule: str = "") -> None:
+    """Create an event on the remote CalDAV server."""
+    import caldav
+
+    creds = _get_caldav_creds(owner)
+    if not creds:
+        return
+    url, user, pw = creds
+    client = caldav.DAVClient(url=url, username=user, password=pw)
+    remote_cal = _find_remote_calendar(client, cal_id)
+    if not remote_cal:
+        logger.warning("CalDAV push-create: no remote calendar for %s", cal_id)
+        return
+
+    vcal = _build_vcal(uid, summary, description, location,
+                       dtstart, dtend, all_day, rrule)
+    remote_cal.add_event(vcal)
+    logger.info("CalDAV push-create: %s on %s", uid, cal_id)
+
+
+def _push_update_blocking(owner: str, cal_id: str, uid: str,
+                          summary: str, description: str, location: str,
+                          dtstart: datetime, dtend: datetime,
+                          all_day: bool, rrule: str = "") -> None:
+    """Update an existing event on the remote CalDAV server."""
+    import caldav
+
+    creds = _get_caldav_creds(owner)
+    if not creds:
+        return
+    url, user, pw = creds
+    client = caldav.DAVClient(url=url, username=user, password=pw)
+    remote_cal = _find_remote_calendar(client, cal_id)
+    if not remote_cal:
+        logger.warning("CalDAV push-update: no remote calendar for %s", cal_id)
+        return
+
+    # CalDAV uses PUT with the same UID to replace an event.
+    vcal = _build_vcal(uid, summary, description, location,
+                       dtstart, dtend, all_day, rrule)
+    remote_cal.add_event(vcal)
+    logger.info("CalDAV push-update: %s on %s", uid, cal_id)
+
+
+def _push_delete_blocking(owner: str, cal_id: str, uid: str) -> None:
+    """Delete an event from the remote CalDAV server by UID."""
+    import caldav
+
+    creds = _get_caldav_creds(owner)
+    if not creds:
+        return
+    url, user, pw = creds
+    client = caldav.DAVClient(url=url, username=user, password=pw)
+    remote_cal = _find_remote_calendar(client, cal_id)
+    if not remote_cal:
+        logger.warning("CalDAV push-delete: no remote calendar for %s", cal_id)
+        return
+
+    try:
+        event = remote_cal.event_by_uid(uid)
+        event.delete()
+        logger.info("CalDAV push-delete: %s from %s", uid, cal_id)
+    except Exception as e:
+        logger.warning("CalDAV push-delete failed for %s: %s", uid, e)
+
+
+async def push_event_create(owner: str, cal_id: str, uid: str,
+                            summary: str, description: str, location: str,
+                            dtstart: datetime, dtend: datetime,
+                            all_day: bool, rrule: str = "") -> None:
+    """Push a newly created event to the remote CalDAV server (async)."""
+    try:
+        await asyncio.to_thread(
+            _push_create_blocking, owner, cal_id, uid,
+            summary, description, location, dtstart, dtend, all_day, rrule,
+        )
+    except Exception as e:
+        logger.error("CalDAV push-create failed: %s", e)
+
+
+async def push_event_update(owner: str, cal_id: str, uid: str,
+                            summary: str, description: str, location: str,
+                            dtstart: datetime, dtend: datetime,
+                            all_day: bool, rrule: str = "") -> None:
+    """Push an event update to the remote CalDAV server (async)."""
+    try:
+        await asyncio.to_thread(
+            _push_update_blocking, owner, cal_id, uid,
+            summary, description, location, dtstart, dtend, all_day, rrule,
+        )
+    except Exception as e:
+        logger.error("CalDAV push-update failed: %s", e)
+
+
+async def push_event_delete(owner: str, cal_id: str, uid: str) -> None:
+    """Push an event deletion to the remote CalDAV server (async)."""
+    try:
+        await asyncio.to_thread(
+            _push_delete_blocking, owner, cal_id, uid,
+        )
+    except Exception as e:
+        logger.error("CalDAV push-delete failed: %s", e)

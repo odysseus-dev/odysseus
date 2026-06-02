@@ -739,6 +739,15 @@ def setup_calendar_routes() -> APIRouter:
             )
             db.add(ev)
             db.commit()
+
+            if cal.source == "caldav":
+                from src.caldav_sync import push_event_create
+                await push_event_create(
+                    owner, cal.id, uid, data.summary,
+                    data.description or "", data.location or "",
+                    dtstart, dtend, data.all_day, data.rrule or "",
+                )
+
             return {"ok": True, "uid": uid}
         except HTTPException:
             raise
@@ -785,6 +794,18 @@ def setup_calendar_routes() -> APIRouter:
             if data.color is not None:
                 ev.color = data.color if data.color else None
             db.commit()
+
+            cal = db.query(CalendarCal).filter(
+                CalendarCal.id == ev.calendar_id
+            ).first()
+            if cal and cal.source == "caldav":
+                from src.caldav_sync import push_event_update
+                await push_event_update(
+                    owner, cal.id, ev.uid, ev.summary,
+                    ev.description or "", ev.location or "",
+                    ev.dtstart, ev.dtend, ev.all_day, ev.rrule or "",
+                )
+
             return {"ok": True}
         except HTTPException:
             raise
@@ -805,8 +826,20 @@ def setup_calendar_routes() -> APIRouter:
         db = SessionLocal()
         try:
             ev = _get_or_404_event(db, base_uid, owner)
+            cal_id = ev.calendar_id
+            event_uid = ev.uid
+
+            cal = db.query(CalendarCal).filter(
+                CalendarCal.id == cal_id
+            ).first()
+
             db.delete(ev)
             db.commit()
+
+            if cal and cal.source == "caldav":
+                from src.caldav_sync import push_event_delete
+                await push_event_delete(owner, cal_id, event_uid)
+
             return {"ok": True}
         except HTTPException:
             raise
