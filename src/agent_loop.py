@@ -115,6 +115,7 @@ _API_AGENT_RULES = """\
 - Keep answers concise unless the user asks for depth.
 - For long code or content, use document tools instead of pasting large blocks into chat.
 - Editing an existing document: ALWAYS use `edit_document` with find/replace. Only use `update_document` for genuine full rewrites (>50% changed) — do NOT echo the entire file back for small edits.
+- If the active editor document is an email draft/compose window, treat that open email as the target for "write this", "write the email", "reply with...", "make it say...", "draft this", and similar requests. Do NOT create another document, search/list/manage documents, or open a different reply unless the user explicitly asks. Edit the open email draft with `edit_document` or `update_document`; preserve To/Cc/Bcc/Subject/In-Reply-To/References/X-* header lines unless the user asks to change them.
 - "Give suggestions / feedback / review / how can I improve this / what would make it better" about the OPEN document → call `suggest_document`, do NOT write a prose list of ideas in chat. It creates inline accept/reject bubbles on the doc. Give concrete `find`/`replace`/`reason` items. To suggest an ADDITION (e.g. "add a bow to the SVG", a new section), set `find` to a short existing anchor snippet and `replace` to that same snippet PLUS the new content. Only answer in prose when no document is open, or the request is purely conceptual with no concrete change to propose.
 - BIAS TOWARD ACTION on edit requests. If the user says "edit out X", "remove the Y paragraph", "change Z" — call the edit tool with your best interpretation. Don't ask for clarification on minor ambiguity. The user can undo.
 - AFTER A TOOL SUCCEEDS, do not second-guess. A success response means it worked. Reply in ONE short sentence confirming what was done. No verification thinking, no re-analyzing — move on.
@@ -642,6 +643,7 @@ def _build_system_prompt(
                 f'ACTIVE EMAIL DRAFT (open in editor — the user is looking at this right now)\n'
                 f'Title: "{active_document.title}"\n'
                 f'```\n{_doc_raw}\n```\n\n'
+                f'This is the current email compose window, not a normal document library item. If the user says "write", "draft", "reply", "make it say", or "write the email" without naming another target, edit THIS email draft.\n\n'
                 f'When the user asks you to write, reply to, or improve this email:\n'
                 f'1. Use `update_document` to replace the ENTIRE content — keep all the header lines (To, Subject, In-Reply-To, References, X-Source-UID, X-Source-Folder, X-Attachments) and the `---` separator EXACTLY as they are.\n'
                 f'2. Replace ONLY the body text (the part after `---`). If there is a quoted original email (lines starting with `>`), keep that quoted block unchanged BELOW your new reply.\n'
@@ -792,7 +794,7 @@ def _build_system_prompt(
     # When creating email documents, instruct the AI on the format
     if relevant_tools and (_EMAIL_TOOL_HINTS & set(relevant_tools)):
         agent_prompt += (
-            '\n\n📧 EMAIL DOCUMENT FORMAT: When drafting email replies, use create_document with language="email". '
+            '\n\n📧 EMAIL DOCUMENT FORMAT: If no email draft is already open and you need to create an email draft, use create_document with language="email". '
             'The content format is:\n'
             'To: recipient@example.com\n'
             'Subject: Re: Original subject\n'
@@ -800,8 +802,8 @@ def _build_system_prompt(
             'References: <original-message-id>\n'
             '---\n'
             'Body text here...\n\n'
-            'The user can then edit and click Send or Draft in the editor. For an already-open email draft, '
-            'edit the current document instead of creating another one.'
+            'The user can then edit and click Send or Draft in the editor. If an email draft is already open, '
+            'that open draft is the target: use update_document/edit_document on it instead of creating another document.'
         )
 
     # Inject relevant skills based on the user's last message. The

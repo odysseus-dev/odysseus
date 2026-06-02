@@ -1528,6 +1528,10 @@ function _renderRecipes() {
   html += '<option value="vllm">vLLM</option>';
   html += '<option value="sglang">SGLang</option>';
   html += '</select>';
+  html += '<span class="hwfit-help-chip" title="Higher numbers usually mean better quality, but they need more memory. Lower numbers fit on more hardware.">?</span>';
+  html += '<label class="hwfit-ctx-control" title="Context length for fit estimates. Lower it to find more models that could fit your hardware.">';
+  html += '<span>Ctx</span><span class="hwfit-help-chip hwfit-help-chip-inline" title="Context length. Lower it to find more models that could fit your hardware; raise it when you need longer chats or documents.">?</span><input type="range" id="hwfit-context" min="0" max="5" step="1" value="3" />';
+  html += '<output id="hwfit-context-label">50k</output></label>';
   html += '</div>';
   html += '<div class="hwfit-toolbar" style="margin-top:7px;">';
   html += '<select class="cookbook-field-input hwfit-server-select" id="hwfit-server-select" style="height:28px;min-width:88px;position:relative;top:0px;">';

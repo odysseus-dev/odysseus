@@ -77,8 +77,10 @@ python setup.py
 python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
 Requirements: Python 3.11+. Cookbook also needs `tmux` for background model
-downloads and serves. Use `--host 0.0.0.0` only when you intentionally want
-LAN/reverse-proxy access.
+downloads and serves. The app itself is lightweight; local model serving is the
+heavy part and depends on the model, runtime, GPU, and VRAM, so small hosts can
+connect to API or remote model servers instead. Use `--host 0.0.0.0` only when
+you intentionally want LAN/reverse-proxy access.
 
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
@@ -97,7 +99,11 @@ ODYSSEUS_HOST=0.0.0.0 ./start-macos.sh
 # then open http://<tailscale-ip>:7860
 ```
 
-Keep auth enabled when binding outside loopback, and do not expose this port directly to the public internet. To build a clickable app wrapper:
+The script also reads `.env` at startup, so `APP_BIND=0.0.0.0` and `APP_PORT`
+set there are picked up automatically without a command-line override each run.
+
+Keep `AUTH_ENABLED=true` (the default) before binding outside loopback. Do not
+expose this port directly to the public internet. To build a clickable app wrapper:
 
 ```bash
 ./build-macos-app.sh

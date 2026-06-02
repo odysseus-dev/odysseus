@@ -202,6 +202,34 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     return f"{base} || {{ ! {venv_check} && {user}; }}"
 
 
+def _venv_safe_local_pip_install_cmd(cmd: str, *, local: bool, in_venv: bool) -> str:
+    """Drop pip user-install flags that are invalid for local venv installs.
+
+    Cookbook dependency installs run through the model-serve task path so users
+    can watch progress in the same log UI. For local POSIX runs, that task
+    prepends Odysseus' own interpreter directory to PATH. If Odysseus itself is
+    running from a venv, `python3` resolves to the venv Python and pip rejects
+    `--user` with "User site-packages are not visible in this virtualenv".
+
+    Keep remote and non-venv installs unchanged: remotes may intentionally use
+    system Python, and Docker/non-venv installs still need user-site fallback.
+    """
+    if not local or not in_venv:
+        return cmd
+    if "pip install" not in (cmd or ""):
+        return cmd
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        return cmd
+    stripped = [
+        part
+        for part in parts
+        if part not in {"--user", "--break-system-packages"}
+    ]
+    return shlex.join(stripped)
+
+
 def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
     """Build the standalone Python scanner used by /api/model/cached."""
     lines = [

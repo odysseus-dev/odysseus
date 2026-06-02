@@ -457,7 +457,7 @@ def setup_email_routes():
     _IMAP_POOL = {}   # account_id → (conn, last_used_at)
     _IMAP_IDLE_MAX = 60.0
     _WARMING_READS = set()
-    _WARM_READ_LIMIT = 3
+    _WARM_READ_LIMIT = 1
     _WARM_MAX_BYTES = 128 * 1024
     _WARM_RECENT_SECONDS = 7 * 24 * 60 * 60
     _pool_lock = _threading.Lock()
@@ -1046,7 +1046,7 @@ def setup_email_routes():
 
                 # Escape backslash and quote for the IMAP-SEARCH quoted-string.
                 q_escaped = q.replace('\\', '\\\\').replace('"', '\\"')
-                search_cmd = f'(OR FROM "{q_escaped}" TEXT "{q_escaped}")'
+                search_cmd = f'(OR OR FROM "{q_escaped}" SUBJECT "{q_escaped}" TEXT "{q_escaped}")'
 
                 status, data = _imap_uid_search(conn, search_cmd)
                 if status != "OK" or not data[0]:

@@ -1610,7 +1610,15 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     } else if (msgHistory.length) {
       for (const msg of msgHistory) {
         const meta = msg.metadata ? { ...msg.metadata, _fromHistory: true } : null;
-        let displayContent = typeof msg.content === 'string' ? msg.content : (msg.content ? String(msg.content) : '');
+        let displayContent;
+        if (typeof msg.content === 'string') {
+          displayContent = msg.content;
+        } else if (Array.isArray(msg.content)) {
+          // Multimodal (image/audio attachments): extract text parts, skip binary
+          displayContent = msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n').trim();
+        } else {
+          displayContent = '';
+        }
         // Clean up doc selection context for display
         if (msg.role === 'user') {
           // Hide "Continue where you left off" bubbles
