@@ -1498,6 +1498,37 @@ def _migrate_seed_email_account():
         logging.getLogger(__name__).warning(f"seed email account migration: {e}")
 
 
+class GitHubIntegration(Base):
+    """Per-user GitHub integration.
+
+    Owner is the Odysseus username (one row per user). PAT is stored
+    encrypted at rest via secret_storage.encrypt(); decryption happens
+    inside the github MCP server when it builds the auth header.
+
+    `enabled` is the user-level kill switch. The remaining columns back
+    optional, independently-shippable layers: `briefing` (an editable
+    system-prompt addendum), `write_enabled` (gates the write-tier MCP
+    tools — post comments, open PRs, push), and the `notify_*` fields
+    (an opt-in unread-notification count surfaced to the agent). The whole
+    table is created up front so each feature layer is purely behavioral
+    and needs no schema migration; columns a given install doesn't use
+    just sit at their defaults.
+    """
+    __tablename__ = "github_integrations"
+
+    owner = Column(String, primary_key=True, index=True)
+    pat_encrypted = Column(Text, nullable=False)
+    github_username = Column(String, nullable=True)
+    briefing = Column(Text, nullable=True)
+    enabled = Column(Boolean, default=True, nullable=False)
+    write_enabled = Column(Boolean, default=False, nullable=False)
+    notify_enabled = Column(Boolean, default=False, nullable=False)
+    last_notif_count = Column(Integer, default=0, nullable=False)
+    last_notif_polled_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 # WARNING: Foreign-key enforcement is enabled globally for all SQLite connections.
 # Any future migrations or schema changes that temporarily violate foreign-key
 # constraints will fail. To perform such operations, foreign_keys must be

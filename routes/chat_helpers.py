@@ -448,6 +448,7 @@ async def build_chat_context(
     webhook_manager=None,
     use_enhanced_message: bool = False,
     agent_mode: bool = False,
+    extra_system_prompts: list = None,
 ) -> ChatContext:
     """Build the full context (preface + messages) for an LLM call.
 
@@ -527,6 +528,14 @@ async def build_chat_context(
     # YouTube transcripts
     for transcript in preprocessed.youtube_transcripts:
         preface.append(untrusted_context_message("youtube transcript", transcript))
+
+    # Extra system prompts: trusted, per-turn additions a feature can opt into
+    # for this request (e.g. an integration briefing). Appended as system
+    # messages after the main preface so they layer on top of the preset
+    # system prompt. None/empty is the common case and a no-op.
+    for _xp in (extra_system_prompts or []):
+        if _xp:
+            preface.append({"role": "system", "content": _xp})
 
     # Normalize model ID. Prefer cached endpoint models so group chat does not
     # re-hit slow local /models endpoints on every participant turn.

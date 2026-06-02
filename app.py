@@ -698,6 +698,13 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
+# GitHub integration — per-user PAT storage + read-only gh_* MCP tools.
+# The tools live in mcp_servers/github_server.py (auto-registered as a built-in
+# MCP server). mcp_manager is passed so a PAT change can flush the server's
+# in-process PAT cache.
+from routes.github_routes import setup_github_routes
+app.include_router(setup_github_routes(mcp_manager=mcp_manager))
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:

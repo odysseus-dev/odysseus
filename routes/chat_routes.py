@@ -229,6 +229,27 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
         db.close()
 
 
+def _github_is_active(owner: str | None) -> bool:
+    """True iff the user has GitHub configured AND the integration is enabled
+    (master toggle ON in Settings). Used as a defense-in-depth gate alongside
+    the per-turn `allow_github` form flag — a stale tab can carry
+    allow_github=true in its DOM after the user paused the integration in
+    another tab, and we don't want those requests to still invoke gh_* tools.
+
+    Failures (missing table on a fresh install, DB error) return False so the
+    chat path never breaks because of GitHub setup state."""
+    try:
+        from core.database import SessionLocal as _SL, GitHubIntegration as _GI
+    except Exception:
+        return False
+    try:
+        with _SL() as db:
+            row = db.query(_GI).filter_by(owner=owner or "").first()
+        return bool(row and row.enabled and row.pat_encrypted)
+    except Exception:
+        return False
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -376,6 +397,7 @@ def setup_chat_routes(
         preset_id = form_data.get("preset_id")
         allow_bash = form_data.get("allow_bash")
         allow_web_search = form_data.get("allow_web_search")
+        allow_github = form_data.get("allow_github")  # gates the read-only gh_* tool family
         use_rag = form_data.get("use_rag")
         search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
@@ -470,6 +492,12 @@ def setup_chat_routes(
 
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
 
+        # Per-turn extra system prompts. Extension point: features that opt in
+        # for the turn (e.g. the GitHub briefing) append trusted system-prompt
+        # text here, and build_chat_context layers it onto the preface. Empty
+        # in the base path.
+        _extra_prompts: list[str] = []
+
         # Build shared context (stream path uses enhanced_message for context preface)
         ctx = await build_chat_context(
             sess, request, chat_handler, chat_processor,
@@ -490,6 +518,7 @@ def setup_chat_routes(
             # manage_skills (agent mode). In plain chat or incognito the
             # index would be useless / unwanted noise.
             agent_mode=(chat_mode == "agent"),
+            extra_system_prompts=_extra_prompts or None,
         )
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope
@@ -552,6 +581,19 @@ def setup_chat_routes(
         if str(allow_web_search).lower() != "true":
             disabled_tools.add("web_search")
             disabled_tools.add("web_fetch")
+
+        # GitHub: gate the read-only gh_* tool family on `allow_github` for
+        # the turn AND a server-side check that the integration is configured
+        # + enabled (defense-in-depth — a stale tab could still carry
+        # allow_github=true in its DOM after the user paused the integration
+        # elsewhere).
+        _gh_read_tools = {
+            "gh_me", "gh_list_my_prs", "gh_get_pr", "gh_get_pr_diff",
+            "gh_list_pr_comments", "gh_search_issues",
+        }
+        _gh_active = _github_is_active(getattr(sess, "owner", None) or "")
+        if str(allow_github).lower() != "true" or not _gh_active:
+            disabled_tools.update(_gh_read_tools)
 
         # Nobody/incognito mode: deny tools that would expose the user's
         # persistent memory, past chats, or other identity-linked data.
