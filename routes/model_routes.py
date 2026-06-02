@@ -1052,11 +1052,15 @@ def setup_model_routes(model_discovery):
             )
             db.add(ep)
             db.commit()
-            # Auto-set as default chat endpoint if none configured yet
+            # Auto-set as default chat endpoint if none configured yet. Seed
+            # the first CHAT model (not raw model_ids[0]) so we don't pin the
+            # global default to an embedding/tts/etc. entry a provider happens
+            # to list first.
             settings = _load_settings()
             if not settings.get("default_endpoint_id"):
+                from src.endpoint_resolver import _first_chat_model
                 settings["default_endpoint_id"] = ep.id
-                settings["default_model"] = model_ids[0] if model_ids else ""
+                settings["default_model"] = _first_chat_model(model_ids) or ""
                 _save_settings(settings)
             _invalidate_models_cache()
             _local_probe_cache["data"] = None
