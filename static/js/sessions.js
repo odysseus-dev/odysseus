@@ -615,6 +615,8 @@ function createSessionItem(s) {
       dropdown.style.display = 'none';
       return;
     }
+    if(!await uiModule.styledConfirm('Are you sure you want to delete this conversation? This action cannot be undone.', {confirmText: 'Yes', cancelText: 'No', danger: true})) return;
+    
     dropdown.style.display = 'none';
     // Optimistic: remove from UI immediately
     const sessionEl = document.querySelector(`.list-item[data-session-id="${s.id}"]`);
