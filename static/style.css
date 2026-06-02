@@ -1754,6 +1754,8 @@ body.bg-pattern-sparkles {
        near-full-window, like ChatGPT/Claude wide mode. Just lifts the --chat-max
        cap the existing centering math already keys off — no layout rewrite. */
     body.chat-wide .chat-history { --chat-max: 1400px; }
+    /* Developer Mode page: hidden from the settings nav until opted in. */
+    body:not(.dev-mode) .settings-nav-item[data-settings-tab="developer"] { display: none; }
     /* Prominent t/s toggle (Appearance → "Always show tokens/sec"): the per-
        message metric is normally dim muted footer text that's easy to miss.
        Make it bright, slightly larger, and full-opacity so the speed is always
@@ -20759,6 +20761,9 @@ body.gallery-selecting .gallery-dl-btn,
 .settings-appearance-panel > .admin-card:nth-of-type(2) { order: 1; }
 .settings-appearance-panel > .admin-card:nth-of-type(3) { order: 2; }
 .settings-appearance-panel > .admin-card:nth-of-type(n+4) { order: 4; }
+/* Developer Mode page reuses this panel's styling but not its Appearance-specific
+   card ordering — keep its cards in DOM order (Chat, Chat Bar, Sidebar). */
+.settings-appearance-panel[data-settings-panel="developer"] > .admin-card { order: 0; }
 
 /* Mobile: stack tabs on top */
 @media (max-width: 600px) {

@@ -31,8 +31,8 @@ function initTabs() {
       // Mark when the Appearance tab is open so the modal can go
       // semi-transparent — lets the user see the rest of the UI react as
       // they flip toggles instead of having to close + reopen the modal.
-      document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
-      syncAppearanceOpacity(tab === 'appearance');
+      document.body.classList.toggle('settings-appearance-open', tab === 'appearance' || tab === 'developer');
+      syncAppearanceOpacity(tab === 'appearance' || tab === 'developer');
       if (tab === 'ai') refreshAiModelEndpoints();
     });
   });
