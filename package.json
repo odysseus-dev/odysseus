@@ -3,6 +3,10 @@
     "type": "git",
     "url": "https://github.com/pewdiepie-archdaemon/odysseus.git"
   },
+  "scripts": {
+    "i18n:compile": "py -3 scripts/i18n/compile_po.py || python3 scripts/i18n/compile_po.py || python scripts/i18n/compile_po.py",
+    "test:i18n": "node --test tests/i18n_core.test.mjs && (py -3 -m pytest tests/test_i18n_po_compile.py -q || python3 -m pytest tests/test_i18n_po_compile.py -q || python -m pytest tests/test_i18n_po_compile.py -q)"
+  },
   "devDependencies": {
     "@antithesishq/bombadil": "^0.3.2"
   },

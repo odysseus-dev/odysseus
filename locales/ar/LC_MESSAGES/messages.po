@@ -1,0 +1,83 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: Odysseus\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ar\n"
+
+msgid "Language"
+msgstr "اللغة"
+
+msgid "Settings"
+msgstr "الإعدادات"
+
+msgid "Search memories…"
+msgstr "ابحث في الذكريات…"
+
+msgid "Search skills…"
+msgstr "ابحث في المهارات…"
+
+msgid "Import"
+msgstr "استيراد"
+
+msgid "Export"
+msgstr "تصدير"
+
+msgid "Theme"
+msgstr "السمة"
+
+msgid "Themes"
+msgstr "السمات"
+
+msgid "Customize"
+msgstr "تخصيص"
+
+msgid "Close theme"
+msgstr "إغلاق السمة"
+
+msgid "Username"
+msgstr "اسم المستخدم"
+
+msgid "Password"
+msgstr "كلمة المرور"
+
+msgid "Confirm Password"
+msgstr "تأكيد كلمة المرور"
+
+msgid "Sign In"
+msgstr "تسجيل الدخول"
+
+msgid "Sign up"
+msgstr "إنشاء حساب"
+
+msgid "Sign in"
+msgstr "تسجيل الدخول"
+
+msgid "Remember me"
+msgstr "تذكرني"
+
+msgid "Show password"
+msgstr "إظهار كلمة المرور"
+
+msgid "Hide password"
+msgstr "إخفاء كلمة المرور"
+
+msgid "Don't have an account? "
+msgstr "ليس لديك حساب؟ "
+
+msgid "Already have an account? "
+msgstr "لديك حساب بالفعل؟ "
+
+msgid "Create Admin Account"
+msgstr "إنشاء حساب مسؤول"
+
+msgid "Create Account"
+msgstr "إنشاء حساب"
+
+msgid "First-time setup — create your admin account"
+msgstr "الإعداد لأول مرة — أنشئ حساب المسؤول"
+
+msgid "Passwords do not match"
+msgstr "كلمتا المرور غير متطابقتين"
+
+msgid "Password must be at least 8 characters"
+msgstr "يجب أن تتكون كلمة المرور من 8 أحرف على الأقل"

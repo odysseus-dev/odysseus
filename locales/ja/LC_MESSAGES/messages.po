@@ -1,0 +1,83 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: Odysseus\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ja\n"
+
+msgid "Language"
+msgstr "言語"
+
+msgid "Settings"
+msgstr "設定"
+
+msgid "Search memories…"
+msgstr "メモリーを検索…"
+
+msgid "Search skills…"
+msgstr "スキルを検索…"
+
+msgid "Import"
+msgstr "インポート"
+
+msgid "Export"
+msgstr "エクスポート"
+
+msgid "Theme"
+msgstr "テーマ"
+
+msgid "Themes"
+msgstr "テーマ"
+
+msgid "Customize"
+msgstr "カスタマイズ"
+
+msgid "Close theme"
+msgstr "テーマを閉じる"
+
+msgid "Username"
+msgstr "ユーザー名"
+
+msgid "Password"
+msgstr "パスワード"
+
+msgid "Confirm Password"
+msgstr "パスワードを確認"
+
+msgid "Sign In"
+msgstr "サインイン"
+
+msgid "Sign up"
+msgstr "登録"
+
+msgid "Sign in"
+msgstr "サインイン"
+
+msgid "Remember me"
+msgstr "ログイン状態を保持"
+
+msgid "Show password"
+msgstr "パスワードを表示"
+
+msgid "Hide password"
+msgstr "パスワードを隠す"
+
+msgid "Don't have an account? "
+msgstr "アカウントをお持ちでないですか？ "
+
+msgid "Already have an account? "
+msgstr "すでにアカウントをお持ちですか？ "
+
+msgid "Create Admin Account"
+msgstr "管理者アカウントを作成"
+
+msgid "Create Account"
+msgstr "アカウントを作成"
+
+msgid "First-time setup — create your admin account"
+msgstr "初回セットアップ — 管理者アカウントを作成"
+
+msgid "Passwords do not match"
+msgstr "パスワードが一致しません"
+
+msgid "Password must be at least 8 characters"
+msgstr "パスワードは8文字以上にしてください"

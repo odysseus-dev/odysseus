@@ -1,0 +1,83 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: Odysseus\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: fr\n"
+
+msgid "Language"
+msgstr "Langue"
+
+msgid "Settings"
+msgstr "Paramètres"
+
+msgid "Search memories…"
+msgstr "Rechercher dans les souvenirs…"
+
+msgid "Search skills…"
+msgstr "Rechercher des compétences…"
+
+msgid "Import"
+msgstr "Importer"
+
+msgid "Export"
+msgstr "Exporter"
+
+msgid "Theme"
+msgstr "Thème"
+
+msgid "Themes"
+msgstr "Thèmes"
+
+msgid "Customize"
+msgstr "Personnaliser"
+
+msgid "Close theme"
+msgstr "Fermer le thème"
+
+msgid "Username"
+msgstr "Nom d’utilisateur"
+
+msgid "Password"
+msgstr "Mot de passe"
+
+msgid "Confirm Password"
+msgstr "Confirmer le mot de passe"
+
+msgid "Sign In"
+msgstr "Se connecter"
+
+msgid "Sign up"
+msgstr "S’inscrire"
+
+msgid "Sign in"
+msgstr "Se connecter"
+
+msgid "Remember me"
+msgstr "Se souvenir de moi"
+
+msgid "Show password"
+msgstr "Afficher le mot de passe"
+
+msgid "Hide password"
+msgstr "Masquer le mot de passe"
+
+msgid "Don't have an account? "
+msgstr "Vous n’avez pas de compte ? "
+
+msgid "Already have an account? "
+msgstr "Vous avez déjà un compte ? "
+
+msgid "Create Admin Account"
+msgstr "Créer un compte administrateur"
+
+msgid "Create Account"
+msgstr "Créer un compte"
+
+msgid "First-time setup — create your admin account"
+msgstr "Configuration initiale — créez votre compte administrateur"
+
+msgid "Passwords do not match"
+msgstr "Les mots de passe ne correspondent pas"
+
+msgid "Password must be at least 8 characters"
+msgstr "Le mot de passe doit contenir au moins 8 caractères"

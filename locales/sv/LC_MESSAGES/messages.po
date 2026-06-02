@@ -1,0 +1,83 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: Odysseus\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: sv\n"
+
+msgid "Language"
+msgstr "Språk"
+
+msgid "Settings"
+msgstr "Inställningar"
+
+msgid "Search memories…"
+msgstr "Sök i minnen…"
+
+msgid "Search skills…"
+msgstr "Sök bland färdigheter…"
+
+msgid "Import"
+msgstr "Importera"
+
+msgid "Export"
+msgstr "Exportera"
+
+msgid "Theme"
+msgstr "Tema"
+
+msgid "Themes"
+msgstr "Teman"
+
+msgid "Customize"
+msgstr "Anpassa"
+
+msgid "Close theme"
+msgstr "Stäng tema"
+
+msgid "Username"
+msgstr "Användarnamn"
+
+msgid "Password"
+msgstr "Lösenord"
+
+msgid "Confirm Password"
+msgstr "Bekräfta lösenord"
+
+msgid "Sign In"
+msgstr "Logga in"
+
+msgid "Sign up"
+msgstr "Registrera dig"
+
+msgid "Sign in"
+msgstr "Logga in"
+
+msgid "Remember me"
+msgstr "Kom ihåg mig"
+
+msgid "Show password"
+msgstr "Visa lösenord"
+
+msgid "Hide password"
+msgstr "Dölj lösenord"
+
+msgid "Don't have an account? "
+msgstr "Har du inget konto? "
+
+msgid "Already have an account? "
+msgstr "Har du redan ett konto? "
+
+msgid "Create Admin Account"
+msgstr "Skapa administratörskonto"
+
+msgid "Create Account"
+msgstr "Skapa konto"
+
+msgid "First-time setup — create your admin account"
+msgstr "Förstagångsinställning — skapa ditt administratörskonto"
+
+msgid "Passwords do not match"
+msgstr "Lösenorden matchar inte"
+
+msgid "Password must be at least 8 characters"
+msgstr "Lösenordet måste vara minst 8 tecken"

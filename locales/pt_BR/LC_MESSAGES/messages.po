@@ -1,0 +1,83 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: Odysseus\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+
+msgid "Language"
+msgstr "Idioma"
+
+msgid "Settings"
+msgstr "Configurações"
+
+msgid "Search memories…"
+msgstr "Pesquisar memórias…"
+
+msgid "Search skills…"
+msgstr "Pesquisar habilidades…"
+
+msgid "Import"
+msgstr "Importar"
+
+msgid "Export"
+msgstr "Exportar"
+
+msgid "Theme"
+msgstr "Tema"
+
+msgid "Themes"
+msgstr "Temas"
+
+msgid "Customize"
+msgstr "Personalizar"
+
+msgid "Close theme"
+msgstr "Fechar tema"
+
+msgid "Username"
+msgstr "Nome de usuário"
+
+msgid "Password"
+msgstr "Senha"
+
+msgid "Confirm Password"
+msgstr "Confirmar senha"
+
+msgid "Sign In"
+msgstr "Entrar"
+
+msgid "Sign up"
+msgstr "Criar conta"
+
+msgid "Sign in"
+msgstr "Entrar"
+
+msgid "Remember me"
+msgstr "Lembrar de mim"
+
+msgid "Show password"
+msgstr "Mostrar senha"
+
+msgid "Hide password"
+msgstr "Ocultar senha"
+
+msgid "Don't have an account? "
+msgstr "Não tem uma conta? "
+
+msgid "Already have an account? "
+msgstr "Já tem uma conta? "
+
+msgid "Create Admin Account"
+msgstr "Criar conta de administrador"
+
+msgid "Create Account"
+msgstr "Criar conta"
+
+msgid "First-time setup — create your admin account"
+msgstr "Configuração inicial — crie sua conta de administrador"
+
+msgid "Passwords do not match"
+msgstr "As senhas não coincidem"
+
+msgid "Password must be at least 8 characters"
+msgstr "A senha deve ter pelo menos 8 caracteres"
