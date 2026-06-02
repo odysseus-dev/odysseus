@@ -25,6 +25,9 @@ def test_llm_call_posts_native_ollama_payload(monkeypatch):
         )
 
     monkeypatch.setattr(llm_core.httpx, "post", fake_post)
+    # `llm_call` looks up the model's context window so it can pass num_ctx
+    # to Ollama. Without a mock, get_context_length would hit the network.
+    monkeypatch.setattr(llm_core, "get_context_length", lambda url, model: 0)
 
     result = llm_core.llm_call(
         "https://ollama.com/api",
@@ -113,3 +116,36 @@ def test_ollama_payload_tolerates_malformed_arguments():
     payload = llm_core._build_ollama_payload("m", msgs, temperature=0.0, max_tokens=0)
     # Falls back to an empty object rather than raising.
     assert payload["messages"][0]["tool_calls"][0]["function"]["arguments"] == {}
+
+
+# ---------------------------------------------------------------------------
+# num_ctx must be sent to Ollama so the model gets the full context window
+# it advertises. Without this Ollama silently caps inputs at 2048 tokens
+# regardless of model capability, and long prompts get truncated.
+# ---------------------------------------------------------------------------
+
+def test_ollama_payload_includes_num_ctx_when_provided():
+    payload = llm_core._build_ollama_payload(
+        "minimax-m3", [{"role": "user", "content": "hi"}],
+        temperature=0.0, max_tokens=0, context_length=131072,
+    )
+    assert payload["options"]["num_ctx"] == 131072
+
+
+def test_ollama_payload_omits_num_ctx_when_not_provided():
+    payload = llm_core._build_ollama_payload(
+        "minimax-m3", [{"role": "user", "content": "hi"}],
+        temperature=0.0, max_tokens=0,
+    )
+    assert "num_ctx" not in payload.get("options", {})
+
+
+def test_ollama_payload_omits_num_ctx_at_or_below_default():
+    """Ollama already defaults num_ctx to 2048; setting it explicitly is wasted
+    payload bytes and risks misleading callers."""
+    for ctx in (0, 1024, 2048):
+        payload = llm_core._build_ollama_payload(
+            "m", [{"role": "user", "content": "hi"}],
+            temperature=0.0, max_tokens=0, context_length=ctx,
+        )
+        assert "num_ctx" not in payload.get("options", {}), f"num_ctx leaked for ctx={ctx}"
