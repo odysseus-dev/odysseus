@@ -1,4 +1,4 @@
-"""Admin-gated Codex CLI model-provider routes."""
+"""Admin-gated OpenAI subscription model-provider routes."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def setup_codex_model_provider_routes(provider: CodexModelProvider | None = None
 
     @router.post("/add-model")
     async def add_model(request: Request, body: CodexProviderRequest | None = None):
-        """Add the signed-in Codex CLI identity as an owner-scoped model endpoint."""
+        """Add the signed-in OpenAI subscription as an owner-scoped LLM endpoint."""
         require_admin(request)
         owner = get_current_user(request) or ""
         status = await provider.status()
@@ -111,6 +111,10 @@ def setup_codex_model_provider_routes(provider: CodexModelProvider | None = None
             "model_type": "llm",
             "supports_tools": False,
             "is_subscription": True,
+            "billing_mode": "openai_subscription",
+            "api_key_required": False,
+            "usage_meter_supported": False,
+            "shared_llm_supported": True,
             "experimental": True,
             "virtual": True,
         }

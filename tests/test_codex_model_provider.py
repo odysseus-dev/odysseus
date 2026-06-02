@@ -3,6 +3,7 @@ import json
 
 from src.codex_model_provider import (
     CODEX_MODEL_PROVIDER_FLAG,
+    CODEX_PROVIDER_ENDPOINT_URL,
     CODEX_DEFAULT_MODEL_ID,
     CodexCliChatAdapter,
     CodexModelProvider,
@@ -61,6 +62,9 @@ def test_provider_disabled_by_default(monkeypatch):
     out = run(provider.status())
     assert out["status"] == "disabled"
     assert out["feature_enabled"] is False
+    assert out["billing_mode"] == "openai_subscription"
+    assert out["api_key_required"] is False
+    assert out["usage_meter_supported"] is False
 
 
 def test_complete_uses_readonly_sandbox_and_selected_model(monkeypatch):
@@ -101,3 +105,84 @@ def test_stream_codex_chat_emits_error_and_done_without_fallback(monkeypatch):
     chunks = run(collect())
     assert chunks[0].startswith("event: error")
     assert chunks[-1] == "data: [DONE]\n\n"
+
+
+def test_codex_virtual_endpoint_does_not_use_api_headers():
+    from src.endpoint_resolver import build_chat_url, build_headers, build_models_url
+
+    assert build_chat_url(CODEX_PROVIDER_ENDPOINT_URL) == CODEX_PROVIDER_ENDPOINT_URL
+    assert build_models_url(CODEX_PROVIDER_ENDPOINT_URL) == CODEX_PROVIDER_ENDPOINT_URL
+    assert build_headers("sk-should-not-be-used", CODEX_PROVIDER_ENDPOINT_URL) == {}
+
+
+class _Endpoint:
+    id = "codex-cli-test"
+    name = "OpenAI subscription (Codex)"
+    base_url = CODEX_PROVIDER_ENDPOINT_URL
+    api_key = "sk-should-not-be-used"
+    is_enabled = True
+    cached_models = json.dumps(["gpt-5.5"])
+    models = None
+
+
+class _Query:
+    def filter(self, *args, **kwargs):
+        return self
+
+    def first(self):
+        return _Endpoint()
+
+
+class _Db:
+    def query(self, *args, **kwargs):
+        return _Query()
+
+    def close(self):
+        pass
+
+
+def _install_codex_resolver_fakes(monkeypatch, endpoint_id="codex-cli-test"):
+    from src import endpoint_resolver
+    import src.settings as settings
+
+    monkeypatch.setattr(endpoint_resolver, "SessionLocal", lambda: _Db())
+    monkeypatch.setattr(settings, "load_settings", lambda: {
+        "default_endpoint_id": endpoint_id,
+        "default_model": "",
+        "utility_endpoint_id": "",
+        "utility_model": "",
+    })
+    monkeypatch.setattr(
+        settings,
+        "get_user_setting",
+        lambda key, owner="", default=None: default,
+    )
+    return endpoint_resolver
+
+
+def test_codex_endpoint_resolves_through_shared_default_and_utility(monkeypatch):
+    monkeypatch.setenv(CODEX_MODEL_PROVIDER_FLAG, "true")
+    endpoint_resolver = _install_codex_resolver_fakes(monkeypatch)
+
+    assert endpoint_resolver.resolve_endpoint("default") == (
+        CODEX_PROVIDER_ENDPOINT_URL,
+        "gpt-5.5",
+        {},
+    )
+    assert endpoint_resolver.resolve_endpoint("utility") == (
+        CODEX_PROVIDER_ENDPOINT_URL,
+        "gpt-5.5",
+        {},
+    )
+
+
+def test_codex_endpoint_does_not_resolve_when_feature_flag_is_off(monkeypatch):
+    monkeypatch.setenv(CODEX_MODEL_PROVIDER_FLAG, "false")
+    endpoint_resolver = _install_codex_resolver_fakes(monkeypatch)
+
+    assert endpoint_resolver.resolve_endpoint("default", "fallback-url", "fallback-model", {}) == (
+        "fallback-url",
+        "fallback-model",
+        {},
+    )
+    assert endpoint_resolver.resolve_endpoint_by_id("codex-cli-test") is None

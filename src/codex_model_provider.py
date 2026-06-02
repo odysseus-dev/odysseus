@@ -1,8 +1,8 @@
-"""Experimental Codex CLI chat provider.
+"""Experimental OpenAI subscription LLM provider.
 
 This provider deliberately uses the official Codex CLI as the credential
-authority. Odysseus does not read or store Codex tokens; it only asks the CLI to
-run a constrained one-shot chat completion after the admin has signed in.
+authority. Odysseus does not read or store Codex tokens; shared LLM
+surfaces call the CLI after the admin has signed in.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from src.codex_auth import get_codex_auth_service
 
 CODEX_MODEL_PROVIDER_FLAG = "ODYSSEUS_CODEX_MODEL_PROVIDER_ENABLED"
 CODEX_PROVIDER_ENDPOINT_URL = "codex-cli://chat"
-CODEX_PROVIDER_ENDPOINT_NAME = "ChatGPT subscription (Codex)"
+CODEX_PROVIDER_ENDPOINT_NAME = "OpenAI subscription (Codex)"
 CODEX_DEFAULT_MODEL_ID = "gpt-5.5"
 CODEX_CHAT_TIMEOUT_SECONDS = 180
 
@@ -41,10 +41,11 @@ _TOKEN_PATTERNS = (
 )
 
 _LIMITATIONS = [
-    "Experimental: chat-only provider backed by codex exec.",
+    "Experimental: shared text LLM provider backed by codex exec.",
+    "Subscription-managed: Odysseus does not send OpenAI API keys.",
     "Non-streaming: Odysseus receives one completed assistant message.",
-    "Stateless: each message starts a fresh Codex CLI execution.",
-    "Agent tool/event mapping is intentionally not enabled in this slice.",
+    "Stateless: each request starts a fresh Codex CLI execution.",
+    "Agent tool-call execution is intentionally not enabled in this slice.",
 ]
 
 
@@ -116,7 +117,7 @@ def normalize_codex_model_id(model: str | None) -> str:
 
 
 class CodexCliChatAdapter:
-    """Small async adapter around `codex exec` for chat-only completions."""
+    """Small async adapter around `codex exec` for shared text LLM calls."""
 
     def __init__(
         self,
@@ -137,9 +138,13 @@ class CodexCliChatAdapter:
             "ok": True,
             "status": "available",
             "chat_supported": True,
+            "shared_llm_supported": True,
             "streaming_supported": False,
             "session_resume_supported": False,
             "tool_execution_allowed": False,
+            "billing_mode": "openai_subscription",
+            "api_key_required": False,
+            "usage_meter_supported": False,
             "limitations": list(_LIMITATIONS),
         }
 
@@ -201,6 +206,9 @@ class CodexCliChatAdapter:
             "streaming_supported": False,
             "session_resume_supported": False,
             "tool_execution_allowed": False,
+            "billing_mode": "openai_subscription",
+            "api_key_required": False,
+            "usage_meter_supported": False,
         }
 
     async def _preflight(self) -> dict[str, Any]:
@@ -294,7 +302,7 @@ class CodexCliChatAdapter:
     @staticmethod
     def _build_prompt(messages: list[dict[str, Any]]) -> str:
         parts = [
-            "You are replying through Odysseus using a ChatGPT subscription via Codex CLI.",
+            "You are replying through Odysseus using an OpenAI subscription via Codex CLI.",
             "Return only the final assistant response.",
             "Do not run tools, shell commands, file edits, or web requests.",
             "",
@@ -344,6 +352,9 @@ class CodexCliChatAdapter:
             "streaming_supported": False,
             "session_resume_supported": False,
             "tool_execution_allowed": False,
+            "billing_mode": "openai_subscription",
+            "api_key_required": False,
+            "usage_meter_supported": False,
         }
 
 
@@ -360,9 +371,13 @@ class CodexModelProvider:
             "experimental": True,
             "models": [],
             "chat_supported": False,
+            "shared_llm_supported": False,
             "streaming_supported": False,
             "session_resume_supported": False,
             "tool_execution_allowed": False,
+            "billing_mode": "openai_subscription",
+            "api_key_required": False,
+            "usage_meter_supported": False,
             "limitations": list(_LIMITATIONS),
             "endpoint_name": CODEX_PROVIDER_ENDPOINT_NAME,
             "endpoint_url": CODEX_PROVIDER_ENDPOINT_URL,
@@ -389,6 +404,7 @@ class CodexModelProvider:
             "authenticated": True,
             "models": codex_available_models(),
             "chat_supported": True,
+            "shared_llm_supported": True,
         }
 
     async def test_chat(

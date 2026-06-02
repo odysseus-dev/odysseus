@@ -394,13 +394,13 @@ function _setCodexProviderMessage(data, showReady = true) {
     return;
   }
   if (data.status === 'disabled') {
-    msg.textContent = 'Subscription provider is off on this server.';
+    msg.textContent = 'OpenAI subscription provider is off on this server.';
   } else if (data.status === 'sign_in_required' || data.authenticated === false) {
     msg.textContent = 'Sign in under Integrations first.';
   } else if (data.status === 'cli_unavailable') {
     msg.textContent = 'Codex CLI is not available on this server.';
   } else {
-    msg.textContent = data.error || 'Codex subscription provider is not ready.';
+    msg.textContent = data.error || 'OpenAI subscription provider is not ready.';
   }
   msg.className = 'admin-error';
 }
@@ -489,7 +489,7 @@ function _initCodexProviderControls() {
           if (data.endpoint && data.endpoint.id) _recentlyAddedEpId = String(data.endpoint.id);
           await loadEndpoints();
           await _selectAddedModelInChat(data.endpoint);
-          if (msg) { msg.textContent = 'Added ChatGPT subscription model.'; msg.className = 'admin-success'; }
+          if (msg) { msg.textContent = 'Added OpenAI subscription model.'; msg.className = 'admin-success'; }
         } else if (msg) {
           msg.textContent = data.detail || data.error || 'Add failed';
           msg.className = 'admin-error';
@@ -558,7 +558,7 @@ async function loadEndpoints() {
               <span class="admin-user-name">${esc(ep.name)}</span>
               ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
               ${statusBadge}
-              ${ep.is_subscription ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 18%, transparent);color:var(--accent);">subscription</span>' : ''}
+              ${ep.is_subscription ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 18%, transparent);color:var(--accent);">OpenAI sub</span>' : ''}
               ${ep.experimental ? '<span class="admin-badge">experimental</span>' : ''}
               ${ep.is_enabled ? '' : '<span class="admin-badge admin-badge-off">disabled</span>'}
               ${hasModels ? '<span style="font-size:10px;opacity:0.4;">Click to manage models</span>' : ''}

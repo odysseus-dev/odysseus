@@ -168,8 +168,32 @@ def build_models_url(base: str) -> str:
     return base + "/models"
 
 
+def _codex_provider_disabled(base: str) -> bool:
+    try:
+        from src.codex_model_provider import codex_model_provider_enabled, is_codex_provider_url
+        return is_codex_provider_url(base) and not codex_model_provider_enabled()
+    except Exception:
+        return False
+
+
+def _endpoint_models(ep) -> list:
+    raw = getattr(ep, "cached_models", None) or getattr(ep, "models", None)
+    if not raw:
+        return []
+    try:
+        return json.loads(raw) if isinstance(raw, str) else list(raw)
+    except Exception:
+        return []
+
+
 def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     """Build auth headers for an endpoint."""
+    try:
+        from src.codex_model_provider import is_codex_provider_url
+        if is_codex_provider_url(base):
+            return {}
+    except Exception:
+        pass
     provider = _detect_provider(base)
     headers: Dict[str, str] = {}
     if provider == "anthropic":
@@ -247,17 +271,14 @@ def resolve_endpoint(
             return fallback_url, fallback_model, fallback_headers
 
         base = normalize_base(ep.base_url)
+        if _codex_provider_disabled(base):
+            return fallback_url, fallback_model, fallback_headers
         chat_url = build_chat_url(base)
         headers = build_headers(ep.api_key, base)
 
-        # If no model specified, try to pick the first from endpoint's cached list
-        if not model and hasattr(ep, 'models') and ep.models:
-            try:
-                models = json.loads(ep.models) if isinstance(ep.models, str) else ep.models
-                if models:
-                    model = _first_chat_model(models)
-            except Exception:
-                pass
+        # If no model specified, pick the first cached chat model from the endpoint.
+        if not model:
+            model = _first_chat_model(_endpoint_models(ep)) or ""
 
         return chat_url, model or fallback_model, headers
     except Exception as e:
@@ -286,16 +307,13 @@ def resolve_endpoint_by_id(
         if not ep:
             return None
         base = normalize_base(ep.base_url)
+        if _codex_provider_disabled(base):
+            return None
         chat_url = build_chat_url(base)
         headers = build_headers(ep.api_key, base)
         m = (model or "").strip()
-        if not m and getattr(ep, "models", None):
-            try:
-                models = json.loads(ep.models) if isinstance(ep.models, str) else ep.models
-                if models:
-                    m = _first_chat_model(models) or ""
-            except Exception:
-                pass
+        if not m:
+            m = _first_chat_model(_endpoint_models(ep)) or ""
         if not m:
             return None
         return chat_url, m, headers

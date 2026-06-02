@@ -172,7 +172,10 @@ async function _fetchModelEndpoints() {
 }
 
 function _endpointLabel(ep) {
-  return ep.name + (ep.online ? '' : ' (offline)');
+  var label = ep.name || '';
+  if (ep.is_subscription) label += ' (OpenAI sub)';
+  if (!ep.online) label += ' (offline)';
+  return label;
 }
 
 function _fillEndpointSelect(selectEl, endpoints, selected, keepBlank) {
@@ -308,7 +311,7 @@ function _bindFallbackWidget(opts) {
       enabledEps().forEach(function(ep) {
         var o = document.createElement('option');
         o.value = ep.id;
-        o.textContent = ep.name + (ep.online ? '' : ' (offline)');
+        o.textContent = _endpointLabel(ep);
         epS.appendChild(o);
       });
       var first = enabledEps()[0];
@@ -411,7 +414,7 @@ async function initDefaultChat() {
       enabledEndpoints().forEach(function(ep) {
         var o = document.createElement('option');
         o.value = ep.id;
-        o.textContent = ep.name + (ep.online ? '' : ' (offline)');
+        o.textContent = _endpointLabel(ep);
         epS.appendChild(o);
       });
       var first = enabledEndpoints()[0];
@@ -844,7 +847,7 @@ async function initTtsSettings() {
       if (!ep.is_enabled) return;
       var hasTTS = (ep.models || []).some(m => ttsKeywords.some(kw => m.toLowerCase().includes(kw)));
       if (!hasTTS) return;
-      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; provSel.appendChild(opt);
+      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = _endpointLabel(ep); provSel.appendChild(opt);
     });
   } catch (e) { console.warn('Failed to load endpoints for TTS', e); }
 
@@ -1011,7 +1014,8 @@ async function initSttSettings() {
     var endpoints = await epRes.json();
     endpoints.forEach(function(ep) {
       if (!ep.is_enabled) return;
-      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; provSel.appendChild(opt);
+      if (ep.is_subscription) return;
+      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = _endpointLabel(ep); provSel.appendChild(opt);
     });
   } catch (e) { console.warn('Failed to load endpoints for STT', e); }
 
