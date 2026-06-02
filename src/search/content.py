@@ -395,8 +395,11 @@ def extract_quotes(text: str) -> List[str]:
 
 def extract_statistics(text: str) -> List[str]:
     """Find numbers, percentages, dates and simple measurements."""
+    # Match a comma-grouped number (1,000,000) OR a plain digit run (50000) —
+    # the old `\d{1,3}(?:,\d{3})*` matched only the first 3 digits of a
+    # comma-less number, and the trailing `\b` dropped a closing `%`.
     pattern = re.compile(
-        r"\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\s*(%|percent|‰|per cent|[a-zA-Z]+)?\b",
+        r"\b(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*(%|percent|‰|per cent|[a-zA-Z]+)?",
         re.IGNORECASE,
     )
     return [m.group(0).strip() for m in pattern.finditer(text)]
