@@ -9,9 +9,7 @@ search:
     - json
 
 engines:
-  - name: radio browser
-    disabled: true
-  - name: ahmia
-    disabled: true
-  - name: torch
-    disabled: true
+  remove:
+    - radio browser
+    - ahmia
+    - torch
