@@ -26,6 +26,16 @@ from urllib.parse import urlparse
 
 import markdown
 
+try:
+    # Server-side LaTeX → MathML. Rendering math in Python keeps the report
+    # self-contained: MathML renders natively in modern browsers, so we need
+    # no client-side KaTeX/MathJax — which the report's strict CSP (no CDN
+    # scripts/styles/fonts) would block anyway. Lazy/guarded so a missing
+    # install degrades to legible raw LaTeX rather than crashing the render.
+    from latex2mathml.converter import convert as _latex_to_mathml
+except Exception:  # pragma: no cover - optional dependency
+    _latex_to_mathml = None
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -45,15 +55,128 @@ def _autolink_urls(md_text: str) -> str:
     )
 
 
-def _md_to_html(md_text: str) -> str:
-    """Convert markdown to HTML with common extensions."""
+# ---------------------------------------------------------------------------
+# Math (LaTeX → MathML)
+# ---------------------------------------------------------------------------
+#
+# The Python markdown processor mangles LaTeX: `*` turns into <em>, the
+# backslashes in `\[ \]` / `\( \)` are stripped, and `&` / `\\` inside
+# matrices get HTML-escaped or collapsed. So math spans are pulled OUT before
+# markdown runs (replaced with inert alphanumeric placeholders) and converted
+# to self-contained MathML afterwards.
+
+# Placeholder is alphanumeric only so markdown leaves it completely untouched
+# (no emphasis/escaping) and never splits it across the rendered HTML.
+_MATH_PLACEHOLDER = "xodysmathph{}phx"
+
+# Single pass over the markdown. Code regions are matched first and returned
+# untouched so `$x$` inside code stays literal; the four math delimiter styles
+# mirror the chat renderer. Inline forms are single-line; display forms may
+# span lines (which also fixes blank-line-splits-the-block).
+#
+# The bare `$...$` form is the tricky one — it has to coexist with currency in
+# prose ("a fee of $5 is unrelated"). We use the standard pandoc disambiguation:
+# the delimiters must hug their content with no adjacent whitespace, and the
+# closing `$` can't touch a digit. So `$a*b*c$` is math, but "$5 ... $word" is
+# not (the `$` before `word` is preceded by a space, so it can't close).
+_CODE_OR_MATH_RE = re.compile(
+    r"(?P<fence>```[\s\S]*?```|~~~[\s\S]*?~~~)"
+    r"|(?P<icode>`[^`\n]+`)"
+    r"|\$\$(?P<dd>[\s\S]+?)\$\$"
+    r"|\\\[(?P<bd>[\s\S]+?)\\\]"
+    r"|\\\((?P<bi>[^\n]+?)\\\)"
+    r"|(?<![\d$])\$(?!\$)(?!\s)(?P<di>[^$\n]+?)(?<!\s)\$(?![\d$])"
+)
+
+
+def _protect_math(md_text: str) -> Tuple[str, List[Tuple[str, bool]]]:
+    """Pull math spans out before the markdown pass.
+
+    Returns ``(text_with_placeholders, spans)`` where ``spans`` is a list of
+    ``(latex, is_display)`` tuples in placeholder order.
+    """
+    spans: List[Tuple[str, bool]] = []
+
+    def _stash(latex: str, display: bool) -> str:
+        spans.append((latex.strip(), display))
+        return _MATH_PLACEHOLDER.format(len(spans) - 1)
+
+    def _repl(m: "re.Match") -> str:
+        if m.group("fence") is not None or m.group("icode") is not None:
+            return m.group(0)  # code region — leave untouched
+        if m.group("dd") is not None:
+            return _stash(m.group("dd"), True)
+        if m.group("bd") is not None:
+            return _stash(m.group("bd"), True)
+        if m.group("bi") is not None:
+            return _stash(m.group("bi"), False)
+        if m.group("di") is not None:
+            return _stash(m.group("di"), False)
+        return m.group(0)
+
+    return _CODE_OR_MATH_RE.sub(_repl, md_text), spans
+
+
+def _render_math(latex: str, display: bool) -> str:
+    """Render one LaTeX span to a self-contained MathML element.
+
+    Falls back to the escaped LaTeX source (kept legible) when the converter
+    is unavailable or the expression won't parse.
+    """
+    cls = "odys-math odys-math-display" if display else "odys-math"
+    if _latex_to_mathml is not None and latex:
+        try:
+            mathml = _latex_to_mathml(latex, display="block" if display else "inline")
+            return f'<span class="{cls}">{mathml}</span>'
+        except Exception:
+            logger.debug("MathML conversion failed for %r", latex, exc_info=True)
+    return f'<span class="{cls} odys-math-raw">{html.escape(latex)}</span>'
+
+
+def _restore_math(report_html: str, spans: List[Tuple[str, bool]]) -> str:
+    """Swap math placeholders back in as rendered MathML, post-markdown."""
+    for idx, (latex, display) in enumerate(spans):
+        report_html = report_html.replace(
+            _MATH_PLACEHOLDER.format(idx), _render_math(latex, display)
+        )
+    return report_html
+
+
+def _heading_text_to_html(text: str) -> str:
+    """Render a heading label for the TOC sidebar.
+
+    HTML-escapes the prose but typesets any inline math as MathML, so a heading
+    like ``The Fundamental Rules: $i^2 = ... = -1$`` matches its rendered body
+    counterpart instead of showing raw ``$...$`` LaTeX in the sidebar. Math in
+    a heading is always laid out inline (display mode would distort a nav row).
+    """
+    protected, spans = _protect_math(text)
+    out = html.escape(protected)
+    for idx, (latex, _display) in enumerate(spans):
+        out = out.replace(_MATH_PLACEHOLDER.format(idx), _render_math(latex, False))
+    return out
+
+
+def _md_to_html(md_text: str) -> Tuple[str, List[Tuple[str, bool]]]:
+    """Convert markdown to HTML with common extensions.
+
+    Returns ``(html, math_spans)``. Math is left as inert placeholders here;
+    the caller restores it (via _restore_math) only after heading IDs are
+    finalized — otherwise injected MathML markup could leak into a generated
+    heading ``id`` attribute and break the tag.
+
+    The ``toc`` extension is deliberately omitted: it auto-assigns heading
+    ``id``s derived from heading text (which would embed a math placeholder in
+    the slug), and those ids are redundant anyway — _apply_heading_ids sets the
+    h2/h3 ids the sidebar links to.
+    """
+    md_text, math_spans = _protect_math(md_text)
     md_text = _autolink_urls(md_text)
     result = markdown.markdown(
         md_text,
-        extensions=["extra", "codehilite", "toc", "tables", "sane_lists"],
+        extensions=["extra", "codehilite", "tables", "sane_lists"],
         extension_configs={
             "codehilite": {"css_class": "code", "guess_lang": False},
-            "toc": {"marker": "", "toc_depth": "2-3"},
         },
     )
     # Make external links open in new tab
@@ -62,7 +185,7 @@ def _md_to_html(md_text: str) -> str:
         r'<a target="_blank" rel="noopener noreferrer" href="\1',
         result,
     )
-    return result
+    return result, math_spans
 
 
 def _extract_headings(md_text: str) -> List[Dict[str, str]]:
@@ -699,6 +822,28 @@ body::after {{
 .content td {{ padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); vertical-align: top; }}
 .content tr:last-child td {{ border-bottom: none; }}
 .content tr:hover td {{ background: var(--accent-bg); }}
+
+/* ── Math (server-rendered MathML) ─────────────────
+   LaTeX is converted to MathML in Python so the page is fully self-contained
+   (no client-side KaTeX/MathJax — the report CSP blocks external scripts,
+   styles, and fonts). Modern browsers render MathML natively. */
+.content .odys-math {{ font-size: 1.04em; }}
+.content .odys-math-display {{
+  display: block;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 1.4rem 0;
+  text-align: center;
+}}
+.content .odys-math-display math {{ font-size: 1.15em; }}
+/* Conversion failed (or library missing): show the raw LaTeX legibly rather
+   than dropping it. */
+.content .odys-math-raw {{ font-family: var(--font-mono); font-size: 0.92em; color: var(--text-dim); }}
+.content .odys-math-display.odys-math-raw {{ white-space: pre-wrap; text-align: left; }}
+/* Inline math in the TOC sidebar — kept compact so a math heading doesn't
+   overflow the narrow nav rail. */
+.toc-sidebar .odys-math {{ font-size: 0.92em; }}
+.toc-sidebar .odys-math-raw {{ font-family: var(--font-mono); color: var(--text-muted); }}
 
 /* ── Sources (collapsible list) ───────────────────── */
 .sources-panel {{ margin-top: 3rem; border-top: 2px solid var(--border); padding-top: 1.5rem; }}
@@ -1689,7 +1834,7 @@ def generate_visual_report(
             flags=re.MULTILINE,
         )
 
-    report_html = _md_to_html(report_markdown)
+    report_html, math_spans = _md_to_html(report_markdown)
 
     headings = _extract_headings(report_markdown)
     report_html = _apply_heading_ids(report_html, headings)
@@ -1743,12 +1888,16 @@ def generate_visual_report(
     report_html, _consumed = _inject_images(report_html, section_pool)
     spare_images = section_pool[_consumed:]
 
+    # Restore math LAST — after heading IDs are finalized and images injected —
+    # so MathML markup can never land inside a generated attribute (e.g. an id).
+    report_html = _restore_math(report_html, math_spans)
+
     # Build TOC
     toc_lines = []
     for h in headings:
         depth_class = f"depth-{h['level']}"
         toc_lines.append(
-            f'<a href="#{h["slug"]}" class="{depth_class}">{html.escape(h["text"])}</a>'
+            f'<a href="#{h["slug"]}" class="{depth_class}">{_heading_text_to_html(h["text"])}</a>'
         )
     toc_html = "\n      ".join(toc_lines) if toc_lines else ""
 

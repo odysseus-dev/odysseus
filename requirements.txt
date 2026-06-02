@@ -21,6 +21,10 @@ youtube-transcript-api
 # Markdown rendering for research reports (src/visual_report.py).
 # Imported at module-top so it's a hard core dep, not optional.
 markdown
+# LaTeX -> MathML for math in research reports (src/visual_report.py).
+# Rendered server-side so the report stays self-contained -- its CSP blocks
+# CDN math libs. Lazy-imported; degrades to legible raw LaTeX if absent.
+latex2mathml
 # Calendar .ics import/export (routes/calendar_routes.py).
 icalendar
 # Recurrence rule expansion for calendar events (routes/calendar_routes.py).
