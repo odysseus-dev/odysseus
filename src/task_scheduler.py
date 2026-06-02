@@ -203,6 +203,21 @@ RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
 })
 
 
+
+def _digest_windows(now):
+    """Return (label, start, end) tuples for the calendar check-in digest.
+
+    Buckets must be contiguous so no event falls in a gap. The original code
+    had this_week ending at now+7d and next_30_days starting at now+8d,
+    silently dropping events between day 7 and day 8.
+    """
+    return [
+        ("today_tomorrow", now,                      now + timedelta(days=2)),
+        ("this_week",      now + timedelta(days=2),  now + timedelta(days=7)),
+        ("next_30_days",   now + timedelta(days=7),  now + timedelta(days=30)),
+    ]
+
+
 class TaskScheduler:
     def __init__(self, session_manager):
         self._session_manager = session_manager
@@ -1082,11 +1097,7 @@ class TaskScheduler:
             from core.database import SessionLocal as _SL, CalendarEvent as _CE
             _db = _SL()
             try:
-                for label, start, end in [
-                    ("today_tomorrow", now, now + timedelta(days=2)),
-                    ("this_week",      now + timedelta(days=2), now + timedelta(days=7)),
-                    ("next_30_days",   now + timedelta(days=8), now + timedelta(days=30)),
-                ]:
+                for label, start, end in _digest_windows(now):
                     # Strip timezone for naive DB comparison
                     _s = start.replace(tzinfo=None) if start.tzinfo else start
                     _e = end.replace(tzinfo=None) if end.tzinfo else end
