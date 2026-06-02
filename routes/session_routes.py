@@ -14,6 +14,13 @@ from core.database import Session as DbSession, SessionLocal, Document, GalleryI
 from src.auth_helpers import get_current_user, effective_user
 
 
+def _sanitize_export_filename(name: str) -> str:
+    """Return a conservative filename safe for Content-Disposition."""
+    name = name or ""
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+    return name[:128]
+
+
 def _verify_session_owner(request: Request, session_id: str):
     """Verify the current user owns the session. Raises 404 if not."""
     user = effective_user(request)
@@ -558,6 +565,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
 
         safe_name = re.sub(r'[^\w\-_]', '_', session.name)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = _sanitize_export_filename(filename)
 
         if fmt == "json":
             import json as _json
