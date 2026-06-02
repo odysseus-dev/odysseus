@@ -209,6 +209,54 @@ function _initModelPickerDropdown() {
     return sortModelObjects(result);
   }
 
+  // ── Provider display names and grouping ──
+  const _PROVIDER_NAMES = {
+    '01-ai': 'Yi', 'abacusai': 'Abacus AI', 'adept': 'Adept',
+    'ai21': 'AI21 Labs', 'ai21labs': 'AI21 Labs', 'aion-labs': 'Aion Labs',
+    'aisingapore': 'AI Singapore', 'allenai': 'Allen AI', 'amazon': 'Amazon',
+    'anthracite-org': 'Anthracite', 'anthropic': 'Anthropic', 'arcee-ai': 'Arcee AI',
+    'baai': 'BAAI', 'baidu': 'Baidu', 'bigcode': 'BigCode',
+    'black-forest-labs': 'Black Forest Labs', 'bytedance': 'ByteDance',
+    'bytedance-seed': 'ByteDance', 'cognitivecomputations': 'Cognitive Computations',
+    'cohere': 'Cohere', 'databricks': 'Databricks', 'deepcogito': 'DeepCogito',
+    'deepseek': 'DeepSeek', 'deepseek-ai': 'DeepSeek', 'essentialai': 'Essential AI',
+    'google': 'Google', 'gryphe': 'Gryphe', 'ibm': 'IBM',
+    'ibm-granite': 'IBM Granite', 'inception': 'Inception',
+    'inclusionai': 'Inclusion AI', 'inflection': 'Inflection',
+    'kwaipilot': 'KwaiPilot', 'liquid': 'Liquid AI', 'mancer': 'Mancer',
+    'meta': 'Llama', 'meta-llama': 'Llama', 'microsoft': 'Microsoft',
+    'minimax': 'MiniMax', 'minimaxai': 'MiniMax', 'mistralai': 'Mistral',
+    'moonshotai': 'Moonshot', 'morph': 'Morph', 'nex-agi': 'Nex AGI',
+    'nousresearch': 'Nous Research', 'nv-mistralai': 'NVIDIA x Mistral',
+    'nvidia': 'NVIDIA', 'openai': 'OpenAI', 'openrouter': 'OpenRouter',
+    'perceptron': 'Perceptron', 'perplexity': 'Perplexity', 'poolside': 'Poolside',
+    'prime-intellect': 'Prime Intellect', 'qwen': 'Qwen', 'rekaai': 'Reka',
+    'relace': 'Relace', 'sao10k': 'Sao10k', 'sarvamai': 'Sarvam AI',
+    'snowflake': 'Snowflake', 'stepfun': 'StepFun', 'stepfun-ai': 'StepFun',
+    'stockmark': 'Stockmark', 'switchpoint': 'SwitchPoint', 'tencent': 'Tencent',
+    'thedrummer': 'TheDrummer', 'undi95': 'Undi95', 'upstage': 'Upstage',
+    'writer': 'Writer', 'x-ai': 'xAI', 'xiaomi': 'Xiaomi',
+    'z-ai': 'Zhipu', 'zyphra': 'Zyphra',
+    '~anthropic': 'Anthropic', '~google': 'Google',
+    '~moonshotai': 'Moonshot', '~openai': 'OpenAI',
+  };
+  const _PROVIDER_ALIAS = {
+    'meta-llama': 'meta', 'deepseek': 'deepseek-ai', 'minimaxai': 'minimax',
+    'stepfun-ai': 'stepfun', 'ai21labs': 'ai21', 'ibm-granite': 'ibm',
+    'bytedance-seed': 'bytedance', '~anthropic': 'anthropic',
+    '~google': 'google', '~moonshotai': 'moonshotai', '~openai': 'openai',
+  };
+  function _providerDisplayName(slug) {
+    return _PROVIDER_NAMES[slug] || slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' ');
+  }
+  function _providerSlug(mid) {
+    const slash = mid.indexOf('/');
+    let slug = slash > 0 ? mid.substring(0, slash) : 'other';
+    return _PROVIDER_ALIAS[slug] || slug;
+  }
+  const _collapsedProviders = new Set(_loadList('odysseus-model-collapsed'));
+  let _justExpandedProvider = null;
+
   function _populate(filter) {
     listEl.innerHTML = '';
     const all = _getAllModels();
@@ -319,13 +367,11 @@ function _initModelPickerDropdown() {
 
     // ── Search mode: flat, filtered results across the whole catalog ──
     if (q) {
-      const matches = all.filter(m =>
-        [
-          m.mid,
-          m.display,
-          m.epName,
-          m.providerText,
-        ].filter(Boolean).join(' ').toLowerCase().includes(q));
+      const matches = all.filter(m => {
+        const provName = _providerDisplayName(_providerSlug(m.mid)).toLowerCase();
+        return [m.mid, m.display, m.epName, m.providerText, provName]
+          .filter(Boolean).join(' ').toLowerCase().includes(q);
+      });
       if (matches.length === 0) _addEmpty('No matching models');
       else matches.forEach(_addRow);
       return;
@@ -355,14 +401,54 @@ function _initModelPickerDropdown() {
         if (shown.size) _addSection('All models');
         rest.forEach(_addRow);
       }
-    } else if (!recentModels.length && !favModels.length) {
-      // Large catalog, nothing pinned yet — point them at the search box.
-      const hint = document.createElement('div');
-      hint.className = 'model-switch-empty mp-empty-hint';
-      hint.innerHTML =
-        '<span class="mp-empty-title">Search ' + all.length + ' models</span>'
-        + '<span class="mp-empty-sub">Picks land in Recent · tap the dot to favorite</span>';
-      listEl.appendChild(hint);
+    } else {
+      // Large catalog: show provider groups with collapsible sections.
+      const rest = all.filter(m => !shown.has(m.mid));
+      const groups = new Map();
+      rest.forEach(m => {
+        const slug = _providerSlug(m.mid);
+        if (!groups.has(slug)) groups.set(slug, []);
+        groups.get(slug).push(m);
+      });
+      const sorted = [...groups.keys()].sort((a, b) =>
+        _providerDisplayName(a).localeCompare(_providerDisplayName(b)));
+
+      sorted.forEach(provider => {
+        const models = groups.get(provider);
+        const isCollapsed = _collapsedProviders.has(provider);
+        const header = document.createElement('div');
+        header.className = 'mp-provider-header';
+        header.innerHTML =
+          `<svg class="mp-provider-chevron${isCollapsed ? ' collapsed' : ''}" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`
+          + `<span class="mp-provider-name">${_providerDisplayName(provider)}</span>`
+          + `<span class="mp-provider-count">${models.length}</span>`;
+        header.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (_collapsedProviders.has(provider)) {
+            _collapsedProviders.delete(provider);
+            _justExpandedProvider = provider;
+          } else {
+            _collapsedProviders.add(provider);
+            _justExpandedProvider = null;
+          }
+          _saveList('odysseus-model-collapsed', [..._collapsedProviders]);
+          const st = listEl.scrollTop;
+          _populate('');
+          listEl.scrollTop = st;
+        });
+        listEl.appendChild(header);
+        if (!isCollapsed) {
+          const group = document.createElement('div');
+          group.className = 'mp-provider-group' + (_justExpandedProvider === provider ? ' mp-just-expanded' : '');
+          models.forEach(m => {
+            _addRow(m);
+            // Move the just-appended row into the group container
+            group.appendChild(listEl.lastElementChild);
+          });
+          listEl.appendChild(group);
+          if (_justExpandedProvider === provider) _justExpandedProvider = null;
+        }
+      });
     }
   }
 

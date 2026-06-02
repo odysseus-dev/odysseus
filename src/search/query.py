@@ -15,7 +15,10 @@ def _detect_question_type(query: str) -> Optional[str]:
     """Return the leading question word if present (who, what, when, where, why, how)."""
     q = query.strip().lower()
     for word in ("who", "what", "when", "where", "why", "how"):
-        if q.startswith(word):
+        # Require a whole-word match: a bare prefix mis-flags ordinary queries
+        # like "whatsapp pricing" (-> what) or "however ..." (-> how), which
+        # then get spurious boost terms OR-appended in enhance_query.
+        if q == word or q.startswith(word + " "):
             return word
     return None
 
