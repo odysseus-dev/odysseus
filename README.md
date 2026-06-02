@@ -311,6 +311,41 @@ Common internal-only ports from the default docs/compose setup:
 | `11434` | Ollama |
 | `8000-8020` | Common local model/provider APIs |
 
+### NixOS
+
+A `flake.nix` is included for NixOS users. It exposes a `nixosModules.odysseus`
+that manages the full stack (Odysseus, ChromaDB, SearXNG, ntfy) via
+`podman-compose`, with data persistence under a configurable `dataDir`.
+
+Add the flake as an input:
+
+```nix
+inputs.odysseus = {
+  url = "github:pewdiepie-archdaemon/odysseus";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+```
+
+Import the module and enable it:
+
+```nix
+imports = [ inputs.odysseus.nixosModules.odysseus ];
+
+services.odysseus = {
+  enable = true;
+  dataDir = "/var/lib/odysseus";   # where data lives
+  port    = 7000;                  # host-side port
+  # llamaServerEndpoint — point at your local LLM server if you have one
+  # searxngSecretKey    — change before exposing to the network
+};
+```
+
+`nixos-rebuild switch` builds the image from source, writes the compose file to
+`/etc/odysseus/`, and starts everything as a single `systemd` unit.
+
+Requires `virtualisation.podman.enable = true` (and optionally
+`hardware.nvidia-container-toolkit.enable = true` for GPU support).
+
 ## Contributing
 Help is welcome. The best entry points are fresh-install testing, provider setup
 bugs, mobile/editor polish, docs, and small focused refactors. See
