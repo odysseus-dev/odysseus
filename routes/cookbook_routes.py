@@ -1898,6 +1898,7 @@ def setup_cookbook_routes() -> APIRouter:
             # persists after the process exits, so a finished download still has a
             # snapshot to classify (DOWNLOAD_OK / exit marker) — evaluate it even
             # when the PID is gone instead of blindly reporting "stopped".
+            download_zero_files = False
             status = "unknown"
             if is_alive or (local_win_task and full_snapshot):
                 lower = full_snapshot.lower()
@@ -1914,7 +1915,11 @@ def setup_cookbook_routes() -> APIRouter:
                     # Only download tasks treat 100% as "completed".
                     # Serve tasks log 100%|██████| during inference progress
                     # (diffusion sampling, etc.) — that's "running", not done.
-                    status = "completed"
+                    if re.search(r"Fetching\s+0\s+files", full_snapshot, re.IGNORECASE):
+                        status = "error"
+                        download_zero_files = True
+                    else:
+                        status = "completed"
                 elif "application startup complete" in lower:
                     status = "ready"
                 elif not is_alive:
@@ -1934,6 +1939,8 @@ def setup_cookbook_routes() -> APIRouter:
             diagnosis = _diagnose_serve_output(full_snapshot) if task_type == "serve" and full_snapshot else None
             if diagnosis and status in {"running", "unknown", "stopped"}:
                 status = "error"
+            if download_zero_files:
+                diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
             output_tail = "\n".join(full_snapshot.splitlines()[-12:]) if full_snapshot else ""
 
             results.append({
