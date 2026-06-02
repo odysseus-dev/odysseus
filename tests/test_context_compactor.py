@@ -78,17 +78,35 @@ class TestResolveInputBudget:
         # auto_max only governs auto mode; an explicit cap is honored verbatim.
         assert resolve_input_budget(50000, context_length=200000, auto_max=16000) == 50000
 
-    def test_auto_never_below_floor(self):
-        # Small-context models keep at least the historical floor.
-        assert resolve_input_budget(-1, context_length=4096) == AUTO_BUDGET_FLOOR
+    # --- auto mode must never exceed the known window (review of #1189) ---
+
+    def test_auto_never_exceeds_known_window(self):
+        # The regression the maintainer caught: a small window must not be
+        # handed a target larger than it can hold.
+        for cl in (2048, 4096, 6000, 7000, 8192, 12000):
+            budget = resolve_input_budget(-1, context_length=cl)
+            assert budget <= cl, f"ctx={cl}: budget {budget} exceeds window"
+
+    def test_auto_tiny_window_collapses_to_window(self):
+        # Below the floor, auto matches the legacy min(context_length, floor).
+        assert resolve_input_budget(-1, context_length=4096) == 4096
+        assert resolve_input_budget(-1, context_length=2048) == 2048
+
+    def test_auto_floor_applies_only_when_it_fits(self):
+        # 6000-token window: 0.75*6000=4500 < floor, and floor fits → floor.
+        assert resolve_input_budget(-1, context_length=6000) == AUTO_BUDGET_FLOOR
+        # 7000-token window: scaled 5250 < floor 6000, floor fits → 6000.
+        assert resolve_input_budget(-1, context_length=7000) == AUTO_BUDGET_FLOOR
 
     def test_auto_unknown_window_falls_back_to_floor(self):
         assert resolve_input_budget(-1, context_length=0) == AUTO_BUDGET_FLOOR
 
     def test_auto_leaves_response_headroom(self):
-        # Auto must never claim the entire window — reserve_tokens stays free.
+        # With a comfortable window the target stays a fraction below it, and
+        # trim_for_context reserves reserve_tokens from there downstream.
         budget = resolve_input_budget(-1, context_length=8192, reserve_tokens=2048)
-        assert budget <= 8192 - 2048 or budget == AUTO_BUDGET_FLOOR
+        assert budget < 8192
+        assert budget == int(8192 * 0.75)
         assert budget < 8192
 
 

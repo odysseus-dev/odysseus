@@ -40,11 +40,15 @@ def resolve_input_budget(soft_budget: int, context_length: int,
 
     See the `agent_input_token_budget` semantics above. Callers should skip
     trimming entirely when ``soft_budget == 0`` (unlimited) before calling
-    this. In auto mode (``soft_budget < 0``) the budget scales with the model's
-    context window, bounded below by ``floor`` and above by ``auto_max`` (so a
-    huge window can't balloon the per-turn input); ``auto_max <= 0`` removes the
-    ceiling. When the window is unknown it falls back to ``floor`` (the
-    historical behavior).
+    this. In auto mode (``soft_budget < 0``) the budget scales to a fraction of
+    the model's context window and is bounded above by ``auto_max`` (so a huge
+    window can't balloon the per-turn input); ``auto_max <= 0`` removes the
+    ceiling. The result never exceeds the known context window — trim_for_context
+    reserves ``reserve_tokens`` from this target downstream, so bounding by the
+    full window keeps real response headroom without double-reserving here. The
+    ``floor`` lifts the budget for comfortable windows but is itself clamped to
+    the window, so a small model is never handed a target larger than it can
+    hold. When the window is unknown it falls back to ``floor``.
     """
     if soft_budget > 0:
         # Explicit hard cap, still bounded by the model's context window.
@@ -53,11 +57,13 @@ def resolve_input_budget(soft_budget: int, context_length: int,
     # Auto (soft_budget < 0): scale to the model's context window.
     if context_length and context_length > 0:
         scaled = int(context_length * fraction)
-        headroom = max(context_length - reserve_tokens, floor)
-        budget = min(scaled, headroom)
         if auto_max and auto_max > 0:
-            budget = min(budget, auto_max)
-        return max(floor, budget)
+            scaled = min(scaled, auto_max)
+        # Lift toward the floor, but never above the window itself. For a tiny
+        # window (< floor) this collapses to the window, matching the old
+        # min(context_length, floor) bound.
+        budget = max(scaled, min(floor, context_length))
+        return min(budget, context_length)
     return floor
 
 # Cursor-style self-summarization prompt — produces structured, dense summaries
