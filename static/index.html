@@ -1602,12 +1602,16 @@
               </div>
               <div class="settings-row">
                 <label class="settings-label">Results</label>
-                <select id="set-searchResultCount" class="settings-select">
-                  <option value="3">3</option>
-                  <option value="5" selected>5</option>
-                  <option value="10">10</option>
-                  <option value="20">20</option>
-                </select>
+                <div style="display:flex;gap:8px;flex:1;">
+                  <select id="set-searchResultCount" class="settings-select" style="flex:1;">
+                    <option value="3">3</option>
+                    <option value="5" selected>5</option>
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                  <input id="set-searchResultCountCustom" type="number" class="settings-select" placeholder="Enter custom value" style="flex:1;display:none;min-width:120px;" min="5" max="100">
+                </div>
               </div>
               <div id="set-searchUrlRow" class="settings-row">
                 <label class="settings-label">URL</label>
