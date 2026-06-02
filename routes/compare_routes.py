@@ -18,6 +18,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/compare", tags=["compare"])
 
 
+def _owned_endpoint_by_url(db, base_url, owner):
+    """ModelEndpoint whose base_url == `base_url` and is VISIBLE to `owner`
+    (their own rows + legacy null-owner "shared" rows); None otherwise.
+
+    Owner-scoped on purpose. ModelEndpoint is per-user (core/database.py: non-null
+    owner = private, "the model picker only shows the endpoint to that user") and
+    holds a decrypted `api_key`. start_comparison copies the matched row's api_key
+    into the caller-owned [CMP] session's headers, which then drives that session's
+    /api/chat_stream calls — so an UNSCOPED base_url match would let a user mint a
+    comparison bound to ANOTHER user's private endpoint and spend that owner's
+    api_key / reach whatever base_url they configured. Mirrors
+    session_routes._owned_endpoint. A null/empty owner is a no-op (single-user /
+    legacy mode).
+    """
+    from core.database import ModelEndpoint
+    from src.auth_helpers import owner_filter
+    q = db.query(ModelEndpoint).filter(ModelEndpoint.base_url == base_url)
+    return owner_filter(q, ModelEndpoint, owner).first()
+
+
 class RecordVoteRequest(BaseModel):
     prompt: str
     models: List[str]
@@ -61,13 +81,11 @@ def setup_compare_routes(session_manager: SessionManager):
             # Copy API key from endpoint config
             db = SessionLocal()
             try:
-                from core.database import ModelEndpoint
                 from src.endpoint_resolver import build_headers, normalize_base
-                # Find matching endpoint by URL
+                # Find matching endpoint by URL, scoped to the caller so a
+                # comparison can't borrow another user's private endpoint key.
                 base = normalize_base(endpoint)
-                ep = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.base_url == base
-                ).first()
+                ep = _owned_endpoint_by_url(db, base, user)
                 if ep and ep.api_key:
                     s = session_manager.sessions.get(sid)
                     if s:
