@@ -90,6 +90,16 @@ def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[st
     return out or [""]
 
 
+def _email_tag_owner_clause(account_id: str | None, owner: str = "") -> tuple[str, list[str]]:
+    aliases = _email_tag_owner_aliases(account_id, owner)
+    placeholders = ",".join("?" * len(aliases))
+    # In configured multi-user mode, do not treat legacy owner='' rows as
+    # visible to everyone. Single-user/unconfigured mode keeps legacy rows.
+    if owner:
+        return f"owner IN ({placeholders})", aliases
+    return f"(owner IN ({placeholders}) OR owner IS NULL)", aliases
+
+
 def _record_email_received_events(owner: str, account_id: str | None, folder: str, emails: list[dict]):
     """Baseline inbox messages, then fire `email_received` for new arrivals."""
     if not owner or (folder or "INBOX").upper() != "INBOX" or not emails:
@@ -645,8 +655,7 @@ def setup_email_routes():
                 try:
                     import sqlite3 as _sql3t
                     _ct = _sql3t.connect(SCHEDULED_DB)
-                    _owner_aliases = _email_tag_owner_aliases(account_id, owner)
-                    _owner_ph = ",".join("?" * len(_owner_aliases))
+                    _owner_clause, _owner_params = _email_tag_owner_clause(account_id, owner)
                     # SECURITY: owner-scope the lookup (review C2/H8). Without
                     # this, user A's `tag:urgent` filter would surface UIDs
                     # written by user B and IMAP would return whatever
@@ -658,8 +667,8 @@ def setup_email_routes():
                         rows_t = _ct.execute(
                             "SELECT message_id, uid FROM email_tags "
                             "WHERE folder=? AND spam_verdict=1 "
-                            f"AND (owner IN ({_owner_ph}) OR owner IS NULL)",
-                            (folder, *_owner_aliases),
+                            f"AND {_owner_clause}",
+                            (folder, *_owner_params),
                         ).fetchall()
                         for mid, uid in rows_t:
                             if mid:
@@ -670,8 +679,8 @@ def setup_email_routes():
                         rows_t = _ct.execute(
                             "SELECT message_id, uid, tags FROM email_tags "
                             "WHERE folder=? AND tags IS NOT NULL AND tags != '' "
-                            f"AND (owner IN ({_owner_ph}) OR owner IS NULL)",
-                            (folder, *_owner_aliases),
+                            f"AND {_owner_clause}",
+                            (folder, *_owner_params),
                         ).fetchall()
                         for r in rows_t:
                             try:
@@ -743,12 +752,11 @@ def setup_email_routes():
                 _uid_strs = [u.decode() for u in uid_list]
                 if _uid_strs:
                     placeholders = ",".join("?" * len(_uid_strs))
-                    _owner_aliases = _email_tag_owner_aliases(account_id, owner)
-                    _owner_ph = ",".join("?" * len(_owner_aliases))
+                    _owner_clause, _owner_params = _email_tag_owner_clause(account_id, owner)
                     rows = _c.execute(
                         f"SELECT uid, tags, spam_verdict FROM email_tags "
-                        f"WHERE folder=? AND (owner IN ({_owner_ph}) OR owner IS NULL) AND uid IN ({placeholders})",
-                        [folder, *_owner_aliases, *_uid_strs],
+                        f"WHERE folder=? AND {_owner_clause} AND uid IN ({placeholders})",
+                        [folder, *_owner_params, *_uid_strs],
                     ).fetchall()
                     for r in rows:
                         try:
@@ -805,14 +813,13 @@ def setup_email_routes():
                     if header_ids:
                         import sqlite3 as _sql3m
                         _cm = _sql3m.connect(SCHEDULED_DB)
-                        _owner_aliases_m = _email_tag_owner_aliases(account_id, owner)
-                        _owner_ph_m = ",".join("?" * len(_owner_aliases_m))
+                        _owner_clause_m, _owner_params_m = _email_tag_owner_clause(account_id, owner)
                         _mid_ph = ",".join("?" * len(header_ids))
                         rows_m = _cm.execute(
                             f"SELECT message_id, tags, spam_verdict FROM email_tags "
-                            f"WHERE folder=? AND (owner IN ({_owner_ph_m}) OR owner IS NULL) "
+                            f"WHERE folder=? AND {_owner_clause_m} "
                             f"AND message_id IN ({_mid_ph})",
-                            [folder, *_owner_aliases_m, *header_ids],
+                            [folder, *_owner_params_m, *header_ids],
                         ).fetchall()
                         _cm.close()
                         for mid, tags_raw, spam_raw in rows_m:
@@ -971,10 +978,11 @@ def setup_email_routes():
     async def unflag_spam(uid: str, owner: str = Depends(require_owner)):
         """User override — mark email as not spam."""
         try:
+            owner_clause, owner_params = _email_tag_owner_clause(None, owner)
             _c = _sql3.connect(SCHEDULED_DB)
             _c.execute(
-                "UPDATE email_tags SET spam_verdict=0, spam_reason='' WHERE uid=?",
-                (uid,),
+                f"UPDATE email_tags SET spam_verdict=0, spam_reason='' WHERE uid=? AND {owner_clause}",
+                [uid, *owner_params],
             )
             _c.commit()
             _c.close()
@@ -997,8 +1005,10 @@ def setup_email_routes():
         ql = (q or "").strip().lower()
         try:
             conn = _sql3.connect(SCHEDULED_DB)
+            owner_clause, owner_params = _email_tag_owner_clause(None, owner)
             rows = conn.execute(
-                "SELECT sender FROM email_tags WHERE sender IS NOT NULL AND sender != ''"
+                f"SELECT sender FROM email_tags WHERE sender IS NOT NULL AND sender != '' AND {owner_clause}",
+                owner_params,
             ).fetchall()
             conn.close()
             seen = {}
@@ -1969,8 +1979,8 @@ def setup_email_routes():
             conn = sqlite3.connect(SCHEDULED_DB)
             conn.execute("""
                 INSERT INTO scheduled_emails
-                (id, to_addr, cc, bcc, subject, body, in_reply_to, references_hdr, attachments, send_at, created_at, status, account_id, odysseus_kind)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                (id, to_addr, cc, bcc, subject, body, in_reply_to, references_hdr, attachments, send_at, created_at, status, account_id, odysseus_kind, owner)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
             """, (
                 sid,
                 req.get("to", ""),
@@ -1985,6 +1995,7 @@ def setup_email_routes():
                 datetime.utcnow().isoformat(),
                 req.get("account_id") or None,
                 req.get("odysseus_kind") or "scheduled",
+                owner or "",
             ))
             conn.commit()
             conn.close()
@@ -2003,9 +2014,9 @@ def setup_email_routes():
             rows = conn.execute("""
                 SELECT id, to_addr, cc, subject, send_at, created_at, status, error
                 FROM scheduled_emails
-                WHERE status IN ('pending', 'failed')
+                WHERE status IN ('pending', 'failed') AND owner = ?
                 ORDER BY send_at ASC
-            """).fetchall()
+            """, (owner or "",)).fetchall()
             conn.close()
             return {"scheduled": [
                 {
@@ -2023,7 +2034,10 @@ def setup_email_routes():
         import sqlite3
         try:
             conn = sqlite3.connect(SCHEDULED_DB)
-            conn.execute("DELETE FROM scheduled_emails WHERE id = ? AND status = 'pending'", (sid,))
+            conn.execute(
+                "DELETE FROM scheduled_emails WHERE id = ? AND status = 'pending' AND owner = ?",
+                (sid, owner or ""),
+            )
             conn.commit()
             conn.close()
             return {"success": True}
@@ -2035,7 +2049,7 @@ def setup_email_routes():
     async def resolve_contact(name: str = Query(..., description="Name to search for"), owner: str = Depends(require_owner)):
         """Search Sent folder for a contact by name. Returns matching email addresses."""
         try:
-            with _imap() as conn:
+            with _imap(owner=owner) as conn:
                 matches = {}
                 for folder in ["Sent", "INBOX", "Drafts"]:
                     try:
@@ -2590,7 +2604,7 @@ def setup_email_routes():
                     # `api_key` field.
                     from core.database import SessionLocal as _SL, Session as _CS
                     _db = _SL()
-                    sess = _db.query(_CS).filter(_CS.id == session_id).first()
+                    sess = _db.query(_CS).filter(_CS.id == session_id, _CS.owner == owner).first()
                     if sess and sess.endpoint_url:
                         url = sess.endpoint_url
                         # Some sessions stored headers double-encoded (a JSON
@@ -2649,9 +2663,10 @@ def setup_email_routes():
             # Manual AI Reply should feel immediate. The heavier context mining
             # can involve multiple IMAP folder searches and attachment parsing;
             # reserve that for callers that explicitly opt out of fast mode.
+            # Owner-scoped so pre-retrieval never crosses tenants.
             context_snippets, _terms = ([], [])
             if not fast_reply:
-                context_snippets, _terms = _pre_retrieve_context(original_body, to)
+                context_snippets, _terms = _pre_retrieve_context(original_body, to, owner=owner)
 
             # NEW: also pull the last few emails from the original sender +
             # their attachments. The "to" field on this endpoint is the
@@ -2667,6 +2682,7 @@ def setup_email_routes():
                         exclude_uid=source_uid,
                         exclude_folder=source_folder,
                         limit=3,
+                        owner=owner,
                     )
                 except Exception as _e:
                     logger.warning(f"sender-thread-context failed: {_e}")
@@ -2728,7 +2744,7 @@ def setup_email_routes():
             # Configured fallback chains last.
             for cand in resolve_utility_fallback_candidates(owner=owner) or []:
                 _add(*cand)
-            for cand in resolve_chat_fallback_candidates() or []:
+            for cand in resolve_chat_fallback_candidates(owner=owner) or []:
                 _add(*cand)
             try:
                 reply = await llm_call_async_with_fallback(
@@ -2819,9 +2835,12 @@ def setup_email_routes():
         import uuid as _uuid
         db = SessionLocal()
         try:
-            row = db.query(EmailAccount).filter(EmailAccount.is_default == True).first()  # noqa: E712
+            q = db.query(EmailAccount).filter(EmailAccount.is_default == True)  # noqa: E712
+            if owner:
+                q = q.filter(EmailAccount.owner == owner)
+            row = q.first()
             if row is None:
-                row = EmailAccount(id=_uuid.uuid4().hex, name="Default", is_default=True, enabled=True)
+                row = EmailAccount(id=_uuid.uuid4().hex, owner=owner, name="Default", is_default=True, enabled=True)
                 db.add(row)
             field_map = {
                 "smtp_host": "smtp_host", "smtp_port": "smtp_port", "smtp_user": "smtp_user",
@@ -2843,6 +2862,10 @@ def setup_email_routes():
                 row.imap_password = _enc(data["imap_password"])
             if data.get("smtp_password"):
                 row.smtp_password = _enc(data["smtp_password"])
+            clear_q = db.query(EmailAccount).filter(EmailAccount.id != row.id)
+            if owner:
+                clear_q = clear_q.filter(EmailAccount.owner == owner)
+            clear_q.update({EmailAccount.is_default: False})
             db.commit()
         finally:
             db.close()
