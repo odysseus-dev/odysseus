@@ -35410,3 +35410,83 @@ body.theme-frosted .modal {
      is already ≥16px and never zoomed — leave it so we don't shrink it. */
   .doc-email-richbody.doc-font-m { font-size: 16px !important; }
 }
+
+
+/* ── Selection Assist popup (#931) ── */
+
+.sa-popup {
+  position: fixed;
+  z-index: 9500;
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  max-width: 340px;
+  min-width: 180px;
+}
+
+.sa-popup.sa-visible {
+  display: flex;
+}
+
+.sa-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sa-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.sa-btn:hover {
+  background: color-mix(in srgb, var(--fg) 12%, var(--bg));
+}
+
+.sa-input-row {
+  display: flex;
+  gap: 4px;
+}
+
+.sa-input {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  outline: none;
+  min-width: 0;
+}
+
+.sa-input:focus {
+  border-color: var(--color-accent);
+}
+
+.sa-send {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.sa-send:hover {
+  background: color-mix(in srgb, var(--fg) 12%, var(--bg));
+}
