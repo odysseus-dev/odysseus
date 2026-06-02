@@ -125,7 +125,52 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  nexus-cost:
+    build: ./nexus-cost
+    ports:
+      - "127.0.0.1:8199:8199"
+    volumes:
+      - nexus-cost-data:/data
+      - ./nexus-cost/config.yaml:/app/config.yaml:ro
+    environment:
+      - NEXUS_COST_DB_PATH=/data/costs.db
+      - NEXUS_COST_CONFIG_PATH=/app/config.yaml
+      - NEXUS_COST_API_KEY=${NEXUS_COST_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8199/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  nexus-metrics:
+    build: ./nexus-metrics
+    network_mode: host
+    pid: host
+    privileged: true
+    volumes:
+      - ./nexus-metrics/config.yaml:/app/config.yaml:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+  nexus-news:
+    build: ./nexus-news
+    ports:
+      - "127.0.0.1:8100:8100"
+    volumes:
+      - nexus-news-data:/app/data
+      - ./nexus-news/config.yaml:/app/config.yaml:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
 volumes:
   searxng-data:
   chromadb-data:
   ntfy-cache:
+  nexus-cost-data:
+  nexus-news-data:

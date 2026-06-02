@@ -659,6 +659,10 @@ app.include_router(setup_vault_routes())
 from routes.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())
 
+# Nexus sidecar services (cost, metrics, news)
+from routes.nexus_routes import setup_nexus_routes
+app.include_router(setup_nexus_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
