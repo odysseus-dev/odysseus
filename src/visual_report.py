@@ -45,8 +45,89 @@ def _autolink_urls(md_text: str) -> str:
     )
 
 
+# Tags/attrs kept when sanitizing the rendered report body. The body is the
+# LLM's synthesis of SCRAPED third-party pages — untrusted — and Python-Markdown
+# (with the "extra" extension) passes raw inline HTML through verbatim, so an
+# attacker-controlled source page can otherwise inject <script>/onerror into the
+# report, which is served with a permissive inline-script CSP. Allowlist: keep
+# formatting, drop everything active.
+_SAFE_TAGS = frozenset({
+    "p", "br", "hr", "div", "span", "blockquote", "pre", "code", "kbd", "samp",
+    "var", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "dl", "dt", "dd",
+    "strong", "b", "em", "i", "u", "s", "strike", "del", "ins", "mark", "sub",
+    "sup", "small", "abbr", "cite", "q", "dfn", "time", "wbr",
+    "a", "img", "figure", "figcaption",
+    "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption",
+    "colgroup", "col",
+})
+# Active/embedding tags removed WITH their contents (not just unwrapped).
+_DROP_TAGS = frozenset({
+    "script", "style", "iframe", "object", "embed", "form", "input", "button",
+    "textarea", "select", "option", "svg", "math", "link", "meta", "base",
+    "noscript", "template", "frame", "frameset", "applet", "audio", "video",
+})
+_TAG_ATTRS = {
+    "a": {"href", "title", "target", "rel"},
+    "img": {"src", "alt", "title", "width", "height"},
+    "td": {"colspan", "rowspan", "align"},
+    "th": {"colspan", "rowspan", "align", "scope"},
+    "ol": {"start", "type"},
+    "time": {"datetime"},
+}
+_GLOBAL_ATTRS = frozenset({"id", "class"})
+_SAFE_URL_SCHEMES = frozenset({"http", "https", "mailto"})
+
+
+def _safe_url(url: Optional[str], *, allow_data_image: bool = False) -> bool:
+    """True if `url` is safe to keep in an href/src — blocks javascript:,
+    data:text/html, vbscript:, etc. Allows in-page/relative links and (for
+    images only) data:image/."""
+    u = (url or "").strip()
+    if not u:
+        return False
+    low = u.lower()
+    if low.startswith(("#", "/", "./", "../")):
+        return True
+    if allow_data_image and low.startswith("data:image/"):
+        return True
+    try:
+        scheme = urlparse(u).scheme.lower()
+    except ValueError:
+        return False
+    if not scheme:
+        return True  # schemeless relative path
+    return scheme in _SAFE_URL_SCHEMES
+
+
+def _sanitize_html(html_str: str) -> str:
+    """Allowlist-sanitize rendered-markdown HTML: drop active tags, strip every
+    event-handler/style/unknown attribute, and reject unsafe href/src schemes."""
+    soup = BeautifulSoup(html_str or "", "html.parser")
+    for el in list(soup.find_all(True)):
+        if el.parent is None:  # already removed as part of a dropped ancestor
+            continue
+        name = (el.name or "").lower()
+        if name in _DROP_TAGS:
+            el.decompose()
+            continue
+        if name not in _SAFE_TAGS:
+            el.unwrap()  # unknown tag: keep its text, drop the tag
+            continue
+        allowed = _TAG_ATTRS.get(name, set()) | _GLOBAL_ATTRS
+        for attr in list(el.attrs.keys()):
+            la = attr.lower()
+            if la not in allowed:
+                del el[attr]  # strips on*, style, srcset, etc.
+            elif la in ("href", "src") and not _safe_url(
+                el.get(attr), allow_data_image=(name == "img")
+            ):
+                del el[attr]
+    return str(soup)
+
+
 def _md_to_html(md_text: str) -> str:
-    """Convert markdown to HTML with common extensions."""
+    """Convert markdown to HTML with common extensions (sanitized — the body is
+    untrusted scraped/LLM content)."""
     md_text = _autolink_urls(md_text)
     result = markdown.markdown(
         md_text,
@@ -62,7 +143,7 @@ def _md_to_html(md_text: str) -> str:
         r'<a target="_blank" rel="noopener noreferrer" href="\1',
         result,
     )
-    return result
+    return _sanitize_html(result)
 
 
 def _extract_headings(md_text: str) -> List[Dict[str, str]]:
