@@ -14848,6 +14848,7 @@ body.left-dock-active {
 /* Cookbook's cached-model list should scale with viewport height, not be capped at 400px */
 .hwfit-cached-list {
   max-height: min(75vh, 900px) !important;
+  overflow-y: auto;
 }
 /* Drag-and-drop visual hint for the email compose pane. Subtle accent
    outline + tinted overlay so it's obvious files will attach if dropped. */

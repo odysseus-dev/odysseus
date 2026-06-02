@@ -648,9 +648,10 @@ function _rerenderCachedModels() {
       item.classList.add('doclib-card-expanded');
       item.style.flexDirection = 'column';
       item.style.alignItems = 'stretch';
-      if (list) list.scrollTop = 0;
       item.insertAdjacentHTML('beforeend', panelHtml);
       const panel = item.querySelector('.hwfit-serve-panel');
+      // Scroll the serve panel into view within its nearest scrollable ancestor
+      requestAnimationFrame(() => panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
 
       // Build command preview
       function updateCmd() {
