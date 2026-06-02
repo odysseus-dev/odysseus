@@ -4488,19 +4488,38 @@ async function initGitHubIntegration() {
         }
         continue;
       }
-      const det = document.createElement('details');
-      det.className = 'gh-briefing-section';
-      const sum = document.createElement('summary');
-      sum.textContent = _formatHeader(s.header);
-      det.appendChild(sum);
+      const wrap = document.createElement('div');
+      wrap.className = 'gh-briefing-section';
+      const hdr = document.createElement('div');
+      hdr.className = 'gh-briefing-section-hdr';
+      const arrow = document.createElement('span');
+      arrow.className = 'gh-briefing-section-arrow';
+      arrow.textContent = '▶';
+      hdr.appendChild(arrow);
+      const label = document.createElement('span');
+      label.textContent = _formatHeader(s.header);
+      hdr.appendChild(label);
+      hdr.addEventListener('click', () => wrap.classList.toggle('is-open'));
+      wrap.appendChild(hdr);
+      const body = document.createElement('div');
+      body.className = 'gh-briefing-section-body';
+      // Strip <!-- ... --> comment blocks from displayed content — they're
+      // editing scaffold from the old briefing format, not real standards.
+      const cleaned = s.content.replace(/<!--[\s\S]*?-->/g, '').replace(/\n{3,}/g, '\n\n').trim();
+      if (!cleaned) continue; // skip entirely empty sections (prompt-only)
       const ta = document.createElement('textarea');
       ta.className = 'gh-briefing-section-ta';
-      ta.value = s.content;
+      ta.value = cleaned;
       ta.spellcheck = false;
-      ta.rows = Math.max(2, Math.min(8, s.content.split('\n').length + 1));
       ta.dataset.header = s.header;
-      det.appendChild(ta);
-      briefingEditor.appendChild(det);
+      // Auto-size: no scroll, textarea grows to fit content
+      const _autoSize = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+      ta.addEventListener('input', _autoSize);
+      // Size on first open (deferred because display:none has no scrollHeight)
+      hdr.addEventListener('click', () => setTimeout(_autoSize, 10), { once: true });
+      body.appendChild(ta);
+      wrap.appendChild(body);
+      briefingEditor.appendChild(wrap);
     }
   }
 

@@ -35498,8 +35498,7 @@ body.theme-frosted .modal {
     }
     .gh-intg-master-row.is-paused .gh-intg-master-user,
     .gh-intg-master-row.is-paused .gh-intg-master-label { opacity: 0.55; }
-    .gh-intg-rotate { margin-top: 10px; }
-    .gh-intg-rotate[open] summary { opacity: 1; }
+    .gh-intg-rotate { margin-top: 8px; }
     .gh-intg-msg { font-size: 11px; min-height: 14px; margin-top: 4px; }
     .gh-intg-msg.ok { color: var(--green, #50fa7b); }
     .gh-intg-msg.err { color: var(--red, #ff4d4f); }
@@ -35578,59 +35577,84 @@ body.theme-frosted .modal {
       transition: opacity 0.12s;
     }
     .gh-intg-cta:hover { opacity: 0.9; text-decoration: none; }
-    .gh-intg-faq {
-      margin-top: 10px;
-      padding-top: 10px;
-      border-top: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
-      font-size: 11.5px;
-    }
-    .gh-intg-faq summary { cursor: pointer; opacity: 0.7; user-select: none; }
-    .gh-intg-faq summary:hover { opacity: 1; }
+    /* gh-intg-faq and gh-intg-rotate <details> inherit the upstream global
+       details/summary theme; no custom border/background overrides needed. */
     .gh-intg-faq p { margin: 8px 0 0; opacity: 0.7; line-height: 1.5; }
 
-    /* ── Structured briefing editor ── */
+    /* ── Structured briefing editor ──
+       Each section is a clickable header row + a collapsible textarea,
+       matching the flat admin-toggle-label / admin-toggle-sub pattern
+       used throughout Settings. No <details> chrome. */
     .gh-briefing-intro {
       font-size: 11.5px;
       line-height: 1.45;
-      opacity: 0.65;
+      opacity: 0.55;
       margin-bottom: 8px;
       padding: 6px 0;
     }
-    .gh-briefing-section {
-      border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
-      border-radius: 5px;
-      margin-bottom: 4px;
-    }
-    .gh-briefing-section summary {
+    .gh-briefing-section { margin: 2px 0; }
+    .gh-briefing-section-hdr {
       cursor: pointer;
-      padding: 7px 10px;
-      font-size: 12px;
-      font-weight: 600;
       user-select: none;
-      list-style: none;
+      padding: 6px 0;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--fg);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      opacity: 0.8;
+      transition: opacity 0.12s;
     }
-    .gh-briefing-section summary::-webkit-details-marker { display: none; }
-    .gh-briefing-section summary::before {
-      content: '\25B8';
-      display: inline-block;
-      margin-right: 6px;
-      font-size: 10px;
-      transition: transform 0.12s;
+    .gh-briefing-section-hdr:hover { opacity: 1; }
+    .gh-briefing-section-arrow {
+      font-size: 8px;
+      transition: transform 0.15s;
+      opacity: 0.5;
     }
-    .gh-briefing-section[open] summary::before { transform: rotate(90deg); }
-    .gh-briefing-section summary:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+    .gh-briefing-section.is-open .gh-briefing-section-arrow { transform: rotate(90deg); }
+    .gh-briefing-section-body { display: none; padding: 0 0 4px; }
+    .gh-briefing-section.is-open .gh-briefing-section-body { display: block; }
     .gh-briefing-section-ta {
       width: 100%;
       box-sizing: border-box;
-      padding: 6px 10px;
+      padding: 6px 8px;
       font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
       font-size: 11px;
       line-height: 1.45;
-      background: var(--bg);
+      background: color-mix(in srgb, var(--fg) 4%, transparent);
       color: var(--fg);
-      border: none;
-      border-top: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
-      resize: vertical;
-      min-height: 40px;
+      border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+      border-radius: 4px;
+      resize: none;
+      overflow: hidden;
     }
-    .gh-briefing-section-ta:focus { outline: none; }
+    .gh-briefing-section-ta:focus {
+      outline: none;
+      border-color: color-mix(in srgb, var(--fg) 20%, transparent);
+    }
+
+    /* Manage-token / FAQ <details> inside the GH card — reset the upstream
+       global details/summary chat-content theme so they look like plain
+       settings rows instead of tinted code blocks. */
+    #gh-intg-card details,
+    #gh-intg-card details[open] {
+      background: none;
+      border: none;
+      border-radius: 0;
+      margin: 6px 0;
+      padding: 0;
+    }
+    #gh-intg-card summary,
+    #gh-intg-card summary:hover {
+      background: none;
+      border: none;
+      color: var(--fg);
+      padding: 6px 0;
+      font-size: 12px;
+      font-weight: 500;
+      opacity: 0.7;
+      gap: 6px;
+    }
+    #gh-intg-card summary:hover { opacity: 1; }
+    #gh-intg-card summary::before { font-size: 8px; opacity: 0.5; }
