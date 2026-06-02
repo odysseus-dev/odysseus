@@ -1050,8 +1050,20 @@ def _append_tool_results(
     `round_reasoning` (DeepSeek / vLLM reasoning-parser deltas) is echoed
     back via `reasoning_content` on the assistant message — DeepSeek's API
     rejects follow-up requests in thinking mode that don't include the
-    prior reasoning. Other vendors ignore the extra field.
+    prior reasoning.
+
+    NOTE: it is NOT universally ignored. Nemotron's chat template re-injects
+    EVERY prior `reasoning_content` as a <think> block, and this agent loop is
+    trimmed only once (before the loop), so across rounds the reasoning piles
+    up unbounded — bloating context and feeding the model its own prior
+    reasoning, which reinforces repetition/looping. So keep reasoning_content
+    on the MOST RECENT assistant turn only: enough for DeepSeek continuity,
+    without the per-round accumulation.
     """
+    # Strip reasoning_content from earlier assistant turns; only the newest keeps it.
+    for _m in messages:
+        if _m.get("role") == "assistant":
+            _m.pop("reasoning_content", None)
     if used_native and native_tool_calls:
         assistant_msg = {"role": "assistant"}
         assistant_msg["content"] = round_response if round_response.strip() else ""
