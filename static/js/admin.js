@@ -1954,6 +1954,215 @@ function initCalDAV() {
   });
 }
 
+/* ── System tab — Software Update ── */
+let _updateStatusInited = false;
+
+function _shortSha(v) {
+  if (!v || typeof v !== 'string') return '—';
+  return v.length <= 11 ? v : `${v.slice(0, 7)}…`;
+}
+
+function _pushWarnings(target, values) {
+  if (!target) return;
+  if (!Array.isArray(values)) return;
+  values.forEach((value) => {
+    if (!value || typeof value !== 'string') return;
+    const trimmed = value.trim();
+    if (trimmed) target.push(trimmed);
+  });
+}
+
+function _setText(id, value, fallback = '—') {
+  const ref = el(id);
+  if (!ref) return;
+  ref.textContent = value || fallback;
+}
+
+function _formatUpdateMode(mode) {
+  const labels = {
+    source_docker: 'Source checkout with Docker',
+    source_native: 'Native source checkout',
+    prebuilt_docker: 'Prebuilt Docker image',
+  };
+  return labels[mode] || mode || 'Unknown';
+}
+
+function _renderUpdateCommandList(container, commands) {
+  if (!container) return;
+  container.innerHTML = '';
+  if (!Array.isArray(commands) || !commands.length) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'opacity:0.55;font-size:11px;';
+    empty.textContent = 'No manual commands available.';
+    container.appendChild(empty);
+    return;
+  }
+  commands.forEach((command) => {
+    const text = typeof command === 'string' ? command.trim() : '';
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;';
+    const code = document.createElement('code');
+    code.style.cssText = 'flex:1;min-width:0;word-break:break-word;font-size:11px;';
+    code.textContent = text || '—';
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'admin-btn-sm';
+    copy.style.flexShrink = '0';
+    copy.disabled = !text;
+    copy.textContent = 'Copy';
+    if (text) {
+      copy.addEventListener('click', async () => {
+        await uiModule.copyToClipboard(text);
+        const prev = copy.textContent;
+        copy.textContent = 'Copied';
+        setTimeout(() => { copy.textContent = prev; }, 1400);
+      });
+    }
+    row.appendChild(code);
+    row.appendChild(copy);
+    container.appendChild(row);
+  });
+}
+
+function _renderUpdateWarnings(container, gitState) {
+  if (!container) return;
+  container.innerHTML = '';
+  const warnings = [];
+  _pushWarnings(warnings, Array.isArray(gitState?.warnings) ? gitState.warnings : []);
+  if (
+    gitState && gitState.dirty === true
+    && !warnings.some((warning) => /dirty|uncommitted/i.test(warning))
+  ) {
+    warnings.push('Working tree contains uncommitted changes');
+  }
+  if (gitState && gitState.detached_head) warnings.push('Detached HEAD');
+  if (gitState && gitState.upstream && gitState.upstream.tracking_configured === false) {
+    warnings.push('No upstream tracking branch configured');
+  }
+  if (!warnings.length) {
+    const badge = document.createElement('span');
+    badge.className = 'admin-badge';
+    badge.style.background = 'color-mix(in srgb, var(--green) 20%, transparent)';
+    badge.style.color = 'var(--green)';
+    badge.textContent = gitState && gitState.dirty === false ? 'Clean' : 'No warnings';
+    container.appendChild(badge);
+    return;
+  }
+  warnings.forEach((warning) => {
+    const badge = document.createElement('span');
+    badge.className = 'admin-badge';
+    badge.textContent = warning;
+    container.appendChild(badge);
+  });
+}
+
+function _renderUpdateStatus(data) {
+  const status = data && typeof data === 'object' ? data : {};
+  const git = status.git || {};
+  const install = status.install || {};
+  const upstream = git.upstream || {};
+
+  _setText('adm-updateVersion', status.version || 'Unknown');
+  _setText('adm-updateMode', _formatUpdateMode(install.mode_guess));
+  _setText('adm-updateCommit', git.commit || 'Unknown');
+  _setText('adm-updateBranch', git.branch || 'Unknown');
+
+  const remoteBits = [];
+  if (upstream.tracking_configured && (upstream.remote || upstream.remote_branch)) {
+    const branchLabel = upstream.remote && upstream.remote_branch
+      ? `${upstream.remote}/${upstream.remote_branch}`
+      : (upstream.remote || upstream.remote_branch || 'unknown branch');
+    remoteBits.push(`Tracking ${branchLabel}`);
+  } else if (git.available === false) {
+    remoteBits.push('Git state unavailable');
+  } else {
+    remoteBits.push('No upstream tracking branch configured');
+  }
+  if (upstream.remote_url_scrubbed) remoteBits.push(upstream.remote_url_scrubbed);
+  if (git.remote && git.remote.sha) remoteBits.push(`Latest SHA ${_shortSha(git.remote.sha)}`);
+  if (typeof git.ahead === 'number' && typeof git.behind === 'number') {
+    remoteBits.push(`Ahead/behind +${git.ahead} / -${git.behind}`);
+  }
+  _setText('adm-updateRemote', remoteBits.join(' • '), 'Not available');
+
+  _renderUpdateWarnings(el('adm-updateWarnings'), git);
+  const msg = el('adm-updateMsg');
+  if (msg) {
+    const notes = [];
+    _pushWarnings(notes, Array.isArray(git.errors) ? git.errors : []);
+    if (Array.isArray(git.timeouts) && git.timeouts.length) {
+      notes.push(`Command timeout: ${git.timeouts.join(', ')}`);
+    }
+    if (notes.length) {
+      msg.className = 'admin-error';
+      msg.textContent = notes.join(' ');
+    } else {
+      msg.className = 'admin-empty';
+      msg.textContent = '';
+    }
+  }
+
+  const commands = Array.isArray(install.manual_update_commands)
+    ? install.manual_update_commands
+    : install.mode_guess && install.manual_update_commands_by_mode
+      ? install.manual_update_commands_by_mode[install.mode_guess]
+      : [];
+  _renderUpdateCommandList(el('adm-updateCommands'), Array.isArray(commands) ? commands : []);
+}
+
+async function loadUpdateStatus() {
+  const refreshBtn = el('adm-updateRefresh');
+  const msg = el('adm-updateMsg');
+  const list = el('adm-updateCommands');
+  _setText('adm-updateVersion', 'Loading…');
+  _setText('adm-updateMode', 'Loading…');
+  _setText('adm-updateCommit', 'Loading…');
+  _setText('adm-updateBranch', 'Loading…');
+  _setText('adm-updateRemote', 'Loading…');
+  const warnings = el('adm-updateWarnings');
+  if (warnings) {
+    warnings.innerHTML = '<span class="admin-badge" style="background:color-mix(in srgb, var(--fg) 14%, transparent);color:var(--fg);">Checking</span>';
+  }
+  if (list) list.innerHTML = '<div style="font-size:11px;opacity:0.6;">Loading commands…</div>';
+  if (refreshBtn) { refreshBtn.disabled = true; refreshBtn.textContent = 'Checking…'; }
+  if (msg) { msg.className = 'admin-empty'; msg.textContent = ''; }
+
+  try {
+    const res = await fetch('/api/admin/update/status', { credentials: 'same-origin' });
+    const status = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (msg) {
+        msg.className = 'admin-error';
+        msg.textContent = status.detail || `Failed to load (${res.status})`;
+      }
+      return;
+    }
+    _renderUpdateStatus(status);
+  } catch (e) {
+    if (msg) {
+      msg.className = 'admin-error';
+      msg.textContent = `Request failed: ${e && e.message ? e.message : 'unknown'}`;
+    }
+    _setText('adm-updateVersion', 'Unavailable');
+    _setText('adm-updateMode', 'Unavailable');
+    _setText('adm-updateCommit', 'Unavailable');
+    _setText('adm-updateBranch', 'Unavailable');
+    _setText('adm-updateRemote', 'Unavailable');
+    _renderUpdateWarnings(el('adm-updateWarnings'), { warnings: ['Failed to load update status.'] });
+    _renderUpdateCommandList(el('adm-updateCommands'), []);
+  } finally {
+    if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.textContent = 'Check'; }
+  }
+}
+
+function initUpdateStatus() {
+  if (_updateStatusInited) return;
+  _updateStatusInited = true;
+  const refreshBtn = el('adm-updateRefresh');
+  if (!refreshBtn) return;
+  refreshBtn.addEventListener('click', loadUpdateStatus);
+}
+
 /* ── Data Backup (export/import) ── */
 function initBackup() {
   el('adm-exportDataBtn').addEventListener('click', async () => {
@@ -2044,7 +2253,7 @@ function initDangerZone() {
    ═══════════════════════════════════════════ */
 function initAll() {
   modalEl = el('settings-modal');
-  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, () => settingsModule.initIntegrations()];
+  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initUpdateStatus, initBackup, initDangerZone, () => settingsModule.initIntegrations()];
   for (const fn of inits) {
     try { fn(); } catch (e) { console.error('Admin init error in', fn.name || 'anonymous', e); }
   }
@@ -2057,6 +2266,7 @@ function refreshAll() {
   loadEndpoints();
   loadBuiltinTools();
   loadMcpServers();
+  loadUpdateStatus();
 }
 
 /* ═══════════════════════════════════════════

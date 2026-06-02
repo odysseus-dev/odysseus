@@ -57,6 +57,9 @@ Use that for the first login, then change it in **Settings**.
 Contributing? See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and
 pull request guidelines.
 
+For update status, release channels, and manual update commands, see
+[docs/UPDATING.md](docs/UPDATING.md).
+
 ### Docker (recommended)
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
