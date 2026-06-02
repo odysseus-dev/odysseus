@@ -28,7 +28,7 @@ from unittest.mock import MagicMock
 def _null_owner_stubs(monkeypatch):
     for _stub, _attrs in (
         ("core.database", (
-            "Base", "SessionLocal", "CalendarCal", "CalendarEvent",
+            "Base", "SessionLocal", "CalendarCal", "CalendarDeletedEvent", "CalendarEvent",
             "Document", "DocumentVersion", "Session", "ChatMessage",
             "GalleryImage", "GalleryAlbum", "Note", "ScheduledTask",
             "TaskRun", "ModelEndpoint", "Webhook",

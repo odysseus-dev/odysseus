@@ -2048,7 +2048,15 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_calendar tool calls: list/create/update/delete calendar events (local SQLite)."""
     from datetime import datetime, timedelta
     from core.database import SessionLocal, CalendarCal, CalendarEvent, Note
-    from routes.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid
+    from routes.calendar_routes import (
+        _ensure_default_calendar,
+        _parse_dt,
+        _parse_dt_pair,
+        parse_due_for_user,
+        _resolve_base_uid,
+        _push_caldav_event_after_commit,
+        _record_caldav_delete_tombstone,
+    )
     import uuid as _uuid
 
     try:
@@ -2389,6 +2397,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 rrule=args.get("rrule", "") or "",
                 event_type=event_type,
                 importance=importance,
+                caldav_sync_pending="create" if cal.source == "caldav" else None,
             )
             db.add(ev)
             reminder_note_id = None
@@ -2403,6 +2412,8 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     dtstart_is_utc and not all_day,
                 )
             db.commit()
+            if cal.source == "caldav":
+                await _push_caldav_event_after_commit(owner, uid, "create")
             tag_blurb = f" [{event_type}]" if event_type else ""
             if minutes_before is None:
                 reminder_blurb = ""
@@ -2460,7 +2471,12 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 ev.event_type = _tag or None
             if args.get("importance") is not None:
                 ev.importance = args["importance"]
+            is_caldav = ev.calendar and ev.calendar.source == "caldav"
+            if is_caldav:
+                ev.caldav_sync_pending = "update"
             db.commit()
+            if is_caldav:
+                await _push_caldav_event_after_commit(owner, base_uid, "update")
             return {"response": f"Updated event {uid}", "exit_code": 0}
 
         elif action == "delete_event":
@@ -2474,8 +2490,13 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             ev = _event_query().filter(CalendarEvent.uid == base_uid).first()
             if not ev:
                 return {"error": f"Event {uid} not found", "exit_code": 1}
+            is_caldav = ev.calendar and ev.calendar.source == "caldav" and ev.remote_href
+            if is_caldav:
+                _record_caldav_delete_tombstone(db, ev, owner)
             db.delete(ev)
             db.commit()
+            if is_caldav:
+                await _push_caldav_event_after_commit(owner, base_uid, "delete")
             return {"response": f"Deleted event {uid}", "exit_code": 0}
 
         else:
