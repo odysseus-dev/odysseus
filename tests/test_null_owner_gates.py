@@ -33,12 +33,14 @@ for _stub in [
         m = types.ModuleType(_stub)
         # Provide the names the importers will look up.
         if _stub == "core.database":
+            m.Base = MagicMock()
             m.SessionLocal = MagicMock()
             m.CalendarCal = MagicMock()
             m.CalendarEvent = MagicMock()
             m.Document = MagicMock()
             m.DocumentVersion = MagicMock()
             m.Session = MagicMock()
+            m.ChatMessage = MagicMock()
             m.GalleryImage = MagicMock()
             m.GalleryAlbum = MagicMock()
             m.Note = MagicMock()

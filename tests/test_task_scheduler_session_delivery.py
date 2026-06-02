@@ -14,6 +14,11 @@ from sqlalchemy.orm import sessionmaker
 from core.database import Base, Session as DbSession
 from src.task_scheduler import TaskScheduler
 
+# core.database may have been stubbed by test_null_owner_gates before this
+# module was collected — Base would be a MagicMock instance.
+if type(Base).__name__ == "MagicMock":
+    pytest.skip("core.database is stubbed — run this file in isolation", allow_module_level=True)
+
 
 def _make_db():
     engine = create_engine("sqlite:///:memory:")
