@@ -108,17 +108,18 @@ function checkPrerequisites(ROOT) {
     return r.stdout?.trim() || r.stderr?.trim() || '';
   };
 
-  try {
-    checks.python = run('python', ['--version']);
+  const tryPython = (cmd, args) => {
+    try { return run(cmd, args); } catch { return null; }
+  };
+
+  checks.python = tryPython('python', ['--version'])
+    || tryPython('python3', ['--version'])
+    || tryPython('py', ['--version']);
+
+  if (checks.python) {
     console.log(`  ${CHECK} Python:    ${checks.python}`);
-  } catch {
-    try {
-      checks.python = run('py', ['--version']);
-      console.log(`  ${CHECK} Python:    ${checks.python}`);
-    } catch {
-      checks.python = null;
-      console.log(`  ${CROSS} Python:    not found`);
-    }
+  } else {
+    console.log(`  ${CROSS} Python:    not found`);
   }
 
   try {
@@ -184,7 +185,8 @@ function createVenv(ROOT) {
     return;
   }
   console.log(`  ${ARROW} Creating virtual environment...`);
-  cmdSync(['python', '-m', 'venv', '.venv'], { cwd: ROOT, silent: true });
+  const py = getVenvPython(ROOT);
+  cmdSync([py, '-m', 'venv', '.venv'], { cwd: ROOT, silent: true });
   console.log(`  ${CHECK} Virtual environment created (.venv/)`);
   return venvPath;
 }
@@ -205,6 +207,7 @@ function installPythonDeps(ROOT) {
     console.log(`  ${ARROW} Installing Python dependencies...\n`);
     const proc = spawn(py, ['-m', 'pip', 'install', '-r', 'requirements.txt'], {
       cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 300000, // 5 minutes
     });
     proc.stdout.on('data', d => {
       for (const line of d.toString().split('\n').filter(Boolean)) {
@@ -237,6 +240,7 @@ function installNpmDeps(ROOT) {
     const args = fs.existsSync(npmCli) ? [npmCli, 'install'] : ['install'];
     const proc = spawn(cmd, args, {
       cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 300000, // 5 minutes
     });
     proc.stdout.on('data', d => {
       for (const line of d.toString().split('\n').filter(Boolean)) {

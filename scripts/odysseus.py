@@ -40,6 +40,11 @@ DIRS = [
 
 
 # ── helpers ────────────────────────────────────────────
+def default_port() -> int:
+    """Return 7860 on macOS (AirPlay uses 7000), 7000 elsewhere."""
+    return 7860 if sys.platform == "darwin" else 7000
+
+
 def get_venv_python() -> str:
     """Return the venv python path, or system python if no venv."""
     for cand in (".venv", "venv"):
@@ -113,7 +118,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
 # ── subcommand: serve ──────────────────────────────────
 def cmd_serve(args: argparse.Namespace) -> int:
     """Detect LAN IPs, detect Tailscale, start uvicorn."""
-    port = args.port or 7000
+    port = args.port or default_port()
 
     # detect LAN IPs
     lan_ips = []
@@ -129,8 +134,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # fallback: parse ifconfig/ipconfig
     if not lan_ips:
         try:
+            if sys.platform == "darwin":
+                cmd = ["ifconfig"]
+            elif os.name == "nt":
+                cmd = ["ipconfig"]
+            else:
+                cmd = ["ip", "addr"]
             result = subprocess.run(
-                ["ipconfig"] if os.name == "nt" else ["ip", "addr"],
+                cmd,
                 capture_output=True, text=True, timeout=5
             )
             for line in result.stdout.splitlines():
@@ -185,9 +196,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 # ── subcommand: status ─────────────────────────────────
 def cmd_status(args: argparse.Namespace) -> int:
     """Health check."""
-    port = args.port or 7000
-
-    # check if port is listening
+    port = args.port or default_port()
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     result = sock.connect_ex(('127.0.0.1', port))
     sock.close()
@@ -221,13 +230,13 @@ def main() -> int:
     # serve
     p_serve = sub.add_parser("serve", help="Start the server")
     p_serve.add_argument("--host", default="0.0.0.0", help="Bind address")
-    p_serve.add_argument("--port", type=int, default=7000, help="Port")
+    p_serve.add_argument("--port", type=int, default=0, help="Port (auto-detects 7860 on macOS)")
     p_serve.add_argument("--dry-run", action="store_true", help="Print URLs and exit")
     p_serve.set_defaults(func=cmd_serve)
 
     # status
     p_status = sub.add_parser("status", help="Health check")
-    p_status.add_argument("--port", type=int, default=7000, help="Port to check")
+    p_status.add_argument("--port", type=int, default=0, help="Port to check (auto-detects)")
     p_status.set_defaults(func=cmd_status)
 
     # args

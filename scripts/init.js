@@ -35,7 +35,7 @@ module.exports = function init(ROOT, args) {
     // Prevent infinite recursion if target is inside source
     const srcEntries = new Set(fs.readdirSync(src));
     for (const entry of srcEntries) {
-      if (skip.has(entry) || entry === target) continue;
+      if (skip.has(entry) || entry === path.basename(dest)) continue;
       const s = path.join(src, entry);
       const d = path.join(dst, entry);
       const stat = fs.statSync(s);

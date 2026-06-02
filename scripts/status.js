@@ -11,14 +11,22 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const CHECK = '\x1b[32m\u2713\x1b[0m';
-const CROSS = '\x1b[31m\u2717\x1b[0m';
+const CHECK = '\x1b[32m✓\x1b[0m';
+const CROSS = '\x1b[31m✗\x1b[0m';
 
 module.exports = function status(ROOT) {
-  const port = 7000;
-  let running = false;
+  // Read port from .env if available, fall back to 7000
+  let port = 7000;
+  try {
+    const envPath = path.join(ROOT, '.env');
+    if (fs.existsSync(envPath)) {
+      const env = fs.readFileSync(envPath, 'utf8');
+      const match = env.match(/^ODYSSEUS_PORT=(\d+)/m);
+      if (match) port = parseInt(match[1], 10);
+    }
+  } catch {}
 
-  const req = http.get(`http://127.0.0.1:${port}/`, () => {
+  const req = http.get(`http://127.0.0.1:${port}/api/health`, (res) => {
     printStatus(ROOT, port, true);
   });
 
@@ -46,20 +54,24 @@ function printStatus(ROOT, port, running) {
   }
 
   // Python check
-  try {
-    const r = spawnSync('python', ['--version'], { encoding: 'utf8', timeout: 10000 });
-    if (r.stdout?.trim() || r.stderr?.trim()) {
-      console.log(`  ${CHECK} Python:     ${r.stdout?.trim() || r.stderr?.trim()}`);
-    } else throw new Error();
-  } catch {
+  const tryPython = (cmd, args) => {
     try {
-      const r = spawnSync('py', ['--version'], { encoding: 'utf8', timeout: 5000 });
+      const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: 10000 });
       if (r.stdout?.trim() || r.stderr?.trim()) {
-        console.log(`  ${CHECK} Python:     ${r.stdout?.trim() || r.stderr?.trim()}`);
-      } else throw new Error();
-    } catch {
-      console.log(`  ${CROSS} Python:     not found`);
-    }
+        return r.stdout?.trim() || r.stderr?.trim();
+      }
+    } catch {}
+    return null;
+  };
+
+  const pyVer = tryPython('python', ['--version'])
+    || tryPython('python3', ['--version'])
+    || tryPython('py', ['--version']);
+
+  if (pyVer) {
+    console.log(`  ${CHECK} Python:     ${pyVer}`);
+  } else {
+    console.log(`  ${CROSS} Python:     not found`);
   }
 
   console.log(`  ${CHECK} Data dir:   ${path.join(ROOT, 'data')}`);

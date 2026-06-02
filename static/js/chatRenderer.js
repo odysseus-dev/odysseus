@@ -8,7 +8,70 @@ import { providerLogo } from './providers.js';
 import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
 
-const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
+// Emoji shortcode map — renders :shortcode: patterns as actual emoji
+const _S = {
+  ':+1:': '\uD83D\uDC4D', ':-1:': '\uD83D\uDC4E', ':100:': '\uD83D\uDCAF',
+  ':blush:': '\uD83D\uDE0A', ':fire:': '\uD83D\uDD25', ':rocket:': '\uD83D\uDE80',
+  ':heart:': '\u2764\uFE0F', ':blue_heart:': '\uD83D\uDC99', ':purple_heart:': '\uD83D\uDC9C',
+  ':green_heart:': '\uD83D\uDC9A', ':yellow_heart:': '\uD83D\uDC9B', ':orange_heart:': '\uD83E\uDDE1',
+  ':smile:': '\uD83D\uDE04', ':smiley:': '\uD83D\uDE03', ':grinning:': '\uD83D\uDE00',
+  ':wink:': '\uD83D\uDE09', ':joy:': '\uD83D\uDE02', ':rofl:': '\uD83E\uDD23',
+  ':laughing:': '\uD83D\uDE06', ':sweat_smile:': '\uD83D\uDE05', ':innocent:': '\uD83D\uDE07',
+  ':star_struck:': '\uD83E\uDD29', ':thinking:': '\uD83E\uDD14', ':smirk:': '\uD83D\uDE0F',
+  ':unamused:': '\uD83D\uDE12', ':roll_eyes:': '\uD83D\uDE44', ':grimacing:': '\uD83D\uDE2C',
+  ':sunglasses:': '\uD83D\uDE0E', ':nerd:': '\uD83E\uDD13', ':confused:': '\uD83D\uDE15',
+  ':worried:': '\uD83D\uDE1F', ':frowning:': '\uD83D\uDE26', ':rage:': '\uD83D\uDE21',
+  ':angry:': '\uD83D\uDE20', ':skull:': '\uD83D\uDC80', ':skull_crossbones:': '\u2620\uFE0F',
+  ':hugging:': '\uD83E\uDD17', ':money_mouth:': '\uD83E\uDD11', ':robot:': '\uD83E\uDD16',
+  ':poop:': '\uD83D\uDCA9', ':clown:': '\uD83E\uDD21', ':ghost:': '\uD83D\uDC7B',
+  ':alien:': '\uD83D\uDC7D', ':raised_hands:': '\uD83D\uDE4C', ':clap:': '\uD83D\uDC4F',
+  ':pray:': '\uD83D\uDE4F', ':handshake:': '\uD83E\uDD1D', ':thumbsup:': '\uD83D\uDC4D',
+  ':thumbsdown:': '\uD83D\uDC4E', ':ok_hand:': '\uD83D\uDC4C', ':wave:': '\uD83D\uDC4B',
+  ':muscle:': '\uD83D\uDCAA', ':fingers_crossed:': '\uD83E\uDD1E', ':middle_finger:': '\uD83D\uDD95',
+  ':metal:': '\uD83E\uDD18', ':eyes:': '\uD83D\uDC40', ':brain:': '\uD83E\uDDE0',
+  ':star:': '\u2B50', ':sparkles:': '\u2728', ':zap:': '\u26A1', ':flame:': '\uD83D\uDD25',
+  ':dog:': '\uD83D\uDC36', ':cat:': '\uD83D\uDC31', ':fox:': '\uD83E\uDD8A',
+  ':bear:': '\uD83D\uDC3B', ':panda:': '\uD83D\uDC3C', ':koala:': '\uD83D\uDC28',
+  ':lion:': '\uD83E\uDD81', ':frog:': '\uD83D\uDC38', ':wolf:': '\uD83D\uDC3A',
+  ':unicorn:': '\uD83E\uDD84', ':butterfly:': '\uD83E\uDD8B', ':turtle:': '\uD83D\uDC22',
+  ':snake:': '\uD83D\uDC0D', ':dragon:': '\uD83D\uDC09', ':t_rex:': '\uD83E\uDD96',
+  ':whale:': '\uD83D\uDC33', ':dolphin:': '\uD83D\uDC2C', ':shark:': '\uD83E\uDD88',
+  ':octopus:': '\uD83D\uDC19', ':cherry_blossom:': '\uD83C\uDF38', ':rose:': '\uD83C\uDF39',
+  ':sunflower:': '\uD83C\uDF3B', ':palm_tree:': '\uD83C\uDF34', ':cactus:': '\uD83C\uDF35',
+  ':mushroom:': '\uD83C\uDF44', ':rainbow:': '\uD83C\uDF08', ':snowflake:': '\u2744\uFE0F',
+  ':apple:': '\uD83C\uDF4E', ':orange:': '\uD83C\uDF4A', ':banana:': '\uD83C\uDF4C',
+  ':watermelon:': '\uD83C\uDF49', ':strawberry:': '\uD83C\uDF53', ':cherries:': '\uD83C\uDF52',
+  ':pizza:': '\uD83C\uDF55', ':hamburger:': '\uD83C\uDF54', ':fries:': '\uD83C\uDF5F',
+  ':taco:': '\uD83C\uDF2E', ':burrito:': '\uD83C\uDF2F', ':popcorn:': '\uD83C\uDF7F',
+  ':cake:': '\uD83C\uDF70', ':cupcake:': '\uD83E\uDDC1', ':cookie:': '\uD83C\uDF6A',
+  ':beers:': '\uD83C\uDF7B', ':wine:': '\uD83C\uDF77', ':cocktail:': '\uD83C\uDF78',
+  ':trophy:': '\uD83C\uDFC6', ':medal:': '\uD83C\uDFC5', ':soccer:': '\u26BD',
+  ':basketball:': '\uD83C\uDFC0', ':football:': '\uD83C\uDFC8', ':baseball:': '\u26BE',
+  ':tennis:': '\uD83C\uDFBE', ':checkered_flag:': '\uD83C\uDFC1', ':rocket:': '\uD83D\uDE80',
+  ':airplane:': '\u2708\uFE0F', ':car:': '\uD83D\uDE97', ':anchor:': '\u2693',
+  ':hourglass:': '\u23F3', ':alarm_clock:': '\u23F0', ':sunrise:': '\uD83C\uDF05',
+  ':house:': '\uD83C\uDFE0', ':office:': '\uD83C\uDFE2', ':crown:': '\uD83D\uDC51',
+  ':ring:': '\uD83D\uDC8D', ':gem:': '\uD83D\uDC8E', ':gift:': '\uD83C\uDF81',
+  ':balloon:': '\uD83C\uDF88', ':tada:': '\uD83C\uDF89', ':guitar:': '\uD83C\uDFB8',
+  ':microphone:': '\uD83C\uDFA4', ':headphones:': '\uD83C\uDFA7', ':computer:': '\uD83D\uDCBB',
+  ':phone:': '\u260E\uFE0F', ':camera:': '\uD83D\uDCF7', ':book:': '\uD83D\uDCD6',
+  ':pencil:': '\u270F\uFE0F', ':lock:': '\uD83D\uDD12', ':key:': '\uD83D\uDD11',
+  ':hammer:': '\uD83D\uDD28', ':wrench:': '\uD83D\uDD27', ':gear:': '\u2699\uFE0F',
+  ':magnifying_glass:': '\uD83D\uDD0D', ':bulb:': '\uD83D\uDCA1', ':moneybag:': '\uD83D\uDCB0',
+  ':email:': '\u2709\uFE0F', ':calendar:': '\uD83D\uDCC6', ':clipboard:': '\uD83D\uDCCB',
+  ':check:': '\u2705', ':x:': '\u274C', ':warning:': '\u26A0\uFE0F',
+  ':no_entry:': '\u26D4', ':radioactive:': '\u2622\uFE0F', ':biohazard:': '\u2623\uFE0F',
+  ':infinity:': '\u267E\uFE0F', ':recycle:': '\u267B\uFE0F', ':wheelchair:': '\u267F',
+  ':zzz:': '\uD83D\uDCA4', ':musical_note:': '\uD83C\uDFB5', ':notes:': '\uD83C\uDFB6',
+  ':boom:': '\uD83D\uDCA5', ':sweat_drops:': '\uD83D\uDCA6', ':dash:': '\uD83D\uDCA8',
+  ':question:': '\u2753', ':exclamation:': '\u2757', ':tm:': '\u2122\uFE0F',
+  ':copyright:': '\u00A9\uFE0F', ':registered:': '\u00AE\uFE0F',
+};
+function _replaceSc(text) {
+  return text.replace(/:([a-z0-9_+\-]+):/g, (m) => _S[m] || m);
+}
+
+const SEARCH_ICON
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
 const CHAT_ABOUT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
 const COPY_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
@@ -2071,7 +2134,7 @@ export function addMessage(role, content, modelName, metadata) {
       );
       b.innerHTML = sourcesPrefix + thinkHtml + findingsSuffix;
     } else {
-      b.innerHTML = sourcesPrefix + markdownModule.processWithThinking(text) + findingsSuffix;
+      b.innerHTML = sourcesPrefix + markdownModule.processWithThinking(_replaceSc(text)) + findingsSuffix;
     }
 
     // The vision/OCR caption is stripped from the displayed text above (so the

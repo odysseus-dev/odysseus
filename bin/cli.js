@@ -8,9 +8,9 @@
 'use strict';
 
 const path = require('path');
-const fs = require('fs');
 
 const ROOT = path.resolve(__dirname, '..');
+const pkg = require(path.join(ROOT, 'package.json'));
 
 const HELP = `
 ╔═══════════════════════════════════════╗
@@ -23,6 +23,7 @@ Usage:
   odysseus setup          Interactive setup wizard
   odysseus serve          Start the server
   odysseus status         Health check
+  odysseus --version      Show version
   odysseus --help         Show this help
 `;
 
@@ -31,6 +32,11 @@ const cmd = process.argv[2];
 if (!cmd || cmd === '--help' || cmd === '-h') {
   process.stdout.write(HELP);
   process.exit(cmd ? 0 : 0);
+}
+
+if (cmd === '--version' || cmd === '-v') {
+  process.stdout.write(pkg.version + '\n');
+  process.exit(0);
 }
 
 const dispatch = {
@@ -46,4 +52,10 @@ if (!dispatch[cmd]) {
   process.exit(1);
 }
 
-dispatch[cmd]();
+const result = dispatch[cmd]();
+if (result && typeof result.then === 'function') {
+  result.catch(err => {
+    process.stderr.write(`error: ${err.message}\n`);
+    process.exit(1);
+  });
+}
