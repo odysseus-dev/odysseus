@@ -487,11 +487,11 @@ def parse_suggest_blocks(content: str) -> list:
     return suggestions
 
 
-async def do_suggest_document(content: str, doc_id: str = None) -> Dict:
+async def do_suggest_document(content: str, doc_id: str = None, session_id: Optional[str] = None) -> Dict:
     """Create inline suggestions for the active document WITHOUT modifying it."""
     from src.database import SessionLocal, Document
 
-    target_id = doc_id or _active_document_id
+    target_id = doc_id or get_active_document(session_id)
     if not target_id:
         return {"error": "No active document to suggest on"}
 

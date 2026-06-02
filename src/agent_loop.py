@@ -579,6 +579,7 @@ def _build_system_prompt(
     compact: bool = False,
     owner: Optional[str] = None,
     description_style: str = "full",
+    session_id: Optional[str] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -647,7 +648,7 @@ def _build_system_prompt(
     # massive tool-description system prompt.
     _doc_message = None
     if active_document:
-        set_active_document(active_document.id)
+        set_active_document(active_document.id, session_id=session_id)
         _doc_raw = active_document.current_content or ""
         _doc_title_l = (active_document.title or "").strip().lower()
         _is_email_doc = (
@@ -758,7 +759,7 @@ def _build_system_prompt(
                 "with <<<FIND>>>...<<<SUGGEST>>>...<<<REASON>>>...<<<END>>> blocks."
             )
     else:
-        set_active_document(None)
+        set_active_document(None, session_id=session_id)
 
     # Inject writing style for any email writing path. This is deliberately
     # broader than read/list: models may compose via send_email, reply_to_email,
@@ -1444,6 +1445,7 @@ async def stream_agent_loop(
         compact=_is_api_model,
         owner=owner,
         description_style=_description_style,
+        session_id=session_id,
     )
     prep_timings["prompt_build"] = time.time() - _t2
 

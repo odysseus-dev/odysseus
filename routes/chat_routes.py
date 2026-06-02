@@ -358,20 +358,28 @@ def setup_chat_routes(
                 if active_doc:
                     logger.info(f"[doc-inject] found by session fallback: title={active_doc.title!r}")
             # Last resort: the document the agent itself just created/edited
-            # (tracked in-memory by the tool layer). This rescues docs that
-            # got orphaned from their session (session_id NULL) — otherwise
-            # neither lookup above can associate them with this conversation,
-            # so the agent never sees what it just wrote. Guarded so we never
-            # leak a doc that belongs to a DIFFERENT session.
+            # (tracked in-memory by the tool layer, per-session). This rescues
+            # docs that got orphaned from their session (session_id NULL) —
+            # otherwise neither lookup above can associate them with this
+            # conversation.  Guarded so we never leak a doc that belongs to
+            # a DIFFERENT session.
             if not active_doc:
                 try:
                     from src.tool_implementations import get_active_document
-                    _mem_id = get_active_document()
+                    _mem_id = get_active_document(session_id=session)
                     if _mem_id:
                         cand = _doc_db.query(DBDocument).filter(DBDocument.id == _mem_id).first()
-                        if cand and (not cand.session_id or cand.session_id == session):
+                        if cand and cand.session_id == session:
                             active_doc = cand
                             logger.info(f"[doc-inject] found by in-memory active id: title={active_doc.title!r} (session_id={cand.session_id!r})")
+                        elif cand and not cand.session_id:
+                            # Orphaned doc (NULL session_id) — only accept if
+                            # the doc owner matches the session owner.
+                            _sess_owner = getattr(sess, 'owner', None)
+                            _doc_owner = getattr(cand, 'owner', None)
+                            if _sess_owner and _doc_owner and _sess_owner == _doc_owner:
+                                active_doc = cand
+                                logger.info(f"[doc-inject] found by in-memory active id (orphan, owner-match): title={active_doc.title!r}")
                 except Exception as _e:
                     logger.debug(f"[doc-inject] in-memory fallback failed: {_e}")
             if not active_doc:

@@ -655,12 +655,12 @@ async def execute_tool_block(
         result = await do_create_document(content, session_id=session_id)
     elif tool == "update_document":
         desc = f"update_document: {content.split(chr(10))[0][:60]}"
-        result = await do_update_document(content)
+        result = await do_update_document(content, session_id=session_id, owner=owner)
     elif tool == "edit_document":
-        result = await do_edit_document(content)
+        result = await do_edit_document(content, session_id=session_id, owner=owner)
         desc = f"edit_document: {result.get('title', '')}"
     elif tool == "suggest_document":
-        result = await do_suggest_document(content)
+        result = await do_suggest_document(content, session_id=session_id)
         desc = f"suggest_document: {result.get('count', 0)} suggestions"
     elif tool == "search_chats":
         query = content.split("\n")[0].strip()
@@ -696,7 +696,7 @@ async def execute_tool_block(
         result = await do_manage_tokens(content, owner=owner)
     elif tool == "manage_documents":
         desc = "manage_documents"
-        result = await do_manage_documents(content, owner=owner)
+        result = await do_manage_documents(content, owner=owner, session_id=session_id)
     elif tool == "manage_settings":
         desc = "manage_settings"
         result = await do_manage_settings(content, owner=owner)
