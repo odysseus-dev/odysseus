@@ -21,6 +21,7 @@ import html
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
+from core.middleware import require_admin
 from src.auth_helpers import get_current_user
 
 from companion import pairing as _pairing
