@@ -130,7 +130,19 @@ class MemoryManager:
         if owner is None:
             return entries
         return [e for e in entries if e.get("owner") == owner]
-    
+
+    def claim_ownerless(self, owner: str):
+        """Assign all ownerless memory entries to the given owner. Run once to migrate."""
+        entries = self.load_all()
+        changed = False
+        for e in entries:
+            if not e.get("owner"):
+                e["owner"] = owner
+                changed = True
+        if changed:
+            self.save(entries)
+            logger.info("Claimed %d ownerless memories for %s", sum(1 for e in entries if e.get("owner") == owner), owner)
+
     def _validate_entries(self, entries: List[Dict]) -> List[Dict]:
         """Ensure all entries have required fields."""
         validated = []
