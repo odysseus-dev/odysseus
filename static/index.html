@@ -1415,6 +1415,25 @@
               </div>
               <div class="settings-row">
                 <label class="settings-label">Model</label>
+          <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M14 4a6 6 0 1 0 6 6"/><path d="M10 10a4 4 0 1 1 4 4"/></svg>Authentik SSO</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Enable optional Authentik login using AUTHENTIK_ISSUER, AUTHENTIK_ID, and AUTHENTIK_SECRET. The login button appears only when it is configured and enabled.</div>
+            <div class="admin-toggle-row">
+              <div>
+                <div class="admin-toggle-label">Enable provider</div>
+                <div class="admin-toggle-sub">Show the Authentik login button on the login page</div>
+              </div>
+              <label class="admin-switch"><input type="checkbox" id="adm-authentikEnabledToggle"><span class="admin-slider"></span></label>
+            </div>
+            <div class="admin-toggle-row">
+              <div>
+                <div class="admin-toggle-label">Auto-create users</div>
+                <div class="admin-toggle-sub">Create a local account the first time someone signs in with Authentik</div>
+              </div>
+              <label class="admin-switch"><input type="checkbox" id="adm-authentikAutoCreateToggle"><span class="admin-slider"></span></label>
+            </div>
+            <div id="adm-authentikStatus" class="admin-toggle-sub" style="margin-top:8px;opacity:0.7;"></div>
+          </div>
                 <select id="set-defaultModelSelect" class="settings-select"></select>
               </div>
               <div id="set-defaultFallbacks" class="settings-fallbacks"></div>

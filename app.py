@@ -40,6 +40,7 @@ import logging
 import secrets
 from datetime import datetime
 from typing import Dict
+from urllib.parse import quote
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
@@ -163,6 +164,8 @@ if AUTH_ENABLED:
         "/api/auth/setup",
         "/api/auth/signup",
         "/api/auth/login",
+        "/api/auth/oidc/login",
+        "/api/auth/oidc/callback",
         "/api/auth/logout",
         "/api/auth/status",
         "/api/auth/features",
@@ -350,7 +353,7 @@ if AUTH_ENABLED:
             if not auth_manager.validate_token(token):
                 if path.startswith("/api/"):
                     return JSONResponse(status_code=401, content={"error": "Not authenticated"})
-                return RedirectResponse(url="/login", status_code=302)
+                return RedirectResponse(url=f"/login?next={quote(path, safe='')}", status_code=302)
 
             # Attach current username to request state for downstream routes
             request.state.current_user = auth_manager.get_username_for_token(token)

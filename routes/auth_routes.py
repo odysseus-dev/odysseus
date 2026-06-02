@@ -1,6 +1,7 @@
 """Authentication routes — login, logout, signup, status, user management."""
 
 from fastapi import APIRouter, Request, Response, HTTPException
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import Optional
 import asyncio
@@ -8,6 +9,20 @@ import logging
 import os
 
 from core.auth import AuthManager
+from core.oidc import (
+    AUTHENTIK_REQUIRE_EMAIL_VERIFIED,
+    AUTHENTIK_REDIRECT_URI,
+    build_authorization_url,
+    decode_state_payload,
+    derive_username,
+    exchange_code,
+    fetch_userinfo,
+    get_authentik_config,
+    get_login_redirect_path,
+    merge_claims,
+    sanitize_username,
+    validate_id_token,
+)
 from src.rate_limiter import RateLimiter
 from src.settings_scrub import scrub_settings
 from src.settings import (
@@ -71,6 +86,8 @@ class SetOpenRegistrationRequest(BaseModel):
     enabled: bool
 
 SESSION_COOKIE = "odysseus_session"
+OIDC_STATE_COOKIE = "odysseus_oidc_state"
+OIDC_NEXT_COOKIE = "odysseus_oidc_next"
 
 
 def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
@@ -148,6 +165,88 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         response.set_cookie(**cookie_kwargs)
         return {"ok": True, "username": username}
 
+    @router.get("/oidc/login", name="authentik_login")
+    async def authentik_login(request: Request):
+        config = get_authentik_config(_load_settings())
+        if not config["enabled"]:
+            return RedirectResponse(url="/login?oidc_error=authentik_disabled", status_code=302)
+        if not config["configured"]:
+            return RedirectResponse(url="/login?oidc_error=authentik_not_configured", status_code=302)
+        try:
+            auth_data = await build_authorization_url(request, get_login_redirect_path(request))
+        except Exception as exc:
+            logger.warning("Authentik login start failed: %s", exc)
+            return RedirectResponse(url="/login?oidc_error=authentik_login_unavailable", status_code=302)
+        response = RedirectResponse(url=auth_data["authorization_url"], status_code=302)
+        cookie_kwargs = dict(httponly=True, samesite="lax", secure=os.getenv("SECURE_COOKIES", "false").lower() == "true", path="/")
+        response.set_cookie(OIDC_STATE_COOKIE, auth_data["payload"], max_age=600, **cookie_kwargs)
+        response.set_cookie(OIDC_NEXT_COOKIE, get_login_redirect_path(request), max_age=600, **cookie_kwargs)
+        return response
+
+    @router.get("/oidc/callback", name="authentik_callback")
+    async def authentik_callback(request: Request, response: Response):
+        config = get_authentik_config(_load_settings())
+        if not config["enabled"] or not config["configured"]:
+            return RedirectResponse(url="/login?oidc_error=authentik_not_available", status_code=302)
+        if request.query_params.get("error"):
+            err = request.query_params.get("error_description") or request.query_params.get("error") or "authentik_login_failed"
+            return RedirectResponse(url=f"/login?oidc_error={err}", status_code=302)
+        state_cookie = request.cookies.get(OIDC_STATE_COOKIE) or ""
+        next_cookie = request.cookies.get(OIDC_NEXT_COOKIE) or "/"
+        code = request.query_params.get("code") or ""
+        state = request.query_params.get("state") or ""
+        if not code or not state or not state_cookie:
+            return RedirectResponse(url="/login?oidc_error=authentik_missing_state", status_code=302)
+        try:
+            parsed = decode_state_payload(state_cookie)
+        except Exception:
+            return RedirectResponse(url="/login?oidc_error=authentik_bad_state", status_code=302)
+        if parsed.get("state") != state:
+            return RedirectResponse(url="/login?oidc_error=authentik_state_mismatch", status_code=302)
+        if not next_cookie.startswith("/") or next_cookie.startswith("//"):
+            next_cookie = "/"
+        try:
+            token_data = await exchange_code(code, request)
+            id_token = token_data.get("id_token")
+            access_token = token_data.get("access_token")
+            if not id_token:
+                raise ValueError("missing id_token")
+            claims = await validate_id_token(id_token, parsed.get("nonce") or "")
+            if access_token:
+                try:
+                    userinfo = await fetch_userinfo(access_token)
+                    claims = merge_claims(claims, userinfo)
+                except Exception:
+                    pass
+            if AUTHENTIK_REQUIRE_EMAIL_VERIFIED and claims.get("email") and not claims.get("email_verified", False):
+                return RedirectResponse(url="/login?oidc_error=email_not_verified", status_code=302)
+            username = sanitize_username(derive_username(claims))
+            if username not in auth_manager.users:
+                if not config["auto_create_users"]:
+                    return RedirectResponse(url="/login?oidc_error=auto_create_disabled", status_code=302)
+                ok = await asyncio.to_thread(auth_manager.create_user, username, None, False, True)
+                if not ok:
+                    return RedirectResponse(url="/login?oidc_error=user_creation_failed", status_code=302)
+            token = await asyncio.to_thread(auth_manager.create_session_for_user, username)
+            if not token:
+                return RedirectResponse(url="/login?oidc_error=session_failed", status_code=302)
+            cookie_kwargs = dict(
+                key=SESSION_COOKIE,
+                value=token,
+                httponly=True,
+                samesite="lax",
+                secure=os.getenv("SECURE_COOKIES", "false").lower() == "true",
+                path="/",
+            )
+            response = RedirectResponse(url=next_cookie, status_code=302)
+            response.set_cookie(**cookie_kwargs)
+            response.delete_cookie(OIDC_STATE_COOKIE, path="/")
+            response.delete_cookie(OIDC_NEXT_COOKIE, path="/")
+            return response
+        except Exception as exc:
+            logger.warning("Authentik callback failed: %s", exc)
+            return RedirectResponse(url="/login?oidc_error=authentik_login_failed", status_code=302)
+
     @router.post("/logout")
     async def logout(request: Request, response: Response):
         token = request.cookies.get(SESSION_COOKIE)
@@ -161,6 +260,13 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         token = request.cookies.get(SESSION_COOKIE)
         result = auth_manager.status(token)
         result["signup_enabled"] = auth_manager.signup_enabled
+        result.update({
+            "authentik_enabled": get_authentik_config(_load_settings())["enabled"],
+            "authentik_configured": get_authentik_config(_load_settings())["configured"],
+            "authentik_auto_create_users": get_authentik_config(_load_settings())["auto_create_users"],
+            "authentik_login_available": get_authentik_config(_load_settings())["enabled"] and get_authentik_config(_load_settings())["configured"],
+            "authentik_redirect_uri": AUTHENTIK_REDIRECT_URI or "(derived from request host)",
+        })
         # Include the caller's effective privileges so the frontend can
         # hide / dim UI controls the user isn't allowed to use. Admins get
         # ADMIN_PRIVILEGES (everything on), regular users get their stored

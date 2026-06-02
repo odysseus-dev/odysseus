@@ -180,6 +180,28 @@
   .toggle { text-align: center; margin-top: calc(1rem + 4px); font-size: 0.85rem; color: color-mix(in srgb, var(--fg) 50%, transparent); }
   .toggle a { color: var(--red); cursor: pointer; text-decoration: none; }
   .toggle a:hover { text-decoration: underline; }
+  .oidc-divider {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    margin: 12px 0 10px;
+    color: color-mix(in srgb, var(--fg) 42%, transparent);
+    font-size: 0.75rem;
+  }
+  .oidc-divider::before, .oidc-divider::after {
+    content: '';
+    height: 1px;
+    flex: 1;
+    background: color-mix(in srgb, var(--border) 82%, transparent);
+  }
+  .oidc-btn {
+    display: none;
+    margin-top: 0;
+    background: color-mix(in srgb, var(--fg) 10%, var(--panel));
+    color: var(--fg);
+    border: 1px solid var(--border);
+  }
+  .oidc-btn:hover { background: color-mix(in srgb, var(--fg) 15%, var(--panel)); }
   .pw-wrapper { position: relative; margin-bottom: 1rem; }
   .pw-wrapper input:not(.remember-check) { padding-right: 2.5rem; margin-bottom: 0; }
   .pw-toggle {
@@ -255,6 +277,7 @@
   <p class="setup-note" id="setupNote" style="display:none"></p>
 
   <div class="error" id="error" role="alert" aria-live="assertive"></div>
+  <div class="oidc-divider" id="oidcDivider">or</div>
 
   <form id="authForm" autocomplete="on">
     <label for="username">Username</label>
@@ -286,6 +309,8 @@
 
     <button type="submit" id="submitBtn">Sign In</button>
   </form>
+
+  <button type="button" id="oidcBtn" class="oidc-btn">Login with Authentik</button>
 
   <div class="toggle" id="toggleArea" style="display:none">
     <span id="toggleText">Don't have an account? </span>
@@ -322,15 +347,24 @@
   const toggleArea = document.getElementById('toggleArea');
   const toggleLink = document.getElementById('toggleLink');
   const toggleText = document.getElementById('toggleText');
+  const oidcBtn = document.getElementById('oidcBtn');
+  const oidcDivider = document.getElementById('oidcDivider');
+  const currentUrl = new URL(window.location.href);
+  const nextPath = (currentUrl.searchParams.get('next') || '/').trim() || '/';
+  const oidcError = currentUrl.searchParams.get('oidc_error') || '';
 
   let mode = 'login'; // 'login' | 'signup' | 'setup'
   let signupAllowed = false;
+  let oidcAvailable = false;
 
   const rememberToggle = document.getElementById('rememberToggle');
 
   function setMode(m) {
     mode = m;
     errEl.style.display = 'none';
+    const showOidc = (m === 'login' || m === 'signup') && oidcAvailable;
+    if (oidcBtn) oidcBtn.style.display = showOidc ? 'block' : 'none';
+    if (oidcDivider) oidcDivider.style.display = showOidc ? 'flex' : 'none';
     if (m === 'setup') {
       setupNote.textContent = 'First-time setup — create your admin account';
       setupNote.style.display = 'block';
@@ -366,6 +400,7 @@
       return;
     }
     signupAllowed = !!data.signup_enabled;
+    oidcAvailable = !!data.authentik_login_available;
     if (!data.configured) {
       setMode('setup');
     } else {
@@ -375,10 +410,33 @@
     setMode('login');
   }
 
+  if (oidcError) {
+    const messages = {
+      authentik_disabled: 'Authentik login is disabled.',
+      authentik_not_configured: 'Authentik is not configured on this server.',
+      authentik_not_available: 'Authentik login is not available.',
+      authentik_login_unavailable: 'Authentik login could not start. Check the issuer URL, client credentials, and TLS trust.',
+      authentik_missing_state: 'Authentik login expired or was interrupted.',
+      authentik_bad_state: 'Authentik login could not be verified.',
+      authentik_state_mismatch: 'Authentik login state did not match.',
+      email_not_verified: 'Your Authentik email address must be verified first.',
+      auto_create_disabled: 'Your account does not exist yet and auto-create is disabled.',
+      authentik_login_failed: 'Authentik login failed. Try again.',
+    };
+    errEl.textContent = messages[oidcError] || 'Authentik login failed.';
+    errEl.style.display = 'block';
+  }
+
   toggleLink.addEventListener('click', (e) => {
     e.preventDefault();
     setMode(mode === 'login' ? 'signup' : 'login');
   });
+
+  if (oidcBtn) {
+    oidcBtn.addEventListener('click', () => {
+      window.location.href = `/api/auth/oidc/login?next=${encodeURIComponent(nextPath)}`;
+    });
+  }
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -468,7 +526,7 @@
         sessionStorage.setItem('ody-prefetch-sessions', JSON.stringify(sess));
         sessionStorage.setItem('ody-prefetch-features', JSON.stringify(feat));
         sessionStorage.setItem('ody-prefetch-settings', JSON.stringify(sett));
-      }).catch(() => {}).finally(() => { window.location.replace('/'); });
+      }).catch(() => {}).finally(() => { window.location.replace(nextPath || '/'); });
     }
     async function doLogin(totpCode) {
       const loginBody = { username, password, remember };
@@ -532,7 +590,7 @@
 })();
 
 // Prevent login button and eye toggles from stealing focus on mobile (keeps keyboard open)
-document.querySelectorAll('#submitBtn, .pw-toggle').forEach(btn => {
+document.querySelectorAll('#submitBtn, .pw-toggle, #oidcBtn').forEach(btn => {
   btn.addEventListener('touchstart', (e) => { e.preventDefault(); }, { passive: false });
   btn.addEventListener('touchend', (e) => {
     e.preventDefault();

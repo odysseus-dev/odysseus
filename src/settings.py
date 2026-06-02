@@ -6,6 +6,7 @@ All modules should import from here instead of accessing files directly.
 """
 
 import json
+import os
 import time
 import logging
 from typing import Any
@@ -132,6 +133,8 @@ DEFAULT_SETTINGS = {
     "utility_model_fallbacks": [],
     "teacher_model": "",
     "teacher_enabled": False,
+    "authentik_enabled": os.getenv("AUTHENTIK_ENABLE", "false").lower() == "true",
+    "authentik_auto_create_users": os.getenv("AUTHENTIK_AUTO_CREATE_USERS", "true").lower() != "false",
     # Skills: minimum self-reported confidence for an auto-written (LLM-authored)
     # DRAFT skill to be injected into the agent prompt. Published skills always
     # qualify. Keeps low-confidence auto-skills out of context until they're

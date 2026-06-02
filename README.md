@@ -390,6 +390,15 @@ Key settings:
 | `AUTH_ENABLED` | `true` | Enable/disable login |
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
 | `SECURE_COOKIES` | `false` | Set true when serving Odysseus through HTTPS at a trusted proxy or private access gateway. |
+| `AUTHENTIK_ENABLE` | `false` | Enable the optional Authentik login provider. Admins can still override this in Settings. |
+| `AUTHENTIK_AUTO_CREATE_USERS` | `true` | Auto-create a local user on first Authentik login. Admins can still override this in Settings. |
+| `AUTHENTIK_ID` | -- | Authentik OIDC client ID. |
+| `AUTHENTIK_SECRET` | -- | Authentik OIDC client secret. |
+| `AUTHENTIK_ISSUER` | -- | Authentik issuer URL used for OIDC discovery. |
+| `AUTHENTIK_REDIRECT_URI` | -- | Optional explicit callback URL to register in Authentik. |
+| `AUTHENTIK_SCOPE` | `openid email profile` | OIDC scopes requested from Authentik. |
+| `AUTHENTIK_REQUIRE_EMAIL_VERIFIED` | `true` | Require the email claim to be verified before creating or logging in a user. |
+| `AUTH_SIGNUP_ENABLE` | `false` | Default local registration state when no saved auth config exists.
 | `DATABASE_URL` | `sqlite:///./data/app.db` | Database connection string |
 | `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
@@ -398,6 +407,8 @@ Key settings:
 ### Built-in MCP servers (optional setup)
 
 Odysseus auto-registers a few built-in MCP servers at startup. The npx-based ones (currently the browser server, `@playwright/mcp`) only start when their npm package is already in the local npx cache. If a package isn't cached, that server is skipped with a startup log message explaining what to do, so a fresh install does not block on a multi-minute npm download or hang if Playwright system deps are missing.
+
+If you enable Authentik, the login page shows a dedicated SSO button and the first successful login auto-creates a local account by default. Both behaviors can be overridden from the admin Users settings.
 
 To enable the browser MCP (page navigation, screenshots, vision), run once:
 
