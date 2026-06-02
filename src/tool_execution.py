@@ -422,7 +422,8 @@ async def _direct_fallback(
             raw = content.strip()
             query = raw
             count = 5
-            # Allow JSON-shaped args: {"query": "...", "count": 5}
+            time_filter = None
+            # Allow JSON-shaped args: {"query": "...", "count": 5, "time_filter": "day"}
             if raw.startswith("{"):
                 try:
                     parsed = _json.loads(raw)
@@ -431,6 +432,9 @@ async def _direct_fallback(
                         c = parsed.get("count")
                         if isinstance(c, int) and 1 <= c <= 20:
                             count = c
+                        tf = parsed.get("time_filter")
+                        if isinstance(tf, str) and tf in ("day", "week", "month", "year"):
+                            time_filter = tf
                 except _json.JSONDecodeError:
                     pass
             if not query:
@@ -439,7 +443,7 @@ async def _direct_fallback(
             results = await asyncio.wait_for(
                 loop.run_in_executor(
                     None,
-                    lambda: atomic_web_search(query, count=count, time_filter="latest"),
+                    lambda: atomic_web_search(query, count=count, time_filter=time_filter),
                 ),
                 timeout=15,
             )

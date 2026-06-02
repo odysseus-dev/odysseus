@@ -195,6 +195,7 @@ Execute Python code. Use for computation, data processing, scripting. NOT for wr
 ```
 Returns a JSON array of results: [{"index": 1, "title": "...", "link": "...", "snippet": "..."}, ...].
 Each result has a unique `index` you can cite in your response with [N] notation, e.g. "According to [1], the feature was released in April [2]."
+For news or time-sensitive queries, pass time_filter as "day", "week", "month", or "year".
 NOT for "research X" / "do research on X" / "look into X" requests — those mean a multi-source DEEP RESEARCH job: use `trigger_research` instead (it runs in the Deep Research sidebar and produces a full report). web_search = one quick query; trigger_research = a researched report.""",
 
     "web_fetch": """\
