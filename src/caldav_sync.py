@@ -285,23 +285,28 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                         result["events"] += 1
                 db.commit()
 
-                # Prune locally-cached CalDAV events that vanished
-                # upstream (only within our sync window — events outside
-                # the window aren't in `objs`, so we'd false-delete them).
+                # Skip the prune entirely when `seen_uids` is empty: an
+                # empty result set cannot distinguish "calendar is empty
+                # in this window" from "delete everything", so the only
+                # safe action is no-op. The previous `seen_uids else
+                # CalendarEvent.uid.isnot(None)` ternary fell through to
+                # "match every row" and mass-deleted the visible window
+                # on any sync that returned 0 events.
                 # Only rows we previously pulled from the server (origin=="caldav")
                 # are prunable; locally-created events (agent / email triage / a
                 # UI event whose write-back failed) carry origin NULL and must
                 # never be deleted just because the server didn't return them.
-                stale = db.query(CalendarEvent).filter(
-                    CalendarEvent.calendar_id == local_cal.id,
-                    CalendarEvent.origin == "caldav",
-                    CalendarEvent.dtstart >= start,
-                    CalendarEvent.dtstart <= end,
-                    ~CalendarEvent.uid.in_(seen_uids) if seen_uids else CalendarEvent.uid.isnot(None),
-                ).all()
-                for ev in stale:
-                    db.delete(ev)
-                result["deleted"] += len(stale)
+                if seen_uids:
+                    stale = db.query(CalendarEvent).filter(
+                        CalendarEvent.calendar_id == local_cal.id,
+                        CalendarEvent.origin == "caldav",
+                        CalendarEvent.dtstart >= start,
+                        CalendarEvent.dtstart <= end,
+                        ~CalendarEvent.uid.in_(seen_uids),
+                    ).all()
+                    for ev in stale:
+                        db.delete(ev)
+                    result["deleted"] += len(stale)
                 db.commit()
             except Exception as e:
                 logger.exception("CalDAV sync failed for one calendar")
