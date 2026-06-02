@@ -21,7 +21,8 @@ _JUNK_TITLES = {
 
 def _norm_title(t: str) -> str:
     """Normalize a title for grouping: trim, collapse whitespace, lowercase."""
-    return re.sub(r"\s+", " ", (t or "").strip()).lower()
+    t = t if isinstance(t, str) else ""
+    return re.sub(r"\s+", " ", t.strip()).lower()
 
 
 def _content_fingerprint(content: str) -> str:
@@ -32,7 +33,7 @@ def _content_fingerprint(content: str) -> str:
     that N imports of the same file collapse to one fingerprint. Whitespace is
     collapsed and the result lowercased.
     """
-    c = content or ""
+    c = content if isinstance(content, str) else ""
     c = re.sub(r'upload_id="[^"]*"', "upload_id", c)          # pdf_source re-imports
     c = re.sub(r"\bid=ann-[A-Za-z0-9_-]+", "id=ann", c)        # annotation ids
     c = re.sub(r"\s+", " ", c).strip().lower()
@@ -41,7 +42,8 @@ def _content_fingerprint(content: str) -> str:
 
 def _real_len(content: str) -> int:
     """Length of content with markdown noise stripped — a 'completeness' proxy."""
-    stripped = re.sub(r"^#{1,6}\s+", "", content or "", flags=re.MULTILINE)
+    content = content if isinstance(content, str) else ""
+    stripped = re.sub(r"^#{1,6}\s+", "", content, flags=re.MULTILINE)
     stripped = re.sub(r"[*_`>\-=]+", "", stripped)
     stripped = re.sub(r"\s+", " ", stripped).strip()
     return len(stripped)
