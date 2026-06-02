@@ -1,5 +1,7 @@
 # Odysseus — Context Document
 
+> Living reference for contributors and agents. When in doubt, read the source — this doc is a map, not the territory. See `docs/architecture.md` for runtime layers and request flow.
+
 ## What is Odysseus?
 
 A self-hosted AI workspace meant to replicate the UI experience of ChatGPT/Claude but running on your own hardware, with your own data. Local-first, privacy-first, no trojan.
@@ -10,46 +12,37 @@ A self-hosted AI workspace meant to replicate the UI experience of ChatGPT/Claud
 
 ## Glossary
 
-| Term | Definition | Don't say |
-|------|-----------|-----------|
-| **Chat** | Conversational interface with any local or remote LLM model | "conversation", "dialogue" |
-| **Agent** | Multi-round tool-execution loop where the LLM decides which tools to use via fenced code blocks | "assistant mode", "automation" |
-| **Tool Block** | A fenced code block (`` ```tool_name ``) that the agent loop parses and executes automatically | "function call", "action" |
-| **Cookbook** | Hardware-aware model discovery, download ranking, and serving. Scans GPU/RAM, recommends models, handles GGUF/FP8/AWQ formats via vLLM, llama.cpp, or SGLang backends | "model marketplace", "store" |
-| **Hardware Fit (hwfit)** | The scoring system in Cookbook that ranks models by architecture age, quant format, VRAM/RAM fit, backend support, and likely serve reliability | "compatibility score" |
-| **Deep Research** | Multi-step research runs that gather sources, read pages, and synthesize into a visual report | "web research", "search" |
-| **Memory** | Persistent vector-backed memory store (ChromaDB + fastembed ONNX). Stores facts about the user across sessions. | "knowledge base", "RAG context" |
-| **Skills** | User-editable instructions that extend agent capabilities. Stored per-user, loaded into agent context. Treated as untrusted data for prompt-injection safety. | "plugins", "extensions" |
-| **Session** | A chat conversation container with its own model, endpoint URL, message history, and RAG toggle | "thread", "conversation" |
-| **Provider / Endpoint** | An LLM server (Ollama, vLLM, OpenAI, Anthropic, etc.) registered in Settings. Identified by its base URL. | "backend", "API key" |
-| **Model Context** | Per-model metadata: token limit, supports thinking, uses `max_completion_tokens` vs `max_tokens`. Drives prompt compaction and payload building. | "model config" |
-| **Session Manager** | The central persistence layer (`core/session_manager.py`). Owns sessions, messages, settings, user auth. All DB writes flow through it. | "database", "ORM" |
-| **Agent Loop** | The streaming multi-round loop (`src/agent_loop.py`) that feeds tool output back into the LLM until it declares DONE or BLOCKED | "repl", "tool loop" |
-| **RAG** | Retrieval-augmented generation using ChromaDB vector store + keyword fallback. Toggled per-session. | "document search" |
-| **MCP Server** | Model Context Protocol servers (browser/playwright, memory, RAG, email, image gen). Auto-registered at startup. | "integration server" |
-| **Companion** | Read-only mode for secondary devices. Limited to chat view only. | "mobile mode", "lite" |
-| **Owner Scope** | Per-user data isolation gate. Each user's sessions, documents, memories, emails are isolated by owner ID. Null owners indicate admin-level shared resources. | "user scope", "tenant" |
-| **Degraded State** | When optional services (ChromaDB, SearXNG, email, ntfy) are unreachable. The app continues running but features depending on that service show degraded-state warnings. | "error mode", "partial failure" |
+Key terms used in the codebase and issues. Definitions are approximate — read the source for current behavior.
+
+| Term | Definition | Source |
+|------|-----------|--------|
+| **Chat** | Conversational interface with any local or remote LLM model | `routes/chat_routes.py`, `src/chat_processor.py` |
+| **Agent** | Multi-round tool-execution loop. Prefers native tool/function calling when available, falls back to fenced code blocks (`tool_name`) for cross-provider compatibility | `src/agent_loop.py` |
+| **Tool Block** | Internal representation of a tool call (from native function calling or parsed code block). Unified format so the agent loop works across all providers | `src/agent_tools.py`, `src/tool_implementations.py` |
+| **Cookbook** | Hardware-aware model discovery, download ranking, and serving. Scans GPU/RAM, recommends models, handles GGUF/FP8/AWQ formats via vLLM, llama.cpp, or SGLang backends | `routes/cookbook_routes.py`, `services/hwfit/` |
+| **Hardware Fit (hwfit)** | Scoring system in Cookbook that ranks models by architecture age, quant format, VRAM/RAM fit, backend support, and likely serve reliability | `services/hwfit/fit.py` |
+| **Deep Research** | Multi-step research runs that gather sources, read pages, and synthesize into a visual report | `services/research/` |
+| **Memory** | Persistent vector-backed memory store (ChromaDB + fastembed ONNX). Stores facts about the user across sessions | `services/memory/`, `src/memory_vector.py` |
+| **Skills** | User-editable instructions that extend agent capabilities. Stored per-user, loaded into agent context. Treated as untrusted data for prompt-injection safety | `services/memory/skills.py` |
+| **Session** | A chat conversation container with its own model, endpoint URL, message history, and RAG toggle | `core/session_manager.py`, `core/models.py` |
+| **Provider / Endpoint** | An LLM server (Ollama, vLLM, OpenAI, Anthropic, etc.) registered in Settings. Identified by its base URL | `src/llm_core.py`, `src/endpoint_resolver.py` |
+| **Model Context** | Per-model metadata: token limit, supports thinking, uses `max_completion_tokens` vs `max_tokens`. Drives prompt compaction and payload building | `src/model_context.py` |
+| **Session Manager** | Central persistence layer. Owns sessions, messages, settings, user auth. All DB writes flow through it | `core/session_manager.py` |
+| **Agent Loop** | Streaming multi-round loop that feeds tool output back into the LLM until DONE or BLOCKED | `src/agent_loop.py` |
+| **RAG** | Retrieval-augmented generation using ChromaDB vector store + keyword fallback. Toggled per-session | `src/rag_vector.py`, `src/rag_manager.py` |
+| **MCP Server** | Model Context Protocol servers (browser/playwright, memory, RAG, email, image gen). Auto-registered at startup | `mcp_servers/`, `src/mcp_manager.py` |
+| **Companion** | Read-only mode for secondary devices. Limited to chat view only | `companion/routes.py` |
+| **Owner Scope** | Per-user data isolation gate. Each user's sessions, documents, memories, emails are isolated by owner ID. Null owners indicate admin-level shared resources | `src/auth_helpers.py`, `core/session_manager.py` |
+| **Degraded State** | When optional services (ChromaDB, SearXNG, email, ntfy) are unreachable. The app continues running but features depending on that service show degraded-state warnings | throughout codebase |
 
 ## Architecture
 
+### Directory Layout
+
 ```
 app.py                   # FastAPI entry point — mounts all routes, starts background tasks
-core/                    # Foundation layer
-  auth.py                # Authentication, session tokens, 2FA
-  database.py            # SQLAlchemy models (User, McpServer, etc.)
-  session_manager.py     # Central persistence — sessions, messages, settings, users
-  models.py              # Pure data containers (ChatMessage, Session)
-  middleware.py           # Request middleware chain
-src/                     # Business logic
-  llm_core.py            # LLM call/stream with provider detection, fallback, caching
-  agent_loop.py          # Multi-round tool execution loop
-  agent_tools.py         # Tool block parsing, execution, schemas
-  chat_processor.py      # Chat message processing pipeline
-  memory_vector.py       # Vector memory operations (ChromaDB)
-  model_context.py       # Per-model token estimation and capability detection
-  prompt_security.py     # Untrusted context wrapping for skills/memories/docs
-  tool_security.py       # Per-user tool blocking based on owner scope
+core/                    # Foundation: auth, database, session persistence, middleware, data models
+src/                     # Business logic: LLM core, agent loop, chat processing, memory, tools, security
 routes/                  # FastAPI route modules (one per feature area)
 services/                # Feature services (docs, memory, research, search, shell, stt, tts, youtube, hwfit, faces)
 mcp_servers/             # Built-in MCP server implementations
@@ -61,22 +54,22 @@ companion/               # Read-only companion mode routes
 ### Data Flow
 
 1. **Chat request** → `routes/chat_routes.py` → `src/chat_processor.py` → `src/llm_core.py` (stream or call) → SSE back to frontend
-2. **Agent request** → `routes/chat_routes.py` → `src/agent_loop.py` → parses tool blocks → executes via `src/agent_tools.py` → feeds output back to LLM → loops until DONE/BLOCKED
+2. **Agent request** → `routes/chat_routes.py` → `src/agent_loop.py` → resolves tools (native calling or code blocks) → executes via `src/agent_tools.py` → feeds output back to LLM → loops until DONE/BLOCKED
 3. **Memory lookup** → `services/memory/` → ChromaDB vector search + keyword fallback → returns ranked memories for injection into context
 4. **Deep Research** → `services/research/` → multi-step web crawl + synthesis → visual report output
 
 ### Persistence
 
-- **SQLite** (`data/app.db`) — sessions, messages, users, settings, MCP servers
+- **SQLite** (`data/app.db`) — users, settings, MCP servers, SQLAlchemy models (`core/database.py`)
 - **ChromaDB** (`data/chroma/`) — vector embeddings for memory and RAG
-- **JSON files** — `data/memory.json`, `data/presets.json`, `data/settings.json`
+- **JSON files** — `data/sessions.json`, `data/memory.json`, `data/presets.json`, `data/settings.json`, `data/integrations.json`, `data/cookbook_state.json`
 - **File system** — `data/uploads/`, `data/personal_docs/`, `data/huggingface/` (Cookbook models)
 
 ### Key Design Decisions
 
 - **Local-first** — all data lives on disk, no cloud dependency. Providers are optional endpoints.
 - **Self-hosted only** — no SaaS mode, no telemetry, no analytics.
-- **Tool blocks over function calling** — agent tools use fenced code blocks (`` ```tool_name ``) rather than OpenAI-style function calls. This works uniformly across all providers regardless of native function-calling support.
+- **Hybrid tool calling** — native tool/function calling when the provider supports it, fenced code blocks (`tool_name`) as universal fallback. Works across all providers regardless of native function-calling support. See `src/agent_loop._resolve_tool_blocks()`.
 - **Provider detection by URL** — `src/llm_core._detect_provider()` identifies the provider from the endpoint URL and builds the correct payload format. No explicit provider type selection needed.
 - **Degraded state, not hard failure** — optional services (ChromaDB, SearXNG, ntfy) can be unreachable without crashing the app. Features show degraded-state warnings instead.
 
@@ -96,7 +89,7 @@ companion/               # Read-only companion mode routes
 
 ## Conventions
 
-- Python files follow standard PEP 8. No type annotations on most functions yet.
+- Python files follow standard PEP 8. Type annotations are sparse — most functions are unannotated.
 - Routes are split per feature area in `routes/` (one file per domain: `chat_routes.py`, `memory_routes.py`, etc.)
 - Services encapsulate complex business logic in `services/`
 - Frontend modules use IIFE/module pattern, not ES modules
