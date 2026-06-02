@@ -47,6 +47,29 @@ def _endpoint_cached_models(ep) -> list:
     return models if isinstance(models, list) else []
 
 
+def _endpoint_hidden_models(ep) -> set:
+    """Model ids the admin disabled on this endpoint (the UI's hidden list)."""
+    raw = getattr(ep, "hidden_models", None)
+    if not raw:
+        return set()
+    try:
+        hidden = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return set()
+    return set(hidden) if isinstance(hidden, list) else set()
+
+
+def _endpoint_enabled_models(ep) -> list:
+    """Cached models minus the ones disabled on the endpoint, order preserved.
+
+    The auto-pick fallback must never select a model the user disabled — a
+    Groq endpoint can list 16 models with only 1 enabled, and picking the
+    raw first one resolves to a model that 400s ("requires terms acceptance").
+    """
+    hidden = _endpoint_hidden_models(ep)
+    return [m for m in _endpoint_cached_models(ep) if m not in hidden]
+
+
 # Cache for Tailscale hostname → IP resolution
 _tailscale_cache: Dict[str, Optional[str]] = {}
 
@@ -248,9 +271,15 @@ def resolve_endpoint(
         chat_url = build_chat_url(base)
         headers = build_headers(ep.api_key, base)
 
-        # If no model specified, try to pick the first from endpoint's cached list.
+        # Discard a configured model the user has since disabled on the
+        # endpoint (e.g. a stale `default_model` left pointing at a now-hidden
+        # model). Treat it as unset so the picker below selects a live one
+        # instead of dispatching to a disabled model that 400s.
+        if model and model in _endpoint_hidden_models(ep):
+            model = ""
+        # If no (usable) model specified, pick the first enabled chat model.
         if not model:
-            model = _first_chat_model(_endpoint_cached_models(ep)) or ""
+            model = _first_chat_model(_endpoint_enabled_models(ep)) or ""
 
         return chat_url, model or fallback_model, headers
     except Exception as e:
@@ -282,8 +311,12 @@ def resolve_endpoint_by_id(
         chat_url = build_chat_url(base)
         headers = build_headers(ep.api_key, base)
         m = (model or "").strip()
+        # Drop a model the user disabled on the endpoint, then pick the first
+        # enabled chat model rather than a hidden one.
+        if m and m in _endpoint_hidden_models(ep):
+            m = ""
         if not m:
-            m = _first_chat_model(_endpoint_cached_models(ep)) or ""
+            m = _first_chat_model(_endpoint_enabled_models(ep)) or ""
         if not m:
             return None
         return chat_url, m, headers
