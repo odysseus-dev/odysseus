@@ -241,6 +241,67 @@ services:
       - ntfy
     restart: unless-stopped
 
+  nexus-security:
+    build: /home/donn/nexus-security
+    ports:
+      - "127.0.0.1:8443:8443"
+    volumes:
+      - nexus-security-data:/app/data
+      - /var/log:/var/log:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+
+  nexus-monitor:
+    build: /home/donn/code/nexus-monitor
+    ports:
+      - "127.0.0.1:8099:8099"
+    volumes:
+      - nexus-monitor-data:/data
+    environment:
+      - NEXUS_MONITOR_CONFIG=/data/config.yaml
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8099/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  nexus-secrets:
+    build: /home/donn/code/nexus-secrets
+    ports:
+      - "127.0.0.1:7438:7438"
+    volumes:
+      - nexus-secrets-data:/data
+    environment:
+      - NEXUS_SECRETS_DB=/data/secrets.db
+      - NEXUS_SECRETS_KEY_FILE=/data/key
+    restart: unless-stopped
+
+  duinn-media:
+    build: /home/donn/duinn-media
+    ports:
+      - "127.0.0.1:8096:8080"
+    volumes:
+      - duinn-media-data:/data
+      - /home/donn/media:/media
+    environment:
+      - DUINN_MEDIA_DATA=/data
+    restart: unless-stopped
+
+  nexus-backup:
+    build: /home/donn/code/nexus-backup
+    volumes:
+      - nexus-backup-data:/backups
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/donn:/source/home:ro
+    environment:
+      - NEXUS_BACKUP_DIR=/backups
+      - NEXUS_BACKUP_SCHEDULE=0 3 * * *
+    restart: unless-stopped
+
 volumes:
   searxng-data:
   chromadb-data:
@@ -251,3 +312,8 @@ volumes:
   nexus-memory-data:
   nexus-workflows-data:
   nexus-automation-data:
+  nexus-security-data:
+  nexus-monitor-data:
+  nexus-secrets-data:
+  duinn-media-data:
+  nexus-backup-data:

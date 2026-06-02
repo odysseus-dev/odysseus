@@ -23,6 +23,10 @@ NEXUS_MEMORY_URL = os.getenv("NEXUS_MEMORY_URL", "http://nexus-memory:8010")
 NEXUS_WORKFLOWS_URL = os.getenv("NEXUS_WORKFLOWS_URL", "http://nexus-workflows:7800")
 NEXUS_WEATHER_URL = os.getenv("NEXUS_WEATHER_URL", "http://nexus-weather:8080")
 NEXUS_AUTOMATION_URL = os.getenv("NEXUS_AUTOMATION_URL", "http://nexus-automation:8090")
+NEXUS_SECURITY_URL = os.getenv("NEXUS_SECURITY_URL", "http://nexus-security:8443")
+NEXUS_MONITOR_URL = os.getenv("NEXUS_MONITOR_URL", "http://nexus-monitor:8099")
+NEXUS_SECRETS_URL = os.getenv("NEXUS_SECRETS_URL", "http://nexus-secrets:7438")
+DUINN_MEDIA_URL = os.getenv("DUINN_MEDIA_URL", "http://duinn-media:8080")
 
 
 def setup_nexus_routes() -> APIRouter:
@@ -251,6 +255,89 @@ def setup_nexus_routes() -> APIRouter:
     async def nexus_automation_history() -> Dict[str, Any]:
         """Proxy: action history."""
         return await _proxy_get(f"{NEXUS_AUTOMATION_URL}/history")
+
+    # ── Nexus Security ────────────────────────────────────────────────────
+
+    @router.get("/api/nexus/security/health")
+    async def nexus_security_health() -> Dict[str, Any]:
+        """Proxy: nexus-security health check."""
+        return await _proxy_get(f"{NEXUS_SECURITY_URL}/health")
+
+    @router.get("/api/nexus/security/threats")
+    async def nexus_security_threats() -> Dict[str, Any]:
+        """Proxy: current threats."""
+        return await _proxy_get(f"{NEXUS_SECURITY_URL}/threats")
+
+    @router.get("/api/nexus/security/blocked")
+    async def nexus_security_blocked() -> Dict[str, Any]:
+        """Proxy: blocked IPs."""
+        return await _proxy_get(f"{NEXUS_SECURITY_URL}/blocked")
+
+    @router.get("/api/nexus/security/audit")
+    async def nexus_security_audit() -> Dict[str, Any]:
+        """Proxy: audit log."""
+        return await _proxy_get(f"{NEXUS_SECURITY_URL}/audit")
+
+    @router.get("/api/nexus/security/whitelist")
+    async def nexus_security_whitelist() -> Dict[str, Any]:
+        """Proxy: IP whitelist."""
+        return await _proxy_get(f"{NEXUS_SECURITY_URL}/whitelist")
+
+    # ── Nexus Monitor ─────────────────────────────────────────────────────
+
+    @router.get("/api/nexus/monitor/health")
+    async def nexus_monitor_health() -> Dict[str, Any]:
+        """Proxy: nexus-monitor health check."""
+        return await _proxy_get(f"{NEXUS_MONITOR_URL}/health")
+
+    @router.get("/api/nexus/monitor/nodes")
+    async def nexus_monitor_nodes() -> Dict[str, Any]:
+        """Proxy: cluster nodes."""
+        return await _proxy_get(f"{NEXUS_MONITOR_URL}/nodes")
+
+    @router.get("/api/nexus/monitor/services")
+    async def nexus_monitor_services() -> Dict[str, Any]:
+        """Proxy: monitored services."""
+        return await _proxy_get(f"{NEXUS_MONITOR_URL}/services")
+
+    @router.get("/api/nexus/monitor/alerts")
+    async def nexus_monitor_alerts() -> Dict[str, Any]:
+        """Proxy: active alerts."""
+        return await _proxy_get(f"{NEXUS_MONITOR_URL}/alerts")
+
+    @router.get("/api/nexus/monitor/stats")
+    async def nexus_monitor_stats() -> Dict[str, Any]:
+        """Proxy: system stats."""
+        return await _proxy_get(f"{NEXUS_MONITOR_URL}/stats")
+
+    # ── Nexus Secrets ─────────────────────────────────────────────────────
+
+    @router.get("/api/nexus/secrets/health")
+    async def nexus_secrets_health() -> Dict[str, Any]:
+        """Proxy: nexus-secrets health check."""
+        return await _proxy_get(f"{NEXUS_SECRETS_URL}/health")
+
+    @router.get("/api/nexus/secrets/list")
+    async def nexus_secrets_list() -> Dict[str, Any]:
+        """Proxy: list secret names (not values)."""
+        return await _proxy_get(f"{NEXUS_SECRETS_URL}/secrets")
+
+    # ── Duinn Media ───────────────────────────────────────────────────────
+
+    @router.get("/api/nexus/media/health")
+    async def duinn_media_health() -> Dict[str, Any]:
+        """Proxy: duinn-media health check."""
+        return await _proxy_get(f"{DUINN_MEDIA_URL}/health")
+
+    @router.get("/api/nexus/media/library")
+    async def duinn_media_library() -> Dict[str, Any]:
+        """Proxy: media library."""
+        return await _proxy_get(f"{DUINN_MEDIA_URL}/api/library")
+
+    @router.get("/api/nexus/media/scan")
+    async def duinn_media_scan() -> Dict[str, Any]:
+        """Proxy: trigger media scan."""
+        return await _proxy_get(f"{DUINN_MEDIA_URL}/api/scan")
 
     return router
 
