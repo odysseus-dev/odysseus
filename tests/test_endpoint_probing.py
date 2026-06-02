@@ -198,9 +198,18 @@ class TestPingEndpoint:
 class TestDockerLoopbackRewrite:
     def test_manual_loopback_rewrites_to_docker_host_when_available(self, monkeypatch):
         monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: True)
+        monkeypatch.setattr(model_routes, "_container_loopback_reachable", lambda base_url: False)
         assert (
             _rewrite_loopback_for_docker("http://localhost:8000/v1")
             == "http://host.docker.internal:8000/v1"
+        )
+
+    def test_reachable_container_loopback_stays_local_even_without_container_flag(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: True)
+        monkeypatch.setattr(model_routes, "_container_loopback_reachable", lambda base_url: True)
+        assert (
+            _rewrite_loopback_for_docker("http://127.0.0.1:8001/v1")
+            == "http://127.0.0.1:8001/v1"
         )
 
     def test_cookbook_container_local_loopback_stays_inside_container(self, monkeypatch):
