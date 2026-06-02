@@ -99,128 +99,141 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         if not memory_groups:
             raise TaskNoop("no memories to consolidate")
 
-        total_removed = 0
-        total_cleaned = 0
-        total_scanned = 0
-        removed_examples = []
-        ai_reasons = []
-        ai_used = False
+        # Group by owner so each AI call sees only one owner's memories at a time.
+        owner_groups = {}
+        for m in owner_memories:
+            owner_groups.setdefault((m.get("owner") or "").strip(), []).append(m)
 
-        async def _try_ai_tidy_group(group_owner: str, group_memories: list) -> bool:
-            nonlocal all_memories, total_removed, total_cleaned, total_scanned, ai_used
-            if len(group_memories) < 2:
-                return False
+        url, model, headers = resolve_endpoint("utility", owner=owner)
+        if not url or not model:
+            url, model, headers = resolve_endpoint("default", owner=owner)
 
-            url, model, headers = resolve_endpoint("utility", owner=group_owner or None)
-            if not url or not model:
-                url, model, headers = resolve_endpoint("default", owner=group_owner or None)
-            if not url or not model:
-                return False
-
+        if url and model:
             try:
-                items = [
-                    {
-                        "id": m.get("id"),
-                        "category": m.get("category", "fact"),
-                        "text": (m.get("text") or "").strip()[:text_limit],
-                        "truncated": len((m.get("text") or "").strip()) > text_limit,
-                    }
-                    for m in group_memories
-                    if m.get("id") and (m.get("text") or "").strip()
-                ]
-                if len(items) < 2:
-                    return False
-                truncated_ids = {item["id"] for item in items if item.get("truncated")}
-                prompt = (
-                    "You are tidying a user's saved personal memories. Return ONLY raw JSON, no markdown.\n"
-                    "Remove memories that are empty, broken, trivial conversation filler, duplicates, or obsolete "
-                    "because a clearer newer memory replaces them. Preserve useful personal facts, preferences, "
-                    "contacts, project context, and instructions. If memories conflict, keep the clearest/latest "
-                    "one and drop the obsolete one.\n\n"
-                    "JSON shape:\n"
-                    "{\"keep\":[{\"id\":\"existing id\",\"text\":\"cleaned text\",\"category\":\"fact|preference|identity|event|contact|project|instruction\"}],"
-                    "\"drop\":[{\"id\":\"existing id\",\"reason\":\"short reason\"}]}\n\n"
-                    f"MEMORIES:\n{json.dumps(items, ensure_ascii=False)}"
-                )
-                raw = await llm_call_async(
-                    url=url,
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.0,
-                    max_tokens=4096,
-                    headers=headers,
-                    timeout=120,
-                )
                 from src.text_helpers import strip_think
+                text_limit = 2000
+                keep_ids = set()
+                cleaned_by_id = {}
+                truncated_ids = set()
+                total_removed = 0
+                total_changed_text = 0
+                all_reasons = []
 
-                raw = strip_think(raw or "", prose=False, prompt_echo=False).strip()
-                raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
-                start = raw.find("{")
-                end = raw.rfind("}")
-                if start != -1 and end != -1 and end > start:
-                    decision = json.loads(raw[start:end + 1])
-                    keep_items = decision.get("keep") if isinstance(decision, dict) else None
-                    drop_items = decision.get("drop") if isinstance(decision, dict) else None
-                    if isinstance(keep_items, list) and isinstance(drop_items, list):
-                        by_id = {m.get("id"): m for m in group_memories if m.get("id")}
-                        keep_ids = set()
-                        cleaned_by_id = {}
-                        for item in keep_items:
-                            if not isinstance(item, dict):
-                                continue
-                            mid = item.get("id")
-                            if mid not in by_id:
-                                continue
-                            text = (item.get("text") or "").strip()
-                            if not text:
-                                continue
-                            keep_ids.add(mid)
-                            cleaned = {
-                                "category": (item.get("category") or by_id[mid].get("category") or "fact").strip(),
+                for group_key, group_memories in owner_groups.items():
+                    if len(group_memories) < 2:
+                        keep_ids.update(m.get("id") for m in group_memories if m.get("id"))
+                        continue
+                    try:
+                        items = [
+                            {
+                                "id": m.get("id"),
+                                "category": m.get("category", "fact"),
+                                "text": (m.get("text") or "").strip()[:text_limit],
+                                "truncated": len((m.get("text") or "").strip()) > text_limit,
                             }
-                            original_text = (by_id[mid].get("text") or "").strip()
-                            if len(original_text) <= text_limit:
-                                cleaned["text"] = text
-                            cleaned_by_id[mid] = cleaned
-
-                        # If the model only saw a truncated memory, do not let
-                        # that partial view delete or rewrite the full memory.
-                        keep_ids.update(mid for mid in truncated_ids if mid in by_id)
-
-                        if keep_ids:
-                            changed_text = 0
-                            group_ref_ids = {id(m) for m in group_memories}
-                            kept_all = []
-                            for mem in all_memories:
-                                if id(mem) not in group_ref_ids:
-                                    kept_all.append(mem)
-                                    continue
-                                mid = mem.get("id")
-                                if mid not in keep_ids:
-                                    continue
-                                cleaned = cleaned_by_id.get(mid) or {}
-                                if mid in truncated_ids:
-                                    cleaned.pop("text", None)
-                                if cleaned.get("text") and cleaned["text"] != mem.get("text"):
-                                    mem["text"] = cleaned["text"]
-                                    changed_text += 1
-                                if cleaned.get("category"):
-                                    mem["category"] = cleaned["category"]
-                                kept_all.append(mem)
-
-                            removed = len(group_memories) - len(keep_ids)
-                            total_scanned += len(group_memories)
-                            if removed or changed_text:
-                                all_memories = kept_all
-                                total_removed += removed
-                                total_cleaned += changed_text
-                                ai_used = True
-                                ai_reasons.extend([
+                            for m in group_memories
+                            if m.get("id") and (m.get("text") or "").strip()
+                        ]
+                        group_truncated = {item["id"] for item in items if item.get("truncated")}
+                        truncated_ids.update(group_truncated)
+                        prompt = (
+                            "You are tidying a user's saved personal memories. Return ONLY raw JSON, no markdown.\n"
+                            "Remove memories that are empty, broken, trivial conversation filler, duplicates, or obsolete "
+                            "because a clearer newer memory replaces them. Preserve useful personal facts, preferences, "
+                            "contacts, project context, and instructions. If memories conflict, keep the clearest/latest "
+                            "one and drop the obsolete one.\n\n"
+                            "JSON shape:\n"
+                            "{\"keep\":[{\"id\":\"existing id\",\"text\":\"cleaned text\",\"category\":\"fact|preference|identity|event|contact|project|instruction\"}],"
+                            "\"drop\":[{\"id\":\"existing id\",\"reason\":\"short reason\"}]}\n\n"
+                            f"MEMORIES:\n{json.dumps(items, ensure_ascii=False)}"
+                        )
+                        raw = await llm_call_async(
+                            url=url,
+                            model=model,
+                            messages=[{"role": "user", "content": prompt}],
+                            temperature=0.0,
+                            max_tokens=4096,
+                            headers=headers,
+                            timeout=120,
+                        )
+                        raw = strip_think(raw or "", prose=False, prompt_echo=False).strip()
+                        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
+                        start = raw.find("{")
+                        end = raw.rfind("}")
+                        if start != -1 and end != -1 and end > start:
+                            decision = json.loads(raw[start:end + 1])
+                            keep_items = decision.get("keep") if isinstance(decision, dict) else None
+                            drop_items = decision.get("drop") if isinstance(decision, dict) else None
+                            if isinstance(keep_items, list) and isinstance(drop_items, list):
+                                by_id = {m.get("id"): m for m in group_memories}
+                                group_keep_ids = set()
+                                for item in keep_items:
+                                    if not isinstance(item, dict):
+                                        continue
+                                    mid = item.get("id")
+                                    if mid not in by_id:
+                                        continue
+                                    text = (item.get("text") or "").strip()
+                                    if not text:
+                                        continue
+                                    group_keep_ids.add(mid)
+                                    cleaned_by_id[mid] = {
+                                        "text": text,
+                                        "category": (item.get("category") or by_id[mid].get("category") or "fact").strip(),
+                                    }
+                                # If the model only saw a truncated memory, do not let
+                                # that partial view delete or rewrite the full memory.
+                                group_keep_ids.update(group_truncated)
+                                total_removed += len(group_memories) - len(group_keep_ids)
+                                keep_ids.update(group_keep_ids)
+                                all_reasons += [
                                     (d.get("reason") or "").strip()
                                     for d in drop_items
                                     if isinstance(d, dict) and (d.get("reason") or "").strip()
-                                ])
-                            return True
+                                ]
+                            else:
+                                keep_ids.update(m.get("id") for m in group_memories if m.get("id"))
+                        else:
+                            keep_ids.update(m.get("id") for m in group_memories if m.get("id"))
+                    except TaskNoop:
+                        keep_ids.update(m.get("id") for m in group_memories if m.get("id"))
+                    except Exception as group_err:
+                        logger.warning("AI memory tidy failed for group %r; keeping all: %s", group_key, group_err)
+                        keep_ids.update(m.get("id") for m in group_memories if m.get("id"))
+
+                if keep_ids:
+                    kept_all = []
+                    for mem in all_memories:
+                        if not _belongs_to_owner(mem):
+                            kept_all.append(mem)
+                            continue
+                        mid = mem.get("id")
+                        if mid not in keep_ids:
+                            continue
+                        cleaned = {**cleaned_by_id.get(mid, {})}
+                        if mid in truncated_ids:
+                            cleaned.pop("text", None)
+                        if cleaned.get("text") and cleaned["text"] != mem.get("text"):
+                            mem["text"] = cleaned["text"]
+                            total_changed_text += 1
+                        if cleaned.get("category"):
+                            mem["category"] = cleaned["category"]
+                        if owner and not mem.get("owner"):
+                            mem["owner"] = owner
+                        kept_all.append(mem)
+
+                    if total_removed or total_changed_text:
+                        manager.save(kept_all)
+                        reason_text = f": {'; '.join(all_reasons[:3])}" if all_reasons else ""
+                        return (
+                            f"AI tidied {len(owner_memories)} memories: "
+                            f"removed {total_removed}, cleaned {total_changed_text}{reason_text}",
+                            True,
+                        )
+
+                raise TaskNoop(f"AI scanned {len(owner_memories)} memories, no changes")
+            except TaskNoop:
+                raise
             except Exception as ai_err:
                 logger.warning("AI memory tidy failed; falling back to duplicate cleanup: %s", ai_err)
             return False
