@@ -6322,13 +6322,170 @@ import * as Modals from './modalManager.js';
   }
 
   /** Update the line number gutter */
-  function updateLineNumbers(text) {
+  let _lineNumberResizeObserver = null;
+  let _lineNumberObservedTextarea = null;
+  let _lineNumberResizeRaf = null;
+
+  function _lineNumberContentEl(gutter) {
+    let inner = gutter.querySelector('.doc-line-number-content');
+    if (!inner) {
+      inner = document.createElement('div');
+      inner.className = 'doc-line-number-content';
+      gutter.textContent = '';
+      gutter.appendChild(inner);
+    }
+    return inner;
+  }
+
+  function _lineNumberStyleSignature(style) {
+    return [
+      style.fontFamily,
+      style.fontSize,
+      style.fontWeight,
+      style.fontStyle,
+      style.lineHeight,
+      style.letterSpacing,
+      style.tabSize,
+      style.fontFeatureSettings,
+      style.fontVariantLigatures,
+      style.fontKerning,
+    ].join('|');
+  }
+
+  function _textareaTextWidth(textarea, style) {
+    const paddingLeft = parseFloat(style.paddingLeft) || 0;
+    const paddingRight = parseFloat(style.paddingRight) || 0;
+    return Math.max(0, textarea.clientWidth - paddingLeft - paddingRight);
+  }
+
+  function _lineHeightPx(style) {
+    const parsed = parseFloat(style.lineHeight);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    const fontSize = parseFloat(style.fontSize) || 11;
+    return fontSize * 1.45;
+  }
+
+  function _lineNumberMeasureEl(textarea) {
+    const wrap = document.getElementById('doc-editor-wrap') || textarea.parentElement || document.body;
+    let probe = wrap.querySelector('.doc-line-number-measure');
+    if (!probe) {
+      probe = document.createElement('textarea');
+      probe.className = 'doc-line-number-measure';
+      probe.setAttribute('aria-hidden', 'true');
+      probe.tabIndex = -1;
+      probe.readOnly = true;
+      probe.wrap = 'soft';
+      wrap.appendChild(probe);
+    }
+    return probe;
+  }
+
+  function _syncLineNumberMeasureStyle(probe, style, textWidth) {
+    probe.style.width = textWidth + 'px';
+    probe.style.fontFamily = style.fontFamily;
+    probe.style.fontSize = style.fontSize;
+    probe.style.fontWeight = style.fontWeight;
+    probe.style.fontStyle = style.fontStyle;
+    probe.style.lineHeight = style.lineHeight;
+    probe.style.letterSpacing = style.letterSpacing;
+    probe.style.tabSize = style.tabSize;
+    probe.style.fontFeatureSettings = style.fontFeatureSettings;
+    probe.style.fontVariantLigatures = style.fontVariantLigatures;
+    probe.style.fontKerning = style.fontKerning;
+    probe.style.textRendering = style.textRendering;
+    probe.style.whiteSpace = style.whiteSpace;
+    probe.style.wordWrap = style.wordWrap;
+    probe.style.overflowWrap = style.overflowWrap;
+  }
+
+  function _measureLineNumberHeights(textarea, lines, textWidth, style) {
+    const probe = _lineNumberMeasureEl(textarea);
+    _syncLineNumberMeasureStyle(probe, style, textWidth);
+    const lineHeight = _lineHeightPx(style);
+    return lines.map(line => {
+      probe.value = line || ' ';
+      const visualRows = Math.max(1, Math.round(probe.scrollHeight / lineHeight));
+      return visualRows * lineHeight;
+    });
+  }
+
+  function _renderLineNumberRows(inner, heights) {
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < heights.length; i++) {
+      const row = document.createElement('div');
+      row.className = 'doc-line-number-row';
+      row.style.height = `${heights[i]}px`;
+
+      const label = document.createElement('span');
+      label.className = 'doc-line-number-label';
+      label.textContent = String(i + 1);
+      row.appendChild(label);
+      frag.appendChild(row);
+    }
+    inner.textContent = '';
+    inner.appendChild(frag);
+  }
+
+  function _scheduleLineNumberRerender() {
+    if (_lineNumberResizeRaf) return;
+    const run = () => {
+      _lineNumberResizeRaf = null;
+      const textarea = document.getElementById('doc-editor-textarea');
+      if (textarea) updateLineNumbers(textarea.value, true);
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      _lineNumberResizeRaf = requestAnimationFrame(run);
+    } else {
+      run();
+    }
+  }
+
+  function _ensureLineNumberResizeObserver(textarea) {
+    if (typeof ResizeObserver === 'undefined') return;
+    if (!_lineNumberResizeObserver) {
+      _lineNumberResizeObserver = new ResizeObserver(_scheduleLineNumberRerender);
+    }
+    if (_lineNumberObservedTextarea === textarea) return;
+    if (_lineNumberObservedTextarea) {
+      _lineNumberResizeObserver.unobserve(_lineNumberObservedTextarea);
+    }
+    _lineNumberObservedTextarea = textarea;
+    _lineNumberResizeObserver.observe(textarea);
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', _scheduleLineNumberRerender);
+  }
+
+  function updateLineNumbers(text, force = false) {
+    const textarea = document.getElementById('doc-editor-textarea');
     const gutter = document.getElementById('doc-line-numbers');
-    if (!gutter) return;
-    const count = (text || '').split('\n').length;
-    let html = '';
-    for (let i = 1; i <= count; i++) html += i + '\n';
-    gutter.textContent = html;
+    if (!textarea || !gutter) return;
+
+    const value = text || '';
+    const lines = value.split('\n');
+    const inner = _lineNumberContentEl(gutter);
+    const style = getComputedStyle(textarea);
+    const textWidth = _textareaTextWidth(textarea, style);
+    const styleSig = _lineNumberStyleSignature(style);
+
+    _ensureLineNumberResizeObserver(textarea);
+    if (
+      !force &&
+      inner._lineNumberText === value &&
+      inner._lineNumberWidth === textWidth &&
+      inner._lineNumberStyleSig === styleSig
+    ) {
+      syncGutterScroll();
+      return;
+    }
+
+    const heights = _measureLineNumberHeights(textarea, lines, textWidth, style);
+    _renderLineNumberRows(inner, heights);
+    inner._lineNumberText = value;
+    inner._lineNumberWidth = textWidth;
+    inner._lineNumberStyleSig = styleSig;
+    syncGutterScroll();
   }
 
   /** Sync line number gutter scroll with textarea */
@@ -6336,7 +6493,7 @@ import * as Modals from './modalManager.js';
     const textarea = document.getElementById('doc-editor-textarea');
     const gutter = document.getElementById('doc-line-numbers');
     if (textarea && gutter) {
-      gutter.scrollTop = textarea.scrollTop;
+      _lineNumberContentEl(gutter).style.transform = `translateY(${-textarea.scrollTop}px)`;
     }
   }
 
