@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="5" viewBox="0 0 500 6">
+    <style>
+        .text > * {
+            paint-order: stroke fill markers;
+        }
+        .text > line {
+            outline: 1px solid #000;
+            border-radius: 1px;
+            stroke-linejoin: round;
+        }
+    </style>
+    <g class="text">
+        <line x1="2" y1="3" x2="498" y2="3" stroke="#fff" stroke-linecap="round" stroke-width="2"/>
+    </g>
+</svg>

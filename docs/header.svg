@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="30" viewBox="0 0 380 25">
+    <style>
+        .text {
+            fill: #ffffff;
+            font-size: 16px;
+            stroke: #000000;
+            stroke-width: 2px;
+            font-family: 'Courier New', Courier, monospace
+        }
+        .text > * {
+            paint-order: stroke fill markers;
+        }
+        .text > line {
+            stroke: #ffffff;
+        }
+    </style>
+    <g class="text">
+        <text x="190" y="20" text-anchor="middle">⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ  Odysseus vers. 1.0</text>
+    </g>
+</svg>

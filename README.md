@@ -1,7 +1,16 @@
 # Odysseus
+<div align="center">
+  <img align="middle" width="1000" src="docs/header-line.svg" />
+  <img align="middle" width="800" src="docs/header.svg" />
+  <img align="middle" width="1000" src="docs/header-line.svg" />
+</div>
+<br>
+
+<!--
 ───────────────────────────────────────────────
  ⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ  Odysseus vers. 1.0
 ───────────────────────────────────────────────
+-->
 
 ![Odysseus](docs/odysseus.jpg)
 
