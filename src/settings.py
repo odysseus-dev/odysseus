@@ -195,6 +195,21 @@ def get_setting(key: str, default: Any = None) -> Any:
     return load_settings().get(key, default)
 
 
+def is_setting_overridden(key: str) -> bool:
+    """True if ``key`` is explicitly present in the saved settings file.
+
+    ``load_settings`` merges DEFAULT_SETTINGS with the saved file, so a value
+    equal to its default is indistinguishable from "never set" via get_setting.
+    Callers that need to treat an explicit user choice differently from the
+    default (e.g. adaptive budgets) use this to read the raw saved file.
+    """
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            return key in json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False
+
+
 # Per-user settings (user prefs override the global admin default). Used for
 # keys that a user is allowed to choose individually — currently the vision
 # model + image-generation model. The owner argument is the authed username

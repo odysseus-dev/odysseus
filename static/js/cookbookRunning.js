@@ -375,6 +375,36 @@ function _refreshModelsAfterEndpointChange() {
   }, 1500);
 }
 
+function _appendCookbookEndpointScope(fd, remoteHost) {
+  const host = String(remoteHost || '').trim();
+  if (!host || host === 'local' || host === 'localhost' || host === '127.0.0.1') {
+    fd.append('container_local', 'true');
+  }
+}
+
+function _connectHostFromRemote(remoteHost, fallback = 'localhost') {
+  const host = String(remoteHost || '').trim();
+  if (!host || host === 'local') return fallback;
+  return host.includes('@') ? host.split('@').pop() : host;
+}
+
+function _isAnyBindHost(host) {
+  const h = String(host || '').trim().toLowerCase();
+  return h === '0.0.0.0' || h === '::' || h === '[::]';
+}
+
+function _endpointFromAdvertisedUrl(rawUrl, currentHost, fallbackPort = '11434') {
+  try {
+    const u = new URL(rawUrl);
+    const host = _isAnyBindHost(u.hostname) ? currentHost : (u.hostname || currentHost);
+    const port = u.port || fallbackPort;
+    const bracketedHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+    return { host, port, baseUrl: `${u.protocol}//${bracketedHost}${port ? `:${port}` : ''}/v1` };
+  } catch {
+    return null;
+  }
+}
+
 // ── Download queue — runs one at a time per server ──
 
 function _processQueue() {
@@ -754,8 +784,7 @@ function _endpointUrlForTask(task, outputText = '') {
   if (_taskLooksOllama(task, outputText)) {
     return _ollamaBaseUrlForTask(task, outputText) + '/v1';
   }
-  const rawHost = task.remoteHost || 'localhost';
-  const host = rawHost.includes('@') ? rawHost.split('@').pop() : rawHost;
+  const host = _connectHostFromRemote(task.remoteHost);
   const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
   const port = portMatch ? portMatch[1] : '8000';
   return `http://${host}:${port}/v1`;
@@ -1953,8 +1982,7 @@ export function _renderRunningTab() {
         // serve to the model-endpoints list regardless of prior flag state.
         if (task.type === 'serve' && task.payload?._cmd) {
           items.push({ label: 'Register endpoint', action: 'register-endpoint', custom: async () => {
-            const rawHost = task.remoteHost || 'localhost';
-            const host = rawHost.includes('@') ? rawHost.split('@').pop() : rawHost;
+            const host = _connectHostFromRemote(task.remoteHost);
             const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
             const port = portMatch ? portMatch[1] : '8000';
             const baseUrl = `http://${host}:${port}/v1`;
@@ -1977,6 +2005,7 @@ export function _renderRunningTab() {
               fd.append('base_url', baseUrl);
               fd.append('name', task.name);
               fd.append('skip_probe', 'true');
+              _appendCookbookEndpointScope(fd, task.remoteHost || '');
               if (task.payload?._cmd?.includes('diffusion_server')) fd.append('model_type', 'image');
               const res = await fetch('/api/model-endpoints', { method: 'POST', credentials: 'same-origin', body: fd });
               if (res.ok) {
@@ -2635,8 +2664,7 @@ async function _reconnectTask(el, task) {
         // first one's dedup check can observe the newly-added row.
         if (task.type === 'serve' && !task._endpointAdded && !task._endpointAddInFlight && task._serveReady) {
           task._endpointAddInFlight = true;
-          const rawHost = task.remoteHost || 'localhost';
-          let host = rawHost.includes('@') ? rawHost.split('@').pop() : rawHost;
+          let host = _connectHostFromRemote(task.remoteHost);
           const portMatch = task.payload?._cmd?.match(/--port[=\s]+(\d+)/)
             || task.payload?._cmd?.match(/(?:^|\s)-p[=\s]+(\d+)/)
             || snapshot.match(/Uvicorn running on\D*?:(\d+)/i)
@@ -2647,12 +2675,8 @@ async function _reconnectTask(el, task) {
           let baseUrl = `http://${host}:${port}/v1`;
           const ollamaUrlMatch = snapshot.match(/Ollama API ready on port\s+\d+:\s*(http:\/\/[^\s]+)/i);
           if (ollamaUrlMatch) {
-            try {
-              const u = new URL(ollamaUrlMatch[1]);
-              host = u.hostname || host;
-              port = u.port || '11434';
-              baseUrl = `${u.origin}/v1`;
-            } catch {}
+            const endpoint = _endpointFromAdvertisedUrl(ollamaUrlMatch[1], host, '11434');
+            if (endpoint) ({ host, port, baseUrl } = endpoint);
           }
           fetch('/api/model-endpoints', { credentials: 'same-origin' })
             .then(r => r.json())
@@ -2680,6 +2704,7 @@ async function _reconnectTask(el, task) {
               fd.append('base_url', baseUrl);
               fd.append('name', task.name);
               fd.append('skip_probe', 'true');
+              _appendCookbookEndpointScope(fd, task.remoteHost || '');
               if (_isDiffusion) fd.append('model_type', 'image');
               return fetch('/api/model-endpoints', { method: 'POST', credentials: 'same-origin', body: fd });
             })
@@ -2783,8 +2808,7 @@ async function _checkServeReachability() {
     ]);
   } catch { return; }
   for (const task of serveTasks) {
-    const rawHost = task.remoteHost || 'localhost';
-    const host = rawHost.includes('@') ? rawHost.split('@').pop() : rawHost;
+    const host = _connectHostFromRemote(task.remoteHost);
     const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
     const port = portMatch ? portMatch[1] : '8000';
     const baseUrl = `http://${host}:${port}/v1`;
@@ -3037,8 +3061,7 @@ async function _pollBackgroundStatus() {
       const localTask = localTasks.find(lt => lt.sessionId === t.session_id);
       if (localTask && localTask._endpointAdded) continue;
 
-      const rawHost = localTask?.remoteHost || t.remote || 'localhost';
-      let host = rawHost.includes('@') ? rawHost.split('@').pop() : (rawHost === 'local' ? 'localhost' : rawHost);
+      let host = _connectHostFromRemote(localTask?.remoteHost || t.remote);
       const portMatch = localTask?.payload?._cmd?.match(/--port\s+(\d+)/)
         || localTask?.payload?._cmd?.match(/OLLAMA_HOST=[^\s:]+:(\d+)/);
       let port = portMatch ? portMatch[1] : '8000';
@@ -3046,12 +3069,8 @@ async function _pollBackgroundStatus() {
       const snapshot = t.output || localTask?.output || '';
       const ollamaUrlMatch = snapshot.match(/Ollama API ready on port\s+\d+:\s*(http:\/\/[^\s]+)/i);
       if (ollamaUrlMatch) {
-        try {
-          const u = new URL(ollamaUrlMatch[1]);
-          host = u.hostname || host;
-          port = u.port || '11434';
-          baseUrl = `${u.origin}/v1`;
-        } catch {}
+        const endpoint = _endpointFromAdvertisedUrl(ollamaUrlMatch[1], host, '11434');
+        if (endpoint) ({ host, port, baseUrl } = endpoint);
       }
       const _isDiffusion = localTask?.payload?._cmd?.includes('diffusion_server');
 
@@ -3082,6 +3101,7 @@ async function _pollBackgroundStatus() {
           fd.append('base_url', baseUrl);
           fd.append('name', t.model);
           fd.append('skip_probe', 'true');
+          _appendCookbookEndpointScope(fd, localTask?.remoteHost || t.remote || '');
           if (_isDiffusion) fd.append('model_type', 'image');
           if (_supportsTools) fd.append('supports_tools', 'true');
           return fetch('/api/model-endpoints', { method: 'POST', credentials: 'same-origin', body: fd });

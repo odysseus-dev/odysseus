@@ -838,7 +838,7 @@ body.bg-pattern-sparkles {
     #tile-ghost.visible { opacity: 1; transform: scale(1); }
     /* Bottom dock — chip per minimized modal */
     #minimized-dock {
-      position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+      position: fixed; bottom: var(--composer-clearance, 12px); left: 50%; transform: translateX(-50%);
       display: flex; gap: 6px; flex-wrap: wrap;
       max-width: calc(100vw - 24px);
       padding: 4px;
@@ -2192,12 +2192,12 @@ body.bg-pattern-sparkles {
       background: transparent;
       border: none;
       outline: none;
-      resize: none;
+      resize: vertical;
       font-size: 14px;
       line-height: 1.5;
       color: var(--fg);
       min-height: 24px;
-      max-height: 200px;
+      max-height: min(60vh, 600px);
       padding: 0;
       font-family: inherit;
       transition: height 0.12s ease-out;
@@ -4901,7 +4901,7 @@ body.bg-pattern-sparkles {
     /* Bottom dock for minimized modals */
     #modal-dock {
       position:fixed;
-      bottom:0;
+      bottom:var(--composer-clearance, 0px);
       left:0;
       right:0;
       display:flex;
@@ -14577,6 +14577,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
     z-index: 260 !important;
     margin-top: 0 !important;
     transform: none !important;
+    border-left: none !important;
   }
 }
 

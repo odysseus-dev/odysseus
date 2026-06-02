@@ -3130,10 +3130,7 @@ function initializeEventListeners() {
         const idx = sessions.findIndex(s => s.id === currentId);
         const nextSession = sessions.filter(s => !s.archived && s.id !== currentId)[Math.max(0, idx)] ||
                             sessions.find(s => !s.archived && s.id !== currentId);
-        const res = await fetch(`${API_BASE}/api/session/${currentId}/archive`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        });
+        const res = await fetch(`${API_BASE}/api/session/${currentId}`, { method: 'DELETE' });
         if (res.ok) {
           await sessionModule.loadSessions();
           if (nextSession) {

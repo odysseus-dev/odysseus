@@ -30,6 +30,7 @@ from .providers import (
     tavily_search,
     serper_search,
     _get_search_settings,
+    _get_provider_key,
     _get_result_count,
 )
 from .content import (
@@ -54,7 +55,7 @@ def get_search_config() -> Dict[str, Any]:
     settings = _get_search_settings()
     provider = settings.get("search_provider", "searxng")
     config["active_provider"] = provider
-    config["has_api_key"] = bool((settings.get("search_api_key") or "").strip())
+    config["has_api_key"] = bool(_get_provider_key(provider))
     config["result_count"] = _get_result_count()
     if provider == "searxng":
         from .providers import _get_search_instance
