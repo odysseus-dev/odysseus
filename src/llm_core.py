@@ -306,6 +306,11 @@ def _detect_provider(url: str) -> str:
     Unknown hosts fall back to the OpenAI-compatible default, which the
     majority of providers implement.
     """
+    try:
+        if (urlparse(url or "").scheme or "").lower() == "bedrock":
+            return "bedrock"
+    except Exception:
+        pass
     if _is_ollama_native_url(url):
         return "ollama"
     if _host_match(url, "anthropic.com"):
@@ -655,6 +660,13 @@ def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT,
     provider = _detect_provider(base_chat_url)
     if provider == "anthropic":
         return list(ANTHROPIC_MODELS)
+    if provider == "bedrock":
+        from src import bedrock_adapter
+        try:
+            return bedrock_adapter.list_models(base_chat_url, bedrock_adapter.creds_from_headers(headers))
+        except Exception as e:
+            logger.warning(f"Bedrock list_models failed: {bedrock_adapter.friendly_error(e)}")
+            return []
     try:
         h = {}
         if headers:
@@ -736,6 +748,18 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     if cached_response:
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
+
+    if provider == "bedrock":
+        from src import bedrock_adapter
+        try:
+            response = bedrock_adapter.chat(
+                url, model, messages_copy, temperature, max_tokens,
+                bedrock_adapter.creds_from_headers(headers),
+            )
+        except Exception as e:
+            raise HTTPException(502, bedrock_adapter.friendly_error(e))
+        _set_cached_response(cache_key, response)
+        return response
 
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
@@ -854,6 +878,18 @@ async def llm_call_async(
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
 
+    if provider == "bedrock":
+        from src import bedrock_adapter
+        try:
+            response = await asyncio.to_thread(
+                bedrock_adapter.chat, url, model, messages_copy, temperature, max_tokens,
+                bedrock_adapter.creds_from_headers(headers),
+            )
+        except Exception as e:
+            raise HTTPException(502, bedrock_adapter.friendly_error(e))
+        _set_cached_response(cache_key, response)
+        return response
+
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
@@ -956,6 +992,19 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         messages_copy = [{"role": "system", "content": "\n\n".join(sys_parts)}] + non_sys
     else:
         messages_copy = non_sys
+
+    # ── AWS Bedrock streaming (Converse) ──
+    # No httpx target_url / host-dead machinery applies; delegate to the adapter
+    # which yields the same SSE shape. tools/native function-calling is deferred
+    # to a follow-up (text streaming only for v1).
+    if provider == "bedrock":
+        from src import bedrock_adapter
+        async for chunk in bedrock_adapter.stream(
+            url, model, messages_copy, temperature, max_tokens,
+            bedrock_adapter.creds_from_headers(headers),
+        ):
+            yield chunk
+        return
 
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)

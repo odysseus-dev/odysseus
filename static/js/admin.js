@@ -698,6 +698,9 @@ function initEndpointForm() {
   });
   function _normalizeBaseUrl(raw) {
     let u = raw.trim();
+    // AWS Bedrock uses a bedrock://<region> sentinel, not an HTTP URL — leave it
+    // intact (don't prepend http:// or strip its path).
+    if (/^bedrock:\/\//i.test(u)) return u.replace(/\/+$/, '');
     // Fix common protocol typos
     u = u.replace(/^https?:\/(?!\/)/, m => m + '/');  // https:/ → https://
     u = u.replace(/^htp:/, 'http:').replace(/^htps:/, 'https:');
@@ -775,7 +778,7 @@ function initEndpointForm() {
       const rawUrl = (urlInput.value || provider.value).trim();
       const apiKey = el('adm-epApiKey').value.trim();
       if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
-      if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
+      if (provider.value && !apiKey && !/^bedrock:\/\//i.test(provider.value)) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
       const url = provider.value && rawUrl === provider.value ? rawUrl : _normalizeBaseUrl(rawUrl);
       apiTestController = new AbortController();
       apiTestBtn.disabled = true;
@@ -820,7 +823,7 @@ function initEndpointForm() {
     const rawUrl = (urlInput.value || provider.value).trim();
     const apiKey = el('adm-epApiKey').value.trim();
     if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
-    if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
+    if (provider.value && !apiKey && !/^bedrock:\/\//i.test(provider.value)) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
     // Normalize URL (fix typos, add /v1, strip wrong paths)
     const url = provider.value && rawUrl === provider.value ? rawUrl : _normalizeBaseUrl(rawUrl);
     const btn = el('adm-epAddBtn');

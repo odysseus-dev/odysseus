@@ -165,6 +165,11 @@ def _ollama_api_root(base: str) -> str:
 
 def build_chat_url(base: str) -> str:
     """Return the correct chat endpoint URL for a given base."""
+    # bedrock://<region> is a sentinel, not an HTTP URL — pass it through
+    # untouched so the adapter can recover the region (and skip resolve_url's
+    # DNS/Tailscale rewriting, which doesn't apply to a region name).
+    if _detect_provider(base) == "bedrock":
+        return base
     base = resolve_url(base)
     provider = _detect_provider(base)
     if provider == "anthropic":
@@ -176,6 +181,8 @@ def build_chat_url(base: str) -> str:
 
 def build_models_url(base: str) -> str:
     """Return the provider-specific model-list endpoint URL for a base."""
+    if _detect_provider(base) == "bedrock":
+        return base
     base = resolve_url(base)
     provider = _detect_provider(base)
     if provider == "anthropic":
