@@ -21,6 +21,14 @@ services:
       # Ollama at http://host.docker.internal:11434.
       - "host.docker.internal:host-gateway"
     environment:
+      # GPU passthrough. The hardware scan runs `nvidia-smi` *inside* this
+      # container; without the device reservation below + these two vars the
+      # container runs under the default `runc` runtime, the NVIDIA Container
+      # Toolkit injects nothing, and the scan reports "No GPU" / cpu_x86 even on
+      # a GPU host. NVIDIA_DRIVER_CAPABILITIES must include `utility` (here:
+      # `all`) — that's the capability that ships nvidia-smi into the container.
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
       - LLM_HOST=${LLM_HOST:-localhost}
       - LLM_HOSTS=${LLM_HOSTS:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -61,6 +69,23 @@ services:
       # Find yours with:  id -u  /  id -g
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+    # Reserve the host's NVIDIA GPU(s). Requires the NVIDIA Container Toolkit
+    # on the host (already present: `nvidia-ctk` + the `nvidia` Docker runtime).
+    # `count: all` exposes every GPU; pin to e.g. `count: 1` or
+    # `device_ids: ['0']` to hand over a subset.
+    # NOTE: on a host WITHOUT the NVIDIA Container Toolkit this block is NOT
+    # ignored — `docker compose up` fails with
+    # `could not select device driver "nvidia" with capabilities: [[gpu]]`.
+    # AMD or CPU-only hosts must delete this `deploy:` block. (AMD GPUs use a
+    # different mechanism: /dev/kfd + /dev/dri device mounts plus video/render
+    # group membership, not an nvidia device reservation.)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     depends_on:
       searxng:
         condition: service_healthy
