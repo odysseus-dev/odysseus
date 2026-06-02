@@ -23,7 +23,7 @@ jobs:
             const issues = [];
 
             // ── 1. Summary section must be filled in ─────────────────────────────
-            const summaryMatch = body.match(/##\s+Summary\s*\n([\s\S]*?)(?=\n##|$)/i);
+            const summaryMatch = body.match(/##\s+Summary\s*\n([\s\S]*?)(?=\n#+\s|$)/i);
             const summaryText = (summaryMatch?.[1] ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
             if (!summaryText || summaryText.length < 20) {
               issues.push('**Summary** is missing or too short. Replace the placeholder with a real description of what changed and why.');
@@ -36,7 +36,7 @@ jobs:
             }
 
             // ── 3. At least one Type of Change box must be checked ───────────────
-            const typeSection = body.match(/##\s+Type of Change[\s\S]*?(?=\n##|$)/i)?.[0] ?? '';
+            const typeSection = body.match(/##\s+Type of Change[\s\S]*?(?=\n#+\s|$)/i)?.[0] ?? '';
             if (!/- \[x\]/i.test(typeSection)) {
               issues.push('**Type of Change** — check at least one box.');
             }
@@ -55,7 +55,7 @@ jobs:
             // ── 6. Test coverage box must be checked or reason given ──────────────
             const testChecked = /- \[x\] I have added or updated tests/i.test(body);
             const testExplained = (() => {
-              const m = body.match(/If tests are not applicable.*?\n([\s\S]*?)(?=\n##|$)/i);
+              const m = body.match(/If tests are not applicable.*?\n([\s\S]*?)(?=\n#+\s|$)/i);
               const explanation = (m?.[1] ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
               return explanation.length > 0;
             })();
@@ -64,7 +64,7 @@ jobs:
             }
 
             // ── 7. "How to Test" section must be filled in ────────────────────────
-            const howToTestMatch = body.match(/##\s+How to Test\s*\n([\s\S]*?)(?=\n##|$)/i);
+            const howToTestMatch = body.match(/##\s+How to Test\s*\n([\s\S]*?)(?=\n#+\s|$)/i);
             const howToTestText = (howToTestMatch?.[1] ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
             // Must have at least one numbered step with real content beyond the bare "1." placeholder
             if (!howToTestText || !/\d+\.\s*\S/.test(howToTestText)) {
@@ -110,6 +110,42 @@ jobs:
                 issue_number: prNumber,
                 body: commentBody,
               });
+            }
+
+            // ── Label management ─────────────────────────────────────────────────
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+
+            async function ensureLabel(name, color, description) {
+              try {
+                await github.rest.issues.createLabel({ owner, repo, name, color, description });
+              } catch (e) {
+                if (e.status !== 422) throw e;
+              }
+            }
+
+            async function swapLabel(issueNum, add, remove) {
+              await ensureLabel(add.name, add.color, add.description);
+              await github.rest.issues.addLabels({ owner, repo, issue_number: issueNum, labels: [add.name] });
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: issueNum, name: remove });
+              } catch (e) {
+                if (e.status !== 404 && e.status !== 410) throw e;
+              }
+            }
+
+            if (issues.length === 0) {
+              await swapLabel(
+                prNumber,
+                { name: 'ready for review', color: '0e8a16', description: 'Template complete — ready for maintainer triage' },
+                'needs work'
+              );
+            } else {
+              await swapLabel(
+                prNumber,
+                { name: 'needs work', color: 'd93f0b', description: 'PR template incomplete — action required before review' },
+                'ready for review'
+              );
             }
 
             // Fail the check so the PR shows a red status, but only for real blockers

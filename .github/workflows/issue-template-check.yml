@@ -49,20 +49,20 @@ jobs:
 
               if (isBugReport) {
                 // ── 2a. Bug: Steps to Reproduce must be filled in ───────────────
-                const stepsMatch = body.match(/#+\s+Steps to Reproduce\s*\n([\s\S]*?)(?=\n##|$)/i);
+                const stepsMatch = body.match(/#+\s+Steps to Reproduce\s*\n([\s\S]*?)(?=\n#+\s|$)/i);
                 const stepsText = (stepsMatch?.[1] ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
                 if (!stepsText || stepsText.split('\n').filter(l => /\S/.test(l)).length < 2) {
                   issues.push('**Steps to Reproduce** — provide at least two numbered steps that reliably trigger the bug. Vague steps make it impossible to verify a fix.');
                 }
 
                 // ── 2b. Bug: Expected + Actual must be filled in ────────────────
-                const expectedMatch = body.match(/#+\s+Expected Behaviour\s*\n([\s\S]*?)(?=\n##|$)/i);
+                const expectedMatch = body.match(/#+\s+Expected Behaviour\s*\n([\s\S]*?)(?=\n#+\s|$)/i);
                 const expectedText = (expectedMatch?.[1] ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
                 if (!expectedText || expectedText.length < 10) {
                   issues.push('**Expected Behaviour** — describe what should have happened.');
                 }
 
-                const actualMatch = body.match(/#+\s+Actual Behaviour\s*\n([\s\S]*?)(?=\n##|$)/i);
+                const actualMatch = body.match(/#+\s+Actual Behaviour\s*\n([\s\S]*?)(?=\n#+\s|$)/i);
                 const actualText = (actualMatch?.[1] ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
                 if (!actualText || actualText.length < 10) {
                   issues.push('**Actual Behaviour** — describe what actually happened, including any error messages.');
@@ -71,14 +71,14 @@ jobs:
 
               if (isFeatureReq) {
                 // ── 3a. Feature: Problem section must be filled in ──────────────
-                const problemMatch = body.match(/#+\s+Problem or Motivation\s*\n([\s\S]*?)(?=\n##|$)/i);
+                const problemMatch = body.match(/#+\s+Problem or Motivation\s*\n([\s\S]*?)(?=\n#+\s|$)/i);
                 const problemText = (problemMatch?.[1] ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
                 if (!problemText || problemText.length < 20) {
                   issues.push('**Problem or Motivation** — explain the specific problem this solves or the use case it enables. "It would be nice" is not sufficient.');
                 }
 
                 // ── 3b. Feature: Solution section must be filled in ─────────────
-                const solutionMatch = body.match(/#+\s+Proposed Solution\s*\n([\s\S]*?)(?=\n##|$)/i);
+                const solutionMatch = body.match(/#+\s+Proposed Solution\s*\n([\s\S]*?)(?=\n#+\s|$)/i);
                 const solutionText = (solutionMatch?.[1] ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
                 if (!solutionText || solutionText.length < 20) {
                   issues.push('**Proposed Solution** — describe the specific behaviour or change you want to see.');
@@ -127,4 +127,42 @@ If this is a **security vulnerability**, please [close this issue](https://githu
                 issue_number: issueNumber,
                 body: commentBody,
               });
+            }
+
+            // ── Label management ─────────────────────────────────────────────────
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+
+            // Ensure a label exists; ignore 422 (already exists).
+            async function ensureLabel(name, color, description) {
+              try {
+                await github.rest.issues.createLabel({ owner, repo, name, color, description });
+              } catch (e) {
+                if (e.status !== 422) throw e;
+              }
+            }
+
+            // Safely add one label and remove another, ignoring "not found" on removal.
+            async function swapLabel(issueNum, add, remove) {
+              await ensureLabel(add.name, add.color, add.description);
+              await github.rest.issues.addLabels({ owner, repo, issue_number: issueNum, labels: [add.name] });
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: issueNum, name: remove });
+              } catch (e) {
+                if (e.status !== 404 && e.status !== 410) throw e;
+              }
+            }
+
+            if (issues.length === 0) {
+              await swapLabel(
+                issueNumber,
+                { name: 'ready for review', color: '0e8a16', description: 'Template complete — ready for maintainer triage' },
+                'needs info'
+              );
+            } else {
+              await swapLabel(
+                issueNumber,
+                { name: 'needs info', color: 'e4e669', description: 'Template incomplete or missing — please update' },
+                'ready for review'
+              );
             }

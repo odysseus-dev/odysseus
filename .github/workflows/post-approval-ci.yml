@@ -20,12 +20,15 @@ permissions:
 jobs:
   python-tests:
     name: Python — Test suite
-    if: github.event.review.state == 'approved'
+    # Only run on approvals from trusted reviewers for PRs originating in this repo.
+    # This avoids executing untrusted fork code and ignores approvals from untrusted associations.
+    if: github.event.review.state == 'approved' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -49,12 +52,13 @@ jobs:
   # ── Python syntax ──────────────────────────────────────────────────────────
   python-syntax:
     name: Python — Syntax check
-    if: github.event.review.state == 'approved'
+    if: github.event.review.state == 'approved' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -72,12 +76,13 @@ jobs:
   # ── Security: known CVEs in dependencies ─────────────────────────────────
   security-cve:
     name: Security — Dependency CVEs (pip-audit)
-    if: github.event.review.state == 'approved'
+    if: github.event.review.state == 'approved' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -96,12 +101,13 @@ jobs:
   # ── Security: static code analysis ────────────────────────────────────────
   security-sast:
     name: Security — SAST (bandit)
-    if: github.event.review.state == 'approved'
+    if: github.event.review.state == 'approved' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -148,12 +154,13 @@ jobs:
   # ── Docker config validation ───────────────────────────────────────────────
   docker-validate:
     name: Docker — Compose config
-    if: github.event.review.state == 'approved'
+    if: github.event.review.state == 'approved' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
 
       - name: Validate base compose config
         run: docker compose config --quiet
@@ -167,12 +174,13 @@ jobs:
   # ── JavaScript syntax ──────────────────────────────────────────────────────
   js-syntax:
     name: JS — Syntax check
-    if: github.event.review.state == 'approved'
+    if: github.event.review.state == 'approved' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -204,7 +212,7 @@ jobs:
     # Always run the summary, even when a job fails, so the PR comment is
     # always updated. But skip entirely if the review wasn't an approval
     # (which would have caused all needs to be skipped).
-    if: always() && github.event.review.state == 'approved'
+    if: always() && github.event.review.state == 'approved' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v7
@@ -280,6 +288,43 @@ jobs:
                 issue_number: context.payload.pull_request.number,
                 body,
               });
+            }
+
+            // ── Label management ─────────────────────────────────────────────────
+            const labelOwner = context.repo.owner;
+            const labelRepo  = context.repo.repo;
+            const prNum      = context.payload.pull_request.number;
+
+            async function ensureLabel(name, color, description) {
+              try {
+                await github.rest.issues.createLabel({ owner: labelOwner, repo: labelRepo, name, color, description });
+              } catch (e) {
+                if (e.status !== 422) throw e;
+              }
+            }
+
+            async function swapLabel(issueNum, add, remove) {
+              await ensureLabel(add.name, add.color, add.description);
+              await github.rest.issues.addLabels({ owner: labelOwner, repo: labelRepo, issue_number: issueNum, labels: [add.name] });
+              try {
+                await github.rest.issues.removeLabel({ owner: labelOwner, repo: labelRepo, issue_number: issueNum, name: remove });
+              } catch (e) {
+                if (e.status !== 404 && e.status !== 410) throw e;
+              }
+            }
+
+            if (allPassed) {
+              await swapLabel(
+                prNum,
+                { name: 'ci passed', color: '0075ca', description: 'All post-approval CI checks passed — safe to merge' },
+                'ci failed'
+              );
+            } else {
+              await swapLabel(
+                prNum,
+                { name: 'ci failed', color: 'b60205', description: 'Post-approval CI checks failed — do not merge' },
+                'ci passed'
+              );
             }
 
             if (!allPassed) {
