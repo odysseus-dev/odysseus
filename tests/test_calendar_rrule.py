@@ -9,6 +9,7 @@ import json
 import tempfile
 import uuid
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
@@ -24,9 +25,15 @@ _ENGINE = create_engine(
 )
 cdb.Base.metadata.create_all(_ENGINE)
 _TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
-# do_manage_calendar does `from core.database import SessionLocal` at call time,
-# so patching the module attribute points it at our temp DB.
-cdb.SessionLocal = _TS
+
+
+@pytest.fixture(autouse=True)
+def _bind_temp_db(monkeypatch):
+    # do_manage_calendar does `from core.database import SessionLocal` at call
+    # time, so patch the module attribute to our temp DB — via monkeypatch so it
+    # is RESTORED after each test and can't leak into later tests in the process.
+    monkeypatch.setattr(cdb, "SessionLocal", _TS)
+    yield
 
 
 async def test_create_event_with_rrule_persists_recurrence():
