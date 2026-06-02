@@ -53,35 +53,22 @@
       };
       for (var k in ADV) { if (a[k]) s.setProperty(ADV[k], a[k]); }
     }
-    // Background effect — pick ONE at random from the main app's 8
-    // patterns each load (matches the old login behavior, but uses the
-    // same effect implementations the main theme system exposes so the
-    // login feels consistent with the rest of the app). Per-theme
-    // bgEffectColor/Intensity defaults still apply so the random
-    // pattern picks up theme-appropriate tinting.
-    var name = (t && t.name) || '';
-    // perlin-flow excluded — too visually intense for a login screen.
-    var PATTERNS = ['dots','synapse','rain','constellations','petals','sparkles','embers'];
-    var pattern = PATTERNS[Math.floor(Math.random() * PATTERNS.length)];
-    var effColor = (t && t.bgEffectColor) || THEME_DEFAULT_EFFECT_COLOR[name] || '';
-    var effInt = (t && t.bgEffectIntensity !== undefined)
-      ? t.bgEffectIntensity
-      : (THEME_DEFAULT_INTENSITY[name] !== undefined ? THEME_DEFAULT_INTENSITY[name] : 1);
-    var effSize = (t && t.bgEffectSize !== undefined) ? t.bgEffectSize : 1;
-    if (effColor) s.setProperty('--bg-effect-color', effColor);
-    s.setProperty('--bg-effect-intensity', String(effInt));
-    s.setProperty('--bg-effect-size', String(effSize));
-    // Stash so the deferred module knows which canvas effect to start.
-    window.__loginBgPattern = pattern;
-    // Apply the body class as soon as <body> exists so static-gradient
-    // patterns (dots, synapse) paint immediately on first frame.
-    var apply = function() { document.body.classList.add('bg-pattern-' + pattern); };
-    if (document.body) apply();
-    else document.addEventListener('DOMContentLoaded', apply, { once: true });
   } catch(e){}
 })();
 </script>
 <style>
+  #matrix-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 0;
+    background-color: #000000;
+  }
+  body {
+    background: transparent !important;
+  }
   @font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Regular.woff2') format('woff2'); }
   @font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-SemiBold.woff2') format('woff2'); }
   /* Mirror the main app's :root defaults (static/style.css ~line 18) so an
@@ -240,6 +227,7 @@
 </style>
 </head>
 <body>
+<canvas id="matrix-canvas"></canvas>
 <main class="card">
   <h1 class="logo">
     <svg class="logo-boat" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M16 4L16 22L6 22Z" fill="currentColor"/><path d="M16 8L16 22L24 22Z" fill="currentColor" opacity="0.6"/><path d="M4 24Q10 20 16 24Q22 28 28 24" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg><span>Odysseus</span>
@@ -550,25 +538,102 @@ if (window.visualViewport) {
   });
 }
 </script>
-<script type="module" nonce="{{CSP_NONCE}}">
-// Drive the login page's bg effect off the user's saved theme. The
-// sync bootstrap above already set the body class + effect CSS vars so
-// the static-gradient patterns (dots, synapse) paint immediately; this
-// block imports theme.js's canvas implementations for the dynamic
-// patterns (rain, constellations, perlin-flow, petals, sparkles,
-// embers, synapse pulses).
-//
-// IMPORTANT: theme.js's auto-init (`_initWithSync` → `initThemeUI`)
-// early-returns at `#themeGrid` which doesn't exist on this page, so
-// `applyBgPattern` would never fire on its own. We call it directly
-// here against the pattern the bootstrap already chose.
-try {
-  const tm = await import('/static/js/theme.js');
-  const pattern = window.__loginBgPattern;
-  if (pattern && tm.applyBgPattern) tm.applyBgPattern(pattern);
-} catch (e) {
-  console.error('[login-bg] failed:', e);
-}
+<script nonce="{{CSP_NONCE}}">
+// ── Matrix Effect ──
+(function() {
+  const canvas = document.getElementById('matrix-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const backgroundColor = 'rgba(0, 0, 0, 0.08)';
+  const fontSize = 14;
+  const speed = 33;
+  const language = 'japanese';
+  const trailLength = 1.2;
+
+  let drops = [];
+
+  const getFadeColor = () => {
+    const baseAlpha = 0.1;
+    const alpha = baseAlpha / trailLength;
+    return `rgba(0, 0, 0, ${alpha})`;
+  };
+
+  const fadeColor = getFadeColor();
+
+  const getRandomChar = () => {
+    if (language === 'japanese') {
+      return String.fromCharCode(0x30A0 + Math.random() * 96);
+    }
+    return String.fromCharCode(0x0041 + Math.random() * 52);
+  };
+
+  const resizeCanvas = () => {
+    const dpr = window.devicePixelRatio || 1;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+
+    let tempCanvas = null;
+    if (canvas.width > 0 && canvas.height > 0) {
+      tempCanvas = document.createElement('canvas');
+      tempCanvas.width = canvas.width;
+      tempCanvas.height = canvas.height;
+      const tempCtx = tempCanvas.getContext('2d');
+      if (tempCtx) {
+        tempCtx.drawImage(canvas, 0, 0);
+      }
+    }
+
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.scale(dpr, dpr);
+
+    if (tempCanvas && tempCanvas.width > 0 && tempCanvas.height > 0) {
+      ctx.drawImage(tempCanvas, 0, 0, tempCanvas.width / dpr, tempCanvas.height / dpr);
+    }
+
+    const newColumns = Math.floor((width + fontSize) / fontSize);
+    if (drops.length > 0) {
+      const nextDrops = new Array(newColumns);
+      for (let i = 0; i < newColumns; i++) {
+        nextDrops[i] = i < drops.length ? drops[i] : Math.floor(Math.random() * -100);
+      }
+      drops = nextDrops;
+    } else {
+      drops = new Array(newColumns).fill(0).map(() => Math.floor(Math.random() * -100));
+    }
+  };
+
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+
+  const draw = () => {
+    const dpr = window.devicePixelRatio || 1;
+    ctx.fillStyle = fadeColor;
+    ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+    
+    // Resolve dynamically from the theme's brand color, falling back to original gold `#9b8046`
+    const resolvedColor = getComputedStyle(document.documentElement).getPropertyValue('--brand-color').trim() ||
+                          getComputedStyle(document.documentElement).getPropertyValue('--red').trim() || '#9b8046';
+    
+    ctx.fillStyle = resolvedColor;
+    ctx.font = `${fontSize}px monospace`;
+
+    for (let i = 0; i < drops.length; i++) {
+      const text = getRandomChar();
+      const x = i * fontSize;
+      const y = drops[i] * fontSize;
+      ctx.fillText(text, x, y);
+      if (y > (canvas.height / dpr) && Math.random() > 0.975) {
+        drops[i] = 0;
+      }
+      drops[i]++;
+    }
+  };
+
+  setInterval(draw, speed);
+})();
 </script>
 </body>
 </html>
