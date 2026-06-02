@@ -16,6 +16,7 @@ import spinnerModule from './spinner.js';
 import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js';
 import signatureModule from './signature.js';
 import * as Modals from './modalManager.js';
+import { gutterScrollTop } from './docGutterSync.js';
 
   let API_BASE = '';
   let isOpen = false;
@@ -6336,7 +6337,14 @@ import * as Modals from './modalManager.js';
     const textarea = document.getElementById('doc-editor-textarea');
     const gutter = document.getElementById('doc-line-numbers');
     if (textarea && gutter) {
-      gutter.scrollTop = textarea.scrollTop;
+      // Map by scroll ratio, not raw scrollTop: the gutter (white-space: pre)
+      // is shorter than the textarea (pre-wrap) whenever a line wraps, so a raw
+      // copy clamps the gutter early and freezes the numbers before the content
+      // stops scrolling (#1496).
+      gutter.scrollTop = gutterScrollTop(
+        textarea.scrollTop, textarea.scrollHeight, textarea.clientHeight,
+        gutter.scrollHeight, gutter.clientHeight,
+      );
     }
   }
 
