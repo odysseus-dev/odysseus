@@ -26,6 +26,18 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install CUDA runtime libraries (for GPU acceleration) and llama-cpp-python
+# Pre-built wheels for CUDA 12.4 – compatible with host driver 13.3
+RUN pip install --no-cache-dir \
+    nvidia-cuda-runtime-cu12 \
+    nvidia-cublas-cu12 \
+    llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+
+# Set environment variables so the linker finds the CUDA libraries
+# The exact paths may vary; use LD_LIBRARY_PATH to include the directories
+# where pip installs the .so files.
+ENV LD_LIBRARY_PATH="/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.12/site-packages/nvidia/cuda_runtime/lib:${LD_LIBRARY_PATH}"
+
 # Copy app code
 COPY . .
 
