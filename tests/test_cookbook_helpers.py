@@ -330,6 +330,53 @@ def test_llama_cpp_linux_bootstrap_prefers_rocm_before_cuda():
     assert 'ROCm/HIP detected — building llama-server with HIP support' in script
 
 
+def test_llama_cpp_linux_bootstrap_checks_cudart_before_cuda_build():
+    """cudart helper and all required paths must appear before the CUDA cmake command."""
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+    script = "\n".join(runner_lines)
+
+    assert '_odysseus_has_cudart' in script
+    assert "grep -q 'libcudart\\.so'" in script
+    # lib64 and lib variants for CUDA_HOME and /usr/local/cuda
+    assert '$_cuh/lib64/libcudart.so' in script
+    assert '$_cuh/lib/libcudart.so' in script
+    assert '/usr/local/cuda/lib64/libcudart.so' in script
+    assert '/usr/local/cuda/lib/libcudart.so' in script
+    # pip-installed nvidia runtime wheel sibling path
+    assert 'cuda_runtime/lib/libcudart.so' in script
+    # entire helper definition precedes the CUDA cmake invocation
+    assert script.index('_odysseus_has_cudart') < script.index('DGGML_CUDA=ON')
+
+
+def test_llama_cpp_linux_bootstrap_cuda_cmake_present_when_cudart_found():
+    """The CUDA cmake command must still be present (inside the cudart-present branch)."""
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+    script = "\n".join(runner_lines)
+
+    assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON' in script
+    assert 'CUDA nvcc + cudart found' in script
+
+
+def test_llama_cpp_linux_bootstrap_nvcc_without_cudart_warns_and_falls_back():
+    """When nvcc exists but cudart is absent, the script must warn and use CPU-only cmake."""
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+    script = "\n".join(runner_lines)
+
+    assert 'WARNING: nvcc found but CUDA runtime (libcudart.so) is not visible — building llama-server for CPU only.' in script
+    assert 'GPU inference will not be available for this llama.cpp build.' in script
+    assert 'libcudart is installed' in script
+    # The CPU-only cmake fallback must appear inside the nvcc branch (before the
+    # outer else that handles no-GPU-toolchain). Verify it appears at least once
+    # before the outer "no HIP/CUDA toolchain" warning.
+    cpu_cmake = 'cmake -B build -DCMAKE_BUILD_TYPE=Release &&'
+    no_toolchain_warn = 'WARNING: no HIP/CUDA toolchain found'
+    assert cpu_cmake in script
+    assert script.index(cpu_cmake) < script.index(no_toolchain_warn)
+
+
 def test_llama_cpp_linux_bootstrap_keeps_cpu_fallback_when_no_gpu_toolchain():
     runner_lines = []
     _append_llama_cpp_linux_accel_build_lines(runner_lines)
