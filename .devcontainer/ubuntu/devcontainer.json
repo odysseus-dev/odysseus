@@ -6,7 +6,7 @@
   ],
   "service": "odysseus",
   "workspaceFolder": "/app",
-  "remoteUser": "odysseus",
+  "remoteUser": "root",
   "forwardPorts": [7000, 8080, 8100, 8091],
   "portsAttributes": {
     "7000": { "label": "Odysseus UI" },

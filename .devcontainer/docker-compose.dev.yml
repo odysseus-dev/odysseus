@@ -1,4 +1,5 @@
 # Shared Dev Container sidecar stack (no odysseus — each profile defines its own).
+# Env: .devcontainer/.env only (not repo-root .env).
 services:
   chromadb:
     image: docker.io/chromadb/chroma:latest
@@ -8,6 +9,8 @@ services:
       - chromadb-data:/chroma/chroma
     environment:
       - ANONYMIZED_TELEMETRY=FALSE
+    env_file:
+      - .env
     networks:
       - odysseus-dev
     restart: unless-stopped
@@ -35,6 +38,8 @@ services:
     environment:
       - SEARXNG_BASE_URL=http://localhost:8080/
       - SEARXNG_SECRET=${SEARXNG_SECRET:-}
+    env_file:
+      - .env
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5).read(1)\""]
       interval: 5s
@@ -54,6 +59,8 @@ services:
       - ntfy-cache:/var/cache/ntfy
     environment:
       - NTFY_BASE_URL=${NTFY_BASE_URL:-http://localhost:8091}
+    env_file:
+      - .env
     networks:
       - odysseus-dev
     restart: unless-stopped

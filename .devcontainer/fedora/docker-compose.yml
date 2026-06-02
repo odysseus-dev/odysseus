@@ -1,22 +1,22 @@
 services:
   odysseus:
     build:
-      context: ../..
+      context: ../
       dockerfile: .devcontainer/fedora/Dockerfile
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
     volumes:
-      - ../../:/app:cached
-      - ../../data:/app/data:z
-      - ../../logs:/app/logs:z
-      - ../../data/ssh:/app/.ssh:z
-      - ../../data/huggingface:/app/.cache/huggingface:z
-      - ../../data/local:/app/.local:z
+      - ../:/app:cached
+      - ../data:/app/data:z
+      - ../logs:/app/logs:z
+      - ../data/ssh:/app/.ssh:z
+      - ../data/huggingface:/app/.cache/huggingface:z
+      - ../data/local:/app/.local:z
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
-      - ../.env
       - .env
+      - ./fedora/.env
     environment:
       - SEARXNG_INSTANCE=http://searxng:8080
       - CHROMADB_HOST=chromadb

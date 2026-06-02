@@ -1,22 +1,22 @@
 services:
   odysseus:
     build:
-      context: ../..
+      context: ../
       dockerfile: .devcontainer/ubuntu/Dockerfile
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
     volumes:
-      - ../../:/app:cached
-      - ../../data:/app/data
-      - ../../logs:/app/logs
-      - ../../data/ssh:/app/.ssh
-      - ../../data/huggingface:/app/.cache/huggingface
-      - ../../data/local:/app/.local
+      - ../:/app:cached
+      - ../data:/app/data
+      - ../logs:/app/logs
+      - ../data/ssh:/app/.ssh
+      - ../data/huggingface:/app/.cache/huggingface
+      - ../data/local:/app/.local
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
-      - ../.env
       - .env
+      - ./ubuntu/.env
     environment:
       - SEARXNG_INSTANCE=http://searxng:8080
       - CHROMADB_HOST=chromadb

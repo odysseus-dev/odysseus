@@ -7,12 +7,10 @@ ENV PIP_BREAK_SYSTEM_PACKAGES=1
 RUN dnf install -y \
     python3.12 \
     python3.12-devel \
-    python3.12-pip \
     gcc \
     gcc-c++ \
     make \
     cmake \
-    curl \
     git \
     nodejs \
     npm \
@@ -20,7 +18,8 @@ RUN dnf install -y \
     openssh-clients \
     && dnf clean all \
     && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
-    && ln -sf /usr/bin/python3.12 /usr/bin/python
+    && ln -sf /usr/bin/python3.12 /usr/bin/python \
+    && python3.12 -m ensurepip --upgrade
 
 RUN curl -fsSL -o /usr/local/bin/gosu \
     "https://github.com/tianon/gosu/releases/download/1.17/gosu-amd64" \
