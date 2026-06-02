@@ -3,132 +3,4252 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Tech Duinn — Home</title>
+<meta name="description" content="Tech Duinn — AI service mesh dashboard. Real-time monitoring for OWL, Swarm, MCP, and Nexus services.">
+<meta name="theme-color" content="#050510">
+<meta name="color-scheme" content="dark">
+<meta property="og:title" content="Tech Duinn — Enter the Grid">
+<meta property="og:description" content="Cyberpunk AI service mesh dashboard with real-time health monitoring, agent visualization, and ambient lofi.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="/sprites/hyrule.svg">
+<meta name="twitter:card" content="summary_large_image">
+<title>Tech Duinn — Enter the Grid</title>
+<link rel="icon" href="/sprites/hyrule.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@400&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#e6edf3;--dim:#8b949e;--red:#e06c75;--green:#61afef;--purple:#c678dd;--cyan:#56b6c2;--orange:#d19a66;--yellow:#e5c07b}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:40px 20px}
-.header{text-align:center;margin-bottom:48px}
-.header h1{font-size:42px;font-weight:700;background:linear-gradient(135deg,var(--red),var(--purple),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px}
-.header p{color:var(--dim);font-size:16px}
-.stats{display:flex;justify-content:center;gap:32px;margin-bottom:48px;flex-wrap:wrap}
-.stat{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px 28px;text-align:center;min-width:140px}
-.stat .num{font-size:32px;font-weight:700;color:var(--green)}
-.stat .label{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-top:4px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;max-width:1400px;margin:0 auto}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;transition:all .2s;cursor:pointer;text-decoration:none;color:var(--text);display:block;position:relative;overflow:hidden}
-.card:hover{border-color:var(--green);transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.3)}
-.card .icon{font-size:28px;margin-bottom:12px}
-.card h3{font-size:16px;font-weight:600;margin-bottom:6px}
-.card p{font-size:13px;color:var(--dim);line-height:1.5}
-.card .port{position:absolute;top:12px;right:12px;font-size:11px;color:var(--dim);background:var(--bg);padding:2px 8px;border-radius:6px;font-family:monospace}
-.card .status{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
-.card .status.ok{background:var(--green)}
-.card .status.err{background:var(--red)}
-.card .status.warn{background:var(--yellow)}
-.section-title{font-size:20px;font-weight:600;margin:48px 0 16px;max-width:1400px;margin-left:auto;margin-right:auto;color:var(--dim);text-transform:uppercase;letter-spacing:2px;font-size:13px}
-.search{max-width:500px;margin:0 auto 32px;position:relative}
-.search input{width:100%;padding:12px 16px 12px 40px;background:var(--card);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;outline:none}
-.search input:focus{border-color:var(--green)}
-.search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--dim)}
-.time{text-align:center;color:var(--dim);font-size:13px;margin-top:48px}
-a.card:focus{outline:2px solid var(--green);outline-offset:2px}
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --ps2-blue: #0066ff;
+  --ps2-purple: #7b5ea7;
+  --ps2-dark: #050510;
+  --ps2-panel: rgba(0, 20, 60, 0.85);
+  --ps2-chrome: #c8d0e0;
+  --ps2-glow: rgba(0, 102, 255, 0.4);
+  --neon-green: #00ff88;
+  --neon-pink: #ff3366;
+  --neon-cyan: #00e5ff;
+  --lofi-warm: #2a1a3e;
+  --font-display: 'Orbitron', monospace;
+  --font-body: 'Rajdhani', sans-serif;
+  --font-mono: 'Share Tech Mono', monospace;
+  /* Game theme override vars */
+  --theme-accent: var(--ps2-blue);
+  --theme-glow: var(--ps2-glow);
+  --theme-particle: #4488ff;
+}
+
+/* Game theme palettes */
+[data-theme="mushroom-kingdom"] { --theme-accent: #e52521; --theme-glow: rgba(229,37,33,0.4); --theme-particle: #f8d848; --ps2-dark: #1a0a2e; }
+[data-theme="hyrule"] { --theme-accent: #ffd700; --theme-glow: rgba(255,215,0,0.4); --theme-particle: #7ec850; --ps2-dark: #0a1a0a; }
+[data-theme="zebes"] { --theme-accent: #ff4444; --theme-glow: rgba(255,68,68,0.4); --theme-particle: #00d4aa; --ps2-dark: #0a0408; }
+[data-theme="midgar"] { --theme-accent: #00e5ff; --theme-glow: rgba(0,229,255,0.4); --theme-particle: #7eb8ff; --ps2-dark: #0d0d1a; }
+[data-theme="crystal"] { --theme-accent: #b088ff; --theme-glow: rgba(176,136,255,0.4); --theme-particle: #e0d0ff; --ps2-dark: #0a0a1e; }
+[data-theme="zanarkand"] { --theme-accent: #ff2020; --theme-glow: rgba(255,32,32,0.4); --theme-particle: #f0e0a0; --ps2-dark: #1a0a1a; }
+[data-theme="green-hill"] { --theme-accent: #1890ff; --theme-glow: rgba(24,144,255,0.4); --theme-particle: #58d854; --ps2-dark: #0a1a2a; }
+[data-theme="chemical-plant"] { --theme-accent: #00ffc8; --theme-glow: rgba(0,255,200,0.4); --theme-particle: #ff6ec7; --ps2-dark: #1a0832; }
+[data-theme="phantasy-star"] { --theme-accent: #ff6040; --theme-glow: rgba(255,96,64,0.4); --theme-particle: #80c0ff; --ps2-dark: #040818; }
+
+html, body {
+  margin: 0; padding: 0;
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: var(--ps2-dark);
+  font-family: var(--font-body);
+  color: var(--ps2-chrome);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PS2 BOOT SEQUENCE
+   ═══════════════════════════════════════════════════════════ */
+#boot-screen {
+  position: fixed; inset: 0; z-index: 10000;
+  background: #000;
+  background: linear-gradient(135deg, #020408 0%, #0a1628 25%, #060d1a 50%, #0a0408 75%, #020408 100%);
+  background-size: 400% 400%;
+  animation: gradientShift 12s ease infinite;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  transition: opacity 1.5s ease;
+}
+
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+#boot-screen.fade-out {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#boot-canvas {
+  position: absolute; inset: 0;
+}
+
+.boot-logo {
+  position: relative; z-index: 2;
+  text-align: center;
+  animation: bootFadeIn 2s ease 1s both;
+}
+
+.boot-logo h1 {
+  font-family: var(--font-display);
+  font-size: 72px; font-weight: 900;
+  letter-spacing: 12px;
+  background: linear-gradient(180deg, #fff 0%, #88aaff 40%, #4466cc 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: none;
+  filter: drop-shadow(0 0 30px var(--theme-glow, rgba(0,102,255,0.5)));
+  animation: bootFadeIn 2s ease 1s both, glitchText 8s ease-in-out infinite;
+}
+
+/* Glitch text — clip-path inset technique from css-tricks */
+.boot-logo h1::before,
+.boot-logo h1::after {
+  content: 'TECH DUINN';
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: linear-gradient(180deg, #fff 0%, #88aaff 40%, #4466cc 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.boot-logo h1::before {
+  animation: glitchBefore 3s cubic-bezier(0.25, 0.46, 0.45, 0.94) infinite;
+  text-shadow: -2px 0 var(--neon-pink);
+  clip-path: inset(0 0 65% 0);
+}
+
+.boot-logo h1::after {
+  animation: glitchAfter 2s cubic-bezier(0.25, 0.46, 0.45, 0.94) infinite;
+  text-shadow: 2px 0 var(--neon-cyan);
+  clip-path: inset(40% 0 0 0);
+}
+
+@keyframes glitchBefore {
+  0%, 100% { clip-path: inset(0 0 65% 0); transform: translate(0); }
+  20% { clip-path: inset(20% 0 50% 0); transform: translate(-3px, 2px); }
+  40% { clip-path: inset(50% 0 20% 0); transform: translate(3px, -1px); }
+  60% { clip-path: inset(10% 0 70% 0); transform: translate(-2px, 1px); }
+  80% { clip-path: inset(60% 0 10% 0); transform: translate(1px, -2px); }
+}
+
+@keyframes glitchAfter {
+  0%, 100% { clip-path: inset(40% 0 0% 0); transform: translate(0); }
+  20% { clip-path: inset(60% 0 0% 0); transform: translate(2px, 1px); }
+  40% { clip-path: inset(20% 0 0% 0); transform: translate(-3px, -1px); }
+  60% { clip-path: inset(70% 0 0% 0); transform: translate(1px, 2px); }
+  80% { clip-path: inset(30% 0 0% 0); transform: translate(-1px, -2px); }
+}
+
+/* Neon glow pulsate — from css-tricks */
+@keyframes neonPulsate {
+  100% {
+    filter: drop-shadow(0 0 7px #fff)
+            drop-shadow(0 0 10px #fff)
+            drop-shadow(0 0 21px #fff)
+            drop-shadow(0 0 42px var(--theme-glow))
+            drop-shadow(0 0 82px var(--theme-glow))
+            drop-shadow(0 0 92px var(--theme-glow));
+  }
+  0% {
+    filter: drop-shadow(0 0 2px #fff)
+            drop-shadow(0 0 4px #fff)
+            drop-shadow(0 0 6px #fff)
+            drop-shadow(0 0 10px var(--theme-glow))
+            drop-shadow(0 0 45px var(--theme-glow))
+            drop-shadow(0 0 55px var(--theme-glow));
+  }
+}
+
+/* Typewriter effect — from css-tricks */
+@keyframes typewriter {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+@keyframes blinkCaret {
+  50% { border-color: transparent; }
+}
+
+.boot-status-typewriter {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  border-right: 2px solid var(--theme-accent, var(--ps2-blue));
+  animation: typewriter 1.5s steps(30, end), blinkCaret 0.75s step-end infinite;
+}
+
+/* Matrix rain canvas — from cssscript.com */
+#matrix-canvas {
+  position: absolute; inset: 0;
+  opacity: 0.15;
+  pointer-events: none;
+}
+
+.boot-logo .sub {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: #4466cc;
+  letter-spacing: 8px;
+  margin-top: 12px;
+  animation: bootCursor 1s step-end infinite;
+}
+
+.boot-progress {
+  position: relative; z-index: 2;
+  width: 300px; height: 3px;
+  background: rgba(255,255,255,0.1);
+  margin-top: 60px;
+  overflow: hidden;
+  animation: bootFadeIn 2s ease 2s both;
+}
+
+.boot-progress-bar {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--theme-accent, var(--ps2-blue)), var(--neon-cyan));
+  box-shadow: 0 0 15px var(--theme-accent, var(--ps2-blue));
+  transition: width 0.3s ease;
+}
+
+.boot-status {
+  position: relative; z-index: 2;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #335;
+  margin-top: 16px;
+  letter-spacing: 2px;
+  animation: bootFadeIn 2s ease 2.5s both;
+}
+
+@keyframes bootFadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes bootCursor {
+  50% { opacity: 0; }
+}
+
+/* Scanlines overlay */
+.scanlines {
+  position: fixed; inset: 0; z-index: 9999;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.08) 2px,
+    rgba(0,0,0,0.08) 4px
+  );
+  mix-blend-mode: multiply;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   GAME WORLD
+   ═══════════════════════════════════════════════════════════ */
+#game-world {
+  position: fixed; inset: 0;
+  opacity: 0;
+  transition: opacity 2s ease;
+}
+
+#game-world.visible {
+  opacity: 1;
+}
+
+#world-canvas {
+  width: 100%; height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* HUD Overlay */
+#hud {
+  position: fixed; top: 0; left: 0; right: 0;
+  z-index: 100;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1s ease 0.5s;
+}
+
+#hud.visible { opacity: 1; }
+
+.hud-top {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding: 16px 20px;
+}
+
+.hud-title {
+  font-family: var(--font-display);
+  font-size: 14px; font-weight: 700;
+  letter-spacing: 4px;
+  color: var(--ps2-chrome);
+  text-shadow: 0 0 10px var(--ps2-glow);
+  animation: neonPulsate 3s infinite alternate;
+}
+
+.hud-title span {
+  color: var(--theme-accent, var(--ps2-blue));
+}
+
+.hud-clock {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: rgba(200,208,224,0.5);
+  letter-spacing: 2px;
+}
+
+/* Sims-style speed controls */
+.speed-controls {
+  display: flex; gap: 2px;
+  pointer-events: auto;
+}
+.speed-btn {
+  background: var(--ps2-panel);
+  border: 1px solid rgba(0,102,255,0.2);
+  border-radius: 3px;
+  color: rgba(200,208,224,0.4);
+  font-size: 8px;
+  padding: 3px 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  letter-spacing: 0;
+  line-height: 1;
+}
+.speed-btn:hover {
+  border-color: var(--ps2-blue);
+  color: var(--ps2-chrome);
+}
+.speed-btn.active {
+  border-color: var(--neon-green);
+  color: var(--neon-green);
+  box-shadow: 0 0 6px rgba(0,255,136,0.3);
+}
+
+/* Service status strip */
+.hud-strip {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  z-index: 100;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1s ease 1s;
+}
+
+.hud-strip.visible { opacity: 1; }
+
+.strip-inner {
+  display: flex; gap: 4px; padding: 12px 16px;
+  overflow-x: auto;
+  background: linear-gradient(0deg, rgba(5,5,16,0.7), transparent);
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  scrollbar-width: none;
+}
+
+.strip-inner::-webkit-scrollbar { display: none; }
+
+.strip-item {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  background: var(--ps2-panel);
+  border: 1px solid rgba(0,102,255,0.15);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 1px;
+  display: flex; align-items: center; gap: 6px;
+  transition: border-color 0.3s, background 0.3s;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.strip-item:hover {
+  border-color: var(--ps2-blue);
+  background: rgba(0,102,255,0.1);
+  box-shadow: 0 0 .2rem #fff,
+              0 0 .2rem #fff,
+              0 0 1rem var(--theme-accent, var(--ps2-blue)),
+              0 0 0.4rem var(--theme-accent, var(--ps2-blue)),
+              inset 0 0 0.5rem rgba(0,102,255,0.15);
+}
+
+.strip-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #333;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.strip-dot.up {
+  background: var(--neon-green);
+  box-shadow: 0 0 6px rgba(0,255,136,0.5);
+}
+
+.strip-dot.down {
+  background: var(--neon-pink);
+  box-shadow: 0 0 6px rgba(255,51,102,0.5);
+}
+
+.strip-name {
+  color: rgba(200,208,224,0.7);
+}
+
+/* Info panel (shows on click) — glassmorphism from ui.glass */
+#info-panel {
+  position: fixed;
+  right: 20px; top: 60px;
+  width: 320px;
+  z-index: 200;
+  background: rgba(5, 20, 60, 0.55);
+  border: 1px solid rgba(0,102,255,0.2);
+  border-radius: 12px;
+  padding: 20px;
+  font-family: var(--font-body);
+  display: none;
+  pointer-events: auto;
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+
+#info-panel.visible { display: block; }
+
+#info-panel h3 {
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 3px;
+  color: var(--neon-cyan);
+  margin-bottom: 12px;
+}
+
+#info-panel .info-row {
+  display: flex; justify-content: space-between;
+  padding: 4px 0;
+  font-size: 13px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+#info-panel .info-label { color: rgba(200,208,224,0.5); }
+#info-panel .info-value { color: var(--ps2-chrome); }
+
+/* Lofi player */
+#lofi-player {
+  position: fixed;
+  bottom: 60px; right: 20px;
+  z-index: 150;
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity 1s ease 2s;
+}
+
+#lofi-player.visible { opacity: 1; }
+
+.lofi-btn {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: var(--ps2-panel);
+  border: 1px solid rgba(0,102,255,0.2);
+  color: var(--ps2-chrome);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.lofi-btn:hover {
+  border-color: var(--ps2-blue);
+  box-shadow: 0 0 .2rem #fff,
+              0 0 .4rem #fff,
+              0 0 1.5rem var(--theme-accent, var(--ps2-blue)),
+              0 0 0.6rem var(--theme-accent, var(--ps2-blue));
+}
+
+.lofi-btn.playing {
+  border-color: var(--neon-green);
+  box-shadow: 0 0 15px rgba(0,255,136,0.3);
+}
+
+/* Minimap — glassmorphism + neon border */
+#minimap {
+  position: fixed;
+  bottom: 60px; left: 20px;
+  width: 160px; height: 120px;
+  z-index: 150;
+  background: rgba(5, 20, 60, 0.5);
+  border: 1px solid rgba(0,102,255,0.25);
+  border-radius: 8px;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 1s ease 2s;
+  pointer-events: none;
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  box-shadow: 0 0 8px rgba(0,102,255,0.15), inset 0 0 8px rgba(0,102,255,0.05);
+}
+
+#minimap.visible { opacity: 1; }
+
+#minimap-canvas {
+  width: 100%; height: 100%;
+  image-rendering: pixelated;
+}
+
+/* Theme Switcher */
+#theme-switcher {
+  position: fixed;
+  top: 16px; right: 20px;
+  z-index: 300;
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity 1s ease 3s;
+}
+
+#theme-switcher.visible { opacity: 1; }
+
+.theme-btn {
+  padding: 6px 14px;
+  background: var(--ps2-panel);
+  border: 1px solid var(--theme-accent, rgba(0,102,255,0.3));
+  border-radius: 4px;
+  color: var(--ps2-chrome);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  cursor: pointer;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.theme-btn:hover {
+  border-color: var(--theme-accent);
+  box-shadow: 0 0 .2rem #fff,
+              0 0 .4rem #fff,
+              0 0 2rem var(--theme-accent, var(--ps2-blue)),
+              0 0 0.8rem var(--theme-accent, var(--ps2-blue)),
+              inset 0 0 0.6rem rgba(0,102,255,0.2);
+  animation: neonPulsate 2.5s infinite alternate;
+}
+
+.theme-grid {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 8px;
+  background: rgba(5, 20, 60, 0.55);
+  border: 1px solid rgba(0,102,255,0.2);
+  border-radius: 12px;
+  padding: 12px;
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  min-width: 280px;
+}
+
+.theme-grid.open { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+
+.theme-option {
+  padding: 8px;
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: rgba(200,208,224,0.7);
+  transition: all 0.2s;
+  background: transparent;
+}
+
+.theme-option:hover {
+  border-color: var(--theme-accent);
+  background: linear-gradient(135deg, rgba(255,255,255,0.05), rgba(0,102,255,0.1), rgba(255,255,255,0.05));
+  background-size: 200% 200%;
+  animation: holoShimmer 2s ease infinite;
+  color: var(--ps2-chrome);
+}
+
+@keyframes holoShimmer {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.theme-option .theme-icon { font-size: 18px; display: block; margin-bottom: 4px; }
+.theme-option .theme-name { display: block; }
+
+/* Rain effect */
+.rain-drop {
+  position: fixed;
+  width: 1px;
+  background: linear-gradient(transparent, var(--theme-particle, #4488ff));
+  opacity: 0.3;
+  pointer-events: none;
+  animation: rainFall linear infinite;
+}
+
+@keyframes rainFall {
+  0% { transform: translateY(-100vh); }
+  100% { transform: translateY(100vh); }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SIMCITY PANEL
+   ═══════════════════════════════════════════════════════════ */
+.simcity-panel {
+  position: fixed;
+  left: 20px; top: 50px;
+  width: 220px;
+  z-index: 160;
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity 1s ease 2s;
+  background: rgba(5, 20, 60, 0.75);
+  border: 1px solid rgba(0,102,255,0.2);
+  border-radius: 8px;
+  padding: 12px;
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+  font-family: var(--font-mono);
+}
+.simcity-panel.visible { opacity: 1; }
+.sc-header {
+  text-align: center;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(0,102,255,0.15);
+}
+.sc-city-name {
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--neon-cyan);
+  text-shadow: 0 0 8px rgba(0,229,255,0.3);
+}
+.sc-population {
+  font-size: 18px;
+  color: var(--ps2-chrome);
+  margin-top: 4px;
+  font-weight: 600;
+}
+.sc-population span {
+  color: var(--neon-green);
+  text-shadow: 0 0 6px rgba(0,255,136,0.3);
+}
+.sc-bars { margin-bottom: 10px; }
+.sc-bar-row {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 4px;
+}
+.sc-bar-label {
+  font-size: 8px;
+  color: rgba(200,208,224,0.5);
+  letter-spacing: 1px;
+  width: 55px;
+  flex-shrink: 0;
+}
+.sc-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.sc-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.8s ease;
+  width: 0%;
+}
+.sc-power { background: linear-gradient(90deg, #ffd93d, #ff9800); box-shadow: 0 0 6px rgba(255,152,0,0.4); }
+.sc-data { background: linear-gradient(90deg, #00e5ff, #0066ff); box-shadow: 0 0 6px rgba(0,102,255,0.4); }
+.sc-network { background: linear-gradient(90deg, #00ff88, #00cc66); box-shadow: 0 0 6px rgba(0,255,136,0.4); }
+.sc-bar-val {
+  font-size: 9px;
+  color: rgba(200,208,224,0.6);
+  width: 30px;
+  text-align: right;
+}
+.sc-zones {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.sc-zone {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 8px;
+  letter-spacing: 1px;
+  color: rgba(200,208,224,0.7);
+  background: rgba(255,255,255,0.03);
+}
+.sc-zone-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.sc-zone-core .sc-zone-dot { background: #4488ff; box-shadow: 0 0 4px #4488ff; }
+.sc-zone-infra .sc-zone-dot { background: #ffd93d; box-shadow: 0 0 4px #ffd93d; }
+.sc-zone-nexus .sc-zone-dot { background: #00ff88; box-shadow: 0 0 4px #00ff88; }
+.sc-zone-pi .sc-zone-dot { background: #ff6b9d; box-shadow: 0 0 4px #ff6b9d; }
+.sc-zone span:last-child {
+  margin-left: auto;
+  color: var(--ps2-chrome);
+  font-weight: 600;
+}
+.sc-rci { margin-bottom: 8px; }
+.sc-rci-bar {
+  display: flex;
+  height: 12px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.05);
+}
+.sc-rci-r {
+  background: #00cc66;
+  transition: flex 0.8s ease;
+  flex: 1;
+}
+.sc-rci-c {
+  background: #4488ff;
+  transition: flex 0.8s ease;
+  flex: 1;
+}
+.sc-rci-i {
+  background: #ffd93d;
+  transition: flex 0.8s ease;
+  flex: 1;
+}
+.sc-rci-labels {
+  display: flex; justify-content: space-around;
+  font-size: 8px;
+  color: rgba(200,208,224,0.4);
+  margin-top: 2px;
+  letter-spacing: 1px;
+}
+.sc-happiness {
+  display: flex; align-items: center; gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(0,102,255,0.1);
+}
+.sc-happy-icon { font-size: 14px; }
+.sc-happy-text {
+  font-size: 10px;
+  color: rgba(200,208,224,0.6);
+}
+
+/* Zone base colors on buildings */
+.zone-core { border-bottom: 3px solid rgba(68,136,255,0.4); }
+.zone-infra { border-bottom: 3px solid rgba(255,217,61,0.4); }
+.zone-nexus { border-bottom: 3px solid rgba(0,255,136,0.4); }
+.zone-pi { border-bottom: 3px solid rgba(255,107,157,0.4); }
+
+/* Day/night ambient overlay */
+#daynight-overlay {
+  position: fixed; inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  transition: background 60s linear;
+}
+
+/* Disaster effect */
+.disaster-pulse {
+  animation: disasterPulse 0.5s ease-in-out infinite alternate;
+}
+@keyframes disasterPulse {
+  from { box-shadow: 0 0 10px rgba(255,51,102,0.3); }
+  to { box-shadow: 0 0 25px rgba(255,51,102,0.6); }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   COMMAND PALETTE
+   ═══════════════════════════════════════════════════════════ */
+.cmd-palette {
+  display: none;
+  position: fixed; inset: 0;
+  z-index: 500;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 15vh;
+}
+.cmd-palette.open { display: flex; }
+.cmd-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(4px);
+}
+.cmd-box {
+  position: relative;
+  width: min(520px, 90vw);
+  background: rgba(10, 20, 50, 0.95);
+  border: 1px solid rgba(0,102,255,0.3);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 16px 64px rgba(0,0,0,0.6), 0 0 30px var(--theme-glow, rgba(0,102,255,0.2));
+  backdrop-filter: blur(20px);
+}
+.cmd-input {
+  width: 100%;
+  padding: 16px 20px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(0,102,255,0.15);
+  color: var(--ps2-chrome);
+  font-family: var(--font-body);
+  font-size: 16px;
+  outline: none;
+  letter-spacing: 0.5px;
+}
+.cmd-input::placeholder { color: rgba(200,208,224,0.3); }
+.cmd-results {
+  max-height: 300px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,102,255,0.3) transparent;
+}
+.cmd-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 20px;
+  cursor: pointer;
+  transition: background 0.15s;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.cmd-item:hover, .cmd-item.active {
+  background: rgba(0,102,255,0.15);
+}
+.cmd-item-icon { font-size: 18px; flex-shrink: 0; }
+.cmd-item-name {
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--ps2-chrome);
+  flex: 1;
+}
+.cmd-item-desc {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: rgba(200,208,224,0.4);
+}
+.cmd-item-badge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(0,102,255,0.2);
+  color: var(--neon-cyan);
+  letter-spacing: 1px;
+}
+.cmd-footer {
+  display: flex; gap: 16px;
+  padding: 8px 20px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: rgba(200,208,224,0.3);
+  border-top: 1px solid rgba(0,102,255,0.1);
+}
+.cmd-footer kbd {
+  background: rgba(0,102,255,0.15);
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-right: 4px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ACTIVITY FEED
+   ═══════════════════════════════════════════════════════════ */
+.activity-feed {
+  position: fixed;
+  left: 20px; top: 60px;
+  width: 280px;
+  max-height: 400px;
+  z-index: 150;
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity 1s ease 2.5s;
+}
+.activity-feed.visible { opacity: 1; }
+.feed-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 12px;
+  background: rgba(5, 20, 60, 0.7);
+  border: 1px solid rgba(0,102,255,0.2);
+  border-radius: 8px 8px 0 0;
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+}
+.feed-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--neon-cyan);
+}
+.feed-toggle {
+  background: none; border: none;
+  color: rgba(200,208,224,0.5);
+  cursor: pointer;
+  font-size: 10px;
+  transition: transform 0.3s;
+}
+.feed-toggle.collapsed { transform: rotate(-90deg); }
+.feed-list {
+  background: rgba(5, 20, 60, 0.6);
+  border: 1px solid rgba(0,102,255,0.15);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,102,255,0.3) transparent;
+  backdrop-filter: blur(12px);
+  transition: max-height 0.3s;
+}
+.feed-list.collapsed { max-height: 0; border: none; overflow: hidden; }
+.feed-item {
+  display: flex; gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  animation: feedSlideIn 0.3s ease;
+}
+@keyframes feedSlideIn {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.feed-time {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: rgba(200,208,224,0.3);
+  flex-shrink: 0;
+  min-width: 45px;
+}
+.feed-msg {
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: rgba(200,208,224,0.7);
+  line-height: 1.3;
+}
+.feed-msg .svc { color: var(--neon-cyan); font-weight: 600; }
+.feed-msg .up { color: var(--neon-green); }
+.feed-msg .down { color: var(--neon-pink); }
+.feed-msg .agent { color: var(--theme-accent, var(--ps2-blue)); }
+
+/* ═══════════════════════════════════════════════════════════
+   AGENT CARDS
+   ═══════════════════════════════════════════════════════════ */
+.agent-cards {
+  position: fixed;
+  right: 20px; bottom: 60px;
+  display: flex; flex-direction: column; gap: 4px;
+  z-index: 150;
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity 1s ease 3s;
+}
+.agent-cards.visible { opacity: 1; }
+.agent-card {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px;
+  background: rgba(5, 20, 60, 0.6);
+  border: 1px solid rgba(0,102,255,0.15);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+.agent-card:hover {
+  border-color: var(--ps2-blue);
+  background: rgba(0,102,255,0.1);
+}
+.agent-card-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.agent-card-name {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ps2-chrome);
+  letter-spacing: 1px;
+}
+.agent-card-status {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: rgba(200,208,224,0.4);
+  margin-left: auto;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   HELP OVERLAY
+   ═══════════════════════════════════════════════════════════ */
+.help-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  z-index: 400;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(4px);
+}
+.help-overlay.open { display: flex; }
+.help-box {
+  background: rgba(10, 20, 50, 0.95);
+  border: 1px solid rgba(0,102,255,0.3);
+  border-radius: 12px;
+  padding: 24px 32px;
+  max-width: 400px;
+  backdrop-filter: blur(20px);
+  box-shadow: 0 16px 64px rgba(0,0,0,0.5);
+}
+.help-box h3 {
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 3px;
+  color: var(--neon-cyan);
+  margin-bottom: 16px;
+  text-align: center;
+}
+.help-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.help-item {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: rgba(200,208,224,0.7);
+}
+.help-item kbd {
+  background: rgba(0,102,255,0.2);
+  border: 1px solid rgba(0,102,255,0.3);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--neon-cyan);
+  min-width: 50px;
+  text-align: center;
+}
+.help-close {
+  text-align: center;
+  margin-top: 16px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: rgba(200,208,224,0.3);
+  letter-spacing: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   UPTIME BAR
+   ═══════════════════════════════════════════════════════════ */
+.uptime-bar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  z-index: 101;
+  display: flex;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1s ease 1.5s;
+}
+.uptime-bar.visible { opacity: 1; }
+.uptime-segment {
+  flex: 1;
+  height: 100%;
+  transition: background 0.5s;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   BUILDING TOOLTIP (canvas overlay)
+   ═══════════════════════════════════════════════════════════ */
+#building-tooltip {
+  position: fixed;
+  z-index: 120;
+  padding: 8px 14px;
+  background: rgba(5, 20, 60, 0.9);
+  border: 1px solid rgba(0,102,255,0.3);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ps2-chrome);
+  pointer-events: none;
+  display: none;
+  backdrop-filter: blur(8px);
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+#building-tooltip .tt-name { font-weight: 600; letter-spacing: 1px; }
+#building-tooltip .tt-desc { font-size: 9px; color: rgba(200,208,224,0.5); margin-top: 2px; }
+#building-tooltip .tt-status { margin-top: 4px; font-size: 10px; }
+
+/* ═══════════════════════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .boot-logo h1 {
+    font-size: 36px;
+    letter-spacing: 6px;
+  }
+  .boot-progress {
+    width: min(300px, 80vw);
+  }
+  .hud-title {
+    font-size: 11px;
+    letter-spacing: 2px;
+  }
+  .hud-top {
+    padding: 10px 12px;
+  }
+  #info-panel {
+    left: 10px;
+    right: 10px;
+    width: auto;
+    top: auto;
+    bottom: 60px;
+  }
+  #minimap {
+    display: none;
+  }
+  #lofi-player {
+    bottom: 60px;
+    right: 10px;
+  }
+  .theme-grid.open {
+    grid-template-columns: repeat(2, 1fr);
+    min-width: 200px;
+  }
+  .strip-inner {
+    padding: 8px 10px;
+    gap: 3px;
+  }
+  .strip-item {
+    padding: 4px 8px;
+    font-size: 9px;
+  }
+  .activity-feed {
+    display: none;
+  }
+  .agent-cards {
+    display: none;
+  }
+  .simcity-panel {
+    left: 10px;
+    top: 45px;
+    width: 180px;
+    padding: 8px;
+    font-size: 9px;
+  }
+  .sc-city-name { font-size: 8px; letter-spacing: 2px; }
+  .sc-population { font-size: 14px; }
+  .help-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .boot-logo h1 {
+    font-size: 24px;
+    letter-spacing: 4px;
+  }
+  .boot-logo .sub {
+    font-size: 10px;
+    letter-spacing: 4px;
+  }
+  .hud-clock {
+    display: none;
+  }
+  .speed-controls {
+    display: none;
+  }
+  #theme-switcher {
+    top: 10px;
+    right: 10px;
+  }
+  .theme-btn {
+    padding: 4px 10px;
+    font-size: 9px;
+  }
+}
+
+/* Focus styles for accessibility */
+.strip-item:focus-visible,
+.theme-btn:focus-visible,
+.lofi-btn:focus-visible,
+.theme-option:focus-visible {
+  outline: 2px solid var(--theme-accent, var(--ps2-blue));
+  outline-offset: 2px;
+}
+
+/* Print styles */
+@media print {
+  #boot-screen, .scanlines, #matrix-canvas, #rain-container,
+  #world-canvas, #minimap, #lofi-player, #theme-switcher { display: none !important; }
+  #hud, .hud-strip, #info-panel {
+    position: static;
+    opacity: 1;
+    pointer-events: auto;
+  }
+  body {
+    background: #fff;
+    color: #000;
+    overflow: visible;
+  }
+  .strip-item {
+    background: #f5f5f5;
+    border-color: #ccc;
+    color: #333;
+  }
+}
 </style>
 </head>
 <body>
-<div class="header">
-<h1>⚡ Tech Duinn</h1>
-<p>Self-hosted AI workspace — all services, one dashboard</p>
+
+<!-- Scanlines -->
+<div class="scanlines" aria-hidden="true"></div>
+
+<!-- PS2 Boot Screen -->
+<div id="boot-screen" role="status" aria-live="polite">
+  <canvas id="boot-canvas" aria-hidden="true"></canvas>
+  <canvas id="matrix-canvas" aria-hidden="true"></canvas>
+  <div class="boot-logo">
+    <h1>TECH DUINN</h1>
+    <div class="sub">OMNI WISDOM LAYER_</div>
+  </div>
+  <div class="boot-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+    <div class="boot-progress-bar" id="boot-bar"></div>
+  </div>
+  <div class="boot-status" id="boot-status">INITIALIZING SYSTEMS...</div>
 </div>
 
-<div class="search">
-<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-<input type="text" id="search" placeholder="Search services..." autofocus>
+<!-- Game World -->
+<main id="game-world">
+  <canvas id="world-canvas" role="img" aria-label="Interactive service map showing agent positions and building health status"></canvas>
+</main>
+
+<!-- HUD -->
+<header id="hud">
+  <div class="hud-top">
+    <h1 class="hud-title">TECH <span>DUINN</span></h1>
+    <div class="hud-clock" id="hud-clock"></div>
+    <div class="speed-controls" id="speed-controls">
+      <button class="speed-btn active" data-speed="1" title="Normal speed">▶</button>
+      <button class="speed-btn" data-speed="2" title="Fast (2x)">▶▶</button>
+      <button class="speed-btn" data-speed="3" title="Ultra fast (3x)">▶▶▶</button>
+      <button class="speed-btn" data-speed="0" title="Pause">⏸</button>
+    </div>
+  </div>
+</header>
+
+<!-- Status Strip -->
+<nav class="hud-strip" aria-label="Service status">
+  <div class="strip-inner" id="strip-inner"></div>
+</nav>
+
+<!-- Info Panel -->
+<aside id="info-panel" role="dialog" aria-label="Service details">
+  <h3 id="info-title">SERVICE</h3>
+  <div id="info-body"></div>
+</aside>
+
+<!-- Minimap -->
+<aside id="minimap" role="img" aria-label="World minimap overview">
+  <canvas id="minimap-canvas"></canvas>
+</aside>
+
+<!-- Theme Switcher -->
+<nav id="theme-switcher" aria-label="Theme selection">
+  <button class="theme-btn" id="theme-btn" aria-haspopup="true" aria-expanded="false">🎮 THEME</button>
+  <div class="theme-grid" id="theme-grid" role="menu" aria-label="Theme options"></div>
+</nav>
+
+<!-- Lofi Player -->
+<aside id="lofi-player">
+  <button class="lofi-btn" id="lofi-btn" title="Toggle ambient audio" aria-label="Toggle ambient lofi audio" aria-pressed="false">♫</button>
+</aside>
+
+<!-- Command Palette (Ctrl+K) -->
+<div id="cmd-palette" class="cmd-palette">
+  <div class="cmd-backdrop"></div>
+  <div class="cmd-box">
+    <input type="text" id="cmd-input" class="cmd-input" placeholder="Search services, agents, actions..." autocomplete="off" spellcheck="false">
+    <div class="cmd-results" id="cmd-results"></div>
+    <div class="cmd-footer">
+      <span>↑↓ navigate</span>
+      <span>↵ select</span>
+      <span>esc close</span>
+    </div>
+  </div>
 </div>
 
-<div class="stats" id="stats"></div>
+<!-- Activity Feed -->
+<aside id="activity-feed" class="activity-feed">
+  <div class="feed-header">
+    <span class="feed-title">⚡ ACTIVITY</span>
+    <button class="feed-toggle" id="feed-toggle" aria-label="Toggle activity feed">▼</button>
+  </div>
+  <div class="feed-list" id="feed-list"></div>
+</aside>
 
-<div class="section-title">Core Services</div>
-<div class="grid" id="core"></div>
+<!-- Agent Cards -->
+<div id="agent-cards" class="agent-cards"></div>
 
-<div class="section-title">Nexus Sidecars</div>
-<div class="grid" id="nexus"></div>
+<!-- Keyboard Help (? key) -->
+<div id="help-overlay" class="help-overlay">
+  <div class="help-box">
+    <h3>⌨️ KEYBOARD SHORTCUTS</h3>
+    <div class="help-grid">
+      <div class="help-item"><kbd>Ctrl+K</kbd> <span>Command palette</span></div>
+      <div class="help-item"><kbd>Space</kbd> <span>Center on OWL</span></div>
+      <div class="help-item"><kbd>Esc</kbd> <span>Close panel</span></div>
+      <div class="help-item"><kbd>?</kbd> <span>Toggle this help</span></div>
+      <div class="help-item"><kbd>Scroll</kbd> <span>Zoom in/out</span></div>
+      <div class="help-item"><kbd>Drag</kbd> <span>Pan the world</span></div>
+      <div class="help-item"><kbd>Click</kbd> <span>Select building/agent</span></div>
+      <div class="help-item"><kbd>1-9</kbd> <span>Jump to service</span></div>
+    </div>
+    <div class="help-close">Press ? or Esc to close</div>
+  </div>
+</div>
 
-<div class="section-title">Infrastructure</div>
-<div class="grid" id="infra"></div>
+<!-- Service uptime bar -->
+<div id="uptime-bar" class="uptime-bar"></div>
 
-<div class="time" id="clock"></div>
+<!-- Rain container -->
+<div id="rain-container" aria-hidden="true"></div>
+
+<!-- Day/Night overlay -->
+<div id="daynight-overlay"></div>
+
+<!-- Building Tooltip -->
+<div id="building-tooltip">
+  <div class="tt-name"></div>
+  <div class="tt-desc"></div>
+  <div class="tt-status"></div>
+</div>
+
+<!-- SimCity Stats Panel -->
+<div id="simcity-panel" class="simcity-panel">
+  <div class="sc-header">
+    <div class="sc-city-name">TECH DUINN METRO</div>
+    <div class="sc-population"><span id="sc-pop">0</span> citizens</div>
+  </div>
+  <div class="sc-bars">
+    <div class="sc-bar-row">
+      <span class="sc-bar-label">⚡ POWER</span>
+      <div class="sc-bar"><div class="sc-bar-fill sc-power" id="sc-power"></div></div>
+      <span class="sc-bar-val" id="sc-power-val">0%</span>
+    </div>
+    <div class="sc-bar-row">
+      <span class="sc-bar-label">💾 DATA</span>
+      <div class="sc-bar"><div class="sc-bar-fill sc-data" id="sc-data"></div></div>
+      <span class="sc-bar-val" id="sc-data-val">0%</span>
+    </div>
+    <div class="sc-bar-row">
+      <span class="sc-bar-label">🌐 NETWORK</span>
+      <div class="sc-bar"><div class="sc-bar-fill sc-network" id="sc-network"></div></div>
+      <span class="sc-bar-val" id="sc-network-val">0%</span>
+    </div>
+  </div>
+  <div class="sc-zones">
+    <div class="sc-zone sc-zone-core" id="sc-zone-core"><span class="sc-zone-dot"></span>CORE <span id="sc-zone-core-n">0</span></div>
+    <div class="sc-zone sc-zone-infra" id="sc-zone-infra"><span class="sc-zone-dot"></span>INFRA <span id="sc-zone-infra-n">0</span></div>
+    <div class="sc-zone sc-zone-nexus" id="sc-zone-nexus"><span class="sc-zone-dot"></span>NEXUS <span id="sc-zone-nexus-n">0</span></div>
+    <div class="sc-zone sc-zone-pi" id="sc-zone-pi"><span class="sc-zone-dot"></span>PI <span id="sc-zone-pi-n">0</span></div>
+  </div>
+  <div class="sc-rci">
+    <div class="sc-rci-bar">
+      <div class="sc-rci-r" id="sc-rci-r" title="Infrastructure demand"></div>
+      <div class="sc-rci-c" id="sc-rci-c" title="Connectivity demand"></div>
+      <div class="sc-rci-i" id="sc-rci-i" title="Intelligence demand"></div>
+    </div>
+    <div class="sc-rci-labels"><span>R</span><span>C</span><span>I</span></div>
+  </div>
+  <div class="sc-happiness">
+    <span class="sc-happy-icon" id="sc-happy-icon">😊</span>
+    <span class="sc-happy-text" id="sc-happy-text">City is thriving</span>
+  </div>
+</div>
 
 <script>
-const SERVICES = [
-{group:"core",name:"Odysseus",desc:"AI workspace — chat, agents, research, docs, email, notes, calendar",port:7000,icon:"🧠",path:"/"},
-{group:"core",name:"Swarm Manager",desc:"Task queue, agent registry, logs, events, shared memory",port:7000,icon:"🐝",path:"/#/swarm"},
-{group:"core",name:"Cookbook",desc:"Model serving — Ollama, vLLM, llama.cpp, SGLang",port:7000,icon:"🍳",path:"/#/cookbook"},
-{group:"core",name:"MCP Bridge",desc:"Shared MCP server for Claude Code, OpenCode, OpenClaw",port:8378,icon:"🌉",path:"/health"},
+(function() {
+'use strict';
 
-{group:"nexus",name:"Nexus Cost",desc:"LLM API cost tracking, budgets, usage analytics",port:8199,icon:"💰"},
-{group:"nexus",name:"Nexus Metrics",desc:"CPU, GPU, RAM, disk, network monitoring",port:9100,icon:"📊"},
-{group:"nexus",name:"Nexus News",desc:"RSS feeds with AI-powered digests",port:8100,icon:"📰"},
-{group:"nexus",name:"Nexus Gateway",desc:"AI middleware — auth, rate limiting, model routing",port:8082,icon:"🚪"},
-{group:"nexus",name:"Nexus Memory",desc:"Agent vector memory — embeddings, learning cycles",port:8010,icon:"🧬"},
-{group:"nexus",name:"Nexus Workflows",desc:"YAML workflow engine — triggers, scheduling",port:7800,icon:"⚙️"},
-{group:"nexus",name:"Nexus Weather",desc:"Weather, air quality, sun times, energy pricing",port:8085,icon:"🌤️"},
-{group:"nexus",name:"Nexus Automation",desc:"IoT rules engine — sensors, actions, AI advisor",port:8090,icon:"🤖"},
-{group:"nexus",name:"Nexus Security",desc:"Threat monitoring, firewall, SSH alerts",port:8443,icon:"🛡️"},
-{group:"nexus",name:"Nexus Monitor",desc:"Cluster health, node stats, alerts",port:8099,icon:"📡"},
-{group:"nexus",name:"Nexus Secrets",desc:"Encrypted secrets vault",port:7438,icon:"🔐"},
-{group:"nexus",name:"Duinn Media",desc:"Media server — streaming, downloads, IPTV",port:8096,icon:"🎬"},
+/* ═══════════════════════════════════════════════════════════
+   CONFIGURATION
+   ═══════════════════════════════════════════════════════════ */
 
-{group:"infra",name:"ChromaDB",desc:"Vector store for embeddings and RAG",port:8100,icon:"🔮"},
-{group:"infra",name:"SearXNG",desc:"Privacy-respecting web search engine",port:8080,icon:"🔍"},
-{group:"infra",name:"ntfy",desc:"Push notifications for mobile and desktop",port:8091,icon:"🔔"},
-{group:"infra",name:"Ollama",desc:"Local LLM serving — llama, qwen, mistral",port:11434,icon:"🦙"},
+var SERVICES = [
+  { id: 'odysseus',     name: 'Odysseus',       group: 'core',   port: 7000,  icon: '🧠', desc: 'AI workspace — the brain',              color: '#ff6b9d' },
+  { id: 'swarm',        name: 'Swarm Manager',   group: 'core',   port: 7000,  icon: '🐝', desc: 'Agent orchestration hive',              color: '#ffd93d' },
+  { id: 'mcp',          name: 'MCP Bridge',      group: 'core',   port: 8378,  icon: '🌉', desc: 'Protocol gateway',                      color: '#6bcb77' },
+  { id: 'ollama',       name: 'Ollama',           group: 'infra',  port: 11434, icon: '🦙', desc: 'Local LLM inference engine',             color: '#9b59b6' },
+  { id: 'chroma',       name: 'ChromaDB',         group: 'infra',  port: 8100,  icon: '💎', desc: 'Vector memory crystal',                  color: '#00bcd4' },
+  { id: 'searxng',      name: 'SearXNG',          group: 'infra',  port: 8080,  icon: '🔍', desc: 'Search oracle',                          color: '#ff9800' },
+  { id: 'memory',       name: 'Nexus Memory',     group: 'nexus',  port: 8010,  icon: '🧬', desc: 'Agent neural pathways',                  color: '#e91e63' },
+  { id: 'gateway',      name: 'Nexus Gateway',    group: 'nexus',  port: 8082,  icon: '🚪', desc: 'Auth & routing gate',                    color: '#4caf50' },
+  { id: 'cost',         name: 'Nexus Cost',       group: 'nexus',  port: 8199,  icon: '💰', desc: 'Resource ledger',                        color: '#ffc107' },
+  { id: 'workflows',    name: 'Nexus Workflows',  group: 'nexus',  port: 7800,  icon: '⚙️', desc: 'Task automation engine',                 color: '#607d8b' },
+  { id: 'weather',      name: 'Nexus Weather',    group: 'nexus',  port: 8085,  icon: '☀️', desc: 'Environmental sensors',                  color: '#ffeb3b' },
+  { id: 'automation',   name: 'Nexus Automation', group: 'nexus',  port: 8090,  icon: '🤖', desc: 'IoT command center',                     color: '#00bcd4' },
+  { id: 'security',     name: 'Nexus Security',   group: 'nexus',  port: 8443,  icon: '🛡️', desc: 'Digital fortress',                       color: '#f44336' },
+  { id: 'monitor',      name: 'Nexus Monitor',    group: 'nexus',  port: 8099,  icon: '🛰️', desc: 'Overwatch system',                       color: '#3f51b5' },
+  { id: 'secrets',      name: 'Nexus Secrets',    group: 'nexus',  port: 7438,  icon: '🔒', desc: 'Vault of keys',                          color: '#795548' },
+  { id: 'media',        name: 'Duinn Media',      group: 'nexus',  port: 8096,  icon: '🎬', desc: 'Media stream hub',                       color: '#e040fb' },
+  { id: 'news',         name: 'Nexus News',       group: 'nexus',  port: 8100,  icon: '📰', desc: 'Information feed',                       color: '#009688' },
+  { id: 'ntfy',         name: 'ntfy',              group: 'infra',  port: 8091,  icon: '🔔', desc: 'Signal beacon',                          color: '#ff5722' },
+  { id: 'metrics',      name: 'Nexus Metrics',    group: 'nexus',  port: 9100,  icon: '📊', desc: 'Vital signs monitor',                    color: '#8bc34a' },
+  { id: 'pi',           name: 'Pi Hub',           group: 'pi',     port: null,  icon: '🍓', desc: 'Edge node — Raspberry Pi',               color: '#e91e63' },
 ];
 
-const grid = {core:document.getElementById("core"),nexus:document.getElementById("nexus"),infra:document.getElementById("infra")};
+var AGENTS = [
+  { id: 'owl',       name: 'OWL',       role: 'Core AI',        color: '#00e5ff', startX: 400, startY: 300, targetService: 'odysseus' },
+  { id: 'researcher', name: 'Researcher', role: 'Web Scanner',   color: '#ff6b9d', startX: 200, startY: 200, targetService: 'searxng' },
+  { id: 'coder',     name: 'Coder',      role: 'Code Gen',       color: '#6bcb77', startX: 600, startY: 400, targetService: 'ollama' },
+  { id: 'guard',     name: 'Guard',      role: 'Security',       color: '#ff3366', startX: 300, startY: 500, targetService: 'security' },
+  { id: 'scribe',    name: 'Scribe',     role: 'Memory Keeper',  color: '#ffd93d', startX: 500, startY: 200, targetService: 'memory' },
+  { id: 'scout',     name: 'Scout',      role: 'Explorer',       color: '#ff9800', startX: 150, startY: 400, targetService: 'news' },
+  { id: 'keeper',    name: 'Keeper',     role: 'Vault Master',   color: '#9b59b6', startX: 700, startY: 300, targetService: 'secrets' },
+  { id: 'weaver',    name: 'Weaver',     role: 'Workflow Engine', color: '#607d8b', startX: 350, startY: 150, targetService: 'workflows' },
+];
 
-function render(filter=""){
-const f = filter.toLowerCase();
-Object.values(grid).forEach(g=>g.innerHTML="");
-let counts={core:0,nexus:0,infra:0};
-SERVICES.forEach(s=>{
-if(f && !s.name.toLowerCase().includes(f) && !s.desc.toLowerCase().includes(f)) return;
-const a=document.createElement("a");
-a.className="card";
-a.href=`http://localhost:${s.port}${s.path||""}`;
-a.target="_blank";
-a.innerHTML=`<span class="port">:${s.port}</span><div class="icon">${s.icon}</div><h3>${s.name}</h3><p>${s.desc}</p>`;
-grid[s.group].appendChild(a);
-counts[s.group]++;
-});
-document.querySelectorAll(".section-title").forEach((el,i)=>{
-const g=["core","nexus","infra"][i];
-el.style.display=counts[g]?"":"none";
-});
+/* ═══════════════════════════════════════════════════════════
+   STATE
+   ═══════════════════════════════════════════════════════════ */
+var state = {
+  booted: false,
+  bootProgress: 0,
+  camera: { x: 0, y: 0, zoom: 1 },
+  mouse: { x: 0, y: 0, down: false, dragStart: null },
+  selectedService: null,
+  healthStatus: {},
+  agents: [],
+  particles: [],
+  time: 0,
+  worldW: 2400,
+  worldH: 1600,
+  themeParticle: '#4488ff',
+};
+
+/* DOM element cache — avoids getElementById in hot paths */
+var dom = {};
+function cacheDom() {
+  dom.bootScreen = document.getElementById('boot-screen');
+  dom.bootBar = document.getElementById('boot-bar');
+  dom.bootStatus = document.getElementById('boot-status');
+  dom.gameWorld = document.getElementById('game-world');
+  dom.hud = document.getElementById('hud');
+  dom.hudClock = document.getElementById('hud-clock');
+  dom.hudStrip = document.querySelector('.hud-strip');
+  dom.stripInner = document.getElementById('strip-inner');
+  dom.infoPanel = document.getElementById('info-panel');
+  dom.infoTitle = document.getElementById('info-title');
+  dom.infoBody = document.getElementById('info-body');
+  dom.minimap = document.getElementById('minimap');
+  dom.lofiPlayer = document.getElementById('lofi-player');
+  dom.themeSwitcher = document.getElementById('theme-switcher');
+  dom.themeBtn = document.getElementById('theme-btn');
+  dom.themeGrid = document.getElementById('theme-grid');
+  dom.lofiBtn = document.getElementById('lofi-btn');
+  dom.rainContainer = document.getElementById('rain-container');
 }
 
-document.getElementById("search").addEventListener("input",e=>render(e.target.value));
-render();
+/* ═══════════════════════════════════════════════════════════
+   BOOT SEQUENCE
+   ═══════════════════════════════════════════════════════════ */
+var bootCanvas = document.getElementById('boot-canvas');
+var bootCtx = bootCanvas.getContext('2d');
+var bootParticles = [];
+var bootRunning = true;
 
-// Stats (via Caddy proxy — same origin, no CORS)
-fetch("/bridge/api/stats").then(r=>r.json()).then(d=>{
-const total=(d.tasks?.done||0)+(d.tasks?.in_progress||0)+(d.tasks?.pending||0);
-const agents=Object.values(d.agents||{}).reduce((a,b)=>a+b,0);
-document.getElementById("stats").innerHTML=`
-<div class="stat"><div class="num">${total}</div><div class="label">Tasks</div></div>
-<div class="stat"><div class="num">${agents}</div><div class="label">Agents</div></div>
-<div class="stat"><div class="num">${d.memory_count||0}</div><div class="label">Memories</div></div>
-<div class="stat"><div class="num">${d.event_count||0}</div><div class="label">Events</div></div>
-<div class="stat"><div class="num">${d.log_count||0}</div><div class="label">Logs</div></div>
-`;
-}).catch(()=>{
-document.getElementById("stats").innerHTML=`<div class="stat"><div class="num" style="color:var(--red)">offline</div><div class="label">Bridge</div></div>`;
+function resizeBoot() {
+  bootCanvas.width = window.innerWidth;
+  bootCanvas.height = window.innerHeight;
+}
+
+function initBootParticles() {
+  bootParticles = [];
+  for (var i = 0; i < 200; i++) {
+    bootParticles.push({
+      x: Math.random() * bootCanvas.width,
+      y: Math.random() * bootCanvas.height,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: -Math.random() * 2 - 0.5,
+      size: Math.random() * 2 + 0.5,
+      alpha: Math.random() * 0.5 + 0.2,
+      life: Math.random()
+    });
+  }
+}
+
+function drawBoot() {
+  bootCtx.clearRect(0, 0, bootCanvas.width, bootCanvas.height);
+
+  // Deep blue gradient
+  var grd = bootCtx.createRadialGradient(
+    bootCanvas.width/2, bootCanvas.height * 0.4, 0,
+    bootCanvas.width/2, bootCanvas.height * 0.4, bootCanvas.width * 0.6
+  );
+  grd.addColorStop(0, '#0a1628');
+  grd.addColorStop(0.5, '#060d1a');
+  grd.addColorStop(1, '#020408');
+  bootCtx.fillStyle = grd;
+  bootCtx.fillRect(0, 0, bootCanvas.width, bootCanvas.height);
+
+  // Rising particles with theme color
+  var particleColor = state.themeParticle;
+  for (var i = 0; i < bootParticles.length; i++) {
+    var p = bootParticles[i];
+    p.y += p.vy;
+    p.x += p.vx;
+    p.life -= 0.002;
+    if (p.y < 0 || p.life <= 0) {
+      p.y = bootCanvas.height + 10;
+      p.x = Math.random() * bootCanvas.width;
+      p.life = 1;
+    }
+    bootCtx.globalAlpha = p.alpha * p.life;
+    bootCtx.fillStyle = particleColor;
+    bootCtx.beginPath();
+    bootCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    bootCtx.fill();
+  }
+
+  // Horizontal scan line
+  var scanY = (state.time * 100) % bootCanvas.height;
+  bootCtx.globalAlpha = 0.03;
+  bootCtx.fillStyle = particleColor;
+  bootCtx.fillRect(0, scanY, bootCanvas.width, 2);
+  bootCtx.globalAlpha = 1;
+
+  // Grid floor
+  bootCtx.globalAlpha = 0.15;
+  bootCtx.strokeStyle = '#2244aa';
+  bootCtx.lineWidth = 0.5;
+  var gridY = bootCanvas.height * 0.75;
+  for (var gx = -20; gx < 20; gx++) {
+    bootCtx.beginPath();
+    bootCtx.moveTo(bootCanvas.width/2 + gx * 80, gridY);
+    bootCtx.lineTo(bootCanvas.width/2 + gx * 200, bootCanvas.height);
+    bootCtx.stroke();
+  }
+  for (var gy = 0; gy < 10; gy++) {
+    var yy = gridY + gy * 30;
+    var spread = (yy - gridY) / (bootCanvas.height - gridY);
+    bootCtx.beginPath();
+    bootCtx.moveTo(bootCanvas.width/2 - 400 * spread - 400, yy);
+    bootCtx.lineTo(bootCanvas.width/2 + 400 * spread + 400, yy);
+    bootCtx.stroke();
+  }
+
+  bootCtx.globalAlpha = 1;
+  if (bootRunning) requestAnimationFrame(drawBoot);
+}
+
+var bootMessages = [
+  'INITIALIZING SYSTEMS...',
+  'LOADING OWL CORE...',
+  'MOUNTING NEURAL PATHWAYS...',
+  'CONNECTING TO SWARM...',
+  'SYNCING MEMORY CRYSTALS...',
+  'CALIBRATING SENSORS...',
+  'ESTABLISHING PROTOCOLS...',
+  'LOADING SPRITES...',
+  'ENTERING THE GRID...'
+];
+
+/* ═══════════════════════════════════════════════════════════
+   GAME THEMES
+   ═══════════════════════════════════════════════════════════ */
+var GAME_THEMES = [
+  { id: 'default',        name: 'Tech Duinn', icon: '🌐', desc: 'PS2 blue' },
+  { id: 'mushroom-kingdom', name: 'Mario',     icon: '🍄', desc: 'Mushroom Kingdom' },
+  { id: 'hyrule',         name: 'Zelda',       icon: '🔺', desc: 'Hyrule' },
+  { id: 'zebes',          name: 'Metroid',     icon: '🧬', desc: 'Zebes' },
+  { id: 'midgar',         name: 'FF VII',      icon: '💎', desc: 'Midgar' },
+  { id: 'crystal',        name: 'Crystal',     icon: '🔮', desc: 'FF Crystal' },
+  { id: 'zanarkand',      name: 'FF X',        icon: '⚔️', desc: 'Zanarkand' },
+  { id: 'green-hill',     name: 'Sonic',       icon: '💍', desc: 'Green Hill' },
+  { id: 'chemical-plant', name: 'Chem Plant',  icon: '💎', desc: 'Chemical Plant' },
+  { id: 'phantasy-star',  name: 'PSO',         icon: '⭐', desc: 'Pioneer 2' },
+];
+
+var currentTheme = localStorage.getItem('duinn-theme') || 'default';
+
+function applyTheme(themeId) {
+  currentTheme = themeId;
+  localStorage.setItem('duinn-theme', themeId);
+  if (themeId === 'default') {
+    document.body.removeAttribute('data-theme');
+  } else {
+    document.body.setAttribute('data-theme', themeId);
+  }
+  // Cache theme particle color for canvas rendering
+  state.themeParticle = getComputedStyle(document.body).getPropertyValue('--theme-particle').trim() || '#4488ff';
+  // Update rain color
+  updateRain();
+}
+
+function initThemeSwitcher() {
+  var grid = dom.themeGrid;
+  GAME_THEMES.forEach(function(t) {
+    var opt = document.createElement('div');
+    opt.className = 'theme-option';
+    opt.setAttribute('role', 'menuitem');
+    opt.setAttribute('tabindex', '0');
+    opt.innerHTML = '<span class="theme-icon">' + t.icon + '</span><span class="theme-name">' + t.name + '</span>';
+    opt.addEventListener('click', function() {
+      applyTheme(t.id);
+      grid.classList.remove('open');
+      dom.themeBtn.setAttribute('aria-expanded', 'false');
+      // Play theme sound
+      playThemeSound(t.id);
+    });
+    opt.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        opt.click();
+      }
+    });
+    grid.appendChild(opt);
+  });
+
+  dom.themeBtn.addEventListener('click', function() {
+    var isOpen = grid.classList.toggle('open');
+    dom.themeBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  });
+
+  // Close on outside click
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('#theme-switcher')) {
+      grid.classList.remove('open');
+    }
+  });
+
+  // Apply saved theme
+  applyTheme(currentTheme);
+}
+
+function playThemeSound(themeId) {
+  var audio = new Audio('/sounds/' + themeId + '.wav');
+  audio.volume = 0.3;
+  audio.play().catch(function() {});
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RAIN EFFECT
+   ═══════════════════════════════════════════════════════════ */
+function updateRain() {
+  var container = dom.rainContainer;
+  container.innerHTML = '';
+  // Only rain for certain themes
+  var rainThemes = ['midgar', 'chemical-plant', 'default', 'zebes'];
+  if (rainThemes.indexOf(currentTheme) === -1) return;
+
+  for (var i = 0; i < 80; i++) {
+    var drop = document.createElement('div');
+    drop.className = 'rain-drop';
+    drop.style.left = Math.random() * 100 + '%';
+    drop.style.height = (15 + Math.random() * 25) + 'px';
+    drop.style.animationDuration = (0.4 + Math.random() * 0.6) + 's';
+    drop.style.animationDelay = Math.random() * 2 + 's';
+    drop.style.opacity = 0.1 + Math.random() * 0.2;
+    container.appendChild(drop);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MATRIX RAIN — from cssscript.com
+   ═══════════════════════════════════════════════════════════ */
+var MatrixRain = (function() {
+  function MatrixRain(canvas, opts) {
+    opts = opts || {};
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.charList = opts.charList || 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEF';
+    this.fontSize = opts.fontSize || 14;
+    this.columns = 0;
+    this.drops = [];
+    this.rgb = opts.rgb || '0,255,136';
+    this.flowRate = opts.flowRate || 0.975;
+    this.resize();
+  }
+
+  MatrixRain.prototype.resize = function() {
+    this.canvas.width = this.canvas.parentElement ? this.canvas.parentElement.offsetWidth : window.innerWidth;
+    this.canvas.height = this.canvas.parentElement ? this.canvas.parentElement.offsetHeight : window.innerHeight;
+    this.columns = Math.floor(this.canvas.width / this.fontSize);
+    this.drops = [];
+    for (var i = 0; i < this.columns; i++) {
+      this.drops[i] = Math.random() * -100;
+    }
+  };
+
+  MatrixRain.prototype.draw = function() {
+    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.font = this.fontSize + 'px monospace';
+
+    for (var i = 0; i < this.drops.length; i++) {
+      var char = this.charList[Math.floor(Math.random() * this.charList.length)];
+      var x = i * this.fontSize;
+      var y = this.drops[i] * this.fontSize;
+
+      // Head character is brighter
+      this.ctx.fillStyle = 'rgba(' + this.rgb + ', 1)';
+      this.ctx.fillText(char, x, y);
+
+      // Trail characters are dimmer
+      if (this.drops[i] > 0) {
+        var prevChar = this.charList[Math.floor(Math.random() * this.charList.length)];
+        this.ctx.fillStyle = 'rgba(' + this.rgb + ', 0.3)';
+        this.ctx.fillText(prevChar, x, y - this.fontSize);
+      }
+
+      if (y > this.canvas.height && Math.random() > this.flowRate) {
+        this.drops[i] = 0;
+      }
+      this.drops[i]++;
+    }
+  };
+
+  return MatrixRain;
+})();
+
+var matrixRain = null;
+var matrixAnimId = null;
+
+function startMatrixRain() {
+  var mc = document.getElementById('matrix-canvas');
+  if (!mc) return;
+  var particleColor = state.themeParticle;
+  // Parse hex to rgb
+  var hex = particleColor.replace('#', '');
+  if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+  var r = parseInt(hex.substring(0,2), 16) || 0;
+  var g = parseInt(hex.substring(2,4), 16) || 255;
+  var b = parseInt(hex.substring(4,6), 16) || 136;
+
+  matrixRain = new MatrixRain(mc, {
+    rgb: r + ',' + g + ',' + b,
+    fontSize: 14,
+    flowRate: 0.975
+  });
+
+  function animLoop() {
+    if (!matrixRain) return;
+    matrixRain.draw();
+    matrixAnimId = requestAnimationFrame(animLoop);
+  }
+  animLoop();
+}
+
+function stopMatrixRain() {
+  matrixRain = null;
+  if (matrixAnimId) { cancelAnimationFrame(matrixAnimId); matrixAnimId = null; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TYPEWRITER BOOT MESSAGES
+   ═══════════════════════════════════════════════════════════ */
+function typewriterBootMessage(el, text, speed) {
+  speed = speed || 40;
+  el.textContent = '';
+  el.classList.remove('boot-status-typewriter');
+  void el.offsetWidth; // force reflow
+  el.classList.add('boot-status-typewriter');
+  var i = 0;
+  function tick() {
+    if (i < text.length) {
+      el.textContent += text.charAt(i);
+      i++;
+      setTimeout(tick, speed + Math.random() * 20);
+    }
+  }
+  tick();
+}
+
+function enterGameWorld() {
+  state.booted = true;
+  var ids = ['game-world', 'hud', 'minimap', 'lofi-player', 'theme-switcher', 'activity-feed', 'uptime-bar', 'simcity-panel'];
+  ids.forEach(function(id) { document.getElementById(id).classList.add('visible'); });
+  document.querySelector('.hud-strip').classList.add('visible');
+  document.getElementById('agent-cards').classList.add('visible');
+  try { updateRain(); } catch(e) {}
+  addFeedItem('<span class="agent">System</span> — Dashboard loaded');
+}
+
+function hideBootScreen() {
+  bootRunning = false;
+  try { stopMatrixRain(); } catch(e) {}
+  var bs = document.getElementById('boot-screen');
+  if (bs) {
+    bs.classList.add('fade-out');
+    setTimeout(function() { bs.style.display = 'none'; }, 1500);
+  }
+  localStorage.setItem('duinn-boot-seen', '1');
+}
+
+function runBoot() {
+  // Always skip boot — go straight to game world
+  document.getElementById('boot-screen').style.display = 'none';
+  enterGameWorld();
+}
+
+/* ═══════════════════════════════════════════════════════════
+   WORLD MAP — Service Buildings
+   ═══════════════════════════════════════════════════════════ */
+
+// Layout: place services in a cyberpunk city grid
+var BUILDINGS = [];
+
+function layoutBuildings() {
+  var cols = 5;
+  var spacingX = 380;
+  var spacingY = 280;
+  var offsetX = 200;
+  var offsetY = 150;
+
+  SERVICES.forEach(function(s, i) {
+    var col = i % cols;
+    var row = Math.floor(i / cols);
+    BUILDINGS.push({
+      service: s,
+      x: offsetX + col * spacingX + (row % 2) * 100,
+      y: offsetY + row * spacingY,
+      w: 140 + Math.random() * 40,
+      h: 100 + Math.random() * 60,
+      glowPhase: Math.random() * Math.PI * 2,
+      windowLights: []
+    });
+
+    // Generate window lights
+    var b = BUILDINGS[BUILDINGS.length - 1];
+    for (var wx = 0; wx < 4; wx++) {
+      for (var wy = 0; wy < 3; wy++) {
+        b.windowLights.push({
+          x: 15 + wx * 30,
+          y: 15 + wy * 25,
+          on: Math.random() > 0.3,
+          flicker: Math.random()
+        });
+      }
+    }
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SPRITE AGENTS
+   ═══════════════════════════════════════════════════════════ */
+
+function initAgents() {
+  state.agents = AGENTS.map(function(a) {
+    var target = BUILDINGS.find(function(b) { return b.service.id === a.targetService; });
+    return {
+      def: a,
+      x: a.startX,
+      y: a.startY,
+      vx: 0, vy: 0,
+      frame: 0,
+      frameTimer: 0,
+      dir: 0,
+      state: 'idle',
+      target: target,
+      path: [],
+      pathIdx: 0,
+      waitTimer: 0,
+      workTimer: 0,
+      bobPhase: Math.random() * Math.PI * 2,
+      trail: [],
+      // The Sims: needs, mood, social
+      mood: 70 + Math.random() * 20,
+      needs: {
+        energy: 60 + Math.random() * 30,
+        social: 40 + Math.random() * 40,
+        fun: 50 + Math.random() * 30,
+        hygiene: 70 + Math.random() * 20,
+        hunger: 60 + Math.random() * 30
+      },
+      bubble: null,
+      bubbleTimer: 0,
+      actionQueue: [],
+      skill: a.role,
+      skillLevel: 1 + Math.floor(Math.random() * 5),
+      xp: 0,
+      socialTarget: null,
+      socialTimer: 0,
+      relationships: {}
+    };
+  });
+
+  // Init relationships
+  state.agents.forEach(function(a) {
+    state.agents.forEach(function(b) {
+      if (a !== b) a.relationships[b.def.id] = 30 + Math.random() * 40;
+    });
+  });
+}
+
+function drawAgent(ctx, agent) {
+  var x = agent.x;
+  var y = agent.y;
+  var c = agent.def.color;
+  var bob = Math.sin(agent.bobPhase) * (agent.state === 'walking' ? 2 : 0.5);
+
+  // Shadow
+  ctx.globalAlpha = 0.3;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(x, y + 20, 10, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Trail
+  if (agent.state === 'walking') {
+    agent.trail.push({ x: x, y: y + 10, alpha: 0.4, size: 3 });
+    if (agent.trail.length > 200) agent.trail.splice(0, agent.trail.length - 200);
+  }
+  for (var t = agent.trail.length - 1; t >= 0; t--) {
+    var tr = agent.trail[t];
+    tr.alpha -= 0.01;
+    tr.size -= 0.05;
+    if (tr.alpha <= 0 || tr.size <= 0) { agent.trail.splice(t, 1); continue; }
+    ctx.globalAlpha = tr.alpha * 0.3;
+    ctx.fillStyle = c;
+    ctx.beginPath();
+    ctx.arc(tr.x, tr.y, tr.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  var py = y + bob;
+
+  // Body (pixel art style)
+  ctx.fillStyle = c;
+
+  // Head
+  ctx.fillRect(x - 5, py - 22, 10, 10);
+
+  // Visor / eyes
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(x - 3, py - 19, 2, 2);
+  ctx.fillRect(x + 1, py - 19, 2, 2);
+
+  // Body
+  ctx.fillStyle = c;
+  ctx.fillRect(x - 6, py - 12, 12, 14);
+
+  // Belt
+  ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  ctx.fillRect(x - 6, py - 4, 12, 2);
+
+  // Arms
+  var armSwing = agent.state === 'walking' ? Math.sin(agent.bobPhase * 2) * 4 : 0;
+  ctx.fillStyle = c;
+  ctx.fillRect(x - 9, py - 10 + armSwing, 3, 10);
+  ctx.fillRect(x + 6, py - 10 - armSwing, 3, 10);
+
+  // Legs
+  var legSwing = agent.state === 'walking' ? Math.sin(agent.bobPhase * 2) * 3 : 0;
+  ctx.fillStyle = shadeColor(c, -30);
+  ctx.fillRect(x - 4, py + 2, 3, 8 + legSwing);
+  ctx.fillRect(x + 1, py + 2, 3, 8 - legSwing);
+
+  // Feet
+  ctx.fillStyle = '#222';
+  ctx.fillRect(x - 5, py + 9 + legSwing, 4, 2);
+  ctx.fillRect(x + 1, py + 9 - legSwing, 4, 2);
+
+  // Glow halo
+  ctx.globalAlpha = 0.15 + Math.sin(agent.bobPhase * 0.5) * 0.05;
+  var glow = ctx.createRadialGradient(x, py - 10, 0, x, py - 10, 25);
+  glow.addColorStop(0, c);
+  glow.addColorStop(1, 'transparent');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(x, py - 10, 25, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Name tag
+  ctx.font = '9px "Share Tech Mono"';
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.textAlign = 'center';
+  ctx.fillText(agent.def.name, x, py - 28);
+
+  // Role tag
+  ctx.font = '7px "Share Tech Mono"';
+  ctx.fillStyle = c;
+  ctx.fillText(agent.def.role, x, py - 36);
+
+  // Working indicator
+  if (agent.state === 'working') {
+    ctx.globalAlpha = 0.6 + Math.sin(state.time * 5) * 0.3;
+    ctx.font = '12px sans-serif';
+    ctx.fillText('⚡', x + 12, py - 15);
+    ctx.globalAlpha = 1;
+  }
+
+  // === THE SIMS: Plumbob (mood diamond) ===
+  var mood = agent.mood || 70;
+  var plumbobColor;
+  if (mood >= 75) plumbobColor = '#00ff88';
+  else if (mood >= 40) plumbobColor = '#ffd93d';
+  else plumbobColor = '#ff3366';
+
+  var pbx = x;
+  var pby = py - 50 + Math.sin(state.time * 2 + agent.bobPhase) * 3;
+  var pbSize = 6;
+
+  // Diamond shape
+  ctx.fillStyle = plumbobColor;
+  ctx.globalAlpha = 0.8 + Math.sin(state.time * 3) * 0.2;
+  ctx.beginPath();
+  ctx.moveTo(pbx, pby - pbSize);
+  ctx.lineTo(pbx + pbSize, pby);
+  ctx.lineTo(pbx, pby + pbSize);
+  ctx.lineTo(pbx - pbSize, pby);
+  ctx.closePath();
+  ctx.fill();
+
+  // Inner glow
+  ctx.fillStyle = '#fff';
+  ctx.globalAlpha = 0.3;
+  ctx.beginPath();
+  ctx.moveTo(pbx, pby - pbSize * 0.5);
+  ctx.lineTo(pbx + pbSize * 0.4, pby);
+  ctx.lineTo(pbx, pby + pbSize * 0.3);
+  ctx.lineTo(pbx - pbSize * 0.4, pby);
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // === THE SIMS: Speech/Thought Bubble ===
+  if (agent.bubble && agent.bubbleTimer > 0) {
+    var bx = x + 18;
+    var by = py - 55;
+    var bubbleW = 28;
+    var bubbleH = 20;
+
+    // Bubble background
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    ctx.ellipse(bx, by, bubbleW/2, bubbleH/2, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bubble tail
+    ctx.beginPath();
+    ctx.moveTo(bx - 6, by + bubbleH/2 - 2);
+    ctx.lineTo(x + 6, py - 30);
+    ctx.lineTo(bx - 2, by + bubbleH/2 - 4);
+    ctx.closePath();
+    ctx.fill();
+
+    // Bubble icon/text
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#333';
+    ctx.textAlign = 'center';
+    ctx.fillText(agent.bubble, bx, by + 4);
+    ctx.textAlign = 'left';
+  }
+
+  // === THE SIMS: Action Queue (tiny icons) ===
+  if (agent.actionQueue && agent.actionQueue.length > 0) {
+    var qx = x - 10;
+    var qy = py - 44;
+    ctx.font = '7px "Share Tech Mono"';
+    ctx.fillStyle = 'rgba(200,208,224,0.5)';
+    agent.actionQueue.slice(0, 3).forEach(function(action, ai) {
+      ctx.fillText(action, qx + ai * 10, qy);
+    });
+  }
+
+  // === THE SIMS: Needs Bars (tiny) ===
+  if (agent.needs) {
+    var nx = x - 12;
+    var ny = py + 16;
+    var barW = 24;
+    var barH = 2;
+    var needNames = ['energy', 'social', 'fun'];
+    needNames.forEach(function(name, ni) {
+      var val = agent.needs[name] || 50;
+      var barColor = val > 60 ? '#00ff88' : val > 30 ? '#ffd93d' : '#ff3366';
+      // Background
+      ctx.fillStyle = 'rgba(255,255,255,0.1)';
+      ctx.fillRect(nx, ny + ni * 3, barW, barH);
+      // Fill
+      ctx.fillStyle = barColor;
+      ctx.globalAlpha = 0.7;
+      ctx.fillRect(nx, ny + ni * 3, barW * (val / 100), barH);
+      ctx.globalAlpha = 1;
+    });
+  }
+}
+
+function shadeColor(hex, percent) {
+  var num = parseInt(hex.replace('#', ''), 16);
+  var r = Math.min(255, Math.max(0, (num >> 16) + percent));
+  var g = Math.min(255, Math.max(0, ((num >> 8) & 0xff) + percent));
+  var b = Math.min(255, Math.max(0, (num & 0xff) + percent));
+  return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+}
+
+function updateAgents(dt) {
+  var simSpeed = state.simSpeed || 1;
+  var sdt = dt * simSpeed;
+
+  state.agents.forEach(function(agent) {
+    agent.bobPhase += sdt * (agent.state === 'walking' ? 8 : 2);
+    agent.frameTimer += sdt;
+
+    // === THE SIMS: Needs decay ===
+    if (agent.needs) {
+      agent.needs.energy -= sdt * 0.8;
+      agent.needs.social -= sdt * 0.5;
+      agent.needs.fun -= sdt * 0.6;
+      agent.needs.hygiene -= sdt * 0.3;
+      agent.needs.hunger -= sdt * 0.4;
+
+      // Clamp
+      Object.keys(agent.needs).forEach(function(k) {
+        agent.needs[k] = Math.max(0, Math.min(100, agent.needs[k]));
+      });
+
+      // Calculate mood from needs
+      var needAvg = Object.keys(agent.needs).reduce(function(sum, k) { return sum + agent.needs[k]; }, 0) / 5;
+      agent.mood = agent.mood * 0.95 + needAvg * 0.05;
+
+      // === THE SIMS: Bubble based on lowest need ===
+      agent.bubbleTimer -= sdt;
+      if (agent.bubbleTimer <= 0) {
+        var lowest = null, lowestVal = 100;
+        Object.keys(agent.needs).forEach(function(k) {
+          if (agent.needs[k] < lowestVal) { lowestVal = agent.needs[k]; lowest = k; }
+        });
+        var bubbleIcons = {
+          energy: '😴', social: '💬', fun: '🎮', hygiene: '🚿', hunger: '🍔'
+        };
+        if (lowestVal < 35) {
+          agent.bubble = bubbleIcons[lowest] || '❗';
+          agent.bubbleTimer = 3 + Math.random() * 2;
+        } else if (Math.random() > 0.7) {
+          var randomBubbles = ['💡', '🎵', '✨', '💭', '😊', '🔥'];
+          agent.bubble = randomBubbles[Math.floor(Math.random() * randomBubbles.length)];
+          agent.bubbleTimer = 2 + Math.random() * 2;
+        } else {
+          agent.bubble = null;
+          agent.bubbleTimer = 1;
+        }
+      }
+
+      // === THE SIMS: Needs fulfilled by building type ===
+      if (agent.state === 'working' && agent.target) {
+        var group = agent.target.service.group;
+        if (group === 'core') { agent.needs.fun += sdt * 3; agent.needs.social += sdt * 2; }
+        if (group === 'infra') { agent.needs.energy += sdt * 1; agent.needs.hunger += sdt * 1; }
+        if (group === 'nexus') { agent.needs.hygiene += sdt * 2; agent.needs.social += sdt * 3; }
+        // XP gain
+        agent.xp += sdt * 2;
+        if (agent.xp >= agent.skillLevel * 50) {
+          agent.skillLevel++;
+          agent.xp = 0;
+          addFeedItem('<span class="agent">' + agent.def.name + '</span> leveled up to <span class="up">Lv.' + agent.skillLevel + ' ' + agent.skill + '</span>');
+          spawnParticles(agent.x, agent.y - 20, '#ffd93d', 15);
+        }
+      }
+    }
+
+    // === THE SIMS: Social interactions ===
+    agent.socialTimer -= sdt;
+    if (agent.socialTimer <= 0 && agent.state === 'idle') {
+      // Find nearby agent
+      var nearby = null;
+      var minDist = 80;
+      state.agents.forEach(function(other) {
+        if (other === agent) return;
+        var dx = other.x - agent.x;
+        var dy = other.y - agent.y;
+        var d = Math.sqrt(dx*dx + dy*dy);
+        if (d < minDist && other.state !== 'walking') {
+          minDist = d;
+          nearby = other;
+        }
+      });
+      if (nearby) {
+        agent.socialTarget = nearby;
+        agent.socialTimer = 5 + Math.random() * 5;
+        agent.bubble = '💬';
+        agent.bubbleTimer = 3;
+        // Relationship boost
+        if (agent.relationships[nearby.def.id] !== undefined) {
+          agent.relationships[nearby.def.id] = Math.min(100, agent.relationships[nearby.def.id] + 5);
+        }
+        agent.needs.social = Math.min(100, agent.needs.social + 15);
+        if (nearby.needs) nearby.needs.social = Math.min(100, nearby.needs.social + 10);
+        addFeedItem('<span class="agent">' + agent.def.name + '</span> chatting with <span class="agent">' + nearby.def.name + '</span>');
+      } else {
+        agent.socialTimer = 3 + Math.random() * 5;
+      }
+    }
+
+    // === THE SIMS: Action queue ===
+    if (agent.state === 'idle' && agent.actionQueue.length === 0) {
+      // Generate whims/wants based on needs
+      if (agent.needs && agent.needs.energy < 30) agent.actionQueue.push('💤');
+      if (agent.needs && agent.needs.hunger < 30) agent.actionQueue.push('🍔');
+      if (agent.needs && agent.needs.fun < 30) agent.actionQueue.push('🎮');
+    }
+
+    if (agent.state === 'idle') {
+      agent.waitTimer -= sdt;
+      if (agent.waitTimer <= 0) {
+        // Pick building based on needs (smart Sims behavior)
+        var bldg;
+        if (agent.needs) {
+          var lowestNeed = null, lowestNeedVal = 100;
+          Object.keys(agent.needs).forEach(function(k) {
+            if (agent.needs[k] < lowestNeedVal) { lowestNeedVal = agent.needs[k]; lowestNeed = k; }
+          });
+          // Try to find a building that fulfills the need
+          var needToGroup = { energy: 'infra', social: 'nexus', fun: 'core', hygiene: 'nexus', hunger: 'infra' };
+          var preferredGroup = needToGroup[lowestNeed] || null;
+          var candidates = BUILDINGS.filter(function(b) { return b.service.group === preferredGroup; });
+          if (candidates.length > 0) {
+            bldg = candidates[Math.floor(Math.random() * candidates.length)];
+          }
+        }
+        if (!bldg) bldg = BUILDINGS[Math.floor(Math.random() * BUILDINGS.length)];
+        agent.target = bldg;
+        agent.state = 'walking';
+        // Shift action queue
+        if (agent.actionQueue.length > 0) agent.actionQueue.shift();
+      }
+    }
+
+    if (agent.state === 'walking' && agent.target) {
+      var tx = agent.target.x + agent.target.w / 2;
+      var ty = agent.target.y + agent.target.h + 10;
+      var dx = tx - agent.x;
+      var dy = ty - agent.y;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < 5) {
+        agent.state = 'working';
+        agent.workTimer = 3 + Math.random() * 5;
+        spawnParticles(tx, ty, agent.def.color, 8);
+        addFeedItem('<span class="agent">' + agent.def.name + '</span> arrived at <span class="svc">' + agent.target.service.icon + ' ' + agent.target.service.name + '</span>');
+      } else {
+        var speed = 60 * simSpeed;
+        agent.vx = (dx / dist) * speed;
+        agent.vy = (dy / dist) * speed;
+        agent.x += agent.vx * dt;
+        agent.y += agent.vy * dt;
+
+        if (Math.abs(dx) > Math.abs(dy)) {
+          agent.dir = dx > 0 ? 2 : 1;
+        } else {
+          agent.dir = dy > 0 ? 0 : 3;
+        }
+      }
+    }
+
+    if (agent.state === 'working') {
+      agent.workTimer -= sdt;
+      if (agent.workTimer <= 0) {
+        agent.state = 'idle';
+        agent.waitTimer = 1 + Math.random() * 3;
+      }
+    }
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PARTICLES
+   ═══════════════════════════════════════════════════════════ */
+
+function spawnParticles(x, y, color, count) {
+  if (state.particles.length > 500) return;
+  for (var i = 0; i < count; i++) {
+    state.particles.push({
+      x: x, y: y,
+      vx: (Math.random() - 0.5) * 80,
+      vy: (Math.random() - 0.5) * 80 - 30,
+      life: 1,
+      decay: 0.5 + Math.random() * 1,
+      size: 2 + Math.random() * 3,
+      color: color
+    });
+  }
+}
+
+function updateParticles(dt) {
+  for (var i = state.particles.length - 1; i >= 0; i--) {
+    var p = state.particles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 50 * dt; // gravity
+    p.life -= p.decay * dt;
+    if (p.life <= 0) state.particles.splice(i, 1);
+  }
+}
+
+function drawParticles(ctx) {
+  // Batch by color to reduce state changes
+  var byColor = {};
+  state.particles.forEach(function(p) {
+    if (!byColor[p.color]) byColor[p.color] = [];
+    byColor[p.color].push(p);
+  });
+  Object.keys(byColor).forEach(function(color) {
+    ctx.fillStyle = color;
+    byColor[color].forEach(function(p) {
+      ctx.globalAlpha = p.life;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  });
+  ctx.globalAlpha = 1;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   WORLD RENDERER
+   ═══════════════════════════════════════════════════════════ */
+
+var worldCanvas = document.getElementById('world-canvas');
+var worldCtx = worldCanvas.getContext('2d');
+var minimapCanvas = document.getElementById('minimap-canvas');
+var minimapCtx = minimapCanvas.getContext('2d');
+
+/* Cached gradients — only rebuilt on resize */
+var cachedAtmo = null;
+var cachedVignette = null;
+
+function cacheGradients() {
+  var w = worldCanvas.width, h = worldCanvas.height;
+  cachedAtmo = worldCtx.createRadialGradient(w/2, h/2, 0, w/2, h/2, w * 0.7);
+  cachedAtmo.addColorStop(0, 'rgba(10,20,50,0.3)');
+  cachedAtmo.addColorStop(1, 'rgba(5,5,16,0)');
+  cachedVignette = worldCtx.createRadialGradient(w/2, h/2, w * 0.3, w/2, h/2, w * 0.8);
+  cachedVignette.addColorStop(0, 'transparent');
+  cachedVignette.addColorStop(1, 'rgba(0,0,0,0.6)');
+}
+
+function resizeWorld() {
+  worldCanvas.width = window.innerWidth;
+  worldCanvas.height = window.innerHeight;
+  minimapCanvas.width = 160;
+  minimapCanvas.height = 120;
+  cacheGradients();
+}
+
+function drawGrid(ctx) {
+  ctx.strokeStyle = 'rgba(0,40,100,0.15)';
+  ctx.lineWidth = 1;
+  var step = 60;
+  var cam = state.camera;
+
+  var startX = Math.floor(cam.x / step) * step;
+  var startY = Math.floor(cam.y / step) * step;
+  var endX = startX + worldCanvas.width / cam.zoom + step * 2;
+  var endY = startY + worldCanvas.height / cam.zoom + step * 2;
+
+  for (var x = startX; x < endX; x += step) {
+    ctx.beginPath();
+    ctx.moveTo(x, startY);
+    ctx.lineTo(x, endY);
+    ctx.stroke();
+  }
+  for (var y = startY; y < endY; y += step) {
+    ctx.beginPath();
+    ctx.moveTo(startX, y);
+    ctx.lineTo(endX, y);
+    ctx.stroke();
+  }
+
+  // Grid intersection dots (batched into single path)
+  ctx.fillStyle = 'rgba(0,102,255,0.08)';
+  ctx.beginPath();
+  for (var gx = startX; gx < endX; gx += step) {
+    for (var gy = startY; gy < endY; gy += step) {
+      ctx.moveTo(gx + 1, gy);
+      ctx.arc(gx, gy, 1, 0, Math.PI * 2);
+    }
+  }
+  ctx.fill();
+}
+
+function drawBuilding(ctx, b, time) {
+  var s = b.service;
+  var x = b.x, y = b.y, w = b.w, h = b.h;
+  var isUp = state.healthStatus[s.id] === 'up';
+  var isDown = state.healthStatus[s.id] === 'down';
+
+  // Building shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillRect(x + 4, y + 4, w, h);
+
+  // Building body
+  var bodyGrad = ctx.createLinearGradient(x, y, x, y + h);
+  bodyGrad.addColorStop(0, '#0d1a2e');
+  bodyGrad.addColorStop(1, '#060c18');
+  ctx.fillStyle = bodyGrad;
+  ctx.fillRect(x, y, w, h);
+
+  // Roof accent with theme color
+  ctx.fillStyle = s.color;
+  ctx.globalAlpha = 0.7;
+  ctx.fillRect(x, y, w, 4);
+  ctx.globalAlpha = 1;
+
+  // Neon edge glow (no shadowBlur — too expensive in hot path)
+  ctx.strokeStyle = s.color;
+  ctx.globalAlpha = 0.15;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(x - 1, y - 1, w + 2, h + 2);
+  ctx.globalAlpha = 0.3;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, w, h);
+  ctx.globalAlpha = 1;
+
+  // Border
+  ctx.strokeStyle = isUp ? 'rgba(0,255,136,0.2)' : isDown ? 'rgba(255,51,102,0.3)' : 'rgba(0,102,255,0.15)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, w, h);
+
+  // Window lights with improved flicker
+  b.windowLights.forEach(function(win) {
+    if (!win.on) return;
+    win.flicker += 0.02;
+    if (Math.random() > 0.998) win.on = !win.on;
+    ctx.globalAlpha = 0.4 + Math.sin(win.flicker) * 0.1;
+    ctx.fillStyle = isUp ? '#1a3a5c' : isDown ? '#3a1a1a' : '#1a1a2a';
+    ctx.fillRect(x + win.x, y + win.y, 20, 15);
+    // Window glow
+    if (isUp) {
+      ctx.globalAlpha = 0.08;
+      ctx.fillStyle = s.color;
+      ctx.fillRect(x + win.x - 2, y + win.y - 2, 24, 19);
+    }
+    ctx.globalAlpha = 1;
+  });
+
+  // Glow at base
+  ctx.globalAlpha = 0.1 + Math.sin(time + b.glowPhase) * 0.05;
+  var baseGlow = ctx.createRadialGradient(x + w/2, y + h, 0, x + w/2, y + h, w);
+  baseGlow.addColorStop(0, s.color);
+  baseGlow.addColorStop(1, 'transparent');
+  ctx.fillStyle = baseGlow;
+  ctx.beginPath();
+  ctx.arc(x + w/2, y + h, w, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Icon (no shadowBlur — too expensive)
+  ctx.font = '28px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(s.icon, x + w/2, y + h/2 + 4);
+
+  // Name
+  ctx.font = '10px "Share Tech Mono"';
+  ctx.fillStyle = 'rgba(200,208,224,0.7)';
+  ctx.fillText(s.name, x + w/2, y + h + 14);
+
+  // Status indicator with pulse
+  var statusColor = isUp ? '#00ff88' : isDown ? '#ff3366' : '#555';
+  ctx.fillStyle = statusColor;
+  ctx.beginPath();
+  ctx.arc(x + w - 8, y + 8, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (isUp) {
+    ctx.globalAlpha = 0.3 + Math.sin(time * 3) * 0.1;
+    ctx.fillStyle = statusColor;
+    ctx.beginPath();
+    ctx.arc(x + w - 8, y + 8, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // Data stream lines from building (when up)
+  if (isUp && Math.random() > 0.97) {
+    spawnParticles(x + w/2, y, s.color, 2);
+  }
+}
+
+function drawRoads(ctx, time) {
+  // Data highways with pulsing glow
+  for (var i = 0; i < BUILDINGS.length - 1; i++) {
+    var a = BUILDINGS[i], b = BUILDINGS[i + 1];
+    var ax = a.x + a.w/2, ay = a.y + a.h + 20;
+    var bx = b.x + b.w/2, by = b.y + b.h + 20;
+
+    // Road base
+    ctx.strokeStyle = 'rgba(0,40,80,0.3)';
+    ctx.lineWidth = 20;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+
+    // Pulsing data line
+    var pulse = (Math.sin(time * 2 + i) + 1) / 2;
+    ctx.strokeStyle = a.service.color;
+    ctx.globalAlpha = 0.1 + pulse * 0.15;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Traveling data dot
+    var dotT = ((time * 0.3 + i * 0.1) % 1);
+    var dotX = ax + (bx - ax) * dotT;
+    var dotY = ay + (by - ay) * dotT;
+    ctx.fillStyle = a.service.color;
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath();
+    ctx.arc(dotX, dotY, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // Road markings
+  ctx.strokeStyle = 'rgba(0,80,160,0.15)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([8, 12]);
+  for (var j = 0; j < BUILDINGS.length - 1; j++) {
+    var c = BUILDINGS[j], d = BUILDINGS[j + 1];
+    ctx.beginPath();
+    ctx.moveTo(c.x + c.w/2, c.y + c.h + 20);
+    ctx.lineTo(d.x + d.w/2, d.y + d.h + 20);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+}
+
+function drawWorld() {
+  var ctx = worldCtx;
+  var w = worldCanvas.width;
+  var h = worldCanvas.height;
+  var cam = state.camera;
+  var time = state.time;
+
+  // Clear
+  ctx.fillStyle = '#050510';
+  ctx.fillRect(0, 0, w, h);
+
+  // Atmospheric gradient (cached)
+  ctx.fillStyle = cachedAtmo;
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.save();
+  ctx.scale(cam.zoom, cam.zoom);
+  ctx.translate(-cam.x, -cam.y);
+
+  // Sky (stars, clouds, moon)
+  drawSky(ctx, time);
+
+  // Grid
+  drawGrid(ctx);
+
+  // River
+  drawRiver(ctx, time);
+
+  // Roads
+  drawRoads(ctx, time);
+
+  // Street lights
+  drawStreetLights(ctx, time);
+
+  // Trees
+  drawTrees(ctx, time);
+
+  // Buildings
+  BUILDINGS.forEach(function(b) {
+    drawBuilding(ctx, b, time);
+    drawBuildingFloors(ctx, b, time);
+    drawDisasterEffects(ctx, b, time);
+  });
+
+  // Neon signs
+  drawNeonSigns(ctx, time);
+
+  // Industrial smoke
+  BUILDINGS.forEach(function(b) {
+    if (b.service.group === 'infra' && state.healthStatus[b.service.id] === 'up' && Math.random() > 0.96) {
+      spawnSmoke(b);
+    }
+  });
+  drawSmoke(ctx);
+
+  // Vehicles
+  drawVehicles(ctx, time);
+
+  // Traffic (data flow)
+  drawTraffic(ctx);
+
+  // Pedestrians
+  drawPedestrians(ctx, time);
+
+  // Connection lines from agents to their targets
+  state.agents.forEach(function(agent) {
+    if (agent.target && agent.state === 'walking') {
+      var tx = agent.target.x + agent.target.w / 2;
+      var ty = agent.target.y + agent.target.h / 2;
+      ctx.strokeStyle = agent.def.color;
+      ctx.globalAlpha = 0.1;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 8]);
+      ctx.beginPath();
+      ctx.moveTo(agent.x, agent.y);
+      ctx.lineTo(tx, ty);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
+  });
+
+  // Particles
+  drawParticles(ctx);
+
+  // Agents
+  state.agents.forEach(function(agent) {
+    drawAgent(ctx, agent);
+  });
+
+  // Ambient floating particles
+  var themeParticle = state.themeParticle;
+  for (var i = 0; i < 40; i++) {
+    var px = (Math.sin(time * 0.3 + i * 1.7) * 0.5 + 0.5) * state.worldW;
+    var py = (Math.cos(time * 0.2 + i * 2.3) * 0.5 + 0.5) * state.worldH;
+    var size = 1 + Math.sin(time * 0.5 + i) * 0.5;
+    ctx.globalAlpha = 0.1 + Math.sin(time + i) * 0.05;
+    ctx.fillStyle = themeParticle;
+    ctx.beginPath();
+    ctx.arc(px, py, size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Weather (rain/fog)
+  drawWeather(ctx);
+
+  ctx.restore();
+
+  // Vignette (cached)
+  ctx.fillStyle = cachedVignette;
+  ctx.fillRect(0, 0, w, h);
+}
+
+function drawMinimap() {
+  var ctx = minimapCtx;
+  var w = 160, h = 120;
+  var scaleX = w / state.worldW;
+  var scaleY = h / state.worldH;
+
+  ctx.fillStyle = 'rgba(5,5,16,0.9)';
+  ctx.fillRect(0, 0, w, h);
+
+  // Buildings as dots
+  BUILDINGS.forEach(function(b) {
+    var isUp = state.healthStatus[b.service.id] === 'up';
+    ctx.fillStyle = isUp ? '#00ff88' : '#ff3366';
+    ctx.globalAlpha = 0.6;
+    ctx.fillRect(b.x * scaleX, b.y * scaleY, 4, 3);
+  });
+
+  // Agents as bright dots
+  state.agents.forEach(function(a) {
+    ctx.fillStyle = a.def.color;
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(a.x * scaleX, a.y * scaleY, 2, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Camera viewport
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = 1;
+  ctx.strokeRect(
+    state.camera.x * scaleX,
+    state.camera.y * scaleY,
+    (worldCanvas.width / state.camera.zoom) * scaleX,
+    (worldCanvas.height / state.camera.zoom) * scaleY
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   HUD & STATUS STRIP
+   ═══════════════════════════════════════════════════════════ */
+
+function updateHUD() {
+  var now = new Date();
+  dom.hudClock.textContent = now.toLocaleTimeString('en-US', { hour12: false }) + ' ' +
+    now.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+}
+
+function renderStrip() {
+  var strip = dom.stripInner;
+  var items = strip.querySelectorAll('.strip-item');
+  if (items.length !== SERVICES.length) {
+    // First render — build DOM
+    strip.innerHTML = '';
+    SERVICES.forEach(function(s) {
+      var isUp = state.healthStatus[s.id] === 'up';
+      var isDown = state.healthStatus[s.id] === 'down';
+      var dotClass = isUp ? 'up' : isDown ? 'down' : '';
+
+      var item = document.createElement('div');
+      item.className = 'strip-item';
+      item.innerHTML = '<span class="strip-dot ' + dotClass + '"></span>' +
+        '<span class="strip-name">' + s.icon + ' ' + s.name + '</span>';
+      item.addEventListener('click', function() {
+        showInfo(s);
+        // Pan camera to building
+        var bldg = BUILDINGS.find(function(b) { return b.service.id === s.id; });
+        if (bldg) {
+          state.camera.x = bldg.x - worldCanvas.width / (2 * state.camera.zoom) + bldg.w / 2;
+          state.camera.y = bldg.y - worldCanvas.height / (2 * state.camera.zoom) + bldg.h / 2;
+        }
+      });
+      strip.appendChild(item);
+    });
+  } else {
+    // Update existing dots only
+    SERVICES.forEach(function(s, i) {
+      var dot = items[i].querySelector('.strip-dot');
+      var isUp = state.healthStatus[s.id] === 'up';
+      var isDown = state.healthStatus[s.id] === 'down';
+      dot.className = 'strip-dot' + (isUp ? ' up' : isDown ? ' down' : '');
+    });
+  }
+}
+
+function showInfo(service) {
+  var panel = dom.infoPanel;
+  var title = dom.infoTitle;
+  var body = dom.infoBody;
+
+  title.textContent = service.icon + ' ' + service.name;
+
+  var isUp = state.healthStatus[service.id] === 'up';
+  var statusText = isUp ? 'ONLINE' : state.healthStatus[service.id] === 'down' ? 'OFFLINE' : 'CHECKING';
+  var statusColor = isUp ? 'var(--neon-green)' : 'var(--neon-pink)';
+
+  // Find agents heading here
+  var agentsHere = state.agents.filter(function(a) {
+    return a.target && a.target.service.id === service.id;
+  });
+
+  var html = '<div class="info-row"><span class="info-label">Status</span>' +
+    '<span class="info-value" style="color:' + statusColor + '">' + statusText + '</span></div>' +
+    '<div class="info-row"><span class="info-label">Port</span>' +
+    '<span class="info-value">:' + (service.port || 'N/A') + '</span></div>' +
+    '<div class="info-row"><span class="info-label">Group</span>' +
+    '<span class="info-value">' + service.group + '</span></div>' +
+    '<div class="info-row"><span class="info-label">Description</span>' +
+    '<span class="info-value">' + service.desc + '</span></div>';
+
+  if (agentsHere.length > 0) {
+    html += '<div style="margin-top:12px;font-size:11px;color:rgba(200,208,224,0.5);letter-spacing:1px">AGENTS</div>';
+    agentsHere.forEach(function(a) {
+      html += '<div class="info-row"><span class="info-value" style="color:' + a.def.color + '">' +
+        a.def.name + '</span><span class="info-label">' + a.def.role + ' — ' + a.state + '</span></div>';
+      // Sims: show needs
+      if (a.needs) {
+        html += '<div style="margin:4px 0 8px;font-size:10px">';
+        var needIcons = { energy: '⚡', social: '💬', fun: '🎮', hygiene: '🚿', hunger: '🍔' };
+        Object.keys(a.needs).forEach(function(k) {
+          var val = Math.round(a.needs[k]);
+          var color = val > 60 ? '#00ff88' : val > 30 ? '#ffd93d' : '#ff3366';
+          html += '<div style="display:flex;align-items:center;gap:4px;margin:2px 0">' +
+            '<span style="width:12px">' + (needIcons[k] || '') + '</span>' +
+            '<span style="width:40px;color:rgba(200,208,224,0.5);font-size:9px">' + k + '</span>' +
+            '<div style="flex:1;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden">' +
+            '<div style="height:100%;width:' + val + '%;background:' + color + ';border-radius:2px"></div></div>' +
+            '<span style="width:24px;text-align:right;font-size:9px;color:' + color + '">' + val + '</span></div>';
+        });
+        html += '</div>';
+        // Mood
+        var moodEmoji = a.mood >= 75 ? '😊' : a.mood >= 40 ? '😐' : '😟';
+        html += '<div class="info-row"><span class="info-label">Mood</span><span class="info-value">' + moodEmoji + ' ' + Math.round(a.mood) + '</span></div>';
+        // Skill
+        html += '<div class="info-row"><span class="info-label">Skill</span><span class="info-value">' + a.skill + ' Lv.' + a.skillLevel + '</span></div>';
+      }
+    });
+  }
+
+  body.innerHTML = html;
+  panel.classList.add('visible');
+}
+
+/* ═══════════════════════════════════════════════════════════
+   HEALTH CHECKS
+   ═══════════════════════════════════════════════════════════ */
+
+function checkHealth(s) {
+  var url;
+  if (s.port === null) return Promise.resolve('unknown');
+  url = 'http://localhost:' + s.port + '/health';
+  var controller = new AbortController();
+  var timeout = setTimeout(function() { controller.abort(); }, 4000);
+  return fetch(url, { method: 'GET', mode: 'no-cors', signal: controller.signal })
+    .then(function() { clearTimeout(timeout); return 'up'; })
+    .catch(function() { clearTimeout(timeout); return 'down'; });
+}
+
+function pollHealth() {
+  Promise.all(SERVICES.map(function(s) {
+    return checkHealth(s).then(function(status) {
+      var prev = state.healthStatus[s.id];
+      state.healthStatus[s.id] = status;
+      // Detect state changes for activity feed
+      if (prev && prev !== status) {
+        if (status === 'up') {
+          addFeedItem('<span class="svc">' + s.icon + ' ' + s.name + '</span> is <span class="up">back online</span>');
+        } else if (status === 'down') {
+          addFeedItem('<span class="svc">' + s.icon + ' ' + s.name + '</span> went <span class="down">offline</span>');
+        }
+      }
+    });
+  })).then(function() {
+    renderStrip();
+    renderUptimeBar();
+  }).catch(function() {
+    renderStrip();
+    renderUptimeBar();
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   INPUT
+   ═══════════════════════════════════════════════════════════ */
+
+function setupInput() {
+  var canvas = worldCanvas;
+
+  canvas.addEventListener('mousedown', function(e) {
+    if (e.button === 0) {
+      state.mouse.down = true;
+      state.mouse.dragStart = { x: e.clientX, y: e.clientY, camX: state.camera.x, camY: state.camera.y };
+    }
+  });
+
+  canvas.addEventListener('mousemove', function(e) {
+    state.mouse.x = e.clientX;
+    state.mouse.y = e.clientY;
+    if (state.mouse.down && state.mouse.dragStart) {
+      var dx = (e.clientX - state.mouse.dragStart.x) / state.camera.zoom;
+      var dy = (e.clientY - state.mouse.dragStart.y) / state.camera.zoom;
+      state.camera.x = state.mouse.dragStart.camX - dx;
+      state.camera.y = state.mouse.dragStart.camY - dy;
+    }
+    // Building tooltips
+    updateBuildingTooltip(e);
+  });
+
+  canvas.addEventListener('mouseup', function() {
+    state.mouse.down = false;
+    state.mouse.dragStart = null;
+  });
+
+  canvas.addEventListener('wheel', function(e) {
+    e.preventDefault();
+    var zoomSpeed = 0.1;
+    var oldZoom = state.camera.zoom;
+    if (e.deltaY < 0) {
+      state.camera.zoom = Math.min(3, state.camera.zoom * (1 + zoomSpeed));
+    } else {
+      state.camera.zoom = Math.max(0.3, state.camera.zoom * (1 - zoomSpeed));
+    }
+    // Zoom toward mouse
+    var zoomRatio = state.camera.zoom / oldZoom;
+    state.camera.x += (state.mouse.x / oldZoom) - (state.mouse.x / state.camera.zoom);
+    state.camera.y += (state.mouse.y / oldZoom) - (state.mouse.y / state.camera.zoom);
+  });
+
+  canvas.addEventListener('click', function(e) {
+    // Check if clicked on a building
+    var wx = state.camera.x + e.clientX / state.camera.zoom;
+    var wy = state.camera.y + e.clientY / state.camera.zoom;
+
+    for (var i = 0; i < BUILDINGS.length; i++) {
+      var b = BUILDINGS[i];
+      if (wx >= b.x && wx <= b.x + b.w && wy >= b.y && wy <= b.y + b.h) {
+        showInfo(b.service);
+        return;
+      }
+    }
+
+    // Check agents
+    for (var j = 0; j < state.agents.length; j++) {
+      var a = state.agents[j];
+      if (Math.abs(wx - a.x) < 15 && Math.abs(wy - a.y) < 20) {
+        showInfo(a.def);
+        return;
+      }
+    }
+
+    dom.infoPanel.classList.remove('visible');
+  });
+
+  // Keyboard
+  document.addEventListener('keydown', function(e) {
+    // Command palette
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      if (cmdOpen) closeCmdPalette();
+      else openCmdPalette();
+      return;
+    }
+
+    // Command palette navigation
+    if (cmdOpen) {
+      var results = document.getElementById('cmd-results');
+      var items = results._items || [];
+      if (e.key === 'Escape') { closeCmdPalette(); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); cmdSelected = Math.min(cmdSelected + 1, items.length - 1); renderCmdResults(document.getElementById('cmd-input').value); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); cmdSelected = Math.max(cmdSelected - 1, 0); renderCmdResults(document.getElementById('cmd-input').value); return; }
+      if (e.key === 'Enter' && items[cmdSelected]) { closeCmdPalette(); items[cmdSelected].action(); return; }
+      return;
+    }
+
+    // Help overlay
+    if (e.key === '?' && !e.ctrlKey && !e.metaKey) {
+      toggleHelp();
+      return;
+    }
+
+    if (e.key === 'Escape') {
+      dom.infoPanel.classList.remove('visible');
+      document.getElementById('help-overlay').classList.remove('open');
+      closeCmdPalette();
+    }
+    if (e.key === ' ') {
+      e.preventDefault();
+      centerOnOwl();
+    }
+
+    // Number keys 1-9 jump to services
+    if (e.key >= '1' && e.key <= '9' && !e.ctrlKey && !e.metaKey) {
+      var idx = parseInt(e.key) - 1;
+      if (idx < SERVICES.length) {
+        var bldg = BUILDINGS[idx];
+        if (bldg) {
+          state.camera.x = bldg.x - worldCanvas.width / (2 * state.camera.zoom) + bldg.w / 2;
+          state.camera.y = bldg.y - worldCanvas.height / (2 * state.camera.zoom) + bldg.h / 2;
+          showInfo(bldg.service);
+        }
+      }
+    }
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   AUDIO — Ambient lofi
+   ═══════════════════════════════════════════════════════════ */
+
+var audioCtx = null;
+var lofiPlaying = false;
+
+function createAmbientAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+
+  // Create a lofi ambient drone
+  var osc1 = audioCtx.createOscillator();
+  var osc2 = audioCtx.createOscillator();
+  var osc3 = audioCtx.createOscillator();
+  var gain = audioCtx.createGain();
+  var filter = audioCtx.createBiquadFilter();
+
+  osc1.type = 'sine';
+  osc1.frequency.value = 55; // A1
+  osc2.type = 'sine';
+  osc2.frequency.value = 82.41; // E2
+  osc3.type = 'triangle';
+  osc3.frequency.value = 110; // A2
+
+  filter.type = 'lowpass';
+  filter.frequency.value = 200;
+  filter.Q.value = 1;
+
+  gain.gain.value = 0.06;
+
+  osc1.connect(filter);
+  osc2.connect(filter);
+  osc3.connect(filter);
+  filter.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  osc1.start();
+  osc2.start();
+  osc3.start();
+
+  // Slow modulation
+  var lfo = audioCtx.createOscillator();
+  var lfoGain = audioCtx.createGain();
+  lfo.frequency.value = 0.1;
+  lfoGain.gain.value = 30;
+  lfo.connect(lfoGain);
+  lfoGain.connect(filter.frequency);
+  lfo.start();
+}
+
+document.getElementById('lofi-btn').addEventListener('click', function() {
+  if (!lofiPlaying) {
+    createAmbientAudio();
+    this.classList.add('playing');
+    this.setAttribute('aria-pressed', 'true');
+    lofiPlaying = true;
+  } else {
+    if (audioCtx) audioCtx.close();
+    audioCtx = null;
+    this.classList.remove('playing');
+    this.setAttribute('aria-pressed', 'false');
+    lofiPlaying = false;
+  }
 });
 
-// Clock
-setInterval(()=>{
-document.getElementById("clock").textContent=new Date().toLocaleString();
-},1000);
+/* ═══════════════════════════════════════════════════════════
+   COMMAND PALETTE (Ctrl+K)
+   ═══════════════════════════════════════════════════════════ */
+var cmdOpen = false;
+var cmdSelected = 0;
+
+function openCmdPalette() {
+  var el = document.getElementById('cmd-palette');
+  el.classList.add('open');
+  cmdOpen = true;
+  cmdSelected = 0;
+  var input = document.getElementById('cmd-input');
+  input.value = '';
+  input.focus();
+  renderCmdResults('');
+}
+
+function closeCmdPalette() {
+  document.getElementById('cmd-palette').classList.remove('open');
+  cmdOpen = false;
+}
+
+function renderCmdResults(query) {
+  var results = document.getElementById('cmd-results');
+  var items = [];
+  var q = query.toLowerCase();
+
+  // Services
+  SERVICES.forEach(function(s, i) {
+    if (!q || s.name.toLowerCase().includes(q) || s.desc.toLowerCase().includes(q) || s.group.includes(q)) {
+      var isUp = state.healthStatus[s.id] === 'up';
+      items.push({
+        icon: s.icon,
+        name: s.name,
+        desc: s.desc,
+        badge: s.group.toUpperCase(),
+        status: isUp ? 'up' : 'down',
+        action: function() {
+          showInfo(s);
+          var bldg = BUILDINGS.find(function(b) { return b.service.id === s.id; });
+          if (bldg) {
+            state.camera.x = bldg.x - worldCanvas.width / (2 * state.camera.zoom) + bldg.w / 2;
+            state.camera.y = bldg.y - worldCanvas.height / (2 * state.camera.zoom) + bldg.h / 2;
+          }
+        }
+      });
+    }
+  });
+
+  // Agents
+  state.agents.forEach(function(a) {
+    if (!q || a.def.name.toLowerCase().includes(q) || a.def.role.toLowerCase().includes(q)) {
+      items.push({
+        icon: '🤖',
+        name: a.def.name,
+        desc: a.def.role + ' — ' + a.state,
+        badge: 'AGENT',
+        action: function() {
+          state.camera.x = a.x - worldCanvas.width / (2 * state.camera.zoom);
+          state.camera.y = a.y - worldCanvas.height / (2 * state.camera.zoom);
+        }
+      });
+    }
+  });
+
+  // Actions
+  if (!q || 'theme'.includes(q) || 'switch theme'.includes(q)) {
+    items.push({ icon: '🎨', name: 'Switch Theme', desc: 'Change the dashboard theme', badge: 'ACTION', action: function() { document.getElementById('theme-grid').classList.toggle('open'); } });
+  }
+  if (!q || 'lofi'.includes(q) || 'music'.includes(q) || 'audio'.includes(q)) {
+    items.push({ icon: '♫', name: 'Toggle Lofi', desc: 'Ambient audio on/off', badge: 'ACTION', action: function() { document.getElementById('lofi-btn').click(); } });
+  }
+  if (!q || 'help'.includes(q) || 'keyboard'.includes(q) || 'shortcut'.includes(q)) {
+    items.push({ icon: '⌨️', name: 'Keyboard Shortcuts', desc: 'Show all shortcuts', badge: 'ACTION', action: function() { document.getElementById('help-overlay').classList.toggle('open'); } });
+  }
+  if (!q || 'owl'.includes(q) || 'center'.includes(q)) {
+    items.push({ icon: '🦉', name: 'Center on OWL', desc: 'Find the core AI agent', badge: 'ACTION', action: function() { centerOnOwl(); } });
+  }
+
+  results.innerHTML = '';
+  items.forEach(function(item, i) {
+    var div = document.createElement('div');
+    div.className = 'cmd-item' + (i === cmdSelected ? ' active' : '');
+    var statusDot = item.status ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:' + (item.status === 'up' ? 'var(--neon-green)' : 'var(--neon-pink)') + ';margin-left:4px"></span>' : '';
+    div.innerHTML = '<span class="cmd-item-icon">' + item.icon + '</span>' +
+      '<span class="cmd-item-name">' + item.name + statusDot + '</span>' +
+      '<span class="cmd-item-desc">' + item.desc + '</span>' +
+      '<span class="cmd-item-badge">' + item.badge + '</span>';
+    div.addEventListener('click', function() {
+      closeCmdPalette();
+      item.action();
+    });
+    results.appendChild(div);
+  });
+
+  // Store items for keyboard nav
+  results._items = items;
+}
+
+document.getElementById('cmd-input').addEventListener('input', function(e) {
+  cmdSelected = 0;
+  renderCmdResults(e.target.value);
+});
+
+document.getElementById('cmd-palette').addEventListener('click', function(e) {
+  if (e.target.classList.contains('cmd-backdrop')) closeCmdPalette();
+});
+
+/* ═══════════════════════════════════════════════════════════
+   ACTIVITY FEED
+   ═══════════════════════════════════════════════════════════ */
+var feedItems = [];
+var feedCollapsed = false;
+var MAX_FEED_ITEMS = 50;
+
+function addFeedItem(html) {
+  var now = new Date();
+  var time = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  feedItems.unshift({ time: time, html: html });
+  if (feedItems.length > MAX_FEED_ITEMS) feedItems.pop();
+  renderFeed();
+}
+
+function renderFeed() {
+  var list = document.getElementById('feed-list');
+  list.innerHTML = '';
+  feedItems.slice(0, 20).forEach(function(item) {
+    var div = document.createElement('div');
+    div.className = 'feed-item';
+    div.innerHTML = '<span class="feed-time">' + item.time + '</span><span class="feed-msg">' + item.html + '</span>';
+    list.appendChild(div);
+  });
+}
+
+document.getElementById('feed-toggle').addEventListener('click', function(e) {
+  e.stopPropagation();
+  feedCollapsed = !feedCollapsed;
+  this.classList.toggle('collapsed', feedCollapsed);
+  document.getElementById('feed-list').classList.toggle('collapsed', feedCollapsed);
+});
+
+document.querySelector('.feed-header').addEventListener('click', function() {
+  feedCollapsed = !feedCollapsed;
+  document.getElementById('feed-toggle').classList.toggle('collapsed', feedCollapsed);
+  document.getElementById('feed-list').classList.toggle('collapsed', feedCollapsed);
+});
+
+/* ═══════════════════════════════════════════════════════════
+   AGENT CARDS
+   ═══════════════════════════════════════════════════════════ */
+function renderAgentCards() {
+  var container = document.getElementById('agent-cards');
+  if (container.children.length === 0) {
+    // Build cards once
+    state.agents.forEach(function(a) {
+      var card = document.createElement('div');
+      card.className = 'agent-card';
+      card.innerHTML = '<span class="agent-card-dot" style="background:' + a.def.color + ';box-shadow:0 0 6px ' + a.def.color + '"></span>' +
+        '<span class="agent-card-name">' + a.def.name + '</span>' +
+        '<span class="agent-card-status" id="agent-status-' + a.def.id + '">' + a.state + '</span>';
+      card.addEventListener('click', function() {
+        state.camera.x = a.x - worldCanvas.width / (2 * state.camera.zoom);
+        state.camera.y = a.y - worldCanvas.height / (2 * state.camera.zoom);
+        showInfo(a.def);
+      });
+      container.appendChild(card);
+    });
+  } else {
+    // Update status text
+    state.agents.forEach(function(a) {
+      var el = document.getElementById('agent-status-' + a.def.id);
+      if (el) {
+        var statusText = a.state;
+        if (a.state === 'working' && a.target) statusText = '→ ' + a.target.service.name;
+        if (a.state === 'walking' && a.target) statusText = 'walking to ' + a.target.service.name;
+        el.textContent = statusText;
+      }
+    });
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   UPTIME BAR
+   ═══════════════════════════════════════════════════════════ */
+function renderUptimeBar() {
+  var bar = document.getElementById('uptime-bar');
+  if (bar.children.length === 0) {
+    SERVICES.forEach(function(s) {
+      var seg = document.createElement('div');
+      seg.className = 'uptime-segment';
+      seg.id = 'uptime-' + s.id;
+      seg.title = s.name;
+      bar.appendChild(seg);
+    });
+  }
+  SERVICES.forEach(function(s) {
+    var seg = document.getElementById('uptime-' + s.id);
+    if (seg) {
+      var isUp = state.healthStatus[s.id] === 'up';
+      var isDown = state.healthStatus[s.id] === 'down';
+      seg.style.background = isUp ? 'var(--neon-green)' : isDown ? 'var(--neon-pink)' : 'rgba(255,255,255,0.1)';
+    }
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   BUILDING TOOLTIPS
+   ═══════════════════════════════════════════════════════════ */
+function updateBuildingTooltip(e) {
+  var tooltip = document.getElementById('building-tooltip');
+  if (!state.booted) { tooltip.style.display = 'none'; return; }
+
+  var wx = state.camera.x + e.clientX / state.camera.zoom;
+  var wy = state.camera.y + e.clientY / state.camera.zoom;
+
+  for (var i = 0; i < BUILDINGS.length; i++) {
+    var b = BUILDINGS[i];
+    if (wx >= b.x && wx <= b.x + b.w && wy >= b.y && wy <= b.y + b.h) {
+      var isUp = state.healthStatus[b.service.id] === 'up';
+      var isDown = state.healthStatus[b.service.id] === 'down';
+      tooltip.querySelector('.tt-name').textContent = b.service.icon + ' ' + b.service.name;
+      tooltip.querySelector('.tt-desc').textContent = b.service.desc;
+      tooltip.querySelector('.tt-status').innerHTML = isUp ? '<span style="color:var(--neon-green)">● ONLINE</span>' : isDown ? '<span style="color:var(--neon-pink)">● OFFLINE</span>' : '<span style="color:#555">● CHECKING</span>';
+      tooltip.style.display = 'block';
+      tooltip.style.left = (e.clientX + 16) + 'px';
+      tooltip.style.top = (e.clientY - 10) + 'px';
+      // Keep tooltip on screen
+      var rect = tooltip.getBoundingClientRect();
+      if (rect.right > window.innerWidth) tooltip.style.left = (e.clientX - rect.width - 16) + 'px';
+      if (rect.bottom > window.innerHeight) tooltip.style.top = (e.clientY - rect.height - 10) + 'px';
+      worldCanvas.style.cursor = 'pointer';
+      return;
+    }
+  }
+
+  // Check agents
+  for (var j = 0; j < state.agents.length; j++) {
+    var a = state.agents[j];
+    if (Math.abs(wx - a.x) < 15 && Math.abs(wy - a.y) < 20) {
+      tooltip.querySelector('.tt-name').textContent = '🤖 ' + a.def.name;
+      tooltip.querySelector('.tt-desc').textContent = a.def.role;
+      var statusText = a.state;
+      if (a.state === 'working' && a.target) statusText = 'Working at ' + a.target.service.name;
+      if (a.state === 'walking' && a.target) statusText = 'Heading to ' + a.target.service.name;
+      tooltip.querySelector('.tt-status').innerHTML = '<span style="color:' + a.def.color + '">' + statusText + '</span>';
+      tooltip.style.display = 'block';
+      tooltip.style.left = (e.clientX + 16) + 'px';
+      tooltip.style.top = (e.clientY - 10) + 'px';
+      worldCanvas.style.cursor = 'pointer';
+      return;
+    }
+  }
+
+  tooltip.style.display = 'none';
+  worldCanvas.style.cursor = 'grab';
+}
+
+/* ═══════════════════════════════════════════════════════════
+   HELP OVERLAY
+   ═══════════════════════════════════════════════════════════ */
+function toggleHelp() {
+  document.getElementById('help-overlay').classList.toggle('open');
+}
+
+function initSpeedControls() {
+  state.simSpeed = 1;
+  document.querySelectorAll('.speed-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var speed = parseInt(this.getAttribute('data-speed'));
+      state.simSpeed = speed;
+      document.querySelectorAll('.speed-btn').forEach(function(b) { b.classList.remove('active'); });
+      this.classList.add('active');
+      addFeedItem('⏩ Speed: <span class="agent">' + (speed === 0 ? 'PAUSED' : speed + 'x') + '</span>');
+    });
+  });
+}
+
+function centerOnOwl() {
+  var owl = state.agents.find(function(a) { return a.def.id === 'owl'; });
+  if (owl) {
+    state.camera.x = owl.x - worldCanvas.width / (2 * state.camera.zoom);
+    state.camera.y = owl.y - worldCanvas.height / (2 * state.camera.zoom);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SIMCITY SYSTEMS
+   ═══════════════════════════════════════════════════════════ */
+
+// Zone colors per service group
+var ZONE_COLORS = {
+  core:   { base: '#0d1a3a', accent: '#4488ff', label: 'COMMERCIAL' },
+  infra:  { base: '#1a1a0d', accent: '#ffd93d', label: 'INDUSTRIAL' },
+  nexus:  { base: '#0d1a10', accent: '#00ff88', label: 'RESIDENTIAL' },
+  pi:     { base: '#1a0d14', accent: '#ff6b9d', label: 'RURAL' }
+};
+
+// Building evolution: floors grow when service is healthy
+var buildingFloors = {};
+var buildingUptime = {};
+var buildingDisaster = {};
+var trafficDots = [];
+
+function initSimCity() {
+  BUILDINGS.forEach(function(b) {
+    buildingFloors[b.service.id] = 0;
+    buildingUptime[b.service.id] = 0;
+    buildingDisaster[b.service.id] = false;
+  });
+}
+
+function updateSimCity(dt) {
+  // Update building evolution
+  BUILDINGS.forEach(function(b) {
+    var id = b.service.id;
+    var isUp = state.healthStatus[id] === 'up';
+    var isDown = state.healthStatus[id] === 'down';
+
+    if (isUp) {
+      buildingUptime[id] = Math.min(buildingUptime[id] + dt * 0.1, 100);
+      // Grow floors every 20% uptime
+      var targetFloors = Math.floor(buildingUptime[id] / 20);
+      if (buildingFloors[id] < targetFloors) {
+        buildingFloors[id] = targetFloors;
+        // Upgrade sparkle
+        spawnParticles(b.x + b.w/2, b.y, b.service.color, 12);
+        addFeedItem('<span class="svc">' + b.service.icon + ' ' + b.service.name + '</span> upgraded to <span class="up">Lv.' + targetFloors + '</span>');
+      }
+      buildingDisaster[id] = false;
+    } else if (isDown) {
+      buildingUptime[id] = Math.max(buildingUptime[id] - dt * 2, 0);
+      buildingFloors[id] = Math.max(0, buildingFloors[id] - 1);
+      // Disaster!
+      if (!buildingDisaster[id]) {
+        buildingDisaster[id] = true;
+        addFeedItem('🚨 <span class="svc">' + b.service.icon + ' ' + b.service.name + '</span> <span class="down">DISASTER!</span>');
+      }
+    }
+  });
+
+  // Update traffic dots
+  updateTraffic(dt);
+
+  // Update day/night
+  updateDayNight();
+}
+
+function updateTraffic(dt) {
+  // Spawn traffic between adjacent buildings
+  if (Math.random() > 0.95 && BUILDINGS.length > 1) {
+    var a = BUILDINGS[Math.floor(Math.random() * BUILDINGS.length)];
+    var b = BUILDINGS[Math.floor(Math.random() * BUILDINGS.length)];
+    if (a !== b) {
+      var isUpA = state.healthStatus[a.service.id] === 'up';
+      var isUpB = state.healthStatus[b.service.id] === 'up';
+      if (isUpA && isUpB) {
+        trafficDots.push({
+          x: a.x + a.w/2,
+          y: a.y + a.h + 20,
+          tx: b.x + b.w/2,
+          ty: b.y + b.h + 20,
+          t: 0,
+          speed: 0.3 + Math.random() * 0.4,
+          color: a.service.color,
+          size: 2 + Math.random() * 2
+        });
+      }
+    }
+  }
+
+  // Update existing traffic
+  for (var i = trafficDots.length - 1; i >= 0; i--) {
+    var d = trafficDots[i];
+    d.t += d.speed * dt;
+    d.x = d.x + (d.tx - d.x) * d.speed * dt * 2;
+    d.y = d.y + (d.ty - d.y) * d.speed * dt * 2;
+    if (d.t > 1) trafficDots.splice(i, 1);
+  }
+
+  // Cap traffic
+  if (trafficDots.length > 100) trafficDots.splice(0, trafficDots.length - 100);
+}
+
+function drawTraffic(ctx) {
+  trafficDots.forEach(function(d) {
+    ctx.globalAlpha = 0.6 * (1 - d.t);
+    ctx.fillStyle = d.color;
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, d.size, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawBuildingFloors(ctx, b, time) {
+  var floors = buildingFloors[b.service.id] || 0;
+  if (floors <= 0) return;
+
+  var s = b.service;
+  var x = b.x, y = b.y, w = b.w;
+
+  // Draw floors on top of building
+  for (var f = 0; f < floors; f++) {
+    var floorH = 12;
+    var floorY = y - (f + 1) * floorH;
+    var floorW = w - f * 4;
+    var floorX = x + (w - floorW) / 2;
+
+    // Floor body
+    ctx.fillStyle = '#0d1a2e';
+    ctx.fillRect(floorX, floorY, floorW, floorH);
+
+    // Floor accent
+    ctx.fillStyle = s.color;
+    ctx.globalAlpha = 0.4 + Math.sin(time * 2 + f) * 0.1;
+    ctx.fillRect(floorX, floorY, floorW, 2);
+    ctx.globalAlpha = 1;
+
+    // Windows
+    var winCount = Math.floor(floorW / 16);
+    for (var wi = 0; wi < winCount; wi++) {
+      var wx = floorX + 4 + wi * 16;
+      ctx.fillStyle = Math.random() > 0.3 ? 'rgba(255,255,200,0.3)' : 'rgba(0,0,0,0.3)';
+      ctx.fillRect(wx, floorY + 4, 10, 6);
+    }
+  }
+
+  // Level indicator
+  if (floors > 0) {
+    ctx.font = '8px "Share Tech Mono"';
+    ctx.fillStyle = s.color;
+    ctx.textAlign = 'right';
+    ctx.fillText('Lv.' + floors, x + w - 4, y - floors * 12 - 4);
+    ctx.textAlign = 'left';
+  }
+}
+
+function drawDisasterEffects(ctx, b, time) {
+  if (!buildingDisaster[b.service.id]) return;
+
+  var x = b.x + b.w/2, y = b.y;
+
+  // Smoke/fire particles
+  for (var i = 0; i < 5; i++) {
+    var px = x + Math.sin(time * 3 + i * 1.5) * 15;
+    var py = y - 10 - i * 12 - Math.sin(time * 2 + i) * 5;
+    var alpha = 0.4 - i * 0.08;
+    ctx.globalAlpha = Math.max(0, alpha);
+    ctx.fillStyle = i < 2 ? '#ff4444' : '#666';
+    ctx.beginPath();
+    ctx.arc(px, py, 4 + i * 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Warning flash
+  ctx.globalAlpha = 0.2 + Math.sin(time * 6) * 0.15;
+  ctx.fillStyle = '#ff3366';
+  ctx.fillRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
+  ctx.globalAlpha = 1;
+}
+
+function updateDayNight() {
+  var hour = new Date().getHours();
+  var overlay = document.getElementById('daynight-overlay');
+  var bg;
+
+  if (hour >= 6 && hour < 8) {
+    bg = 'linear-gradient(180deg, rgba(255,150,50,0.05) 0%, rgba(0,0,30,0.1) 100%)';
+  } else if (hour >= 8 && hour < 17) {
+    bg = 'rgba(0,0,0,0)';
+  } else if (hour >= 17 && hour < 20) {
+    bg = 'linear-gradient(180deg, rgba(200,80,50,0.08) 0%, rgba(0,0,40,0.15) 100%)';
+  } else {
+    bg = 'rgba(0,0,40,0.2)';
+  }
+
+  overlay.style.background = bg;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SKY — Stars, Clouds, Moon
+   ═══════════════════════════════════════════════════════════ */
+var stars = [];
+var clouds = [];
+var citySkyInit = false;
+
+function initSky() {
+  // Stars
+  stars = [];
+  for (var i = 0; i < 120; i++) {
+    stars.push({
+      x: Math.random() * state.worldW,
+      y: Math.random() * state.worldH * 0.4,
+      size: 0.5 + Math.random() * 1.5,
+      twinkle: Math.random() * Math.PI * 2,
+      speed: 0.5 + Math.random() * 1.5
+    });
+  }
+  // Clouds
+  clouds = [];
+  for (var j = 0; j < 8; j++) {
+    clouds.push({
+      x: Math.random() * state.worldW,
+      y: 30 + Math.random() * 150,
+      w: 80 + Math.random() * 160,
+      h: 20 + Math.random() * 40,
+      speed: 5 + Math.random() * 15,
+      opacity: 0.03 + Math.random() * 0.05
+    });
+  }
+  citySkyInit = true;
+}
+
+function drawSky(ctx, time) {
+  if (!citySkyInit) initSky();
+
+  // Night sky gradient
+  var skyGrad = ctx.createLinearGradient(0, 0, 0, 400);
+  skyGrad.addColorStop(0, '#020408');
+  skyGrad.addColorStop(0.3, '#060d1a');
+  skyGrad.addColorStop(0.7, '#0a1628');
+  skyGrad.addColorStop(1, '#0d1a2e');
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, state.worldW, 400);
+
+  // Stars
+  stars.forEach(function(s) {
+    var twinkle = (Math.sin(time * s.speed + s.twinkle) + 1) / 2;
+    ctx.globalAlpha = 0.3 + twinkle * 0.7;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.size * (0.5 + twinkle * 0.5), 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  // Moon
+  var moonX = state.worldW * 0.8;
+  var moonY = 80;
+  ctx.globalAlpha = 0.15;
+  var moonGlow = ctx.createRadialGradient(moonX, moonY, 0, moonX, moonY, 80);
+  moonGlow.addColorStop(0, 'rgba(200,220,255,0.3)');
+  moonGlow.addColorStop(1, 'transparent');
+  ctx.fillStyle = moonGlow;
+  ctx.beginPath();
+  ctx.arc(moonX, moonY, 80, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 0.6;
+  ctx.fillStyle = '#c8dcff';
+  ctx.beginPath();
+  ctx.arc(moonX, moonY, 15, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Clouds
+  clouds.forEach(function(c) {
+    c.x += c.speed * 0.01;
+    if (c.x > state.worldW + c.w) c.x = -c.w;
+    ctx.globalAlpha = c.opacity;
+    ctx.fillStyle = '#1a2a4a';
+    // Cloud shape: overlapping ellipses
+    ctx.beginPath();
+    ctx.ellipse(c.x, c.y, c.w * 0.5, c.h * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(c.x - c.w * 0.2, c.y + 5, c.w * 0.35, c.h * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(c.x + c.w * 0.25, c.y + 3, c.w * 0.3, c.h * 0.35, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   VEHICLES — Cars on roads
+   ═══════════════════════════════════════════════════════════ */
+var vehicles = [];
+var MAX_VEHICLES = 60;
+
+function spawnVehicle() {
+  if (vehicles.length >= MAX_VEHICLES) return;
+  if (BUILDINGS.length < 2) return;
+
+  var a = BUILDINGS[Math.floor(Math.random() * BUILDINGS.length)];
+  var b = BUILDINGS[Math.floor(Math.random() * BUILDINGS.length)];
+  if (a === b) return;
+
+  var colors = ['#ff4444', '#4488ff', '#ffcc00', '#ffffff', '#00cc88', '#ff8844', '#cc44ff'];
+  vehicles.push({
+    x: a.x + a.w/2,
+    y: a.y + a.h + 20,
+    tx: b.x + b.w/2,
+    ty: b.y + b.h + 20,
+    t: 0,
+    speed: 0.15 + Math.random() * 0.25,
+    color: colors[Math.floor(Math.random() * colors.length)],
+    w: 8 + Math.random() * 4,
+    h: 4 + Math.random() * 2,
+    headlightPhase: Math.random() * Math.PI * 2
+  });
+}
+
+function updateVehicles(dt) {
+  // Spawn
+  if (Math.random() > 0.96) spawnVehicle();
+
+  for (var i = vehicles.length - 1; i >= 0; i--) {
+    var v = vehicles[i];
+    v.t += v.speed * dt;
+    // Lerp position
+    var ease = v.t < 0.5 ? 2 * v.t * v.t : 1 - Math.pow(-2 * v.t + 2, 2) / 2;
+    v.cx = v.x + (v.tx - v.x) * ease;
+    v.cy = v.y + (v.ty - v.y) * ease;
+    if (v.t >= 1) vehicles.splice(i, 1);
+  }
+}
+
+function drawVehicles(ctx, time) {
+  vehicles.forEach(function(v) {
+    var angle = Math.atan2(v.ty - v.y, v.tx - v.x);
+
+    ctx.save();
+    ctx.translate(v.cx, v.cy);
+    ctx.rotate(angle);
+
+    // Car body
+    ctx.fillStyle = v.color;
+    ctx.globalAlpha = 0.8;
+    ctx.fillRect(-v.w/2, -v.h/2, v.w, v.h);
+
+    // Windshield
+    ctx.fillStyle = 'rgba(100,180,255,0.4)';
+    ctx.fillRect(v.w/2 - 3, -v.h/2 + 1, 2, v.h - 2);
+
+    // Headlights
+    ctx.globalAlpha = 0.6 + Math.sin(time * 3 + v.headlightPhase) * 0.2;
+    ctx.fillStyle = '#ffee88';
+    ctx.fillRect(v.w/2 - 1, -v.h/2, 2, 1);
+    ctx.fillRect(v.w/2 - 1, v.h/2 - 1, 2, 1);
+
+    // Tail lights
+    ctx.fillStyle = '#ff3333';
+    ctx.globalAlpha = 0.5;
+    ctx.fillRect(-v.w/2, -v.h/2, 1, 1);
+    ctx.fillRect(-v.w/2, v.h/2 - 1, 1, 1);
+
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PEDESTRIANS — Tiny people on sidewalks
+   ═══════════════════════════════════════════════════════════ */
+var pedestrians = [];
+var MAX_PEDESTRIANS = 30;
+
+function spawnPedestrian() {
+  if (pedestrians.length >= MAX_PEDESTRIANS) return;
+  if (BUILDINGS.length < 2) return;
+
+  var a = BUILDINGS[Math.floor(Math.random() * BUILDINGS.length)];
+  var b = BUILDINGS[Math.floor(Math.random() * BUILDINGS.length)];
+  if (a === b) return;
+
+  var bodyColors = ['#4488ff', '#ff6b9d', '#00cc88', '#ffd93d', '#cc44ff', '#ff8844', '#88ccff'];
+  pedestrians.push({
+    x: a.x + a.w/2 + (Math.random() - 0.5) * 30,
+    y: a.y + a.h + 30,
+    tx: b.x + b.w/2 + (Math.random() - 0.5) * 30,
+    ty: b.y + b.h + 30,
+    t: 0,
+    speed: 0.08 + Math.random() * 0.12,
+    color: bodyColors[Math.floor(Math.random() * bodyColors.length)],
+    bobPhase: Math.random() * Math.PI * 2
+  });
+}
+
+function updatePedestrians(dt) {
+  if (Math.random() > 0.97) spawnPedestrian();
+
+  for (var i = pedestrians.length - 1; i >= 0; i--) {
+    var p = pedestrians[i];
+    p.t += p.speed * dt;
+    p.bobPhase += dt * 6;
+    p.cx = p.x + (p.tx - p.x) * p.t;
+    p.cy = p.y + (p.ty - p.y) * p.t;
+    if (p.t >= 1) pedestrians.splice(i, 1);
+  }
+}
+
+function drawPedestrians(ctx, time) {
+  pedestrians.forEach(function(p) {
+    var bob = Math.sin(p.bobPhase) * 1;
+    var px = p.cx, py = p.cy + bob;
+
+    // Head
+    ctx.fillStyle = '#ddbb88';
+    ctx.fillRect(px - 1, py - 5, 3, 3);
+
+    // Body
+    ctx.fillStyle = p.color;
+    ctx.fillRect(px - 2, py - 2, 5, 5);
+
+    // Legs
+    var legSwing = Math.sin(p.bobPhase * 2) * 1.5;
+    ctx.fillStyle = '#333';
+    ctx.fillRect(px - 1, py + 3, 1, 3 + legSwing);
+    ctx.fillRect(px + 1, py + 3, 1, 3 - legSwing);
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TREES & VEGETATION
+   ═══════════════════════════════════════════════════════════ */
+var trees = [];
+var cityTreesInit = false;
+
+function initTrees() {
+  trees = [];
+  // Place trees between buildings
+  for (var i = 0; i < BUILDINGS.length - 1; i++) {
+    var a = BUILDINGS[i], b = BUILDINGS[i + 1];
+    var mx = (a.x + a.w/2 + b.x + b.w/2) / 2;
+    var my = (a.y + a.h + b.y + b.h) / 2 + 10;
+    // A few trees between each pair
+    for (var t = 0; t < 2 + Math.floor(Math.random() * 3); t++) {
+      trees.push({
+        x: mx + (Math.random() - 0.5) * 80,
+        y: my + (Math.random() - 0.5) * 40,
+        size: 4 + Math.random() * 6,
+        sway: Math.random() * Math.PI * 2,
+        type: Math.random() > 0.3 ? 'round' : 'pine'
+      });
+    }
+  }
+  // Random trees across the world
+  for (var j = 0; j < 40; j++) {
+    trees.push({
+      x: 50 + Math.random() * (state.worldW - 100),
+      y: 50 + Math.random() * (state.worldH - 100),
+      size: 3 + Math.random() * 8,
+      sway: Math.random() * Math.PI * 2,
+      type: Math.random() > 0.4 ? 'round' : 'pine'
+    });
+  }
+  cityTreesInit = true;
+}
+
+function drawTrees(ctx, time) {
+  if (!cityTreesInit) initTrees();
+
+  trees.forEach(function(tree) {
+    var sway = Math.sin(time * 0.8 + tree.sway) * 1.5;
+    var tx = tree.x, ty = tree.y, s = tree.size;
+
+    // Trunk
+    ctx.fillStyle = '#2a1a0a';
+    ctx.fillRect(tx - 1, ty - s * 0.3, 2, s * 0.6);
+
+    if (tree.type === 'round') {
+      // Round tree canopy
+      ctx.fillStyle = '#0a3a1a';
+      ctx.beginPath();
+      ctx.arc(tx + sway, ty - s * 0.6, s * 0.7, 0, Math.PI * 2);
+      ctx.fill();
+      // Highlight
+      ctx.fillStyle = '#0d4a22';
+      ctx.globalAlpha = 0.5;
+      ctx.beginPath();
+      ctx.arc(tx + sway - s * 0.2, ty - s * 0.8, s * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    } else {
+      // Pine tree
+      ctx.fillStyle = '#0a3a1a';
+      ctx.beginPath();
+      ctx.moveTo(tx + sway, ty - s * 1.2);
+      ctx.lineTo(tx - s * 0.5, ty);
+      ctx.lineTo(tx + s * 0.5, ty);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#0d4a22';
+      ctx.globalAlpha = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(tx + sway, ty - s * 0.9);
+      ctx.lineTo(tx - s * 0.3, ty - s * 0.1);
+      ctx.lineTo(tx + s * 0.3, ty - s * 0.1);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   WATER — River running through the city
+   ═══════════════════════════════════════════════════════════ */
+var riverPoints = [];
+var cityRiverInit = false;
+
+function initRiver() {
+  riverPoints = [];
+  var segments = 20;
+  var baseY = state.worldH * 0.65;
+  for (var i = 0; i <= segments; i++) {
+    var t = i / segments;
+    riverPoints.push({
+      x: t * state.worldW,
+      y: baseY + Math.sin(t * Math.PI * 2) * 60 + (Math.random() - 0.5) * 20,
+      w: 40 + Math.random() * 30
+    });
+  }
+  cityRiverInit = true;
+}
+
+function drawRiver(ctx, time) {
+  if (!cityRiverInit) initRiver();
+
+  // Water body
+  ctx.beginPath();
+  ctx.moveTo(riverPoints[0].x, riverPoints[0].y - riverPoints[0].w/2);
+  for (var i = 1; i < riverPoints.length; i++) {
+    var rp = riverPoints[i];
+    var wave = Math.sin(time * 1.5 + i * 0.5) * 3;
+    ctx.lineTo(rp.x, rp.y - rp.w/2 + wave);
+  }
+  for (var j = riverPoints.length - 1; j >= 0; j--) {
+    var rp2 = riverPoints[j];
+    var wave2 = Math.sin(time * 1.2 + j * 0.7) * 3;
+    ctx.lineTo(rp2.x, rp2.y + rp2.w/2 + wave2);
+  }
+  ctx.closePath();
+
+  // Water gradient
+  var riverCenterY = riverPoints.length > 0 ? riverPoints[Math.floor(riverPoints.length/2)].y : state.worldH * 0.65;
+  var waterGrad = ctx.createLinearGradient(0, riverCenterY - 40, 0, riverCenterY + 40);
+  waterGrad.addColorStop(0, 'rgba(0,40,80,0.4)');
+  waterGrad.addColorStop(0.5, 'rgba(0,60,120,0.5)');
+  waterGrad.addColorStop(1, 'rgba(0,40,80,0.4)');
+  ctx.fillStyle = waterGrad;
+  ctx.fill();
+
+  // Water surface highlights
+  ctx.strokeStyle = 'rgba(100,200,255,0.15)';
+  ctx.lineWidth = 1;
+  for (var k = 0; k < riverPoints.length - 1; k++) {
+    var rp3 = riverPoints[k];
+    var waveX = rp3.x + Math.sin(time * 2 + k) * 10;
+    var waveY = rp3.y + Math.sin(time * 1.5 + k * 0.8) * 5;
+    ctx.beginPath();
+    ctx.moveTo(waveX - 10, waveY);
+    ctx.lineTo(waveX + 10, waveY);
+    ctx.stroke();
+  }
+
+  // Bridge over river (at a few points)
+  for (var b = 0; b < 3; b++) {
+    var bridgeT = (b + 1) / 4;
+    var bridgeIdx = Math.floor(bridgeT * (riverPoints.length - 1));
+    var bp = riverPoints[bridgeIdx];
+    ctx.fillStyle = '#1a1a2a';
+    ctx.fillRect(bp.x - 30, bp.y - bp.w/2 - 5, 60, bp.w + 10);
+    // Bridge rails
+    ctx.strokeStyle = 'rgba(0,102,255,0.3)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bp.x - 30, bp.y - bp.w/2 - 5, 60, bp.w + 10);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   STREET LIGHTS
+   ═══════════════════════════════════════════════════════════ */
+var streetLights = [];
+var cityLightsInit = false;
+
+function initStreetLights() {
+  streetLights = [];
+  // Place lights along roads
+  for (var i = 0; i < BUILDINGS.length - 1; i++) {
+    var a = BUILDINGS[i], b = BUILDINGS[i + 1];
+    var steps = 3;
+    for (var s = 1; s < steps; s++) {
+      var t = s / steps;
+      streetLights.push({
+        x: a.x + a.w/2 + (b.x + b.w/2 - a.x - a.w/2) * t,
+        y: a.y + a.h + 20 + (b.y + b.h + 20 - a.y - a.h - 20) * t,
+        flicker: Math.random() * Math.PI * 2
+      });
+    }
+  }
+  cityLightsInit = true;
+}
+
+function drawStreetLights(ctx, time) {
+  if (!cityLightsInit) initStreetLights();
+
+  streetLights.forEach(function(light) {
+    var lx = light.x, ly = light.y;
+    var flicker = 0.7 + Math.sin(time * 2 + light.flicker) * 0.15;
+
+    // Pole
+    ctx.fillStyle = '#333';
+    ctx.fillRect(lx - 1, ly - 18, 2, 18);
+
+    // Lamp arm
+    ctx.fillRect(lx - 1, ly - 18, 8, 1);
+
+    // Light bulb
+    ctx.fillStyle = '#ffee88';
+    ctx.globalAlpha = flicker;
+    ctx.fillRect(lx + 5, ly - 20, 4, 3);
+
+    // Light cone
+    ctx.globalAlpha = flicker * 0.08;
+    var cone = ctx.createRadialGradient(lx + 7, ly - 18, 0, lx + 7, ly, 30);
+    cone.addColorStop(0, '#ffee88');
+    cone.addColorStop(1, 'transparent');
+    ctx.fillStyle = cone;
+    ctx.beginPath();
+    ctx.arc(lx + 7, ly, 30, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   INDUSTRIAL SMOKE/STEAM
+   ═══════════════════════════════════════════════════════════ */
+var smokeParticles = [];
+
+function spawnSmoke(b) {
+  if (smokeParticles.length > 60) return;
+  smokeParticles.push({
+    x: b.x + b.w * 0.3 + Math.random() * b.w * 0.4,
+    y: b.y,
+    vx: (Math.random() - 0.5) * 8,
+    vy: -15 - Math.random() * 20,
+    life: 1,
+    decay: 0.3 + Math.random() * 0.3,
+    size: 4 + Math.random() * 8
+  });
+}
+
+function updateSmoke(dt) {
+  for (var i = smokeParticles.length - 1; i >= 0; i--) {
+    var p = smokeParticles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy *= 0.99;
+    p.size += dt * 3;
+    p.life -= p.decay * dt;
+    if (p.life <= 0) smokeParticles.splice(i, 1);
+  }
+}
+
+function drawSmoke(ctx) {
+  smokeParticles.forEach(function(p) {
+    ctx.globalAlpha = p.life * 0.15;
+    ctx.fillStyle = '#888';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   NEON SIGNS ON BUILDINGS
+   ═══════════════════════════════════════════════════════════ */
+var neonSigns = [];
+var cityNeonInit = false;
+
+function initNeonSigns() {
+  neonSigns = [];
+  var signTexts = ['DATA', 'AI', 'ONLINE', 'LIVE', 'OPEN', 'SYNC', 'NET', 'CORE'];
+  BUILDINGS.forEach(function(b) {
+    if (Math.random() > 0.5) {
+      neonSigns.push({
+        building: b,
+        text: signTexts[Math.floor(Math.random() * signTexts.length)],
+        offset: Math.random() * Math.PI * 2,
+        side: Math.random() > 0.5 ? 'left' : 'right'
+      });
+    }
+  });
+  cityNeonInit = true;
+}
+
+function drawNeonSigns(ctx, time) {
+  if (!cityNeonInit) initNeonSigns();
+
+  neonSigns.forEach(function(sign) {
+    var b = sign.building;
+    var flicker = 0.6 + Math.sin(time * 3 + sign.offset) * 0.3;
+    // Occasional flicker off
+    if (Math.sin(time * 7 + sign.offset * 3) > 0.95) flicker = 0.1;
+
+    var sx = sign.side === 'left' ? b.x - 5 : b.x + b.w + 5;
+    var sy = b.y + b.h * 0.3;
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    if (sign.side === 'right') ctx.scale(-1, 1);
+
+    ctx.globalAlpha = flicker;
+    ctx.font = 'bold 7px "Share Tech Mono"';
+    ctx.fillStyle = b.service.color;
+    ctx.textAlign = 'center';
+    ctx.fillText(sign.text, 0, 0);
+
+    // Glow
+    ctx.globalAlpha = flicker * 0.3;
+    ctx.shadowColor = b.service.color;
+    ctx.shadowBlur = 8;
+    ctx.fillText(sign.text, 0, 0);
+    ctx.shadowBlur = 0;
+
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   WEATHER SYSTEM
+   ═══════════════════════════════════════════════════════════ */
+var weatherDrops = [];
+var weatherType = 'clear'; // clear, rain, fog
+var weatherTimer = 0;
+
+function updateWeather(dt) {
+  weatherTimer -= dt;
+  if (weatherTimer <= 0) {
+    // Random weather change
+    var r = Math.random();
+    if (r < 0.5) weatherType = 'clear';
+    else if (r < 0.8) weatherType = 'rain';
+    else weatherType = 'fog';
+    weatherTimer = 30 + Math.random() * 60;
+    if (weatherType !== 'clear') {
+      addFeedItem('🌤️ Weather: <span class="agent">' + weatherType.toUpperCase() + '</span>');
+    }
+  }
+
+  // Rain drops
+  if (weatherType === 'rain') {
+    if (weatherDrops.length < 150) {
+      for (var i = 0; i < 3; i++) {
+        weatherDrops.push({
+          x: state.camera.x + Math.random() * worldCanvas.width / state.camera.zoom,
+          y: state.camera.y - 20,
+          vx: -20,
+          vy: 200 + Math.random() * 100,
+          life: 1
+        });
+      }
+    }
+  }
+
+  // Update drops
+  for (var j = weatherDrops.length - 1; j >= 0; j--) {
+    var d = weatherDrops[j];
+    d.x += d.vx * dt;
+    d.y += d.vy * dt;
+    d.life -= dt * 0.5;
+    if (d.life <= 0 || d.y > state.camera.y + worldCanvas.height / state.camera.zoom + 20) {
+      weatherDrops.splice(j, 1);
+    }
+  }
+}
+
+function drawWeather(ctx) {
+  if (weatherType === 'rain') {
+    ctx.strokeStyle = 'rgba(100,180,255,0.3)';
+    ctx.lineWidth = 1;
+    weatherDrops.forEach(function(d) {
+      ctx.globalAlpha = d.life * 0.4;
+      ctx.beginPath();
+      ctx.moveTo(d.x, d.y);
+      ctx.lineTo(d.x + d.vx * 0.02, d.y + d.vy * 0.02);
+      ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
+  } else if (weatherType === 'fog') {
+    ctx.globalAlpha = 0.06;
+    ctx.fillStyle = '#1a2a4a';
+    ctx.fillRect(state.camera.x, state.camera.y, worldCanvas.width / state.camera.zoom, worldCanvas.height / state.camera.zoom);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function updateSimCityPanel() {
+  // Population: count agents + tasks completed
+  var pop = state.agents.length;
+  document.getElementById('sc-pop').textContent = pop;
+
+  // Resource bars based on service health
+  var upCount = 0, totalCount = 0;
+  SERVICES.forEach(function(s) {
+    if (s.port !== null) {
+      totalCount++;
+      if (state.healthStatus[s.id] === 'up') upCount++;
+    }
+  });
+  var healthPct = totalCount > 0 ? Math.round(upCount / totalCount * 100) : 0;
+
+  document.getElementById('sc-power').style.width = healthPct + '%';
+  document.getElementById('sc-power-val').textContent = healthPct + '%';
+  document.getElementById('sc-data').style.width = Math.min(100, healthPct + 10) + '%';
+  document.getElementById('sc-data-val').textContent = Math.min(100, healthPct + 10) + '%';
+  document.getElementById('sc-network').style.width = Math.max(0, healthPct - 5) + '%';
+  document.getElementById('sc-network-val').textContent = Math.max(0, healthPct - 5) + '%';
+
+  // Zone counts
+  var zones = { core: 0, infra: 0, nexus: 0, pi: 0 };
+  SERVICES.forEach(function(s) { zones[s.group] = (zones[s.group] || 0) + 1; });
+  Object.keys(zones).forEach(function(z) {
+    var el = document.getElementById('sc-zone-' + z + '-n');
+    if (el) el.textContent = zones[z];
+  });
+
+  // RCI demand
+  var infraDemand = Math.max(0, 100 - healthPct);
+  var connDemand = Math.round(healthPct * 0.8);
+  var intelDemand = Math.round(healthPct * 0.6);
+  var totalRCI = infraDemand + connDemand + intelDemand || 1;
+  document.getElementById('sc-rci-r').style.flex = infraDemand / totalRCI;
+  document.getElementById('sc-rci-c').style.flex = connDemand / totalRCI;
+  document.getElementById('sc-rci-i').style.flex = intelDemand / totalRCI;
+
+  // Happiness
+  var happyIcon = document.getElementById('sc-happy-icon');
+  var happyText = document.getElementById('sc-happy-text');
+  if (healthPct >= 90) {
+    happyIcon.textContent = '😊';
+    happyText.textContent = 'City is thriving!';
+  } else if (healthPct >= 70) {
+    happyIcon.textContent = '😐';
+    happyText.textContent = 'City is stable';
+  } else if (healthPct >= 50) {
+    happyIcon.textContent = '😟';
+    happyText.textContent = 'Citizens worried';
+  } else {
+    happyIcon.textContent = '😡';
+    happyText.textContent = 'City in crisis!';
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   GAME LOOP
+   ═══════════════════════════════════════════════════════════ */
+
+var lastTime = 0;
+var lastHUDUpdate = 0;
+var minimapFrame = 0;
+
+function gameLoop(timestamp) {
+  var dt = Math.min((timestamp - lastTime) / 1000, 0.1);
+  lastTime = timestamp;
+  state.time += dt;
+
+  if (state.booted) {
+    updateAgents(dt);
+    updateParticles(dt);
+    updateVehicles(dt);
+    updatePedestrians(dt);
+    updateSmoke(dt);
+    updateWeather(dt);
+    updateSimCity(dt);
+    drawWorld();
+    // Minimap only needs every 3rd frame
+    if (++minimapFrame % 3 === 0) drawMinimap();
+    // HUD clock only changes once per second
+    if (state.time - lastHUDUpdate >= 1) {
+      updateHUD();
+      renderAgentCards();
+      updateSimCityPanel();
+      lastHUDUpdate = state.time;
+    }
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   INIT
+   ═══════════════════════════════════════════════════════════ */
+
+function init() {
+  cacheDom();
+  resizeWorld();
+  layoutBuildings();
+  initAgents();
+  initSimCity();
+  setupInput();
+  initThemeSwitcher();
+  initSpeedControls();
+
+  // Center camera
+  state.camera.x = state.worldW / 2 - worldCanvas.width / 2;
+  state.camera.y = state.worldH / 2 - worldCanvas.height / 2;
+
+  // Start boot sequence
+  runBoot();
+
+  // Start game loop
+  requestAnimationFrame(gameLoop);
+
+  // Health polling
+  pollHealth();
+  setInterval(pollHealth, 30000);
+
+  // Handle resize (debounced)
+  var resizeTimer;
+  window.addEventListener('resize', function() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(resizeWorld, 100);
+  });
+}
+
+init();
+
+})();
 </script>
 </body>
 </html>

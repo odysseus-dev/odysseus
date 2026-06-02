@@ -1,0 +1,302 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="1000" height="1000">
+  <defs>
+    <!-- Sunset gradient -->
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0a0015"/>
+      <stop offset="20%" stop-color="#1a0030"/>
+      <stop offset="40%" stop-color="#3d0066"/>
+      <stop offset="55%" stop-color="#6b0099"/>
+      <stop offset="65%" stop-color="#cc0066"/>
+      <stop offset="75%" stop-color="#ff3366"/>
+      <stop offset="85%" stop-color="#ff6633"/>
+      <stop offset="92%" stop-color="#ffaa00"/>
+      <stop offset="100%" stop-color="#ffdd44"/>
+    </linearGradient>
+
+    <!-- Sun gradient -->
+    <radialGradient id="sun" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="30%" stop-color="#ffdd66"/>
+      <stop offset="60%" stop-color="#ff6633"/>
+      <stop offset="100%" stop-color="#cc006600"/>
+    </radialGradient>
+
+    <!-- Grid perspective -->
+    <linearGradient id="gridFade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff00ff" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#ff00ff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Neon glow filter -->
+    <filter id="neonGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+
+    <filter id="heavyGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="12" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+
+    <filter id="vhsNoise">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="3" stitchTiles="stitch" result="noise"/>
+      <feColorMatrix type="saturate" values="0" in="noise" result="monoNoise"/>
+      <feBlend in="SourceGraphic" in2="monoNoise" mode="overlay" result="noisy"/>
+      <feComponentTransfer in="noisy">
+        <feFuncR type="linear" slope="1.05"/>
+        <feFuncG type="linear" slope="1.02"/>
+        <feFuncB type="linear" slope="1.08"/>
+      </feComponentTransfer>
+    </filter>
+
+    <filter id="scanlines">
+      <feImage width="4" height="4" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4'%3E%3Crect width='4' height='2' fill='%23000' opacity='0.15'/%3E%3C/svg%3E"/>
+      <feTile/>
+      <feComposite in="SourceGraphic" operator="over"/>
+    </filter>
+
+    <!-- Chromatic aberration -->
+    <filter id="chromatic">
+      <feOffset in="SourceGraphic" dx="2" dy="0" result="red"/>
+      <feOffset in="SourceGraphic" dx="-2" dy="0" result="blue"/>
+      <feColorMatrix in="red" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="redOnly"/>
+      <feColorMatrix in="blue" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="blueOnly"/>
+      <feBlend in="redOnly" in2="SourceGraphic" mode="screen" result="redBlend"/>
+      <feBlend in="blueOnly" in2="redBlend" mode="screen"/>
+    </filter>
+
+    <!-- Stars clip -->
+    <clipPath id="skyClip">
+      <rect x="0" y="0" width="1000" height="620"/>
+    </clipPath>
+  </defs>
+
+  <!-- Sky -->
+  <rect width="1000" height="1000" fill="url(#sky)"/>
+
+  <!-- Stars -->
+  <g clip-path="url(#skyClip)" opacity="0.6">
+    <circle cx="80" cy="50" r="1.5" fill="#fff"/>
+    <circle cx="200" cy="120" r="1" fill="#fff"/>
+    <circle cx="350" cy="30" r="1.2" fill="#fff"/>
+    <circle cx="500" cy="80" r="0.8" fill="#fff"/>
+    <circle cx="650" cy="45" r="1.5" fill="#fff"/>
+    <circle cx="780" cy="130" r="1" fill="#fff"/>
+    <circle cx="900" cy="60" r="1.3" fill="#fff"/>
+    <circle cx="150" cy="200" r="0.7" fill="#fff"/>
+    <circle cx="420" cy="170" r="1.1" fill="#fff"/>
+    <circle cx="700" cy="190" r="0.9" fill="#fff"/>
+    <circle cx="50" cy="300" r="0.8" fill="#fff"/>
+    <circle cx="300" cy="250" r="1.2" fill="#fff"/>
+    <circle cx="550" cy="220" r="0.6" fill="#fff"/>
+    <circle cx="850" cy="280" r="1" fill="#fff"/>
+    <circle cx="950" cy="150" r="0.9" fill="#fff"/>
+    <circle cx="120" cy="350" r="0.5" fill="#fff"/>
+    <circle cx="480" cy="310" r="0.8" fill="#fff"/>
+    <circle cx="720" cy="340" r="0.7" fill="#fff"/>
+    <circle cx="250" cy="400" r="0.6" fill="#fff"/>
+    <circle cx="600" cy="380" r="0.9" fill="#fff"/>
+    <circle cx="830" cy="360" r="0.5" fill="#fff"/>
+  </g>
+
+  <!-- Sun (behind horizon) -->
+  <circle cx="500" cy="580" r="160" fill="url(#sun)" filter="url(#heavyGlow)" opacity="0.9"/>
+
+  <!-- Sun stripes (retro) -->
+  <g opacity="0.6">
+    <rect x="340" y="540" width="320" height="6" fill="#0a0015" rx="3"/>
+    <rect x="350" y="558" width="300" height="8" fill="#0a0015" rx="4"/>
+    <rect x="360" y="580" width="280" height="10" fill="#0a0015" rx="5"/>
+    <rect x="375" y="605" width="250" height="12" fill="#0a0015" rx="6"/>
+    <rect x="395" y="632" width="210" height="14" fill="#0a0015" rx="7"/>
+  </g>
+
+  <!-- Vaporwave grid floor -->
+  <g transform="translate(0, 640)">
+    <!-- Horizontal lines -->
+    <line x1="0" y1="0" x2="1000" y2="0" stroke="#ff00ff" stroke-width="1.5" opacity="0.6"/>
+    <line x1="0" y1="30" x2="1000" y2="30" stroke="#ff00ff" stroke-width="0.8" opacity="0.5"/>
+    <line x1="0" y1="65" x2="1000" y2="65" stroke="#ff00ff" stroke-width="0.6" opacity="0.4"/>
+    <line x1="0" y1="105" x2="1000" y2="105" stroke="#ff00ff" stroke-width="0.5" opacity="0.3"/>
+    <line x1="0" y1="150" x2="1000" y2="150" stroke="#ff00ff" stroke-width="0.4" opacity="0.2"/>
+    <line x1="0" y1="200" x2="1000" y2="200" stroke="#ff00ff" stroke-width="0.3" opacity="0.15"/>
+    <line x1="0" y1="260" x2="1000" y2="260" stroke="#ff00ff" stroke-width="0.3" opacity="0.1"/>
+    <line x1="0" y1="330" x2="1000" y2="330" stroke="#ff00ff" stroke-width="0.2" opacity="0.05"/>
+
+    <!-- Vertical perspective lines -->
+    <line x1="500" y1="0" x2="-200" y2="360" stroke="#ff00ff" stroke-width="0.8" opacity="0.4"/>
+    <line x1="500" y1="0" x2="0" y2="360" stroke="#ff00ff" stroke-width="0.6" opacity="0.35"/>
+    <line x1="500" y1="0" x2="200" y2="360" stroke="#ff00ff" stroke-width="0.5" opacity="0.3"/>
+    <line x1="500" y1="0" x2="350" y2="360" stroke="#ff00ff" stroke-width="0.4" opacity="0.25"/>
+    <line x1="500" y1="0" x2="500" y2="360" stroke="#ff00ff" stroke-width="0.5" opacity="0.4"/>
+    <line x1="500" y1="0" x2="650" y2="360" stroke="#ff00ff" stroke-width="0.4" opacity="0.25"/>
+    <line x1="500" y1="0" x2="800" y2="360" stroke="#ff00ff" stroke-width="0.5" opacity="0.3"/>
+    <line x1="500" y1="0" x2="1000" y2="360" stroke="#ff00ff" stroke-width="0.6" opacity="0.35"/>
+    <line x1="500" y1="0" x2="1200" y2="360" stroke="#ff00ff" stroke-width="0.8" opacity="0.4"/>
+  </g>
+
+  <!-- Cityscape silhouette -->
+  <g filter="url(#neonGlow)">
+    <!-- Left buildings -->
+    <rect x="0" y="460" width="60" height="180" fill="#0a0020" stroke="#6b0099" stroke-width="0.5" opacity="0.9"/>
+    <rect x="5" y="470" width="12" height="8" fill="#ff00ff" opacity="0.3"/>
+    <rect x="25" y="470" width="12" height="8" fill="#00ffff" opacity="0.2"/>
+    <rect x="5" y="490" width="12" height="8" fill="#ff6633" opacity="0.25"/>
+    <rect x="45" y="475" width="8" height="6" fill="#ff00ff" opacity="0.3"/>
+
+    <rect x="70" y="420" width="80" height="220" fill="#0d0025" stroke="#6b0099" stroke-width="0.5" opacity="0.9"/>
+    <rect x="80" y="430" width="14" height="10" fill="#ff00ff" opacity="0.2"/>
+    <rect x="100" y="430" width="14" height="10" fill="#00ffff" opacity="0.15"/>
+    <rect x="120" y="430" width="14" height="10" fill="#ff6633" opacity="0.2"/>
+    <rect x="80" y="455" width="14" height="10" fill="#00ffff" opacity="0.25"/>
+    <rect x="100" y="455" width="14" height="10" fill="#ff00ff" opacity="0.15"/>
+    <rect x="120" y="455" width="14" height="10" fill="#ff6633" opacity="0.1"/>
+
+    <rect x="160" y="480" width="50" height="160" fill="#080020" stroke="#6b0099" stroke-width="0.5" opacity="0.85"/>
+    <rect x="168" y="490" width="10" height="8" fill="#ff00ff" opacity="0.3"/>
+    <rect x="185" y="495" width="10" height="8" fill="#00ffff" opacity="0.2"/>
+
+    <rect x="220" y="390" width="100" height="250" fill="#0f0030" stroke="#8800cc" stroke-width="0.5" opacity="0.9"/>
+    <!-- Antenna -->
+    <rect x="268" y="370" width="4" height="20" fill="#0f0030"/>
+    <circle cx="270" cy="368" r="3" fill="#ff3366" opacity="0.8"/>
+    <rect x="230" y="400" width="16" height="12" fill="#ff00ff" opacity="0.15"/>
+    <rect x="255" y="400" width="16" height="12" fill="#00ffff" opacity="0.2"/>
+    <rect x="280" y="400" width="16" height="12" fill="#ff6633" opacity="0.15"/>
+    <rect x="230" y="425" width="16" height="12" fill="#00ffff" opacity="0.2"/>
+    <rect x="255" y="425" width="16" height="12" fill="#ff00ff" opacity="0.25"/>
+    <rect x="280" y="425" width="16" height="12" fill="#ff00ff" opacity="0.15"/>
+    <rect x="230" y="450" width="16" height="12" fill="#ff6633" opacity="0.2"/>
+    <rect x="255" y="450" width="16" height="12" fill="#00ffff" opacity="0.15"/>
+
+    <!-- Center-left tall building -->
+    <rect x="340" y="350" width="70" height="290" fill="#100035" stroke="#8800cc" stroke-width="0.5" opacity="0.9"/>
+    <rect x="348" y="360" width="10" height="8" fill="#ff00ff" opacity="0.25"/>
+    <rect x="365" y="360" width="10" height="8" fill="#00ffff" opacity="0.2"/>
+    <rect x="382" y="360" width="10" height="8" fill="#ff00ff" opacity="0.15"/>
+    <rect x="348" y="380" width="10" height="8" fill="#00ffff" opacity="0.2"/>
+    <rect x="365" y="380" width="10" height="8" fill="#ff6633" opacity="0.25"/>
+    <rect x="382" y="380" width="10" height="8" fill="#00ffff" opacity="0.15"/>
+    <rect x="348" y="400" width="10" height="8" fill="#ff00ff" opacity="0.2"/>
+    <rect x="365" y="400" width="10" height="8" fill="#ff00ff" opacity="0.15"/>
+    <rect x="382" y="400" width="10" height="8" fill="#ff6633" opacity="0.2"/>
+
+    <!-- Right side buildings -->
+    <rect x="580" y="400" width="90" height="240" fill="#0f0030" stroke="#8800cc" stroke-width="0.5" opacity="0.9"/>
+    <rect x="590" y="410" width="14" height="10" fill="#ff00ff" opacity="0.2"/>
+    <rect x="612" y="410" width="14" height="10" fill="#00ffff" opacity="0.25"/>
+    <rect x="634" y="410" width="14" height="10" fill="#ff6633" opacity="0.15"/>
+    <rect x="590" y="435" width="14" height="10" fill="#00ffff" opacity="0.2"/>
+    <rect x="612" y="435" width="14" height="10" fill="#ff00ff" opacity="0.3"/>
+    <rect x="634" y="435" width="14" height="10" fill="#ff00ff" opacity="0.15"/>
+
+    <rect x="680" y="440" width="65" height="200" fill="#0a0025" stroke="#6b0099" stroke-width="0.5" opacity="0.85"/>
+    <rect x="688" y="450" width="10" height="8" fill="#ff00ff" opacity="0.25"/>
+    <rect x="705" y="455" width="10" height="8" fill="#00ffff" opacity="0.2"/>
+    <rect x="722" y="450" width="10" height="8" fill="#ff6633" opacity="0.2"/>
+
+    <rect x="755" y="380" width="80" height="260" fill="#100035" stroke="#8800cc" stroke-width="0.5" opacity="0.9"/>
+    <rect x="765" y="390" width="12" height="10" fill="#ff00ff" opacity="0.2"/>
+    <rect x="785" y="390" width="12" height="10" fill="#00ffff" opacity="0.25"/>
+    <rect x="805" y="390" width="12" height="10" fill="#ff00ff" opacity="0.15"/>
+    <rect x="765" y="415" width="12" height="10" fill="#00ffff" opacity="0.2"/>
+    <rect x="785" y="415" width="12" height="10" fill="#ff6633" opacity="0.3"/>
+    <rect x="805" y="415" width="12" height="10" fill="#ff00ff" opacity="0.15"/>
+
+    <rect x="845" y="460" width="55" height="180" fill="#0a0020" stroke="#6b0099" stroke-width="0.5" opacity="0.85"/>
+    <rect x="853" y="470" width="10" height="8" fill="#ff00ff" opacity="0.3"/>
+    <rect x="870" y="475" width="10" height="8" fill="#00ffff" opacity="0.2"/>
+
+    <rect x="910" y="430" width="90" height="210" fill="#0d0025" stroke="#6b0099" stroke-width="0.5" opacity="0.9"/>
+    <rect x="920" y="440" width="14" height="10" fill="#ff00ff" opacity="0.2"/>
+    <rect x="942" y="440" width="14" height="10" fill="#00ffff" opacity="0.25"/>
+    <rect x="964" y="440" width="14" height="10" fill="#ff6633" opacity="0.15"/>
+  </g>
+
+  <!-- Neon sign on building -->
+  <g filter="url(#heavyGlow)" opacity="0.8">
+    <text x="270" y="510" font-family="monospace" font-size="14" fill="#00ffff" text-anchor="middle" letter-spacing="3">OPEN</text>
+  </g>
+
+  <!-- Flying car light trails -->
+  <g opacity="0.4">
+    <line x1="100" y1="380" x2="300" y2="340" stroke="#ff00ff" stroke-width="2" filter="url(#neonGlow)"/>
+    <line x1="700" y1="350" x2="900" y2="390" stroke="#00ffff" stroke-width="2" filter="url(#neonGlow)"/>
+  </g>
+
+  <!-- Palm tree silhouette left -->
+  <g opacity="0.7">
+    <rect x="45" y="500" width="6" height="140" fill="#0a0015"/>
+    <ellipse cx="48" cy="495" rx="35" ry="15" fill="#0a0015"/>
+    <ellipse cx="30" cy="505" rx="30" ry="12" fill="#0a0015" transform="rotate(-20 30 505)"/>
+    <ellipse cx="70" cy="502" rx="28" ry="11" fill="#0a0015" transform="rotate(15 70 502)"/>
+  </g>
+
+  <!-- Palm tree silhouette right -->
+  <g opacity="0.6">
+    <rect x="920" y="480" width="6" height="160" fill="#0a0015"/>
+    <ellipse cx="923" cy="475" rx="32" ry="14" fill="#0a0015"/>
+    <ellipse cx="905" cy="485" rx="28" ry="11" fill="#0a0015" transform="rotate(-15 905 485)"/>
+    <ellipse cx="940" cy="482" rx="26" ry="10" fill="#0a0015" transform="rotate(20 940 482)"/>
+  </g>
+
+  <!-- Ryan Celsius° text — main title -->
+  <g filter="url(#chromatic)">
+    <text x="500" y="220" font-family="'Courier New', monospace" font-size="72" font-weight="bold" fill="#ffffff" text-anchor="middle" letter-spacing="8" filter="url(#heavyGlow)">
+      RYAN CELSIUS°
+    </text>
+  </g>
+
+  <!-- SOUNDS subtitle -->
+  <g filter="url(#neonGlow)">
+    <text x="500" y="280" font-family="'Courier New', monospace" font-size="36" fill="#00ffff" text-anchor="middle" letter-spacing="20" opacity="0.9">
+      SOUNDS
+    </text>
+  </g>
+
+  <!-- Decorative line -->
+  <line x1="250" y1="300" x2="750" y2="300" stroke="#ff00ff" stroke-width="1" opacity="0.5" filter="url(#neonGlow)"/>
+
+  <!-- Tagline -->
+  <text x="500" y="330" font-family="monospace" font-size="14" fill="#ff6633" text-anchor="middle" letter-spacing="6" opacity="0.7">
+    LATE NIGHT DRIVES // 2 AM VIBES
+  </text>
+
+  <!-- VHS tracking lines (random horizontal glitch bars) -->
+  <g opacity="0.15">
+    <rect x="0" y="150" width="1000" height="3" fill="#fff"/>
+    <rect x="0" y="380" width="1000" height="2" fill="#00ffff"/>
+    <rect x="0" y="520" width="1000" height="4" fill="#ff00ff"/>
+    <rect x="0" y="700" width="1000" height="2" fill="#fff"/>
+    <rect x="0" y="850" width="1000" height="3" fill="#ff6633"/>
+  </g>
+
+  <!-- Scanline overlay -->
+  <g opacity="0.08">
+    <pattern id="scanPattern" width="4" height="4" patternUnits="userSpaceOnUse">
+      <rect width="4" height="2" fill="#000"/>
+    </pattern>
+    <rect width="1000" height="1000" fill="url(#scanPattern)"/>
+  </g>
+
+  <!-- VHS timestamp -->
+  <g opacity="0.4">
+    <text x="40" y="960" font-family="monospace" font-size="16" fill="#fff" filter="url(#neonGlow)">● REC</text>
+    <text x="820" y="960" font-family="monospace" font-size="14" fill="#fff" opacity="0.6">02:47 AM</text>
+  </g>
+
+  <!-- Corner decorations -->
+  <g stroke="#ff00ff" stroke-width="1" opacity="0.3" fill="none">
+    <polyline points="20,20 20,50"/>
+    <polyline points="20,20 50,20"/>
+    <polyline points="980,20 980,50"/>
+    <polyline points="980,20 950,20"/>
+    <polyline points="20,980 20,950"/>
+    <polyline points="20,980 50,980"/>
+    <polyline points="980,980 980,950"/>
+    <polyline points="980,980 950,980"/>
+  </g>
+
+  <!-- Neon border -->
+  <rect x="10" y="10" width="980" height="980" rx="0" fill="none" stroke="#ff00ff" stroke-width="0.5" opacity="0.2"/>
+</svg>

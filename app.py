@@ -667,6 +667,10 @@ app.include_router(setup_nexus_routes())
 from routes.swarm_routes import setup_swarm_routes
 app.include_router(setup_swarm_routes())
 
+# Tech Duinn fan-out subagent orchestrator (parallel agent runs)
+from routes.fanout_routes import setup_fanout_routes
+app.include_router(setup_fanout_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
@@ -759,7 +763,7 @@ async def health_check() -> Dict[str, object]:
     chroma_port = os.getenv("CHROMADB_PORT", "8100")
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get(f"http://{chroma_host}:{chroma_port}/api/v1/heartbeat")
+            r = await client.get(f"http://{chroma_host}:{chroma_port}/api/v2/heartbeat")
             checks["chromadb"] = "ok" if r.status_code == 200 else f"status {r.status_code}"
             if r.status_code != 200:
                 all_ok = False

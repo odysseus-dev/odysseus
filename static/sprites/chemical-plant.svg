@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="64" height="64">
+  <!-- Chaos Emerald -->
+  <polygon points="8,1 12,5 12,11 8,15 4,11 4,5" fill="#00ffc8"/>
+  <polygon points="8,3 10,5 10,11 8,13 6,11 6,5" fill="#00e0b0"/>
+  <polygon points="8,5 9,7 9,10 8,11 7,10 7,7" fill="#80ffe0"/>
+  <rect x="6" y="3" width="1" height="1" fill="#ffffff" opacity="0.5"/>
+</svg>

@@ -28,6 +28,16 @@ export const THEMES = {
                             inputBg: '#2f2f2f' } },
   claude:     { bg:'#262624', fg:'#f5f4f0', panel:'#30302e', border:'#4a4a47', red:'#c6613f' },
   cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
+  // ── Game themes ──
+  'mushroom-kingdom': { bg:'#1a0a2e', fg:'#f8d848', panel:'#0d0520', border:'#4a2080', red:'#e52521' },
+  hyrule:       { bg:'#0a1a0a', fg:'#7ec850', panel:'#051005', border:'#2a5a1a', red:'#ffd700' },
+  zebes:        { bg:'#0a0408', fg:'#00d4aa', panel:'#05020a', border:'#1a3040', red:'#ff4444' },
+  midgar:       { bg:'#0d0d1a', fg:'#7eb8ff', panel:'#080810', border:'#1a2a4a', red:'#00e5ff' },
+  crystal:      { bg:'#0a0a1e', fg:'#e0d0ff', panel:'#050514', border:'#2a2060', red:'#b088ff' },
+  zanarkand:    { bg:'#1a0a1a', fg:'#f0e0a0', panel:'#100510', border:'#4a1a4a', red:'#ff2020' },
+  'green-hill': { bg:'#0a1a2a', fg:'#58d854', panel:'#051018', border:'#1a3a4a', red:'#1890ff' },
+  'chemical-plant': { bg:'#1a0832', fg:'#ff6ec7', panel:'#100420', border:'#4a1060', red:'#00ffc8' },
+  'phantasy-star': { bg:'#040818', fg:'#80c0ff', panel:'#020410', border:'#102040', red:'#ff6040' },
 };
 
 const DEFAULT_THEME = 'dark';
@@ -57,6 +67,15 @@ const THEME_DEFAULT_PATTERN = {
   organs:     'rain',
   ume:        'petals',
   cute:       'sparkles',
+  'mushroom-kingdom': 'sparkles',
+  hyrule:       'constellations',
+  zebes:        'embers',
+  midgar:       'rain',
+  crystal:      'sparkles',
+  zanarkand:    'embers',
+  'green-hill': 'perlin-flow',
+  'chemical-plant': 'rain',
+  'phantasy-star': 'constellations',
 };
 
 // Default effect colors for specific themes (overrides --fg)
@@ -65,6 +84,15 @@ const THEME_DEFAULT_EFFECT_COLOR = {
   organs:     '#451616',
   cute:       '#ff8cb8',
   ume:        '#f5a0c0',
+  'mushroom-kingdom': '#ffd700',
+  hyrule:       '#4a8030',
+  zebes:        '#ff2200',
+  midgar:       '#4488cc',
+  crystal:      '#8060c0',
+  zanarkand:    '#aa4040',
+  'green-hill': '#30a030',
+  'chemical-plant': '#cc44aa',
+  'phantasy-star': '#4060a0',
 };
 
 // Default effect intensity (0..1) per theme. Any theme not listed defaults to 1.
@@ -72,11 +100,22 @@ const THEME_DEFAULT_INTENSITY = {
   midnight:   0.5,
   terminal:   0.8,
   organs:     0.65,
+  'mushroom-kingdom': 0.9,
+  hyrule:       0.7,
+  zebes:        0.8,
+  midgar:       0.6,
+  crystal:      0.85,
+  zanarkand:    0.75,
+  'green-hill': 0.8,
+  'chemical-plant': 0.7,
+  'phantasy-star': 0.6,
 };
 
 // Default frosted-glass state per theme. Themes not listed default to false.
 const THEME_DEFAULT_FROSTED = {
   lavender:   true,
+  midgar:     true,
+  crystal:    true,
 };
 
 // ── Custom theme persistence ──

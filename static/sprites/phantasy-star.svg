@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="64" height="64">
+  <!-- Pioneer badge -->
+  <rect x="4" y="3" width="8" height="10" rx="1" fill="#ff6040"/>
+  <rect x="5" y="4" width="6" height="8" fill="#ff8060"/>
+  <polygon points="8,5 9.5,8 6.5,8" fill="#ffffff"/>
+  <rect x="7" y="8" width="2" height="2" fill="#ffffff"/>
+  <rect x="6" y="10" width="4" height="1" fill="#ffffff"/>
+</svg>

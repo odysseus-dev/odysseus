@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="64" height="64">
+  <!-- Triforce -->
+  <polygon points="8,2 12,10 4,10" fill="#ffd700"/>
+  <polygon points="4,6 8,14 0,14" fill="#ffd700"/>
+  <polygon points="12,6 16,14 8,14" fill="#ffd700"/>
+  <polygon points="8,4 10,8 6,8" fill="#0a1a0a"/>
+  <polygon points="4,8 6,12 2,12" fill="#0a1a0a"/>
+  <polygon points="12,8 14,12 10,12" fill="#0a1a0a"/>
+</svg>

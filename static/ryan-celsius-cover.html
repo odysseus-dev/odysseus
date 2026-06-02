@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Ryan Celsius° Sounds — Cover</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #000; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+canvas { display: block; image-rendering: auto; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1000" height="1000"></canvas>
+<script>
+var c = document.getElementById('c');
+var ctx = c.getContext('2d');
+var W = 1000, H = 1000;
+
+// Sky gradient
+var sky = ctx.createLinearGradient(0, 0, 0, H);
+sky.addColorStop(0, '#0a0015');
+sky.addColorStop(0.2, '#1a0030');
+sky.addColorStop(0.4, '#3d0066');
+sky.addColorStop(0.55, '#6b0099');
+sky.addColorStop(0.65, '#cc0066');
+sky.addColorStop(0.75, '#ff3366');
+sky.addColorStop(0.85, '#ff6633');
+sky.addColorStop(0.92, '#ffaa00');
+sky.addColorStop(1, '#ffdd44');
+ctx.fillStyle = sky;
+ctx.fillRect(0, 0, W, H);
+
+// Stars
+var stars = [];
+for (var i = 0; i < 60; i++) {
+  stars.push({ x: Math.random()*W, y: Math.random()*620, r: Math.random()*1.5+0.3, a: Math.random()*0.6+0.2 });
+}
+stars.forEach(function(s) {
+  ctx.globalAlpha = s.a;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+  ctx.fill();
+});
+ctx.globalAlpha = 1;
+
+// Sun
+var sunGrad = ctx.createRadialGradient(500, 580, 0, 500, 580, 160);
+sunGrad.addColorStop(0, '#ffffff');
+sunGrad.addColorStop(0.3, '#ffdd66');
+sunGrad.addColorStop(0.6, '#ff6633');
+sunGrad.addColorStop(1, 'rgba(204,0,102,0)');
+ctx.fillStyle = sunGrad;
+ctx.beginPath();
+ctx.arc(500, 580, 160, 0, Math.PI*2);
+ctx.fill();
+
+// Sun stripes
+ctx.fillStyle = '#0a0015';
+ctx.globalAlpha = 0.6;
+[[540,6],[558,8],[580,10],[605,12],[632,14]].forEach(function(s) {
+  var w = 320 - (s[0]-540)*1.2;
+  ctx.fillRect(500-w/2, s[0], w, s[1]);
+});
+ctx.globalAlpha = 1;
+
+// Vaporwave grid
+ctx.strokeStyle = '#ff00ff';
+var hLines = [[0,1.5,0.6],[30,0.8,0.5],[65,0.6,0.4],[105,0.5,0.3],[150,0.4,0.2],[200,0.3,0.15],[260,0.3,0.1],[330,0.2,0.05]];
+hLines.forEach(function(h) {
+  ctx.globalAlpha = h[2];
+  ctx.lineWidth = h[1];
+  ctx.beginPath();
+  ctx.moveTo(0, 640+h[0]);
+  ctx.lineTo(W, 640+h[0]);
+  ctx.stroke();
+});
+
+var vLines = [[-200],[0],[200],[350],[500],[650],[800],[1000],[1200]];
+vLines.forEach(function(v, i) {
+  ctx.globalAlpha = i===4 ? 0.4 : (Math.abs(i-4)<=1 ? 0.25 : (Math.abs(i-4)<=2 ? 0.3 : 0.4));
+  ctx.lineWidth = i===4 ? 0.5 : 0.6;
+  ctx.beginPath();
+  ctx.moveTo(500, 640);
+  ctx.lineTo(v[0], 1000);
+  ctx.stroke();
+});
+ctx.globalAlpha = 1;
+
+// Buildings
+function drawBuilding(x, y, w, h, color, windowColor) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#6b0099';
+  ctx.lineWidth = 0.5;
+  ctx.strokeRect(x, y, w, h);
+
+  // Windows
+  var winW = Math.min(14, w/4);
+  var winH = 10;
+  var cols = Math.floor((w-16)/(winW+4));
+  var rows = Math.floor((h-20)/(winH+8));
+  for (var r = 0; r < rows; r++) {
+    for (var cc = 0; cc < cols; cc++) {
+      if (Math.random() > 0.4) {
+        var colors = ['#ff00ff','#00ffff','#ff6633','#ff00ff'];
+        ctx.globalAlpha = 0.15 + Math.random()*0.15;
+        ctx.fillStyle = colors[Math.floor(Math.random()*colors.length)];
+        ctx.fillRect(x+8+cc*(winW+4), y+10+r*(winH+8), winW, winH);
+      }
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+drawBuilding(0, 460, 60, 180, '#0a0020');
+drawBuilding(70, 420, 80, 220, '#0d0025');
+drawBuilding(160, 480, 50, 160, '#080020');
+drawBuilding(220, 390, 100, 250, '#0f0030');
+drawBuilding(340, 350, 70, 290, '#100035');
+drawBuilding(580, 400, 90, 240, '#0f0030');
+drawBuilding(680, 440, 65, 200, '#0a0025');
+drawBuilding(755, 380, 80, 260, '#100035');
+drawBuilding(845, 460, 55, 180, '#0a0020');
+drawBuilding(910, 430, 90, 210, '#0d0025');
+
+// Antenna on tall building
+ctx.fillStyle = '#0f0030';
+ctx.fillRect(268, 370, 4, 20);
+ctx.fillStyle = '#ff3366';
+ctx.globalAlpha = 0.8;
+ctx.beginPath();
+ctx.arc(270, 368, 3, 0, Math.PI*2);
+ctx.fill();
+ctx.globalAlpha = 1;
+
+// Neon OPEN sign
+ctx.font = '14px monospace';
+ctx.fillStyle = '#00ffff';
+ctx.textAlign = 'center';
+ctx.shadowColor = '#00ffff';
+ctx.shadowBlur = 15;
+ctx.globalAlpha = 0.8;
+ctx.fillText('OPEN', 270, 510);
+ctx.shadowBlur = 0;
+ctx.globalAlpha = 1;
+
+// Palm trees
+function drawPalm(px, flip) {
+  ctx.fillStyle = '#0a0015';
+  ctx.fillRect(px-3, 500, 6, 140);
+  ctx.beginPath();
+  ctx.ellipse(px, 495, 35, 15, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(px-18, 505, 30, 12, -0.35, 0, Math.PI*2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(px+22, 502, 28, 11, 0.26, 0, Math.PI*2);
+  ctx.fill();
+}
+ctx.globalAlpha = 0.7;
+drawPalm(48);
+ctx.globalAlpha = 0.6;
+drawPalm(923);
+ctx.globalAlpha = 1;
+
+// Flying car trails
+ctx.globalAlpha = 0.4;
+ctx.strokeStyle = '#ff00ff';
+ctx.lineWidth = 2;
+ctx.shadowColor = '#ff00ff';
+ctx.shadowBlur = 10;
+ctx.beginPath();
+ctx.moveTo(100, 380);
+ctx.lineTo(300, 340);
+ctx.stroke();
+ctx.strokeStyle = '#00ffff';
+ctx.shadowColor = '#00ffff';
+ctx.beginPath();
+ctx.moveTo(700, 350);
+ctx.lineTo(900, 390);
+ctx.stroke();
+ctx.shadowBlur = 0;
+ctx.globalAlpha = 1;
+
+// Title with chromatic aberration
+ctx.textAlign = 'center';
+ctx.font = 'bold 72px "Courier New", monospace';
+
+// Red channel offset
+ctx.globalAlpha = 0.6;
+ctx.fillStyle = '#ff0000';
+ctx.fillText('RYAN CELSIUS°', 502, 220);
+
+// Blue channel offset
+ctx.fillStyle = '#0066ff';
+ctx.fillText('RYAN CELSIUS°', 498, 220);
+
+// White main
+ctx.globalAlpha = 1;
+ctx.fillStyle = '#ffffff';
+ctx.shadowColor = '#ff00ff';
+ctx.shadowBlur = 30;
+ctx.fillText('RYAN CELSIUS°', 500, 220);
+ctx.shadowBlur = 0;
+
+// SOUNDS subtitle
+ctx.font = '36px "Courier New", monospace';
+ctx.fillStyle = '#00ffff';
+ctx.shadowColor = '#00ffff';
+ctx.shadowBlur = 20;
+ctx.globalAlpha = 0.9;
+ctx.letterSpacing = '20px';
+ctx.fillText('S O U N D S', 500, 280);
+ctx.shadowBlur = 0;
+ctx.globalAlpha = 1;
+
+// Decorative line
+ctx.strokeStyle = '#ff00ff';
+ctx.lineWidth = 1;
+ctx.globalAlpha = 0.5;
+ctx.shadowColor = '#ff00ff';
+ctx.shadowBlur = 8;
+ctx.beginPath();
+ctx.moveTo(250, 300);
+ctx.lineTo(750, 300);
+ctx.stroke();
+ctx.shadowBlur = 0;
+ctx.globalAlpha = 1;
+
+// Tagline
+ctx.font = '14px monospace';
+ctx.fillStyle = '#ff6633';
+ctx.globalAlpha = 0.7;
+ctx.fillText('LATE NIGHT DRIVES // 2 AM VIBES', 500, 330);
+ctx.globalAlpha = 1;
+
+// VHS tracking lines
+ctx.globalAlpha = 0.12;
+ctx.fillStyle = '#fff';
+ctx.fillRect(0, 150, W, 3);
+ctx.fillStyle = '#00ffff';
+ctx.fillRect(0, 380, W, 2);
+ctx.fillStyle = '#ff00ff';
+ctx.fillRect(0, 520, W, 4);
+ctx.fillStyle = '#fff';
+ctx.fillRect(0, 700, W, 2);
+ctx.fillStyle = '#ff6633';
+ctx.fillRect(0, 850, W, 3);
+ctx.globalAlpha = 1;
+
+// Scanlines
+ctx.globalAlpha = 0.06;
+for (var sl = 0; sl < H; sl += 4) {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, sl, W, 2);
+}
+ctx.globalAlpha = 1;
+
+// VHS timestamp
+ctx.textAlign = 'left';
+ctx.font = '16px monospace';
+ctx.fillStyle = '#fff';
+ctx.globalAlpha = 0.4;
+ctx.shadowColor = '#fff';
+ctx.shadowBlur = 5;
+ctx.fillText('● REC', 40, 960);
+ctx.textAlign = 'right';
+ctx.globalAlpha = 0.5;
+ctx.font = '14px monospace';
+ctx.fillText('02:47 AM', 960, 960);
+ctx.shadowBlur = 0;
+ctx.globalAlpha = 1;
+
+// Corner brackets
+ctx.strokeStyle = '#ff00ff';
+ctx.lineWidth = 1;
+ctx.globalAlpha = 0.3;
+// Top-left
+ctx.beginPath(); ctx.moveTo(20,50); ctx.lineTo(20,20); ctx.lineTo(50,20); ctx.stroke();
+// Top-right
+ctx.beginPath(); ctx.moveTo(950,20); ctx.lineTo(980,20); ctx.lineTo(980,50); ctx.stroke();
+// Bottom-left
+ctx.beginPath(); ctx.moveTo(20,950); ctx.lineTo(20,980); ctx.lineTo(50,980); ctx.stroke();
+// Bottom-right
+ctx.beginPath(); ctx.moveTo(950,980); ctx.lineTo(980,980); ctx.lineTo(980,950); ctx.stroke();
+ctx.globalAlpha = 1;
+
+// Thin neon border
+ctx.strokeStyle = '#ff00ff';
+ctx.lineWidth = 0.5;
+ctx.globalAlpha = 0.2;
+ctx.strokeRect(10, 10, 980, 980);
+ctx.globalAlpha = 1;
+
+// "Click to save" hint
+console.log('Right-click canvas → Save image as... to download PNG');
+</script>
+</body>
+</html>

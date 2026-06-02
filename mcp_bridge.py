@@ -257,32 +257,69 @@ def create_app():
         status = 200 if "error" not in result else 404
         return JSONResponse(result, status_code=status)
 
+    # ── Session management for MCP SSE transport ────────────────────────
+    # Each SSE connection gets a unique session ID. The POST /messages
+    # handler routes responses back through the correct SSE stream via
+    # per-session asyncio queues.  This is required by the MCP SSE spec:
+    #   1. Client GET /sse → server sends `endpoint: /messages?sessionId=X`
+    #   2. Client POST /messages?sessionId=X with JSON-RPC
+    #   3. Server returns HTTP 202 (empty) and pushes the response as an
+    #      `event: message` on the SSE stream for session X.
+
+    _sessions: dict[str, asyncio.Queue] = {}
+
+    def _make_session_id() -> str:
+        import uuid
+        return uuid.uuid4().hex[:16]
+
     async def mcp_sse_endpoint(request: Request):
         """SSE endpoint for MCP clients."""
         if not check_auth(dict(request.headers)):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
 
         from sse_starlette.sse import EventSourceResponse
-        import mcp.types as types
+
+        session_id = _make_session_id()
+        queue: asyncio.Queue = asyncio.Queue()
+        _sessions[session_id] = queue
+        logger.info(f"MCP SSE client connected (session={session_id})")
 
         async def event_generator():
-            """Generate SSE events for MCP."""
-            # Send endpoint info
-            yield {
-                "event": "endpoint",
-                "data": "/messages"
-            }
-            # Keep alive
-            while True:
-                yield {"event": "ping", "data": str(time.time())}
-                await asyncio.sleep(30)
+            try:
+                # Tell the client where to POST messages (with session routing)
+                yield {
+                    "event": "endpoint",
+                    "data": f"/messages?sessionId={session_id}",
+                }
+                # Now yield responses pushed by the POST handler
+                while True:
+                    try:
+                        msg_json = await asyncio.wait_for(queue.get(), timeout=30)
+                        yield {"event": "message", "data": msg_json}
+                    except asyncio.TimeoutError:
+                        # Keep-alive ping (empty data is ignored by MCP clients)
+                        yield {"event": "ping", "data": ""}
+            except asyncio.CancelledError:
+                pass
+            finally:
+                _sessions.pop(session_id, None)
+                logger.info(f"MCP SSE client disconnected (session={session_id})")
 
         return EventSourceResponse(event_generator())
 
     async def mcp_messages_endpoint(request: Request):
-        """Handle MCP JSON-RPC messages."""
+        """Handle MCP JSON-RPC messages routed via sessionId."""
         if not check_auth(dict(request.headers)):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+        # Look up the session queue
+        session_id = request.query_params.get("sessionId", "")
+        queue = _sessions.get(session_id)
+        if not queue:
+            return JSONResponse(
+                {"error": f"Unknown or expired sessionId: {session_id}"},
+                status_code=400,
+            )
 
         try:
             body = await request.json()
@@ -294,10 +331,16 @@ def create_app():
         params = body.get("params", {})
         msg_id = body.get("id")
 
+        # Notifications (no id) don't need a response
+        is_notification = msg_id is None
+
+        # ── Process the request ─────────────────────────────────────────
+        response_payload = None
+
         db = get_db()
         try:
             if method == "initialize":
-                return JSONResponse({
+                response_payload = json.dumps({
                     "jsonrpc": "2.0",
                     "id": msg_id,
                     "result": {
@@ -305,6 +348,17 @@ def create_app():
                         "capabilities": {"tools": {"listChanged": False}},
                         "serverInfo": {"name": "tech-duinn-bridge", "version": "1.0.0"}
                     }
+                })
+
+            elif method == "notifications/initialized":
+                # Client ack after initialize — no response needed
+                pass
+
+            elif method == "ping":
+                response_payload = json.dumps({
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {}
                 })
 
             elif method == "tools/list":
@@ -388,20 +442,20 @@ def create_app():
                         }
                     }
                 ]
-                return JSONResponse({"jsonrpc": "2.0", "id": msg_id, "result": {"tools": tools}})
+                response_payload = json.dumps({"jsonrpc": "2.0", "id": msg_id, "result": {"tools": tools}})
 
             elif method == "tools/call":
                 tool_name = params.get("name", "")
                 tool_args = params.get("arguments", {})
                 result = await _handle_tool_call(db, tool_name, tool_args)
-                return JSONResponse({
+                response_payload = json.dumps({
                     "jsonrpc": "2.0",
                     "id": msg_id,
                     "result": {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
                 })
 
             else:
-                return JSONResponse({
+                response_payload = json.dumps({
                     "jsonrpc": "2.0",
                     "id": msg_id,
                     "error": {"code": -32601, "message": f"Method not found: {method}"}
@@ -409,6 +463,13 @@ def create_app():
 
         finally:
             db.close()
+
+        # Push response to the SSE stream (if not a notification)
+        if response_payload is not None:
+            await queue.put(response_payload)
+
+        # Always return 202 Accepted — the real response goes via SSE
+        return JSONResponse({}, status_code=202)
 
     async def _handle_tool_call(db, tool_name: str, args: dict) -> dict:
         """Handle MCP tool calls."""

@@ -59,6 +59,8 @@ services:
         condition: service_healthy
       chromadb:
         condition: service_healthy
+      mcp-bridge:
+        condition: service_healthy
     restart: unless-stopped
 
   chromadb:
@@ -69,8 +71,12 @@ services:
       - chromadb-data:/chroma/chroma
     environment:
       - ANONYMIZED_TELEMETRY=FALSE
+    networks:
+      default:
+        aliases:
+          - dagda
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat', timeout=5)"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8000 && echo -e 'GET /api/v2/heartbeat HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && timeout 3 cat <&3 | grep -q heartbeat && exec 3>&-"]
       interval: 10s
       timeout: 6s
       retries: 5
@@ -137,7 +143,7 @@ services:
       - NEXUS_COST_CONFIG_PATH=/app/config.yaml
       - NEXUS_COST_API_KEY=${NEXUS_COST_API_KEY:-}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8199/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8199/health', timeout=5)"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -192,7 +198,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=5)"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -222,7 +228,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5)"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -260,8 +266,8 @@ services:
       - "127.0.0.1:8099:8099"
     volumes:
       - nexus-monitor-data:/data
-    environment:
-      - NEXUS_MONITOR_CONFIG=/data/config.yaml
+      - /home/donn/code/nexus-monitor/config.yaml:/etc/nexus-monitor/config.yaml:ro
+    command: ["-config", "/etc/nexus-monitor/config.yaml"]
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8099/health"]
       interval: 30s
@@ -271,6 +277,7 @@ services:
 
   nexus-secrets:
     build: /home/donn/code/nexus-secrets
+    command: ["nexus-secrets", "serve"]
     ports:
       - "127.0.0.1:7438:7438"
     volumes:
@@ -278,6 +285,7 @@ services:
     environment:
       - NEXUS_SECRETS_DB=/data/secrets.db
       - NEXUS_SECRETS_KEY_FILE=/data/key
+      - NEXUS_MASTER_KEY=58976f44c88e8d7034f22e193e7d7802d3f14c7c800c8108f0a6e10cd9d6af04
     restart: unless-stopped
 
   duinn-media:
@@ -289,6 +297,7 @@ services:
       - /home/donn/media:/media
     environment:
       - DUINN_MEDIA_DATA=/data
+      - RD_TOKEN=PUYBASDZMFI2LZLBP4347WKOXBNAX2PVVR5BMGRSTI4LOLP3M4ZQ
     restart: unless-stopped
 
   nexus-backup:
@@ -300,6 +309,8 @@ services:
     environment:
       - NEXUS_BACKUP_DIR=/backups
       - NEXUS_BACKUP_SCHEDULE=0 3 * * *
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   mcp-bridge:
@@ -314,6 +325,27 @@ services:
       - MCP_BRIDGE_TOKEN=${MCP_BRIDGE_TOKEN:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8378/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  pi-tools:
+    build: /home/donn/pi-tools-api
+    ports:
+      - "127.0.0.1:8086:8086"
+    volumes:
+      - /home/donn:/scripts:ro
+      - /home/donn/.ssh:/root/.ssh:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - PI_HOST=100.108.225.22
+      - PI_USER=pi
+      - SCRIPTS_DIR=/scripts
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8086/api/pi/ping', timeout=5)"]
       interval: 30s
       timeout: 5s
       retries: 3

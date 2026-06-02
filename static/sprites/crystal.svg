@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="64" height="64">
+  <!-- FF Crystal -->
+  <polygon points="8,1 11,5 11,11 8,15 5,11 5,5" fill="#b088ff"/>
+  <polygon points="8,2 10,5 10,11 8,14 6,11 6,5" fill="#d0b0ff"/>
+  <polygon points="8,3 9,5 9,11 8,13 7,11 7,5" fill="#e8d8ff"/>
+  <rect x="7" y="6" width="2" height="4" fill="#ffffff" opacity="0.8"/>
+</svg>
