@@ -49,7 +49,7 @@ NON_ADMIN_BLOCKED_TOOLS = {
 
 def is_public_blocked_tool(tool_name: Optional[str]) -> bool:
     """Return True when a non-admin/public user must not execute this tool."""
-    if not tool_name:
+    if not isinstance(tool_name, str) or not tool_name:
         return False
     return tool_name in NON_ADMIN_BLOCKED_TOOLS or tool_name.startswith("mcp__")
 
