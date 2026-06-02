@@ -91,6 +91,7 @@ function _initModelPickerDropdown() {
       }
     }, 200);
   }
+  window.closeModelPicker = _close;
 
   function _openPickerShortcut(kind) {
     _close();

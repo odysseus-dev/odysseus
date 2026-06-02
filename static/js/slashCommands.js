@@ -1833,6 +1833,8 @@ async function _cmdDemo(args, ctx) {
     document.querySelectorAll('.tour-halo').forEach(e => e.remove());
     document.getElementById('tour-tooltip')?.remove();
     document.body.classList.remove('tour-active');
+    if (typeof window.closeOverflowMenu === 'function') window.closeOverflowMenu();
+    if (typeof window.closeModelPicker === 'function') window.closeModelPicker();
     // Keep the draft-restore mechanism alive for a few seconds AFTER the
     // tour visually ends, because the closing `typewriterReply` and any
     // async stragglers can clear #message in between resolve('next') and
@@ -2213,7 +2215,14 @@ async function _cmdDemo(args, ctx) {
     { sel: '#sidebar-new-chat-btn', text: 'Start a new chat here. <b>Click it.</b> You can do it!', mode: 'click',
       before() { if (sidebar?.classList.contains('hidden')) sidebar.classList.remove('hidden'); } },
     { sel: '#model-picker-btn',   text: 'Pick your LLM, Local or API.', advanceOnClick: true },
-    { sel: '#mode-agent-btn',     text: '<b>Agent mode</b> gives Odysseus more control of the app when your model supports tools: create a theme, download a model, make a daily task, organize things, and more.', mode: 'click' },
+    { sel: '#mode-agent-btn',     text: '<b>Agent mode</b> gives Odysseus more control of the app when your model supports tools: create a theme, download a model, make a daily task, organize things, and more.', mode: 'click',
+      before() {
+        if (typeof window.closeModelPicker === 'function') {
+          window.closeModelPicker();
+        } else {
+          document.getElementById('model-picker-menu')?.classList.add('hidden');
+        }
+      } },
     { sel: '#web-toggle-btn',     text: 'Toggle tools like <b>web search</b>. Odysseus comes with private built-in <b>SearXNG</b> search.', mode: 'click' },
     { sel: '#overflow-plus-btn',  text: 'More tools can be found here, or in your sidebar. <b>Click to peek.</b>',
       advanceOnClick: true, pulseNext: true, afterDelay: 2200 },
