@@ -618,6 +618,10 @@ async function _fetchDependencies() {
     const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
       if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
+      if (pkg.installed && pkg.pip_update_available === false) {
+        const tip = esc(pkg.update_note || pkg.status_note || 'Found externally; update outside Odysseus.');
+        return `<span class="cookbook-dep-tag cookbook-dep-installed" title="${tip}">Installed</span>`;
+      }
       if (pkg.installed) return `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn" title="Installed — click for actions"><span class="cookbook-dep-installed-label">Installed</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
       if (isSystemDep) {
         const depTip = esc(pkg.install_hint || 'Install this OS package on the selected server.');
@@ -632,11 +636,13 @@ async function _fetchDependencies() {
       const isSystemDep = pkg.kind === 'system';
       const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
       const note = pkg.status_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.65;margin-top:3px;">${esc(pkg.status_note)}</div>` : '';
+      const updateNote = pkg.installed && pkg.pip_update_available === false && pkg.update_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.55;margin-top:3px;">${esc(pkg.update_note)}</div>` : '';
       return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
         + `<div class="cookbook-dep-info">`
         + `<div class="memory-item-title">${esc(pkg.name)}</div>`
         + `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`
         + note
+        + updateNote
         + `</div>`
         + `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`
         + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
