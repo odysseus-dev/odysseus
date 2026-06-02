@@ -38,6 +38,7 @@ from core.platform_compat import (
     detached_popen_kwargs,
     find_bash,
 )
+from src.workspace import WorkspaceError, resolve_workspace_dir
 
 
 def _require_admin(request: Request):
@@ -357,6 +358,7 @@ PTY_UNSUPPORTED_ERROR = "pty_unsupported"
 
 class ShellExecRequest(BaseModel):
     command: str
+    cwd: str | None = None
     timeout: int | None = None  # optional override; 0 = no timeout (run until client disconnects)
     use_pty: bool = False       # use pseudo-TTY (for progress bars)
     use_tmux: bool = False      # run in tmux session (survives browser disconnect)
@@ -376,15 +378,16 @@ async def _create_shell(command: str, **kwargs):
     return await asyncio.create_subprocess_shell(command, **kwargs)
 
 
-async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, Any]:
+async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT, cwd: str | None = None) -> Dict[str, Any]:
     """Run a shell command and return stdout/stderr/exit_code."""
     proc = None
     try:
+        workdir = resolve_workspace_dir(cwd)
         proc = await _create_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=str(Path.home()),
+            cwd=workdir,
         )
         stdout_b, stderr_b = await asyncio.wait_for(
             proc.communicate(), timeout=timeout
@@ -404,7 +407,7 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
         return {"stdout": "", "stderr": str(e), "exit_code": -1}
 
 
-async def _generate_pty(cmd: str, timeout: int, request: Request):
+async def _generate_pty(cmd: str, timeout: int, request: Request, cwd: str | None = None):
     """Run command in a pseudo-TTY so tqdm/progress bars work natively."""
     if not PTY_SUPPORTED:
         msg = "PTY streaming is not supported on this platform"
@@ -412,6 +415,13 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
             msg += f": {_PTY_IMPORT_ERROR}"
         yield f"data: {json.dumps({'stream': 'stderr', 'data': msg, 'error': PTY_UNSUPPORTED_ERROR})}\n\n"
         yield f"data: {json.dumps({'exit_code': -1, 'error': PTY_UNSUPPORTED_ERROR})}\n\n"
+        return
+
+    try:
+        workdir = resolve_workspace_dir(cwd)
+    except WorkspaceError as e:
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': str(e)})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
         return
 
     loop = asyncio.get_running_loop()
@@ -426,7 +436,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
         stdin=slave_fd,
         stdout=slave_fd,
         stderr=slave_fd,
-        cwd=str(Path.home()),
+        cwd=workdir,
         preexec_fn=os.setsid,
     )
     os.close(slave_fd)  # parent doesn't need the slave side
@@ -544,10 +554,17 @@ def _pty_read(fd: int) -> bytes | None:
     return None  # timeout, no data yet
 
 
-async def _generate_tmux(cmd: str, request: Request):
+async def _generate_tmux(cmd: str, request: Request, cwd: str | None = None):
     """Run command in a tmux session. Streams output via a log file.
     The tmux session survives browser disconnect — user can reconnect or
     `tmux attach -t <name>` to see it live."""
+    try:
+        workdir = resolve_workspace_dir(cwd)
+    except WorkspaceError as e:
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': str(e)})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
+        return
+
     TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
     session_id = f"cookbook-{uuid.uuid4().hex[:8]}"
     log_path = TMUX_LOG_DIR / f"{session_id}.log"
@@ -562,6 +579,7 @@ async def _generate_tmux(cmd: str, request: Request):
         f"  ODYSSEUS_USER_PATH=\"$(\"$ODYSSEUS_USER_SHELL\" -ic 'printf \"__ODYSSEUS_PATH__%s\\n\" \"$PATH\"' 2>/dev/null | sed -n 's/^__ODYSSEUS_PATH__//p' | tail -n 1 || true)\"\n"
         f"  if [ -n \"$ODYSSEUS_USER_PATH\" ]; then export PATH=\"$ODYSSEUS_USER_PATH:$PATH\"; fi\n"
         f"fi\n"
+        f"cd {shlex.quote(workdir)} || exit 1\n"
         f"{cmd} 2>&1 | tee '{log_path}'\n"
         f"EC=${{PIPESTATUS[0]}}\n"
         f"echo ':::EXIT_CODE:::'$EC >> '{log_path}'\n"
@@ -654,7 +672,7 @@ async def _generate_tmux(cmd: str, request: Request):
         pass
 
 
-async def _generate_win_detached(cmd: str, request: Request):
+async def _generate_win_detached(cmd: str, request: Request, cwd: str | None = None):
     """Windows stand-in for the tmux path (issues #84/#162).
 
     tmux doesn't exist on Windows, so we run the command in a *detached* child
@@ -663,6 +681,13 @@ async def _generate_win_detached(cmd: str, request: Request):
     (Git Bash) for command-syntax parity; falls back to cmd.exe. There's no
     `tmux attach` equivalent, but the "keeps running if you disconnect" contract
     holds, which is the point of the feature for long Cookbook downloads."""
+    try:
+        workdir = resolve_workspace_dir(cwd)
+    except WorkspaceError as e:
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': str(e)})}\n\n"
+        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
+        return
+
     TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
     session_id = f"cookbook-{uuid.uuid4().hex[:8]}"
     log_path = TMUX_LOG_DIR / f"{session_id}.log"
@@ -694,6 +719,7 @@ async def _generate_win_detached(cmd: str, request: Request):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
+            cwd=workdir,
             **detached_popen_kwargs(),
         )
     except Exception as e:
@@ -752,8 +778,8 @@ def setup_shell_routes() -> APIRouter:
         if not cmd:
             return {"stdout": "", "stderr": "No command provided", "exit_code": 1}
 
-        logger.info("User shell exec requested: length=%d", len(cmd))
-        result = await _exec_shell(cmd, timeout=EXEC_TIMEOUT)
+        logger.info("User shell exec requested: cwd_override=%s length=%d", bool(req.cwd), len(cmd))
+        result = await _exec_shell(cmd, timeout=EXEC_TIMEOUT, cwd=req.cwd)
         return result
 
     @router.post("/api/shell/stream")
@@ -771,22 +797,23 @@ def setup_shell_routes() -> APIRouter:
         use_pty = req.use_pty
         use_tmux = req.use_tmux
         logger.info(
-            "User shell stream requested: timeout=%s pty=%s tmux=%s length=%d",
+            "User shell stream requested: timeout=%s pty=%s tmux=%s cwd_override=%s length=%d",
             "none" if timeout == 0 else f"{timeout}s",
             use_pty,
             use_tmux,
+            bool(req.cwd),
             len(cmd),
         )
 
         if use_tmux:
             # tmux is POSIX-only; Windows uses a detached-process + logfile tail
             # that preserves the "survives disconnect" behaviour.
-            gen = _generate_win_detached(cmd, request) if IS_WINDOWS else _generate_tmux(cmd, request)
+            gen = _generate_win_detached(cmd, request, cwd=req.cwd) if IS_WINDOWS else _generate_tmux(cmd, request, cwd=req.cwd)
             return StreamingResponse(gen, media_type="text/event-stream")
 
         if use_pty and not IS_WINDOWS:
             return StreamingResponse(
-                _generate_pty(cmd, timeout, request),
+                _generate_pty(cmd, timeout, request, cwd=req.cwd),
                 media_type="text/event-stream",
             )
         # Windows has no PTY; fall through to pipe streaming below (output still
@@ -796,11 +823,12 @@ def setup_shell_routes() -> APIRouter:
             proc = None
             reader_tasks = []
             try:
+                workdir = resolve_workspace_dir(req.cwd)
                 proc = await _create_shell(
                     cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    cwd=str(Path.home()),
+                    cwd=workdir,
                 )
 
                 q: asyncio.Queue = asyncio.Queue()

@@ -17,6 +17,7 @@ import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
+from src.workspace import WorkspaceError, resolve_workspace_dir, resolve_workspace_path
 
 MAX_OUTPUT_CHARS = 10_000
 MAX_READ_CHARS = 20_000
@@ -84,6 +85,13 @@ def _tool_path_roots() -> list[str]:
     from src.constants import DATA_DIR
     roots.append(DATA_DIR)
 
+    # Configured workspace directory — relative read_file/write_file paths are
+    # resolved there, while sensitive-subpath checks below still apply.
+    try:
+        roots.append(resolve_workspace_dir())
+    except WorkspaceError:
+        pass
+
     # /tmp (and its macOS realpath /private/tmp).
     roots.append("/tmp")
     try:
@@ -136,8 +144,10 @@ def _resolve_tool_path(raw_path: str) -> str:
     """
     if raw_path is None or not str(raw_path).strip():
         raise ValueError("path is required")
-    expanded = os.path.expanduser(str(raw_path).strip())
-    resolved = os.path.realpath(expanded)
+    try:
+        resolved = os.path.realpath(resolve_workspace_path(str(raw_path).strip()))
+    except WorkspaceError as e:
+        raise ValueError(str(e)) from e
 
     if _is_sensitive_path(resolved):
         raise ValueError(
@@ -465,11 +475,13 @@ async def _direct_fallback(
 
     try:
         if tool == "bash":
+            workdir = resolve_workspace_dir()
             proc = await asyncio.create_subprocess_shell(
                 content,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
+                cwd=workdir,
             )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
                 proc,
@@ -486,6 +498,7 @@ async def _direct_fallback(
             return {"output": output or "(no output)", "exit_code": rc or 0}
 
         if tool == "python":
+            workdir = resolve_workspace_dir()
             # Run user code in a subprocess so an infinite loop or crash
             # can't take the whole server down. -I = isolated mode (skip
             # user site, no PYTHONPATH inheritance) for hygiene.
@@ -496,6 +509,7 @@ async def _direct_fallback(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
+                cwd=workdir,
             )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
                 proc,
@@ -772,7 +786,11 @@ async def execute_tool_block(
         _is_bg, _bg_cmd = _split_bg_marker(content)
         if _is_bg and _bg_cmd:
             from src import bg_jobs
-            rec = bg_jobs.launch(_bg_cmd, session_id=session_id)
+            try:
+                workdir = resolve_workspace_dir()
+            except WorkspaceError as e:
+                return "bash (background): workspace", {"error": str(e), "exit_code": 1}
+            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=workdir)
             short = _bg_cmd.strip().split(chr(10))[0][:80]
             desc = f"bash (background): {short}"
             result = {

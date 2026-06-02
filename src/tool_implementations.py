@@ -1571,6 +1571,8 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             "hard max": "agent_input_token_hard_max",
             "token budget cap": "agent_input_token_hard_max",
             "input budget cap": "agent_input_token_hard_max",
+            "workspace": "workspace_dir", "workspace dir": "workspace_dir",
+            "workspace directory": "workspace_dir", "working directory": "workspace_dir",
         }
         def _resolve(k):
             k2 = (k or "").strip().lower()

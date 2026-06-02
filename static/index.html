@@ -1478,7 +1478,12 @@
                 <label class="settings-label">Tool call limit</label>
                 <input id="set-agentMaxTools" type="text" inputmode="numeric" placeholder="0 = unlimited" class="settings-select" style="width:120px;">
               </div>
+              <div class="settings-row">
+                <label class="settings-label">Workspace</label>
+                <input id="set-agentWorkspaceDir" type="text" placeholder="/workspace/project" class="settings-select" style="width:220px;">
+              </div>
               <div id="set-agentMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+              <div id="set-agentWorkspaceMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
           <!-- Image Generation removed — only inpaint remains in this build,

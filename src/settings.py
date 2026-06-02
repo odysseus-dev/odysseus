@@ -94,6 +94,7 @@ DEFAULT_SETTINGS = {
     # unbounded model/API bill. Other values are bounded to [60, 86400].
     # Tune via Settings or by editing data/settings.json.
     "research_run_timeout_seconds": 1800,
+    "workspace_dir": "",
     "agent_max_tool_calls": 0,
     "agent_input_token_budget": 6000,
     # Ceiling on the *auto-derived* input budget that #1230 introduced. Has

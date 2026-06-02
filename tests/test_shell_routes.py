@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from routes.shell_routes import (
+    _exec_shell,
     _find_line_break,
     _running_in_container,
     _docker_row_status,
@@ -24,6 +25,17 @@ from routes.shell_routes import (
     _venv_activate_prefix,
     DOCKER_IN_CONTAINER_HINT,
 )
+
+
+async def test_exec_shell_uses_workspace_setting(monkeypatch, tmp_path):
+    import routes.shell_routes as shell_routes
+
+    monkeypatch.setattr(shell_routes, "resolve_workspace_dir", lambda cwd=None: str(tmp_path))
+
+    result = await _exec_shell("pwd")
+
+    assert result["exit_code"] == 0
+    assert result["stdout"].strip() == str(tmp_path)
 
 
 def test_shell_routes_import_without_posix_pty_modules(monkeypatch):

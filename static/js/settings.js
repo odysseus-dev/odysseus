@@ -1554,16 +1554,19 @@ async function initResearchSearchSettings() {
 /* ── Agent Settings (AI tab) ── */
 async function initAgentSettings() {
   var toolsInput = el('set-agentMaxTools');
+  var workspaceInput = el('set-agentWorkspaceDir');
   var msg = el('set-agentMsg');
-  if (!toolsInput) return;
+  var workspaceMsg = el('set-agentWorkspaceMsg');
+  if (!toolsInput && !workspaceInput) return;
 
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
-    if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
+    if (toolsInput && settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
+    if (workspaceInput) workspaceInput.value = settings.workspace_dir || '';
   } catch (e) {}
 
-  async function save() {
+  async function saveTools() {
     var val = parseInt(toolsInput.value, 10) || 0;
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
@@ -1575,9 +1578,25 @@ async function initAgentSettings() {
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
-  toolsInput.addEventListener('change', save);
-  var cur = parseInt(toolsInput.value, 10) || 0;
-  msg.textContent = cur > 0 ? 'Limit: ' + cur + ' tool calls per message' : 'Unlimited';
+  async function saveWorkspace() {
+    var path = (workspaceInput.value || '').trim();
+    try {
+      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_dir: path })
+      });
+      workspaceMsg.textContent = path ? 'Saved' : 'Using home directory';
+      workspaceMsg.style.color = 'var(--fg)';
+      setTimeout(function() { workspaceMsg.textContent = ''; }, 2000);
+    } catch (e) { workspaceMsg.textContent = 'Failed to save'; workspaceMsg.style.color = 'var(--red)'; }
+  }
+
+  if (toolsInput) {
+    toolsInput.addEventListener('change', saveTools);
+    var cur = parseInt(toolsInput.value, 10) || 0;
+    msg.textContent = cur > 0 ? 'Limit: ' + cur + ' tool calls per message' : 'Unlimited';
+  }
+  if (workspaceInput) workspaceInput.addEventListener('change', saveWorkspace);
 }
 
 /* ═══════════════════════════════════════════
