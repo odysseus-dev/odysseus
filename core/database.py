@@ -356,6 +356,11 @@ class ModelEndpoint(TimestampMixin, Base):
     # can be toggled per-endpoint in the UI. NULL = unknown, falls
     # back to the model-name keyword heuristic in agent_loop.py.
     supports_tools = Column(Boolean, nullable=True, default=None)
+    # Optional read-only diagnostics for self-hosted/loopback wrapper servers.
+    # JSON object mapping a section name to a URL path on the same origin, e.g.
+    # {"health": "/health"}. NULL/empty = no diagnostics; the admin-only,
+    # loopback-only diagnostics route only fetches sections listed here.
+    diagnostics_paths = Column(Text, nullable=True)
     # Per-user ownership. NULL = legacy/shared (visible to every user) — this
     # is the historical default. When non-null, the model picker only shows
     # the endpoint to that user (admins always see everything).
@@ -876,6 +881,25 @@ def _migrate_add_supports_tools_column():
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).warning(f"supports_tools migration failed: {e}")
+
+
+def _migrate_add_model_endpoint_diagnostics_paths_column():
+    """Add diagnostics_paths column to model_endpoints if it doesn't exist."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(model_endpoints)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "diagnostics_paths" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN diagnostics_paths TEXT")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'diagnostics_paths' column to model_endpoints")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"diagnostics_paths migration failed: {e}")
 
 
 def _migrate_add_cached_models_column():
@@ -1599,6 +1623,7 @@ def init_db():
     _migrate_add_model_endpoint_refresh_columns()
     _migrate_add_model_endpoint_owner_column()
     _migrate_add_supports_tools_column()
+    _migrate_add_model_endpoint_diagnostics_paths_column()
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
     _migrate_add_document_archived_column()

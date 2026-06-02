@@ -96,6 +96,24 @@ function _modelExists(modelId, url) {
   });
 }
 
+function _activeEndpointIdForModel(modelId, session, pendingChat) {
+  if (!modelId) return null;
+  if (pendingChat && pendingChat.modelId === modelId && pendingChat.endpointId) {
+    return String(pendingChat.endpointId);
+  }
+  if (!window.modelsModule || !window.modelsModule.getCachedItems) return null;
+  const items = window.modelsModule.getCachedItems() || [];
+  const targetUrl = ((session && session.endpoint_url) || (pendingChat && pendingChat.url) || '').replace(/\/+$/, '');
+  for (const item of items) {
+    if (item.offline) continue;
+    const itemUrl = (item.url || '').replace(/\/+$/, '');
+    if (targetUrl && itemUrl !== targetUrl) continue;
+    const models = (item.models || []).concat(item.models_extra || []);
+    if (models.includes(modelId) && item.endpoint_id) return String(item.endpoint_id);
+  }
+  return null;
+}
+
 /**
  * Initialize the model picker dropdown.
  * @param {Object} deps
@@ -737,6 +755,23 @@ export function updateModelPicker() {
     }
   }
 
+  // Publish the active model id so other panels can show model-specific
+  // affordances only while that model is actually in use. Publish the endpoint
+  // too, otherwise duplicate endpoints can all appear active when they serve
+  // the same model.
+  const previousActiveModelId = window.__odyActiveModelId || null;
+  const previousActiveEndpointId = window.__odyActiveEndpointId || null;
+  const nextActiveModelId = modelId || null;
+  const nextActiveEndpointId = _activeEndpointIdForModel(modelId, s, _pendingChat);
+  window.__odyActiveModelId = nextActiveModelId;
+  window.__odyActiveEndpointId = nextActiveEndpointId;
+  if (previousActiveModelId !== nextActiveModelId || previousActiveEndpointId !== nextActiveEndpointId) {
+    try {
+      document.dispatchEvent(new CustomEvent('odysseus:active-model-changed', {
+        detail: { modelId: nextActiveModelId, endpointId: nextActiveEndpointId },
+      }));
+    } catch (_) {}
+  }
   const displayName = modelId ? modelId.split('/').pop() : 'Select model';
   // The header indicator clips long names with ellipsis; show the full model
   // identifier on hover (#1982). No tooltip on the "Select model" placeholder.

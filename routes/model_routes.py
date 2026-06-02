@@ -10,6 +10,7 @@ import time as _time
 import logging
 import httpx
 from datetime import datetime
+from types import SimpleNamespace
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse, urlunparse
 from fastapi import APIRouter, HTTPException, Form, Query, Body, Request, Response
@@ -29,6 +30,204 @@ from src.endpoint_resolver import (
 from src.auth_helpers import _auth_disabled, owner_filter
 
 logger = logging.getLogger(__name__)
+
+# Hard cap on how many diagnostic sections an endpoint may register, and the
+# shape each path must take. Keeps the admin-only, loopback-only diagnostics
+# fetch from being abused as a generic same-origin proxy.
+_MAX_DIAGNOSTIC_SECTIONS = 16
+_DIAGNOSTIC_RESPONSE_LIMIT_BYTES = 20_000
+
+
+def _parse_diagnostics_paths(raw: Any) -> Dict[str, str]:
+    """Normalize a stored/submitted diagnostics map into {section: "/path"}.
+
+    Accepts a JSON string or a dict. Section names must be short identifiers and
+    each path must be a single same-origin absolute path (leading "/", no scheme,
+    host, "?"/"#", or "//" escape). Anything malformed is dropped silently so a
+    bad row can never widen what the diagnostics route will fetch.
+    """
+    if not raw:
+        return {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, str] = {}
+    for name, path in raw.items():
+        if not isinstance(name, str) or not isinstance(path, str):
+            continue
+        section = name.strip().lower()
+        path = path.strip()
+        if not section or not re.fullmatch(r"[a-z0-9_-]{1,32}", section):
+            continue
+        if not path.startswith("/") or path.startswith("//"):
+            continue
+        if any(c in path for c in ("?", "#", "\\")) or "://" in path:
+            continue
+        out[section] = path
+        if len(out) >= _MAX_DIAGNOSTIC_SECTIONS:
+            break
+    return out
+
+
+def _anthropic_api_root(base: str) -> str:
+    """Return Anthropic's API root without duplicating /v1."""
+    base = (base or "").strip().rstrip("/")
+    host = urlparse(base).hostname or ""
+    if host.endswith("anthropic.com") and base.endswith("/v1"):
+        return base[:-3].rstrip("/")
+    return base
+
+
+def _ollama_api_root(base: str) -> str:
+    """Return Ollama's native API root without depending on deferred imports."""
+    base = (base or "").strip().rstrip("/")
+    parsed = urlparse(base)
+    host = parsed.hostname or ""
+    path = (parsed.path or "").rstrip("/")
+    if path.endswith("/api"):
+        return base
+    if host.endswith("ollama.com"):
+        root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
+        return root.rstrip("/") + "/api"
+    return base
+
+
+def _models_url(base: str) -> str:
+    """Return provider-specific model-list URL for route-local probing."""
+    provider = _detect_provider(base)
+    host = urlparse(base).hostname or ""
+    if provider == "anthropic" or host.endswith("anthropic.com"):
+        return _anthropic_api_root(base) + "/v1/models"
+    if provider == "ollama" or host.endswith("ollama.com"):
+        return _ollama_api_root(base) + "/tags"
+    return base.rstrip("/") + "/models"
+
+
+def _provider_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
+    """Build provider auth headers without depending on import-time stubs."""
+    if not api_key:
+        return {}
+    provider = _detect_provider(base)
+    host = urlparse(base).hostname or ""
+    if provider == "anthropic" or host.endswith("anthropic.com"):
+        return {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        }
+    return {"Authorization": f"Bearer {api_key}"}
+
+
+def _is_loopback_url(base: str) -> bool:
+    try:
+        parsed = urlparse(base or "")
+    except Exception:
+        return False
+    return (parsed.hostname or "").lower() in {"127.0.0.1", "localhost", "::1"}
+
+
+def _root_from_openai_base(base: str) -> str:
+    base = (base or "").strip().rstrip("/")
+    parsed = urlparse(base)
+    path = (parsed.path or "").rstrip("/")
+    if path == "/v1":
+        parsed = parsed._replace(path="")
+        return urlunparse(parsed).rstrip("/")
+    if path.endswith("/v1"):
+        parsed = parsed._replace(path=path[:-3].rstrip("/"))
+        return urlunparse(parsed).rstrip("/")
+    return base
+
+
+def _endpoint_diagnostics(ep: Any) -> Dict[str, str]:
+    """Return the validated diagnostics map for an endpoint, or {} if none."""
+    return _parse_diagnostics_paths(getattr(ep, "diagnostics_paths", None))
+
+
+def _endpoint_supports_diagnostics(ep: Any) -> bool:
+    """Diagnostics are offered only for loopback endpoints that registered at
+    least one diagnostic section. Loopback is required so the admin-only fetch
+    can never be pointed at an arbitrary host (SSRF)."""
+    if not _is_loopback_url(ep.base_url or ""):
+        return False
+    return bool(_endpoint_diagnostics(ep))
+
+
+def _endpoint_diagnostics_sections(ep: Any) -> List[str]:
+    """Return visible diagnostics sections only when the endpoint is eligible."""
+    if not _is_loopback_url(getattr(ep, "base_url", "") or ""):
+        return []
+    return sorted(_endpoint_diagnostics(ep).keys())
+
+
+def _parse_supports_tools_value(value: Any) -> Optional[bool]:
+    if value is None:
+        return None
+    if value in (True, 1):
+        return True
+    if value in (False, 0):
+        return False
+    raw = str(value).strip().lower()
+    if raw in ("true", "1", "yes", "on"):
+        return True
+    if raw in ("false", "0", "no", "off"):
+        return False
+    return None
+
+
+def _read_capped_response_bytes(resp: Any, limit: int = _DIAGNOSTIC_RESPONSE_LIMIT_BYTES) -> tuple[bytes, bool]:
+    """Read at most `limit` bytes from an httpx response stream."""
+    chunks: List[bytes] = []
+    total = 0
+    truncated = False
+    for chunk in resp.iter_bytes():
+        if not chunk:
+            continue
+        remaining = limit - total
+        if remaining <= 0:
+            truncated = True
+            break
+        if len(chunk) > remaining:
+            chunks.append(chunk[:remaining])
+            truncated = True
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    return b"".join(chunks), truncated
+
+
+def _decode_response_bytes(resp: Any, raw: bytes) -> str:
+    encoding = getattr(resp, "encoding", None) or "utf-8"
+    try:
+        return raw.decode(encoding, errors="replace")
+    except LookupError:
+        return raw.decode("utf-8", errors="replace")
+
+
+def _fetch_endpoint_diagnostic_payload(target: str, headers: Dict[str, str]) -> tuple[Any, bool]:
+    """Fetch one diagnostic URL with redirect/proxy hardening and a hard body cap."""
+    with httpx.stream(
+        "GET",
+        target,
+        headers=headers,
+        timeout=3,
+        follow_redirects=False,
+        trust_env=False,
+    ) as r:
+        raw_bytes, truncated = _read_capped_response_bytes(r)
+        raw = _decode_response_bytes(r, raw_bytes)
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, raw[:500] or f"Endpoint returned HTTP {r.status_code}")
+        if not truncated:
+            try:
+                return json.loads(raw), False
+            except Exception:
+                pass
+        return raw, truncated
+
 
 _SPEECH_ENDPOINT_SETTINGS = (
     ("tts_provider", "tts_model", "tts-1", "Text to Speech"),
@@ -1459,6 +1658,7 @@ def setup_model_routes(model_discovery):
                     "model_refresh_mode": _endpoint_refresh_mode(r, kind),
                     "model_refresh_interval": getattr(r, "model_refresh_interval", None),
                     "model_refresh_timeout": getattr(r, "model_refresh_timeout", None),
+                    "diagnostics_sections": _endpoint_diagnostics_sections(r),
                 })
             return results
         finally:
@@ -1479,6 +1679,7 @@ def setup_model_routes(model_discovery):
         model_refresh_timeout: str = Form(""),
         supports_tools: str = Form(""),  # "true"/"false"/"" (unknown)
         pinned_models: str = Form(""),  # admin-pinned IDs: list/JSON/comma/newline
+        diagnostics_paths: str = Form(""),  # JSON {section: "/path"} for loopback wrappers
         container_local: str = Form("false"),
         # Default `shared=true` → endpoints are visible to all users (the
         # app's historical behaviour). Admins can pass `shared=false` to
@@ -1541,8 +1742,9 @@ def setup_model_routes(model_discovery):
                 existing = _empty_key_existing
             if existing:
                 changed = False
-                # Persist any incoming pinned IDs onto the existing row. An
-                # empty/omitted form field must not wipe previously pinned IDs.
+                # Persist any incoming pinned IDs / supports_tools / diagnostics
+                # onto the existing row. An empty/omitted form field must not
+                # wipe previously stored values.
                 _incoming_pinned = _normalize_model_ids(pinned_models)
                 if _incoming_pinned:
                     _merged_pinned = _merge_model_ids(
@@ -1576,12 +1778,24 @@ def setup_model_routes(model_discovery):
                     if probed_models:
                         existing.cached_models = json.dumps(probed_models)
                         changed = True
+                _st_raw = supports_tools.strip() if isinstance(supports_tools, str) else ""
+                if _st_raw:
+                    existing.supports_tools = _parse_supports_tools_value(_st_raw)
+                    changed = True
+                _diag_raw = diagnostics_paths.strip() if isinstance(diagnostics_paths, str) else ""
+                if _diag_raw:
+                    _diag = _parse_diagnostics_paths(_diag_raw)
+                    existing.diagnostics_paths = json.dumps(_diag) if _diag else None
+                    changed = True
                 if changed:
                     _db_dedup.commit()
                     _invalidate_models_cache()
                     _local_probe_cache["data"] = None
                 existing_models = _cached_model_ids(existing)
                 _existing_pinned = _normalize_model_ids(getattr(existing, "pinned_models", None))
+                existing_ping = None
+                if not existing_models and not _existing_pinned and existing.is_enabled:
+                    existing_ping = _ping_endpoint(existing.base_url, existing.api_key, timeout=1.0)
                 existing_kind = _effective_endpoint_kind(existing, existing.base_url)
                 return {
                     "id": existing.id,
@@ -1595,8 +1809,12 @@ def setup_model_routes(model_discovery):
                         existing.pinned_models,
                     ),
                     "pinned_models": _existing_pinned,
-                    "online": True,
-                    "status": "online",
+                    "online": bool(existing_models) or bool(_existing_pinned) or bool((existing_ping or {}).get("reachable")),
+                    "status": "online" if (existing_models or _existing_pinned) else ("empty" if (existing_ping or {}).get("reachable") else "offline"),
+                    "ping_error": (existing_ping or {}).get("error") if existing_ping else None,
+                    "model_type": getattr(existing, "model_type", None) or "llm",
+                    "supports_tools": getattr(existing, "supports_tools", None),
+                    "diagnostics_sections": _endpoint_diagnostics_sections(existing),
                     "existing": True,
                     "endpoint_kind": existing_kind,
                     "category": _classify_endpoint(existing.base_url, existing_kind),
@@ -1614,9 +1832,13 @@ def setup_model_routes(model_discovery):
         ep_id = str(uuid.uuid4())[:8]
         db = SessionLocal()
         try:
-            _st_raw = (supports_tools or "").strip().lower()
-            _st = True if _st_raw in ("true", "1", "yes") else (False if _st_raw in ("false", "0", "no") else None)
+            _st = _parse_supports_tools_value(supports_tools)
             _pinned = _normalize_model_ids(pinned_models)
+            # Validate + normalize any diagnostics map before persisting, so a
+            # malformed submission can never store a fetchable path we'd later
+            # trust. Empty/invalid → NULL (no diagnostics).
+            _diag = _parse_diagnostics_paths(diagnostics_paths)
+            _diag_json = json.dumps(_diag) if _diag else None
             # Stamp owner so the picker only shows this endpoint to the admin
             # who added it. Pass `shared=true` to mark it null-owner (visible
             # to all users), preserving the pre-fix "everyone sees everything"
@@ -1638,6 +1860,7 @@ def setup_model_routes(model_discovery):
                 cached_models=json.dumps(model_ids) if model_ids else None,
                 pinned_models=json.dumps(_pinned) if _pinned else None,
                 supports_tools=_st,
+                diagnostics_paths=_diag_json,
                 owner=_owner_val,
             )
             db.add(ep)
@@ -1671,6 +1894,11 @@ def setup_model_routes(model_discovery):
             "ping_error": ping.get("error") if ping else None,
             "endpoint_kind": requested_kind,
             "category": _classify_endpoint(base_url, requested_kind),
+            "model_type": model_type.strip() if model_type else "llm",
+            "supports_tools": _st,
+            "diagnostics_sections": _endpoint_diagnostics_sections(
+                SimpleNamespace(base_url=base_url, diagnostics_paths=_diag_json)
+            ),
         }
 
     @router.post("/model-endpoints/test")
@@ -1703,6 +1931,67 @@ def setup_model_routes(model_discovery):
             "endpoint_kind": requested_kind,
             "category": _classify_endpoint(base_url, requested_kind),
         }
+
+    @router.get("/model-endpoints/{ep_id}/diagnostics")
+    def get_endpoint_diagnostics(
+        ep_id: str,
+        request: Request,
+        section: str = Query(""),
+    ):
+        """Fetch a read-only diagnostic section from a registered loopback endpoint.
+
+        Admin-only. Only loopback endpoints that registered a `diagnostics_paths`
+        map are eligible, and `section` must be one of *that endpoint's own*
+        configured sections — the server never fetches an arbitrary path or host.
+        """
+        require_admin(request)
+        section = (section or "").strip().lower()
+
+        db = SessionLocal()
+        try:
+            ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
+            if not ep:
+                raise HTTPException(404, "Endpoint not found")
+            ep_data = {
+                "id": ep.id,
+                "name": ep.name,
+                "base_url": ep.base_url,
+                "api_key": ep.api_key,
+                "diagnostics_paths": ep.diagnostics_paths,
+            }
+        finally:
+            db.close()
+
+        ep_view = SimpleNamespace(**ep_data)
+        if not _endpoint_supports_diagnostics(ep_view):
+            raise HTTPException(400, "Endpoint has no diagnostics configured or is not loopback")
+
+        diagnostics = _endpoint_diagnostics(ep_view)
+        if not section:
+            section = next(iter(diagnostics))  # default to the first configured section
+        diag_path = diagnostics.get(section)
+        if not diag_path:
+            raise HTTPException(400, "Unknown diagnostic section for this endpoint")
+
+        root = _root_from_openai_base(_normalize_base(ep_data["base_url"]))
+        target = root.rstrip("/") + diag_path
+        try:
+            payload, truncated = _fetch_endpoint_diagnostic_payload(
+                target,
+                _provider_headers(ep_data["api_key"], ep_data["base_url"]),
+            )
+            return {
+                "endpoint_id": ep_data["id"],
+                "endpoint_name": ep_data["name"],
+                "section": section,
+                "url": target,
+                "data": payload,
+                "truncated": truncated,
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, f"Could not reach endpoint diagnostics: {e}")
 
     @router.get("/model-endpoints/{ep_id}/probe")
     def probe_endpoint_models(ep_id: str, request: Request):
@@ -1965,6 +2254,11 @@ def setup_model_routes(model_discovery):
                 if "supports_tools" in body:
                     v = body["supports_tools"]
                     ep.supports_tools = {True: True, False: False, 'true': True, 'false': False, 1: True, 0: False}.get(v)
+                if "diagnostics_paths" in body:
+                    # Re-validate on every write so a bad payload clears rather
+                    # than widens what the diagnostics route will fetch.
+                    _d = _parse_diagnostics_paths(body["diagnostics_paths"])
+                    ep.diagnostics_paths = json.dumps(_d) if _d else None
                 if "is_enabled" in body:
                     v_ie = body['is_enabled']
                     ep.is_enabled = v_ie.lower() in ('true', '1', 'yes') if isinstance(v_ie, str) else bool(v_ie)
@@ -2020,6 +2314,7 @@ def setup_model_routes(model_discovery):
                 "model_refresh_mode": getattr(ep, "model_refresh_mode", None) or "auto",
                 "model_refresh_interval": getattr(ep, "model_refresh_interval", None),
                 "model_refresh_timeout": getattr(ep, "model_refresh_timeout", None),
+                "diagnostics_sections": _endpoint_diagnostics_sections(ep),
             }
         finally:
             db.close()

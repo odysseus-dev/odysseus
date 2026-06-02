@@ -39,7 +39,7 @@ import asyncio
 import logging
 import secrets
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
@@ -817,8 +817,38 @@ async def readiness_check() -> JSONResponse:
     result = check_readiness()
     return JSONResponse(status_code=200 if result.get("ready") else 503, content=result)
 
+def _local_endpoint_default() -> Optional[Dict[str, object]]:
+    """Optional quick-add defaults for a self-hosted/loopback wrapper endpoint.
+
+    All values come from env and are unset by default, so stock installs expose
+    nothing here. Operators who run a local wrapper can seed a one-click add by
+    setting these in their (git-ignored) .env. Returned only to admins.
+    """
+    url = (os.getenv("LOCAL_ENDPOINT_URL") or "").strip()
+    if not url:
+        return None
+    st_raw = (os.getenv("LOCAL_ENDPOINT_SUPPORTS_TOOLS") or "").strip().lower()
+    supports_tools = (
+        True if st_raw in ("true", "1", "yes", "on")
+        else False if st_raw in ("false", "0", "no", "off")
+        else None
+    )
+    diag = {}
+    try:
+        from routes.model_routes import _parse_diagnostics_paths
+        diag = _parse_diagnostics_paths(os.getenv("LOCAL_ENDPOINT_DIAG_PATHS") or "")
+    except Exception:
+        diag = {}
+    return {
+        "url": url,
+        "name": (os.getenv("LOCAL_ENDPOINT_NAME") or "").strip() or None,
+        "supports_tools": supports_tools,
+        "diagnostics_paths": diag or None,
+    }
+
+
 @app.get("/api/runtime")
-async def runtime_info() -> Dict[str, object]:
+async def runtime_info(request: Request) -> Dict[str, object]:
     in_docker = os.path.exists("/.dockerenv")
     if not in_docker:
         try:
@@ -832,10 +862,21 @@ async def runtime_info() -> Dict[str, object]:
         or os.getenv("OLLAMA_URL")
         or ("http://host.docker.internal:11434/v1" if in_docker else "http://127.0.0.1:11434/v1")
     )
-    return {
+    info: Dict[str, object] = {
         "in_docker": in_docker,
         "ollama_base_url": ollama_url,
     }
+    # Reveal the local-wrapper quick-add default to admins only — it describes
+    # the operator's private loopback setup and must not leak to other users.
+    from core.middleware import require_admin
+    try:
+        require_admin(request)
+        is_admin = True
+    except Exception:
+        is_admin = False
+    if is_admin:
+        info["local_endpoint_default"] = _local_endpoint_default()
+    return info
 
 # ========= LIFECYCLE =========
 

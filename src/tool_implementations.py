@@ -1028,35 +1028,152 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
 async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict:
     """Manage model endpoints: list, add, delete, enable, disable."""
     from core.database import SessionLocal, ModelEndpoint
+    from src.endpoint_resolver import normalize_base, resolve_url
+    from src.tool_security import owner_is_admin_or_single_user
+    from routes.model_routes import _endpoint_diagnostics_sections, _parse_diagnostics_paths
     try:
         args = _parse_tool_args(content)
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
 
+    if not owner_is_admin_or_single_user(owner):
+        return {"error": "manage_endpoints requires an admin user", "exit_code": 1}
+
+    def _bool_arg(value, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    def _parse_supports_tools(value):
+        if value is None or value == "":
+            return None
+        if value in (True, 1):
+            return True
+        if value in (False, 0):
+            return False
+        raw = str(value).strip().lower()
+        if raw in {"true", "1", "yes", "on"}:
+            return True
+        if raw in {"false", "0", "no", "off"}:
+            return False
+        return None
+
+    def _normalize_endpoint_base(value: str) -> str:
+        base = (value or "").strip().rstrip("/")
+        for suffix in ["/models", "/chat/completions", "/completions", "/v1/messages"]:
+            if base.endswith(suffix):
+                base = base[: -len(suffix)].rstrip("/")
+        return resolve_url(normalize_base(base))
+
     action = args.get("action", "list")
     db = SessionLocal()
     try:
         if action == "list":
-            eps = db.query(ModelEndpoint).all()
-            items = [{"id": e.id, "name": e.name, "base_url": e.base_url,
-                       "is_enabled": e.is_enabled} for e in eps]
+            q = db.query(ModelEndpoint)
+            eps = q.all()
+            items = []
+            for e in eps:
+                models = []
+                if e.cached_models:
+                    try:
+                        models = json.loads(e.cached_models)
+                    except Exception:
+                        models = []
+                items.append({
+                    "id": e.id,
+                    "name": e.name,
+                    "base_url": e.base_url,
+                    "is_enabled": e.is_enabled,
+                    "model_type": getattr(e, "model_type", None) or "llm",
+                    "models": models,
+                    "supports_tools": getattr(e, "supports_tools", None),
+                    "diagnostics_sections": _endpoint_diagnostics_sections(e),
+                    "shared": not bool(getattr(e, "owner", None)),
+                })
             return {"response": f"{len(items)} endpoints", "endpoints": items, "exit_code": 0}
 
         elif action == "add":
             import uuid as _uuid
-            name = args.get("name", "")
-            base_url = args.get("base_url", "")
-            api_key = args.get("api_key", "")
+            name = str(args.get("name") or "")
+            base_url = _normalize_endpoint_base(args.get("base_url", ""))
+            api_key = str(args.get("api_key") or "")
+            model_type = str(args.get("model_type") or "llm").strip() or "llm"
+            if model_type not in {"llm", "image"}:
+                model_type = "llm"
+            supports_tools = _parse_supports_tools(args.get("supports_tools"))
+            diagnostics = _parse_diagnostics_paths(args.get("diagnostics_paths"))
+            shared = _bool_arg(args.get("shared"), default=False)
+            require_models = _bool_arg(args.get("require_models"), default=False)
+            skip_probe = _bool_arg(args.get("skip_probe"), default=False)
             if not base_url:
                 return {"error": "base_url is required", "exit_code": 1}
+            existing_q = db.query(ModelEndpoint).filter(ModelEndpoint.base_url == base_url)
+            existing = existing_q.first()
+            if existing:
+                changed = False
+                if "supports_tools" in args:
+                    existing.supports_tools = supports_tools
+                    changed = True
+                if "diagnostics_paths" in args:
+                    existing.diagnostics_paths = json.dumps(diagnostics) if diagnostics else None
+                    changed = True
+                if changed:
+                    db.commit()
+                existing_models = []
+                if existing.cached_models:
+                    try:
+                        existing_models = json.loads(existing.cached_models)
+                    except Exception:
+                        existing_models = []
+                return {
+                    "response": f"Endpoint already exists: '{existing.name}' (id: {existing.id})",
+                    "endpoint_id": existing.id,
+                    "models": existing_models,
+                    "supports_tools": getattr(existing, "supports_tools", None),
+                    "diagnostics_sections": _endpoint_diagnostics_sections(existing),
+                    "existing": True,
+                    "exit_code": 0,
+                }
+            model_ids = []
+            if not skip_probe or require_models:
+                try:
+                    from routes.model_routes import _probe_endpoint
+                    probe_timeout = 3 if (":11434" in base_url or "ollama" in base_url.lower()) else 2
+                    model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
+                except Exception as probe_error:
+                    if require_models:
+                        return {"error": f"Endpoint probe failed: {probe_error}", "exit_code": 1}
+                if require_models and not model_ids:
+                    return {"error": "No models found for that endpoint/key", "exit_code": 1}
             eid = str(_uuid.uuid4())[:8]
             from datetime import datetime
-            ep = ModelEndpoint(id=eid, name=name or base_url, base_url=base_url,
-                               api_key=api_key, is_enabled=True,
-                               created_at=datetime.utcnow(), updated_at=datetime.utcnow())
+            ep = ModelEndpoint(
+                id=eid,
+                name=name or base_url,
+                base_url=base_url,
+                api_key=api_key.strip() or None,
+                is_enabled=True,
+                cached_models=json.dumps(model_ids) if model_ids else None,
+                model_type=model_type,
+                supports_tools=supports_tools,
+                diagnostics_paths=json.dumps(diagnostics) if diagnostics else None,
+                owner=None if shared else owner,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
             db.add(ep)
             db.commit()
-            return {"response": f"Added endpoint '{name or base_url}' (id: {eid})", "exit_code": 0}
+            return {
+                "response": f"Added endpoint '{name or base_url}' (id: {eid})",
+                "endpoint_id": eid,
+                "models": model_ids,
+                "shared": shared,
+                "supports_tools": supports_tools,
+                "diagnostics_sections": _endpoint_diagnostics_sections(ep),
+                "exit_code": 0,
+            }
 
         elif action == "delete":
             eid = args.get("endpoint_id", "")
@@ -3669,8 +3786,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
                 ep_result = await do_manage_endpoints(json.dumps({
                     "action": "add",
                     "name": display_name,
-                    "endpoint_url": endpoint_url,
-                    "is_local": False,
+                    "base_url": endpoint_url,
                 }), owner=owner)
                 if isinstance(ep_result, dict) and not ep_result.get("error"):
                     endpoint_msg = f" Endpoint {endpoint_url} added as {display_name!r}."
@@ -4185,25 +4301,32 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
 
     contacts = {}  # email -> {name, source}
 
-    # 1. CardDAV (Radicale) — structured contacts. Call in-process: a
-    # server-side httpx GET to /api/contacts/search carries no session
-    # cookie and would 401 under require_user.
     try:
-        import asyncio
-        from routes import contacts_routes as cc
-        all_contacts = await asyncio.to_thread(cc._fetch_contacts)
-        q = name.lower()
-        for c in (all_contacts or []):
-            hay_name = (c.get("name") or "").lower()
-            match = q in hay_name or any(q in (e or "").lower() for e in c.get("emails", []))
-            if not match:
-                continue
-            for email in (c.get("emails") or []):
-                email = (email or "").strip().lower()
-                if email and "@" in email:
-                    contacts[email] = {"name": c.get("name") or email, "source": "contacts"}
+        from src.tool_security import owner_is_admin_or_single_user
+        contacts_allowed = owner_is_admin_or_single_user(owner)
     except Exception:
-        pass
+        contacts_allowed = not bool(owner)
+
+    # 1. CardDAV (Radicale) — structured contacts. This is a shared address book,
+    # so only expose it to admins/single-user mode; non-admin owners still get
+    # owner-scoped email history below.
+    if contacts_allowed:
+        try:
+            import asyncio
+            from routes import contacts_routes as cc
+            all_contacts = await asyncio.to_thread(cc._fetch_contacts)
+            q = name.lower()
+            for c in (all_contacts or []):
+                hay_name = (c.get("name") or "").lower()
+                match = q in hay_name or any(q in (e or "").lower() for e in c.get("emails", []))
+                if not match:
+                    continue
+                for email in (c.get("emails") or []):
+                    email = (email or "").strip().lower()
+                    if email and "@" in email:
+                        contacts[email] = {"name": c.get("name") or email, "source": "contacts"}
+        except Exception:
+            pass
 
     async with httpx.AsyncClient(timeout=30) as client:
         # 2. Email history (sent/received)
@@ -4237,6 +4360,11 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
     action = (args.get("action") or "").strip().lower()
+    # CardDAV contacts are global shared state. Keep direct tool calls aligned
+    # with the public-tool policy even if this function is invoked in-process.
+    from src.tool_security import owner_is_admin_or_single_user
+    if not owner_is_admin_or_single_user(owner):
+        return {"error": "manage_contact requires an admin user", "exit_code": 1}
     try:
         from routes import contacts_routes as cc
     except Exception as e:

@@ -678,7 +678,13 @@ FUNCTION_TOOL_SCHEMAS = [
                     "endpoint_id": {"type": "string", "description": "Endpoint ID (for delete/enable/disable)"},
                     "name": {"type": "string", "description": "Display name (for add)"},
                     "base_url": {"type": "string", "description": "API base URL e.g. https://api.openai.com/v1 (for add)"},
-                    "api_key": {"type": "string", "description": "API key (for add)"}
+                    "api_key": {"type": "string", "description": "API key or bearer token (for add)"},
+                    "model_type": {"type": "string", "enum": ["llm", "image"], "description": "Endpoint type for add; default llm"},
+                    "supports_tools": {"type": "boolean", "description": "Whether the endpoint supports OpenAI tool calls; use false for non-tool-capable local endpoints (e.g. raw completion servers)"},
+                    "diagnostics_paths": {"type": "object", "description": "Optional read-only diagnostics for a loopback wrapper: map of section name -> same-origin path, e.g. {\"health\": \"/health\"} (for add)"},
+                    "shared": {"type": "boolean", "description": "Share endpoint with all users; default false for tool-added endpoints"},
+                    "require_models": {"type": "boolean", "description": "Fail add if /models returns no models"},
+                    "skip_probe": {"type": "boolean", "description": "Skip probing /models during add"}
                 },
                 "required": ["action"]
             }
