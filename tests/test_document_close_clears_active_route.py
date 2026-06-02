@@ -1,31 +1,31 @@
 """Issue #1160 — route-level regression for clearing the active-document pointer.
 
-Drives the REAL ``PATCH /api/document/{id}`` (session_id="") and
-``DELETE /api/document/{id}`` handlers via TestClient, proving that closing a
-document's tab (detach or delete) clears the in-memory active-document pointer
-under the actual owner/session routing — not just the helper in isolation.
+Exercises the REAL ``PATCH /api/document/{id}`` (session_id="") and
+``DELETE /api/document/{id}`` handlers, proving that closing a document's tab
+(detach or delete) clears the in-memory active-document pointer under the actual
+owner/session routing — not just the helper in isolation.
 
-Binds a DEDICATED temporary SQLite engine and patches the route module's
-``SessionLocal`` to it (rather than setting ``DATABASE_URL`` at import time), so
-the test never touches the real dev DB, is independent of import order, and does
-not contend for the dev DB's locks (which could hang).
+Calls the route handler callables DIRECTLY (extracted from the router) instead of
+through Starlette's TestClient. The TestClient path spun up a middleware app +
+threadpool that could hang in some environments; calling the async handler with a
+minimal fake request keeps the same real coverage (handler + DB + owner routing)
+while completing reliably everywhere.
 """
 
 import tempfile
 import uuid
+from types import SimpleNamespace
 
-import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
-from fastapi import FastAPI, Request
-from fastapi.testclient import TestClient
 from unittest.mock import MagicMock
 
 import core.database as cdb
 import routes.document_routes as droutes
 from core.database import Document
 from core.database import Session as DbSession
+from routes.document_helpers import DocumentPatch
 from src.tool_implementations import set_active_document, get_active_document
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
@@ -36,28 +36,22 @@ _ENGINE = create_engine(
 )
 cdb.Base.metadata.create_all(_ENGINE)
 _TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
+droutes.SessionLocal = _TS  # route handlers resolve SessionLocal at call time
 
 
-@pytest.fixture(autouse=True)
-def _bind_db(monkeypatch):
-    monkeypatch.setattr(droutes, "SessionLocal", _TS)
-    yield
+def _req():
+    return SimpleNamespace(state=SimpleNamespace(current_user="tester"))
 
 
-def _client():
-    app = FastAPI()
-
-    @app.middleware("http")
-    async def _inject_user(request: Request, call_next):
-        request.state.current_user = "tester"
-        return await call_next(request)
-
-    app.include_router(droutes.setup_document_routes(MagicMock(), None))
-    return TestClient(app)
+def _endpoint(method, path):
+    router = droutes.setup_document_routes(MagicMock(), None)
+    for r in router.routes:
+        if getattr(r, "path", None) == path and method in getattr(r, "methods", set()):
+            return r.endpoint
+    raise RuntimeError(f"{method} {path} not found")
 
 
 def _make_doc():
-    """Create a real session + an active document linked to it (owner 'tester')."""
     sid = "s-" + uuid.uuid4().hex[:8]
     db = _TS()
     try:
@@ -74,29 +68,26 @@ def _make_doc():
         db.close()
 
 
-def test_patch_unlink_clears_active_document():
-    client = _client()
+async def test_patch_unlink_clears_active_document():
+    patch_document = _endpoint("PATCH", "/api/document/{doc_id}")
     doc_id = _make_doc()
     set_active_document(doc_id)
-    r = client.patch(f"/api/document/{doc_id}", json={"session_id": ""})
-    assert r.status_code == 200, r.text
+    await patch_document(_req(), doc_id, DocumentPatch(session_id=""))
     assert get_active_document() is None
 
 
-def test_delete_clears_active_document():
-    client = _client()
+async def test_delete_clears_active_document():
+    delete_document = _endpoint("DELETE", "/api/document/{doc_id}")
     doc_id = _make_doc()
     set_active_document(doc_id)
-    r = client.delete(f"/api/document/{doc_id}")
-    assert r.status_code == 200, r.text
+    await delete_document(_req(), doc_id)
     assert get_active_document() is None
 
 
-def test_unlinking_a_different_doc_leaves_pointer():
-    client = _client()
+async def test_unlinking_a_different_doc_leaves_pointer():
+    patch_document = _endpoint("PATCH", "/api/document/{doc_id}")
     active_id = _make_doc()
     other_id = _make_doc()
     set_active_document(active_id)
-    r = client.patch(f"/api/document/{other_id}", json={"session_id": ""})
-    assert r.status_code == 200, r.text
+    await patch_document(_req(), other_id, DocumentPatch(session_id=""))
     assert get_active_document() == active_id
