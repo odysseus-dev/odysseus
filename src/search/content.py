@@ -2,7 +2,6 @@
 
 import copy
 import io
-import ipaddress
 import json
 import os
 import re
@@ -22,52 +21,24 @@ from .cache import (
     generate_cache_key,
     cleanup_cache,
 )
+from src.ssrf_guard import UrlAccessPolicy, assess_url
 
 logger = logging.getLogger(__name__)
 
-_PRIVATE_NETWORKS = (
-    ipaddress.ip_network("0.0.0.0/8"),
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("169.254.0.0/16"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fc00::/7"),
-    ipaddress.ip_network("fe80::/10"),
-)
-
-
-def _is_private_address(addr: ipaddress._BaseAddress) -> bool:
-    return any(addr in net for net in _PRIVATE_NETWORKS) or addr.is_private or addr.is_loopback
-
-
-def _resolve_hostname_ips(hostname: str) -> List[ipaddress._BaseAddress]:
+def _resolve_hostname_ips(hostname: str) -> List[str]:
     ips = []
     for family, _, _, _, sockaddr in socket.getaddrinfo(hostname, None):
         if family in (socket.AF_INET, socket.AF_INET6):
-            ips.append(ipaddress.ip_address(sockaddr[0]))
+            ips.append(sockaddr[0])
     return ips
 
 
 def _public_http_url(url: str) -> bool:
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        return False
-    host = parsed.hostname.strip().lower()
-    if host in ("localhost", "metadata.google.internal", "metadata"):
-        return False
-    try:
-        return not _is_private_address(ipaddress.ip_address(host))
-    except ValueError:
-        pass
-    try:
-        ips = _resolve_hostname_ips(host)
-    except OSError:
-        return False
-    # Fail closed: a hostname that resolves to nothing is treated as
-    # non-public (an empty all(...) would otherwise return True).
-    return bool(ips) and all(not _is_private_address(ip) for ip in ips)
+    def _resolver(host: str) -> List[str]:
+        return [str(ip) for ip in _resolve_hostname_ips(host)]
+
+    decision = assess_url(url, UrlAccessPolicy.STRICT_UNTRUSTED_FETCH, resolver=_resolver)
+    return decision.allowed
 
 
 def _get_public_url(url: str, *, headers: dict, timeout: int) -> httpx.Response:

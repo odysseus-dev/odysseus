@@ -99,6 +99,17 @@ def test_public_https_allowed_in_strict_policy():
     assert decision.reason == "allowed_public_http"
 
 
+def test_empty_dns_resolution_fails_closed():
+    decision = assess_url(
+        "https://empty.example.test/",
+        UrlAccessPolicy.STRICT_UNTRUSTED_FETCH,
+        resolver=_resolver({"empty.example.test": []}),
+    )
+
+    assert decision.allowed is False
+    assert decision.reason == "dns_resolution_failed"
+
+
 def test_non_http_scheme_is_rejected_before_policy_specific_allow():
     decision = assess_url(
         "file:///etc/passwd",

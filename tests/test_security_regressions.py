@@ -817,6 +817,7 @@ import pytest as _pytest
     "http://10.0.0.5/",                   # private LAN 10/8
     "http://172.16.0.1/",                 # private LAN 172.16/12
     "http://192.168.1.1/",                # private LAN 192.168/16
+    "http://100.64.1.2/",                 # Tailscale CGNAT / tailnet
     "http://169.254.169.254/latest/",     # link-local / cloud metadata
     "http://metadata.google.internal/",   # metadata by name
     "http://[::1]/",                      # IPv6 loopback

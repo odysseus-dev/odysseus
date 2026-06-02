@@ -20,6 +20,18 @@ that matches the endpoint class.
   This policy allows loopback, LAN, and Tailscale addresses, but still blocks
   metadata-service addresses.
 
+## Protected Endpoints
+
+Current strict-policy enforcement:
+
+- `src.search.content._get_public_url`: used by web/search content fetches and
+  the `web_fetch` tool. Redirect targets are checked at each hop.
+
+Trusted user-configured endpoints are not wired through strict policy in this
+PR. Model, embedding, CalDAV/CardDAV, and ntfy flows should use
+`trusted_user_configured_endpoint` in separate endpoint-specific PRs if they
+need classification.
+
 ## Address Classes
 
 The classifier labels resolved targets as:
