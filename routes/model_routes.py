@@ -501,7 +501,7 @@ def setup_model_routes(model_discovery):
                     def _probe_one(ep):
                         base = _normalize_base(ep.base_url)
                         try:
-                            ids = _probe_endpoint(base, ep.api_key, timeout=2)
+                            ids = _probe_endpoint(base, ep.api_key, timeout=5)
                             return ep, ids, None
                         except Exception as e:
                             return ep, None, e
@@ -687,7 +687,7 @@ def setup_model_routes(model_discovery):
         async def _probe_one(ep_id: str, base: str, api_key: Optional[str]) -> Dict[str, Any]:
             t0 = _time.time()
             try:
-                models = _probe_endpoint(base, api_key, timeout=2.5)
+                models = _probe_endpoint(base, api_key, timeout=5)
                 lat = round((_time.time() - t0) * 1000)
                 return {
                     "alive": bool(models),
@@ -934,7 +934,7 @@ def setup_model_routes(model_discovery):
                 status = "online" if all_models else "offline"
                 ping = None
                 if not all_models and r.is_enabled:
-                    ping = _ping_endpoint(r.base_url, r.api_key, timeout=1.0)
+                    ping = _ping_endpoint(r.base_url, r.api_key, timeout=5)
                     if ping.get("reachable"):
                         status = "empty"
                 results.append({
@@ -1018,8 +1018,8 @@ def setup_model_routes(model_discovery):
         finally:
             _db_dedup.close()
 
-        # Quick model list fetch (1s timeout — if endpoint is slow, it'll update on next refresh)
-        _probe_timeout = 3 if (":11434" in base_url or "ollama" in base_url.lower()) else 1
+        # Quick model list fetch (5s timeout — proxies and slow connections need more time)
+        _probe_timeout = 5
         model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=_probe_timeout) if should_probe else []
         ping = {"reachable": False, "error": None}
         if should_probe and not model_ids:
@@ -1089,7 +1089,7 @@ def setup_model_routes(model_discovery):
             raise HTTPException(400, "Base URL is required")
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
-        probe_timeout = 3 if (":11434" in base_url or "ollama" in base_url.lower()) else 2
+        probe_timeout = 5
         models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
         ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
         return {
@@ -1166,7 +1166,7 @@ def setup_model_routes(model_discovery):
                 except Exception:
                     pass
             # Try live probe, fall back to cached
-            all_models = _probe_endpoint(ep.base_url, ep.api_key, timeout=3)
+            all_models = _probe_endpoint(ep.base_url, ep.api_key, timeout=5)
             if all_models:
                 ep.cached_models = json.dumps(all_models)
                 db.commit()

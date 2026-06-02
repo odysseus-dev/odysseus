@@ -2,7 +2,7 @@ fastapi
 uvicorn
 python-multipart
 python-dotenv
-httpx
+httpx[socks]
 pydantic>=2.0
 pydantic-settings>=2.0
 SQLAlchemy
@@ -31,6 +31,7 @@ python-dateutil
 # fetch across Radicale, Nextcloud, Apple, Fastmail; we'd be reinventing
 # the protocol without it.
 caldav
+PySocks
 cryptography
 bcrypt
 mcp
