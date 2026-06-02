@@ -103,6 +103,14 @@ DEFAULT_SETTINGS = {
     #   >0 — explicit hard cap, still bounded by the model's context window.
     # Resolved in src/context_compactor.py:resolve_input_budget.
     "agent_input_token_budget": -1,
+    # Ceiling applied in auto mode (agent_input_token_budget == -1) so the
+    # adaptive budget can't balloon on huge windows — e.g. a discovered
+    # 1M-token context would otherwise resolve to ~750k input tokens every
+    # turn, a surprise cost/latency hit on premium APIs. Conservative default
+    # of 32000 stays well above the old 6000 floor while bounding the worst
+    # case; raise it (or set 0 to uncap) if you want long-context models to
+    # use more of their window. Ignored when an explicit budget (>0) is set.
+    "agent_input_token_budget_auto_max": 32000,
     "agent_stream_timeout_seconds": 300,
     "task_endpoint_id": "",
     "task_model": "",

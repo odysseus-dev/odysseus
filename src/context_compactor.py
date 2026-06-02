@@ -28,28 +28,36 @@ SMALL_CONTEXT_LIMIT = 8192  # Models with context <= this get aggressive trimmin
 #   > 0  -> explicit hard cap, still bounded by the model's context window.
 AUTO_BUDGET_FLOOR = 6000      # never auto-trim below this (the legacy default)
 AUTO_BUDGET_FRACTION = 0.75   # fraction of the context window used in auto mode
+AUTO_BUDGET_MAX = 32000       # default ceiling for auto mode (see settings.py)
 
 
 def resolve_input_budget(soft_budget: int, context_length: int,
                          reserve_tokens: int = 512,
                          floor: int = AUTO_BUDGET_FLOOR,
-                         fraction: float = AUTO_BUDGET_FRACTION) -> int:
+                         fraction: float = AUTO_BUDGET_FRACTION,
+                         auto_max: int = AUTO_BUDGET_MAX) -> int:
     """Resolve the effective soft input-token budget for context trimming.
 
     See the `agent_input_token_budget` semantics above. Callers should skip
     trimming entirely when ``soft_budget == 0`` (unlimited) before calling
-    this. In auto mode the budget scales with the model's context window but
-    never drops below ``floor``; when the window is unknown it falls back to
-    ``floor`` (the historical behavior).
+    this. In auto mode (``soft_budget < 0``) the budget scales with the model's
+    context window, bounded below by ``floor`` and above by ``auto_max`` (so a
+    huge window can't balloon the per-turn input); ``auto_max <= 0`` removes the
+    ceiling. When the window is unknown it falls back to ``floor`` (the
+    historical behavior).
     """
     if soft_budget > 0:
         # Explicit hard cap, still bounded by the model's context window.
+        # auto_max does not apply — the user asked for this exact cap.
         return min(context_length or soft_budget, soft_budget)
     # Auto (soft_budget < 0): scale to the model's context window.
     if context_length and context_length > 0:
         scaled = int(context_length * fraction)
         headroom = max(context_length - reserve_tokens, floor)
-        return max(floor, min(scaled, headroom))
+        budget = min(scaled, headroom)
+        if auto_max and auto_max > 0:
+            budget = min(budget, auto_max)
+        return max(floor, budget)
     return floor
 
 # Cursor-style self-summarization prompt — produces structured, dense summaries

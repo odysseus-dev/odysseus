@@ -1557,10 +1557,20 @@ async function initAgentSettings() {
   var msg = el('set-agentMsg');
   if (!toolsInput) return;
 
+  var budgetInput = el('set-agentInputBudget');
+  var autoMaxInput = el('set-agentBudgetAutoMax');
+  var budgetMsg = el('set-agentBudgetMsg');
+
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
     if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
+    if (budgetInput && settings.agent_input_token_budget !== undefined && settings.agent_input_token_budget !== null) {
+      budgetInput.value = settings.agent_input_token_budget;
+    }
+    if (autoMaxInput && settings.agent_input_token_budget_auto_max !== undefined && settings.agent_input_token_budget_auto_max !== null) {
+      autoMaxInput.value = settings.agent_input_token_budget_auto_max;
+    }
   } catch (e) {}
 
   async function save() {
@@ -1575,9 +1585,51 @@ async function initAgentSettings() {
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
+  // Parse an int budget field, falling back to `dflt` when blank/invalid so a
+  // cleared box doesn't silently post 0.
+  function parseBudget(input, dflt) {
+    if (!input) return dflt;
+    var raw = (input.value || '').trim();
+    if (raw === '') return dflt;
+    var n = parseInt(raw, 10);
+    return isNaN(n) ? dflt : n;
+  }
+
+  function describeBudget() {
+    if (!budgetMsg) return;
+    var b = parseBudget(budgetInput, -1);
+    var cap = parseBudget(autoMaxInput, 32000);
+    var text;
+    if (b === 0) text = 'No trimming — unlimited input.';
+    else if (b > 0) text = 'Hard cap: ' + b + ' input tokens.';
+    else text = (cap > 0 ? 'Auto — scales to the model window, capped at ' + cap + ' tokens.'
+                         : 'Auto — scales to the full model window (uncapped).');
+    budgetMsg.textContent = text;
+    budgetMsg.style.color = 'var(--fg)';
+  }
+
+  async function saveBudget() {
+    var payload = {
+      agent_input_token_budget: parseBudget(budgetInput, -1),
+      agent_input_token_budget_auto_max: parseBudget(autoMaxInput, 32000)
+    };
+    try {
+      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      describeBudget();
+    } catch (e) {
+      if (budgetMsg) { budgetMsg.textContent = 'Failed to save'; budgetMsg.style.color = 'var(--red)'; }
+    }
+  }
+
   toolsInput.addEventListener('change', save);
+  if (budgetInput) budgetInput.addEventListener('change', saveBudget);
+  if (autoMaxInput) autoMaxInput.addEventListener('change', saveBudget);
   var cur = parseInt(toolsInput.value, 10) || 0;
   msg.textContent = cur > 0 ? 'Limit: ' + cur + ' tool calls per message' : 'Unlimited';
+  describeBudget();
 }
 
 /* ═══════════════════════════════════════════

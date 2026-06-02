@@ -16,6 +16,7 @@ for mod in [
 
 from src.context_compactor import (
     AUTO_BUDGET_FLOOR,
+    AUTO_BUDGET_MAX,
     COMPACT_THRESHOLD,
     SELF_SUMMARY_SYSTEM_PROMPT,
     SUMMARY_MAX_TOKENS,
@@ -49,12 +50,33 @@ class TestResolveInputBudget:
         # Unknown window (0) leaves the explicit cap untouched.
         assert resolve_input_budget(6000, context_length=0) == 6000
 
-    def test_auto_scales_with_large_window(self):
-        # The bug in #1170: a 200k model used to be trimmed to 6000. Auto mode
-        # now scales to a generous fraction of the window instead.
-        budget = resolve_input_budget(-1, context_length=200000)
-        assert budget == int(200000 * 0.75)
+    def test_auto_scales_with_window_below_ceiling(self):
+        # The bug in #1170: a model used to be trimmed to 6000. Below the auto
+        # ceiling, auto mode scales to a fraction of the window instead.
+        budget = resolve_input_budget(-1, context_length=32000)
+        assert budget == int(32000 * 0.75)
         assert budget > AUTO_BUDGET_FLOOR
+
+    def test_auto_bounded_by_ceiling_on_large_window(self):
+        # A 200k window scaled to 150k would blow up per-turn cost; the auto
+        # ceiling caps it. This is the safeguard requested in review of #1189.
+        assert resolve_input_budget(-1, context_length=200000) == AUTO_BUDGET_MAX
+
+    def test_auto_ceiling_caps_huge_window(self):
+        # Even a 1M-token window stays at the ceiling, not ~750k.
+        assert resolve_input_budget(-1, context_length=1_000_000) == AUTO_BUDGET_MAX
+
+    def test_auto_ceiling_disabled_with_zero(self):
+        # auto_max <= 0 removes the ceiling — opt-in to full scaling.
+        budget = resolve_input_budget(-1, context_length=1_000_000, auto_max=0)
+        assert budget == int(1_000_000 * 0.75)
+
+    def test_auto_custom_ceiling_is_respected(self):
+        assert resolve_input_budget(-1, context_length=200000, auto_max=16000) == 16000
+
+    def test_explicit_cap_ignores_auto_ceiling(self):
+        # auto_max only governs auto mode; an explicit cap is honored verbatim.
+        assert resolve_input_budget(50000, context_length=200000, auto_max=16000) == 50000
 
     def test_auto_never_below_floor(self):
         # Small-context models keep at least the historical floor.

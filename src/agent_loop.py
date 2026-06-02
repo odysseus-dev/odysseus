@@ -1479,18 +1479,22 @@ async def stream_agent_loop(
         from src.context_compactor import trim_for_context, resolve_input_budget
 
         # agent_input_token_budget: <0 auto (scale to the model's context
-        # window), 0 unlimited (no soft trim), >0 explicit hard cap. Default is
-        # auto so long-context models aren't silently capped at a flat 6000
-        # (issue #1170).
+        # window, bounded by agent_input_token_budget_auto_max), 0 unlimited
+        # (no soft trim), >0 explicit hard cap. Default is auto so long-context
+        # models aren't silently capped at a flat 6000 (issue #1170).
         try:
             soft_budget = int(get_setting("agent_input_token_budget", -1))
         except (TypeError, ValueError):
             soft_budget = -1
+        try:
+            auto_max = int(get_setting("agent_input_token_budget_auto_max", 32000))
+        except (TypeError, ValueError):
+            auto_max = 32000
         if soft_budget != 0:
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
             effective_budget = resolve_input_budget(
-                soft_budget, context_length, reserve_tokens,
+                soft_budget, context_length, reserve_tokens, auto_max=auto_max,
             )
             trimmed_messages = trim_for_context(
                 messages,
