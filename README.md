@@ -223,9 +223,23 @@ OLLAMA_HOST=0.0.0.0:11434 ollama serve
 
 ```bash
 docker compose ps
+curl -v http://127.0.0.1:7000/api/ready
 docker compose logs --tail=120 odysseus
 docker compose logs odysseus | grep -E 'ChromaDB|MemoryVectorStore|DEGRADED'
 ```
+
+If the host curl resets or returns an empty response but `docker compose ps`
+shows Odysseus as running, check whether FastAPI responds from inside the
+container:
+
+```bash
+docker compose exec odysseus python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:7000/api/ready', timeout=5).read().decode())"
+```
+
+If the in-container check passes, the app is serving and the problem is likely
+host port forwarding, a local firewall, or a conflicting port. If it fails,
+`docker compose ps` should mark Odysseus as unhealthy and the Odysseus logs are
+the next place to look.
 
 **macOS details.** `start-macos.sh` installs Homebrew deps, creates the venv,
 runs setup, and starts uvicorn on port `7860` because AirPlay often holds

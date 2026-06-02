@@ -119,6 +119,12 @@ def test_docker_compose_binds_web_ui_to_loopback_by_default():
     assert '"${APP_PORT:-7000}:7000"' not in compose
 
 
+def test_docker_compose_healthchecks_odysseus_ready_endpoint():
+    compose = Path("docker-compose.yml").read_text(encoding="utf-8")
+    assert "http://127.0.0.1:7000/api/ready" in compose
+    assert "start_period: 30s" in compose
+
+
 def test_readme_native_quickstart_uses_loopback():
     readme = Path("README.md").read_text(encoding="utf-8")
     assert "python -m uvicorn app:app --host 127.0.0.1 --port 7000" in readme

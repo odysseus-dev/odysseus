@@ -66,6 +66,12 @@ services:
         condition: service_healthy
       chromadb:
         condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:7000/api/ready', timeout=5).read(1)\""]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
 
   chromadb:
