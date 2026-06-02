@@ -129,6 +129,10 @@ def test_intel_mac_skipped(monkeypatch):
 def test_detect_system_propagates_unified_memory(monkeypatch):
     """The unified_memory flag set by GPU detection must survive into the
     system dict so the API and UI can report it (it was being dropped)."""
+    monkeypatch.setattr(hardware, "_remote_host", None)
+    monkeypatch.setattr(hardware.os, "name", "posix")
+    monkeypatch.setattr(hardware.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(hardware.platform, "machine", lambda: "arm64")
     monkeypatch.setattr(hardware, "_detect_apple_silicon", lambda: {
         "gpu_name": "Apple M4", "gpu_vram_gb": 10.7, "gpu_count": 1,
         "gpus": [], "gpu_groups": [], "homogeneous": True,

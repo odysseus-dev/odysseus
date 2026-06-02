@@ -21,9 +21,9 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, hf_hub_download
 
 DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "services", "hwfit", "data", "hf_models.json")
 DATA_PATH = os.path.abspath(DATA_PATH)
@@ -123,6 +123,108 @@ def _arch_from_tags(tags):
     return ""
 
 
+def _estimate_params_from_config(config):
+    """Estimate total and active parameters from config.json structure."""
+    if not isinstance(config, dict):
+        return None, None
+
+    # 1. Get basic model dimensions
+    hidden_size = config.get("hidden_size") or config.get("d_model") or config.get("n_embd")
+    num_layers = config.get("num_hidden_layers") or config.get("num_layers") or config.get("n_layers")
+
+    if not hidden_size or not num_layers:
+        # Check for alternative keys/architectures (e.g. encoder-decoder / t5)
+        hidden_size = config.get("d_model") or config.get("hidden_size")
+        num_layers = config.get("num_layers") or config.get("num_decoder_layers")
+        if not hidden_size or not num_layers:
+            return None, None
+
+    hidden_size = int(hidden_size)
+    num_layers = int(num_layers)
+
+    vocab_size = config.get("vocab_size") or config.get("encoder_vocab_size") or 32000
+    vocab_size = int(vocab_size)
+
+    # 2. Attention parameter estimation
+    num_heads = config.get("num_attention_heads") or config.get("num_heads") or config.get("n_heads")
+    num_kv_heads = config.get("num_key_value_heads")
+    if num_heads:
+        num_heads = int(num_heads)
+        if num_kv_heads is None:
+            num_kv_heads = num_heads
+        else:
+            num_kv_heads = int(num_kv_heads)
+
+        head_dim = config.get("head_dim") or (hidden_size // num_heads)
+        q_size = hidden_size * num_heads * head_dim
+        kv_size = 2 * hidden_size * num_kv_heads * head_dim
+        o_size = num_heads * head_dim * hidden_size
+        attn_params = q_size + kv_size + o_size
+    else:
+        attn_params = 4 * hidden_size * hidden_size
+
+    # 3. MLP parameter estimation
+    intermediate_size = config.get("intermediate_size") or config.get("encoder_ffn_dim") or config.get("decoder_ffn_dim") or config.get("d_ff")
+    if intermediate_size:
+        intermediate_size = int(intermediate_size)
+    else:
+        act = str(config.get("hidden_act", "")).lower()
+        is_gated = any(g in act for g in ["silu", "swiglu", "geglu", "gated"])
+        if is_gated:
+            intermediate_size = int(8 / 3 * hidden_size)
+        else:
+            intermediate_size = 4 * hidden_size
+
+    act = str(config.get("hidden_act", "")).lower()
+    is_gated = any(g in act for g in ["silu", "swiglu", "geglu", "gated"]) or "gated" in str(config.get("mlp_class", "")).lower()
+
+    base_mlp_params = (3 if is_gated else 2) * hidden_size * intermediate_size
+
+    # MoE handling
+    num_experts = config.get("num_local_experts") or config.get("num_experts") or config.get("n_routed_experts")
+    num_active_experts = config.get("num_experts_per_tok") or config.get("num_active_experts")
+
+    if num_experts:
+        num_experts = int(num_experts)
+        # Total MLP parameters in MoE layers
+        mlp_params_total = base_mlp_params * num_experts
+        # Add router parameter count (usually hidden_size * num_experts)
+        mlp_params_total += hidden_size * num_experts
+
+        # Calculate active MLP parameters
+        if num_active_experts:
+            num_active_experts = int(num_active_experts)
+            mlp_params_active = base_mlp_params * num_active_experts
+            # Router is always active
+            mlp_params_active += hidden_size * num_experts
+        else:
+            # Fallback if active experts is not specified
+            mlp_params_active = base_mlp_params
+    else:
+        mlp_params_total = base_mlp_params
+        mlp_params_active = base_mlp_params
+
+    # 4. Total parameter counts
+    # Layer count
+    total_layer_params = attn_params + mlp_params_total
+    active_layer_params = attn_params + mlp_params_active
+
+    # Embedding layers
+    embedding_params = vocab_size * hidden_size
+
+    # Tie word embeddings check
+    tie_word_embeddings = config.get("tie_word_embeddings", True)
+    head_params = 0 if tie_word_embeddings else (vocab_size * hidden_size)
+
+    total_params = embedding_params + head_params + (num_layers * total_layer_params)
+
+    active_params = None
+    if num_experts:
+        active_params = embedding_params + head_params + (num_layers * active_layer_params)
+
+    return total_params, active_params
+
+
 def _entry_from_modelinfo(mi, overrides):
     name = mi.id
     provider = name.split("/")[0]
@@ -139,6 +241,19 @@ def _entry_from_modelinfo(mi, overrides):
                 total = bt
                 if ba and active is None:
                     active = ba
+    # Try config.json fallback when name/tag parsing fails
+    if total is None:
+        try:
+            config_path = hf_hub_download(repo_id=name, filename="config.json")
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            t_est, a_est = _estimate_params_from_config(config)
+            if t_est:
+                total = t_est
+                if a_est and active is None:
+                    active = a_est
+        except Exception:
+            pass
     # Determine quant first — we need it to unpack the safetensors fallback.
     quant = _quant_from_name(name)
     # Last resort: read safetensors element counts. For pre-quantized repos
@@ -174,7 +289,7 @@ def _entry_from_modelinfo(mi, overrides):
         return None  # can't size it — skip
     pb = total / 1e9
     created = getattr(mi, "created_at", None)
-    rel = created.strftime("%Y-%m-%d") if created else datetime.utcnow().strftime("%Y-%m-%d")
+    rel = created.strftime("%Y-%m-%d") if created else datetime.now(timezone.utc).strftime("%Y-%m-%d")
     # Rough RAM/VRAM hints (fit.py recomputes the real requirement from params+quant).
     _BPP = {"AWQ-4bit": 0.58, "GPTQ-Int4": 0.58, "mlx-4bit": 0.55, "mlx-6bit": 0.85,
             "AWQ-8bit": 1.1, "GPTQ-Int8": 1.1, "mlx-8bit": 1.1, "FP8": 1.1,
