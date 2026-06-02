@@ -382,7 +382,7 @@ async function _createAndAppendPane(m) {
 
   // Create session
   const fd = new FormData();
-  fd.append('name', '[CMP] ' + m.name);
+  fd.append('name', '[CMP] ' + (state._blindMode ? 'Model ' + _slotChar(i) : m.name));
   fd.append('endpoint_url', m.url || '');
   fd.append('model', m.id || '');
   if (m.endpointId) {
@@ -584,7 +584,7 @@ function _showModelSwapDropdown(paneIdx, titleBtn) {
         fetch(`${state.API_BASE}/api/session/${oldSid}`, { method: 'DELETE' }).catch(() => {});
       }
       const fd = new FormData();
-      fd.append('name', '[CMP] ' + m.name);
+      fd.append('name', '[CMP] ' + (state._blindMode ? 'Model ' + _slotChar(paneIdx) : m.name));
       fd.append('endpoint_url', m.url || '');
       fd.append('model', m.id || '');
       if (m.endpointId) {

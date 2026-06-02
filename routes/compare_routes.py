@@ -48,11 +48,13 @@ def setup_compare_routes(session_manager: SessionManager):
         sid_b = str(uuid.uuid4())
 
         # Create ephemeral sessions (prefixed [CMP])
-        for sid, model, endpoint in [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]:
+        blind = str(is_blind).lower() == "true"
+        for idx, (sid, model, endpoint) in enumerate([(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]):
             user = getattr(request.state, 'current_user', None)
+            label = f"Model {chr(65 + idx)}" if blind else model.split('/')[-1]
             session_manager.create_session(
                 session_id=sid,
-                name=f"[CMP] {model.split('/')[-1]}",
+                name=f"[CMP] {label}",
                 endpoint_url=endpoint,
                 model=model,
                 rag=False,
@@ -76,7 +78,6 @@ def setup_compare_routes(session_manager: SessionManager):
                 db.close()
 
         # Blind mapping: randomly assign left/right
-        blind = str(is_blind).lower() == "true"
         if blind:
             mapping = {"left": "a", "right": "b"}
             if random.random() > 0.5:
