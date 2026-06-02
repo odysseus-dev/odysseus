@@ -1771,6 +1771,26 @@ import createResearchSynapse from './researchSynapse.js';
                     if (tsSpan) roleEl.appendChild(tsSpan);
                   }
                 }
+              } else if (json.type === 'fallback') {
+                // The selected model failed and another provider answered. Make
+                // it visible so a misconfigured provider is never silently
+                // masked under the selected model's name.
+                if (!_isBg) {
+                  var _selM = _shortModel(json.selected_model || '');
+                  var _ansM = _shortModel(json.answered_by || '');
+                  uiModule.showToast('⚠ ' + _selM + ' failed — answered by ' + _ansM, 6000);
+                  if (holder) {
+                    var _rEl = holder.querySelector('.role');
+                    if (_rEl) {
+                      var _tsS = _rEl.querySelector('.role-timestamp');
+                      _rEl.textContent = _ansM + ' (fallback) ';
+                      _rEl.title = (json.selected_model || '') + ' failed' +
+                        (json.reason ? ': ' + json.reason : '') + ' — answered by ' + (json.answered_by || '');
+                      _applyModelColor(_rEl, json.answered_by);
+                      if (_tsS) _rEl.appendChild(_tsS);
+                    }
+                  }
+                }
               } else if (json.type === 'attachments') {
                 if (_isBg) continue;
                 // Update user bubble — replace file chips with image previews

@@ -1148,6 +1148,24 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
 
 
+def _summarize_stream_error(err_chunk: Optional[str]) -> str:
+    """Pull a short human reason out of an `event: error` SSE chunk for the
+    fallback notice. Returns a generic message if it can't be parsed."""
+    if not err_chunk:
+        return "primary model failed"
+    try:
+        for line in err_chunk.split("\n"):
+            if line.startswith("data: "):
+                j = json.loads(line[6:])
+                txt = j.get("text") or j.get("error") or ""
+                status = j.get("status")
+                msg = (f"HTTP {status}: " if status else "") + str(txt)
+                return msg[:200].strip() or "primary model failed"
+    except Exception:
+        pass
+    return "primary model failed"
+
+
 async def stream_llm_with_fallback(candidates, messages, **kwargs):
     """Wrap stream_llm with an ordered fallback chain.
 
@@ -1166,6 +1184,7 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
         yield f'event: error\ndata: {json.dumps({"error": "No model endpoint configured", "status": 503})}\n\n'
         return
 
+    primary_model = cands[0][1]
     last_error = None
     for i, (url, model, headers) in enumerate(cands):
         is_last = (i == len(cands) - 1)
@@ -1187,6 +1206,19 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                 continue
             # Any data chunk other than the terminal [DONE] means real output.
             if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
+                # First real output from a NON-primary candidate: tell the client
+                # the selected model failed and another answered. Without this the
+                # fallback is invisible — a misconfigured provider looks like it
+                # works because the reply is shown under the originally selected
+                # model's name (e.g. a Bedrock/Claude endpoint that 400s every
+                # request but appears fine because another model silently answered).
+                if not emitted and i > 0:
+                    yield ('data: ' + json.dumps({
+                        "type": "fallback",
+                        "selected_model": primary_model,
+                        "answered_by": model,
+                        "reason": _summarize_stream_error(last_error),
+                    }) + '\n\n')
                 emitted = True
             yield chunk
         if not retried:

@@ -1633,6 +1633,12 @@ async def stream_agent_loop(
                         real_output_tokens += u.get("output_tokens", 0)
                         last_round_input_tokens = round_input
                         has_real_usage = True
+                    elif data.get("type") == "fallback":
+                        # The selected model failed and another answered; surface
+                        # the notice so a misconfigured provider isn't masked.
+                        logger.warning(f"[agent] round {round_num} fell back: "
+                                       f"{data.get('selected_model')} -> {data.get('answered_by')}")
+                        yield chunk
                     elif "delta" in data:
                         if not first_token_received:
                             time_to_first_token = time.time() - total_start

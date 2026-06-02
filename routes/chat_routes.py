@@ -769,6 +769,7 @@ def setup_chat_routes(
                 return
             elif chat_mode == "chat":
                 _chat_start = time.time()
+                _answered_by = None  # set if the selected model failed and a fallback answered
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
                     _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
@@ -797,9 +798,14 @@ def setup_chat_routes(
                                         full_response += data["delta"]
                                         _stream_set(session, partial=full_response)
                                     yield chunk
+                                elif data.get("type") == "fallback":
+                                    # Selected model failed; a fallback answered.
+                                    # Forward the notice and remember the real model.
+                                    _answered_by = data.get("answered_by") or _answered_by
+                                    yield chunk
                                 elif data.get("type") == "usage":
                                     last_metrics = data.get("data", {})
-                                    last_metrics["model"] = sess.model
+                                    last_metrics["model"] = _answered_by or sess.model
                                     if ctx.context_length and last_metrics.get("input_tokens"):
                                         pct = min(round((last_metrics["input_tokens"] / ctx.context_length) * 100, 1), 100.0)
                                         last_metrics["context_percent"] = pct
@@ -867,6 +873,7 @@ def setup_chat_routes(
                 # ── Agent mode: full agent loop with tools ──
                 _agent_rounds = 0
                 _agent_tool_calls = 0
+                _answered_by = None  # set if the selected model failed and a fallback answered
                 try:
                     from src.settings import get_setting
                     _tool_budget = int(get_setting("agent_max_tool_calls", 0))
@@ -911,9 +918,16 @@ def setup_chat_routes(
                                     elif data.get("type") == "tool_start":
                                         _agent_tool_calls += 1
                                     yield chunk
+                                elif data.get("type") == "fallback":
+                                    # Selected model failed; a fallback answered.
+                                    # Forward the notice and remember the real
+                                    # model so metrics reflect it, not the masked
+                                    # selected model.
+                                    _answered_by = data.get("answered_by") or _answered_by
+                                    yield chunk
                                 elif data.get("type") == "metrics":
                                     last_metrics = data.get("data", {})
-                                    last_metrics["model"] = sess.model
+                                    last_metrics["model"] = _answered_by or sess.model
                                     yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             except json.JSONDecodeError:
                                 yield chunk
