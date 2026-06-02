@@ -43,7 +43,9 @@ class McpManager:
         self._sessions: Dict[str, Any] = {}
         # server_id -> exit stack (for cleanup)
         self._stacks: Dict[str, Any] = {}
-        # Tracking updates to tools/connections for RAG indexing
+        # server_id -> background connect task (HTTP transport / OAuth)
+        self._connect_tasks: Dict[str, Any] = {}
+        # Tracking updates to tools/connections for RAG indexing / prompt cache
         self._generation = 0
 
     async def connect_server(
@@ -56,12 +58,14 @@ class McpManager:
         env: Optional[Dict[str, str]] = None,
         url: Optional[str] = None,
     ) -> bool:
-        """Connect to an MCP server via stdio or SSE transport."""
+        """Connect to an MCP server via stdio, SSE, or Streamable HTTP transport."""
         try:
             if transport == "stdio":
                 res = await self._connect_stdio(server_id, name, command, args or [], env or {})
             elif transport == "sse":
                 res = await self._connect_sse(server_id, name, url)
+            elif transport == "http":
+                res = await self._start_http_connect(server_id, name, url)
             else:
                 logger.error(f"Unknown MCP transport: {transport}")
                 res = False
@@ -174,6 +178,88 @@ class McpManager:
         except ImportError:
             logger.warning("MCP package not installed. Install with: pip install mcp")
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
+            return False
+
+    async def _start_http_connect(self, server_id: str, name: str, url: str, wait: float = 8.0) -> bool:
+        """Begin a Streamable HTTP connect in the background. Returns within
+        `wait` seconds: True if it connected (cached-token path), otherwise the
+        flow is awaiting browser authorization and status becomes 'needs_auth'."""
+        import asyncio
+        self._connections[server_id] = {"status": "connecting", "name": name, "transport": "http"}
+        task = asyncio.create_task(self._connect_http(server_id, name, url))
+        self._connect_tasks[server_id] = task
+        done, _ = await asyncio.wait({task}, timeout=wait)
+        if task in done:
+            try:
+                return task.result()
+            except Exception as e:
+                self._connections[server_id] = {"status": "error", "error": str(e), "name": name}
+                return False
+        # Still running → either awaiting authorization, or discovery/DCR is
+        # still in flight. If _on_redirect already published needs_auth+auth_url,
+        # leave it; otherwise mark needs_auth (auth_url filled in once it fires).
+        from src.mcp_oauth import pop_auth_url
+        cur = self._connections.get(server_id, {})
+        if cur.get("status") != "needs_auth":
+            self._connections[server_id] = {
+                "status": "needs_auth", "name": name, "transport": "http",
+                "auth_url": pop_auth_url(server_id),
+            }
+        return False
+
+    async def _connect_http(self, server_id: str, name: str, url: str) -> bool:
+        """Connect to a Streamable HTTP MCP server (with automatic OAuth)."""
+        try:
+            from mcp import ClientSession
+            from mcp.client.streamable_http import streamablehttp_client
+            from contextlib import AsyncExitStack
+            from src.mcp_oauth import build_provider, clear_auth_url
+
+            def _on_redirect(auth_url):
+                # Publish needs_auth the moment the URL is known, independent of
+                # how long discovery/DCR took (may exceed the bounded start wait).
+                self._connections[server_id] = {
+                    "status": "needs_auth", "name": name, "transport": "http",
+                    "auth_url": auth_url,
+                }
+
+            provider = build_provider(server_id, url, on_redirect=_on_redirect)
+            stack = AsyncExitStack()
+            transport = await stack.enter_async_context(streamablehttp_client(url, auth=provider))
+            read_stream, write_stream, _get_session_id = transport
+            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+            await session.initialize()
+
+            tools_result = await session.list_tools()
+            tools = []
+            for tool in tools_result.tools:
+                tools.append({
+                    "name": tool.name,
+                    "description": tool.description or "",
+                    "input_schema": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                })
+
+            self._sessions[server_id] = session
+            self._stacks[server_id] = stack
+            self._tools[server_id] = tools
+            self._connections[server_id] = {
+                "status": "connected", "name": name, "transport": "http",
+                "tool_count": len(tools),
+            }
+            clear_auth_url(server_id)
+            # Tools changed (this can complete after connect_server already
+            # returned, via the background OAuth flow), so bump the generation
+            # to invalidate the tool-prompt cache.
+            self._generation += 1
+            logger.info(f"MCP server connected: {name} ({server_id}) - {len(tools)} tools via http")
+            return True
+        except ImportError:
+            logger.warning("MCP package not installed. Install with: pip install mcp")
+            self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
+            return False
+        except Exception as e:
+            logger.error(f"Failed to connect HTTP MCP server {name} ({server_id}): {e}")
+            self._connections[server_id] = {"status": "error", "error": str(e), "name": name}
             return False
 
     async def disconnect_server(self, server_id: str):

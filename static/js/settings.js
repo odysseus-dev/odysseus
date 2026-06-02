@@ -4180,6 +4180,47 @@ async function initUnifiedIntegrations() {
 
   // ── MCP form — full management view ──
   async function showMcpForm(editId) {
+    function _showMcpPasteback(id) {
+      const msg = el('uf-mcp-msg'); if (!msg) return;
+      if (el('uf-mcp-pasteback')) return;  // already shown
+      msg.innerHTML =
+        'Authorize in the opened tab. If the redirect fails (remote access), paste the resulting URL here: ' +
+        '<input id="uf-mcp-pasteback" class="settings-input" placeholder="http://localhost:7000/api/mcp/oauth/callback?code=..." style="margin-top:4px">' +
+        '<button class="admin-btn-sm" id="uf-mcp-paste-go" style="margin-top:4px">Submit</button>';
+      const pasteGo = el('uf-mcp-paste-go');
+      if (pasteGo) pasteGo.addEventListener('click', async () => {
+        const cb = el('uf-mcp-pasteback').value.trim();
+        if (!cb) return;
+        const pf = new FormData(); pf.append('callback_url', cb);
+        await fetch(`/api/mcp/oauth/exchange/${id}`, { method: 'POST', credentials: 'same-origin', body: pf });
+      });
+    }
+
+    // Drives the OAuth flow: waits for the auth_url (discovery+DCR may lag),
+    // opens it once, then resolves on connected/error.
+    async function _handleMcpAuth(id, initialAuthUrl, tries = 90) {
+      let opened = false;
+      const openAuth = (u) => { if (!opened && u) { opened = true; window.open(u, '_blank', 'noopener'); _showMcpPasteback(id); } };
+      openAuth(initialAuthUrl);
+      const msg = el('uf-mcp-msg');
+      for (let i = 0; i < tries; i++) {
+        await new Promise(res => setTimeout(res, 2000));
+        try {
+          const r = await fetch('/api/mcp/servers', { credentials: 'same-origin' });
+          const list = await r.json();
+          const s = Array.isArray(list) ? list.find(x => x.id === id) : null;
+          if (!s) continue;
+          if (s.auth_url) openAuth(s.auth_url);
+          if (s.status === 'connected') {
+            if (msg) msg.textContent = `Connected (${s.tool_count || 0} tools)`;
+            await renderList(); return;
+          }
+          if (s.status === 'error') {
+            if (msg) msg.textContent = `Failed: ${s.error || 'unknown'}`; return;
+          }
+        } catch (_) {}
+      }
+    }
     if (editId && editId !== 'new') {
       // Show management view for existing server
       formEl.innerHTML = '<div class="admin-card" style="margin-top:8px"><span style="opacity:0.5;font-size:11px">Loading...</span></div>';
@@ -4257,7 +4298,7 @@ async function initUnifiedIntegrations() {
           <h2 style="font-size:13px">Add MCP Server</h2>
           <div class="settings-col">
             <div class="settings-row"><label class="settings-label">Name</label><input id="uf-mcp-name" class="settings-input" placeholder="Server name"></div>
-            <div class="settings-row"><label class="settings-label">Transport</label><select id="uf-mcp-transport" class="settings-input"><option value="stdio">stdio</option><option value="sse">SSE</option></select></div>
+            <div class="settings-row"><label class="settings-label">Transport</label><select id="uf-mcp-transport" class="settings-input"><option value="stdio">stdio</option><option value="sse">SSE</option><option value="http">Streamable HTTP</option></select></div>
             <div id="uf-mcp-stdio-fields" style="display:flex;flex-direction:column;gap:6px;">
               <div class="settings-row"><label class="settings-label">Command</label><input id="uf-mcp-cmd" class="settings-input" placeholder="npx"></div>
               <div class="settings-row"><label class="settings-label">Args</label><input id="uf-mcp-args" class="settings-input" placeholder='["-y", "@modelcontextprotocol/server-filesystem"]'></div>
@@ -4270,9 +4311,12 @@ async function initUnifiedIntegrations() {
           </div>
         </div>`;
       el('uf-mcp-transport').addEventListener('change', () => {
-        const sse = el('uf-mcp-transport').value === 'sse';
-        el('uf-mcp-stdio-fields').style.display = sse ? 'none' : 'flex';
-        el('uf-mcp-sse-fields').style.display = sse ? 'flex' : 'none';
+        const v = el('uf-mcp-transport').value;
+        const isUrl = (v === 'sse' || v === 'http');
+        el('uf-mcp-stdio-fields').style.display = isUrl ? 'none' : 'flex';
+        el('uf-mcp-sse-fields').style.display = isUrl ? 'flex' : 'none';
+        const urlInput = el('uf-mcp-url');
+        if (urlInput) urlInput.placeholder = (v === 'http') ? 'https://mcp.example.com/mcp' : 'http://localhost:3001/sse';
       });
       el('uf-mcp-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
       el('uf-mcp-save').addEventListener('click', async () => {
@@ -4292,7 +4336,14 @@ async function initUnifiedIntegrations() {
         }
         try {
           const r = await fetch('/api/mcp/servers', { method: 'POST', credentials: 'same-origin', body: fd });
-          if (r.ok) {
+          const data = await r.json().catch(() => ({}));
+          if (r.ok && data.needs_auth) {
+            el('uf-mcp-msg').textContent = 'Preparing authorization…';
+            _handleMcpAuth(data.id, data.auth_url);
+          } else if (r.ok && (data.connected || data.status === 'connected')) {
+            el('uf-mcp-msg').textContent = `Connected (${data.tool_count || 0} tools)`;
+            formEl.style.display = 'none'; await renderList();
+          } else if (r.ok) {
             el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
           } else {
             el('uf-mcp-msg').textContent = `Failed (${r.status})`;
