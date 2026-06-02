@@ -87,6 +87,11 @@ html, body { overflow-x: hidden; height: 100%; margin: 0; overscroll-behavior: n
 body {
   background-color: var(--bg);
   color: var(--fg);
+  /* Animate the dock push BOTH ways. Keeping the transition on the base body
+     (not on .right/left-dock-active) means removing the class on undock also
+     animates padding back to 0 — otherwise the chat snapped back instantly. */
+  transition: padding-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              padding-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
   font-family: var(--font-family, 'Fira Code', monospace);
   display: flex;
   height: 100%;
@@ -14546,11 +14551,9 @@ body [data-act="from-sender"] {
    fit instead of being hidden behind the panel. */
 body.right-dock-active {
   padding-right: var(--right-dock-w, 0px);
-  transition: padding-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 body.left-dock-active {
   padding-left: var(--left-dock-w, 0px);
-  transition: padding-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 .modal.modal-right-docked {
   align-items: stretch;
