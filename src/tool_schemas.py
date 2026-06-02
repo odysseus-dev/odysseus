@@ -1074,6 +1074,14 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         logger.error(f"Failed to parse function call arguments for {name}: {arguments}")
         return None
 
+    # Some models emit valid JSON that isn't an object (e.g. a bare array
+    # ["ls -la"], string, or number) as the function arguments. Every branch
+    # below assumes a dict and calls args.get(...), so a non-dict would raise
+    # AttributeError and abort the whole agent stream. Coerce to {} instead.
+    if not isinstance(args, dict):
+        logger.warning(f"Non-object function call arguments for {name}: {args!r}; treating as empty")
+        args = {}
+
     tool_type = _TOOL_NAME_MAP.get(name, name)
 
     # Allow MCP tools through (namespaced as mcp__serverid__toolname)
