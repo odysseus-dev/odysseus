@@ -39,6 +39,10 @@ let _onDocKeydown = null;
 let _apiBase = '';
 let _endpoints = [];
 let _expandedJobId = null;
+// Searchable model combobox: its dropdown is appended to <body> so it escapes
+// the panel's overflow:hidden, and exists in the DOM only while open.
+let _modelMenuEl = null;
+let _modelMenuCleanup = null;
 let _markdownModule = null;
 let _sessionModule = null;
 let _settingsCollapsed = false;
@@ -308,6 +312,7 @@ function _focusJob(jobId) {
 export function closePanel() {
   if (!_open) return;
   _open = false;
+  _closeModelMenu();
 
   if (_onDocKeydown) {
     document.removeEventListener('keydown', _onDocKeydown);
@@ -378,9 +383,16 @@ function _buildPanelHTML() {
             <span class="research-setting-label">Endpoint</span>
             <select id="research-endpoint"><option value="">Default</option></select>
           </label>
-          <label class="research-setting">
+          <label class="research-setting research-model-setting">
             <span class="research-setting-label">Model</span>
-            <select id="research-model"><option value="">Default</option></select>
+            <div class="research-model-combo">
+              <input type="text" id="research-model-input" class="research-model-input"
+                     placeholder="Default" autocomplete="off" spellcheck="false"
+                     role="combobox" aria-autocomplete="list" aria-expanded="false"
+                     aria-controls="research-model-menu">
+              <svg class="research-model-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+              <select id="research-model" class="research-model-native" tabindex="-1" aria-hidden="true"><option value="">Default</option></select>
+            </div>
           </label>
         </div>
         <div class="research-controls-row">
@@ -461,6 +473,23 @@ function _wireEvents(pane) {
   const endpointSelect = pane.querySelector('#research-endpoint');
   endpointSelect.addEventListener('change', () => _populateModels(endpointSelect.value));
 
+  const modelInput = pane.querySelector('#research-model-input');
+  if (modelInput) {
+    // Focus reveals the full list (text selected so typing replaces it);
+    // each keystroke filters; arrows/Enter/Esc drive the dropdown.
+    modelInput.addEventListener('focus', () => { modelInput.select(); _openModelMenu(); });
+    modelInput.addEventListener('input', () => {
+      if (!_modelMenuEl) _openModelMenu();
+      _renderModelMenu(modelInput.value);
+      _positionModelMenu();
+    });
+    modelInput.addEventListener('keydown', _onModelInputKeydown);
+    // Tab-away closes the menu (outside-click is handled while it's open).
+    modelInput.addEventListener('blur', () => setTimeout(() => {
+      if (_modelMenuEl && document.activeElement !== modelInput) _closeModelMenu();
+    }, 120));
+  }
+
   _renderJobs();
 }
 
@@ -515,9 +544,10 @@ function _editJob(job) {
   const spEl = document.getElementById('research-search-provider');
   if (spEl && s.search_provider) spEl.value = s.search_provider;
   const epEl = document.getElementById('research-endpoint');
-  if (epEl && s.endpoint_id) epEl.value = s.endpoint_id;
+  if (epEl && s.endpoint_id) { epEl.value = s.endpoint_id; _populateModels(s.endpoint_id); }
   const mEl = document.getElementById('research-model');
   if (mEl && s.model) mEl.value = s.model;
+  _syncModelInputFromSelect();
   // Remove the old job so clicking Start/Queue makes a fresh one
   jobs.removeJob(job.id);
   // Scroll the form into view
@@ -609,7 +639,7 @@ function _restoreSavedSettings() {
     if (saved.model) {
       setTimeout(() => {
         const model = document.getElementById('research-model');
-        if (model) model.value = saved.model;
+        if (model) { model.value = saved.model; _syncModelInputFromSelect(); }
       }, 50);
     }
   }
@@ -635,15 +665,168 @@ function _populateModels(endpointId) {
   const sel = document.getElementById('research-model');
   if (!sel) return;
   sel.innerHTML = '<option value="">Default</option>';
-  if (!endpointId) return;
-  const ep = _endpoints.find(e => e.id === endpointId);
-  if (!ep || !ep.models) return;
-  sortModelIds(ep.models).forEach(m => {
-    const opt = document.createElement('option');
-    opt.value = m;
-    opt.textContent = m;
-    sel.appendChild(opt);
+  const ep = endpointId ? _endpoints.find(e => e.id === endpointId) : null;
+  if (ep && ep.models) {
+    sortModelIds(ep.models).forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = m;
+      sel.appendChild(opt);
+    });
+  }
+  // Keep the searchable input (and any open dropdown) in sync with the reset list.
+  _syncModelInputFromSelect();
+  if (_modelMenuEl) _renderModelMenu(document.getElementById('research-model-input')?.value || '');
+}
+
+// ── Searchable model combobox ──────────────────────────────────
+// The Model field is a text input that filters a dropdown of the selected
+// endpoint's models. The native <select id="research-model"> is kept (hidden)
+// as the value store, so every existing reader of its .value is unchanged.
+
+/** Mirror the hidden <select> value into the visible search input. An empty
+ *  value ("Default") leaves the input blank so the placeholder shows. */
+function _syncModelInputFromSelect() {
+  const sel = document.getElementById('research-model');
+  const input = document.getElementById('research-model-input');
+  if (!sel || !input) return;
+  input.value = sel.value || '';
+}
+
+/** The endpoint's models, read from the hidden <select> (the single source of
+ *  truth). Each entry is { value, label }; the empty "Default" option is first. */
+function _modelOptionsFromSelect() {
+  const sel = document.getElementById('research-model');
+  if (!sel) return [];
+  return Array.from(sel.options).map(o => ({ value: o.value, label: o.textContent }));
+}
+
+function _pickModel(value) {
+  const sel = document.getElementById('research-model');
+  const input = document.getElementById('research-model-input');
+  if (sel) sel.value = value;
+  if (input) input.value = value || '';
+  _closeModelMenu();
+  _saveSettingsToStorage();
+  if (input) input.focus();
+}
+
+function _renderModelMenu(filter) {
+  if (!_modelMenuEl) return;
+  const q = (filter || '').trim().toLowerCase();
+  const sel = document.getElementById('research-model');
+  const current = sel ? sel.value : '';
+  const opts = _modelOptionsFromSelect();
+  // Case-insensitive substring match on the full model id. The "Default" row
+  // (empty value) only shows when the user hasn't typed a query.
+  const matches = opts.filter(o => (o.value === '' ? !q : o.label.toLowerCase().includes(q)));
+  _modelMenuEl.innerHTML = '';
+  if (!matches.length) {
+    const empty = document.createElement('div');
+    empty.className = 'research-model-empty';
+    empty.textContent = opts.length <= 1 ? 'Select an endpoint first' : 'No matching models';
+    _modelMenuEl.appendChild(empty);
+    return;
+  }
+  matches.forEach(o => {
+    const row = document.createElement('div');
+    row.className = 'research-model-item' + (o.value === current ? ' selected' : '');
+    row.setAttribute('role', 'option');
+    row.dataset.value = o.value;
+    row.textContent = o.value === '' ? 'Default' : o.label;
+    // mousedown + preventDefault so the pick lands before the input's blur
+    // would close the menu, and focus stays in the input.
+    row.addEventListener('mousedown', (e) => { e.preventDefault(); _pickModel(o.value); });
+    _modelMenuEl.appendChild(row);
   });
+}
+
+function _positionModelMenu() {
+  if (!_modelMenuEl) return;
+  const input = document.getElementById('research-model-input');
+  if (!input) return;
+  const r = input.getBoundingClientRect();
+  const menu = _modelMenuEl;
+  const margin = 8;
+  // Width: at least as wide as the field, but grow to fit the longest model
+  // name (capped to the viewport). The old native <select> dropdown auto-sized
+  // to its content, so match that instead of truncating to the field width.
+  menu.style.width = 'auto';
+  menu.style.minWidth = `${Math.round(r.width)}px`;
+  menu.style.maxWidth = `${Math.round(window.innerWidth - margin * 2)}px`;
+  const mw = menu.offsetWidth;
+  const mh = Math.min(menu.scrollHeight, 240);
+  // Horizontal: align to the field's left edge, but pull back so a wide menu
+  // never spills off the right (or left) edge of the screen.
+  let left = r.left;
+  if (left + mw + margin > window.innerWidth) left = window.innerWidth - mw - margin;
+  if (left < margin) left = margin;
+  // Vertical: drop down by default; flip up only when there's more room above.
+  const spaceBelow = window.innerHeight - r.bottom;
+  const goUp = spaceBelow < mh + 4 && r.top > spaceBelow;
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(goUp ? r.top - mh - 4 : r.bottom + 4)}px`;
+}
+
+function _openModelMenu() {
+  if (_modelMenuEl) return;
+  const combo = document.querySelector('.research-model-combo');
+  const input = document.getElementById('research-model-input');
+  if (!combo || !input) return;
+  const menu = document.createElement('div');
+  menu.id = 'research-model-menu';
+  menu.className = 'research-model-menu';
+  menu.setAttribute('role', 'listbox');
+  document.body.appendChild(menu);
+  _modelMenuEl = menu;
+  input.setAttribute('aria-expanded', 'true');
+  _renderModelMenu('');           // focus shows the full list
+  _positionModelMenu();
+
+  const reposition = () => _positionModelMenu();
+  const onDocDown = (e) => {
+    if (menu.contains(e.target) || combo.contains(e.target)) return;
+    _closeModelMenu();
+  };
+  // Capture phase so we react before other handlers; reposition while the
+  // modal scrolls/resizes instead of leaving the menu stranded.
+  window.addEventListener('scroll', reposition, true);
+  window.addEventListener('resize', reposition);
+  document.addEventListener('mousedown', onDocDown, true);
+  _modelMenuCleanup = () => {
+    window.removeEventListener('scroll', reposition, true);
+    window.removeEventListener('resize', reposition);
+    document.removeEventListener('mousedown', onDocDown, true);
+  };
+}
+
+function _closeModelMenu() {
+  if (_modelMenuCleanup) { _modelMenuCleanup(); _modelMenuCleanup = null; }
+  if (_modelMenuEl) { _modelMenuEl.remove(); _modelMenuEl = null; }
+  const input = document.getElementById('research-model-input');
+  if (input) input.setAttribute('aria-expanded', 'false');
+}
+
+function _onModelInputKeydown(e) {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (!_modelMenuEl) { _openModelMenu(); return; }
+    const items = Array.from(_modelMenuEl.querySelectorAll('.research-model-item'));
+    if (!items.length) return;
+    let idx = items.findIndex(el => el.classList.contains('kb-active'));
+    items.forEach(el => el.classList.remove('kb-active'));
+    if (e.key === 'ArrowDown') idx = idx < items.length - 1 ? idx + 1 : 0;
+    else idx = idx > 0 ? idx - 1 : items.length - 1;
+    items[idx].classList.add('kb-active');
+    items[idx].scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter') {
+    if (!_modelMenuEl) return;
+    const active = _modelMenuEl.querySelector('.research-model-item.kb-active')
+      || _modelMenuEl.querySelector('.research-model-item');
+    if (active) { e.preventDefault(); _pickModel(active.dataset.value); }
+  } else if (e.key === 'Escape') {
+    if (_modelMenuEl) { e.preventDefault(); e.stopPropagation(); _closeModelMenu(); }
+  }
 }
 
 // ── Job rendering ──

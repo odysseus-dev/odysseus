@@ -34169,6 +34169,45 @@ body.research-panel-view #research-divider { display:none; }
   color: var(--fg);
   border: 1px solid var(--border); border-radius: 4px;
 }
+/* Searchable model field — a text input that filters a dropdown. The native
+   <select id="research-model"> is kept (hidden) as the value store, and the
+   menu is appended to <body> so the panel's overflow:hidden can't clip it. */
+.research-model-combo { position: relative; display: flex; align-items: center; }
+.research-model-native { display: none; }
+.research-model-input {
+  width: 100%; box-sizing: border-box;
+  font-size: 11px; font-family: inherit;
+  padding: 4px 22px 4px 6px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px;
+}
+.research-model-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 60%, var(--border));
+}
+.research-model-input::placeholder { color: color-mix(in srgb, var(--fg) 40%, transparent); }
+.research-model-caret {
+  position: absolute; right: 6px; pointer-events: none;
+  opacity: 0.5; color: var(--fg);
+}
+.research-model-menu {
+  position: fixed; z-index: 12000; box-sizing: border-box;
+  max-height: 240px; overflow-y: auto;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-size: 11px;
+}
+.research-model-item {
+  padding: 5px 8px; border-radius: 4px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--fg);
+}
+.research-model-item:hover,
+.research-model-item.kb-active { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.research-model-item.selected { color: var(--accent, var(--red)); font-weight: 600; }
+.research-model-empty { padding: 8px; text-align: center; opacity: 0.6; }
 .research-controls-row {
   display:flex; align-items:center; gap:10px; margin-top:10px;
 }
