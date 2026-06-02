@@ -17,33 +17,39 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_NAME="Odysseus"
 INSTALL_DIR="$REPO_DIR"
 PORT="${ODYSSEUS_PORT:-7860}"
+ICON_BG="${ODYSSEUS_ICON_BG:-#111111}"
 DIST="$REPO_DIR/dist"
 APP="$DIST/$APP_NAME.app"
 
 echo "Building $APP_NAME.app"
 echo "  install dir: $INSTALL_DIR"
 echo "  port:        $PORT"
+echo "  icon bg:     $ICON_BG"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-# ── Icon (best effort) — center-crop docs/odysseus.jpg to a square .icns ──
-if [ -f "$REPO_DIR/docs/odysseus.jpg" ] && command -v sips >/dev/null 2>&1; then
-  TMPIMG="$(mktemp -d)"
-  # Center-crop to a square, scale to 512 (sips' icns encoder caps at 512), and
-  # let sips emit the .icns directly — more robust across macOS versions than
-  # building an .iconset by hand.
-  sips -c 720 720 "$REPO_DIR/docs/odysseus.jpg" --out "$TMPIMG/sq.png" >/dev/null 2>&1 || cp "$REPO_DIR/docs/odysseus.jpg" "$TMPIMG/sq.png"
-  sips -z 512 512 "$TMPIMG/sq.png" --out "$TMPIMG/icon.png" >/dev/null 2>&1
-  if sips -s format icns "$TMPIMG/icon.png" --out "$APP/Contents/Resources/odysseus.icns" >/dev/null 2>&1; then
-    echo "  icon:        odysseus.icns"
-  else
-    echo "  icon:        (skipped — conversion failed)"
-  fi
-  rm -rf "$TMPIMG"
-else
-  echo "  icon:        (skipped — no docs/odysseus.jpg)"
+# ── Icon ──
+if [ ! -f "$REPO_DIR/assets/app-icon.svg" ]; then
+  echo "✗ Missing app icon source: assets/app-icon.svg"
+  exit 1
 fi
+if [ ! -x "$REPO_DIR/scripts/build-icons.sh" ]; then
+  echo "✗ Missing icon build script: scripts/build-icons.sh"
+  exit 1
+fi
+if ! command -v rsvg-convert >/dev/null 2>&1; then
+  echo "✗ rsvg-convert is required to build the Odysseus.app icon."
+  echo "  Install it with: brew install librsvg"
+  exit 1
+fi
+if ! command -v iconutil >/dev/null 2>&1; then
+  echo "✗ iconutil is required to build the Odysseus.app icon."
+  exit 1
+fi
+ODYSSEUS_ICON_BG="$ICON_BG" "$REPO_DIR/scripts/build-icons.sh" macos >/dev/null
+cp "$REPO_DIR/dist/icons/odysseus.icns" "$APP/Contents/Resources/odysseus.icns"
+echo "  icon:        assets/app-icon.svg"
 
 # ── Info.plist ──
 cat > "$APP/Contents/Info.plist" <<PLIST
