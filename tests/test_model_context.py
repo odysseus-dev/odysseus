@@ -1,9 +1,10 @@
 """Tests for model_context.py — local endpoint detection, token estimation, known model lookup."""
 
+import httpx
 import pytest
 
 import src.model_context as model_context
-from src.model_context import _is_local_endpoint, estimate_tokens, _lookup_known
+from src.model_context import DEFAULT_CONTEXT, _is_local_endpoint, estimate_tokens, _lookup_known
 
 
 class TestIsLocalEndpoint:
@@ -22,6 +23,9 @@ class TestIsLocalEndpoint:
     def test_tailscale_100(self):
         # 100.64.0.0/10 is the CGNAT range Tailscale uses.
         assert _is_local_endpoint("http://100.64.0.1:5000/v1/chat/completions") is True
+
+    def test_host_docker_internal(self):
+        assert _is_local_endpoint("http://host.docker.internal:11434/v1/chat/completions") is True
 
     def test_openai_is_remote(self):
         assert _is_local_endpoint("https://api.openai.com/v1/chat/completions") is False
@@ -109,7 +113,6 @@ class TestLookupKnown:
         result = _lookup_known("deepseek-r1:free")
         assert result == 64000
 
-
 class TestGetContextLength:
     def setup_method(self):
         model_context._context_cache.clear()
@@ -151,3 +154,143 @@ class TestGetContextLength:
         assert first == 200000
         assert second == 200000
         assert len(calls) == 1
+
+
+class TestQueryContextLength:
+    OLLAMA_URL = "http://localhost:11434/v1/chat/completions"
+    REMOTE_URL = "https://api.openai.com/v1/chat/completions"
+
+    def _response(self, method, url, status, body):
+        req = httpx.Request(method, url)
+        return httpx.Response(status, request=req, json=body)
+
+    def test_ollama_api_show_used_for_local_endpoint(self, monkeypatch):
+        post_calls = []
+        get_calls = []
+
+        def fake_get(url, timeout=None):
+            get_calls.append(url)
+            if url.endswith("/slots"):
+                raise httpx.ConnectError("slots unavailable")
+            return self._response("GET", url, 200, {"data": []})
+
+        def fake_post(url, json=None, timeout=None):
+            post_calls.append((url, json))
+            return self._response(
+                "POST",
+                url,
+                200,
+                {"model_info": {"qwen3.context_length": 40960}},
+            )
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        monkeypatch.setattr(model_context.httpx, "post", fake_post)
+
+        result = model_context._query_context_length(self.OLLAMA_URL, "qwen3:14b")
+
+        assert result == 40960
+        assert post_calls == [("http://localhost:11434/api/show", {"name": "qwen3:14b"})]
+        assert not any(url.endswith("/models") for url in get_calls)
+
+    def test_api_show_404_falls_through_to_models(self, monkeypatch):
+        def fake_get(url, timeout=None):
+            if url.endswith("/slots"):
+                raise httpx.ConnectError("slots unavailable")
+            return self._response(
+                "GET",
+                url,
+                200,
+                {"data": [{"id": "llama3:8b", "context_length": 8192}]},
+            )
+
+        def fake_post(url, json=None, timeout=None):
+            return self._response("POST", url, 404, {})
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        monkeypatch.setattr(model_context.httpx, "post", fake_post)
+
+        result = model_context._query_context_length(
+            "http://localhost:11434/v1/chat/completions",
+            "llama3:8b",
+        )
+
+        assert result == 8192
+
+    def test_api_show_not_tried_for_non_ollama_local_endpoint(self, monkeypatch):
+        post_calls = []
+
+        def fake_get(url, timeout=None):
+            if url.endswith("/slots"):
+                raise httpx.ConnectError("slots unavailable")
+            return self._response(
+                "GET",
+                url,
+                200,
+                {"data": [{"id": "local-model", "context_length": 16384}]},
+            )
+
+        def fake_post(url, json=None, timeout=None):
+            post_calls.append(url)
+            return self._response("POST", url, 200, {})
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        monkeypatch.setattr(model_context.httpx, "post", fake_post)
+
+        result = model_context._query_context_length(
+            "http://localhost:8080/v1/chat/completions",
+            "local-model",
+        )
+
+        assert result == 16384
+        assert post_calls == []
+
+    def test_api_show_connection_error_falls_through_to_known_model(self, monkeypatch):
+        def fake_get(url, timeout=None):
+            raise httpx.ConnectError("offline")
+
+        def fake_post(url, json=None, timeout=None):
+            raise httpx.ConnectError("offline")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        monkeypatch.setattr(model_context.httpx, "post", fake_post)
+
+        result = model_context._query_context_length(self.OLLAMA_URL, "qwen3:14b")
+
+        assert result == 131072
+
+    def test_api_show_connection_error_falls_through_to_default_context(self, monkeypatch):
+        def fake_get(url, timeout=None):
+            raise httpx.ConnectError("offline")
+
+        def fake_post(url, json=None, timeout=None):
+            raise httpx.ConnectError("offline")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        monkeypatch.setattr(model_context.httpx, "post", fake_post)
+
+        result = model_context._query_context_length(self.OLLAMA_URL, "unknown-local-model")
+
+        assert result == DEFAULT_CONTEXT
+
+    def test_api_show_not_tried_for_remote_endpoint(self, monkeypatch):
+        post_calls = []
+
+        def fake_get(url, timeout=None):
+            return self._response(
+                "GET",
+                url,
+                200,
+                {"data": [{"id": "gpt-4o", "context_length": 128000}]},
+            )
+
+        def fake_post(url, json=None, timeout=None):
+            post_calls.append(url)
+            return self._response("POST", url, 200, {})
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        monkeypatch.setattr(model_context.httpx, "post", fake_post)
+
+        result = model_context._query_context_length(self.REMOTE_URL, "gpt-4o")
+
+        assert result == 128000
+        assert post_calls == []

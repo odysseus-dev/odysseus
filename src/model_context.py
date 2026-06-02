@@ -29,6 +29,16 @@ def _is_local_endpoint(url: str) -> bool:
     except Exception:
         return False
 
+
+def _is_ollama_endpoint(url: str) -> bool:
+    """Check if URL points to a local Ollama-style endpoint."""
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        return _is_local_endpoint(url) and (parsed.port == 11434 or "ollama" in host.lower())
+    except Exception:
+        return False
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -214,40 +224,59 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
         except Exception:
             pass
 
-    models_url = endpoint_url.replace("/chat/completions", "/models")
-    try:
-        r = httpx.get(models_url, timeout=REQUEST_TIMEOUT)
-        if r.is_success:
-            data = r.json()
-            models_list = data.get("data") or []
-
-            for m in models_list:
-                mid = m.get("id", "")
-                if mid == model or mid.split("/")[-1] == model.split("/")[-1]:
-                    for field in (
-                        "context_length",
-                        "context_window",
-                        "max_model_len",
-                        "max_context_length",
-                        "max_seq_len",
-                    ):
-                        val = m.get(field)
-                        if val and isinstance(val, (int, float)) and val > 0:
-                            api_ctx = int(val)
+    # Try Ollama /api/show for local endpoints. Ollama's OpenAI-compatible
+    # /v1/models response omits context_length, while model_info reports the
+    # serving context it uses by default.
+    if _is_ollama_endpoint(endpoint_url):
+        try:
+            base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rsplit("/", 1)[0]
+            r = httpx.post(f"{base}/api/show", json={"name": model}, timeout=REQUEST_TIMEOUT)
+            if r.is_success:
+                model_info = (r.json() or {}).get("model_info") or {}
+                if isinstance(model_info, dict):
+                    for key, val in model_info.items():
+                        if key.endswith(".context_length") and isinstance(val, int) and val > 0:
+                            logger.info(f"Ollama /api/show reports context_length={val} for {model}")
+                            api_ctx = val
                             break
+        except Exception:
+            pass
 
-                    if not api_ctx:
-                        meta = m.get("meta") or m.get("model_extra") or {}
-                        if isinstance(meta, dict):
-                            # n_ctx is the actual serving context (set via -c flag in llama.cpp)
-                            for field in ("n_ctx", "context_length", "context_window", "max_model_len"):
-                                val = meta.get(field)
-                                if val and isinstance(val, (int, float)) and val > 0:
-                                    api_ctx = int(val)
-                                    break
-                    break
-    except Exception as e:
-        logger.debug(f"Failed to query context length for {model}: {e}")
+    if api_ctx is None:
+        models_url = endpoint_url.replace("/chat/completions", "/models")
+        try:
+            r = httpx.get(models_url, timeout=REQUEST_TIMEOUT)
+            if r.is_success:
+                data = r.json()
+                models_list = data.get("data") or []
+
+                for m in models_list:
+                    mid = m.get("id", "")
+                    if mid == model or mid.split("/")[-1] == model.split("/")[-1]:
+                        for field in (
+                            "context_length",
+                            "context_window",
+                            "max_model_len",
+                            "max_context_length",
+                            "max_seq_len",
+                        ):
+                            val = m.get(field)
+                            if val and isinstance(val, (int, float)) and val > 0:
+                                api_ctx = int(val)
+                                break
+
+                        if not api_ctx:
+                            meta = m.get("meta") or m.get("model_extra") or {}
+                            if isinstance(meta, dict):
+                                # n_ctx is the actual serving context (set via -c flag in llama.cpp)
+                                for field in ("n_ctx", "context_length", "context_window", "max_model_len"):
+                                    val = meta.get(field)
+                                    if val and isinstance(val, (int, float)) and val > 0:
+                                        api_ctx = int(val)
+                                        break
+                        break
+        except Exception as e:
+            logger.debug(f"Failed to query context length for {model}: {e}")
 
     # For local/self-hosted endpoints, trust the API value (user set --max-model-len)
     # For cloud APIs, use the larger value (API can report low defaults)
