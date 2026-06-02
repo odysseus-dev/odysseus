@@ -380,9 +380,10 @@ async function _addPane(anchorBtn) {
 async function _createAndAppendPane(m) {
   const i = state._selectedModels.length;  // New index
 
-  // Create session
+  // Create session — use neutral label in blind mode so the sidebar
+  // doesn't reveal model identity before the user votes.
   const fd = new FormData();
-  fd.append('name', '[CMP] ' + m.name);
+  fd.append('name', '[CMP] ' + (state._blindMode ? 'Model ' + _slotChar(i) : m.name));
   fd.append('endpoint_url', m.url || '');
   fd.append('model', m.id || '');
   if (m.endpointId) {
@@ -584,7 +585,7 @@ function _showModelSwapDropdown(paneIdx, titleBtn) {
         fetch(`${state.API_BASE}/api/session/${oldSid}`, { method: 'DELETE' }).catch(() => {});
       }
       const fd = new FormData();
-      fd.append('name', '[CMP] ' + m.name);
+      fd.append('name', '[CMP] ' + (state._blindMode ? 'Model ' + _slotChar(paneIdx) : m.name));
       fd.append('endpoint_url', m.url || '');
       fd.append('model', m.id || '');
       if (m.endpointId) {

@@ -47,12 +47,17 @@ def setup_compare_routes(session_manager: SessionManager):
         sid_a = str(uuid.uuid4())
         sid_b = str(uuid.uuid4())
 
-        # Create ephemeral sessions (prefixed [CMP])
-        for sid, model, endpoint in [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]:
+        # Create ephemeral sessions (prefixed [CMP]).
+        # In blind mode use neutral slot labels so the session sidebar and
+        # /api/sessions don't reveal model identities before the user votes.
+        _slot_labels = ["Model A", "Model B"]
+        for idx, (sid, model, endpoint) in enumerate([(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]):
             user = getattr(request.state, 'current_user', None)
+            blind_for_name = str(is_blind).lower() == "true"
+            session_name = f"[CMP] {_slot_labels[idx]}" if blind_for_name else f"[CMP] {model.split('/')[-1]}"
             session_manager.create_session(
                 session_id=sid,
-                name=f"[CMP] {model.split('/')[-1]}",
+                name=session_name,
                 endpoint_url=endpoint,
                 model=model,
                 rag=False,
@@ -107,15 +112,20 @@ def setup_compare_routes(session_manager: SessionManager):
         session_left = sid_a if mapping["left"] == "a" else sid_b
         session_right = sid_a if mapping["right"] == "a" else sid_b
 
-        return {
+        # In blind mode omit real model names from the response — the client
+        # already knows which pane is which by session_left/session_right.
+        # Real names are revealed after the user votes (see /vote endpoint).
+        resp = {
             "id": comp_id,
             "session_left": session_left,
             "session_right": session_right,
-            "model_left": model_a if mapping["left"] == "a" else model_b,
-            "model_right": model_a if mapping["right"] == "a" else model_b,
             "is_blind": blind,
             "mapping": mapping,
         }
+        if not blind:
+            resp["model_left"] = model_a if mapping["left"] == "a" else model_b
+            resp["model_right"] = model_a if mapping["right"] == "a" else model_b
+        return resp
 
     @router.post("/{comp_id}/vote")
     def vote_comparison(
