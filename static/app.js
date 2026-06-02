@@ -45,6 +45,103 @@ import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
 const API_BASE = window.location.origin;
+
+// Export Markdown configuration constants (GlitchWorks Agnostic Architecture Protocol)
+const MD_EXPORT_MAX_CHUNK_SIZE_BYTES = 120 * 1024; // 120KB maximum chunk size
+
+// Helper to get UTF-8 byte length of a string
+function getByteLength(str) {
+  return new TextEncoder().encode(str).length;
+}
+
+// Helper to slice a string safely by bytes at character boundaries
+function sliceStringByBytes(str, maxBytes) {
+  const encoder = new TextEncoder();
+  let low = 0;
+  let high = str.length;
+  let bestIndex = 0;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const substring = str.slice(0, mid);
+    const bytes = encoder.encode(substring).length;
+    if (bytes <= maxBytes) {
+      bestIndex = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  const sliced = str.slice(0, bestIndex);
+  const remaining = str.slice(bestIndex);
+  return { sliced, remaining };
+}
+
+// Smart chunking algorithm that splits transcript at message boundaries (\n\n)
+// and slices single giant messages safely by bytes if they exceed the limit.
+function chunkTranscript(transcript, maxBytes) {
+  const messages = transcript.split('\n\n');
+  const chunks = [];
+  let currentChunk = '';
+
+  for (const message of messages) {
+    const msgByteLen = getByteLength(message);
+
+    if (msgByteLen > maxBytes) {
+      // If there's an active current chunk, push it first
+      if (currentChunk) {
+        chunks.push(currentChunk);
+        currentChunk = '';
+      }
+
+      // Slice the giant message into pieces under maxBytes
+      let remaining = message;
+      while (getByteLength(remaining) > maxBytes) {
+        const { sliced, remaining: nextRemaining } = sliceStringByBytes(remaining, maxBytes);
+        chunks.push(sliced);
+        remaining = nextRemaining;
+      }
+      // The last remaining piece of the giant message becomes the start of the next chunk
+      if (remaining) {
+        currentChunk = remaining;
+      }
+    } else {
+      // Check if adding this message to the current chunk would exceed the limit
+      const separator = currentChunk ? '\n\n' : '';
+      const additionByteLen = getByteLength(separator + message);
+
+      if (getByteLength(currentChunk) + additionByteLen > maxBytes) {
+        // Push current chunk and start a new one
+        if (currentChunk) {
+          chunks.push(currentChunk);
+        }
+        currentChunk = message;
+      } else {
+        currentChunk += separator + message;
+      }
+    }
+  }
+
+  if (currentChunk) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
+}
+
+// Helper to trigger download of a string content as a file
+function triggerDownload(content, filename) {
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 window.themeModule = themeModule;
 window.sessionModule = sessionModule;
 window.uiModule = uiModule;
@@ -355,6 +452,41 @@ function initializeEventListeners() {
       } catch (err) {
         console.error('Save to docs failed:', err);
         uiModule.showError('Failed to save to documents');
+      }
+    });
+  }
+
+  // Export: Markdown (.md) with smart chunking
+  const exportMdBtn = el('export-md-btn');
+  if (exportMdBtn) {
+    exportMdBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      exportMenu.classList.remove('open');
+      try {
+        const transcript = _serializeChatTranscript();
+        if (!transcript.trim()) {
+          uiModule.showToast('Nothing to export yet');
+          return;
+        }
+
+        const meta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
+        const sessionName = meta ? meta.name : 'Odysseus Chat';
+        const sanitizedSessionName = sessionName.replace(/[/\\?%*:|"<>]/g, '_') || 'Odysseus_Chat';
+
+        const chunks = chunkTranscript(transcript, MD_EXPORT_MAX_CHUNK_SIZE_BYTES);
+
+        for (let i = 0; i < chunks.length; i++) {
+          const partSuffix = chunks.length > 1 ? `_part${i + 1}` : '';
+          const filename = `${sanitizedSessionName}${partSuffix}.md`;
+          triggerDownload(chunks[i], filename);
+          if (chunks.length > 1) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
+        }
+        uiModule.showToast(chunks.length > 1 ? `Exported ${chunks.length} parts` : 'Exported Markdown');
+      } catch (err) {
+        console.error('Markdown export failed:', err);
+        uiModule.showError('Failed to export Markdown');
       }
     });
   }

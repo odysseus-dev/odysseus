@@ -33,6 +33,7 @@ function _handlePickerKeydown(e, listEl, itemSelector, closeFn) {
 // Dependencies injected via initModelPicker()
 let _deps = null;
 let _autoSelectingDefault = false;
+let _pendingRegenElement = null;
 
 function _modelExists(modelId, url) {
   if (!modelId || !window.modelsModule || !window.modelsModule.getCachedItems) return false;
@@ -70,7 +71,22 @@ function _initModelPickerDropdown() {
   const searchRow = menu ? menu.querySelector('.model-picker-search-row') : null;
   if (!wrap || !btn || !menu || !search || !listEl) return;
 
+  document.addEventListener('odysseus:model-switch-request', (e) => {
+    const el = e.detail?.element;
+    if (el) {
+      _pendingRegenElement = el;
+      const btn = document.getElementById('model-picker-btn');
+      if (btn) {
+        const menu = document.getElementById('model-picker-menu');
+        if (menu && menu.classList.contains('hidden')) {
+          btn.click();
+        }
+      }
+    }
+  });
+
   function _close() {
+    _pendingRegenElement = null;
     if (menu.classList.contains('hidden')) return;
     // Restore scroll button
     const _scrollBtn = document.getElementById('scroll-bottom-btn');
@@ -252,6 +268,10 @@ function _initModelPickerDropdown() {
     const currentSessionId = _deps.getCurrentSessionId();
     const _pendingChat = _deps.getPendingChat();
 
+    // Capture the pending regen element before _close() clears it
+    const regenElement = _pendingRegenElement;
+    _pendingRegenElement = null;
+
     // Broadcast immediately so listeners (e.g. the tour) can advance without
     // waiting for the async session-create/PATCH that follows.
     try { document.dispatchEvent(new CustomEvent('odysseus:model-picked', { detail: m })); } catch {}
@@ -298,6 +318,20 @@ function _initModelPickerDropdown() {
     // Update picker visibility — model is now set
     updateModelPicker();
     uiModule.showToast(`Using ${m.display}`);
+
+    if (regenElement) {
+      if (window.chatModule) {
+        if (regenElement.classList.contains('msg-user')) {
+          if (typeof window.chatModule.resendUserMessage === 'function') {
+            window.chatModule.resendUserMessage(regenElement);
+          }
+        } else {
+          if (typeof window.chatModule.regenerateFrom === 'function') {
+            window.chatModule.regenerateFrom(regenElement);
+          }
+        }
+      }
+    }
   }
 
   document.addEventListener('odysseus:auto-select-model', async (e) => {

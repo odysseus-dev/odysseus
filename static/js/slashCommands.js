@@ -501,17 +501,85 @@ function typewriterBlocksReply(blocks, options = {}) {
 }
 
 /**
- * Typewriter effect into an existing element (for error messages during streaming).
+ * Helper to validate and format raw error details for collapsible display.
+ * Adheres to GlitchWorks Agnostic Architecture Protocol (Boundary Validation).
  */
-export function typewriterInto(el, text) {
+function formatRawDetails(rawDetails) {
+  if (rawDetails === undefined || rawDetails === null) return null;
+  
+  // If it's already an object, pretty-print it
+  if (typeof rawDetails === 'object') {
+    try {
+      return JSON.stringify(rawDetails, null, 2);
+    } catch (e) {
+      return String(rawDetails);
+    }
+  }
+  
+  // If it's a string, try to parse as JSON first to pretty-print it
+  if (typeof rawDetails === 'string') {
+    const trimmed = rawDetails.trim();
+    if (!trimmed) return null;
+    try {
+      const parsed = JSON.parse(trimmed);
+      return JSON.stringify(parsed, null, 2);
+    } catch (e) {
+      return trimmed;
+    }
+  }
+  
+  return String(rawDetails);
+}
+
+/**
+ * Typewriter effect into an existing element (for error messages during streaming).
+ * Accepts an optional rawDetails parameter for collapsible technical disclosure.
+ */
+export function typewriterInto(el, text, rawDetails) {
+  // Boundary validation
+  if (!el) return;
+  const safeText = typeof text === 'string' ? text : (text ? String(text) : 'An unknown error occurred.');
+
   el.textContent = '';
   el.style.color = 'var(--red)';
   el.style.fontStyle = 'italic';
   let i = 0;
   const iv = setInterval(() => {
-    el.textContent = text.slice(0, ++i);
-    uiModule.scrollHistory();
-    if (i >= text.length) clearInterval(iv);
+    el.textContent = safeText.slice(0, ++i);
+    if (typeof uiModule !== 'undefined' && typeof uiModule.scrollHistory === 'function') {
+      uiModule.scrollHistory();
+    }
+    if (i >= safeText.length) {
+      clearInterval(iv);
+      
+      // Append raw details if present and valid
+      try {
+        const formatted = formatRawDetails(rawDetails);
+        if (formatted) {
+          const details = document.createElement('details');
+          details.className = 'error-details-container';
+          
+          const summary = document.createElement('summary');
+          summary.className = 'error-details-summary';
+          summary.textContent = 'Show technical details';
+          
+          const pre = document.createElement('pre');
+          pre.className = 'error-details-pre';
+          pre.textContent = formatted;
+          
+          details.appendChild(summary);
+          details.appendChild(pre);
+          
+          el.appendChild(details);
+          
+          if (typeof uiModule !== 'undefined' && typeof uiModule.scrollHistory === 'function') {
+            uiModule.scrollHistory();
+          }
+        }
+      } catch (err) {
+        console.error('Failed to append raw error details:', err);
+      }
+    }
   }, 10);
 }
 

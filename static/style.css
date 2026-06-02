@@ -34272,3 +34272,53 @@ body.theme-frosted .modal {
   background-color: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
   transform: translateX(1px);
 }
+
+/* ── Collapsible Error Details Block ── */
+.error-details-container {
+  --bg-muted: var(--hl-bg);
+  --fg-muted: var(--color-muted-alt);
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background-color: var(--bg-muted);
+  font-family: var(--font-family, 'Fira Code', monospace);
+  font-style: normal; /* Reset italic style from typewriterInto */
+  color: var(--fg); /* Reset red color from typewriterInto */
+  overflow: hidden;
+  text-align: left; /* Ensure left alignment */
+}
+
+.error-details-summary {
+  padding: 8px 12px;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  user-select: none;
+  background-color: color-mix(in srgb, var(--border) 15%, transparent);
+  border-bottom: 1px solid transparent;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.error-details-summary:hover {
+  background-color: color-mix(in srgb, var(--border) 25%, transparent);
+  color: var(--fg);
+}
+
+.error-details-container[open] .error-details-summary {
+  border-bottom-color: var(--border);
+}
+
+.error-details-pre {
+  margin: 0;
+  padding: 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-x: auto;
+  color: var(--fg);
+  background-color: var(--bg-muted);
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

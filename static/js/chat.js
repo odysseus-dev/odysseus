@@ -1331,7 +1331,7 @@ import createResearchSynapse from './researchSynapse.js';
                 const errMsg = json.text || json.error?.message || `Error ${json.status || 'unknown'}`;
                 console.error('Stream error:', errMsg);
                 if (spinner && spinner.element) spinner.destroy();
-                typewriterInto(roundHolder.querySelector('.body'), errMsg);
+                typewriterInto(roundHolder.querySelector('.body'), errMsg, json.raw);
                 break;
               }
               if (json.delta || json.type === 'tool_start' || json.type === 'agent_step' || json.type === 'doc_stream_delta') {
@@ -3613,7 +3613,7 @@ import createResearchSynapse from './researchSynapse.js';
     }
   }
 
-  const _VARIANT_ICONS = { regen: '\u21BB', shorter: '\u2702', simpler: '?', original: '\u25CB' };
+  const _VARIANT_ICONS = { regen: '\u21BB', shorter: '\u2702', simpler: '?', original: '\u25CB', 'think harder': '🧠' };
   function _variantTagText(label) {
     return _VARIANT_ICONS[label] || _VARIANT_ICONS['original'];
   }
@@ -4200,6 +4200,7 @@ import createResearchSynapse from './researchSynapse.js';
     let varLabel = 'rewrite';
     if (instruction.includes('shorter')) varLabel = 'shorter';
     else if (instruction.includes('simpler')) varLabel = 'simpler';
+    else if (instruction.includes('deeper') || instruction.includes('thorough')) varLabel = 'think harder';
 
     // Clear the bubble and show a whirlpool spinner while we wait for the
     // rewrite (replaces the old "Rewriting..." text).

@@ -1275,6 +1275,12 @@ export function createMsgFooter(msgElement) {
       e.stopPropagation();
       if (window.chatModule?.regenerateFrom) window.chatModule.regenerateFrom(msgElement);
     }},
+    { id: 'regen_different_model', icon: '\u21C4', title: 'Regenerate with different model...', cls: 'msg-action-btn', handler(e) {
+      e.stopPropagation();
+      document.dispatchEvent(new CustomEvent('odysseus:model-switch-request', {
+        detail: { element: msgElement }
+      }));
+    }},
     { id: 'shorten', icon: '\u2702', title: 'Rewrite shorter', cls: 'msg-action-btn', handler(e) {
       e.stopPropagation();
       if (window.chatModule?.rewriteWith) window.chatModule.rewriteWith(msgElement, 'Rewrite your last response to be shorter and more concise. Keep the key information but cut the fluff.');
@@ -1282,6 +1288,10 @@ export function createMsgFooter(msgElement) {
     { id: 'explain', icon: '?', title: 'Explain simpler', cls: 'msg-action-btn', handler(e) {
       e.stopPropagation();
       if (window.chatModule?.rewriteWith) window.chatModule.rewriteWith(msgElement, 'Explain your last response in simpler terms. Use plain language and short sentences.');
+    }},
+    { id: 'think-harder', icon: '🧠', title: 'Think harder', cls: 'msg-action-btn', handler(e) {
+      e.stopPropagation();
+      if (window.chatModule?.rewriteWith) window.chatModule.rewriteWith(msgElement, 'Analyze the question and your previous response. Think deeper, explain step-by-step, and provide a more thorough, detailed, and rigorous explanation.');
     }},
     { id: 'fork', icon: '\u2ADD', title: 'Fork conversation', cls: 'msg-action-btn', handler(e) {
       e.stopPropagation();
@@ -1493,6 +1503,12 @@ export function createUserMsgFooter(msgElement) {
     { id: 'resend', icon: '\u21BB', title: 'Resend message', cls: 'msg-action-btn', handler(e) {
       e.stopPropagation();
       if (window.chatModule?.resendUserMessage) window.chatModule.resendUserMessage(msgElement);
+    }},
+    { id: 'resend_different_model', icon: '\u21C4', title: 'Resend with different model...', cls: 'msg-action-btn', handler(e) {
+      e.stopPropagation();
+      document.dispatchEvent(new CustomEvent('odysseus:model-switch-request', {
+        detail: { element: msgElement }
+      }));
     }},
   ];
 
@@ -2190,7 +2206,7 @@ export function addMessage(role, content, modelName, metadata) {
       nav.appendChild(divider);
 
       const tagLabel = document.createElement('span');
-      const _icons = { regen: '\u21BB', shorter: '\u2702', simpler: '?', original: '\u25CB' };
+      const _icons = { regen: '\u21BB', shorter: '\u2702', simpler: '?', original: '\u25CB', 'think harder': '🧠' };
       const _tl0 = metadata.variants[idx]?.label;
       tagLabel.className = 'variant-tag' + (_tl0 === 'shorter' ? ' variant-tag-scissors' : '');
       tagLabel.textContent = _icons[_tl0] || '';
