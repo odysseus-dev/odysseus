@@ -353,7 +353,7 @@ MAX_OUTPUT = 200_000  # truncate limit
 # Anchor session logs under the app's data dir so the path is stable across
 # restarts, even if TEMP/TMP differs between shells (e.g. Claude sandbox
 # overrides TEMP). Falls back to the old tempdir location for compat.
-TMUX_LOG_DIR = Path(os.environ.get("DATA_DIR", "data")) / "cookbook-sessions"
+TMUX_LOG_DIR = Path(os.environ.get("DATA_DIR", "data")).resolve() / "cookbook-sessions"
 PTY_UNSUPPORTED_ERROR = "pty_unsupported"
 
 
