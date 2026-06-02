@@ -1118,6 +1118,11 @@ def _append_tool_results(
                     "name": tc.get("name", ""),
                     "arguments": tc.get("arguments", "{}"),
                 },
+                # Gemini 3 requires the opaque thought_signature it returned with
+                # each function call to be echoed back on the follow-up turn, or
+                # the next request 400s. Replay it when present; other providers
+                # never emit it (their payload builders just ignore the field).
+                **({"extra_content": tc["extra_content"]} if tc.get("extra_content") else {}),
             }
             for j, tc in enumerate(native_tool_calls)
         ]

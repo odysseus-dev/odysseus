@@ -301,3 +301,39 @@ class TestAppendToolResultsNativeContent:
         assert messages[0]["content"] == "thinking..."
         assert messages[1]["role"] == "user"
         assert "tool output" in messages[1]["content"]
+
+
+class TestAppendToolResultsThoughtSignature:
+    """Gemini 3 returns an opaque thought_signature (in extra_content) with each
+    function call and rejects the follow-up turn with HTTP 400 unless it is
+    echoed back on the assistant tool_call. _append_tool_results must replay it
+    when present, and omit the field entirely otherwise (other providers never
+    send it)."""
+
+    def test_extra_content_is_replayed_when_present(self):
+        native = [{
+            "id": "call_g",
+            "name": "app_api",
+            "arguments": '{"action": "get_memory"}',
+            "extra_content": {"google": {"thought_signature": "EuIDCt8DAQ=="}},
+        }]
+        messages = []
+        _append_tool_results(
+            messages, "", native, [{}], ["mem"],
+            used_native=True, round_num=1,
+        )
+        tc = messages[0]["tool_calls"][0]
+        assert tc["extra_content"] == {"google": {"thought_signature": "EuIDCt8DAQ=="}}
+        # function payload is still well-formed alongside it
+        assert tc["function"]["name"] == "app_api"
+        assert tc["id"] == "call_g"
+
+    def test_no_extra_content_key_when_absent(self):
+        native = [{"id": "call_o", "name": "app_api", "arguments": "{}"}]
+        messages = []
+        _append_tool_results(
+            messages, "", native, [{}], ["r"],
+            used_native=True, round_num=1,
+        )
+        # No empty/None extra_content leaks onto non-Gemini tool calls.
+        assert "extra_content" not in messages[0]["tool_calls"][0]

@@ -194,6 +194,43 @@ def _normalize_ollama_url(url: str) -> str:
     return base.rstrip("/") + "/chat"
 
 
+def _ollama_normalize_tool_messages(messages: List[Dict]) -> List[Dict]:
+    """Adapt Odysseus' canonical OpenAI-style messages to native Ollama /api/chat.
+
+    Odysseus carries assistant tool calls in the OpenAI shape, where
+    `function.arguments` is a JSON *string*. Native Ollama expects it to be a
+    JSON *object*; given the string it fails the whole request with HTTP 400
+    "Value looks like object, but can't find closing '}' symbol", which aborts
+    every follow-up (tool-result) round. Parse the arguments back into an object
+    here, on a shallow copy, leaving non-tool messages untouched. The opaque
+    Gemini `extra_content` (thought_signature) is dropped — it is meaningless to
+    Ollama and only matters when the conversation is replayed to Gemini.
+    """
+    out: List[Dict] = []
+    for m in messages or []:
+        tcs = m.get("tool_calls") if isinstance(m, dict) else None
+        if not tcs:
+            out.append(m)
+            continue
+        new_calls = []
+        for tc in tcs:
+            fn = tc.get("function") or {}
+            args = fn.get("arguments")
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args) if args.strip() else {}
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+            call: Dict = {"function": {"name": fn.get("name", ""), "arguments": args or {}}}
+            if tc.get("id"):
+                call["id"] = tc["id"]
+            new_calls.append(call)
+        nm = dict(m)
+        nm["tool_calls"] = new_calls
+        out.append(nm)
+    return out
+
+
 def _build_ollama_payload(
     model: str,
     messages: List[Dict],
@@ -204,7 +241,7 @@ def _build_ollama_payload(
 ) -> Dict:
     payload: Dict = {
         "model": model,
-        "messages": messages,
+        "messages": _ollama_normalize_tool_messages(messages),
         "stream": stream,
     }
     options: Dict = {}
@@ -1040,6 +1077,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     # ── OpenAI-compatible streaming ──
     # Accumulate native tool_calls across streaming chunks
     _tc_acc: Dict[int, Dict] = {}  # index -> {id, name, arguments}
+    _tc_last_idx = [-1]  # most-recently-touched slot, for providers that omit `index`
     # For thinking models: prepend <think> to first content delta so frontend
     # can detect thinking-in-progress (some models output </think> but no <think>)
     _thinking_model = _supports_thinking(model)
@@ -1105,12 +1143,41 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             yield f'data: {json.dumps({"delta": content})}\n\n'
                                         # Native tool calls — accumulate across chunks
                                         for tc in delta.get("tool_calls") or []:
-                                            idx = tc.get("index", 0)
+                                            func = tc.get("function") or {}
+                                            raw_idx = tc.get("index")
+                                            if raw_idx is None:
+                                                # Gemini's OpenAI-compat layer omits `index` on
+                                                # parallel tool calls (every delta arrives as
+                                                # index=None) and sends each call complete in one
+                                                # delta. Without this, all parallel calls collide
+                                                # into slot 0 — later calls overwrite the first's
+                                                # name and CORRUPT its arguments by concatenation,
+                                                # so only one malformed call survives and the
+                                                # follow-up round 400s. A function name marks the
+                                                # start of a new call → allocate a fresh slot;
+                                                # an arg-only continuation attaches to the last.
+                                                if func.get("name") or _tc_last_idx[0] < 0:
+                                                    # Next free slot ABOVE any existing key (not
+                                                    # len()), so a provider mixing integer indices
+                                                    # with index=None can never collide.
+                                                    idx = max(_tc_acc, default=-1) + 1
+                                                else:
+                                                    idx = _tc_last_idx[0]
+                                            else:
+                                                idx = raw_idx
+                                            _tc_last_idx[0] = idx
                                             if idx not in _tc_acc:
                                                 _tc_acc[idx] = {"id": "", "name": "", "arguments": ""}
                                             if tc.get("id"):
                                                 _tc_acc[idx]["id"] = tc["id"]
-                                            func = tc.get("function") or {}
+                                            # Gemini 3 returns an opaque thought_signature in
+                                            # extra_content on the function-call delta. It MUST be
+                                            # echoed back on the assistant tool_call next round or the
+                                            # follow-up request 400s ("Function call is missing a
+                                            # thought_signature"). Preserve it verbatim; other
+                                            # providers never send it, so this is a no-op for them.
+                                            if tc.get("extra_content"):
+                                                _tc_acc[idx]["extra_content"] = tc["extra_content"]
                                             if func.get("name"):
                                                 _tc_acc[idx]["name"] = func["name"]
                                             if "arguments" in func:
