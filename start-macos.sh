@@ -67,19 +67,42 @@ for cand in $cands; do
   fi
 done
 
-# System dependencies:
+# System dependencies (each installed only if missing, so re-runs stay fast and
+# don't re-hit Homebrew over the network):
 #    - tmux      : Cookbook runs model downloads/serves in the background
 #    - llama.cpp : a prebuilt, Metal-enabled llama-server so Cookbook can serve
 #                  GGUF models on the GPU with no compile step
 #    - python@3.11 : installed only if no suitable (arm64) Python was found above
-echo "▶ Installing dependencies (Homebrew)…"
+#
+# tmux and llama.cpp are needed only by Cookbook (local model serving), not to
+# boot the core app. So if Homebrew can't install one right now we warn and keep
+# going instead of aborting the whole launch. Python is required to build the
+# venv, so that one stays fatal (handled by the PY check just below).
+
+# Install a Homebrew formula only if its command isn't already present. A failed
+# install warns but does not abort — Cookbook can be set up later.
+brew_ensure() {
+  if command -v "$1" >/dev/null 2>&1; then
+    echo "  ✓ $2 already installed"
+    return 0
+  fi
+  echo "  installing $2…"
+  if ! brew install "$2"; then
+    echo "  ⚠ Couldn't install $2 right now — Cookbook (local model serving) may be limited."
+    echo "    You can install it later with:  brew install $2"
+  fi
+}
+
+echo "▶ Checking dependencies (Homebrew)…"
 if [ -n "$PY" ]; then
   echo "  (using $("$PY" --version 2>&1) at $PY)"
-  brew install tmux llama.cpp
 else
-  brew install python@3.11 tmux llama.cpp
+  echo "  installing python@3.11…"
+  brew install python@3.11 || true
   PY="$(command -v /opt/homebrew/bin/python3.11 || command -v python3.11 || true)"
 fi
+brew_ensure tmux tmux
+brew_ensure llama-server llama.cpp
 
 if [ -z "$PY" ] || [ ! -x "$PY" ]; then
   echo "✗ Couldn't find a Python 3.11+ to build the environment with."

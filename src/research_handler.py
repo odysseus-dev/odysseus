@@ -750,7 +750,7 @@ class ResearchHandler:
             try:
                 import asyncio
                 logger.info("Falling back to legacy ResearchOrchestrator...")
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 result = await loop.run_in_executor(
                     None, self._legacy_engine.start_research, query, max_time
                 )

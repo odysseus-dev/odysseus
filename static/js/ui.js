@@ -579,8 +579,8 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
       overlay.id = 'styled-confirm-overlay';
       overlay.className = 'modal';
       overlay.innerHTML =
-        '<div class="modal-content styled-confirm-box">' +
-          '<div class="modal-header"><h4>Confirm</h4></div>' +
+        '<div class="modal-content styled-confirm-box" role="dialog" aria-modal="true" aria-labelledby="styled-confirm-title" aria-describedby="styled-confirm-msg">' +
+          '<div class="modal-header"><h4 id="styled-confirm-title">Confirm</h4></div>' +
           '<div class="modal-body"><p id="styled-confirm-msg"></p></div>' +
           '<div class="modal-footer">' +
             '<button id="styled-confirm-cancel"></button>' +
@@ -600,6 +600,8 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
     okBtn.className = danger ? 'confirm-btn confirm-btn-danger' : 'confirm-btn confirm-btn-primary';
     cancelBtn.className = 'confirm-btn confirm-btn-secondary';
 
+    // Remember what had focus so we can restore it when the dialog closes.
+    const _prevFocus = document.activeElement;
     overlay.classList.remove('hidden');
     overlay.style.display = '';
 
@@ -610,6 +612,7 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
       cancelBtn.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onBackdrop);
       document.removeEventListener('keydown', onKey);
+      try { _prevFocus && _prevFocus.focus && _prevFocus.focus(); } catch {}
       resolve(result);
     }
     function onOk() { cleanup(true); }
@@ -626,6 +629,13 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
         e.stopPropagation();
         e.stopImmediatePropagation();
         cleanup(false);
+      } else if (e.key === 'Tab') {
+        // Trap focus inside the dialog so Tab can't wander to the page behind.
+        e.preventDefault();
+        const f = [cancelBtn, okBtn];
+        const i = f.indexOf(document.activeElement);
+        const n = e.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i >= f.length - 1 ? 0 : i + 1);
+        f[n].focus();
       }
     }
 
@@ -656,7 +666,7 @@ export function styledPrompt(message, {
       overlay.id = 'styled-prompt-overlay';
       overlay.className = 'modal';
       overlay.innerHTML =
-        '<div class="modal-content styled-confirm-box styled-prompt-box">' +
+        '<div class="modal-content styled-confirm-box styled-prompt-box" role="dialog" aria-modal="true" aria-labelledby="styled-prompt-title" aria-describedby="styled-prompt-msg">' +
           '<div class="modal-header"><h4 id="styled-prompt-title"></h4></div>' +
           '<div class="modal-body">' +
             '<p id="styled-prompt-msg"></p>' +
@@ -685,6 +695,8 @@ export function styledPrompt(message, {
     okBtn.textContent = confirmText;
     cancelBtn.textContent = cancelText;
 
+    // Remember what had focus so we can restore it when the dialog closes.
+    const _prevFocus = document.activeElement;
     overlay.classList.remove('hidden');
     overlay.style.display = '';
 
@@ -696,6 +708,7 @@ export function styledPrompt(message, {
       overlay.removeEventListener('click', onBackdrop);
       document.removeEventListener('keydown', onKey);
       input.removeEventListener('keydown', onInputKey);
+      try { _prevFocus && _prevFocus.focus && _prevFocus.focus(); } catch {}
       resolve(result);
     }
     function onOk() { cleanup((input.value || '').trim()); }
@@ -707,6 +720,13 @@ export function styledPrompt(message, {
         e.stopPropagation();
         e.stopImmediatePropagation();
         cleanup(null);
+      } else if (e.key === 'Tab') {
+        // Trap focus inside the dialog (input → Cancel → OK → input …).
+        e.preventDefault();
+        const f = [input, cancelBtn, okBtn];
+        const i = f.indexOf(document.activeElement);
+        const n = e.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i >= f.length - 1 ? 0 : i + 1);
+        f[n].focus();
       }
     }
     function onInputKey(e) {

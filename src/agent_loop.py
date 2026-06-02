@@ -2001,8 +2001,11 @@ async def stream_agent_loop(
                 )
             desc, result = await _tool_task
 
-            # Extract structured web sources from web_search tool output
-            _src_text = result.get("results") or result.get("stdout") or ""
+            # Extract structured web sources from web_search tool output.
+            # web_search returns {"output": ..., "exit_code": 0}; check "output"
+            # first so the <!-- SOURCES:…--> marker is found and stripped even
+            # when the result doesn't carry a "results" or "stdout" key.
+            _src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
             if block.tool_type == "web_search" and _src_text:
                 _src_marker = "<!-- SOURCES:"
                 _src_idx = _src_text.find(_src_marker)
@@ -2014,7 +2017,9 @@ async def stream_agent_loop(
                             yield f'data: {json.dumps({"type": "web_sources", "data": _extracted_sources})}\n\n'
                             # Strip the marker from the result so it doesn't show in chat
                             _clean = _src_text[:_src_idx].rstrip()
-                            if "results" in result:
+                            if "output" in result:
+                                result["output"] = _clean
+                            elif "results" in result:
                                 result["results"] = _clean
                             elif "stdout" in result:
                                 result["stdout"] = _clean
@@ -2160,6 +2165,13 @@ async def stream_agent_loop(
 
         # Separator in accumulated response
         full_response += "\n\n"
+
+    # If the response is completely empty and no tools were executed,
+    # yield a fallback message so the user is not left hanging.
+    if not full_response.strip() and not tool_events:
+        _error_msg = "The model returned an empty response. Please try again or switch to a different model."
+        yield f'data: {json.dumps({"delta": _error_msg})}\n\n'
+        full_response = _error_msg
 
     # --- Final metrics ---
     total_duration = time.time() - total_start

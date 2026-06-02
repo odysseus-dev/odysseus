@@ -2253,8 +2253,9 @@ function _renderActivityEntry(entry) {
   const hue = _categoryHue(entry.taskName, entry.kind);
   // CSS vars feed the colored title + accent stripe.
   const styleVars = `--cat-hue:${hue};`;
+  const _runningPlaceholder = /^(Starting…|Starting\.\.\.|_Running…_|_Running\.\.\._|_Queued\b)/i.test((entry.result || '').trim());
   const hasResult = !!(entry.result && entry.result.trim() && entry.status !== 'running' && entry.status !== 'queued');
-  const hasRunningProgress = !!(entry.result && entry.result.trim() && (entry.status === 'running' || entry.status === 'queued'));
+  const hasRunningProgress = !!(entry.result && entry.result.trim() && !_runningPlaceholder && (entry.status === 'running' || entry.status === 'queued'));
   // "Open in chat" only makes sense for runs whose result is a real assistant
   // message (Prompt / Research tasks). Action/event runs are just log lines
   // (e.g. "No recent emails", "Tidied N memories") — for those, replace the
@@ -2299,9 +2300,10 @@ function _renderActivityEntry(entry) {
   let rightHtml;
   if (_isRunning) {
     const isQueued = entry.status === 'queued';
-    const label = isQueued ? 'Queued' : 'Running';
     // Initial elapsed for the first paint; the 1s interval below keeps it live.
     const startMs = entry.ts ? new Date(entry.ts).getTime() : Date.now();
+    const stale = !isQueued && (Date.now() - startMs) > 30 * 60 * 1000;
+    const label = isQueued ? 'Queued' : stale ? 'Still running' : 'Running';
     const elapsedInit = isQueued ? '' : `<span class="task-log-running-elapsed" data-since="${startMs}">${_fmtElapsed(Date.now() - startMs)}</span>`;
     const forceBtn = isQueued && entry.taskId ? `<button class="task-log-force-run" type="button" title="Start now in parallel, bypassing the queue" style="border:0;background:transparent;box-shadow:none;margin-left:5px;padding:0;width:12px;height:12px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;line-height:1;color:inherit;opacity:.8;"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" style="display:block;"><polygon points="6 4 20 12 6 20 6 4"/></svg></button>` : '';
     const stopBtn = entry.taskId ? `<button class="task-log-stop" type="button" title="Stop this task"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></button>` : '';
