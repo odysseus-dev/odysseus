@@ -220,6 +220,24 @@ def _trim_comment(c: dict) -> dict:
     }
 
 
+def _trim_notification(n: dict) -> dict:
+    if not isinstance(n, dict):
+        return n
+    subject = n.get("subject") or {}
+    return {
+        "id": n.get("id"),
+        "reason": n.get("reason"),
+        "unread": n.get("unread"),
+        "updated_at": n.get("updated_at"),
+        "repo": (n.get("repository") or {}).get("full_name"),
+        "type": subject.get("type"),
+        "title": subject.get("title"),
+        # subject.url is an API URL the agent can follow for details; keep it
+        # so tools can chain (e.g. fetch the PR/issue it points at).
+        "subject_api_url": subject.get("url"),
+    }
+
+
 # ── Tools (read-only) ──
 
 TOOLS: list[Tool] = [
@@ -302,6 +320,22 @@ TOOLS: list[Tool] = [
                 "per_page": {"type": "integer", "default": 10, "maximum": 30},
             },
             "required": ["query"],
+        },
+    ),
+    Tool(
+        name="gh_get_notifications",
+        description=(
+            "List the authenticated user's GitHub notifications (unread by default). Use as a "
+            "starting point when the user asks 'what's new' or 'anything need my attention', or "
+            "when surfacing the unread count the user already knows about."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "all": {"type": "boolean", "default": False, "description": "Include read notifications too."},
+                "per_page": {"type": "integer", "default": 20, "maximum": 50},
+            },
+            "required": [],
         },
     ),
 ]
@@ -400,6 +434,14 @@ async def _dispatch(name: str, args: dict) -> Any:
         out = await _gh_request("GET", "/search/issues", params={"q": query, "per_page": per_page, "sort": "updated"})
         items = (out or {}).get("items", [])
         return {"total": (out or {}).get("total_count", 0), "items": [_trim_issue(i) for i in items]}
+
+    if name == "gh_get_notifications":
+        params: dict = {
+            "all": "true" if args.get("all") else "false",
+            "per_page": min(int(args.get("per_page") or 20), 50),
+        }
+        out = await _gh_request("GET", "/notifications", params=params)
+        return {"count": len(out or []), "notifications": [_trim_notification(n) for n in (out or [])]}
 
     raise RuntimeError(f"Unknown tool: {name}")
 

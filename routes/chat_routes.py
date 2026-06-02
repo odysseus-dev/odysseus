@@ -269,6 +269,32 @@ def _fetch_github_briefing(owner: str | None) -> str | None:
         return None
 
 
+async def _fetch_github_notif_hint(owner: str | None) -> str | None:
+    """If the user opted into notifications and has unread ones, return a
+    one-liner telling the agent to surface the count and OFFER to sift through
+    them — not to act on them unprompted. None when notifications are off, the
+    count is zero, or anything fails."""
+    try:
+        from routes.github_routes import get_unread_notif_count
+    except Exception:
+        return None
+    try:
+        count = await get_unread_notif_count(owner or "")
+    except Exception:
+        return None
+    if count <= 0:
+        return None
+    shown = "50+" if count >= 50 else str(count)
+    plural = "" if count == 1 else "s"
+    return (
+        f"The user has {shown} unread GitHub notification{plural}. Let them know at a "
+        f"natural point in your reply and offer to sift through them (call "
+        f"gh_get_notifications to see what's actually there). Don't act on them "
+        f"unprompted: surface and offer, the user decides what to do. For unrelated "
+        f"chat this is silent context, not something to bring up every turn."
+    )
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -524,6 +550,13 @@ def setup_chat_routes(
             if _gh_brief:
                 _extra_prompts.append(_gh_brief)
 
+        # GitHub notifications: when the user opted in, surface the unread count
+        # so the agent can let them know and offer to sift through them.
+        if str(allow_github).lower() == "true":
+            _gh_notif = await _fetch_github_notif_hint(getattr(sess, "owner", None) or "")
+            if _gh_notif:
+                _extra_prompts.append(_gh_notif)
+
         # Build shared context (stream path uses enhanced_message for context preface)
         ctx = await build_chat_context(
             sess, request, chat_handler, chat_processor,
@@ -615,7 +648,7 @@ def setup_chat_routes(
         # elsewhere).
         _gh_read_tools = {
             "gh_me", "gh_list_my_prs", "gh_get_pr", "gh_get_pr_diff",
-            "gh_list_pr_comments", "gh_search_issues",
+            "gh_list_pr_comments", "gh_search_issues", "gh_get_notifications",
         }
         _gh_active = _github_is_active(getattr(sess, "owner", None) or "")
         if str(allow_github).lower() != "true" or not _gh_active:

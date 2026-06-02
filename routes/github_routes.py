@@ -130,6 +130,7 @@ class SavePATRequest(BaseModel):
 
 class UpdateFlagsRequest(BaseModel):
     enabled: bool | None = None
+    notify_enabled: bool | None = None
 
 
 class UpdateBriefingRequest(BaseModel):
@@ -149,6 +150,7 @@ def _row_to_dict(row: GitHubIntegration) -> dict:
         "configured": True,
         "github_username": row.github_username,
         "enabled": bool(row.enabled),
+        "notify_enabled": bool(getattr(row, "notify_enabled", False)),
         "briefing": briefing,
         "briefing_agent_preview": strip_briefing_prompts(briefing),
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -178,6 +180,46 @@ async def _validate_pat(pat: str) -> dict:
         return resp.json()
     except Exception:
         raise HTTPException(status_code=502, detail="GitHub returned a non-JSON response.")
+
+
+_NOTIF_CACHE_TTL = 60.0  # seconds — throttle so the chat path can't hammer GitHub
+
+
+async def get_unread_notif_count(owner: str) -> int:
+    """Return the user's unread GitHub notification count, cached on the row for
+    _NOTIF_CACHE_TTL seconds so injecting it into chat doesn't hit GitHub on
+    every message. Only runs when the user opted into notify_enabled.
+    Best-effort: on any failure returns the last known count (or 0)."""
+    with SessionLocal() as db:
+        row = db.query(GitHubIntegration).filter_by(owner=owner or "").first()
+        if not row or not row.enabled or not row.notify_enabled or not row.pat_encrypted:
+            return 0
+        now = datetime.utcnow()
+        last = row.last_notif_polled_at
+        if last and (now - last).total_seconds() < _NOTIF_CACHE_TTL:
+            return int(row.last_notif_count or 0)
+        pat = row.pat_encrypted
+        if pat.startswith("enc:"):
+            from src.secret_storage import decrypt as _decrypt
+            pat = _decrypt(pat)
+        headers = {
+            "Authorization": f"Bearer {pat}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": USER_AGENT,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=GH_TIMEOUT) as client:
+                # Default (all=false) returns only unread notifications.
+                resp = await client.get(f"{GH_API}/notifications", headers=headers, params={"per_page": 50})
+            if resp.status_code != 200:
+                return int(row.last_notif_count or 0)
+            count = len(resp.json() or [])
+        except Exception:
+            return int(row.last_notif_count or 0)
+        row.last_notif_count = count
+        row.last_notif_polled_at = now
+        db.commit()
+        return count
 
 
 # ── Router setup ──
@@ -268,6 +310,8 @@ def setup_github_routes(mcp_manager=None):
                 raise HTTPException(404, "GitHub integration not configured.")
             if body.enabled is not None:
                 row.enabled = bool(body.enabled)
+            if body.notify_enabled is not None:
+                row.notify_enabled = bool(body.notify_enabled)
             row.updated_at = datetime.utcnow()
             db.commit()
             db.refresh(row)
