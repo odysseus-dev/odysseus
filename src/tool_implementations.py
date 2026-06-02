@@ -1921,9 +1921,22 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
             if owner is not None and note.owner and note.owner != owner:
                 return {"error": "Note not found", "exit_code": 1}
-            for field in ("title", "content", "note_type", "color", "label", "due_date"):
+            for field in ("title", "content", "note_type", "color", "label"):
                 if field in args and args[field] is not None:
                     setattr(note, field, args[field])
+            # Parse due_date the same way the `add` action does. The schema
+            # advertises natural language ("tomorrow at 9am"), and naive ISO
+            # strings need the user's tz offset attached so the frontend's
+            # `new Date()` resolves the right absolute moment. Storing the raw
+            # value here left updated reminders as unparseable literals that
+            # never fired.
+            if args.get("due_date") is not None:
+                due_raw = args["due_date"]
+                try:
+                    from routes.calendar_routes import parse_due_for_user as _pdt_user
+                    note.due_date = _pdt_user(due_raw)
+                except Exception:
+                    note.due_date = due_raw  # fall through; trust the model
             new_items = args.get("checklist_items")
             if new_items is None:
                 new_items = args.get("items")

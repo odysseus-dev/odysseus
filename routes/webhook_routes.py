@@ -26,6 +26,25 @@ MAX_MESSAGE_LEN = 32_000
 from core.middleware import require_admin as _require_admin
 
 
+def _first_enabled_endpoint(db, owner):
+    """First enabled ModelEndpoint VISIBLE to `owner` — their own rows plus
+    legacy null-owner ("shared") rows. Owner-scoped on purpose: ModelEndpoint
+    is per-user (core/database.py — "when non-null, the model picker only shows
+    the endpoint to that user"), and the sync-chat fallback uses the row's
+    decrypted `api_key`. An unscoped ``.first()`` would let a chat-scoped token
+    (e.g. a paired mobile device) fall back onto ANOTHER user's private
+    endpoint and silently spend that owner's API key / quota — and reach
+    whatever internal base_url they configured. Mirrors the owner_filter scoping
+    in routes/model_routes.py and companion/routes.py. A null/empty owner is a
+    no-op (single-user / legacy mode), preserving the original behaviour.
+    """
+    from core.database import ModelEndpoint
+    from src.auth_helpers import owner_filter
+    q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
+    q = owner_filter(q, ModelEndpoint, owner)
+    return q.first()
+
+
 def _caller_owns_session(sess_owner, caller) -> bool:
     """Strict session-ownership gate for the token-authenticated sync-chat
     endpoint (`POST /api/v1/chat`).
@@ -222,7 +241,6 @@ def setup_webhook_routes(
 
         from core.models import ChatMessage
         from src.llm_core import llm_call_async
-        from core.database import ModelEndpoint
         from src.endpoint_resolver import build_chat_url, build_headers, build_models_url, normalize_base
 
         message = body.message.strip()
@@ -287,7 +305,9 @@ def setup_webhook_routes(
         if not sess:
             db = SessionLocal()
             try:
-                ep = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).first()
+                # Owner-scoped: only THIS token owner's endpoints + legacy
+                # shared rows, never another user's private endpoint/api_key.
+                ep = _first_enabled_endpoint(db, token_owner)
             finally:
                 db.close()
 

@@ -871,11 +871,14 @@ function initEndpointForm() {
       const raw = (el('adm-epLocalUrl').value || '').trim();
       if (!raw) { msg.textContent = 'Enter a base URL to test'; msg.className = 'admin-error'; return; }
       const url = _normalizeBaseUrl(raw);
+      const keyEl = el('adm-epLocalApiKey');
+      const apiKey = keyEl ? keyEl.value.trim() : '';
       localTestBtn.disabled = true;
       localTestBtn.textContent = 'Testing...';
       try {
         const fd = new FormData();
         fd.append('base_url', url);
+        if (apiKey) fd.append('api_key', apiKey);
         const res = await fetch('/api/model-endpoints/test', { method: 'POST', body: fd, credentials: 'same-origin' });
         const d = await res.json();
         _renderEndpointTestResult(msg, res, d);
@@ -894,10 +897,13 @@ function initEndpointForm() {
       const raw = (el('adm-epLocalUrl').value || '').trim();
       if (!raw) { msg.textContent = 'Enter a base URL (e.g. http://localhost:8002/v1)'; msg.className = 'admin-error'; return; }
       const url = _normalizeBaseUrl(raw);
+      const keyEl = el('adm-epLocalApiKey');
+      const apiKey = keyEl ? keyEl.value.trim() : '';
       localAddBtn.disabled = true; localAddBtn.textContent = 'Adding...';
       try {
         const fd = new FormData();
         fd.append('base_url', url);
+        if (apiKey) fd.append('api_key', apiKey);
         const lt = el('adm-epLocalType');
         if (lt) fd.append('model_type', lt.value);
         fd.append('skip_probe', 'false');
@@ -905,6 +911,7 @@ function initEndpointForm() {
         const d = await res.json();
         if (res.ok) {
           el('adm-epLocalUrl').value = '';
+          if (keyEl) keyEl.value = '';
           if (lt) lt.value = 'llm';
           if (d.id) _recentlyAddedEpId = String(d.id);
           await loadEndpoints();

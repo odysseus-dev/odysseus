@@ -8,6 +8,7 @@ import hashlib
 import threading
 from fastapi import HTTPException
 from typing import Optional, Dict, List
+from src.model_context import get_context_length, DEFAULT_CONTEXT
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -238,7 +239,19 @@ def _build_ollama_payload(
     max_tokens: int,
     stream: bool = False,
     tools: Optional[List[Dict]] = None,
+    num_ctx: Optional[int] = None,
 ) -> Dict:
+    """Build the JSON payload for Ollama's /api/chat endpoint.
+
+    ``num_ctx`` sets the input context window. Ollama defaults to 2048
+    when the option is omitted, so a model with a larger advertised
+    window is silently truncated there, and a model with a smaller one
+    gets an oversized window it can't service. Pass the discovered
+    context length through ``num_ctx``; this builder only emits it when
+    the value is trusted (not the ``DEFAULT_CONTEXT`` fallback), so we
+    don't guess for unknown models but do tell Ollama the real window
+    when we know it — even if it's smaller than 2048.
+    """
     payload: Dict = {
         "model": model,
         "messages": _ollama_normalize_tool_messages(messages),
@@ -249,6 +262,8 @@ def _build_ollama_payload(
         options["temperature"] = temperature
     if max_tokens and max_tokens > 0:
         options["num_predict"] = max_tokens
+    if num_ctx is not None and num_ctx > 0 and num_ctx != DEFAULT_CONTEXT:
+        options["num_ctx"] = num_ctx
     if options:
         payload["options"] = options
     if tools:
@@ -387,6 +402,22 @@ def _uses_max_completion_tokens(model: str) -> bool:
         return False
     m = model.lower()
     return any(m.startswith(p) or f"/{p}" in m for p in _MAX_COMPLETION_TOKENS_MODELS)
+
+# OpenAI reasoning models (o1, o3, o4, gpt-5 families) only accept the default
+# temperature. Sending any explicit value — even 0.0 — returns HTTP 400
+# ("Only the default (1) value is supported"). That otherwise breaks chat when a
+# preset sets a non-default temperature, and makes endpoint probing report a
+# perfectly good model as failing. For these models we omit the field and let
+# the API use its required default. (gpt-4.5 is intentionally excluded — it is
+# not a reasoning model and accepts temperature normally.)
+_FIXED_TEMPERATURE_MODELS = ("o1", "o3", "o4", "gpt-5")
+
+def _restricts_temperature(model: str) -> bool:
+    """Check if a model rejects any non-default temperature."""
+    if not model:
+        return False
+    m = model.lower()
+    return any(m.startswith(p) or f"/{p}" in m for p in _FIXED_TEMPERATURE_MODELS)
 
 # Models that support structured thinking — may output </think> without opening tag
 _THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax", "m2-reap")
@@ -571,7 +602,44 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
                 cleaned.append(item)
         elif "content" in item:
             cleaned.append(item)
-    return cleaned
+
+    # Merge consecutive user messages to satisfy strict role alternation requirements.
+    merged = []
+    for item in cleaned:
+        if not merged:
+            merged.append(item)
+            continue
+
+        last = merged[-1]
+        if last["role"] == "user" and item["role"] == "user":
+            last_copy = dict(last)
+
+            # Content:
+            last_content = last_copy.get("content")
+            item_content = item.get("content")
+
+            # Convert contents to string if they exist, or keep None/empty
+            last_str = str(last_content) if last_content is not None else ""
+            item_str = str(item_content) if item_content is not None else ""
+
+            if last_str and item_str:
+                new_content = f"{last_str}\n\n{item_str}"
+            elif last_str:
+                new_content = last_str
+            else:
+                new_content = item_str if item_str else None
+
+            if new_content is not None:
+                last_copy["content"] = new_content
+            elif "content" in last_copy:
+                del last_copy["content"]
+
+            merged[-1] = last_copy
+        else:
+            merged.append(item)
+
+    return merged
+
 
 def _normalize_anthropic_url(url: str) -> str:
     """Ensure Anthropic URL points to /v1/messages."""
@@ -675,7 +743,10 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
-        payload = _build_ollama_payload(model, messages_copy, temperature, max_tokens, stream=False)
+        payload = _build_ollama_payload(
+            model, messages_copy, temperature, max_tokens,
+            stream=False, num_ctx=get_context_length(url, model),
+        )
     else:
         target_url = url
         payload = {
@@ -683,6 +754,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             "messages": messages_copy,
             "temperature": temperature,
         }
+        if _restricts_temperature(model):
+            payload.pop("temperature", None)
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
@@ -790,7 +863,10 @@ async def llm_call_async(
         h = {"Content-Type": "application/json"}
         if headers:
             h.update(headers)
-        payload = _build_ollama_payload(model, messages_copy, temperature, max_tokens, stream=False)
+        payload = _build_ollama_payload(
+            model, messages_copy, temperature, max_tokens,
+            stream=False, num_ctx=get_context_length(url, model),
+        )
     else:
         target_url = url
         h = _provider_headers(provider, headers)
@@ -799,6 +875,8 @@ async def llm_call_async(
             "messages": messages_copy,
             "temperature": temperature,
         }
+        if _restricts_temperature(model):
+            payload.pop("temperature", None)
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
@@ -888,7 +966,10 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         h = {"Content-Type": "application/json"}
         if headers:
             h.update(headers)
-        payload = _build_ollama_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
+        payload = _build_ollama_payload(
+            model, messages_copy, temperature, max_tokens,
+            stream=True, tools=tools, num_ctx=get_context_length(url, model),
+        )
     else:
         target_url = url
         payload = {
@@ -897,6 +978,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             "temperature": temperature,
             "stream": True,
         }
+        if _restricts_temperature(model):
+            payload.pop("temperature", None)
         if provider not in {"openrouter", "groq"}:
             payload["stream_options"] = {"include_usage": True}
         if max_tokens and max_tokens > 0:
@@ -1122,7 +1205,19 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                 _delta0 = _choices[0].get("delta") if _choices else None
                                 if "usage" in j and _delta0 in (None, {}, {"content": None}):
                                     u = j["usage"]
-                                    yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": u.get("prompt_tokens", 0), "output_tokens": u.get("completion_tokens", 0)}})}\n\n'
+                                    _usage_data = {"input_tokens": u.get("prompt_tokens", 0), "output_tokens": u.get("completion_tokens", 0)}
+                                    # llama.cpp puts a `timings` block alongside `usage` with the
+                                    # TRUE generation speed (predicted_per_second) — pure decode,
+                                    # excluding prefill/network. Pass it through so the UI shows the
+                                    # real gen t/s instead of recomputing tokens/wall-clock (which
+                                    # includes prefill and reads ~20-40% low). Prefill speed too.
+                                    _tm = j.get("timings")
+                                    if isinstance(_tm, dict):
+                                        if _tm.get("predicted_per_second"):
+                                            _usage_data["gen_tps"] = round(_tm["predicted_per_second"], 2)
+                                        if _tm.get("prompt_per_second"):
+                                            _usage_data["prefill_tps"] = round(_tm["prompt_per_second"], 2)
+                                    yield f'data: {json.dumps({"type": "usage", "data": _usage_data})}\n\n'
                                 elif "choices" in j:
                                     delta = j["choices"][0].get("delta") or {}
                                     if isinstance(delta, dict):

@@ -2419,7 +2419,7 @@ def setup_email_routes():
         """Generate a quick AI summary of an email body."""
         try:
             from src.endpoint_resolver import resolve_endpoint
-            from src.llm_core import _uses_max_completion_tokens
+            from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
             import requests as _req
 
             body = data.get("body", "")
@@ -2476,6 +2476,9 @@ def setup_email_routes():
                 "temperature": 0.3,
                 "stream": False,
             }
+            # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
+            if _restricts_temperature(model):
+                payload.pop("temperature", None)
             resp = await asyncio.to_thread(
                 _req.post, url, json=payload, headers=req_headers, timeout=180
             )

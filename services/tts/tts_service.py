@@ -188,7 +188,7 @@ class TTSService:
         provider = settings["tts_provider"]
         tts_enabled = settings.get("tts_enabled", True)
 
-        cache_files = list(self.cache_dir.glob("*.wav"))
+        cache_files = list(self.cache_dir.glob("*.wav")) + list(self.cache_dir.glob("*.mp3"))
         cache_size = sum(f.stat().st_size for f in cache_files)
 
         is_available = self.available and tts_enabled
