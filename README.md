@@ -245,6 +245,21 @@ Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Window
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
 
+### Helm Chart
+
+A Helm chart is available in `charts/odysseus`. Build an Odysseus image from
+source and push it to a registry first, then install:
+
+```bash
+helm install odysseus ./charts/odysseus \
+  --set image.repository=ghcr.io/YOUR_OWNER/odysseus \
+  --set image.tag=latest
+```
+
+The chart can deploy bundled ChromaDB and SearXNG services, runs first-time
+setup as an init container, and persists app data on PVCs. See
+`charts/odysseus/README.md` for values and examples.
+
 ## Security Notes
 Odysseus is a self-hosted workspace with powerful local tools: shell access, file uploads, model downloads, web research, email/calendar integrations, and API tokens. Treat it like an admin console.
 
