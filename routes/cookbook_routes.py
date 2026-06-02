@@ -21,6 +21,7 @@ from core.middleware import require_admin
 from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
+    utf8_subprocess_env,
     find_bash,
     kill_process_tree,
     pid_alive,
@@ -388,6 +389,11 @@ def setup_cookbook_routes() -> APIRouter:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
+            # Force UTF-8 stdio in the child (and its hf/pip grandchildren) so
+            # non-ASCII CLI output (e.g. hf's "Token is valid (✓)", U+2713)
+            # doesn't crash the download/install with a Windows cp1252
+            # UnicodeEncodeError. No-op on POSIX. See issue #1543.
+            env=utf8_subprocess_env(),
             **detached_popen_kwargs(),
         )
         pid_path.write_text(str(proc.pid), encoding="utf-8")

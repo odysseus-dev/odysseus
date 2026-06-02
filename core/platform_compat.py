@@ -61,6 +61,27 @@ def detached_popen_kwargs() -> dict:
     return {"start_new_session": True}
 
 
+def utf8_subprocess_env(base: Optional[dict] = None) -> dict:
+    """Environment dict that forces a child **Python** process to use UTF-8 for
+    its standard I/O, regardless of the host's locale.
+
+    On Windows, Python defaults its stdio encoding to the active code page
+    (e.g. ``cp1252``), which cannot represent many characters CLI tools print —
+    e.g. the ``hf`` downloader's "Token is valid (✓)" (U+2713). The child then
+    dies with ``UnicodeEncodeError`` ('charmap' codec can't encode character
+    '\\u2713'), which is exactly what crashes Cookbook downloads / dependency
+    installs on Windows native (the failure is masked as exit 0). ``PYTHONUTF8=1``
+    + ``PYTHONIOENCODING=utf-8`` make the child use UTF-8 instead; both are
+    harmless no-ops on POSIX (already UTF-8). The vars are inherited by further
+    child processes, so the bash wrapper's ``hf``/``pip`` grandchildren get them
+    too. Pass the result as ``Popen(..., env=utf8_subprocess_env())``.
+    """
+    env = dict(os.environ if base is None else base)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
 def pid_alive(pid: Optional[int]) -> bool:
     """True if a process with ``pid`` is currently running.
 
