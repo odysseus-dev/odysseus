@@ -390,7 +390,9 @@ def get_tldr(text: str, max_sentences: int = 3) -> str:
 
 def extract_quotes(text: str) -> List[str]:
     """Return quoted excerpts that are at least 15 characters long."""
-    return [m.group(1).strip() for m in re.finditer(r'["\']([^"\']{15,}?)["\']', text)]
+    # Backreference the opening quote so the closing quote must match it —
+    # otherwise `"text'` (open double, close single) is treated as a quote.
+    return [m.group(2).strip() for m in re.finditer(r'(["\'])([^"\']{15,}?)\1', text)]
 
 
 def extract_statistics(text: str) -> List[str]:
