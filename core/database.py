@@ -36,6 +36,10 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+# Listening on the Engine class ensures this listener fires for all Engine
+# instances created within the process, not just the primary application engine.
+# The isinstance(sqlite3.Connection) check ensures that this PRAGMA foreign_keys=ON
+# configuration remains a no-op when using non-SQLite database backends.
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
     if isinstance(dbapi_connection, sqlite3.Connection):
@@ -1494,6 +1498,10 @@ def _migrate_seed_email_account():
         logging.getLogger(__name__).warning(f"seed email account migration: {e}")
 
 
+# WARNING: Foreign-key enforcement is enabled globally for all SQLite connections.
+# Any future migrations or schema changes that temporarily violate foreign-key
+# constraints will fail. To perform such operations, foreign_keys must be
+# temporarily disabled around the migration workflow.
 def init_db():
     """
     Initialize the database by creating all tables.
