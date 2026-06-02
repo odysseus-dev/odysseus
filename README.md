@@ -168,6 +168,8 @@ COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml
 COMPOSE_FILE=docker-compose.yml:docker/gpu.amd.yml
 ```
 
+For NVIDIA/AMD GPU support, also read the comments in the selected overlay file: docker/gpu.nvidia.yml or docker/gpu.amd.yml.
+
 Verify after enabling either overlay:
 
 ```bash

@@ -91,6 +91,7 @@ class STTService:
         model = self._get_whisper()
         if not model:
             return None
+        tmp_path = None
         try:
             # Write to temp file (faster-whisper needs a file path or file-like)
             with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
@@ -104,14 +105,14 @@ class STTService:
             segments, info = model.transcribe(tmp_path, **kwargs)
             text = " ".join(seg.text.strip() for seg in segments)
 
-            # Cleanup
-            Path(tmp_path).unlink(missing_ok=True)
-
             logger.info(f"Local STT: {len(text)} chars, lang={info.language}, prob={info.language_probability:.2f}")
             return text
         except Exception as e:
             logger.error(f"Local STT transcription failed: {e}", exc_info=True)
             return None
+        finally:
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
 
     # ── API endpoint ──
 

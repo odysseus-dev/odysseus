@@ -34,6 +34,8 @@ _VISION_MODEL_KEYWORDS = (
     # open / local
     "vision", "llava", "bakllava", "moondream", "pixtral", "minicpm",
     "internvl", "cogvlm", "qwen-vl", "qwen2-vl", "qwen3-vl", "qwen3vl",
+    # zhipu / glm (glm-4.5v, glm-4.6v, glm-5v-turbo, etc.)
+    "glm-4.5v", "glm-4.6v", "glm-5v",
 )
 # Catches the "*-VL-*" / "*VL*" family not covered by a literal keyword above
 # (e.g. Qwen2.5-VL and various tags): a standalone "vl" token, plus "vlm".

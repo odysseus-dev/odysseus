@@ -216,15 +216,25 @@ class ResearchHandler:
         """
         # Resolve the hard wall-clock timeout from settings when the caller
         # didn't pin one. Local / edge models routinely need more than the
-        # old 600s default to finish a deep-research synthesis.
+        # old 600s default to finish a deep-research synthesis. A setting of
+        # 0 disables the cap entirely (unlimited run); any other value is
+        # bounded to [60, 86400] so a misconfigured settings.json can't
+        # explode into a multi-day hang.
         if hard_timeout is None:
             from src.settings import get_setting
-            hard_timeout = _bounded_int(
-                get_setting("research_run_timeout_seconds", 1800),
-                default=1800,
-                minimum=60,
-                maximum=86400,
-            )
+            try:
+                raw_timeout = int(get_setting("research_run_timeout_seconds", 1800))
+            except (TypeError, ValueError):
+                raw_timeout = 1800
+            if raw_timeout <= 0:
+                hard_timeout = None  # 0 = no wall-clock cap (asyncio.wait_for timeout=None)
+            else:
+                hard_timeout = _bounded_int(
+                    raw_timeout,
+                    default=1800,
+                    minimum=60,
+                    maximum=86400,
+                )
 
         # Cancel any existing research for this session
         if session_id in self._active_tasks:
