@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.js_test_helpers import run_node_script
+
 _REPO = Path(__file__).resolve().parent.parent
 _HAS_NODE = shutil.which("node") is not None
 
@@ -30,7 +32,7 @@ def _run_markdown_case(markdown: str) -> str:
         };
         globalThis.MutationObserver = class { observe() {} };
 
-        let source = fs.readFileSync('./static/js/markdown.js', 'utf8');
+        let source = fs.readFileSync('./static/js/markdown.js', 'utf8').replace(/\\r\\n/g, '\\n');
         source = source.replace(
           "import uiModule from './ui.js';\\n\\nvar escapeHtml = uiModule.esc;",
           `var escapeHtml = (value) => String(value ?? '')
@@ -47,15 +49,11 @@ def _run_markdown_case(markdown: str) -> str:
         console.log(JSON.stringify({ html: mod.mdToHtml(input) }));
         """
     )
-    result = subprocess.run(
-        ["node", "--input-type=module", "-e", script, json.dumps(markdown)],
+    result = run_node_script(
+        ["--input-type=module", "-e", script, json.dumps(markdown)],
         cwd=_REPO,
-        capture_output=True,
         timeout=15,
-        text=True,
     )
-    if result.returncode != 0:
-        raise AssertionError(f"node failed:\nSTDERR:\n{result.stderr}\nSTDOUT:\n{result.stdout}")
     return json.loads(result.stdout.splitlines()[-1])["html"]
 
 

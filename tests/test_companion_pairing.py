@@ -44,6 +44,10 @@ class _DBStub(types.ModuleType):
         return MagicMock()
 
 
+# Save original modules to prevent polluting subsequent tests
+_mods_to_stub = ["core.database", "core.auth", "src.endpoint_resolver"]
+_orig_mods = {name: sys.modules.get(name) for name in _mods_to_stub}
+
 _db = _DBStub("core.database")
 _db.get_db_session = _get_db_session
 _db.ApiToken = _ApiToken
@@ -53,11 +57,10 @@ for _name, _attrs in {
     "core.auth": {"AuthManager": MagicMock()},
     "src.endpoint_resolver": {"build_chat_url": (lambda u: u)},
 }.items():
-    if _name not in sys.modules:
-        _mm = types.ModuleType(_name)
-        for _k, _v in _attrs.items():
-            setattr(_mm, _k, _v)
-        sys.modules[_name] = _mm
+    _mm = types.ModuleType(_name)
+    for _k, _v in _attrs.items():
+        setattr(_mm, _k, _v)
+    sys.modules[_name] = _mm
 
 from fastapi import HTTPException  # noqa: E402
 
@@ -66,10 +69,18 @@ import companion.routes as companion_routes  # noqa: E402
 from companion.routes import mint_pairing_token, setup_companion_routes  # noqa: E402
 from core.middleware import require_admin  # noqa: E402
 
+# Restore original modules immediately after importing
+for name, orig in _orig_mods.items():
+    if orig is not None:
+        sys.modules[name] = orig
+    else:
+        sys.modules.pop(name, None)
+
 
 # --- token minting: shown once, hashed at rest -----------------------------
 
-def test_mint_token_returns_raw_once_and_stores_only_a_hash():
+def test_mint_token_returns_raw_once_and_stores_only_a_hash(monkeypatch):
+    monkeypatch.setitem(sys.modules, "core.database", _db)
     token_id, raw = P.mint_token("alice")
     assert raw.startswith("ody_")
     # The persisted row stores a bcrypt hash + prefix, never the plaintext.

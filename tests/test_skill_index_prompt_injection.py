@@ -26,16 +26,30 @@ from unittest.mock import MagicMock
 import pytest
 
 
-# ── module-load stubbing ─────────────────────────────────────────────────
-for _mod in [
+# Save original modules to prevent polluting subsequent tests
+_mods_to_stub = [
     "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext", "sqlalchemy.ext.declarative",
     "sqlalchemy.ext.hybrid", "sqlalchemy.sql", "sqlalchemy.sql.expression",
     "src.database",
     "src.agent_tools",
     "core.models", "core.database",
-]:
-    if _mod not in sys.modules:
-        sys.modules[_mod] = MagicMock()
+]
+_orig_mods = {name: sys.modules.get(name) for name in _mods_to_stub}
+
+# ── module-load stubbing ─────────────────────────────────────────────────
+for _mod in _mods_to_stub:
+    sys.modules[_mod] = MagicMock()
+
+# Import the module under test while stubs are active
+import src.agent_loop
+import src.constants
+
+# Restore original modules
+for name, orig in _orig_mods.items():
+    if orig is not None:
+        sys.modules[name] = orig
+    else:
+        sys.modules.pop(name, None)
 
 
 MALICIOUS_INDEX_DESC = (

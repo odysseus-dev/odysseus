@@ -19,14 +19,24 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # blows up under conftest's sqlalchemy MagicMock stubs. companion.routes only
 # imports it lazily inside the /models handler, but stub it defensively so the
 # import is robust regardless of collection order.
-if "core.database" not in sys.modules:
-    _db = types.ModuleType("core.database")
-    _db.SessionLocal = MagicMock()
-    _db.ModelEndpoint = MagicMock()
-    sys.modules["core.database"] = _db
+# Save original modules to prevent polluting subsequent tests
+_mods_to_stub = ["core.database"]
+_orig_mods = {name: sys.modules.get(name) for name in _mods_to_stub}
+
+_db = types.ModuleType("core.database")
+_db.SessionLocal = MagicMock()
+_db.ModelEndpoint = MagicMock()
+sys.modules["core.database"] = _db
 
 import companion.routes as companion_routes
 from companion.routes import setup_companion_routes, token_owner, owner_can_see
+
+# Restore original modules immediately after importing
+for name, orig in _orig_mods.items():
+    if orig is not None:
+        sys.modules[name] = orig
+    else:
+        sys.modules.pop(name, None)
 
 
 def _request(**state):
@@ -124,6 +134,7 @@ def _models_route():
 
 def _call_models_route(monkeypatch, rows, request):
     db = _DB(rows)
+    monkeypatch.setitem(sys.modules, "core.database", _db)
     db_mod = sys.modules["core.database"]
     monkeypatch.setattr(db_mod, "SessionLocal", lambda: db)
     monkeypatch.setattr(db_mod, "ModelEndpoint", _ModelEndpoint)
@@ -131,7 +142,7 @@ def _call_models_route(monkeypatch, rows, request):
     endpoint_mod = sys.modules.get("src.endpoint_resolver")
     if endpoint_mod is None:
         endpoint_mod = types.ModuleType("src.endpoint_resolver")
-        sys.modules["src.endpoint_resolver"] = endpoint_mod
+        monkeypatch.setitem(sys.modules, "src.endpoint_resolver", endpoint_mod)
     monkeypatch.setattr(
         endpoint_mod,
         "build_chat_url",

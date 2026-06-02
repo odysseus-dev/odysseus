@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.js_test_helpers import run_node_script
+
 _REPO = Path(__file__).resolve().parent.parent
 _SRC = _REPO / "static" / "js" / "chatRenderer.js"
 _HAS_NODE = shutil.which("node") is not None
@@ -29,11 +31,10 @@ def _is_local(url: str) -> bool:
     assert m, "isLocalEndpoint not found in chatRenderer.js"
     fn = m.group(0).replace("export function", "function", 1)
     js = fn + f"\nconsole.log(JSON.stringify(isLocalEndpoint({json.dumps(url)})));"
-    proc = subprocess.run(
-        ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+    proc = run_node_script(
+        ["--input-type=module"],
+        input_str=js, cwd=_REPO, timeout=30,
     )
-    assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout.strip())
 
 

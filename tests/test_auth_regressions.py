@@ -66,6 +66,10 @@ def _ensure_stub(name: str, **attrs):
         setattr(parent, child_name, mod)
     return mod
 
+# Save original modules to prevent polluting subsequent tests
+_mods_to_stub = ["core.database", "core.auth", "src.endpoint_resolver"]
+_orig_mods = {name: sys.modules.get(name) for name in _mods_to_stub}
+
 _ensure_stub("core.database",
     SessionLocal=MagicMock(), ScheduledTask=MagicMock(), TaskRun=MagicMock(),
     ModelEndpoint=MagicMock(), Session=MagicMock(), ChatMessage=MagicMock(),
@@ -82,7 +86,18 @@ _ensure_stub("src.endpoint_resolver",
     build_headers=MagicMock(),
 )
 
+# Import route/scheduler modules at the top level while stubs are active
+import routes.research_routes
+import routes.task_routes
+import src.task_scheduler
 from fastapi import HTTPException
+
+# Restore original modules immediately
+for name, orig in _orig_mods.items():
+    if orig is not None:
+        sys.modules[name] = orig
+    else:
+        sys.modules.pop(name, None)
 
 # ---------------------------------------------------------------------------
 # Auth routes -- open signup setter
@@ -161,6 +176,7 @@ def test_set_signup_enabled_requires_admin():
 
     assert exc.value.status_code == 403
     assert auth.signup_enabled is False
+
 
 # ---------------------------------------------------------------------------
 # Research endpoints — `_require_user` rejects anonymous
@@ -287,7 +303,7 @@ def test_research_spinoff_rejects_wrong_owner():
 # pop_notifications owner filter
 # ---------------------------------------------------------------------------
 
-def test_pop_notifications_owner_filtered():
+def test_pop_notifications_owner_filtered(monkeypatch):
     """pop_notifications(owner='alice') must return only alice's items.
     bob's and legacy ownerless items stay behind in the queue."""
     # Build a minimal scheduler instance that we can hit directly.
@@ -298,9 +314,8 @@ def test_pop_notifications_owner_filtered():
     # `task_scheduler` pulls in lots of helpers — stub the ones it uses.
     for s in ["src.builtin_actions", "src.ai_interaction", "src.endpoint_resolver",
               "src.agent_loop", "src.session_manager"]:
-        if s not in sys.modules:
-            mod = types.ModuleType(s)
-            sys.modules[s] = mod
+        mod = types.ModuleType(s)
+        monkeypatch.setitem(sys.modules, s, mod)
     from src.task_scheduler import TaskScheduler
     sch = TaskScheduler.__new__(TaskScheduler)  # bypass __init__ network etc.
     sch._pending_notifications = []

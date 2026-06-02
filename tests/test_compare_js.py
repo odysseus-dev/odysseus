@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.js_test_helpers import run_node_script
+
 _REPO = Path(__file__).resolve().parent.parent
 _HAS_NODE = shutil.which("node") is not None
 
@@ -31,15 +33,11 @@ def node_available():
 def _run_node(script: str) -> dict:
     """Run a JS snippet under node --input-type=module. Returns parsed
     JSON from the last `console.log` line."""
-    res = subprocess.run(
-        ["node", "--input-type=module", "-e", script],
+    res = run_node_script(
+        ["--input-type=module", "-e", script],
         cwd=_REPO,
-        capture_output=True,
         timeout=15,
-        text=True,
     )
-    if res.returncode != 0:
-        raise AssertionError(f"node failed:\n{res.stderr}")
     out_lines = [ln for ln in res.stdout.splitlines() if ln.strip()]
     if not out_lines:
         raise AssertionError("node produced no stdout")

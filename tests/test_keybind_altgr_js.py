@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.js_test_helpers import run_node_script
+
 _REPO = Path(__file__).resolve().parent.parent
 _HELPER = _REPO / "static" / "js" / "keyboard-shortcuts.js"
 _PLATFORM = _REPO / "static" / "js" / "platform.js"
@@ -41,11 +43,10 @@ pytestmark = pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 
 
 def _run(js: str) -> str:
-    proc = subprocess.run(
-        ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+    proc = run_node_script(
+        ["--input-type=module"],
+        input_str=js, cwd=_REPO, timeout=30,
     )
-    assert proc.returncode == 0, proc.stderr
     return proc.stdout.strip()
 
 

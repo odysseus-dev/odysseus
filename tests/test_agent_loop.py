@@ -4,22 +4,32 @@ and _append_tool_results. Uses mock imports to avoid loading the full app stack.
 import sys
 from unittest.mock import MagicMock
 
-# Mock heavy dependencies before importing
-for mod in [
+# Save original modules to prevent polluting subsequent tests
+_mods_to_stub = [
     'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
     'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
     'src.database',
     'src.agent_tools',
     'core.models', 'core.database',
-]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
+]
+_orig_mods = {name: sys.modules.get(name) for name in _mods_to_stub}
+
+# Mock heavy dependencies before importing
+for name in _mods_to_stub:
+    sys.modules[name] = MagicMock()
 
 from src.agent_loop import (
     _detect_admin_intent,
     _compute_final_metrics,
     _append_tool_results,
 )
+
+# Restore the original modules immediately after importing to isolate stubs.
+for name, orig in _orig_mods.items():
+    if orig is not None:
+        sys.modules[name] = orig
+    else:
+        sys.modules.pop(name, None)
 
 
 # ---------------------------------------------------------------------------

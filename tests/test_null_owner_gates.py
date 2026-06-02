@@ -24,34 +24,53 @@ from unittest.mock import MagicMock
 # the conftest's `sqlalchemy.*` MagicMock stubs ("metaclass conflict").
 # Stub also a handful of route modules each of these targeted modules
 # happens to drag in at import-time.
-for _stub in [
-    "core.database",
-    "core.auth",
-    "src.endpoint_resolver",
-]:
-    if _stub not in sys.modules:
-        m = types.ModuleType(_stub)
-        # Provide the names the importers will look up.
-        if _stub == "core.database":
-            m.Base = MagicMock()
-            m.SessionLocal = MagicMock()
-            m.CalendarCal = MagicMock()
-            m.CalendarEvent = MagicMock()
-            m.Document = MagicMock()
-            m.DocumentVersion = MagicMock()
-            m.Session = MagicMock()
-            m.ChatMessage = MagicMock()
-            m.GalleryImage = MagicMock()
-            m.GalleryAlbum = MagicMock()
-            m.Note = MagicMock()
-            m.ScheduledTask = MagicMock()
-            m.TaskRun = MagicMock()
-            m.ModelEndpoint = MagicMock()
-        elif _stub == "core.auth":
-            m.AuthManager = MagicMock()
-        sys.modules[_stub] = m
+# Save original modules to prevent polluting subsequent tests
+_mods_to_stub = ["core.database", "core.auth", "src.endpoint_resolver", "src.webhook_manager"]
+_orig_mods = {name: sys.modules.get(name) for name in _mods_to_stub}
 
+# Stub them out...
+for _stub in ["core.database", "core.auth", "src.endpoint_resolver"]:
+    m = types.ModuleType(_stub)
+    if _stub == "core.database":
+        m.Base = MagicMock()
+        m.SessionLocal = MagicMock()
+        m.CalendarCal = MagicMock()
+        m.CalendarEvent = MagicMock()
+        m.Document = MagicMock()
+        m.DocumentVersion = MagicMock()
+        m.Session = MagicMock()
+        m.ChatMessage = MagicMock()
+        m.GalleryImage = MagicMock()
+        m.GalleryAlbum = MagicMock()
+        m.Note = MagicMock()
+        m.ScheduledTask = MagicMock()
+        m.TaskRun = MagicMock()
+        m.ModelEndpoint = MagicMock()
+        m.Webhook = MagicMock()
+    elif _stub == "core.auth":
+        m.AuthManager = MagicMock()
+    sys.modules[_stub] = m
+
+# Also stub src.webhook_manager
+wm = types.ModuleType("src.webhook_manager")
+wm.WebhookManager = MagicMock()
+wm.validate_webhook_url = MagicMock()
+wm.validate_events = MagicMock()
+sys.modules["src.webhook_manager"] = wm
+
+# Import route modules at top level under the stubs
+import routes.calendar_routes
+import routes.document_routes
+import routes.gallery_routes
+import routes.webhook_routes
 from fastapi import HTTPException
+
+# Restore original modules immediately
+for name, orig in _orig_mods.items():
+    if orig is not None:
+        sys.modules[name] = orig
+    else:
+        sys.modules.pop(name, None)
 
 
 # ---------------------------------------------------------------------------
@@ -59,15 +78,7 @@ from fastapi import HTTPException
 # ---------------------------------------------------------------------------
 
 def _import_calendar_helpers():
-    """Import the two private gate helpers without booting the full
-    calendar router. We patch sys.modules so the module-load side
-    effects (DB import) don't blow up under the conftest stubs."""
-    mod_name = "routes.calendar_routes"
-    if mod_name in sys.modules:
-        return sys.modules[mod_name]
-    # core.database is stubbed by conftest already; the module should
-    # import cleanly.
-    return __import__(mod_name, fromlist=["_get_or_404_calendar", "_get_or_404_event"])
+    return routes.calendar_routes
 
 
 def test_calendar_gate_rejects_null_owner_for_authenticated_user():
@@ -179,21 +190,7 @@ def test_gallery_owner_filter_passes_user():
 # calendar/notes/gallery gates above and _verify_session_owner.
 
 def _import_webhook_helper():
-    """Import routes.webhook_routes without dragging in the real webhook
-    manager / database. Stub src.webhook_manager (only referenced by an
-    import line) and ensure core.database exposes the names the import chain
-    (core/__init__ → session_manager) looks up."""
-    for _name in ("Webhook", "ChatMessage"):
-        setattr(sys.modules["core.database"], _name, MagicMock())
-    if "src.webhook_manager" not in sys.modules:
-        wm = types.ModuleType("src.webhook_manager")
-        wm.WebhookManager = MagicMock()
-        wm.validate_webhook_url = MagicMock()
-        wm.validate_events = MagicMock()
-        sys.modules["src.webhook_manager"] = wm
-    return __import__(
-        "routes.webhook_routes", fromlist=["_caller_owns_session"]
-    )
+    return routes.webhook_routes
 
 
 def test_sync_chat_gate_rejects_null_owner_session():

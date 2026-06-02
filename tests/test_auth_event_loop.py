@@ -64,10 +64,21 @@ def _ensure_stub(name: str, **attrs):
     return mod
 
 
+# Save original modules to prevent polluting subsequent tests
+_mods_to_stub = ["core.database", "core.auth"]
+_orig_mods = {name: sys.modules.get(name) for name in _mods_to_stub}
+
 _ensure_stub("core.database", SessionLocal=MagicMock())
 _ensure_stub("core.auth", AuthManager=MagicMock())
 
 from routes.auth_routes import setup_auth_routes, LoginRequest
+
+# Restore original modules immediately after importing
+for name, orig in _orig_mods.items():
+    if orig is not None:
+        sys.modules[name] = orig
+    else:
+        sys.modules.pop(name, None)
 
 
 def _login_endpoint(auth_manager):

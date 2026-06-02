@@ -18,6 +18,10 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Save original modules to prevent polluting subsequent tests
+_mods_to_stub = ["core.database", "core.session_manager", "core.models", "src.request_models"]
+_orig_mods = {name: sys.modules.get(name) for name in _mods_to_stub}
+
 # routes.session_routes imports several heavy modules at import time that blow up
 # under conftest's sqlalchemy/* MagicMock stubs (declarative classes). Stub them
 # so we can import the module and exercise _verify_session_owner with a mock DB.
@@ -29,16 +33,22 @@ _STUBS = {
     "src.request_models": {"SessionResponse": MagicMock()},
 }
 for _name, _attrs in _STUBS.items():
-    if _name not in sys.modules:
-        _m = types.ModuleType(_name)
-        for _k, _v in _attrs.items():
-            setattr(_m, _k, _v)
-        sys.modules[_name] = _m
+    _m = types.ModuleType(_name)
+    for _k, _v in _attrs.items():
+        setattr(_m, _k, _v)
+    sys.modules[_name] = _m
 
 from fastapi import HTTPException  # noqa: E402
 
 from src.auth_helpers import effective_user  # noqa: E402
 import routes.session_routes as SR  # noqa: E402
+
+# Restore the original modules immediately after importing to isolate stubs.
+for name, orig in _orig_mods.items():
+    if orig is not None:
+        sys.modules[name] = orig
+    else:
+        sys.modules.pop(name, None)
 
 
 def _req(**state):
