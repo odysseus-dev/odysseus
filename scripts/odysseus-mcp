@@ -42,7 +42,7 @@ def _serialize(s: "McpServer", redact_env: bool = True) -> dict:
         env_obj = json.loads(s.env) if s.env else {}
     except json.JSONDecodeError:
         env_obj = {}
-    if redact_env and env_obj:
+    if redact_env and isinstance(env_obj, dict):
         env_obj = {k: ("***" if v else "") for k, v in env_obj.items()}
     return {
         "id": s.id,

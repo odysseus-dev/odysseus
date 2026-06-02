@@ -532,6 +532,13 @@ function initializeEventListeners() {
         return;
       }
 
+      // Model picker popup — close before opening any modals
+      const modelPickerMenu = document.getElementById('model-picker-menu');
+      if (modelPickerMenu && modelPickerMenu.classList.contains('open')) {
+        modelPickerMenu.classList.remove('open');
+        return;
+      }
+
       // Close one modal at a time (last in DOM = topmost)
       // Map modal id → sidebar list-item id to clear active state
       const modalItemMap = {
@@ -543,7 +550,7 @@ function initializeEventListeners() {
       };
 
       // Dynamic modals (removed from DOM on close)
-      const dynamicModals = ['library-modal', 'archive-modal', 'doclib-modal', 'gallery-modal', 'tasks-modal'];
+      const dynamicModals = ['library-modal', 'archive-modal', 'doclib-modal', 'gallery-modal', 'tasks-modal', 'email-lib-modal'];
       for (const id of dynamicModals) {
         const m = document.getElementById(id);
         if (id === 'gallery-modal') {

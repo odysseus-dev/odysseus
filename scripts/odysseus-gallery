@@ -30,11 +30,19 @@ except ModuleNotFoundError as e:
     sys.exit(2)
 
 
+def _preview_text(value, limit: int = 200) -> str:
+    """Truncated preview tolerant of non-string values. A gallery row whose
+    ``prompt`` is a non-string would crash ``(value or "")[:200]`` with a
+    TypeError; coerce non-strings to ""."""
+    text = value if isinstance(value, str) else ""
+    return text[:limit]
+
+
 def _serialize_image(i: "GalleryImage") -> dict:
     return {
         "id": i.id,
         "filename": i.filename,
-        "prompt": (i.prompt or "")[:200],
+        "prompt": _preview_text(i.prompt),
         "model": i.model or "",
         "size": i.size or "",
         "tags": i.tags or "",
