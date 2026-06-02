@@ -117,6 +117,7 @@ if [ ! -d venv ]; then
   echo "▶ Creating Python environment…"
   "$PY" -m venv venv
 fi
+PY="./venv/bin/python"
 echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
 "$PY" -m pip install --quiet --upgrade pip
 # Not --quiet: this is the slow step, so show progress (and any real errors).
