@@ -1201,6 +1201,8 @@ def _pre_retrieve_context(
             try:
                 from routes.contacts_routes import _fetch_contacts
                 for c in _fetch_contacts() or []:
+                    # Contacts are normalized to plural `emails` lists, but
+                    # keep the legacy singular key fallback for older data.
                     contact_emails = []
                     raw_emails = c.get("emails")
                     if isinstance(raw_emails, list):
@@ -1302,13 +1304,13 @@ def _pre_retrieve_context(
                 t_lower = term.lower()
                 matches = [c for c in all_contacts
                            if t_lower in (c.get("name") or "").lower()
-                           or t_lower in (c.get("email") or "").lower()]
+                           or any(t_lower in (e or "").lower() for e in (c.get("emails") or []))]
                 for c in matches[:2]:
                     parts = [f"Name: {c.get('name','')}"]
-                    if c.get("email"):
-                        parts.append(f"Email: {c['email']}")
-                    if c.get("phone"):
-                        parts.append(f"Phone: {c['phone']}")
+                    if c.get("emails"):
+                        parts.append(f"Email: {', '.join(c['emails'])}")
+                    if c.get("phones"):
+                        parts.append(f"Phone: {', '.join(c['phones'])}")
                     context_snippets.append(f"[Contact match for \"{term}\"] " + ", ".join(parts))
         except Exception:
             pass
