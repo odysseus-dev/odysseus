@@ -181,3 +181,67 @@ def test_plain_ctrl_shortcut_unaffected():
     # Non-alt combos were never AltGr-ambiguous and must keep matching.
     ev = {"ctrlKey": True, "altKey": False, "shiftKey": False, "key": "k"}
     assert _matches(ev, "ctrl+k", altgraph=False, is_mac=False) is True
+
+
+# --- The remaining Ctrl/Cmd-key handlers route through the shared guard -------
+#
+# Follow-up to the original AltGr fix: three more keydown handlers gated only on
+# `(e.ctrlKey || e.metaKey)` could false-fire on the no-glyph AltGr keystroke the
+# same way (right Alt reported as Ctrl+Alt). They live as inline, DOM-coupled
+# listeners inside large modules (document.js / notes.js) with no `node` unit
+# harness — so, exactly like test_document_deeplink.py, we pin the source-level
+# invariant that each one is wired through the already-behaviorally-tested
+# `isAltGrEvent` predicate above. notes.js Ctrl+C is deliberately NOT rewired: its
+# pre-existing `&& !e.altKey` already excludes AltGr, and swapping it would loosen
+# Mac Cmd+Option+C — so we pin that it stays put.
+
+_DOCUMENT_JS = _REPO / "static" / "js" / "document.js"
+_NOTES_JS = _REPO / "static" / "js" / "notes.js"
+
+
+def _src(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def test_document_js_imports_shared_altgr_guard():
+    assert "import { isAltGrEvent } from './platform.js';" in _src(_DOCUMENT_JS)
+
+
+def test_notes_js_imports_shared_altgr_guard():
+    assert "import { isAltGrEvent } from './platform.js';" in _src(_NOTES_JS)
+
+
+def test_markdown_format_shortcut_guards_altgr():
+    # Ctrl+B/I/K markdown formatting fires inside the doc-editor textarea while
+    # typing; AltGr+b/i/k produce no glyph on common non-US layouts, so without
+    # the guard prose typing would wrap the selection in markdown markup.
+    assert (
+        "lang === 'markdown' && (e.ctrlKey || e.metaKey) && !isAltGrEvent(e)"
+        in _src(_DOCUMENT_JS)
+    )
+
+
+def test_doc_find_shortcut_guards_altgr():
+    # Ctrl+F find-bar; preventDefault+stopPropagation would otherwise eat the key.
+    assert (
+        "(e.ctrlKey || e.metaKey) && !isAltGrEvent(e) && e.key === 'f'"
+        in _src(_DOCUMENT_JS)
+    )
+
+
+def test_notes_undo_shortcut_guards_altgr():
+    # Ctrl+Z note-undo (the inField early-return already blunts most exposure,
+    # but the guard keeps it consistent with its siblings).
+    assert (
+        "(e.ctrlKey || e.metaKey) && !isAltGrEvent(e) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey"
+        in _src(_NOTES_JS)
+    )
+
+
+def test_notes_copy_shortcut_keeps_existing_altkey_guard():
+    # Intentionally untouched: !e.altKey already excludes the AltGr no-glyph case,
+    # and switching to isAltGrEvent would re-enable Cmd+Option+C on macOS.
+    assert (
+        "(e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C') && !e.shiftKey && !e.altKey"
+        in _src(_NOTES_JS)
+    )
