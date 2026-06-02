@@ -35,8 +35,21 @@ function _slotChar(i) { return state._parallel ? String.fromCharCode(65 + i) : S
 
 // ── Stop / reroll ──
 
+// Aborting the fetch only closes the SSE reader on the client; the run is
+// detached server-side, so the model keeps generating tokens upstream (e.g. in
+// LM Studio) until we tell the backend to cancel it (issue #1508). Mirror the
+// main chat Stop button: POST /api/chat/stop/<sid> for the pane's session.
+function _backendStopPane(paneIdx) {
+  const sid = state._paneSessionIds && state._paneSessionIds[paneIdx];
+  if (sid) {
+    fetch(`/api/chat/stop/${encodeURIComponent(sid)}`, {
+      method: 'POST', credentials: 'same-origin',
+    }).catch(() => {});
+  }
+}
+
 function stopAll() {
-  state._abortControllers.forEach(ac => { if (ac) ac.abort(); });
+  state._abortControllers.forEach((ac, i) => { if (ac) { ac.abort(); _backendStopPane(i); } });
   state._abortControllers = [];
   state._streaming = false;
   if (_setSendBtn) _setSendBtn('send');
@@ -52,6 +65,8 @@ function stopPane(paneIdx) {
     ac.abort();
     state._abortControllers[paneIdx] = null;
   }
+  // Cancel the detached run server-side too, or the model keeps generating (#1508).
+  _backendStopPane(paneIdx);
   // Hide stop button, show reroll
   const pane = document.querySelector(`.compare-pane[data-pane="${paneIdx}"]`);
   if (pane) {
