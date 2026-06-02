@@ -148,6 +148,21 @@ def _local_tooling_path_export(executable: str) -> str:
     return f'export PATH="{esc}:$PATH"'
 
 
+def _pip_install_no_cache(cmd: str) -> str:
+    """Add ``--no-cache-dir`` to a pip install command.
+
+    Cookbook dependency installs (vLLM, llama-cpp-python, …) build large wheels;
+    pip's default cache lives under ``$HOME/.cache/pip`` and these builds can fill
+    a small home filesystem with ``[Errno 28] No space left on device`` mid-build
+    (issue #1219), leaving the dependency "installed" but unusable (#1459).
+    Disabling the cache for these one-off installs keeps them off the home disk
+    (the maintainer's suggested ``PIP_CACHE_DIR=`` workaround, made the default).
+    Idempotent; leaves non-pip-install commands untouched."""
+    if not cmd or "pip install" not in cmd or "--no-cache-dir" in cmd:
+        return cmd
+    return cmd.replace("pip install", "pip install --no-cache-dir", 1)
+
+
 def _pip_install_attempt(pip_cmd: str) -> str:
     """Wrap a single pip install command so its exit status survives the
     fallback chain and its stderr is visible in the tmux log on failure.

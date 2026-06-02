@@ -38,7 +38,7 @@ from routes.cookbook_helpers import (
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
-    _ollama_bind_from_cmd, _pip_install_fallback_chain, _venv_safe_local_pip_install_cmd,
+    _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache, _venv_safe_local_pip_install_cmd,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -841,6 +841,10 @@ def setup_cookbook_routes() -> APIRouter:
         )
         is_pip_install = bool(req.cmd and "pip install" in req.cmd)
         if is_pip_install:
+            # Keep big dependency wheel builds (vLLM, …) off the home filesystem's
+            # pip cache so they don't fail mid-build with "No space left" (#1219)
+            # and leave the dep installed-but-unusable (#1459).
+            req.cmd = _pip_install_no_cache(req.cmd)
             # PEP-508-style package spec — letters, digits, `.-_` for the
             # name; `[` `]` for extras; `<>=!~,` for version specifiers.
             # v2 review HIGH-14: tightened from the previous regex which

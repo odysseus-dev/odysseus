@@ -415,3 +415,23 @@ def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):
     assert ggufs[1]["size_bytes"] == len(b"part1part2part3")
     assert ggufs[2]["quant"] == "Q6_K_XL"
     assert ggufs[3]["quant"] == "BF16"
+
+
+# ── #1219 / #1459: keep big dependency wheel builds off the home pip cache ──
+
+def test_pip_install_no_cache_injects_flag():
+    from routes.cookbook_helpers import _pip_install_no_cache
+    assert _pip_install_no_cache("python -m pip install vllm") == \
+        "python -m pip install --no-cache-dir vllm"
+    assert _pip_install_no_cache("pip install -q huggingface-hub") == \
+        "pip install --no-cache-dir -q huggingface-hub"
+
+
+def test_pip_install_no_cache_is_idempotent_and_scoped():
+    from routes.cookbook_helpers import _pip_install_no_cache
+    # already present -> unchanged
+    already = "pip install --no-cache-dir vllm"
+    assert _pip_install_no_cache(already) == already
+    # not a pip install -> unchanged
+    assert _pip_install_no_cache("vllm serve --model x") == "vllm serve --model x"
+    assert _pip_install_no_cache("") == ""
