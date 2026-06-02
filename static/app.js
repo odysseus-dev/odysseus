@@ -669,6 +669,9 @@ function initializeEventListeners() {
     if (modeToggle && modeToggle.checked) { modeToggle.checked = false; modeToggle.dispatchEvent(new Event('change')); }
     // Clear character/persona
     if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
+    // Clear the composer so stale draft text doesn't carry over to the new chat.
+    const _msgInput = el('message');
+    if (_msgInput) { _msgInput.value = ''; if (uiModule && uiModule.autoResize) uiModule.autoResize(_msgInput); }
   }
 
   /** Sync Research indicator button + overflow + tool sidebar active state. */
@@ -3059,6 +3062,8 @@ function initializeEventListeners() {
       if (chatModule && chatModule.showWelcomeScreen) {
         chatModule.showWelcomeScreen();
       }
+      const _msgInputNoModel = el('message');
+      if (_msgInputNoModel) { _msgInputNoModel.value = ''; if (uiModule && uiModule.autoResize) uiModule.autoResize(_msgInputNoModel); }
       document.querySelectorAll('.session-item.active').forEach(s => s.classList.remove('active'));
     });
   }
