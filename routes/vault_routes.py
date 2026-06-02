@@ -83,10 +83,9 @@ async def _run_bw(args: list, session: str = None, input_text: str = None,
     if session:
         env["BW_SESSION"] = session
     # Secrets must never be passed as argv — process arguments are world-readable
-    # via `ps` / `/proc/<pid>/cmdline` to any local user. Hand the master password
-    # to `bw` through the environment instead (paired with `--passwordenv
-    # BW_PASSWORD` in args); /proc/<pid>/environ is readable only by the process
-    # owner. This mirrors how BW_SESSION is already passed above.
+    # via `ps` / `/proc/<pid>/cmdline` to any local user. Keep --passwordenv
+    # support for bw commands that need it; unlock/login callers should prefer
+    # stdin so the master password is not left in the child environment either.
     if bw_password is not None:
         env["BW_PASSWORD"] = bw_password
     bw_path = _find_bw()
@@ -184,13 +183,12 @@ def setup_vault_routes():
     async def unlock(req: VaultUnlockRequest, request: Request):
         """Unlock the vault and save the session key."""
         require_admin(request)
-        # Pass the master password via the environment (--passwordenv), NOT as
-        # an argv element — argv is visible to every local user through `ps` /
-        # /proc/<pid>/cmdline. (The sibling /login handler already keeps the
-        # password off argv by feeding it on stdin.)
+        # Pass the master password on stdin, not argv. argv is visible through
+        # `ps` / /proc/<pid>/cmdline; stdin also avoids leaving the secret in
+        # the child process environment.
         stdout, stderr, rc = await _run_bw(
-            ["unlock", "--passwordenv", "BW_PASSWORD", "--raw"],
-            bw_password=req.master_password,
+            ["unlock", "--raw"],
+            input_text=req.master_password + "\n",
         )
         if rc != 0:
             return {"ok": False, "error": f"Unlock failed: {stderr[:300]}"}

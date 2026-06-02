@@ -4094,7 +4094,9 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
     if not master_password:
         return {"error": "master_password is required", "exit_code": 1}
 
-    stdout, stderr, rc = await _run_bw(["unlock", master_password, "--raw"])
+    # Do not pass the master password as an argv element. Local process lists
+    # can expose argv to other users; stdin keeps the secret out of `ps`.
+    stdout, stderr, rc = await _run_bw(["unlock", "--raw"], input_text=master_password + "\n")
     if rc != 0:
         return {"error": f"Unlock failed: {stderr[:300]}", "exit_code": 1}
 
