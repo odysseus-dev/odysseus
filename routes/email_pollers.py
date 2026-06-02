@@ -829,7 +829,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                             _req.post, url, json=payload, headers=req_headers, timeout=120
                         )
                         if not resp.ok:
-                            logger.warning(f"Auto-classify {uid.decode()} HTTP {resp.status_code}: {resp.text[:200]}")
+                            logger.warning(f"Auto-classify {uid.decode() if isinstance(uid, bytes) else str(uid)} HTTP {resp.status_code}: {resp.text[:200]}")
                         else:
                             rdata = resp.json()
                             m = (rdata.get("choices") or [{}])[0].get("message", {})
