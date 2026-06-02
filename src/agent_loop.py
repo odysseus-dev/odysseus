@@ -1314,6 +1314,30 @@ async def _run_verifier_subagent(
     return [r.strip() for r in reasons.split(";") if r.strip()]
 
 
+def _empty_response_fallback(
+    full_response: str,
+    round_reasoning: str,
+    tool_events: list,
+) -> tuple:
+    """Return (final_response, sse_chunk_or_none) for the end-of-loop empty-response guard.
+
+    When a thinking model routes all tokens to reasoning_content (leaving
+    content=""), full_response is empty but round_reasoning has content.
+    The reasoning was already streamed as {thinking:true} chunks — do not
+    re-emit it as a normal delta.  Just persist it and yield nothing.
+
+    Returns:
+        (final_response: str, chunk: str | None)
+            chunk is the SSE string to yield, or None if nothing should be emitted.
+    """
+    if full_response.strip() or tool_events:
+        return full_response, None
+    if round_reasoning.strip():
+        return round_reasoning, None
+    _error_msg = "The model returned an empty response. Please try again or switch to a different model."
+    return _error_msg, f'data: {json.dumps({"delta": _error_msg})}\n\n'
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -2225,10 +2249,11 @@ async def stream_agent_loop(
 
     # If the response is completely empty and no tools were executed,
     # yield a fallback message so the user is not left hanging.
-    if not full_response.strip() and not tool_events:
-        _error_msg = "The model returned an empty response. Please try again or switch to a different model."
-        yield f'data: {json.dumps({"delta": _error_msg})}\n\n'
-        full_response = _error_msg
+    full_response, _fallback_chunk = _empty_response_fallback(
+        full_response, round_reasoning, tool_events
+    )
+    if _fallback_chunk:
+        yield _fallback_chunk
 
     # --- Final metrics ---
     total_duration = time.time() - total_start

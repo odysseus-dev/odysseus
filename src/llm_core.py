@@ -860,7 +860,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         elif provider == "ollama":
             response = _parse_ollama_response(data)
         else:
-            response = data["choices"][0]["message"]["content"]
+            msg = data["choices"][0]["message"]
+            response = msg.get("content") or msg.get("reasoning_content") or ""
         _set_cached_response(cache_key, response)
         return response
     except Exception:
@@ -997,7 +998,8 @@ async def llm_call_async(
                 elif provider == "ollama":
                     response = _parse_ollama_response(data)
                 else:
-                    response = data["choices"][0]["message"]["content"]
+                    msg = data["choices"][0]["message"]
+                    response = msg.get("content") or msg.get("reasoning_content") or ""
                 _set_cached_response(cache_key, response)
                 return response
             except Exception:
