@@ -43,6 +43,18 @@ def is_valid_upload_id(upload_id: str) -> bool:
     return UPLOAD_ID_RE.fullmatch(upload_id or "") is not None
 
 
+def count_recent_uploads(timestamps, now: float, window: float = 10.0) -> int:
+    """Number of upload events in *timestamps* within the last *window* seconds.
+
+    Used by the per-IP concurrency guard. The count is of genuine prior upload
+    events — it must NOT scale with how many files are in the *current* request,
+    or a single multi-file batch would reject itself (issue #1346)."""
+    if not timestamps:
+        return 0
+    cutoff = now - window
+    return sum(1 for t in timestamps if t > cutoff)
+
+
 class UploadHandler:
     def __init__(self, base_dir: str, upload_dir: str):
         self.base_dir = base_dir
