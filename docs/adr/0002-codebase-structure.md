@@ -1,5 +1,7 @@
 # ADR-0002: Codebase Structure and Layer Conventions
 
+> For the current state of the codebase structure, see [`docs/architecture.md`](../architecture.md). This ADR focuses on the decisions and evolution that led to that structure.
+
 **Status:** Accepted
 **Date:** 2026-06-01
 **Supersedes:** None (complements ADR-0001)

@@ -37,41 +37,18 @@ Key terms used in the codebase and issues. Definitions are approximate — read 
 
 ## Architecture
 
-### Directory Layout
+See [`docs/architecture.md`](docs/architecture.md) for:
+- Runtime layers and request flow
+- Directory structure and import conventions  
+- Persistence layer details
+- Known architectural debt
 
-```
-app.py                   # FastAPI entry point — mounts all routes, starts background tasks
-core/                    # Foundation: auth, database, session persistence, middleware, data models
-src/                     # Business logic: LLM core, agent loop, chat processing, memory, tools, security
-routes/                  # FastAPI route modules (one per feature area)
-services/                # Feature services (docs, memory, research, search, shell, stt, tts, youtube, hwfit, faces)
-mcp_servers/             # Built-in MCP server implementations
-static/                  # Frontend — index.html, app.js, style.css, js/*.js modules
-scripts/                 # CLI tools (odysseus, odysseus-backup, odysseus-cookbook, etc.)
-companion/               # Read-only companion mode routes
-```
+### Key Concepts
 
-### Data Flow
-
-1. **Chat request** → `routes/chat_routes.py` → `src/chat_processor.py` → `src/llm_core.py` (stream or call) → SSE back to frontend
-2. **Agent request** → `routes/chat_routes.py` → `src/agent_loop.py` → resolves tools (native calling or code blocks) → executes via `src/agent_tools.py` → feeds output back to LLM → loops until DONE/BLOCKED
-3. **Memory lookup** → `services/memory/` → ChromaDB vector search + keyword fallback → returns ranked memories for injection into context
-4. **Deep Research** → `services/research/` → multi-step web crawl + synthesis → visual report output
-
-### Persistence
-
-- **SQLite** (`data/app.db`) — users, settings, MCP servers, SQLAlchemy models (`core/database.py`)
-- **ChromaDB** (`data/chroma/`) — vector embeddings for memory and RAG
-- **JSON files** — `data/sessions.json`, `data/memory.json`, `data/presets.json`, `data/settings.json`, `data/integrations.json`, `data/cookbook_state.json`
-- **File system** — `data/uploads/`, `data/personal_docs/`, `data/huggingface/` (Cookbook models)
-
-### Key Design Decisions
-
-- **Local-first** — all data lives on disk, no cloud dependency. Providers are optional endpoints.
-- **Self-hosted only** — no SaaS mode, no telemetry, no analytics.
-- **Hybrid tool calling** — native tool/function calling when the provider supports it, fenced code blocks (`tool_name`) as universal fallback. Works across all providers regardless of native function-calling support. See `src/agent_loop._resolve_tool_blocks()`.
-- **Provider detection by URL** — `src/llm_core._detect_provider()` identifies the provider from the endpoint URL and builds the correct payload format. No explicit provider type selection needed.
-- **Degraded state, not hard failure** — optional services (ChromaDB, SearXNG, ntfy) can be unreachable without crashing the app. Features show degraded-state warnings instead.
+- **Local-first** — all data lives on disk, no cloud dependency
+- **Self-hosted only** — no SaaS mode, no telemetry
+- **Hybrid tool calling** — native when available, code block fallback
+- **Owner isolation** — every query filters by owner ID
 
 ## Frontend Architecture
 
