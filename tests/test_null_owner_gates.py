@@ -252,6 +252,7 @@ class _Column:
 
 
 class _ModelEndpoint:
+    id = _Column("id")
     is_enabled = _Column("is_enabled")
     owner = _Column("owner")
 
@@ -319,3 +320,52 @@ def test_sync_chat_fallback_null_owner_is_legacy_single_user_noop():
     rows = [_ep("first", "bob"), _ep("second", "alice")]
     ep = _select(rows, None)
     assert ep is not None and ep.name == "first"
+
+
+# ---------------------------------------------------------------------------
+# session_routes._owned_endpoint  (POST /session, PATCH /session/{sid})
+# ---------------------------------------------------------------------------
+# The SAME multi-tenant leak on the session model-picker: create_session and
+# rename_session resolve a CALLER-SUPPLIED endpoint_id to a ModelEndpoint and
+# copy its *decrypted* api_key + base_url into the session's auth headers. The
+# lookup was a bare `.filter(ModelEndpoint.id == endpoint_id).first()`, so a
+# user (or a paired chat-scoped mobile token) could bind their session to
+# ANOTHER user's PRIVATE endpoint and silently spend that owner's api_key /
+# reach their internal base_url. The lookup must be owner-scoped (own rows +
+# legacy null-owner shared rows), exactly like the webhook fallback above and
+# routes/model_routes.py / companion/routes.py.
+
+def _ep_id(eid, owner, *, api_key="sk-secret"):
+    return SimpleNamespace(id=eid, owner=owner, api_key=api_key)
+
+
+def _select_owned(rows, endpoint_id, owner):
+    sess_mod = __import__("routes.session_routes", fromlist=["_owned_endpoint"])
+    sys.modules["core.database"].ModelEndpoint = _ModelEndpoint
+    return sess_mod._owned_endpoint(_DB(rows), endpoint_id, owner)
+
+
+def test_owned_endpoint_rejects_another_owners_private_endpoint():
+    # bob's private endpoint exists, but alice asking for it by id gets nothing.
+    rows = [_ep_id("ep-bob", "bob"), _ep_id("ep-alice", "alice")]
+    assert _select_owned(rows, "ep-bob", "alice") is None
+
+
+def test_owned_endpoint_returns_callers_own_endpoint():
+    rows = [_ep_id("ep-bob", "bob"), _ep_id("ep-alice", "alice")]
+    ep = _select_owned(rows, "ep-alice", "alice")
+    assert ep is not None and ep.id == "ep-alice"
+
+
+def test_owned_endpoint_allows_legacy_null_owner_shared_row():
+    rows = [_ep_id("ep-shared", None)]
+    ep = _select_owned(rows, "ep-shared", "alice")
+    assert ep is not None and ep.id == "ep-shared"
+
+
+def test_owned_endpoint_null_owner_is_legacy_single_user_noop():
+    # Single-user / unresolved owner: owner_filter is a no-op, so an exact id
+    # match still resolves (preserves pre-multi-user behaviour).
+    rows = [_ep_id("ep-x", "bob")]
+    ep = _select_owned(rows, "ep-x", None)
+    assert ep is not None and ep.id == "ep-x"

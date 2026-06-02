@@ -11,7 +11,7 @@ from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
-from src.auth_helpers import get_current_user, effective_user
+from src.auth_helpers import get_current_user, effective_user, owner_filter
 
 
 def _sanitize_export_filename(name: str) -> str:
@@ -53,6 +53,27 @@ def _verify_session_owner(request: Request, session_id: str, session_manager=Non
         if ghost is not None and getattr(ghost, "owner", None) == user:
             return
     raise HTTPException(404, f"Session {session_id} not found")
+
+
+def _owned_endpoint(db, endpoint_id, owner):
+    """The ModelEndpoint with `endpoint_id` VISIBLE to `owner` — their own row or
+    a legacy null-owner ("shared") row — else None.
+
+    ModelEndpoint is per-user (non-null owner = private to that user — see
+    core/database.py: "the model picker only shows the endpoint to that user")
+    and holds a decrypted `api_key`. Session create / switch-model copy that key
+    and base_url into the session's auth headers, so an UNSCOPED lookup by the
+    caller-supplied endpoint_id would let a user bind their session to ANOTHER
+    user's PRIVATE endpoint — spending that owner's api_key/quota and reaching
+    whatever internal base_url they configured. Owner-scoped via owner_filter,
+    matching routes/model_routes.py, companion/routes.py and webhook_routes.py.
+    A null/empty owner is a no-op (single-user / legacy mode).
+    """
+    from core.database import ModelEndpoint
+    q = db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id)
+    q = owner_filter(q, ModelEndpoint, owner)
+    return q.first()
+
 
 logger = logging.getLogger(__name__)
 
@@ -255,10 +276,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         resolved_key = api_key.strip() if api_key else ""
         resolved_base = endpoint_url
         if not resolved_key and endpoint_id and endpoint_id.strip():
-            from core.database import ModelEndpoint
             _db = SessionLocal()
             try:
-                ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id.strip()).first()
+                # Owner-scoped: never resolve another user's private endpoint
+                # (and its decrypted api_key / internal base_url). See
+                # _owned_endpoint.
+                ep = _owned_endpoint(_db, endpoint_id.strip(), user)
                 if ep and ep.api_key:
                     resolved_key = ep.api_key
                     resolved_base = ep.base_url
@@ -291,6 +314,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         endpoint_id: str = Form(None),
     ):
         _verify_session_owner(request, sid)
+        owner = effective_user(request)
         try:
             session = session_manager.get_session(sid)
         except KeyError:
@@ -314,10 +338,13 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         # Switch model/endpoint mid-session
         if model is not None and endpoint_url is not None:
             if endpoint_id:
-                from core.database import ModelEndpoint
                 _db = SessionLocal()
                 try:
-                    ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
+                    # Owner-scoped: a scoped miss (another user's endpoint, or a
+                    # deleted one) reads as "no longer exists" so existence isn't
+                    # revealed and the private api_key is never copied. See
+                    # _owned_endpoint.
+                    ep = _owned_endpoint(_db, endpoint_id, owner)
                     if not ep:
                         raise HTTPException(400, "Model endpoint no longer exists")
                 finally:
@@ -328,7 +355,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             if endpoint_id:
                 _db = SessionLocal()
                 try:
-                    ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
+                    ep = _owned_endpoint(_db, endpoint_id, owner)
                     if ep and ep.api_key:
                         from src.endpoint_resolver import build_headers
                         session.headers = build_headers(ep.api_key, ep.base_url)
