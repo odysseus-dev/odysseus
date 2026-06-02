@@ -1,0 +1,2 @@
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-args=-fuse-ld=lld -Wl,--dynamicbase -Wl,--disable-auto-image-base -Wl,--high-entropy-va", "-C", "link-self-contained=yes"]

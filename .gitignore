@@ -89,3 +89,23 @@ docs/windows-port/
 compound.config.json
 *.error.log
 _scratch/
+
+# Tauri desktop wrapper
+desktop/target/
+desktop/frontend/node_modules/
+desktop/*.log
+
+# Tauri updater signing key (NEVER commit private keys!)
+*.key
+
+# Key generator build artifacts
+tools/gen-key/target/
+
+# Build artifacts
+*.whl
+*.tar.gz
+tools/gen-key/target/
+
+# Superpowers skill docs (generated)
+docs/superpowers/
+desktop/gen/

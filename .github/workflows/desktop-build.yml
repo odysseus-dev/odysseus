@@ -1,0 +1,104 @@
+name: Build Desktop App
+
+on:
+  push:
+    paths:
+      - 'desktop/**'
+    tags:
+      - 'desktop-v*'
+  pull_request:
+    paths:
+      - 'desktop/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Run tests
+        working-directory: desktop
+        run: cargo test --lib
+
+  build:
+    name: Build (${{ matrix.os }})
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundle: msi
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundle: dmg
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bundle: appimage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Install macOS deps
+        if: runner.os == 'macOS'
+        run: |
+          # Generate proper .icns from PNG
+          brew install imagemagick
+          mkdir -p desktop/icons/odysseus.iconset
+          for s in 16 32 64 128 256 512; do
+            convert desktop/icons/icon.png -resize ${s}x${s} "desktop/icons/odysseus.iconset/icon_${s}x${s}.png"
+            convert desktop/icons/icon.png -resize $((s*2))x$((s*2)) "desktop/icons/odysseus.iconset/icon_${s}x${s}@2x.png"
+          done
+          iconutil -c icns desktop/icons/odysseus.iconset -o desktop/icons/icon.icns
+      - name: Build
+        working-directory: desktop
+        run: cargo tauri build --target ${{ matrix.target }}
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: odysseus-desktop-${{ matrix.os }}
+          path: |
+            desktop/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle }}/*
+            desktop/target/${{ matrix.target }}/release/bundle/appimage/*
+      - name: Generate updater metadata
+        if: matrix.os == 'ubuntu-latest'
+        id: updater
+        run: |
+          VERSION="${GITHUB_REF_NAME#desktop-v}"
+          SHA256=$(sha256sum desktop/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage | cut -d' ' -f1)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        with:
+          name: "Odysseus Desktop v${{ steps.updater.outputs.version }}"
+          tag_name: ${{ github.ref_name }}
+          files: |
+            desktop/target/**/release/bundle/**/*
+          body: |
+            ## Odysseus Desktop v${{ steps.updater.outputs.version }}
+
+            Desktop wrapper release for Windows, macOS, and Linux.
+
+            ### Installation
+            - **Windows:** Run the .msi installer
+            - **macOS:** Open the .dmg and drag Odysseus to Applications
+            - **Linux:** Make the .AppImage executable and run it

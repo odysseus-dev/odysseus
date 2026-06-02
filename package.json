@@ -6,6 +6,11 @@
   "devDependencies": {
     "@antithesishq/bombadil": "^0.3.2"
   },
+  "scripts": {
+    "desktop:dev": "cd desktop && cargo tauri dev",
+    "desktop:build": "cd desktop && cargo tauri build",
+    "desktop:test": "cd desktop && cargo test --lib"
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0"
   }

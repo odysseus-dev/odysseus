@@ -1,0 +1,8 @@
+# On Windows ARM64, the Tauri SDK ships prebuilts for x86_64.
+# For native arm64 builds, ensure we use the correct target.
+# (CI handles cross-compilation; local dev uses native triple.)
+#
+# Use Rust's self-contained LLD linker to avoid needing GCC runtime libs.
+[target.x86_64-pc-windows-gnu]
+linker = "rust-lld"
+rustflags = ["-C", "link-self-contained=yes"]

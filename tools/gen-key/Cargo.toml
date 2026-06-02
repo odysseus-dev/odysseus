@@ -1,0 +1,9 @@
+[package]
+name = "gen-key"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+minisign = "0.7"
+base64 = "0.22"
+serde_json = "1"

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Odysseus</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    user-select: none;
+  }
+  .icon {
+    width: 96px; height: 96px;
+    background: linear-gradient(135deg, #e94560, #0f3460);
+    border-radius: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 48px;
+    margin-bottom: 24px;
+  }
+  .spinner {
+    width: 32px; height: 32px;
+    border: 3px solid rgba(233, 69, 96, 0.3);
+    border-top-color: #e94560;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 16px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+  p { font-size: 14px; color: #888; }
+  .error {
+    color: #e94560;
+    display: none;
+    margin-top: 16px;
+    text-align: center;
+  }
+  .error button {
+    margin-top: 12px;
+    padding: 8px 24px;
+    background: #e94560;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+  <div class="icon">Ω</div>
+  <div class="spinner" id="spinner"></div>
+  <h1>Starting Odysseus…</h1>
+  <p id="status">Initializing server</p>
+  <div class="error" id="error">
+    <p id="errorMsg"></p>
+    <button onclick="window.__retry__()">Retry</button>
+  </div>
+</body>
+</html>
