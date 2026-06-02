@@ -1487,13 +1487,23 @@ async def stream_agent_loop(
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
-        from src.context_budget import compute_input_token_budget
+        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX
         from src.settings import is_setting_overridden
 
         soft_budget = int(get_setting("agent_input_token_budget", 6000) or 0)
         if soft_budget > 0:
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
+            # Honour the configurable ceiling for the auto-derived budget path.
+            # No-op when the user has an explicit `agent_input_token_budget`
+            # (that branch ignores hard_max). Falls back to DEFAULT_HARD_MAX
+            # on missing/malformed values so misconfig can't zero the budget.
+            try:
+                hard_max = int(get_setting("agent_input_token_hard_max", DEFAULT_HARD_MAX) or DEFAULT_HARD_MAX)
+            except (TypeError, ValueError):
+                hard_max = DEFAULT_HARD_MAX
+            if hard_max <= 0:
+                hard_max = DEFAULT_HARD_MAX
             # Scale the default budget to the model's context window so long-context
             # models aren't silently capped at 6000; an explicit user setting is
             # still honoured (clamped to the window). (#1170)
@@ -1501,6 +1511,7 @@ async def stream_agent_loop(
                 soft_budget,
                 context_length,
                 is_setting_overridden("agent_input_token_budget"),
+                hard_max=hard_max,
             )
             trimmed_messages = trim_for_context(
                 messages,
