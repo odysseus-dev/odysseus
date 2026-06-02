@@ -2243,14 +2243,14 @@ function _setBubblesDisabled(v) {
 }
 
 function _renderEmailBody(data) {
-  // Prefer the server-cached thread parse — that's the richest structure
-  // and the one the chat-bubble layout is built around. Skip when the user
-  // has manually disabled bubble rendering.
-  if (!_bubblesDisabled() && Array.isArray(data && data.thread_turns) && data.thread_turns.length) {
-    return _foldSignature(
-      _renderTurnsAsBubbles(data.thread_turns, data),
-      data && data.sender_signature || null,
-    );
+  // Prefer the server-cached thread parse — that's the richest structure.
+  // Use the chat-bubble layout when enabled; otherwise render as collapsible
+  // nested folds so quoted reply chains are still properly structured.
+  if (Array.isArray(data && data.thread_turns) && data.thread_turns.length) {
+    const rendered = _bubblesDisabled()
+      ? _renderTurnsFromServer(data.thread_turns)
+      : _renderTurnsAsBubbles(data.thread_turns, data);
+    return _foldSignature(rendered, data && data.sender_signature || null);
   }
   const b = data && data.boundaries;
   // Use cached boundaries when present AND we have plain-text body to slice

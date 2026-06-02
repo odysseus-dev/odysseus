@@ -488,9 +488,13 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
       uiModule.showToast('Download failed: HTTP ' + res.status);
       return;
     }
-    const data = await res.json();
-    if (!data.ok) {
-      uiModule.showToast('Download failed: ' + (data.error || ''));
+    const data = await res.json().catch(() => null);
+    if (!data || !data.ok) {
+      uiModule.showToast('Download failed: ' + ((data && data.error) || 'Invalid server response'));
+      return;
+    }
+    if (!data.session_id) {
+      uiModule.showToast('Download failed: server did not return a session ID');
       return;
     }
     _addTask(data.session_id, shortName, 'download', payload);

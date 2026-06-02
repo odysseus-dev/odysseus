@@ -147,7 +147,7 @@ async function _removeEndpointByUrl(baseUrl) {
   try {
     const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
     if (!res.ok) return;
-    const endpoints = await res.json();
+    const endpoints = await res.json().catch(() => []);
     const hostPort = baseUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
     const ep = endpoints.find(e => e.base_url === baseUrl)
             || endpoints.find(e => e.base_url.includes(hostPort));
@@ -241,10 +241,17 @@ async function _startQueuedDownload(task) {
       _renderRunningTab();
       return;
     }
-    const data = await res.json();
-    if (!data.ok) {
-      _updateTask(task.sessionId, { status: 'error', output: data.error || 'Unknown error' });
+    const data = await res.json().catch(() => null);
+    if (!data || !data.ok) {
+      _updateTask(task.sessionId, { status: 'error', output: (data && data.error) || 'Server returned an invalid response' });
       _renderRunningTab();
+      _processQueue();
+      return;
+    }
+    if (!data.session_id) {
+      _updateTask(task.sessionId, { status: 'error', output: 'Server did not return a session ID' });
+      _renderRunningTab();
+      _processQueue();
       return;
     }
     const oldId = task.sessionId;
@@ -644,7 +651,7 @@ export async function _syncFromServer() {
   try {
     const res = await fetch('/api/cookbook/state', { credentials: 'same-origin' });
     if (!res.ok) return false;
-    const state = _normalizeState(await res.json());
+    const state = _normalizeState(await res.json().catch(() => null));
     if (!state || !state.env) return false;
 
     const localTasks = _loadTasks();
@@ -703,7 +710,7 @@ async function _retryTask(el, task) {
   } catch {}
   _removeTask(task.sessionId);
   if (task.payload) {
-    if (task.type === 'serve' && task.payload._cmd) {
+    if ((task.type === 'serve' || task.payload._dep) && task.payload._cmd) {
       _launchServeTask(task.name, task.payload.repo_id, task.payload._cmd, task.payload._fields, task.remoteHost || '');
     } else {
       _retryDownload(task.name, task.payload);
@@ -726,9 +733,13 @@ async function _retryDownload(name, payload) {
       uiModule.showToast('Download failed: HTTP ' + res.status);
       return;
     }
-    const data = await res.json();
-    if (!data.ok) {
-      uiModule.showToast('Download failed: ' + (data.error || ''));
+    const data = await res.json().catch(() => null);
+    if (!data || !data.ok) {
+      uiModule.showToast('Download failed: ' + ((data && data.error) || 'Invalid server response'));
+      return;
+    }
+    if (!data.session_id) {
+      uiModule.showToast('Download failed: server did not return a session ID');
       return;
     }
     _addTask(data.session_id, name, 'download', payload);
@@ -1070,14 +1081,18 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(reqBody),
     });
-    const data = await res.json();
-    if (!data.ok) {
+    const data = await res.json().catch(() => null);
+    if (!data || !data.ok) {
       // Two error shapes: `{ok:false, error}` (tmux launch failed) or
       // `{detail}` (FastAPI HTTPException). Show whichever is present
       // + log full payload so the user can copy the error.
-      const err = data.error || data.detail || res.statusText || 'unknown';
+      const err = (data && (data.error || data.detail)) || res.statusText || 'unknown';
       console.error('[cookbook] /api/model/serve failed', { status: res.status, body: data });
       uiModule.showToast('Failed to start: ' + String(err).slice(0, 200), 9000);
+      return;
+    }
+    if (!data.session_id) {
+      uiModule.showToast('Failed: server did not return a session ID');
       return;
     }
 
@@ -1889,7 +1904,7 @@ async function _reconnectTask(el, task) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: _tmuxCmd(task, `capture-pane -t ${task.sessionId} -p -S -200`), timeout: 15 }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (data.exit_code !== 0) {
         failCount++;
@@ -1903,7 +1918,7 @@ async function _reconnectTask(el, task) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ command: _tmuxCmd(task, `has-session -t ${task.sessionId}`) }),
           });
-          const vData = await verify.json();
+          const vData = await verify.json().catch(() => ({}));
           if (vData.exit_code === 0) {
             failCount = 0;
             await new Promise(r => setTimeout(r, 5000));
@@ -1948,9 +1963,16 @@ async function _reconnectTask(el, task) {
               <div class="cookbook-diag-title" style="font-weight:600;margin-bottom:4px;color:var(--red);">Process crashed — last output:</div>
               <pre style="margin:0;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:11px;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;">${esc(crashLines)}</pre>
               <div style="margin-top:6px;display:flex;gap:6px;">
-                <button class="cookbook-diag-action" onclick="navigator.clipboard.writeText(this.closest('.cookbook-diagnosis').querySelector('pre').textContent).then(()=>this.textContent='Copied!')" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--panel);color:var(--fg);cursor:pointer;">Copy logs</button>
+                <button class="cookbook-diag-action cookbook-crash-copy-btn" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--panel);color:var(--fg);cursor:pointer;">Copy logs</button>
               </div>
             </div>`;
+            diagEl.querySelector('.cookbook-crash-copy-btn')?.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const pre = diagEl.querySelector('pre');
+              _copyText(pre?.textContent || '').then(() => {
+                e.target.textContent = 'Copied!';
+              });
+            });
             _showCookbookNotif(true);
           } else {
             _updateTask(task.sessionId, { status: 'done' });
@@ -2020,6 +2042,20 @@ async function _reconnectTask(el, task) {
                 badge.addEventListener('click', (e) => { e.stopPropagation(); _retryTask(el, task); });
               }
             } else if (Date.now() - (el._lastProgressTime || 0) > _STALE_TIMEOUT && !task._autoRestarted) {
+              // Dependency installs (pip) cannot be restarted via /api/model/download
+              // — that endpoint expects a HuggingFace repo_id. Mark them as stalled
+              // with a click-to-retry badge instead.
+              if (task.payload?._dep) {
+                badge.textContent = 'stalled ↻';
+                badge.className = 'cookbook-task-status cookbook-task-error';
+                badge.title = 'Click to retry';
+                badge.style.cursor = 'pointer';
+                if (!badge._retryBound) {
+                  badge._retryBound = true;
+                  badge.addEventListener('click', (e) => { e.stopPropagation(); _retryTask(el, task); });
+                }
+                break;
+              }
               task._autoRestarted = true;
               _updateTask(task.sessionId, { _autoRestarted: true });
               badge.textContent = 'stale — restarting';
@@ -2049,8 +2085,8 @@ async function _reconnectTask(el, task) {
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify(dlPayload),
                 });
-                const data = await res.json();
-                if (data.ok && data.session_id) {
+                const data = await res.json().catch(() => null);
+                if (data && data.ok && data.session_id) {
                   _updateTask(task.sessionId, { sessionId: data.session_id, status: 'running', output: '' });
                   task.sessionId = data.session_id;
                   el._lastProgress = null;
@@ -2060,9 +2096,19 @@ async function _reconnectTask(el, task) {
                   continue;
                 }
               } catch {}
+              // Restart failed — mark the task as error so it shows a retry
+              // button instead of staying stuck as "running" with no monitoring.
+              _updateTask(task.sessionId, { status: 'error' });
               badge.textContent = 'stale — restart failed';
               badge.className = 'cookbook-task-status cookbook-task-error';
+              badge.title = 'Click to retry';
+              badge.style.cursor = 'pointer';
+              if (!badge._retryBound) {
+                badge._retryBound = true;
+                badge.addEventListener('click', (e) => { e.stopPropagation(); _retryTask(el, task); });
+              }
               _showCookbookNotif(true);
+              _processQueue();
               break;
             }
 
@@ -2324,12 +2370,33 @@ async function _reconnectTask(el, task) {
           const badge = el.querySelector('.cookbook-task-status');
           if (badge) { badge.textContent = status; badge.className = `cookbook-task-status cookbook-task-${status}`; }
           _renderRunningTab();
+          break;
         }
         _updateTask(task.sessionId, { output: snapshot.slice(-5000) });
       }
     } catch {
       failCount++;
-      if (failCount > 10) break;
+      if (failCount > 10) {
+        // Too many consecutive polling failures (server down, network lost,
+        // tmux gone). Mark the task as errored so it shows a retry button
+        // instead of staying stuck as "running" with no active monitoring.
+        _updateTask(task.sessionId, { status: 'error', output: (output?.textContent || task.output || '').slice(-5000) });
+        const badge = el.querySelector('.cookbook-task-status');
+        if (badge) {
+          badge.textContent = 'connection lost';
+          badge.className = 'cookbook-task-status cookbook-task-error';
+          badge.title = 'Click to retry';
+          badge.style.cursor = 'pointer';
+          if (!badge._retryBound) {
+            badge._retryBound = true;
+            badge.addEventListener('click', (e) => { e.stopPropagation(); _retryTask(el, task); });
+          }
+        }
+        _showCookbookNotif(true);
+        _renderRunningTab();
+        _processQueue();
+        break;
+      }
       await new Promise(r => setTimeout(r, 10000));
       continue;
     }
@@ -2569,7 +2636,7 @@ async function _pollBackgroundStatus() {
 
     const res = await fetch('/api/cookbook/tasks/status', { credentials: 'same-origin' });
     if (!res.ok) return;
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     const tasks = data.tasks || [];
 
     const statusEl = document.getElementById('cookbook-bg-status');

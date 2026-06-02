@@ -1846,6 +1846,18 @@ async def stream_agent_loop(
                     # never re-verify an unchanged state in a loop.
                     _effectful_used = False
                     continue
+            # If the model produced no visible text, no tools, and no error
+            # was forwarded, the user would see a completely empty response.
+            # Emit a message so the stream doesn't silently end with nothing.
+            if round_num == 1 and not full_response.strip() and not tool_events and not native_tool_calls:
+                _empty_msg = (
+                    "The model did not produce a response. This can happen due to "
+                    "a timeout, context overflow, or the model failing to generate output. "
+                    "Try again, or switch to a different model."
+                )
+                logger.warning(f"[agent] empty response from {model} on round 1 (endpoint={endpoint_url})")
+                yield f'data: {json.dumps({"delta": _empty_msg})}\n\n'
+                full_response += _empty_msg
             break  # no tools — done
 
         # ── Loop-breaker (Terminus-style stall detector) ──────────────

@@ -1214,6 +1214,7 @@ import createResearchSynapse from './researchSynapse.js';
 
       let _nextIsError = false;
       let _streamSawDone = false;
+      let _streamError = false;  // set when an error event arrives mid-stream
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1330,6 +1331,7 @@ import createResearchSynapse from './researchSynapse.js';
               // Handle SSE error events (e.g. HTTP 404 from provider)
               if (_nextIsError || json.status >= 400) {
                 _nextIsError = false;
+                _streamError = true;
                 const errMsg = json.text || json.error?.message || `Error ${json.status || 'unknown'}`;
                 console.error('Stream error:', errMsg);
                 if (spinner && spinner.element) spinner.destroy();
@@ -2226,7 +2228,7 @@ import createResearchSynapse from './researchSynapse.js';
         throw new Error('Stream closed before completion');
       }
 
-      _renderStream();
+      if (!_streamError) _renderStream();
       _cancelThinkingTimer();
       _removeThinkingSpinner();
       // Stop any thread pulse animations
@@ -2381,6 +2383,34 @@ import createResearchSynapse from './researchSynapse.js';
         }
         if (markdownModule.renderMermaid) markdownModule.renderMermaid(roundHolder);
 
+        // If a stream error arrived mid-response, append an error indicator
+        // below the partial text so the user knows the stream was interrupted.
+        if (_streamError) {
+          const _errBody = roundHolder.querySelector('.body') || roundHolder;
+          const _errInd = document.createElement('div');
+          _errInd.className = 'stopped-indicator';
+          _errInd.innerHTML = '<span style="color: var(--color-error); font-style: italic;">[Stream interrupted — connection lost]</span>';
+          _errBody.appendChild(_errInd);
+          // Also add a continue button so the user can retry
+          const _errCont = document.createElement('button');
+          _errCont.className = 'continue-btn';
+          _errCont.title = 'Continue';
+          _errCont.textContent = '\u25B8';
+          _errCont.addEventListener('click', () => {
+            _errInd.remove();
+            _hideUserBubble = true;
+            _pendingContinue = roundHolder;
+            const cutoff = accumulated;
+            const msgInput = uiModule.el('message');
+            if (msgInput) {
+              msgInput.value = 'Your previous response was interrupted by a connection error. It ended with:\n\n' + cutoff.slice(-500) + '\n\nDo NOT repeat what you already said. Continue exactly from where you were cut off.';
+              const sb = document.querySelector('.send-btn');
+              if (sb) sb.click();
+            }
+          });
+          _errInd.appendChild(_errCont);
+        }
+
         uiModule.scrollHistory();
         // Render RAG sources if present
         if (holder._ragSources && holder._ragSources.length) {
@@ -2492,7 +2522,7 @@ import createResearchSynapse from './researchSynapse.js';
       } // end if (!_isBgFinal)
 
     } catch (err) {
-      _renderStream();
+      if (!_streamError) _renderStream();
       // Clean up any active spinner (e.g. "Generating response" during tool calls)
       if (spinner && spinner.element) spinner.destroy();
       _cancelThinkingTimer();
@@ -2651,14 +2681,17 @@ import createResearchSynapse from './researchSynapse.js';
           // errors (unsupported tools, 4xx/5xx, parse failures) surface right away
           // instead of burning the nudge budget on a guaranteed-to-fail retry.
           if (!(_isRecoverableStreamErr(err) && _tryAutoRecover(holder, accumulated, streamSessionId))) {
-            const errorHolder = document.querySelector('.msg-ai:last-of-type .body');
-            if (errorHolder) {
-              let errMsg = `Error: ${err.message}`;
-              // Add hint for tool-call errors
-              if (err.message && (err.message.includes('tool') || err.message.includes('auto'))) {
-                errMsg += '\n\nThis model may not support tools — try switching to Chat mode.';
+            // Only show the error if it wasn't already displayed via an SSE error event
+            if (!_streamError) {
+              const errorHolder = document.querySelector('.msg-ai:last-of-type .body');
+              if (errorHolder) {
+                let errMsg = `Error: ${err.message}`;
+                // Add hint for tool-call errors
+                if (err.message && (err.message.includes('tool') || err.message.includes('auto'))) {
+                  errMsg += '\n\nThis model may not support tools — try switching to Chat mode.';
+                }
+                typewriterInto(errorHolder, errMsg);
               }
-              typewriterInto(errorHolder, errMsg);
             }
           }
         }

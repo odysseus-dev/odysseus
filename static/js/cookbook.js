@@ -637,6 +637,10 @@ async function _fetchDependencies() {
           uiModule.showToast('Install failed: ' + String(reason).slice(0, 200));
           return;
         }
+        if (!data.session_id) {
+          uiModule.showToast('Install failed: server did not return a session ID');
+          return;
+        }
         // _dep flags this as a pip dependency/driver install (not a servable
         // model) so the running-task card doesn't offer a "Serve →" button.
         const payload = { repo_id: pipName, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true };
