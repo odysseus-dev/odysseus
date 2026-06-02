@@ -676,8 +676,8 @@ def setup_contacts_routes():
     @router.post("/add")
     async def add_contact(data: dict, _admin: str = Depends(require_admin)):
         """Add a new contact."""
-        name = data.get("name", "").strip()
-        email = data.get("email", "").strip()
+        name = (data.get("name") or "").strip()
+        email = (data.get("email") or "").strip()
         if not email:
             return {"success": False, "error": "Email required"}
         # Check if already exists
