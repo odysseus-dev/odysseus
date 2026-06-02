@@ -862,7 +862,7 @@ def _build_system_prompt(
                 # matter how often it's been matched and applied.
                 for _sk in relevant_skills:
                     try:
-                        sm.record_use(_sk.get('name', ''))
+                        sm.record_use(_sk.get('name', ''), owner=owner)
                     except Exception:
                         pass
                 lines.append("## Relevant skills for this request")
@@ -961,6 +961,10 @@ _ADMIN_TOOLS = {
     "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens",
     "manage_documents", "manage_settings", "create_session", "list_sessions",
     "send_to_session", "pipeline", "ask_teacher", "list_models",
+    "download_model", "serve_model", "serve_preset", "list_serve_presets",
+    "list_cookbook_servers", "list_served_models", "list_downloads",
+    "list_cached_models", "stop_served_model", "cancel_download",
+    "adopt_served_model",
 }
 
 def _build_base_prompt(
@@ -1436,13 +1440,27 @@ async def stream_agent_loop(
     _endpoint_supports: Optional[bool] = None
     try:
         from core.database import SessionLocal as _SL, ModelEndpoint as _ME
+        from src.endpoint_resolver import build_chat_url as _build_chat_url, normalize_base as _normalize_base
         _db = _SL()
         try:
-            _ep = _db.query(_ME).filter(_ME.base_url == endpoint_url).first()
-            if not _ep and endpoint_url:
-                _u = endpoint_url.rstrip("/")
-                _ep = _db.query(_ME).filter(_ME.base_url == _u).first() or \
-                      _db.query(_ME).filter(_ME.base_url == _u + "/").first()
+            _ep = None
+            _target_chat = (endpoint_url or "").rstrip("/")
+            _q = _db.query(_ME).filter(_ME.is_enabled == True)
+            if owner:
+                from src.auth_helpers import owner_filter as _owner_filter
+                _q = _owner_filter(_q, _ME, owner)
+            for _candidate in _q.all():
+                _base = _normalize_base(_candidate.base_url or "")
+                if (endpoint_url or "").rstrip("/") in {
+                    (_candidate.base_url or "").rstrip("/"),
+                    _base.rstrip("/"),
+                    _build_chat_url(_base).rstrip("/"),
+                }:
+                    _ep = _candidate
+                    break
+                if _target_chat and _target_chat == _build_chat_url(_base).rstrip("/"):
+                    _ep = _candidate
+                    break
             if _ep is not None:
                 _endpoint_supports = _ep.supports_tools
         finally:

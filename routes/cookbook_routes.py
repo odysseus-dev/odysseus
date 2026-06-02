@@ -1706,13 +1706,20 @@ def setup_cookbook_routes() -> APIRouter:
             return {"ok": False, "error": str(e)}
 
     @router.get("/api/cookbook/hf-latest")
-    async def hf_latest(vram_gb: float = 0, limit: int = 10, pipeline: str = "text-generation", owner: str = Depends(require_user)):
+    async def hf_latest(
+        request: Request,
+        vram_gb: float = 0,
+        limit: int = 10,
+        pipeline: str = "text-generation",
+        _owner: str = Depends(require_user),
+    ):
         """Fetch latest HuggingFace models, filtered by what fits in available VRAM.
 
         vram_gb: total available VRAM in GB. 0 = no filter (return everything).
         limit:   how many models to return (default 10).
         pipeline: HF pipeline_tag filter (text-generation, text-to-image, etc.).
         """
+        require_admin(request)
         import re
         import httpx
 

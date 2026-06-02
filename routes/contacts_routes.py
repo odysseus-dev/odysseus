@@ -41,10 +41,19 @@ def _save_settings(settings):
 def _get_carddav_config():
     import os
     settings = _load_settings()
+    password = settings.get("carddav_password", os.environ.get("CARDDAV_PASSWORD", ""))
+    # Stored CardDAV passwords are encrypted at rest (see update_config). Legacy
+    # plaintext values and env-supplied passwords decrypt to themselves.
+    if password:
+        try:
+            from src.secret_storage import decrypt
+            password = decrypt(password)
+        except Exception:
+            pass
     return {
         "url": settings.get("carddav_url", os.environ.get("CARDDAV_URL", "")),
         "username": settings.get("carddav_username", os.environ.get("CARDDAV_USERNAME", "")),
-        "password": settings.get("carddav_password", os.environ.get("CARDDAV_PASSWORD", "")),
+        "password": password,
     }
 
 
@@ -740,7 +749,19 @@ def setup_contacts_routes():
         settings = _load_settings()
         for key in ("carddav_url", "carddav_username", "carddav_password"):
             if key in data:
-                settings[key] = data[key]
+                value = data[key]
+                # Encrypt the password at rest (legacy plaintext stays readable
+                # via the decrypt fallback in _get_carddav_config). Skip the
+                # masked sentinel so re-saving the form doesn't clobber the key.
+                if key == "carddav_password" and value and value != "***":
+                    try:
+                        from src.secret_storage import encrypt
+                        value = encrypt(value)
+                    except Exception:
+                        pass
+                if key == "carddav_password" and value == "***":
+                    continue
+                settings[key] = value
         _save_settings(settings)
         # Force re-fetch
         _contact_cache["fetched_at"] = None

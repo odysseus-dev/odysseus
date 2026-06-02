@@ -25,15 +25,19 @@ _STUBS = {
     "core.database": {"Session": MagicMock(), "SessionLocal": MagicMock(),
                       "Document": MagicMock(), "GalleryImage": MagicMock()},
     "core.session_manager": {"SessionManager": MagicMock()},
-    "core.models": {"ChatMessage": MagicMock()},
+    "core.models": {"Session": MagicMock(), "ChatMessage": MagicMock()},
     "src.request_models": {"SessionResponse": MagicMock()},
 }
 for _name, _attrs in _STUBS.items():
     if _name not in sys.modules:
         _m = types.ModuleType(_name)
-        for _k, _v in _attrs.items():
-            setattr(_m, _k, _v)
         sys.modules[_name] = _m
+    _m = sys.modules[_name]
+    for _k, _v in _attrs.items():
+        setattr(_m, _k, _v)
+    _parent, _, _attr = _name.rpartition(".")
+    if _parent in sys.modules:
+        setattr(sys.modules[_parent], _attr, _m)
 
 from fastapi import HTTPException  # noqa: E402
 

@@ -823,10 +823,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from src.llm_core import llm_call_async
 
         user = get_current_user(request)
-        url, model, headers = resolve_task_endpoint()
+        url, model, headers = resolve_task_endpoint(owner=user)
         if not url or not model:
             # Fall back to default endpoint
-            url, model, headers = resolve_endpoint("default")
+            url, model, headers = resolve_endpoint("default", owner=user)
         if not url or not model:
             raise HTTPException(500, "No endpoint configured for AI tidy")
 
@@ -1130,7 +1130,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         settings = _load_vl_settings()
         vl_model = settings.get("vision_model", "")
         try:
-            url, model_id, headers = _resolve_vl_model(vl_model)
+            url, model_id, headers = _resolve_vl_model(vl_model, owner=user)
         except Exception as e:
             raise HTTPException(503, f"No vision model available: {e}")
 

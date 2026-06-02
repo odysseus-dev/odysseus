@@ -311,11 +311,19 @@ _ADMIN_TOOLS = {
     "manage_webhooks",
     "manage_tokens",
     "manage_settings",
+    # These look like convenience helpers, but they describe or mutate local
+    # model-serving state. Treat the whole serving surface as admin-only.
     "download_model",
     "serve_model",
     "serve_preset",
+    "list_serve_presets",
+    "list_cookbook_servers",
+    "list_served_models",
+    "list_downloads",
+    "list_cached_models",
     "stop_served_model",
     "cancel_download",
+    "adopt_served_model",
 }
 
 

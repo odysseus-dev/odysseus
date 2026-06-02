@@ -73,6 +73,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+API_TOKEN_ALLOWED_PATHS = {
+    "/api/v1/chat",
+}
+
 # ========= APP =========
 app = FastAPI(
     title="AI Chat Application",
@@ -289,6 +293,11 @@ if AUTH_ENABLED:
             # --- Bearer token auth (API tokens for external integrations) ---
             auth_header = request.headers.get("authorization", "")
             if auth_header.startswith("Bearer ody_"):
+                # API tokens are integration credentials, not browser sessions.
+                # Keep them on explicit token routes so a leaked chat token
+                # cannot walk into unrelated admin/user endpoints.
+                if path not in API_TOKEN_ALLOWED_PATHS:
+                    return JSONResponse(status_code=403, content={"error": "API tokens are only accepted on scoped API routes"})
                 raw_token = auth_header[7:]
                 # Sanity check: tokens are "ody_" + 43 chars of base64
                 if len(raw_token) < 12 or len(raw_token) > 100:

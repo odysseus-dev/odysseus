@@ -38,9 +38,17 @@ NON_ADMIN_BLOCKED_TOOLS = {
     "vault_search",
     "vault_get",
     "vault_unlock",
+    # Cookbook/model serving tools expose local runtime state and can start,
+    # stop, or adopt model servers. Keep even read-looking inventory calls out
+    # of non-admin sessions.
     "download_model",
     "serve_model",
     "serve_preset",
+    "list_serve_presets",
+    "list_cookbook_servers",
+    "list_served_models",
+    "list_downloads",
+    "list_cached_models",
     "stop_served_model",
     "cancel_download",
     "adopt_served_model",

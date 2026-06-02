@@ -14,7 +14,9 @@ These are pure-function tests — no FastAPI app boot, no DB.
 import sys
 import types
 import json
+import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -122,7 +124,7 @@ def test_docker_compose_binds_web_ui_to_loopback_by_default():
 def test_readme_native_quickstart_uses_loopback():
     readme = Path("README.md").read_text(encoding="utf-8")
     assert "python -m uvicorn app:app --host 127.0.0.1 --port 7000" in readme
-    assert "Use `--host 0.0.0.0` only when you intentionally want" in readme
+    assert re.search(r"Use `--host 0\.0\.0\.0` only when\s+you intentionally want", readme)
 
 
 def test_ollama_cookbook_runner_does_not_force_public_bind():
@@ -295,6 +297,7 @@ def _stub_core_database_for_route_imports(monkeypatch):
     core_pkg = types.ModuleType("core")
     core_pkg.__path__ = []
     models = types.ModuleType("core.models")
+    models.Session = MagicMock()
     models.ChatMessage = MagicMock()
 
     db = types.ModuleType("core.database")
@@ -943,6 +946,60 @@ def test_mcp_oauth_page_escapes_reflected_values():
         assert f"{var} = html.escape({var}" in body, var
 
 
+# ── session endpoint SSRF guard ─────────────────────────────────────────────
+
+def _fake_request_for_user(user, *, admin=False):
+    auth_manager = SimpleNamespace(is_admin=lambda username: bool(admin))
+    return SimpleNamespace(
+        state=SimpleNamespace(current_user=user),
+        app=SimpleNamespace(state=SimpleNamespace(auth_manager=auth_manager)),
+    )
+
+
+def test_non_admin_session_create_rejects_raw_endpoint_url_without_endpoint_id():
+    from fastapi import HTTPException
+    from routes.session_routes import _reject_raw_endpoint_url_for_non_admin
+
+    request = _fake_request_for_user("alice", admin=False)
+    with pytest.raises(HTTPException) as exc:
+        _reject_raw_endpoint_url_for_non_admin(
+            request,
+            "alice",
+            "",
+            "http://169.254.169.254/latest/meta-data",
+        )
+
+    assert exc.value.status_code == 403
+
+
+def test_non_admin_session_create_allows_registered_endpoint_id():
+    from routes.session_routes import _reject_raw_endpoint_url_for_non_admin
+
+    request = _fake_request_for_user("alice", admin=False)
+    _reject_raw_endpoint_url_for_non_admin(
+        request,
+        "alice",
+        "owned-endpoint-id",
+        "http://127.0.0.1:8765/v1/chat/completions",
+    )
+
+
+def test_admin_and_single_user_mode_can_still_use_raw_endpoint_urls():
+    from routes.session_routes import _reject_raw_endpoint_url_for_non_admin
+
+    _reject_raw_endpoint_url_for_non_admin(
+        _fake_request_for_user("admin", admin=True),
+        "admin",
+        "",
+        "http://127.0.0.1:8765/v1/chat/completions",
+    )
+    _reject_raw_endpoint_url_for_non_admin(
+        _fake_request_for_user(None, admin=False),
+        None,
+        "",
+        "http://127.0.0.1:8765/v1/chat/completions",
+    )
+
 
 # -- export/gallery filename hardening ----------------------------------------
 
@@ -965,6 +1022,7 @@ def _install_route_import_stubs(monkeypatch):
     session_manager_mod.SessionManager = type("SessionManager", (), {})
 
     models_mod = types.ModuleType("core.models")
+    models_mod.Session = type("Session", (), {})
     models_mod.ChatMessage = type("ChatMessage", (), {})
 
     monkeypatch.setitem(sys.modules, "core", core_mod)
@@ -1022,6 +1080,7 @@ def test_gallery_replace_filename_sanitizer_falls_back_when_empty(monkeypatch):
 
     assert mod._sanitize_gallery_filename("../") == "abcdef123456"
 
+
 def test_chat_active_document_lookup_is_owner_scoped():
     """The explicit `active_doc_id` path in /api/chat_stream must scope the
     document lookup to the caller. Resolving by id alone let any user inject
@@ -1041,3 +1100,16 @@ def test_chat_active_document_lookup_is_owner_scoped():
     assert "filter( DBDocument.id == active_doc_id, ).first()" not in flat
     assert "filter(DBDocument.id == active_doc_id).first()" not in flat
     assert "filter(DBDocument.id == _mem_id).first()" not in flat
+
+
+def test_chat_endpoint_recovery_helpers_are_owner_scoped():
+    """Endpoint recovery must not let another owner's private endpoint decide
+    whether this user's chat endpoint is still valid or which model to recover."""
+    src = Path(__file__).resolve().parents[1] / "routes" / "chat_routes.py"
+    text = src.read_text()
+
+    assert "def _clear_orphaned_session_endpoint(sess, owner:" in text
+    assert "def _recover_empty_session_model(sess, session_id: str, owner:" in text
+    assert "q = owner_filter(q, ModelEndpoint, owner)" in text
+    assert "_clear_orphaned_session_endpoint(sess, owner=owner)" in text
+    assert "_recover_empty_session_model(sess, session, owner=owner)" in text

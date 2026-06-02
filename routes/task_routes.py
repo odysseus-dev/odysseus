@@ -10,8 +10,8 @@ from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import SessionLocal, ScheduledTask, TaskRun
-from src.auth_helpers import get_current_user
+from core.database import SessionLocal, ScheduledTask, TaskRun, ModelEndpoint
+from src.auth_helpers import get_current_user, owner_filter
 from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from routes.prefs_routes import _load_for_user, _save_for_user
 
@@ -156,8 +156,8 @@ def _resolve_run_endpoint(db, task: ScheduledTask, run: TaskRun) -> str:
         return ""
 
     try:
-        from core.database import ModelEndpoint
-        eps = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        eps = owner_filter(q, ModelEndpoint, getattr(task, "owner", None) or "").all()
         for ep in eps:
             cached = []
             if ep.cached_models:
@@ -178,22 +178,42 @@ def setup_task_routes(task_scheduler) -> APIRouter:
     def _owner(request: Request):
         return get_current_user(request)
 
-    async def _generate_task_name(prompt: str) -> str:
+    def _resolve_task_model_choice(db, owner: str | None, endpoint_url: str | None, model: str | None) -> tuple[str | None, str | None]:
+        """Validate a task's pinned endpoint against the owner's registered endpoints."""
+        clean_url = (endpoint_url or "").strip()
+        clean_model = (model or "").strip()
+        if not clean_url:
+            return None, clean_model or None
+
+        from src.endpoint_resolver import normalize_base, build_chat_url
+        target_base = normalize_base(clean_url)
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        q = owner_filter(q, ModelEndpoint, owner or "")
+        for ep in q.all():
+            base = normalize_base(ep.base_url or "")
+            if target_base != base:
+                continue
+            if clean_model and ep.cached_models:
+                try:
+                    cached = json.loads(ep.cached_models) or []
+                except Exception:
+                    cached = []
+                if cached and clean_model not in cached:
+                    raise HTTPException(400, "Model is not available on the selected endpoint")
+            return build_chat_url(base), clean_model or None
+
+        raise HTTPException(400, "Model endpoint is not available to this user")
+
+    async def _generate_task_name(prompt: str, owner: str | None = None) -> str:
         """Use LLM to generate a short task name from the prompt."""
         try:
             from src.llm_core import llm_call_async
-            from core.database import Session as DbSession
-            db = SessionLocal()
-            try:
-                recent = db.query(DbSession).filter(
-                    DbSession.endpoint_url.isnot(None),
-                    DbSession.model.isnot(None),
-                ).order_by(DbSession.created_at.desc()).first()
-                if not recent:
-                    return prompt[:50].strip()
-                url, model = recent.endpoint_url, recent.model
-            finally:
-                db.close()
+            from src.endpoint_resolver import resolve_endpoint
+            url, model, headers = resolve_endpoint("utility", owner=owner)
+            if not url:
+                url, model, headers = resolve_endpoint("default", owner=owner)
+            if not (url and model):
+                return prompt[:50].strip()
 
             result = await llm_call_async(
                 url=url, model=model,
@@ -202,6 +222,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                     {"role": "user", "content": prompt[:500]},
                 ],
                 max_tokens=20,
+                headers=headers,
                 timeout=15,
             )
             title = result.strip().strip('"\'').strip()
@@ -352,7 +373,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 from src.builtin_actions import BUILTIN_ACTION_INFO
                 name = BUILTIN_ACTION_INFO.get(req.action, req.action or "Action Task")
             elif req.prompt:
-                name = await _generate_task_name(req.prompt)
+                name = await _generate_task_name(req.prompt, user)
             else:
                 name = "Untitled Task"
 
@@ -379,6 +400,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         task_id = str(uuid.uuid4())
         db = SessionLocal()
         try:
+            endpoint_url, model = _resolve_task_model_choice(db, user, req.endpoint_url, req.model)
             notifications_enabled = (
                 False if req.task_type == "action" and req.notifications_enabled is None
                 else bool(req.notifications_enabled) if req.notifications_enabled is not None
@@ -403,8 +425,8 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 next_run=next_run,
                 status="active" if (req.trigger_type in ("event", "webhook") or next_run) else "completed",
                 output_target=req.output_target,
-                model=req.model or None,
-                endpoint_url=req.endpoint_url or None,
+                model=model,
+                endpoint_url=endpoint_url,
                 then_task_id=req.then_task_id or None,
                 webhook_token=webhook_token,
                 notifications_enabled=notifications_enabled,
@@ -538,10 +560,13 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 task.action = req.action
             if req.output_target is not None:
                 task.output_target = req.output_target
-            if req.model is not None:
-                task.model = req.model or None
-            if req.endpoint_url is not None:
-                task.endpoint_url = req.endpoint_url or None
+            if req.model is not None or req.endpoint_url is not None:
+                task.endpoint_url, task.model = _resolve_task_model_choice(
+                    db,
+                    user,
+                    req.endpoint_url if req.endpoint_url is not None else task.endpoint_url,
+                    req.model if req.model is not None else task.model,
+                )
             if req.trigger_type is not None:
                 # Generate webhook token when switching to webhook trigger
                 if req.trigger_type == "webhook" and not task.webhook_token:
@@ -919,6 +944,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         from datetime import datetime as _dt
 
         body = await request.json()
+        user = _owner(request)
         desc = (body.get("description") or "").strip()
         if not desc:
             return {"success": False, "message": "Nothing to parse"}
@@ -948,9 +974,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             "use cron '0 H * * 1-5'. Keep the prompt actionable and self-contained."
         )
         try:
-            url, model, headers = resolve_endpoint("utility")
+            url, model, headers = resolve_endpoint("utility", owner=user)
             if not url:
-                url, model, headers = resolve_endpoint("default")
+                url, model, headers = resolve_endpoint("default", owner=user)
             if not (url and model):
                 return {"success": False, "message": "No model endpoint configured"}
             raw = await llm_call_async(

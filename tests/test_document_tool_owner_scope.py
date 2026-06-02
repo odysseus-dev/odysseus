@@ -73,11 +73,18 @@ def _install_database_stub(monkeypatch, module_name, query):
     return db
 
 
-def test_owned_document_query_rejects_missing_owner():
+def test_owned_document_query_without_owner_filters_to_ownerless():
     query = _Query()
 
     assert tools._owned_document_query(query, _Document, None) is query
-    assert False in query.filters
+    assert ("or", ("owner", "eq", None), ("owner", "eq", "")) in query.filters
+
+
+def test_owned_document_query_empty_owner_filters_to_ownerless():
+    query = _Query()
+
+    assert tools._owned_document_query(query, _Document, "") is query
+    assert ("or", ("owner", "eq", None), ("owner", "eq", "")) in query.filters
 
 
 def test_owned_document_query_filters_to_owner():

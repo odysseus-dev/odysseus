@@ -13,8 +13,20 @@ polls.
 import sys, types, asyncio
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
-from sqlalchemy import create_engine, Column, String, DateTime, Integer, Boolean, Text
-from sqlalchemy.orm import sessionmaker, declarative_base
+
+import pytest
+
+
+_SQLALCHEMY_MODULES = (
+    "sqlalchemy",
+    "sqlalchemy.orm",
+    "sqlalchemy.types",
+    "sqlalchemy.ext",
+    "sqlalchemy.ext.declarative",
+    "sqlalchemy.sql",
+    "sqlalchemy.sql.expression",
+    "sqlalchemy.sql.sqltypes",
+)
 
 
 def _stub_heavy():
@@ -25,7 +37,28 @@ def _stub_heavy():
         sys.modules.setdefault(name, types.ModuleType(name))
 
 
-def _setup_isolated_db():
+def _drop_module(name: str):
+    module = sys.modules.pop(name, None)
+    parent_name, _, attr = name.rpartition(".")
+    parent = sys.modules.get(parent_name)
+    if isinstance(parent, types.ModuleType) and hasattr(parent, attr):
+        delattr(parent, attr)
+
+
+def _drop_stale_mock(name: str):
+    module = sys.modules.get(name)
+    if module is not None and not isinstance(module, types.ModuleType):
+        _drop_module(name)
+
+
+def _setup_isolated_db(monkeypatch):
+    for mod in _SQLALCHEMY_MODULES:
+        _drop_stale_mock(mod)
+    pytest.importorskip("sqlalchemy")
+    from sqlalchemy import create_engine, Column, String, DateTime, Integer, Text
+    from sqlalchemy.orm import sessionmaker, declarative_base
+
+    _drop_module("core.database")
     import core.database as cd
     B = declarative_base()
 
@@ -52,17 +85,20 @@ def _setup_isolated_db():
 
     eng = create_engine("sqlite:///:memory:")
     B.metadata.create_all(eng)
-    cd.engine = eng
-    cd.SessionLocal = sessionmaker(bind=eng, autocommit=False, autoflush=False)
-    cd.ScheduledTask = ScheduledTask
-    cd.TaskRun = TaskRun
+    monkeypatch.setattr(cd, "engine", eng, raising=False)
+    monkeypatch.setattr(cd, "SessionLocal", sessionmaker(bind=eng, autocommit=False, autoflush=False), raising=False)
+    monkeypatch.setattr(cd, "ScheduledTask", ScheduledTask, raising=False)
+    monkeypatch.setattr(cd, "TaskRun", TaskRun, raising=False)
+    monkeypatch.setitem(sys.modules, "core.database", cd)
+    if "core" in sys.modules:
+        monkeypatch.setattr(sys.modules["core"], "database", cd, raising=False)
     return cd, ScheduledTask, TaskRun
 
 
 def _drive_scheduler(monkeypatch, pre_start_setup=None):
     """Build a TaskScheduler bypassing __init__ and run start() + two polls."""
     _stub_heavy()
-    cd, ScheduledTask, TaskRun = _setup_isolated_db()
+    cd, ScheduledTask, TaskRun = _setup_isolated_db(monkeypatch)
 
     from src.task_scheduler import TaskScheduler
     sch = TaskScheduler.__new__(TaskScheduler)

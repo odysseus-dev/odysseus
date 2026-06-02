@@ -126,7 +126,7 @@ async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
         if skip_llm:
             return f"Cleaned {deleted_empty + deleted_throwaway} sessions (folder sort skipped)."
 
-        url, model, headers = resolve_task_endpoint()
+        url, model, headers = resolve_task_endpoint(owner=owner)
         if not url:
             return f"Cleaned {deleted_empty + deleted_throwaway} sessions. No model endpoint available for sorting."
 

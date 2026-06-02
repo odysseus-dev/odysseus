@@ -88,10 +88,19 @@ def get_active_document():
     return _active_document_id
 
 
+def _ownerless_document_clause(Document):
+    none_clause = Document.owner == None  # noqa: E711 - SQLAlchemy null comparison
+    empty_clause = Document.owner == ""
+    try:
+        return none_clause | empty_clause
+    except TypeError:
+        return ("or", none_clause, empty_clause)
+
+
 def _owned_document_query(query, Document, owner: Optional[str]):
-    if owner is None:
-        return query.filter(False)
-    return query.filter(Document.owner == owner)
+    if owner:
+        return query.filter(Document.owner == owner)
+    return query.filter(_ownerless_document_clause(Document))
 
 
 def _get_owned_document(db, Document, doc_id: str, owner: Optional[str], active_only: bool = False):
@@ -1030,10 +1039,14 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
 async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict:
     """Manage model endpoints: list, add, delete, enable, disable."""
     from core.database import SessionLocal, ModelEndpoint
+    from src.tool_security import owner_is_admin_or_single_user
     try:
         args = _parse_tool_args(content)
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
+
+    if not owner_is_admin_or_single_user(owner):
+        return {"error": "manage_endpoints requires an admin user", "exit_code": 1}
 
     action = args.get("action", "list")
     db = SessionLocal()
@@ -1049,12 +1062,14 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
             name = args.get("name", "")
             base_url = args.get("base_url", "")
             api_key = args.get("api_key", "")
+            shared = str(args.get("shared", "")).strip().lower() in {"1", "true", "yes", "on"}
             if not base_url:
                 return {"error": "base_url is required", "exit_code": 1}
             eid = str(_uuid.uuid4())[:8]
             from datetime import datetime
             ep = ModelEndpoint(id=eid, name=name or base_url, base_url=base_url,
                                api_key=api_key, is_enabled=True,
+                               owner=None if shared else owner,
                                created_at=datetime.utcnow(), updated_at=datetime.utcnow())
             db.add(ep)
             db.commit()
@@ -3803,11 +3818,13 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
 
     # 1. CardDAV (Radicale) — structured contacts. Call in-process: a
     # server-side httpx GET to /api/contacts/search carries no session
-    # cookie and would 401 under require_user.
+    # cookie and would 401 under require_user. The address book is global
+    # admin data, so only consult it for an admin / single-user owner.
+    from src.tool_security import owner_is_admin_or_single_user
     try:
         import asyncio
         from routes import contacts_routes as cc
-        all_contacts = await asyncio.to_thread(cc._fetch_contacts)
+        all_contacts = await asyncio.to_thread(cc._fetch_contacts) if owner_is_admin_or_single_user(owner) else []
         q = name.lower()
         for c in (all_contacts or []):
             hay_name = (c.get("name") or "").lower()
@@ -3853,6 +3870,11 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
     action = (args.get("action") or "").strip().lower()
+    # The CardDAV address book is global admin data backed by one Radicale
+    # instance; managing it is admin-only, matching the /api/contacts/* routes.
+    from src.tool_security import owner_is_admin_or_single_user
+    if not owner_is_admin_or_single_user(owner):
+        return {"error": "manage_contact requires an admin user", "exit_code": 1}
     try:
         from routes import contacts_routes as cc
     except Exception as e:
@@ -4060,7 +4082,9 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
     if not master_password:
         return {"error": "master_password is required", "exit_code": 1}
 
-    stdout, stderr, rc = await _run_bw(["unlock", master_password, "--raw"])
+    # Do not pass the master password as an argv element. Local process lists
+    # can expose argv to other users; stdin keeps the secret out of `ps`.
+    stdout, stderr, rc = await _run_bw(["unlock", "--raw"], input_text=master_password + "\n")
     if rc != 0:
         return {"error": f"Unlock failed: {stderr[:300]}", "exit_code": 1}
 

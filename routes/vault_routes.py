@@ -183,13 +183,12 @@ def setup_vault_routes():
     async def unlock(req: VaultUnlockRequest, request: Request):
         """Unlock the vault and save the session key."""
         require_admin(request)
-        # Pass the master password via the environment (--passwordenv), NOT as
-        # an argv element — argv is visible to every local user through `ps` /
-        # /proc/<pid>/cmdline. (The sibling /login handler already keeps the
-        # password off argv by feeding it on stdin.)
+        # Pass the master password on stdin, not argv. argv is visible through
+        # `ps` / /proc/<pid>/cmdline; stdin also avoids leaving the secret in
+        # the child process environment.
         stdout, stderr, rc = await _run_bw(
-            ["unlock", "--passwordenv", "BW_PASSWORD", "--raw"],
-            bw_password=req.master_password,
+            ["unlock", "--raw"],
+            input_text=req.master_password + "\n",
         )
         if rc != 0:
             return {"ok": False, "error": f"Unlock failed: {stderr[:300]}"}

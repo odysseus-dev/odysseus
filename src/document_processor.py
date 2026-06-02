@@ -215,7 +215,7 @@ def _load_vl_settings() -> dict:
         return {}
 
 
-def _resolve_vl_model(configured: str) -> tuple:
+def _resolve_vl_model(configured: str, owner: str | None = None) -> tuple:
     """Resolve the vision model to (url, model_id, headers).
 
     Uses admin-configured model if set, otherwise tries auto-detection
@@ -224,7 +224,7 @@ def _resolve_vl_model(configured: str) -> tuple:
     from src.ai_interaction import _resolve_model
 
     if configured:
-        return _resolve_model(configured)
+        return _resolve_model(configured, owner=owner)
 
     # Auto-detect: try known vision-capable models in priority order
     candidates = [
@@ -235,14 +235,14 @@ def _resolve_vl_model(configured: str) -> tuple:
     ]
     for candidate in candidates:
         try:
-            return _resolve_model(candidate)
+            return _resolve_model(candidate, owner=owner)
         except (ValueError, Exception):
             continue
 
     raise ValueError("No vision model available")
 
 
-def analyze_image_with_vl_result(image_path: str) -> dict:
+def analyze_image_with_vl_result(image_path: str, owner: str | None = None) -> dict:
     """Analyze an image and return both text and the model that produced it."""
     logger.info(f"Analyzing image with VL model: {image_path}")
     try:
@@ -252,7 +252,7 @@ def analyze_image_with_vl_result(image_path: str) -> dict:
         vl_model = settings.get("vision_model", "")
 
         try:
-            url, model_id, headers = _resolve_vl_model(vl_model)
+            url, model_id, headers = _resolve_vl_model(vl_model, owner=owner)
         except ValueError:
             return {"text": "[No vision model configured — set one in Settings → Vision]", "model": vl_model or ""}
 
@@ -277,7 +277,7 @@ def analyze_image_with_vl_result(image_path: str) -> dict:
         # — same shape as task/chat but its own list (`vision_model_fallbacks`).
         try:
             from src.endpoint_resolver import resolve_vision_fallback_candidates
-            _vl_candidates = [(url, model_id, headers)] + resolve_vision_fallback_candidates()
+            _vl_candidates = [(url, model_id, headers)] + resolve_vision_fallback_candidates(owner=owner)
         except Exception:
             _vl_candidates = [(url, model_id, headers)]
 
@@ -299,9 +299,9 @@ def analyze_image_with_vl_result(image_path: str) -> dict:
         return {"text": "[VL model unavailable - image not analyzed]", "model": ""}
 
 
-def analyze_image_with_vl(image_path: str) -> str:
+def analyze_image_with_vl(image_path: str, owner: str | None = None) -> str:
     """Analyze an image using the admin-configured Vision-Language model."""
-    return analyze_image_with_vl_result(image_path).get("text", "")
+    return analyze_image_with_vl_result(image_path, owner=owner).get("text", "")
 
 
 def build_user_content(

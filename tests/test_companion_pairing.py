@@ -47,7 +47,28 @@ class _DBStub(types.ModuleType):
 _db = _DBStub("core.database")
 _db.get_db_session = _get_db_session
 _db.ApiToken = _ApiToken
-sys.modules["core.database"] = _db  # overwrite any minimal stub from a sibling test
+
+
+def _install_db_stub(monkeypatch=None):
+    # Overwrite any minimal stub from a sibling test. Update the parent package
+    # too because importlib may otherwise reuse core.database from the package
+    # attribute even after sys.modules["core.database"] is replaced.
+    if monkeypatch is None:
+        sys.modules["core.database"] = _db
+        if "core" in sys.modules:
+            setattr(sys.modules["core"], "database", _db)
+        return
+    monkeypatch.setitem(sys.modules, "core.database", _db)
+    if "core" in sys.modules:
+        monkeypatch.setattr(sys.modules["core"], "database", _db, raising=False)
+
+
+_install_db_stub()
+
+
+@pytest.fixture(autouse=True)
+def _pairing_db_stub(monkeypatch):
+    _install_db_stub(monkeypatch)
 
 for _name, _attrs in {
     "core.auth": {"AuthManager": MagicMock()},

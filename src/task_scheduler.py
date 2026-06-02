@@ -1259,6 +1259,8 @@ class TaskScheduler:
         if (not endpoint_url or not model) and crew:
             endpoint_url = endpoint_url or crew.endpoint_url
             model = model or crew.model
+        if endpoint_url:
+            endpoint_url, model = self._registered_task_endpoint(db, task.owner, endpoint_url, model)
         if not endpoint_url or not model:
             endpoint_url, model = self._resolve_defaults(db, task.owner)
         if not endpoint_url or not model:
@@ -1403,6 +1405,8 @@ class TaskScheduler:
         if (not endpoint_url or not model_name) and crew:
             endpoint_url = endpoint_url or crew.endpoint_url
             model_name = model_name or crew.model
+        if endpoint_url:
+            endpoint_url, model_name = self._registered_task_endpoint(db, task.owner, endpoint_url, model_name)
         if not endpoint_url or not model_name:
             try:
                 resolved_url, resolved_model = self._resolve_defaults(db, task.owner)
@@ -1537,9 +1541,11 @@ class TaskScheduler:
         try:
             from core.database import SessionLocal, ModelEndpoint
             from src.endpoint_resolver import normalize_base, build_headers
+            from src.auth_helpers import owner_filter
             db2 = SessionLocal()
             try:
-                eps = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+                q = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+                eps = owner_filter(q, ModelEndpoint, task.owner or "").all()
                 for ep in eps:
                     if normalize_base(ep.base_url) in endpoint_url or endpoint_url in normalize_base(ep.base_url):
                         headers = build_headers(ep.api_key, normalize_base(ep.base_url))
@@ -1560,7 +1566,7 @@ class TaskScheduler:
         # chat uses but with the utility list (`utility_model_fallbacks`).
         try:
             from src.endpoint_resolver import resolve_utility_fallback_candidates
-            _task_fallbacks = resolve_utility_fallback_candidates()
+            _task_fallbacks = resolve_utility_fallback_candidates(owner=task.owner)
         except Exception:
             _task_fallbacks = []
         async for event_str in stream_agent_loop(
@@ -1603,7 +1609,7 @@ class TaskScheduler:
                 else:
                     grace_context += "No tool results were captured."
                 grace_context += "\n\nSummarize what you accomplished and what's still pending. Be concise."
-                _grace_candidates = [(endpoint_url, model, headers)] + resolve_utility_fallback_candidates()
+                _grace_candidates = [(endpoint_url, model, headers)] + resolve_utility_fallback_candidates(owner=task.owner)
                 full_text = await llm_call_async_with_fallback(
                     _grace_candidates,
                     messages=[
@@ -1631,6 +1637,9 @@ class TaskScheduler:
         # Resolve endpoint/model: research settings > task settings > session defaults
         endpoint_url = task.endpoint_url
         model = task.model
+        headers = {}
+        if endpoint_url:
+            endpoint_url, model = self._registered_task_endpoint(db, task.owner, endpoint_url, model)
 
         if not endpoint_url or not model:
             try:
@@ -1640,9 +1649,11 @@ class TaskScheduler:
                     endpoint_url or None,
                     model or None,
                     None,
+                    owner=task.owner,
                 )
                 endpoint_url = ep_url or endpoint_url
                 model = ep_model or model
+                headers = ep_headers or {}
             except Exception:
                 pass
 
@@ -1654,12 +1665,13 @@ class TaskScheduler:
         self._last_run_model = model
 
         # Resolve headers
-        headers = {}
         try:
             from core.database import ModelEndpoint
             from src.endpoint_resolver import normalize_base, build_headers
+            from src.auth_helpers import owner_filter
             db2 = db
-            eps = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+            q = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+            eps = owner_filter(q, ModelEndpoint, task.owner or "").all()
             for ep in eps:
                 if normalize_base(ep.base_url) in endpoint_url or endpoint_url in normalize_base(ep.base_url):
                     headers = build_headers(ep.api_key, normalize_base(ep.base_url))
@@ -1770,7 +1782,15 @@ class TaskScheduler:
         return True  # too deep, treat as cycle
 
     def _resolve_defaults(self, db, owner):
-        """Find the first available endpoint + model from an existing session."""
+        """Find the owner's configured task endpoint, then fall back to recent sessions."""
+        try:
+            from src.endpoint_resolver import resolve_endpoint
+            endpoint_url, model, _headers = resolve_endpoint("task", owner=owner)
+            if endpoint_url and model:
+                return endpoint_url, model
+        except Exception:
+            pass
+
         from core.database import Session as DbSession
         try:
             recent = db.query(DbSession).filter(
@@ -1783,6 +1803,43 @@ class TaskScheduler:
         except Exception:
             pass
         return None, None
+
+    def _registered_task_endpoint(self, db, owner, endpoint_url, model):
+        """Return a pinned task endpoint only if it is registered for this owner."""
+        endpoint_url = (endpoint_url or "").strip()
+        model = (model or "").strip()
+        if not endpoint_url:
+            return None, model or None
+
+        try:
+            from core.database import ModelEndpoint
+            from src.auth_helpers import owner_filter
+            from src.endpoint_resolver import normalize_base, build_chat_url
+            target_base = normalize_base(endpoint_url)
+            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+            # Scheduled tasks can outlive endpoint edits and user changes.
+            # Treat a stale or foreign endpoint as unavailable instead of
+            # letting a background task reuse another user's credentials.
+            eps = owner_filter(q, ModelEndpoint, owner or "").all()
+            for ep in eps:
+                base = normalize_base(ep.base_url or "")
+                if target_base != base:
+                    continue
+                cached = []
+                if ep.cached_models:
+                    try:
+                        cached = json.loads(ep.cached_models) or []
+                    except Exception:
+                        cached = []
+                if model and cached and model not in cached:
+                    continue
+                if not model and cached:
+                    model = str(cached[0])
+                return build_chat_url(base), model or None
+        except Exception:
+            logger.debug("Could not validate scheduled-task endpoint", exc_info=True)
+        logger.warning("Ignoring unavailable scheduled-task endpoint for owner=%r: %s", owner, endpoint_url)
+        return None, model or None
 
     async def _deliver_via_mcp(self, tool_name: str, task, result: str):
         """Send the task result via an MCP tool (e.g. Gmail send).

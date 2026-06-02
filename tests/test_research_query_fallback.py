@@ -5,16 +5,20 @@ bare affirmation ("yes", "ok", "go ahead"), that follow-up must not become the
 research topic — we fall back to the original substantive ask. A short but
 meaningful answer ("UK", "C++", "Rust") is a real topic and must be preserved.
 """
+from types import SimpleNamespace
+
 import pytest
 
-from core.models import ChatMessage, Session
 from src.research_handler import ResearchHandler
 
 
 def _session(history):
-    return Session(
-        id="s1", name="t", endpoint_url="http://local.test", model="m",
-        history=[ChatMessage(role, content) for role, content in history],
+    return SimpleNamespace(
+        id="s1",
+        name="t",
+        endpoint_url="http://local.test",
+        model="m",
+        history=[SimpleNamespace(role=role, content=content) for role, content in history],
     )
 
 

@@ -590,9 +590,9 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
             if not events:
                 return "No upcoming events to classify", True
 
-            llm_url, llm_model, llm_headers = resolve_endpoint("utility")
+            llm_url, llm_model, llm_headers = resolve_endpoint("utility", owner=owner)
             if not llm_url:
-                llm_url, llm_model, llm_headers = resolve_endpoint("default")
+                llm_url, llm_model, llm_headers = resolve_endpoint("default", owner=owner)
             llm_available = bool(llm_url and llm_model)
 
             # Pull user memories so the LLM has personal context (relationships,
@@ -815,9 +815,9 @@ async def action_mark_email_boundaries(owner: str, **kwargs) -> Tuple[str, bool]
         if not mails:
             raise TaskNoop("no emails to analyze")
 
-        url, model, headers = resolve_endpoint("utility")
+        url, model, headers = resolve_endpoint("utility", owner=owner)
         if not url or not model:
-            url, model, headers = resolve_endpoint("default")
+            url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return "No LLM endpoint available", False
 
@@ -1053,9 +1053,9 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         if not eligible:
             return "All sender sigs already cached (or no eligible senders)", True
 
-        url, model, headers = resolve_endpoint("utility")
+        url, model, headers = resolve_endpoint("utility", owner=owner)
         if not url or not model:
-            url, model, headers = resolve_endpoint("default")
+            url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return "No LLM endpoint available", False
 
@@ -1313,7 +1313,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         if not names:
             raise TaskNoop("no skills to test")
 
-        url, model, headers = resolve_endpoint("default")
+        url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return "No Default/Utility model configured — set one in Settings.", False
 
@@ -1374,7 +1374,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
                 # user-set value (e.g. 1.0 → 0.95) is destructive.
                 if v in ("pass", "needs_work", "fail", "inconclusive"):
                     try:
-                        sm.set_audit(name, v, by_teacher=False, worker_model=model)
+                        sm.set_audit(name, v, by_teacher=False, worker_model=model, owner=owner)
                     except Exception as _e:
                         logger.warning(f"test_skills set_audit({name}) failed: {_e}")
                 if v == "unknown":
@@ -1666,12 +1666,12 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
 
         # ── 1. Resolve LLM candidates (utility primary + utility fallbacks; fall
         # through to default chat as a last resort).
-        url, model, headers = resolve_endpoint("utility")
+        url, model, headers = resolve_endpoint("utility", owner=owner)
         if not url or not model:
-            url, model, headers = resolve_endpoint("default")
+            url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return "No LLM endpoint available", False
-        candidates = [(url, model, headers)] + resolve_utility_fallback_candidates()
+        candidates = [(url, model, headers)] + resolve_utility_fallback_candidates(owner=owner)
 
         # ── 2. Enumerate enabled accounts. Match this task's owner AND fall
         # back to the legacy "unowned account whose imap_user / from_address
