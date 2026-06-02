@@ -40,9 +40,20 @@ const PROVIDER_PATTERNS = [
   { re: /^sk-or-/,           name: 'OpenRouter', url: 'https://openrouter.ai/api/v1' },
   { re: /^sk-proj-/,         name: 'OpenAI',     url: 'https://api.openai.com/v1' },
   { re: /^gsk_/,             name: 'Groq',       url: 'https://api.groq.com/openai/v1' },
-  { re: /^AIza/,             name: 'Gemini',     url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
+  { re: /^(AIza|AQ\.)/,      name: 'Gemini',     url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
   { re: /^xai-/,             name: 'xAI',        url: 'https://api.x.ai/v1' },
 ];
+
+const PROVIDER_PREFIXES = {
+  deepseek: 'sk-',
+  openai: 'sk-proj-',
+  openrouter: 'sk-or-',
+  xai: 'xai-',
+  anthropic: 'sk-ant-',
+  groq: 'gsk_',
+  gemini: 'AQ.',
+  google: 'AQ.',
+};
 const SETUP_PROVIDER_URLS = {
   deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/v1' },
   openai: { name: 'OpenAI', url: 'https://api.openai.com/v1' },
@@ -5960,9 +5971,11 @@ export function initSlashCommands(deps) {
     if (providerEl) {
       e.preventDefault();
       const providerName = providerEl.textContent.trim();
+      const key = providerName.toLowerCase();
+      const prefix = PROVIDER_PREFIXES[key] || 'sk-';
       const messageInput = document.getElementById('message');
       if (messageInput) {
-        const text = providerName + ' sk-';
+        const text = providerName + ' ' + prefix;
         messageInput.value = text;
         messageInput.dispatchEvent(new Event('input', { bubbles: true }));
         messageInput.focus();

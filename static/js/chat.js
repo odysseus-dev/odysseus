@@ -220,7 +220,7 @@ import createResearchSynapse from './researchSynapse.js';
   // -----------------------------------------------------------------------
 
   // API key pattern for the guard in handleChatSubmit
-  const API_KEY_RE = /^(sk-[a-zA-Z0-9_\-]{20,}|gsk_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_\-]{30,}|xai-[a-zA-Z0-9]{20,})$/;
+  const API_KEY_RE = /^(sk-[a-zA-Z0-9_\-]{20,}|gsk_[a-zA-Z0-9]{20,}|(AIza|AQ\.)[a-zA-Z0-9_\-]{30,}|xai-[a-zA-Z0-9]{20,})$/;
 
 
   /**
