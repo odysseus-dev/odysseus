@@ -69,8 +69,40 @@ class ResearchHandler:
         """
         # Build conversation context from history
         history = getattr(sess, 'history', [])
+
+        # A bare affirmation ("yes", "ok", "go ahead") is the user accepting the
+        # clarifying-question round, NOT a research topic — researching the word
+        # "yes" is the classic failure here. When synthesis can't run or fails,
+        # fall back to the earliest substantive user message (the original ask)
+        # rather than the literal follow-up.
+        #
+        # Match on an explicit affirmation/continuation phrase only (plus the
+        # empty/punctuation-only case). We deliberately do NOT use a length
+        # heuristic: a short answer like "UK", "C++", or "Rust" is a real topic
+        # in a clarification flow and must be left untouched.
+        _AFFIRMATIONS = {
+            "yes", "y", "yeah", "yep", "yup", "sure", "sure thing", "ok", "okay",
+            "k", "kk", "go", "go ahead", "go for it", "do it", "please",
+            "yes please", "sounds good", "continue", "proceed", "lets go",
+            "let's go", "yes go ahead",
+        }
+
+        def _normalize(text: str) -> str:
+            return (text or "").strip().lower().strip("!.? ")
+
+        def _fallback() -> str:
+            normalized = _normalize(latest_message)
+            if normalized and normalized not in _AFFIRMATIONS:
+                return latest_message  # short or long, it's a real topic
+            # Affirmation, or empty/punctuation-only: use the original ask.
+            for m in history:
+                c = (m.content or "").strip()
+                if m.role == "user" and c and _normalize(c) not in _AFFIRMATIONS:
+                    return c
+            return latest_message
+
         if len(history) <= 1:
-            return latest_message  # No conversation to synthesize
+            return _fallback()  # No conversation to synthesize
 
         # Take last 6 messages max for context
         recent = history[-6:]
@@ -104,7 +136,7 @@ class ResearchHandler:
         except Exception as e:
             logger.warning(f"Query synthesis failed: {e}")
 
-        return latest_message  # Fallback
+        return _fallback()
 
     async def generate_plan(
         self, query: str, llm_endpoint: str, llm_model: str, llm_headers: dict = None,
