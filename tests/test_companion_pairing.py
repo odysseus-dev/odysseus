@@ -62,7 +62,7 @@ for _name, _attrs in {
 from fastapi import HTTPException  # noqa: E402
 
 import companion.pairing as P  # noqa: E402
-import companion.routes as companion_routes  # noqa: E402
+import companion.routes as R  # noqa: E402
 from companion.routes import mint_pairing_token, setup_companion_routes  # noqa: E402
 from core.middleware import require_admin  # noqa: E402
 
@@ -149,12 +149,30 @@ def _pair_methods():
     return methods
 
 
-def _pair_endpoint(method):
-    router = setup_companion_routes()
-    for r in router.routes:
-        if getattr(r, "path", "").endswith("/pair") and method in getattr(r, "methods", set()):
-            return r.endpoint
+def _pair_route(method):
+    for route in setup_companion_routes().routes:
+        path = getattr(route, "path", "")
+        if path.endswith("/pair") and method in getattr(route, "methods", set()):
+            return route.endpoint
     raise AssertionError(f"{method} /api/companion/pair route not found")
+
+
+def _fake_pair_request(format=None, port=7000):
+    query_params = {}
+    if format is not None:
+        query_params["format"] = format
+    return SimpleNamespace(
+        state=SimpleNamespace(current_user="alice", api_token=False),
+        headers={},
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                auth_manager=_admin_mgr(True),
+                invalidate_token_cache=MagicMock(),
+            )
+        ),
+        query_params=query_params,
+        url=SimpleNamespace(port=port),
+    )
 
 
 def test_pair_is_minted_via_post_not_get():
@@ -166,7 +184,87 @@ def test_pair_is_minted_via_post_not_get():
 
 
 def test_pair_page_uses_imported_admin_gate(monkeypatch):
-    monkeypatch.setattr(companion_routes, "require_admin", lambda request: None)
-    response = _pair_endpoint("GET")(SimpleNamespace())
+    monkeypatch.setattr(R, "require_admin", lambda request: None)
+    response = _pair_route("GET")(SimpleNamespace())
 
     assert "Pair a device" in str(getattr(response, "body", response))
+
+
+def test_pair_get_renders_form_without_minting(monkeypatch):
+    mint = MagicMock(side_effect=AssertionError("GET must not mint a token"))
+    monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
+    monkeypatch.setattr(R, "mint_pairing_token", mint)
+
+    response = _pair_route("GET")(_fake_pair_request())
+    body = response.body.decode()
+
+    assert response.media_type == "text/html"
+    assert '<form method="POST" action="/api/companion/pair">' in body
+    assert "Generate pairing code" in body
+    mint.assert_not_called()
+
+
+def test_pair_post_json_returns_pairing_payload(monkeypatch):
+    mint = MagicMock(return_value=("tok123", "ody_raw"))
+    monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
+    monkeypatch.setattr(R, "get_current_user", lambda request: "alice")
+    monkeypatch.setattr(R, "mint_pairing_token", mint)
+    monkeypatch.setattr(R._pairing, "lan_ip_candidates", lambda: ["192.168.1.50"])
+
+    request = _fake_pair_request(format="json", port=7000)
+    response = _pair_route("POST")(request)
+
+    mint.assert_called_once_with("alice", request.app.state.invalidate_token_cache)
+    assert response["host"] == "192.168.1.50"
+    assert response["port"] == 7000
+    assert response["token"] == "ody_raw"
+    assert response["token_id"] == "tok123"
+    assert response["payload"] == {
+        "v": 1,
+        "host": "192.168.1.50",
+        "port": 7000,
+        "token": "ody_raw",
+    }
+    for secret_key in ("token_hash", "token_prefix", "scopes", "is_active", "owner", "name"):
+        assert secret_key not in response
+        assert secret_key not in response["payload"]
+
+
+def test_pair_post_json_qr_failure_returns_null_qr(monkeypatch):
+    monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
+    monkeypatch.setattr(R, "get_current_user", lambda request: "alice")
+    monkeypatch.setattr(R, "mint_pairing_token", lambda owner, invalidate: ("tok123", "ody_raw"))
+    monkeypatch.setattr(R._pairing, "lan_ip_candidates", lambda: ["192.168.1.50"])
+    monkeypatch.setattr(R._pairing, "pairing_qr_png_data_uri", lambda payload: None)
+
+    response = _pair_route("POST")(_fake_pair_request(format="json", port=7000))
+
+    assert response["qr"] is None
+    assert response["host"] == "192.168.1.50"
+    assert response["port"] == 7000
+    assert response["token"] == "ody_raw"
+    assert response["payload"] == {
+        "v": 1,
+        "host": "192.168.1.50",
+        "port": 7000,
+        "token": "ody_raw",
+    }
+
+
+def test_pair_post_html_escapes_pairing_values(monkeypatch):
+    monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
+    monkeypatch.setattr(R, "get_current_user", lambda request: "alice")
+    monkeypatch.setattr(R, "mint_pairing_token", lambda owner, invalidate: ("tok<123>", "ody_<raw>&"))
+    monkeypatch.setattr(R._pairing, "lan_ip_candidates", lambda: ["host<one>&"])
+    monkeypatch.setattr(R._pairing, "pairing_qr_png_data_uri", lambda payload: None)
+
+    response = _pair_route("POST")(_fake_pair_request())
+    body = response.body.decode()
+
+    assert response.media_type == "text/html"
+    assert "host<one>&" not in body
+    assert "ody_<raw>&" not in body
+    assert "tok<123>" not in body
+    assert "host&lt;one&gt;&amp;" in body
+    assert "ody_&lt;raw&gt;&amp;" in body
+    assert "tok&lt;123&gt;" in body
