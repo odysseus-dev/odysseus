@@ -291,6 +291,53 @@ def test_models_route_filters_hidden_models_and_secret_fields(monkeypatch):
     assert "super-secret" not in repr(returned)
 
 
+def test_models_route_tolerates_invalid_cached_models_json(monkeypatch):
+    endpoint = _ep(1, "alice-endpoint", "alice")
+    endpoint.cached_models = "{not-json"
+    rows = [endpoint]
+    monkeypatch.setattr(companion_routes, "get_current_user", lambda request: "alice")
+
+    endpoints = _call_models_route(
+        monkeypatch,
+        rows,
+        _request(api_token=False, current_user="alice"),
+    )
+
+    assert len(endpoints) == 1
+    returned = endpoints[0]
+    assert returned["name"] == "alice-endpoint"
+    assert returned["models"] == []
+    assert "api_key" not in returned
+    assert "headers" not in returned
+    assert "base_url" not in returned
+
+
+def test_models_route_tolerates_invalid_hidden_models_json(monkeypatch):
+    endpoint = _ep(
+        1,
+        "alice-endpoint",
+        "alice",
+        cached_models=["visible-model"],
+    )
+    endpoint.hidden_models = "{not-json"
+    rows = [endpoint]
+    monkeypatch.setattr(companion_routes, "get_current_user", lambda request: "alice")
+
+    endpoints = _call_models_route(
+        monkeypatch,
+        rows,
+        _request(api_token=False, current_user="alice"),
+    )
+
+    assert len(endpoints) == 1
+    returned = endpoints[0]
+    assert returned["name"] == "alice-endpoint"
+    assert returned["models"] == ["visible-model"]
+    assert "api_key" not in returned
+    assert "headers" not in returned
+    assert "base_url" not in returned
+
+
 def test_models_route_filters_disabled_and_non_llm_endpoints(monkeypatch):
     rows = [
         _ep(1, "enabled-llm", "alice", is_enabled=True, model_type="llm"),
