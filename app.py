@@ -844,6 +844,13 @@ async def startup_event():
 
     _startup_tasks.append(asyncio.create_task(_warmup_tool_index()))
     # Warmup: ping all known LLM endpoints to prime connections
+    # Use configurable timeout from settings for consistency with other probes
+    try:
+        from src.settings import load_settings
+        _WARMUP_TIMEOUT = float(load_settings().get("model_probe_timeout_cloud", 5.0))
+    except Exception:
+        _WARMUP_TIMEOUT = 5.0
+
     async def _warmup_endpoints():
         try:
             import httpx
@@ -852,7 +859,7 @@ async def startup_event():
                 url = ep.get("url", "").replace("/chat/completions", "/models")
                 if url:
                     try:
-                        async with httpx.AsyncClient(timeout=5.0) as client:
+                        async with httpx.AsyncClient(timeout=_WARMUP_TIMEOUT) as client:
                             await client.get(url)
                         logger.info(f"Warmup ping OK: {url}")
                     except Exception as e:

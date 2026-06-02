@@ -32,7 +32,6 @@ python-dateutil
 # fetch across Radicale, Nextcloud, Apple, Fastmail; we'd be reinventing
 # the protocol without it.
 caldav
-PySocks
 cryptography
 bcrypt
 mcp

@@ -14,6 +14,13 @@ from src.webhook_manager import WebhookManager, validate_webhook_url, validate_e
 
 logger = logging.getLogger(__name__)
 
+# Model probe timeout for auto-discovery in webhook routes
+try:
+    from src.settings import load_settings
+    _WEBHOOK_MODEL_PROBE_TIMEOUT = float(load_settings().get("model_probe_timeout_cloud", 5.0))
+except Exception:
+    _WEBHOOK_MODEL_PROBE_TIMEOUT = 5.0
+
 router = APIRouter(prefix="/api", tags=["webhooks"])
 
 # Input limits
@@ -281,7 +288,7 @@ def setup_webhook_routes(
 
             if model == "auto":
                 try:
-                    async with httpx.AsyncClient(timeout=5) as client:
+                    async with httpx.AsyncClient(timeout=_WEBHOOK_MODEL_PROBE_TIMEOUT) as client:
                         models_url = build_models_url(base_url)
                         hdrs = build_headers(api_key, base_url)
                         resp = await client.get(models_url, headers=hdrs)

@@ -261,6 +261,20 @@ def _classify_endpoint(base_url: str) -> str:
     return "api"
 
 
+def _get_probe_timeout(endpoint_class: str) -> float:
+    """Return the appropriate probe timeout based on endpoint classification.
+
+    Local endpoints (Ollama, vLLM, etc.) get a fast timeout.
+    Cloud/API endpoints (OpenAI, Anthropic, etc.) get a longer timeout
+    to accommodate proxies and slow connections.
+    """
+    from src.settings import load_settings
+    settings = load_settings()
+    if endpoint_class == "local":
+        return float(settings.get("model_probe_timeout_local", 1.5))
+    return float(settings.get("model_probe_timeout_cloud", 5.0))
+
+
 
 def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
@@ -461,8 +475,10 @@ def setup_model_routes(model_discovery):
 
                     def _probe_one(ep):
                         base = _normalize_base(ep.base_url)
+                        category = _classify_endpoint(base)
+                        timeout = _get_probe_timeout(category)
                         try:
-                            ids = _probe_endpoint(base, ep.api_key, timeout=5)
+                            ids = _probe_endpoint(base, ep.api_key, timeout=timeout)
                             return ep, ids, None
                         except Exception as e:
                             return ep, None, e
@@ -648,7 +664,8 @@ def setup_model_routes(model_discovery):
         async def _probe_one(ep_id: str, base: str, api_key: Optional[str]) -> Dict[str, Any]:
             t0 = _time.time()
             try:
-                models = _probe_endpoint(base, api_key, timeout=5)
+                # For probe-local, we're already filtering to local endpoints only
+                models = _probe_endpoint(base, api_key, timeout=1.5)
                 lat = round((_time.time() - t0) * 1000)
                 return {
                     "alive": bool(models),
@@ -686,18 +703,21 @@ def setup_model_routes(model_discovery):
         for ep in endpoints:
             base = _normalize_base(ep.base_url)
             provider = _detect_provider(base)
+            category = _classify_endpoint(base)
+            timeout = _get_probe_timeout(category)
             entry = {
                 "id": ep.id,
                 "name": ep.name,
                 "base_url": base,
                 "provider": provider,
-                "category": _classify_endpoint(base),
+                "category": category,
+                "timeout": timeout,
             }
             if provider == "anthropic":
                 # Anthropic has no /models endpoint; just check connectivity
                 try:
                     t0 = _time.time()
-                    r = httpx.get(base.rstrip("/"), timeout=5)
+                    r = httpx.get(base.rstrip("/"), timeout=timeout)
                     entry["latency_ms"] = round((_time.time() - t0) * 1000)
                     entry["status"] = "online"
                     entry["model_count"] = len(ANTHROPIC_MODELS)
@@ -711,7 +731,7 @@ def setup_model_routes(model_discovery):
                 headers = build_headers(ep.api_key, base)
                 try:
                     t0 = _time.time()
-                    r = httpx.get(url, headers=headers, timeout=5)
+                    r = httpx.get(url, headers=headers, timeout=timeout)
                     entry["latency_ms"] = round((_time.time() - t0) * 1000)
                     r.raise_for_status()
                     data = r.json()
@@ -895,7 +915,9 @@ def setup_model_routes(model_discovery):
                 status = "online" if all_models else "offline"
                 ping = None
                 if not all_models and r.is_enabled:
-                    ping = _ping_endpoint(r.base_url, r.api_key, timeout=5)
+                    category = _classify_endpoint(r.base_url)
+                    timeout = _get_probe_timeout(category)
+                    ping = _ping_endpoint(r.base_url, r.api_key, timeout=timeout)
                     if ping.get("reachable"):
                         status = "empty"
                 results.append({
@@ -974,8 +996,9 @@ def setup_model_routes(model_discovery):
         finally:
             _db_dedup.close()
 
-        # Quick model list fetch (5s timeout — proxies and slow connections need more time)
-        _probe_timeout = 5
+        # Quick model list fetch with timeout based on endpoint classification
+        category = _classify_endpoint(base_url)
+        _probe_timeout = _get_probe_timeout(category)
         model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=_probe_timeout) if should_probe else []
         ping = {"reachable": False, "error": None}
         if should_probe and not model_ids:
@@ -1046,7 +1069,8 @@ def setup_model_routes(model_discovery):
             raise HTTPException(400, "Base URL is required")
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
-        probe_timeout = 5
+        category = _classify_endpoint(base_url)
+        probe_timeout = _get_probe_timeout(category)
         models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
         ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
         return {
@@ -1123,7 +1147,9 @@ def setup_model_routes(model_discovery):
                 except Exception:
                     pass
             # Try live probe, fall back to cached
-            all_models = _probe_endpoint(ep.base_url, ep.api_key, timeout=5)
+            category = _classify_endpoint(ep.base_url)
+            timeout = _get_probe_timeout(category)
+            all_models = _probe_endpoint(ep.base_url, ep.api_key, timeout=timeout)
             if all_models:
                 ep.cached_models = json.dumps(all_models)
                 db.commit()

@@ -17,6 +17,9 @@ from typing import Dict, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 AI_CHAT_TIMEOUT = 120  # seconds for a single LLM call
+
+# Model probe timeout for quick endpoint validation
+_MODEL_PROBE_TIMEOUT = 5.0
 MAX_DEBATE_ROUNDS = 5
 MAX_PIPELINE_STEPS = 10
 
@@ -109,7 +112,7 @@ def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
             else:
                 # OpenAI-compatible and native Ollama: probe the provider's model list.
                 try:
-                    r = httpx.get(build_models_url(base), headers=headers, timeout=5)
+                    r = httpx.get(build_models_url(base), headers=headers, timeout=_MODEL_PROBE_TIMEOUT)
                     r.raise_for_status()
                     data = r.json()
                     model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
@@ -1117,7 +1120,7 @@ async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict
                 model_ids = list(ANTHROPIC_MODELS)
             else:
                 try:
-                    r = httpx.get(build_models_url(base), headers=headers, timeout=5)
+                    r = httpx.get(build_models_url(base), headers=headers, timeout=_MODEL_PROBE_TIMEOUT)
                     r.raise_for_status()
                     data = r.json()
                     model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]

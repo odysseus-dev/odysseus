@@ -189,6 +189,11 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
     """
     import requests as _req
     from src.endpoint_resolver import build_chat_url, build_headers, build_models_url, normalize_base
+    from src.settings import load_settings
+
+    settings = load_settings()
+    # Use configurable timeout for endpoint fallback ping
+    fallback_timeout = float(settings.get("model_probe_timeout_cloud", 5.0))
 
     current_url = sess.endpoint_url or ""
     db = SessionLocal()
@@ -204,11 +209,11 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
         # Skip current endpoint
         if current_url and base in current_url:
             continue
-        # Quick ping
+        # Quick ping with configurable timeout
         ping_url = build_models_url(base)
         headers = build_headers(ep.api_key, base)
         try:
-            r = _req.get(ping_url, headers=headers, timeout=5)
+            r = _req.get(ping_url, headers=headers, timeout=fallback_timeout)
             r.raise_for_status()
             data = r.json()
             models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]

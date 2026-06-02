@@ -66,6 +66,11 @@ DEFAULT_SETTINGS = {
     "research_max_tokens": 16384,
     "research_extraction_timeout_seconds": 90,
     "research_extraction_concurrency": 3,
+    # Model probe timeouts in seconds. Local/Ollama endpoints are probed
+    # quickly; cloud/API endpoints get more time for proxies and slow connections.
+    # These can be overridden per-endpoint via the model-endpoints API.
+    "model_probe_timeout_local": 1.5,
+    "model_probe_timeout_cloud": 5.0,
     "agent_max_tool_calls": 0,
     "agent_input_token_budget": 6000,
     "agent_stream_timeout_seconds": 300,
