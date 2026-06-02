@@ -313,8 +313,10 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db.close()
         # Switch model/endpoint mid-session
         if model is not None and endpoint_url is not None:
+            from core.database import ModelEndpoint
+            from src.endpoint_resolver import build_headers
+
             if endpoint_id:
-                from core.database import ModelEndpoint
                 _db = SessionLocal()
                 try:
                     ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
@@ -322,18 +324,37 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                         raise HTTPException(400, "Model endpoint no longer exists")
                 finally:
                     _db.close()
+
             session.model = model
             session.endpoint_url = endpoint_url
+
             # Update auth headers from the endpoint's stored API key
             if endpoint_id:
                 _db = SessionLocal()
                 try:
                     ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
-                    if ep and ep.api_key:
-                        from src.endpoint_resolver import build_headers
+                    if ep:
                         session.headers = build_headers(ep.api_key, ep.base_url)
                 finally:
                     _db.close()
+            else:
+                _db = SessionLocal()
+                try:
+                    domain = endpoint_url.split("//")[1].split("/")[0] if "//" in endpoint_url else ""
+                    if domain:
+                        ep = _db.query(ModelEndpoint).filter(
+                            ModelEndpoint.base_url.contains(domain),
+                            ModelEndpoint.is_enabled == True
+                        ).first()
+                        if ep:
+                            session.headers = build_headers(ep.api_key, ep.base_url)
+                        else:
+                            session.headers = {}
+                    else:
+                        session.headers = {}
+                finally:
+                    _db.close()
+
             # Persist to DB
             db = SessionLocal()
             try:
@@ -341,6 +362,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 if db_session:
                     db_session.model = model
                     db_session.endpoint_url = endpoint_url
+                    db_session.headers = json.dumps(session.headers) if session.headers else None
                     db_session.updated_at = datetime.utcnow()
                     db.commit()
             finally:
