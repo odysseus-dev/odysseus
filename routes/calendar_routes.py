@@ -453,8 +453,21 @@ def _expand_rrule(
         return [d]
 
     # Parse the rrule, applying it to the base dtstart.
+    rrule_str = ev.rrule
+    if ev.dtstart is not None and getattr(ev.dtstart, "tzinfo", None) is None:
+        # Events are stored with a naive (UTC) dtstart, but standard .ics
+        # exporters (Google/Apple/Outlook/Fastmail) write the bound as an
+        # absolute UTC value, e.g. UNTIL=20240105T090000Z. dateutil refuses to
+        # mix a tz-aware UNTIL with a naive DTSTART ("RRULE UNTIL values must be
+        # specified in UTC when DTSTART is timezone-aware"), so the except branch
+        # below would silently collapse the whole series to a single event.
+        # Drop the trailing Z so UNTIL matches the naive DTSTART.
+        import re as _re
+        rrule_str = _re.sub(
+            r"(UNTIL=\d{8}(?:T\d{6})?)Z", r"\1", rrule_str, flags=_re.IGNORECASE
+        )
     try:
-        rule = rrulestr(ev.rrule, dtstart=ev.dtstart)
+        rule = rrulestr(rrule_str, dtstart=ev.dtstart)
     except Exception as ex:
         logger.warning(
             "Failed to parse rrule=%r for event %s: %s", ev.rrule, ev.uid, ex
