@@ -193,3 +193,72 @@ def test_update_skill_scalar_keys_exclude_owner():
         "The fix removed this to prevent cross-user ownership reassignment "
         "via the updates dict."
     )
+
+
+def test_read_skill_md_scopes_to_owner(tmp_path):
+    """Two users own distinct skills with the same slug. read_skill_md()
+    called with owner='alice' must return Alice's content, not Bob's.
+    Called without an owner it must match only ownerless skills."""
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir(parents=True, exist_ok=True)
+
+    alice_path = _write_skill_md(
+        skills_root, category="alice-cat", name="login-flow",
+        owner="alice", description="alice secret",
+    )
+    bob_path = _write_skill_md(
+        skills_root, category="bob-cat", name="login-flow",
+        owner="bob", description="bob secret",
+    )
+
+    sm = SkillsManager(str(tmp_path))
+
+    alice_md = sm.read_skill_md("login-flow", owner="alice")
+    assert alice_md is not None, "read_skill_md returned None for alice's skill"
+    assert "alice secret" in alice_md, (
+        f"read_skill_md(owner='alice') returned the wrong file: {alice_md[:200]}"
+    )
+
+    bob_md = sm.read_skill_md("login-flow", owner="bob")
+    assert bob_md is not None, "read_skill_md returned None for bob's skill"
+    assert "bob secret" in bob_md, (
+        f"read_skill_md(owner='bob') returned the wrong file: {bob_md[:200]}"
+    )
+
+    no_owner_md = sm.read_skill_md("login-flow")
+    assert no_owner_md is None, (
+        "read_skill_md without owner matched an owned skill — "
+        "default should only match ownerless skills. Got: "
+        f"{no_owner_md[:200] if no_owner_md else 'None'}"
+    )
+
+
+def test_update_skill_positive_scoping(tmp_path):
+    """Alice CAN update her own skill. Two users with the same slug;
+    update_skill(owner='alice') modifies only Alice's file."""
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir(parents=True, exist_ok=True)
+
+    alice_path = _write_skill_md(
+        skills_root, category="alice-cat", name="login-flow",
+        owner="alice", description="alice original",
+    )
+    bob_path = _write_skill_md(
+        skills_root, category="bob-cat", name="login-flow",
+        owner="bob", description="bob original",
+    )
+
+    sm = SkillsManager(str(tmp_path))
+
+    ok = sm.update_skill("login-flow", {"description": "alice updated"}, owner="alice")
+    assert ok, "update_skill(owner='alice') should succeed on alice's file"
+
+    after_alice = alice_path.read_text(encoding="utf-8")
+    after_bob = bob_path.read_text(encoding="utf-8")
+
+    assert "alice updated" in after_alice, (
+        "Alice's file was not updated despite passing owner='alice'."
+    )
+    assert "bob original" in after_bob and "alice updated" not in after_bob, (
+        "Bob's file was mutated by Alice's update_skill call — cross-tenant leak."
+    )

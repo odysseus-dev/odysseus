@@ -199,7 +199,7 @@ class DeepResearcher:
         self.max_urls_per_round = max_urls_per_round
         self.max_content_chars = max_content_chars
         self.max_report_tokens = max_report_tokens
-        self.extraction_timeout = min(600, max(15, int(extraction_timeout or 90)))
+        self.extraction_timeout = min(3600, max(15, int(extraction_timeout or 90)))
         self.extraction_concurrency = min(12, max(1, int(extraction_concurrency or 3)))
         self.min_rounds = min_rounds
         self.max_empty_rounds = max_empty_rounds
@@ -535,7 +535,9 @@ class DeepResearcher:
                 return []
 
             # Try primary provider, then fallbacks
-            for prov in _build_provider_chain(provider):
+            chain = _build_provider_chain(provider)
+            raised = False
+            for prov in chain:
                 try:
                     results = await asyncio.to_thread(_call_provider, prov, query, 10)
                     if results:
@@ -544,8 +546,20 @@ class DeepResearcher:
                             self.providers_used.append(prov)
                         return results
                 except Exception as e:
+                    raised = True
                     logger.warning(f"Research search: {prov} failed: {e}")
                     self._last_search_error = f"{prov}: {e}"
+            # Every provider ran but none returned results. If none of them
+            # raised, record an actionable reason here — otherwise this empty
+            # path leaves `_last_search_error` unset and the caller surfaces a
+            # bare "unknown error" (issue #344). This is exactly the SearXNG
+            # case where the service is reachable but all its engines fail, so
+            # each provider returns [] without throwing.
+            if not raised:
+                self._last_search_error = (
+                    f"no results from search provider(s): "
+                    f"{', '.join(chain) if chain else provider}"
+                )
             return []
         except Exception as e:
             logger.error(f"Search failed for '{query}': {e}")

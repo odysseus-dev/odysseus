@@ -431,10 +431,14 @@ class ToolIndex:
         base = set(always_include or ALWAYS_AVAILABLE)
         retrieved = self.retrieve(query, k=k)
         base.update(retrieved)
-        # Keyword-based force-include for common intents
+        # Keyword-based force-include for common intents. Match on word
+        # boundaries, not raw substrings, so short hints like "fix", "line",
+        # "serve", "reply" or "unread" don't fire inside unrelated words
+        # ("prefix", "deadline"/"online", "observe"/"reserve", "replying",
+        # "unreadable"). Same word-boundary matching used in topic_analyzer.
         ql = query.lower()
         for keywords, tools in self._KEYWORD_HINTS.items():
-            if any(kw in ql for kw in keywords):
+            if any(re.search(rf"\b{re.escape(kw)}\b", ql) for kw in keywords):
                 base.update(tools)
         # Structural scheduling-intent detection — typo-resilient (the literal
         # keyword "every day" misses "every dya"). Catches "every <word>",

@@ -145,7 +145,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             create_form_markdown_document,
             create_plain_pdf_document,
         )
-        from src.document_processor import _process_pdf
+        from src.document_processor import _process_pdf, strip_pdf_content_marker
         import os
 
         from src.auth_helpers import require_privilege
@@ -184,7 +184,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
         title = os.path.splitext(meta.get("original_name") or meta.get("name") or upload_id)[0]
         try:
-            body_text = _process_pdf(pdf_path).lstrip("\n[PDF content]:").strip()
+            body_text = strip_pdf_content_marker(_process_pdf(pdf_path))
         except Exception:
             body_text = None
 
@@ -402,7 +402,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         text extraction was wired, plus for scanned/image-only PDFs where the
         VL model picks up text the basic pypdf path missed."""
         import re
-        from src.document_processor import _process_pdf
+        from src.document_processor import _process_pdf, strip_pdf_content_marker
         from src.pdf_form_doc import find_source_upload_id
 
         user = get_current_user(request)
@@ -423,7 +423,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 raise HTTPException(404, "Source PDF could not be located")
 
             try:
-                body_text = _process_pdf(pdf_path).lstrip("\n[PDF content]:").strip()
+                body_text = strip_pdf_content_marker(_process_pdf(pdf_path))
             except Exception as e:
                 logger.error(f"extract_pdf_text failed for {pdf_path}: {e}")
                 raise HTTPException(500, f"Extraction failed: {e}")

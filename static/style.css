@@ -1744,6 +1744,12 @@ body.bg-pattern-sparkles {
       padding-left: max(0px, calc((100% - var(--chat-max)) / 2));
       padding-right: max(12px, calc((100% - var(--chat-max)) / 2 + 12px));
     }
+    /* Sortable Cookbook column headers had no visual cue, so users couldn't tell
+       a header was clickable (the Newest sort on the Model column was invisible).
+       Show a pointer + hover highlight, and underline the active sort column. */
+    .hwfit-header .hwfit-sortable { cursor: pointer; transition: color .12s; }
+    .hwfit-header .hwfit-sortable:hover { color: var(--fg); text-decoration: underline dotted; }
+    .hwfit-header .hwfit-sort-active { color: var(--fg); font-weight: 600; }
     /* Welcome screen — centered in available space above input bar */
     #welcome-screen {
       position:absolute;
@@ -2796,6 +2802,55 @@ body.bg-pattern-sparkles {
     .model-picker-list .mp-empty-hint .mp-empty-sub {
       font-size: 0.92em;
       opacity: 0.7;
+    }
+    /* Provider group headers */
+    .model-picker-list .mp-provider-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      cursor: pointer;
+      font-size: 0.78em;
+      font-weight: 500;
+      color: var(--fg);
+      border-radius: 4px;
+      user-select: none;
+    }
+    .model-picker-list .mp-provider-header:hover {
+      background: color-mix(in srgb, var(--fg) 6%, transparent);
+    }
+    .model-picker-list .mp-provider-chevron {
+      display: inline-flex;
+      opacity: 0.4;
+      transition: transform 0.2s, opacity 0.15s;
+      flex-shrink: 0;
+    }
+    .model-picker-list .mp-provider-header:hover .mp-provider-chevron {
+      opacity: 0.7;
+    }
+    .model-picker-list .mp-provider-chevron.collapsed {
+      transform: rotate(-90deg);
+    }
+    .model-picker-list .mp-provider-name { flex: 1; }
+    .model-picker-list .mp-provider-count { font-size: 0.85em; opacity: 0.4; }
+    /* Domino expand (15% faster than sidebar) */
+    .mp-provider-group.mp-just-expanded .model-switch-item {
+      animation: mp-domino-in 0.31s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
+    }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(1)  { animation-delay: 0.035s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(2)  { animation-delay: 0.07s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(3)  { animation-delay: 0.105s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(4)  { animation-delay: 0.14s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(5)  { animation-delay: 0.175s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(6)  { animation-delay: 0.21s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(7)  { animation-delay: 0.245s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(8)  { animation-delay: 0.28s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(9)  { animation-delay: 0.315s; }
+    .mp-provider-group.mp-just-expanded .model-switch-item:nth-child(10) { animation-delay: 0.35s; }
+    @keyframes mp-domino-in {
+      0%   { opacity: 0; transform: translateY(6px) scale(0.94); }
+      60%  { opacity: 1; }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
     }
     /* Comfortable touch targets on phones / narrow screens. */
     @media (hover: none) and (pointer: coarse), (max-width: 768px) {
@@ -5363,19 +5418,20 @@ body.bg-pattern-sparkles {
     #compare-model-overlay .modal-header h4 {
       pointer-events: none;
     }
-    /* Compare modal sizes to content — the global .modal-content max-height
-       + .modal-body overflow combo makes BOTH the outer card and the inner
-       body scrollable, so even when the content fits the viewport you get
-       a stray vertical scrollbar. Drop the cap and disable inner scroll
-       here; if the viewport is genuinely tiny the modal still won't exceed
-       it because it's centered and the parent .modal flex layout shrinks. */
+    /* Compare model selector: keep manually-resized/tiny windows contained.
+       Picker dropdowns are appended to document.body, so the card itself can
+       clip and scroll without cropping the dropdown list. */
     #compare-model-overlay .modal-content {
-      max-height: none;
-      overflow: visible;
+      display: flex;
+      flex-direction: column;
+      max-height: min(720px, calc(100dvh - 48px));
+      overflow: hidden;
+      min-height: 180px;
     }
     #compare-model-overlay .modal-body {
-      overflow: visible;
-      flex: 0 0 auto;
+      overflow: auto;
+      flex: 1 1 auto;
+      min-height: 0;
     }
     .vis-hint {
       font-size: 10px;
@@ -6955,6 +7011,8 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .compare-mode-tabs {
       display: flex;
       gap: 4px;
+      flex-wrap: wrap;
+      min-width: 0;
     }
     /* Type tabs match Mode toggles 1:1 (same flex column layout, same metrics) */
     .compare-mode-tab {
@@ -19015,7 +19073,7 @@ body.gallery-selecting .gallery-dl-btn,
   align-items: center;
   gap: 3px;
   position: relative;
-  top: 2px;
+  top: 0;
   cursor: pointer;
   padding: 1px 6px 1px 4px;
   border-radius: 9px;
@@ -19024,22 +19082,17 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .cookbook-task-check svg { flex-shrink: 0; }
 .cookbook-task-check:hover { background: color-mix(in srgb, var(--red, #ff5555) 18%, transparent); }
-/* Shows "done" (green) normally; on hover the icon + label swap to a red ✕ /
-   "clear" to reveal it's a dismiss action. */
+/* Terminal task clear pill. */
 .cookbook-task-done-label,
 .cookbook-task-clear-label {
   font-size: 9px;
   line-height: 1;
   text-transform: lowercase;
 }
-.cookbook-task-done-label { color: var(--green, #50fa7b); }
-.cookbook-task-clear-label { display: none; color: var(--red, #ff5555); }
-.cookbook-task-check:hover .cookbook-task-done-label { display: none; }
-.cookbook-task-check:hover .cookbook-task-clear-label { display: inline; }
-/* Default: show the green check. On hover: swap to a red ✕ to signal "clear". */
-.cookbook-task-clear-ico { display: none; }
-.cookbook-task-check:hover .cookbook-task-check-ico { display: none; }
-.cookbook-task-check:hover .cookbook-task-clear-ico { display: inline; }
+.cookbook-task-done-label { color: var(--red, #ff5555); }
+.cookbook-task-clear-label { display: none; }
+.cookbook-task-check-ico { display: none; }
+.cookbook-task-clear-ico { display: inline; }
 /* "Serve" button on a finished download — green pill matching the "running" /
    finished badge (it sits next to the green FINISHED chip + check). */
 .cookbook-task-serve-btn {
@@ -19583,16 +19636,135 @@ body.gallery-selecting .gallery-dl-btn,
   border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
   border-radius: 6px;
 }
+.cookbook-diag-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  position: relative;
+  top: -4px;
+  margin-bottom: -4px;
+}
+.cookbook-diag-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-error);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-right: auto;
+}
+.cookbook-diag-fold:hover {
+  background: transparent;
+  color: var(--color-error);
+  opacity: 0.85;
+}
+.cookbook-diag-chevron {
+  display: inline-block;
+  width: 10px;
+  font-size: 10px;
+}
+.cookbook-diag-copy {
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  padding: 0 2px;
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cookbook-diag-copy:hover {
+  background: transparent;
+  color: var(--fg);
+}
+.cookbook-diag-copy.copied {
+  color: var(--green, #50fa7b);
+}
+.cookbook-diag-copy svg {
+  display: block;
+}
+.cookbook-diag-dismiss {
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  padding: 0;
+  width: 16px;
+  height: 18px;
+  min-height: 18px;
+  line-height: 16px;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  top: -2px;
+}
+.cookbook-diag-dismiss:hover {
+  background: transparent;
+  color: var(--color-error);
+}
+.cookbook-diag-body {
+  margin-top: 7px;
+}
 .cookbook-diag-message {
   font-size: 12px;
   font-weight: 600;
   color: var(--color-error);
+  margin-bottom: 4px;
+  margin-left: 2px;
+  user-select: text;
+}
+.cookbook-diag-suggestion {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--fg-muted);
   margin-bottom: 8px;
+  margin-left: 2px;
+  user-select: text;
 }
 .cookbook-diag-fixes {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+.cookbook-diag-actions {
+  position: relative;
+  display: inline-flex;
+}
+.cookbook-diag-action-trigger {
+  font-size: 11px;
+  padding: 4px 10px;
+  min-height: 24px;
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--color-error) 40%, transparent);
+  color: var(--fg);
+}
+.cookbook-diag-action-trigger:hover {
+  border-color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+}
+.cookbook-diag-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  min-width: 180px;
+  z-index: 80;
+}
+.cookbook-diag-menu button {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  white-space: nowrap;
 }
 .cookbook-diag-btn {
   font-size: 11px;
@@ -20098,6 +20270,19 @@ body.gallery-selecting .gallery-dl-btn,
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  /* Cap chip width so a long label (e.g. heterogeneous GPU group
+     "1× RTX 4090 + 1× RTX 3060") wraps to the next row instead of
+     overflowing the modal. Full text stays in the tooltip. */
+  max-width: 100%;
+}
+.hwfit-hw-chip-toggle {
+  /* Allow the chip body to truncate with an ellipsis when the chip
+     itself is capped at its container's width. Without this, the
+     toggle button keeps its intrinsic width and pushes the × button
+     off-screen on narrow viewports. */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .hwfit-hw-chip button,
 .hwfit-hw-chip-dismiss,
