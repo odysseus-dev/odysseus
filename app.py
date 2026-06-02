@@ -847,10 +847,7 @@ async def runtime_info() -> Dict[str, object]:
     }
 
 
-# Gnexus Local Ollama model routes
-from routes.gnexus_ollama_routes import setup_gnexus_ollama_routes
-app.include_router(setup_gnexus_ollama_routes())
-logger.info("Gnexus local Ollama routes initialized")
+
 
 # ========= LIFECYCLE =========
 
