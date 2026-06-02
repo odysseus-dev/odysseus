@@ -213,6 +213,74 @@ function _initHoverCardSpaceToggle() {
 
 _initHoverCardSpaceToggle();
 
+/** Map markdown fence language tags to file extensions for downloads. */
+const LANG_EXT = {
+  javascript: '.js', js: '.js', jsx: '.jsx',
+  typescript: '.ts', ts: '.ts', tsx: '.tsx',
+  python: '.py', py: '.py',
+  html: '.html', htm: '.html',
+  css: '.css',
+  markdown: '.md', md: '.md',
+  json: '.json',
+  yaml: '.yml', yml: '.yaml',
+  bash: '.sh', sh: '.sh', shell: '.sh', zsh: '.sh',
+  sql: '.sql',
+  rust: '.rs',
+  go: '.go',
+  java: '.java',
+  c: '.c', h: '.h',
+  cpp: '.cpp', 'c++': '.cpp', cc: '.cpp', hpp: '.hpp',
+  csharp: '.cs', cs: '.cs',
+  ruby: '.rb', rb: '.rb',
+  php: '.php',
+  xml: '.xml',
+  toml: '.toml',
+  ini: '.ini',
+  csv: '.csv',
+  kotlin: '.kt', kt: '.kt',
+  swift: '.swift',
+  lua: '.lua',
+  r: '.r',
+  scala: '.scala',
+  perl: '.pl',
+  dockerfile: 'Dockerfile', docker: 'Dockerfile',
+  makefile: 'Makefile', make: 'Makefile',
+  powershell: '.ps1', ps1: '.ps1',
+  vb: '.vb',
+  tex: '.tex', latex: '.tex',
+  diff: '.diff',
+  plaintext: '.txt', text: '.txt', txt: '.txt',
+};
+
+export function langToExtension(lang) {
+  const key = (lang || '').trim().toLowerCase();
+  if (!key) return '.txt';
+  return LANG_EXT[key] || '.txt';
+}
+
+function _langToMime(lang) {
+  const key = (lang || '').trim().toLowerCase();
+  if (key === 'json') return 'application/json';
+  if (key === 'html' || key === 'htm') return 'text/html';
+  if (key === 'csv') return 'text/csv';
+  if (key === 'xml') return 'application/xml';
+  return 'text/plain';
+}
+
+/** Trigger a browser download for chat/document code snippets. */
+export function downloadCode(code, lang, filename) {
+  const ext = langToExtension(lang);
+  const base = (filename || 'snippet').replace(/[^a-zA-Z0-9_\-. ]/g, '_').trim() || 'snippet';
+  const name = ext.startsWith('.') ? base + ext : ext;
+  const blob = new Blob([code], { type: _langToMime(lang) });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('Downloaded');
+}
+
 /**
  * Copy text to clipboard
  */
@@ -846,6 +914,8 @@ export function emptyStateIcon(kind) {
 
 const uiModule = {
   copyToClipboard,
+  downloadCode,
+  langToExtension,
   showToast,
   showError,
   styledConfirm,

@@ -3147,6 +3147,22 @@ import createResearchSynapse from './researchSynapse.js';
    * Initialize event listeners
    */
   export function initListeners() {
+    // Global event delegation for download-code buttons
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('.download-code');
+      if (!btn) return;
+      e.stopPropagation();
+      const code = btn.getAttribute('data-code');
+      if (code && uiModule) {
+        const pre = btn.closest('pre');
+        const lang = btn.getAttribute('data-lang')
+          || pre?.querySelector('code')?.getAttribute('data-lang')
+          || pre?.querySelector('code')?.className.match(/language-(\S+)/)?.[1]
+          || '';
+        uiModule.downloadCode(code, lang);
+      }
+    });
+
     // Global event delegation for copy-code buttons
     document.addEventListener('click', (e) => {
       const btn = e.target.closest('.copy-code');
@@ -3201,6 +3217,8 @@ import createResearchSynapse from './researchSynapse.js';
         const newCode = codeEl.textContent;
         const copyBtn = pre.querySelector('.copy-code');
         if (copyBtn) copyBtn.setAttribute('data-code', newCode);
+        const downloadBtn = pre.querySelector('.download-code');
+        if (downloadBtn) downloadBtn.setAttribute('data-code', newCode);
         const runBtn = pre.querySelector('.run-code');
         if (runBtn) runBtn.setAttribute('data-code', newCode);
         // Swap icon back to pencil
@@ -3231,7 +3249,7 @@ import createResearchSynapse from './researchSynapse.js';
     // Tapping a code block body (not its buttons) toggles the overlay
     // copy/edit/run buttons, which otherwise cover the text on mobile.
     document.addEventListener('click', (e) => {
-      if (e.target.closest('.copy-code, .edit-code, .run-code')) return;
+      if (e.target.closest('.copy-code, .download-code, .edit-code, .run-code')) return;
       const pre = e.target.closest('pre');
       if (!pre || !pre.querySelector('.copy-code')) return;
       // Don't hide while editing — the buttons (incl. the Done checkmark) matter.
@@ -3253,6 +3271,8 @@ import createResearchSynapse from './researchSynapse.js';
       const isBottom = rect.top < threshold;
       const copyBtn = pre.querySelector('.copy-code');
       if (copyBtn) copyBtn.classList.toggle('bottom', isBottom);
+      const downloadBtn = pre.querySelector('.download-code');
+      if (downloadBtn) downloadBtn.classList.toggle('bottom', isBottom);
       const editBtn = pre.querySelector('.edit-code');
       if (editBtn) editBtn.classList.toggle('bottom', isBottom);
       const runBtn = pre.querySelector('.run-code');
