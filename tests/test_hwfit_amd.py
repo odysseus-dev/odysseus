@@ -179,3 +179,17 @@ def test_sort_by_newest_orders_by_release_date():
             seen_blank = True
         elif seen_blank:
             assert False, "a dated model appeared after an undated one"
+
+
+def test_no_vendor_specific_formats_on_consumer_rdna():
+    """Consumer Radeon can't run NVIDIA NVFP4, Apple MLX, or vLLM-only FP8/AWQ/
+    GPTQ builds — none should be recommended on RDNA even though such repos DO
+    exist in the catalog. Guards the format filter directly (not just is_gguf)."""
+    import re
+    bad = re.compile(r"NVFP4|FP8|FP4|-MLX-|\bMLX\b|AWQ|GPTQ", re.IGNORECASE)
+    names = [r["name"] for r in rank_models(_rocm_system(family="rdna"), limit=900)]
+    offenders = [n for n in names if bad.search(n)]
+    assert offenders == [], f"non-runnable formats recommended on RDNA: {offenders[:5]}"
+    # Guard against a vacuous test: such formats must actually be in the catalog.
+    assert any(bad.search(m["name"]) for m in get_models()), \
+        "catalog has no NVFP4/MLX/FP8 repos — test would be vacuous"
