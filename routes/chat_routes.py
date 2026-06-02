@@ -250,6 +250,24 @@ def _github_is_active(owner: str | None) -> bool:
         return False
 
 
+def _github_write_active(owner: str | None) -> bool:
+    """True iff the integration is active AND the user has persisted write
+    actions on (write_enabled in Settings). Server-side companion to the
+    per-turn allow_github_write form flag: even if a stale tab still sends
+    allow_github_write=true after the user turned writes off, the write tools
+    stay disabled. Failures return False (deny)."""
+    try:
+        from core.database import SessionLocal as _SL, GitHubIntegration as _GI
+    except Exception:
+        return False
+    try:
+        with _SL() as db:
+            row = db.query(_GI).filter_by(owner=owner or "").first()
+        return bool(row and row.enabled and row.pat_encrypted and row.write_enabled)
+    except Exception:
+        return False
+
+
 def _fetch_github_briefing(owner: str | None) -> str | None:
     """Return the user's GitHub briefing with editing-prompt comments stripped,
     or None if the integration isn't set up / enabled / has no briefing. Safe to
@@ -442,7 +460,8 @@ def setup_chat_routes(
         preset_id = form_data.get("preset_id")
         allow_bash = form_data.get("allow_bash")
         allow_web_search = form_data.get("allow_web_search")
-        allow_github = form_data.get("allow_github")  # gates the read-only gh_* tool family
+        allow_github = form_data.get("allow_github")  # gates the gh_* read tool family
+        allow_github_write = form_data.get("allow_github_write")  # additionally gates gh_* write tools
         use_rag = form_data.get("use_rag")
         search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
@@ -650,9 +669,19 @@ def setup_chat_routes(
             "gh_me", "gh_list_my_prs", "gh_get_pr", "gh_get_pr_diff",
             "gh_list_pr_comments", "gh_search_issues", "gh_get_notifications",
         }
-        _gh_active = _github_is_active(getattr(sess, "owner", None) or "")
+        _gh_write_tools = {
+            "gh_post_pr_comment", "gh_post_issue_comment",
+            "gh_open_pr", "gh_edit_pr", "gh_close_issue",
+            "gh_push_commits", "gh_mark_notification_read",
+        }
+        _gh_owner = getattr(sess, "owner", None) or ""
+        _gh_active = _github_is_active(_gh_owner)
         if str(allow_github).lower() != "true" or not _gh_active:
-            disabled_tools.update(_gh_read_tools)
+            disabled_tools.update(_gh_read_tools | _gh_write_tools)
+        elif str(allow_github_write).lower() != "true" or not _github_write_active(_gh_owner):
+            # Read tools allowed, but write tools require BOTH the per-turn
+            # opt-in AND write_enabled persisted in Settings.
+            disabled_tools.update(_gh_write_tools)
 
         # Nobody/incognito mode: deny tools that would expose the user's
         # persistent memory, past chats, or other identity-linked data.

@@ -131,6 +131,7 @@ class SavePATRequest(BaseModel):
 class UpdateFlagsRequest(BaseModel):
     enabled: bool | None = None
     notify_enabled: bool | None = None
+    write_enabled: bool | None = None
 
 
 class UpdateBriefingRequest(BaseModel):
@@ -150,6 +151,7 @@ def _row_to_dict(row: GitHubIntegration) -> dict:
         "configured": True,
         "github_username": row.github_username,
         "enabled": bool(row.enabled),
+        "write_enabled": bool(getattr(row, "write_enabled", False)),
         "notify_enabled": bool(getattr(row, "notify_enabled", False)),
         "briefing": briefing,
         "briefing_agent_preview": strip_briefing_prompts(briefing),
@@ -312,6 +314,8 @@ def setup_github_routes(mcp_manager=None):
                 row.enabled = bool(body.enabled)
             if body.notify_enabled is not None:
                 row.notify_enabled = bool(body.notify_enabled)
+            if body.write_enabled is not None:
+                row.write_enabled = bool(body.write_enabled)
             row.updated_at = datetime.utcnow()
             db.commit()
             db.refresh(row)
