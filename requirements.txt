@@ -37,5 +37,9 @@ mcp
 pyotp
 qrcode[pil]
 croniter
+# GGUF model download for the local llama.cpp hub (services/llama/manager.py
+# imports hf_hub_download directly). fastembed pulls it in transitively, but —
+# exactly like python-dateutil above — we declare the direct import explicitly.
+huggingface_hub
 pytest
 pytest-asyncio

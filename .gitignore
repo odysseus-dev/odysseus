@@ -83,3 +83,6 @@ docs/windows-port/
 compound.config.json
 *.error.log
 _scratch/
+
+# llama.cpp provisioned binaries + downloaded GGUF models (runtime, large, never commit)
+data/llama/
