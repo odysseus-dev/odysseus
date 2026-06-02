@@ -622,6 +622,9 @@ export function _addTask(sessionId, name, type, payload) {
     tasks = tasks.filter(t => !(t.type === 'download' && t.status === 'done' && t.payload && t.payload.repo_id === _repoId));
   }
   if (type === 'download' && payload && payload.repo_id) {
+    // Fresh download for this model — clear any stale "user stopped" mark so a
+    // genuine interruption can auto-retry again (issue #1458).
+    _userStoppedDownloads.delete(payload.repo_id || name);
     const key = _downloadDedupeKey({ type: 'download', payload, remoteHost });
     tasks = tasks.filter(t => {
       if (t.sessionId === sessionId) return false;
@@ -1034,6 +1037,12 @@ export async function _syncFromServer() {
 // big multi-file downloads are common and HF resumes from the .incomplete parts.
 const _dlRetryCount = new Map();
 const _DL_MAX_AUTO_RETRY = 2;
+// Downloads the user explicitly stopped (Stop / Stop all), keyed by repo_id|name.
+// A manual stop kills the process, which prints DOWNLOAD_FAILED just like a crash
+// — without this the watcher would auto-retry the very download the user stopped
+// (issue #1458). Cleared when a fresh download for that key is started.
+const _userStoppedDownloads = new Set();
+const _dlStopKey = (task) => (task && (task.payload?.repo_id || task.name)) || '';
 
 // Kill + relaunch a task (download or serve). Shared by the ⋮ → Restart action
 // and the click-to-retry on a stalled download badge.
@@ -1065,6 +1074,8 @@ async function _retryTask(el, task) {
 }
 
 async function _retryDownload(name, payload, replaceSessionId = '') {
+  // A deliberate retry re-enables auto-retry for this model (issue #1458).
+  _userStoppedDownloads.delete(payload?.repo_id || name);
   try {
     // A retry means the fast hf_transfer path already failed once — fall back to
     // the plain, reliable downloader for this and any further attempt (it resumes
@@ -2166,6 +2177,13 @@ export function _renderRunningTab() {
       const badge = el.querySelector('.cookbook-task-status');
       if (badge) { badge.textContent = 'stopping...'; badge.className = 'cookbook-task-status cookbook-task-stopping'; }
       el.dataset.status = 'stopped';
+      // A user-stopped download must NOT be auto-retried: the kill prints
+      // DOWNLOAD_FAILED, which the watcher would otherwise treat as a crash and
+      // relaunch (issue #1458). Mark it (and clear its retry counter).
+      if (task.type === 'download') {
+        _userStoppedDownloads.add(_dlStopKey(task));
+        _dlRetryCount.delete(_dlStopKey(task));
+      }
       const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
       // Drop the model endpoint so the picker stops listing it.
       if (task.type === 'serve' && task.payload) {
@@ -2549,7 +2567,7 @@ async function _reconnectTask(el, task) {
               const _accessDenied = /Access to model.*is restricted|gated repo|GatedRepoError|401 Unauthorized|403 Forbidden|not in the authorized list|awaiting a review|must (?:be authenticated|have access)/i.test(snapshot);
               const _dlKey = task.payload?.repo_id || task.name;
               const _dlN = _dlRetryCount.get(_dlKey) || 0;
-              if (!_accessDenied && task.type === 'download' && task.payload && _dlN < _DL_MAX_AUTO_RETRY) {
+              if (!_accessDenied && !_userStoppedDownloads.has(_dlKey) && task.type === 'download' && task.payload && _dlN < _DL_MAX_AUTO_RETRY) {
                 // Auto-retry: kill the dead session and re-launch (resumes from
                 // the cached .incomplete files) after a short delay.
                 _dlRetryCount.set(_dlKey, _dlN + 1);
