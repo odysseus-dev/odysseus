@@ -344,6 +344,16 @@ class DeepResearcher:
         self._emit(phase="writing", total_sources=len(self.urls_fetched),
                    total_findings=len(findings))
         if not report:
+            # Synthesis can fail (e.g. the LLM timed out) even though the search
+            # rounds did gather findings. Don't throw that work away — return the
+            # gathered findings as a basic compiled report instead of claiming
+            # nothing was found (#1551).
+            if findings:
+                logger.warning(
+                    "Synthesis produced no report; returning %d gathered "
+                    "finding(s) as a fallback", len(findings)
+                )
+                return self._fallback_report(question, findings)
             return "No information could be gathered for this question."
 
         self.evolving_report = report  # preserve pre-synthesis report
@@ -662,7 +672,11 @@ class DeepResearcher:
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=self.max_report_tokens,
-                timeout=60,
+                # Synthesis is a heavy generation call like the final report
+                # (which gets 180s); a slow local model (e.g. a 20B served from
+                # LM Studio) routinely needs >60s for it. The old 60s cap timed
+                # out mid-stream and discarded the round's findings (#1551).
+                timeout=180,
             )
         except Exception as e:
             logger.error(f"Synthesis failed: {e}")
@@ -840,6 +854,21 @@ class DeepResearcher:
             content = summary if summary else (evidence[:1000] if evidence else "(no content)")
             parts.append(f"**Finding {i}** — [{title}]({url})\n{content}")
         return "\n\n".join(parts)
+
+    def _fallback_report(self, question: str, findings: List[Dict]) -> str:
+        """Compile gathered findings into a basic report.
+
+        Used when the LLM synthesis step produced no report (e.g. it timed out)
+        but the search rounds did collect findings — so the user still gets the
+        material that was gathered instead of "No information could be gathered"
+        (#1551).
+        """
+        return (
+            f"# {question}\n\n"
+            "_Automatic synthesis did not complete, so this report lists the "
+            f"{len(findings)} finding(s) gathered during research._\n\n"
+            f"{self._format_findings(findings)}"
+        )
 
     def get_stats(self) -> Dict:
         """Return research statistics."""
