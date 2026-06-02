@@ -17,39 +17,24 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_NAME="Odysseus"
 INSTALL_DIR="$REPO_DIR"
 PORT="${ODYSSEUS_PORT:-7860}"
-ICON_BG="${ODYSSEUS_ICON_BG:-#111111}"
 DIST="$REPO_DIR/dist"
 APP="$DIST/$APP_NAME.app"
 
 echo "Building $APP_NAME.app"
 echo "  install dir: $INSTALL_DIR"
 echo "  port:        $PORT"
-echo "  icon bg:     $ICON_BG"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-# ── Icon ──
-if [ ! -f "$REPO_DIR/assets/app-icon.svg" ]; then
-  echo "✗ Missing app icon source: assets/app-icon.svg"
-  exit 1
-fi
+# ── Icon (simply skips if icon generation fails)
 if [ ! -x "$REPO_DIR/scripts/build-icons.sh" ]; then
-  echo "✗ Missing icon build script: scripts/build-icons.sh"
-  exit 1
+  echo "  icon:        (skipped — missing scripts/build-icons.sh)"
 fi
-if ! command -v rsvg-convert >/dev/null 2>&1; then
-  echo "✗ rsvg-convert is required to build the Odysseus.app icon."
-  echo "  Install it with: brew install librsvg"
-  exit 1
+if [ -x "$REPO_DIR/scripts/build-icons.sh" ] && "$REPO_DIR/scripts/build-icons.sh" macos; then
+  cp "$REPO_DIR/dist/icons/odysseus.icns" "$APP/Contents/Resources/odysseus.icns"
+  echo "  icon:        assets/app-icon.svg"
 fi
-if ! command -v iconutil >/dev/null 2>&1; then
-  echo "✗ iconutil is required to build the Odysseus.app icon."
-  exit 1
-fi
-ODYSSEUS_ICON_BG="$ICON_BG" "$REPO_DIR/scripts/build-icons.sh" macos >/dev/null
-cp "$REPO_DIR/dist/icons/odysseus.icns" "$APP/Contents/Resources/odysseus.icns"
-echo "  icon:        assets/app-icon.svg"
 
 # ── Info.plist ──
 cat > "$APP/Contents/Info.plist" <<PLIST

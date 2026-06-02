@@ -10,6 +10,13 @@ TARGET="${1:-all}"
 has() { command -v "$1" >/dev/null 2>&1; }
 die() { echo "$*" >&2; exit 1; }
 
+# Tool checks are target-specific; Linux writes SVG and needs no renderer.
+require_cmd() { has "$1" || die "$2"; }
+require_imagemagick() {
+  IMG="$(command -v magick || command -v convert || true)"
+  [ -n "$IMG" ] || die "ImageMagick is required to build Windows .ico files."
+}
+
 case "$TARGET" in
   macos|windows|linux|png|all) ;;
   -h|--help) echo "Usage: $0 [macos|windows|linux|png|all]"; exit 0 ;;
@@ -21,6 +28,23 @@ mkdir -p "$OUT"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# Validate required tools
+case "$TARGET" in
+  macos)
+    require_cmd rsvg-convert "rsvg-convert is required to render PNG-based icons. Install librsvg."
+    require_cmd iconutil "iconutil is required to build macOS .icns files."
+    ;;
+  windows)
+    require_cmd rsvg-convert "rsvg-convert is required to render PNG-based icons. Install librsvg."
+    require_imagemagick
+    ;;
+  png)
+    require_cmd rsvg-convert "rsvg-convert is required to render PNG-based icons. Install librsvg."
+    ;;
+  all) ;;
+esac
+
+# Compose the final app icon SVG from the source boat mark and adds a background.
 write_svg() {
   cat > "$1" <<SVG
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
@@ -32,12 +56,13 @@ SVG
   printf '  </g>\n</svg>\n' >> "$1"
 }
 
+# Render one PNG size from the composed SVG.
 render_png() {
-  has rsvg-convert || die "rsvg-convert is required to render PNG-based icons."
   write_svg "$TMP/icon.svg"
   rsvg-convert -w "$1" -h "$1" "$TMP/icon.svg" -o "$2"
 }
 
+# Build only the requested target.
 case "$TARGET" in
   linux)
     write_svg "$OUT/odysseus.svg"
@@ -46,7 +71,6 @@ case "$TARGET" in
     render_png 1024 "$OUT/odysseus-1024.png"
     ;;
   macos)
-    has iconutil || die "iconutil is required to build macOS .icns files."
     ICONSET="$TMP/odysseus.iconset"
     mkdir -p "$ICONSET"
     for spec in \
@@ -61,8 +85,6 @@ case "$TARGET" in
     iconutil -c icns "$ICONSET" -o "$OUT/odysseus.icns"
     ;;
   windows)
-    has magick || has convert || die "ImageMagick is required to build Windows .ico files."
-    IMG="$(command -v magick || command -v convert)"
     files=()
     for size in 16 24 32 48 64 128 256; do
       render_png "$size" "$TMP/odysseus-$size.png"
@@ -72,8 +94,8 @@ case "$TARGET" in
     ;;
   all)
     "$0" linux
-    has iconutil && "$0" macos || echo "Skipping macOS .icns: iconutil not found."
-    (has magick || has convert) && "$0" windows || echo "Skipping Windows .ico: ImageMagick not found."
+    "$0" macos || echo "Skipping macOS .icns."
+    "$0" windows || echo "Skipping Windows .ico."
     ;;
 esac
 

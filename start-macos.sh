@@ -74,8 +74,15 @@ done
 #                  GGUF models on the GPU with no compile step
 #    - librsvg   : renders the SVG app icon when building Odysseus.app
 #    - python@3.11 : installed only if no suitable (arm64) Python was found above
+#
+# tmux and llama.cpp are needed only by Cookbook (local model serving), not to
+# boot the core app. librsvg is needed only when building the app icon. So if
+# Homebrew can't install one right now we warn and keep going instead of
+# aborting the whole launch. Python is required to build the venv, so that one
+# stays fatal (handled by the PY check just below).
 
-# Install a Homebrew formula only if its command isn't already present.
+# Install a Homebrew formula only if its command isn't already present. A failed
+# install warns but does not abort — Cookbook or app-icon builds can be set up later.
 brew_ensure() {
   if command -v "$1" >/dev/null 2>&1; then
     echo "  ✓ $2 already installed"
@@ -83,9 +90,8 @@ brew_ensure() {
   fi
   echo "  installing $2…"
   if ! brew install "$2"; then
-    echo "✗ Couldn't install $2."
-    echo "  Try manually: brew install $2"
-    exit 1
+    echo "  ⚠ Couldn't install $2 right now — Cookbook (local model serving) may be limited."
+    echo "    You can install it later with:  brew install $2"
   fi
 }
 
