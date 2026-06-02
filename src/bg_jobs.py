@@ -74,7 +74,8 @@ def _pid_alive(pid: Optional[int]) -> bool:
 
 
 def launch(command: str, session_id: str, cwd: Optional[str] = None,
-           max_runtime_s: int = DEFAULT_MAX_RUNTIME_S) -> Dict[str, Any]:
+           max_runtime_s: int = DEFAULT_MAX_RUNTIME_S,
+           env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """Launch `command` detached. Returns the job record (status='running').
 
     Output + the final exit code are written to files so status survives a
@@ -131,6 +132,7 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
         cwd=cwd or None,
+        env=env,
         **detached_popen_kwargs(),  # detach from the request lifecycle (setsid / DETACHED_PROCESS)
     )
 

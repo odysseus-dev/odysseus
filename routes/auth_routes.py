@@ -17,6 +17,7 @@ from src.settings import (
     save_features as _save_features,
     DEFAULT_SETTINGS,
 )
+from src.workspace import WorkspaceError, resolve_workspace_dir
 from src.integrations import (
     load_integrations,
     add_integration,
@@ -421,6 +422,11 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         current = _load_settings()
         for key in DEFAULT_SETTINGS:
             if key in body:
+                if key == "workspace_dir" and str(body[key] or "").strip():
+                    try:
+                        resolve_workspace_dir(str(body[key]))
+                    except WorkspaceError as exc:
+                        raise HTTPException(400, str(exc)) from exc
                 current[key] = body[key]
         _save_settings(current)
         return current

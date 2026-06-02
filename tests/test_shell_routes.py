@@ -38,6 +38,17 @@ async def test_exec_shell_uses_workspace_setting(monkeypatch, tmp_path):
     assert result["stdout"].strip() == str(tmp_path)
 
 
+async def test_exec_shell_can_call_odysseus_cli_from_workspace(monkeypatch, tmp_path):
+    import routes.shell_routes as shell_routes
+
+    monkeypatch.setattr(shell_routes, "resolve_workspace_dir", lambda cwd=None: str(tmp_path))
+
+    result = await _exec_shell("odysseus --version")
+
+    assert result["exit_code"] == 0
+    assert result["stdout"].startswith("odysseus ")
+
+
 def test_shell_routes_import_without_posix_pty_modules(monkeypatch):
     """Native Windows has no fcntl/termios; importing routes must still work."""
     real_import = builtins.__import__

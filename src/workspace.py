@@ -9,6 +9,8 @@ from typing import Optional
 from src.settings import get_setting
 
 ENV_WORKSPACE_DIR = "ODYSSEUS_WORKSPACE_DIR"
+ENV_APP_DIR = "ODYSSEUS_APP_DIR"
+APP_DIR = Path(__file__).resolve().parent.parent
 
 
 class WorkspaceError(ValueError):
@@ -53,3 +55,28 @@ def resolve_workspace_path(path: str) -> str:
     if expanded.is_absolute():
         return str(expanded)
     return str((Path(resolve_workspace_dir()) / expanded).resolve())
+
+
+def workspace_subprocess_env(
+    workdir: str,
+    base_env: Optional[dict[str, str]] = None,
+) -> dict[str, str]:
+    """Build the environment for subprocesses launched from a workspace.
+
+    User-facing shell/tool commands run from the configured workspace instead
+    of the app root. Keep Odysseus' own CLIs discoverable from there by adding
+    the repo scripts directory to PATH and exposing the app root explicitly.
+    """
+    env = dict(base_env or os.environ)
+    scripts_dir = str(APP_DIR / "scripts")
+    local_bin_dir = str(APP_DIR / ".local" / "bin")
+    existing_path = env.get("PATH", "")
+    path_parts = [p for p in existing_path.split(os.pathsep) if p]
+    merged: list[str] = []
+    for path in (scripts_dir, local_bin_dir, *path_parts):
+        if path and path not in merged:
+            merged.append(path)
+    env["PATH"] = os.pathsep.join(merged)
+    env[ENV_WORKSPACE_DIR] = workdir
+    env[ENV_APP_DIR] = str(APP_DIR)
+    return env

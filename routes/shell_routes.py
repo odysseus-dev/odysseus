@@ -38,7 +38,7 @@ from core.platform_compat import (
     detached_popen_kwargs,
     find_bash,
 )
-from src.workspace import WorkspaceError, resolve_workspace_dir
+from src.workspace import WorkspaceError, resolve_workspace_dir, workspace_subprocess_env
 
 
 def _require_admin(request: Request):
@@ -383,11 +383,13 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT, cwd: str | None
     proc = None
     try:
         workdir = resolve_workspace_dir(cwd)
+        env = workspace_subprocess_env(workdir)
         proc = await _create_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workdir,
+            env=env,
         )
         stdout_b, stderr_b = await asyncio.wait_for(
             proc.communicate(), timeout=timeout
@@ -423,6 +425,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request, cwd: str | Non
         yield f"data: {json.dumps({'stream': 'stderr', 'data': str(e)})}\n\n"
         yield f"data: {json.dumps({'exit_code': -1})}\n\n"
         return
+    env = workspace_subprocess_env(workdir)
 
     loop = asyncio.get_running_loop()
     master_fd, slave_fd = pty.openpty()
@@ -437,6 +440,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request, cwd: str | Non
         stdout=slave_fd,
         stderr=slave_fd,
         cwd=workdir,
+        env=env,
         preexec_fn=os.setsid,
     )
     os.close(slave_fd)  # parent doesn't need the slave side
@@ -564,6 +568,7 @@ async def _generate_tmux(cmd: str, request: Request, cwd: str | None = None):
         yield f"data: {json.dumps({'stream': 'stderr', 'data': str(e)})}\n\n"
         yield f"data: {json.dumps({'exit_code': -1})}\n\n"
         return
+    env = workspace_subprocess_env(workdir)
 
     TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
     session_id = f"cookbook-{uuid.uuid4().hex[:8]}"
@@ -574,6 +579,9 @@ async def _generate_tmux(cmd: str, request: Request, cwd: str | None = None):
     script_path = TMUX_LOG_DIR / f"{session_id}.sh"
     script_path.write_text(
         f"#!/bin/bash\n"
+        f"export ODYSSEUS_WORKSPACE_DIR={shlex.quote(env.get('ODYSSEUS_WORKSPACE_DIR', workdir))}\n"
+        f"export ODYSSEUS_APP_DIR={shlex.quote(env.get('ODYSSEUS_APP_DIR', ''))}\n"
+        f"export PATH={shlex.quote(env.get('PATH', ''))}\n"
         f"ODYSSEUS_USER_SHELL=\"${{SHELL:-}}\"\n"
         f"if [ -n \"$ODYSSEUS_USER_SHELL\" ] && [ -x \"$ODYSSEUS_USER_SHELL\" ]; then\n"
         f"  ODYSSEUS_USER_PATH=\"$(\"$ODYSSEUS_USER_SHELL\" -ic 'printf \"__ODYSSEUS_PATH__%s\\n\" \"$PATH\"' 2>/dev/null | sed -n 's/^__ODYSSEUS_PATH__//p' | tail -n 1 || true)\"\n"
@@ -596,6 +604,7 @@ async def _generate_tmux(cmd: str, request: Request, cwd: str | None = None):
         tmux_cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=env,
     )
     await proc.wait()
     if proc.returncode != 0:
@@ -687,6 +696,7 @@ async def _generate_win_detached(cmd: str, request: Request, cwd: str | None = N
         yield f"data: {json.dumps({'stream': 'stderr', 'data': str(e)})}\n\n"
         yield f"data: {json.dumps({'exit_code': -1})}\n\n"
         return
+    env = workspace_subprocess_env(workdir)
 
     TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
     session_id = f"cookbook-{uuid.uuid4().hex[:8]}"
@@ -720,6 +730,7 @@ async def _generate_win_detached(cmd: str, request: Request, cwd: str | None = N
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             cwd=workdir,
+            env=env,
             **detached_popen_kwargs(),
         )
     except Exception as e:
@@ -824,11 +835,13 @@ def setup_shell_routes() -> APIRouter:
             reader_tasks = []
             try:
                 workdir = resolve_workspace_dir(req.cwd)
+                env = workspace_subprocess_env(workdir)
                 proc = await _create_shell(
                     cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=workdir,
+                    env=env,
                 )
 
                 q: asyncio.Queue = asyncio.Queue()

@@ -17,7 +17,12 @@ import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
-from src.workspace import WorkspaceError, resolve_workspace_dir, resolve_workspace_path
+from src.workspace import (
+    WorkspaceError,
+    resolve_workspace_dir,
+    resolve_workspace_path,
+    workspace_subprocess_env,
+)
 
 MAX_OUTPUT_CHARS = 10_000
 MAX_READ_CHARS = 20_000
@@ -476,11 +481,12 @@ async def _direct_fallback(
     try:
         if tool == "bash":
             workdir = resolve_workspace_dir()
+            env = workspace_subprocess_env(workdir, _subproc_env)
             proc = await asyncio.create_subprocess_shell(
                 content,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=_subproc_env,
+                env=env,
                 cwd=workdir,
             )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
@@ -499,6 +505,7 @@ async def _direct_fallback(
 
         if tool == "python":
             workdir = resolve_workspace_dir()
+            env = workspace_subprocess_env(workdir, _subproc_env)
             # Run user code in a subprocess so an infinite loop or crash
             # can't take the whole server down. -I = isolated mode (skip
             # user site, no PYTHONPATH inheritance) for hygiene.
@@ -508,7 +515,7 @@ async def _direct_fallback(
                 (sys.executable or "python"), "-I", "-c", content,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=_subproc_env,
+                env=env,
                 cwd=workdir,
             )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
@@ -790,7 +797,8 @@ async def execute_tool_block(
                 workdir = resolve_workspace_dir()
             except WorkspaceError as e:
                 return "bash (background): workspace", {"error": str(e), "exit_code": 1}
-            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=workdir)
+            env = workspace_subprocess_env(workdir, _subproc_env)
+            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=workdir, env=env)
             short = _bg_cmd.strip().split(chr(10))[0][:80]
             desc = f"bash (background): {short}"
             result = {

@@ -2248,6 +2248,90 @@ body.bg-pattern-sparkles {
       position: relative;
       z-index: 1;
     }
+    .workspace-control-wrap {
+      flex-shrink: 0;
+      position: relative;
+    }
+    .workspace-cwd-btn {
+      gap: 4px;
+      max-width: 150px;
+      padding-right: 8px;
+    }
+    #workspace-cwd-label {
+      font-size: 11px;
+      max-width: 96px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .workspace-cwd-menu {
+      position: fixed;
+      z-index: 1000;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    }
+    .workspace-cwd-menu.hidden {
+      display: none;
+    }
+    .workspace-cwd-field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      font-size: 11px;
+      color: color-mix(in srgb, var(--fg) 68%, transparent);
+    }
+    .workspace-cwd-field input {
+      width: 100%;
+      background: color-mix(in srgb, var(--fg) 5%, transparent);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 7px 8px;
+      font: inherit;
+      font-size: 12px;
+      outline: none;
+    }
+    .workspace-cwd-field input:focus {
+      border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+    }
+    .workspace-cwd-actions {
+      display: flex;
+      gap: 6px;
+      justify-content: flex-end;
+      margin-top: 8px;
+    }
+    .workspace-cwd-actions button {
+      background: color-mix(in srgb, var(--fg) 7%, transparent);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 5px 9px;
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .workspace-cwd-actions button:hover {
+      background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+    }
+    .workspace-cwd-status {
+      min-height: 15px;
+      margin-top: 6px;
+      font-size: 11px;
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .workspace-cwd-status.error {
+      color: var(--red);
+    }
+    @media (max-width: 768px) {
+      #workspace-cwd-label { display: none; }
+      .workspace-cwd-btn { max-width: none; padding-right: 6px; }
+    }
     .input-divider {
       width: 1px;
       height: 16px;

@@ -1581,14 +1581,22 @@ async function initAgentSettings() {
   async function saveWorkspace() {
     var path = (workspaceInput.value || '').trim();
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+      var res = await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspace_dir: path })
       });
+      if (!res.ok) {
+        var detail = 'Failed to save';
+        try {
+          var data = await res.json();
+          detail = data.detail || data.error || detail;
+        } catch (_) {}
+        throw new Error(detail);
+      }
       workspaceMsg.textContent = path ? 'Saved' : 'Using home directory';
       workspaceMsg.style.color = 'var(--fg)';
       setTimeout(function() { workspaceMsg.textContent = ''; }, 2000);
-    } catch (e) { workspaceMsg.textContent = 'Failed to save'; workspaceMsg.style.color = 'var(--red)'; }
+    } catch (e) { workspaceMsg.textContent = e.message || 'Failed to save'; workspaceMsg.style.color = 'var(--red)'; }
   }
 
   if (toolsInput) {

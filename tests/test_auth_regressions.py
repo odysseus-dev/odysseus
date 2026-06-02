@@ -118,7 +118,7 @@ def test_set_signup_enabled_true_is_idempotent():
     request = _fake_auth_request()
     auth.signup_enabled = False
 
-    out = asyncio.run(target(body=SetOpenRegistrationRequest(enabled=True),request=request))
+    out = asyncio.run(target(body=SetOpenRegistrationRequest(enabled=True), request=request))
 
     assert out == {"ok": True, "signup_enabled": True}
     assert auth.signup_enabled is True
@@ -127,6 +127,51 @@ def test_set_signup_enabled_true_is_idempotent():
 
     assert out == {"ok": True, "signup_enabled": True}
     assert auth.signup_enabled is True
+
+
+def _json_request(body: dict, token="session-token"):
+    req = _fake_auth_request(token)
+
+    async def _json():
+        return body
+
+    req.json = _json
+    return req
+
+
+def test_set_settings_rejects_missing_workspace_dir(monkeypatch, tmp_path):
+    auth, target = _auth_route_endpoint("/api/auth/settings", "POST")
+    auth.get_username_for_token.return_value = "admin"
+    auth.is_admin.return_value = True
+    saved = []
+
+    monkeypatch.setattr("routes.auth_routes._load_settings", lambda: {"workspace_dir": ""})
+    monkeypatch.setattr("routes.auth_routes._save_settings", lambda settings: saved.append(settings))
+
+    request = _json_request({"workspace_dir": str(tmp_path / "missing")})
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(target(request=request))
+
+    assert exc.value.status_code == 400
+    assert "does not exist" in exc.value.detail
+    assert saved == []
+
+
+def test_set_settings_accepts_existing_workspace_dir(monkeypatch, tmp_path):
+    auth, target = _auth_route_endpoint("/api/auth/settings", "POST")
+    auth.get_username_for_token.return_value = "admin"
+    auth.is_admin.return_value = True
+    saved = []
+
+    monkeypatch.setattr("routes.auth_routes._load_settings", lambda: {"workspace_dir": ""})
+    monkeypatch.setattr("routes.auth_routes._save_settings", lambda settings: saved.append(dict(settings)))
+
+    request = _json_request({"workspace_dir": str(tmp_path)})
+    out = asyncio.run(target(request=request))
+
+    assert out["workspace_dir"] == str(tmp_path)
+    assert saved == [{"workspace_dir": str(tmp_path)}]
 
 def test_set_signup_enabled_false_is_idempotent():
     from routes.auth_routes import SetOpenRegistrationRequest
