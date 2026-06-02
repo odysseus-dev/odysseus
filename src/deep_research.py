@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import time
+from datetime import datetime
 from typing import Callable, Dict, List, Optional, Set
 
 from src.research_utils import strip_thinking, is_low_quality
@@ -18,6 +19,20 @@ from src.research_utils import strip_thinking, is_low_quality
 from src.goal_based_extractor import EXTRACTOR_PROMPT
 
 logger = logging.getLogger(__name__)
+
+
+def current_date_context() -> str:
+    """Preamble that grounds query-generation/planning LLMs in the real current
+    date. Without it the model falls back to its training-cutoff year and emits
+    queries like "best Python tutorials 2025" when the year is actually 2026.
+    System TZ-local so it matches what the user sees. Portable strftime only."""
+    now = datetime.now().astimezone()
+    return (
+        f"Today's date is {now.strftime('%B %d, %Y')} ({now.strftime('%Y-%m-%d')}). "
+        f"When a search query needs a year or refers to 'latest'/'current'/"
+        f"'this year', use {now.strftime('%Y')} or relative wording — never a "
+        f"year inferred from training data.\n\n"
+    )
 
 # ---------------------------------------------------------------------------
 # Prompts
@@ -364,7 +379,7 @@ class DeepResearcher:
     # ------------------------------------------------------------------
     async def _create_plan(self, question: str) -> str:
         """LLM analyzes the question and creates a research plan."""
-        prompt = RESEARCH_PLAN_PROMPT.format(question=question)
+        prompt = current_date_context() + RESEARCH_PLAN_PROMPT.format(question=question)
         try:
             response = await self._llm(
                 [{"role": "user", "content": prompt}],
@@ -439,7 +454,7 @@ class DeepResearcher:
                 "that the report doesn't yet cover well."
             )
 
-        prompt = QUERY_GEN_PROMPT.format(
+        prompt = current_date_context() + QUERY_GEN_PROMPT.format(
             question=question,
             research_plan=self.research_plan or "(No plan — search broadly.)",
             report=report or "(No findings yet.)",
