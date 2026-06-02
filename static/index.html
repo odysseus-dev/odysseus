@@ -1623,6 +1623,18 @@
                 <label class="settings-label">CX ID</label>
                 <input id="set-searchCx" type="text" placeholder="Google PSE engine ID" class="settings-select">
               </div>
+              <div id="set-serpapiEngineRow" class="settings-row" style="display:none;">
+                <label class="settings-label">Engine</label>
+                <select id="set-serpapiEngine" class="settings-select">
+                  <option value="google_light">Google Light</option>
+                  <option value="google">Google</option>
+                  <option value="bing">Bing</option>
+                  <option value="yahoo">Yahoo</option>
+                  <option value="duckduckgo">DuckDuckGo</option>
+                  <option value="naver">Naver</option>
+                  <option value="baidu">Baidu</option>
+                </select>
+              </div>
               <div class="settings-row">
                 <label class="settings-label" title="Providers tried in order when the primary fails or hits a rate limit">Fallbacks</label>
                 <div class="search-fallback-chain" id="set-searchFallbackChain"></div>

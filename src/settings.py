@@ -81,6 +81,7 @@ DEFAULT_SETTINGS = {
     "tavily_api_key": "",
     "serper_api_key": "",
     "serpapi_api_key": "",
+    "serpapi_engine": "google_light",
     "research_endpoint_id": "",
     "research_model": "",
     "research_search_provider": "",
