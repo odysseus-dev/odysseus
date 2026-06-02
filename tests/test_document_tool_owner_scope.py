@@ -119,7 +119,9 @@ def test_update_document_active_id_filters_to_calling_owner(monkeypatch):
     finally:
         tools.set_active_document(None)
 
-    assert result["error"] == "No documents exist to update"
+    # alice must NOT be able to update bob's doc via the active-doc pointer:
+    # the lookup is still owner-scoped, so it resolves to nothing for alice.
+    assert "No document in this chat to update" in result["error"]
     assert ("id", "eq", "doc-bob") in query.filters
     assert ("owner", "eq", "alice") in query.filters
 
@@ -145,6 +147,8 @@ def test_document_tool_dispatch_forwards_owner():
     source = open("src/tool_execution.py", encoding="utf-8").read()
 
     assert "do_create_document(content, session_id=session_id, owner=owner)" in source
-    assert "do_update_document(content, owner=owner)" in source
-    assert "do_edit_document(content, owner=owner)" in source
+    # update/edit also forward session_id so the write target is scoped to the
+    # current chat instead of the owner's most-recent doc anywhere (issue #135).
+    assert "do_update_document(content, owner=owner, session_id=session_id)" in source
+    assert "do_edit_document(content, owner=owner, session_id=session_id)" in source
     assert "do_suggest_document(content, owner=owner)" in source

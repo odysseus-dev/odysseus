@@ -8,7 +8,7 @@ and the task scheduler / builtin actions system.
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,35 @@ _THROWAWAY_NAMES = {
     "ok", "lol", "bruh", "hmm", "hm", "meh",
 }
 _THROWAWAY_MAX_MESSAGES = 4
+
+# The automatic background sweep must never delete a chat the user just touched.
+# With a slow local model a chat can sit for minutes with a user message and no
+# assistant reply yet (it looks "dead" to the heuristics below), and the sweep
+# fires every few new chats — so without this guard it deleted chats that were
+# still being used, including in-progress ones (issue #135). Anything created,
+# updated, or messaged within this window is left strictly alone; genuinely
+# stale junk is still cleaned up on a later run.
+_RECENT_ACTIVITY_GUARD_MINUTES = 30
+
+
+def _session_last_active(row):
+    """Newest activity timestamp for a session (created/updated/last message)."""
+    stamps = [
+        getattr(row, "created_at", None),
+        getattr(row, "updated_at", None),
+        getattr(row, "last_message_at", None),
+    ]
+    stamps = [s for s in stamps if s is not None]
+    return max(stamps) if stamps else None
+
+
+def _is_recently_active(row, now=None) -> bool:
+    """True if the session was touched within the recent-activity guard window."""
+    last = _session_last_active(row)
+    if last is None:
+        return False
+    now = now or datetime.utcnow()
+    return last >= now - timedelta(minutes=_RECENT_ACTIVITY_GUARD_MINUTES)
 
 
 async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
@@ -50,8 +79,14 @@ async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
             *([DbSession.owner == owner] if owner else []),
         ).all()
 
+        sweep_now = datetime.utcnow()
         for row in rows:
             if getattr(row, 'is_important', False):
+                continue
+            # Never auto-delete a chat the user just created / used / messaged.
+            # Protects in-progress chats (slow models leave them looking "dead")
+            # and freshly-opened ones from this background sweep (issue #135).
+            if _is_recently_active(row, sweep_now):
                 continue
             if (row.name or "").strip() == "Incognito":
                 deleted_throwaway += 1

@@ -801,9 +801,9 @@ async def execute_tool_block(
         result = await do_create_document(content, session_id=session_id, owner=owner)
     elif tool == "update_document":
         desc = f"update_document: {content.split(chr(10))[0][:60]}"
-        result = await do_update_document(content, owner=owner)
+        result = await do_update_document(content, owner=owner, session_id=session_id)
     elif tool == "edit_document":
-        result = await do_edit_document(content, owner=owner)
+        result = await do_edit_document(content, owner=owner, session_id=session_id)
         desc = f"edit_document: {result.get('title', '')}"
     elif tool == "suggest_document":
         result = await do_suggest_document(content, owner=owner)

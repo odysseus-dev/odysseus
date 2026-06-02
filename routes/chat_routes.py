@@ -504,12 +504,12 @@ def setup_chat_routes(
                 active_doc = _owner_session_filter(_session_doc_q, ctx.user).order_by(DBDocument.updated_at.desc()).first()
                 if active_doc:
                     logger.info(f"[doc-inject] found by session fallback: title={active_doc.title!r}")
-            # Last resort: the document the agent itself just created/edited
-            # (tracked in-memory by the tool layer). This rescues docs that
-            # got orphaned from their session (session_id NULL) — otherwise
-            # neither lookup above can associate them with this conversation,
-            # so the agent never sees what it just wrote. Guarded so we never
-            # leak a doc that belongs to a DIFFERENT session.
+            # Last resort: the document the agent just created/edited in THIS
+            # request (the pointer is request-scoped, so it never carries over
+            # from another chat). Require an exact session match — we must NOT
+            # surface an orphaned (session_id NULL) doc here, because that is
+            # precisely how a document from a deleted/older chat leaked into an
+            # unrelated one (issues #135 / #1160).
             if not active_doc:
                 try:
                     from src.tool_implementations import get_active_document
@@ -517,7 +517,7 @@ def setup_chat_routes(
                     if _mem_id:
                         _mem_q = _doc_db.query(DBDocument).filter(DBDocument.id == _mem_id)
                         cand = _owner_session_filter(_mem_q, ctx.user).first()
-                        if cand and (not cand.session_id or cand.session_id == session):
+                        if cand and cand.session_id == session:
                             active_doc = cand
                             logger.info(f"[doc-inject] found by in-memory active id: title={active_doc.title!r} (session_id={cand.session_id!r})")
                 except Exception as _e:

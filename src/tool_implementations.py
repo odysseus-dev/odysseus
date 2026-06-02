@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+from contextvars import ContextVar
 from typing import Any, Dict, List, Optional
 
 MAX_OUTPUT_CHARS = 10_000
@@ -68,24 +69,40 @@ def _parse_tool_args(content):
 # Active document state
 # ---------------------------------------------------------------------------
 
-_active_document_id: Optional[str] = None
-_active_model: Optional[str] = None
+# The "active document" and "active model" pointers are REQUEST-SCOPED, not
+# process-global. A plain module global here is shared by every chat, every
+# user, and every concurrent request in the process, so it leaked context
+# between unrelated chats: a document write in one chat would target a document
+# opened/created in a *different* chat, and an orphaned doc would re-surface in
+# later chats (issue #135; see also #1160). ContextVars are isolated per
+# asyncio task — each HTTP request and each background task (task scheduler,
+# pollers) runs in its own task with its own context copy — so a value set
+# while handling one chat can never bleed into another. Each request also
+# starts clean (default None), which is exactly what we want.
+_active_document_var: ContextVar[Optional[str]] = ContextVar(
+    "odysseus_active_document_id", default=None
+)
+_active_model_var: ContextVar[Optional[str]] = ContextVar(
+    "odysseus_active_model", default=None
+)
 
 
 def set_active_document(doc_id: Optional[str]):
-    """Set the active document ID for document tool execution."""
-    global _active_document_id
-    _active_document_id = doc_id
+    """Set the active document ID for document tool execution (request-scoped)."""
+    _active_document_var.set(doc_id)
 
 
 def set_active_model(model: Optional[str]):
-    """Set the current model name for version summaries."""
-    global _active_model
-    _active_model = model
+    """Set the current model name for version summaries (request-scoped)."""
+    _active_model_var.set(model)
 
 
 def get_active_document():
-    return _active_document_id
+    return _active_document_var.get()
+
+
+def get_active_model():
+    return _active_model_var.get()
 
 
 def clear_active_document(doc_id: Optional[str] = None) -> bool:
@@ -99,9 +116,8 @@ def clear_active_document(doc_id: Optional[str] = None) -> bool:
     path re-surface a closed document in a later, unrelated chat — even one whose
     session no longer matches — because an unlinked doc has session_id NULL (#1160).
     """
-    global _active_document_id
-    if doc_id is None or _active_document_id == doc_id:
-        _active_document_id = None
+    if doc_id is None or _active_document_var.get() == doc_id:
+        _active_document_var.set(None)
         return True
     return False
 
@@ -130,6 +146,50 @@ def _most_recent_owned_document(db, Document, owner: Optional[str], active_only:
         q = q.filter(Document.is_active == True)
     q = _owned_document_query(q, Document, owner)
     return q.order_by(Document.updated_at.desc()).first()
+
+
+def _resolve_write_target_document(db, Document, doc_id, owner, session_id):
+    """Pick the document a write tool (update/edit) should target.
+
+    Resolution order — all owner-scoped:
+      1. an explicit ``doc_id`` from the tool call
+      2. the active document of THIS request (the editor's open doc, injected by
+         the agent loop, or one created earlier in the same turn) — kept in a
+         request-scoped ContextVar so it can't point at another chat's doc
+      3. the most-recently-updated *active* document IN THIS CHAT SESSION
+      4. the most-recently-updated document IN THIS CHAT SESSION (any)
+
+    It deliberately NEVER falls back to "the owner's most-recent document across
+    all chats". That cross-session fallback is what let a write in one chat
+    silently clobber a document belonging to a different chat (issue #135). When
+    nothing in the current chat matches, the caller returns an error instead of
+    guessing.
+    """
+    # 1. explicit id
+    if doc_id:
+        doc = _get_owned_document(db, Document, doc_id, owner)
+        if doc:
+            return doc
+    # 2. this request's active document
+    active_id = get_active_document()
+    if active_id:
+        doc = _get_owned_document(db, Document, active_id, owner)
+        if doc:
+            return doc
+    # 3 & 4. scoped to the current chat session only
+    if session_id and owner is not None:
+        base = db.query(Document).filter(
+            Document.session_id == session_id,
+            Document.owner == owner,
+            Document.archived == False,
+        )
+        doc = base.filter(Document.is_active == True).order_by(Document.updated_at.desc()).first()
+        if doc:
+            return doc
+        doc = base.order_by(Document.updated_at.desc()).first()
+        if doc:
+            return doc
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +363,7 @@ async def do_create_document(content_block: str, session_id: Optional[str] = Non
             document_id=doc_id,
             version_number=1,
             content=content,
-            summary=f"Created by {_active_model or 'AI'}",
+            summary=f"Created by {get_active_model() or 'AI'}",
             source="ai",
         )
         db.add(doc)
@@ -332,26 +392,19 @@ async def do_create_document(content_block: str, session_id: Optional[str] = Non
         db.close()
 
 
-async def do_update_document(content: str, doc_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_update_document(content: str, doc_id: Optional[str] = None, owner: Optional[str] = None,
+                             session_id: Optional[str] = None) -> Dict:
     """Update an existing document. Content = full new document text."""
     import uuid
     from src.database import SessionLocal, Document, DocumentVersion
 
-    target_id = doc_id or _active_document_id
-
     db = SessionLocal()
     try:
-        doc = None
-        if target_id:
-            doc = _get_owned_document(db, Document, target_id, owner)
+        doc = _resolve_write_target_document(db, Document, doc_id, owner, session_id)
         if not doc:
-            doc = _most_recent_owned_document(db, Document, owner)
-            if doc:
-                target_id = doc.id
-                set_active_document(target_id)
-                logger.info(f"update_document: fell back to most recent doc id={target_id}")
-        if not doc:
-            return {"error": "No documents exist to update"}
+            return {"error": "No document in this chat to update. Create one first with create_document."}
+        target_id = doc.id
+        set_active_document(target_id)
 
         is_email_doc = doc.language == "email" or _looks_like_email_document(doc.current_content or "", doc.title or "")
         new_content = _coerce_email_document_content(doc.current_content or "", content) if is_email_doc else content.strip()
@@ -364,7 +417,7 @@ async def do_update_document(content: str, doc_id: Optional[str] = None, owner: 
             document_id=target_id,
             version_number=new_ver,
             content=new_content,
-            summary=f"Updated by {_active_model or 'AI'}",
+            summary=f"Updated by {get_active_model() or 'AI'}",
             source="ai",
         )
         doc.current_content = new_content
@@ -396,12 +449,11 @@ def parse_edit_blocks(content: str) -> list:
     return edits
 
 
-async def do_edit_document(content: str, doc_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_edit_document(content: str, doc_id: Optional[str] = None, owner: Optional[str] = None,
+                           session_id: Optional[str] = None) -> Dict:
     """Apply targeted FIND/REPLACE edits to an existing document."""
     import uuid
     from src.database import SessionLocal, Document, DocumentVersion
-
-    target_id = doc_id or _active_document_id
 
     edits = parse_edit_blocks(content)
     if not edits:
@@ -409,19 +461,14 @@ async def do_edit_document(content: str, doc_id: Optional[str] = None, owner: Op
 
     db = SessionLocal()
     try:
-        doc = None
-        if target_id:
-            doc = _get_owned_document(db, Document, target_id, owner)
+        # Scoped to the current chat (explicit id → this request's active doc →
+        # a doc in THIS session). Never the owner's most-recent doc across all
+        # chats — that cross-session fallback let one chat edit another's doc (#135).
+        doc = _resolve_write_target_document(db, Document, doc_id, owner, session_id)
         if not doc:
-            # Fallback: most recently updated document. Avoids "no active doc" errors
-            # after server restart or when the agent loses track of which doc to edit.
-            doc = _most_recent_owned_document(db, Document, owner)
-            if doc:
-                target_id = doc.id
-                set_active_document(target_id)
-                logger.info(f"edit_document: fell back to most recent doc id={target_id} title={doc.title!r}")
-        if not doc:
-            return {"error": "No documents exist to edit"}
+            return {"error": "No document in this chat to edit. Create one first with create_document."}
+        target_id = doc.id
+        set_active_document(target_id)
 
         updated_content = doc.current_content
         applied = 0
@@ -456,7 +503,7 @@ async def do_edit_document(content: str, doc_id: Optional[str] = None, owner: Op
             document_id=target_id,
             version_number=new_ver,
             content=updated_content,
-            summary=f"Edited by {_active_model or 'AI'} ({applied} edit(s))",
+            summary=f"Edited by {get_active_model() or 'AI'} ({applied} edit(s))",
             source="ai",
         )
         doc.current_content = updated_content
@@ -508,7 +555,7 @@ async def do_suggest_document(content: str, doc_id: str = None, owner: Optional[
     """Create inline suggestions for the active document WITHOUT modifying it."""
     from src.database import SessionLocal, Document
 
-    target_id = doc_id or _active_document_id
+    target_id = doc_id or get_active_document()
     if not target_id:
         return {"error": "No active document to suggest on"}
 
@@ -1469,7 +1516,7 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
             }
 
         elif action == "delete":
-            doc_id = args.get("document_id") or args.get("id") or args.get("uid") or _active_document_id
+            doc_id = args.get("document_id") or args.get("id") or args.get("uid") or get_active_document()
             doc = None
             if doc_id:
                 doc = _get_owned_document(db, Document, doc_id, owner)
@@ -1481,7 +1528,7 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
             title = doc.title
             doc.is_active = False
             db.commit()
-            if _active_document_id == doc.id:
+            if get_active_document() == doc.id:
                 set_active_document(None)
             return {"response": f"Deleted document '{title}'", "exit_code": 0}
 
