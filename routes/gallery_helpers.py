@@ -50,7 +50,7 @@ def _extract_exif(content: bytes) -> dict:
             raw = exif.get(tag_id)
             if raw:
                 try:
-                    result["taken_at"] = datetime.strptime(str(raw).strip(), "%Y:%m:%d %H:%M:%S")
+                    result["taken_at"] = datetime.strptime(str(raw).strip(), "%Y:%m:%d %H:%M:%S")  # noqa: DTZ007 — EXIF format has no timezone component
                     break
                 except (ValueError, TypeError):
                     pass

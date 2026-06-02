@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from core.database import Base, Session, ChatMessage
-from datetime import datetime
+from datetime import datetime, timezone
 
 def test_sqlite_foreign_keys_cascade():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
@@ -17,8 +17,8 @@ def test_sqlite_foreign_keys_cascade():
         name="Test Session",
         endpoint_url="http://localhost:8000",
         model="gpt-4",
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc)
     )
     m = ChatMessage(id="test-msg-123", session_id=session_id, role="user", content="test message")
     

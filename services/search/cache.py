@@ -2,7 +2,7 @@
 
 import hashlib
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict
 
@@ -33,7 +33,7 @@ def generate_cache_key(data: str) -> str:
 
 def cleanup_cache(cache_dir: Path, cache_index: Dict[str, datetime], max_age: timedelta):
     """Remove expired cache entries and enforce LRU policy."""
-    current_time = datetime.now()
+    current_time = datetime.now(timezone.utc)
     files_in_dir = {f.name.split(".")[0]: f for f in cache_dir.glob("*.cache")}
 
     to_remove = []

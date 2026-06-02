@@ -23,7 +23,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 from huggingface_hub import HfApi, hf_hub_download
 from huggingface_hub.utils import EntryNotFoundError, RepositoryNotFoundError
@@ -320,7 +320,7 @@ def _entry_from_modelinfo(mi, overrides):
         return None  # can't size it — skip
     pb = total / 1e9
     created = getattr(mi, "created_at", None)
-    rel = created.strftime("%Y-%m-%d") if created else datetime.utcnow().strftime("%Y-%m-%d")
+    rel = created.strftime("%Y-%m-%d") if created else datetime.now(timezone.utc).strftime("%Y-%m-%d")
     # Rough RAM/VRAM hints (fit.py recomputes the real requirement from params+quant).
     _BPP = {"AWQ-4bit": 0.58, "GPTQ-Int4": 0.58, "mlx-4bit": 0.55, "mlx-6bit": 0.85,
             "AWQ-8bit": 1.1, "GPTQ-Int8": 1.1, "mlx-8bit": 1.1, "FP8": 1.1,

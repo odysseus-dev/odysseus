@@ -3,7 +3,7 @@ import re
 import html
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Form, HTTPException, Response, Request
 import logging
 
@@ -99,7 +99,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         # purge exists only to catch ghosts the frontend missed (tab close,
         # crash). Only clean up rows old enough to be definitely orphaned.
         try:
-            from datetime import datetime as _dt, timedelta as _td
+            from datetime import datetime, timedelta as _td, timezone, timezone as _dt
             _cutoff = _dt.utcnow() - _td(minutes=10)
             _purge_db = SessionLocal()
             try:
@@ -306,7 +306,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db_session = db.query(DbSession).filter(DbSession.id == sid).first()
                 if db_session:
                     db_session.folder = folder if folder else None
-                    db_session.updated_at = datetime.utcnow()
+                    db_session.updated_at = datetime.now(timezone.utc)
                     db.commit()
                     result["folder"] = folder if folder else None
             finally:
@@ -341,7 +341,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 if db_session:
                     db_session.model = model
                     db_session.endpoint_url = endpoint_url
-                    db_session.updated_at = datetime.utcnow()
+                    db_session.updated_at = datetime.now(timezone.utc)
                     db.commit()
             finally:
                 db.close()
@@ -467,7 +467,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db_session = db.query(DbSession).filter(DbSession.id == sid).first()
                 if db_session:
                     db_session.archived = True
-                    db_session.updated_at = datetime.utcnow()
+                    db_session.updated_at = datetime.now(timezone.utc)
                     db.commit()
                     
                     # Update in memory if it exists
@@ -501,7 +501,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             if not db_session:
                 raise HTTPException(404, f"Session {sid} not found")
             db_session.archived = False
-            db_session.updated_at = datetime.utcnow()
+            db_session.updated_at = datetime.now(timezone.utc)
             db.commit()
             # Reload into session manager so it appears in the active list
             try:
@@ -582,7 +582,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             raise HTTPException(404, f"Session {sid} not found")
 
         safe_name = re.sub(r'[^\w\-_]', '_', session.name)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
         filename = _sanitize_export_filename(filename)
 
         if fmt == "json":
@@ -590,7 +590,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             data = {
                 "name": session.name,
                 "model": session.model,
-                "exported": datetime.now().isoformat(),
+                "exported": datetime.now(timezone.utc).isoformat(),
                 "messages": [{"role": m.role, "content": m.content} for m in session.history],
             }
             out_name = filename or f"conversation_{safe_name}_{timestamp}.json"
@@ -641,7 +641,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         # Default: markdown
         markdown_lines = []
         markdown_lines.append(f"# Conversation: {session.name}")
-        markdown_lines.append(f"*Exported on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+        markdown_lines.append(f"*Exported on: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}*")
         markdown_lines.append(f"*Model: {session.model}*")
         markdown_lines.append("\n---\n")
         for message in session.history:
@@ -706,7 +706,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
                 if db_session:
                     db_session.is_important = important
-                    db_session.updated_at = datetime.utcnow()
+                    db_session.updated_at = datetime.now(timezone.utc)
                     db.commit()
 
                     # Update in memory if it exists
@@ -793,7 +793,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             metadata={
                 "compacted": True,
                 "summarized_count": len(older),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             },
         )
         new_history = [summary_msg] + recent
@@ -1056,7 +1056,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db_session = db.query(DbSession).filter(DbSession.id == sid, DbSession.owner == user).first()
                 if db_session:
                     db_session.folder = folder_name
-                    db_session.updated_at = datetime.utcnow()
+                    db_session.updated_at = datetime.now(timezone.utc)
                     updated += 1
             db.commit()
         except Exception as e:

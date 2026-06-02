@@ -16,7 +16,7 @@ import html
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from bs4 import BeautifulSoup
@@ -1792,7 +1792,7 @@ def generate_visual_report(
             + "\n</div>\n</details>\n</div>"
         )
 
-    timestamp = datetime.now().strftime("%B %d, %Y at %H:%M")
+    timestamp = datetime.now(timezone.utc).strftime("%B %d, %Y at %H:%M")
 
     # Build description for OG/meta tags (first 160 chars of plain text)
     desc_text = re.sub(r'[#*_\[\]()]', '', report_markdown)[:160].strip()

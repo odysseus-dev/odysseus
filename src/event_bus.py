@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -101,11 +101,11 @@ async def _handle_event(event_name: str, owner: Optional[str] = None):
                 # behind a model call, `next_run <= now` makes the trigger
                 # survive reboot instead of losing the event after the counter
                 # has already reset.
-                task.next_run = datetime.utcnow()
+                task.next_run = datetime.now(timezone.utc)
                 db.commit()
                 # Fire the task
                 if _task_scheduler:
-                    if task.next_run and task.next_run > datetime.utcnow():
+                    if task.next_run and task.next_run > datetime.now(timezone.utc):
                         logger.info(
                             f"Event '{event_name}' reached task '{task.name}', "
                             f"but it is already deferred until {task.next_run}"

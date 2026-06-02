@@ -39,7 +39,7 @@ import uuid
 import asyncio
 import logging
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict
 
 from fastapi import FastAPI, Request, HTTPException
@@ -318,7 +318,7 @@ if AUTH_ENABLED:
                                 _db = SessionLocal()
                                 try:
                                     _db.query(ApiToken).filter(ApiToken.id == tid).update(
-                                        {"last_used_at": datetime.utcnow()}
+                                        {"last_used_at": datetime.now(timezone.utc)}
                                     )
                                     _db.commit()
                                 finally:
@@ -770,7 +770,7 @@ async def get_version():
 
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/api/runtime")
 async def runtime_info() -> Dict[str, object]:
@@ -994,14 +994,14 @@ async def startup_event():
     # skills. Gated by the `skill_audit_nightly` setting (default on); hour via
     # `skill_audit_hour` (default 2), batch size via `skill_audit_batch` (8).
     async def _skill_audit_nightly_loop():
-        from datetime import timedelta
+        from datetime import timedelta, timezone
         while True:
             try:
                 from src.settings import get_setting
                 hour = int(get_setting("skill_audit_hour", 2) or 2)
             except Exception:
                 hour = 2
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             nxt = now.replace(hour=hour % 24, minute=0, second=0, microsecond=0)
             if nxt <= now:
                 nxt += timedelta(days=1)

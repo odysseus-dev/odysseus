@@ -2,7 +2,7 @@
 
 import re
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from urllib.parse import urlparse
 
@@ -73,13 +73,13 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
             return 0.0
         for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
             try:
-                dt = datetime.strptime(age_str, fmt)
+                dt = datetime.strptime(age_str, fmt).replace(tzinfo=timezone.utc)
                 break
             except Exception:
                 dt = None
         if not dt:
             return 0.0
-        days_old = (datetime.now() - dt).days
+        days_old = (datetime.now(timezone.utc) - dt).days
         if days_old <= 7:
             return 1.0
         if days_old >= 30:

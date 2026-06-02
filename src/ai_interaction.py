@@ -473,12 +473,12 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
             rows.append((ts, sid, sess))
 
         # Sort by timestamp DESC; rows without a timestamp sink to the bottom.
-        rows.sort(key=lambda r: r[0] or datetime.min, reverse=True)
+        rows.sort(key=lambda r: r[0] or datetime.min, reverse=True)  # noqa: DTZ901 — min is a sentinel for None timestamps, not a real datetime
 
         def _rel(ts):
             if not ts:
                 return 'never'
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             try:
                 if ts.tzinfo is not None:
                     now = datetime.now(timezone.utc)

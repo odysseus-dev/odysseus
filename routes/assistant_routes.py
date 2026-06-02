@@ -8,7 +8,7 @@ enabled tools, timezone, and the three check-in times/prompts/enabled flags.
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -196,11 +196,11 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
                     existing = [t for t in existing if t not in _EMAIL_TOOLS]
                 crew_db.enabled_tools = json.dumps(existing)
 
-            crew_db.updated_at = datetime.utcnow()
+            crew_db.updated_at = datetime.now(timezone.utc)
 
             # Update check-in tasks.
             if payload.check_ins:
-                now_utc = datetime.utcnow()
+                now_utc = datetime.now(timezone.utc)
                 tz_name = crew_db.timezone or None
                 for ci in payload.check_ins:
                     task = db.query(ScheduledTask).filter(
@@ -230,12 +230,12 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
                             cron_expression=task.cron_expression,
                             tz_name=tz_name,
                         )
-                    task.updated_at = datetime.utcnow()
+                    task.updated_at = datetime.now(timezone.utc)
 
             # Timezone change also shifts the NEXT run of all check-ins even if
             # the user didn't touch the time fields.
             if payload.timezone is not None:
-                now_utc = datetime.utcnow()
+                now_utc = datetime.now(timezone.utc)
                 tz_name = crew_db.timezone or None
                 tasks = db.query(ScheduledTask).filter(
                     ScheduledTask.owner == owner,

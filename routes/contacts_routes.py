@@ -13,7 +13,7 @@ import csv
 import io
 import httpx
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Query, Depends, Response
 from typing import List, Dict, Optional
 
@@ -92,7 +92,7 @@ def _save_local_contacts(contacts: List[Dict]) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     atomic_write_json(str(LOCAL_CONTACTS_FILE), {"contacts": [_normalize_contact(c) for c in contacts]}, indent=2)
     _contact_cache["contacts"] = [_normalize_contact(c) for c in contacts]
-    _contact_cache["fetched_at"] = datetime.utcnow()
+    _contact_cache["fetched_at"] = datetime.now(timezone.utc)
 
 
 # ── vCard parsing ──
@@ -278,7 +278,7 @@ def _fetch_via_report(cfg, auth):
 def _fetch_contacts(force=False):
     """Fetch all contacts. Uses CardDAV when configured, otherwise local JSON."""
     if not force and _contact_cache["fetched_at"]:
-        age = (datetime.utcnow() - _contact_cache["fetched_at"]).total_seconds()
+        age = (datetime.now(timezone.utc) - _contact_cache["fetched_at"]).total_seconds()
         if age < 60:
             return _contact_cache["contacts"]
 
@@ -286,7 +286,7 @@ def _fetch_contacts(force=False):
     if not _carddav_configured(cfg):
         contacts = _load_local_contacts()
         _contact_cache["contacts"] = contacts
-        _contact_cache["fetched_at"] = datetime.utcnow()
+        _contact_cache["fetched_at"] = datetime.now(timezone.utc)
         return contacts
 
     try:
@@ -303,7 +303,7 @@ def _fetch_contacts(force=False):
                 return _contact_cache["contacts"]
             contacts = _parse_vcards(r.text)
         _contact_cache["contacts"] = contacts
-        _contact_cache["fetched_at"] = datetime.utcnow()
+        _contact_cache["fetched_at"] = datetime.now(timezone.utc)
         return contacts
     except Exception as e:
         logger.error(f"Failed to fetch contacts: {e}")

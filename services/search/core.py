@@ -3,7 +3,7 @@
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List, Set
 from urllib.parse import urlparse
 
@@ -127,7 +127,7 @@ def searxng_search_results(query: str, count: int = 10, time_filter: str = None)
                 cached_data = json.load(f)
             expiry_raw = cached_data.get("expiry")
             expiry = datetime.fromisoformat(expiry_raw) if expiry_raw else None
-            if expiry and datetime.now() < expiry:
+            if expiry and datetime.now(timezone.utc) < expiry:
                 logger.debug(f"Search cache hit for query: {query}")
                 results = cached_data["data"]
                 _record_query(query, bool(results), cache_hit=True)
@@ -170,15 +170,15 @@ def searxng_search_results(query: str, count: int = 10, time_filter: str = None)
     if success:
         results = rank_search_results(query, results)
         try:
-            expiry = datetime.now() + _cache_duration_for_query(query)
+            expiry = datetime.now(timezone.utc) + _cache_duration_for_query(query)
             cache_data = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "expiry": expiry.isoformat(),
                 "data": results,
             }
             with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f)
-            search_cache_index[cache_key] = datetime.now()
+            search_cache_index[cache_key] = datetime.now(timezone.utc)
             cleanup_cache(SEARCH_CACHE_DIR, search_cache_index, timedelta(hours=1))
         except Exception as e:
             logger.warning(f"Failed to write search cache for {query}: {e}")

@@ -24,7 +24,7 @@ import re
 import html
 import logging
 import inspect
-from datetime import datetime
+from datetime import datetime, timezone
 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -163,7 +163,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         await _emit_progress(progress_cb, "Connecting to mail…")
         conn = _imap_connect(account_id)
         from datetime import timedelta as _td
-        since = (datetime.utcnow() - _td(days=max(1, days_back))).strftime("%d-%b-%Y")
+        since = (datetime.now(timezone.utc) - _td(days=max(1, days_back))).strftime("%d-%b-%Y")
         # uid_list carries real IMAP UIDs, matching the email UI/read routes.
         # Using sequence numbers here made background-cached replies miss when
         # the user clicked the same visible message in the UI.
@@ -379,7 +379,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                     INSERT OR REPLACE INTO email_summaries
                                     (message_id, uid, folder, subject, sender, summary, model_used, created_at)
                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (message_id, uid.decode() if isinstance(uid, bytes) else str(uid), _folder, subject, sender, summary, model, datetime.utcnow().isoformat()))
+                                """, (message_id, uid.decode() if isinstance(uid, bytes) else str(uid), _folder, subject, sender, summary, model, datetime.now(timezone.utc).isoformat()))
                                 _c.commit()
                                 _c.close()
                                 _sum_existing.add(message_id)
@@ -422,7 +422,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                 INSERT OR REPLACE INTO email_ai_replies
                                 (message_id, uid, folder, reply, model_used, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?)
-                            """, (message_id, uid.decode() if isinstance(uid, bytes) else str(uid), _folder, reply, model, datetime.utcnow().isoformat()))
+                            """, (message_id, uid.decode() if isinstance(uid, bytes) else str(uid), _folder, reply, model, datetime.now(timezone.utc).isoformat()))
                             _c.commit()
                             _c.close()
                             _reply_existing.add(message_id)
@@ -639,7 +639,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                             "INSERT OR REPLACE INTO email_calendar_extractions "
                             "(message_id, uid, events_created, created_at) VALUES (?, ?, ?, ?)",
                             (message_id, uid.decode() if isinstance(uid, bytes) else str(uid),
-                             _cal_run_count, datetime.utcnow().isoformat())
+                             _cal_run_count, datetime.now(timezone.utc).isoformat())
                         )
                         _cc.commit()
                         _cc.close()
@@ -700,7 +700,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                     (message_id, uid.decode() if isinstance(uid, bytes) else str(uid),
                                      _folder, subject, sender, urgency, reason,
                                      1 if urgency in ("critical", "high") else 0,
-                                     datetime.utcnow().isoformat())
+                                     datetime.now(timezone.utc).isoformat())
                                 )
                                 _uc.commit()
                                 _uc.close()
@@ -763,7 +763,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                     outer_alert["From"] = cfg["from_address"]
                                     outer_alert["To"] = to_addr
                                     outer_alert["Subject"] = alert_subject
-                                    outer_alert["Date"] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+                                    outer_alert["Date"] = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
                                     outer_alert["X-Priority"] = "1"
                                     outer_alert["Importance"] = "high"
                                     outer_alert.attach(MIMEText(alert_body, "plain", "utf-8"))
@@ -858,7 +858,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                     VALUES (?, ?, 'INBOX', ?, ?, ?, ?, ?, ?, ?, ?)
                                 """, (message_id, uid.decode(), subject, sender,
                                       json.dumps(tags), 1 if is_spam else 0,
-                                      spam_reason, moved_to, model, datetime.utcnow().isoformat()))
+                                      spam_reason, moved_to, model, datetime.now(timezone.utc).isoformat()))
                                 _c.commit()
                                 _c.close()
                                 _tag_existing.add(message_id)
@@ -932,7 +932,7 @@ def _scheduled_poll_once() -> dict:
     sent = []
     failed = []
     try:
-        now_iso = datetime.utcnow().isoformat()
+        now_iso = datetime.now(timezone.utc).isoformat()
         conn = sqlite3.connect(SCHEDULED_DB)
         cols = [row[1] for row in conn.execute("PRAGMA table_info(scheduled_emails)").fetchall()]
         kind_expr = "odysseus_kind" if "odysseus_kind" in cols else "'scheduled' AS odysseus_kind"
@@ -962,7 +962,7 @@ def _scheduled_poll_once() -> dict:
                 if r[2]:
                     outer["Cc"] = r[2]
                 outer["Subject"] = r[4] or ""
-                outer["Date"] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+                outer["Date"] = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
                 outer["X-Odysseus-Origin"] = "odysseus-ui"
                 outer["X-Odysseus-Kind"] = re.sub(r"[^A-Za-z0-9_.-]", "-", odysseus_kind or "scheduled")[:64]
                 outer["X-Odysseus-Ref"] = sid

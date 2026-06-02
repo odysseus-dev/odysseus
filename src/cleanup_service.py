@@ -1,6 +1,6 @@
 # src/cleanup_service.py
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Tuple, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ async def archive_inactive_sessions(session_manager, owner: Optional[str] = None
     Returns:
         Number of sessions archived
     """
-    cutoff_date = datetime.utcnow() - timedelta(days=CleanupConfig.ARCHIVE_AFTER_DAYS)
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=CleanupConfig.ARCHIVE_AFTER_DAYS)
     archived_count = 0
 
     from src.database import SessionLocal, Session as DbSession
@@ -53,7 +53,7 @@ async def archive_inactive_sessions(session_manager, owner: Optional[str] = None
 
         for session in sessions_to_archive:
             session.archived = True
-            session.updated_at = datetime.utcnow()
+            session.updated_at = datetime.now(timezone.utc)
             archived_count += 1
 
         if archived_count > 0:
@@ -79,7 +79,7 @@ async def cleanup_old_sessions(session_manager, owner: Optional[str] = None) -> 
     Returns:
         Tuple of (number of sessions deleted, space freed in MB)
     """
-    cutoff_date = datetime.utcnow() - timedelta(days=CleanupConfig.DELETE_AFTER_DAYS)
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=CleanupConfig.DELETE_AFTER_DAYS)
     deleted_count = 0
     space_freed = 0
 
@@ -158,8 +158,8 @@ async def get_cleanup_preview(owner: Optional[str] = None) -> Dict[str, Any]:
     Returns:
         Dictionary containing preview information
     """
-    cutoff_archive = datetime.utcnow() - timedelta(days=CleanupConfig.ARCHIVE_AFTER_DAYS)
-    cutoff_delete = datetime.utcnow() - timedelta(days=CleanupConfig.DELETE_AFTER_DAYS)
+    cutoff_archive = datetime.now(timezone.utc) - timedelta(days=CleanupConfig.ARCHIVE_AFTER_DAYS)
+    cutoff_delete = datetime.now(timezone.utc) - timedelta(days=CleanupConfig.DELETE_AFTER_DAYS)
 
     sessions_to_archive = []
     sessions_to_delete = []

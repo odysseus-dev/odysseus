@@ -7,7 +7,7 @@ import ipaddress
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -203,7 +203,7 @@ class WebhookManager:
             logger.warning(f"Webhook {webhook_id} has invalid URL, skipping: {e}")
             return
 
-        body = json.dumps({"event": event, "timestamp": datetime.utcnow().isoformat(), "data": payload})
+        body = json.dumps({"event": event, "timestamp": datetime.now(timezone.utc).isoformat(), "data": payload})
         headers = {
             "Content-Type": "application/json",
             "X-Odysseus-Event": event,
@@ -217,7 +217,7 @@ class WebhookManager:
         try:
             resp = await self._client.post(url, content=body, headers=headers)
             db.query(Webhook).filter(Webhook.id == webhook_id).update({
-                "last_triggered_at": datetime.utcnow(),
+                "last_triggered_at": datetime.now(timezone.utc),
                 "last_status_code": resp.status_code,
                 "last_error": None,
             })
@@ -226,7 +226,7 @@ class WebhookManager:
             logger.warning(f"Webhook delivery failed for {webhook_id}")
             try:
                 db.query(Webhook).filter(Webhook.id == webhook_id).update({
-                    "last_triggered_at": datetime.utcnow(),
+                    "last_triggered_at": datetime.now(timezone.utc),
                     "last_status_code": None,
                     "last_error": sanitize_error(str(e)),
                 })

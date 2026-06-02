@@ -39,3 +39,4 @@ qrcode[pil]
 croniter
 pytest
 pytest-asyncio
+ruff

@@ -1,3 +1,23 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+exclude = ["venv", "data", ".git"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "DTZ",  # flake8-datetimez (catches datetime.utcnow() and naive datetime usage)
+    "UP",   # pyupgrade
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "UP007",  # use X | Y for type hints (requires py310+, but some compat needed)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F401", "F811"]

@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from datetime import datetime, date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional, List, Tuple
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
@@ -162,7 +162,7 @@ def parse_due_for_user(s: str) -> str:
         evaluated against the user's local "now" instead of the server's,
         then ISO-with-offset.
     """
-    from datetime import timezone as _tz, timedelta as _td
+    from datetime import timedelta as _td, timezone, timezone as _tz
     offset = get_user_tz_offset()
     s = (s or "").strip()
     if not s:
@@ -190,7 +190,7 @@ def parse_due_for_user(s: str) -> str:
     # Natural language — evaluate against user's "now".
     server_now_utc = datetime.now(_tz.utc)
     user_now = server_now_utc.astimezone(user_tz)
-    # Patch datetime.now() inside _parse_dt by leveraging the user's clock:
+    # Patch datetime.now(timezone.utc) inside _parse_dt by leveraging the user's clock:
     # we re-implement the small natural-language phrases here against user_now
     # so the result is naturally in the user's tz.
     import re as _re
@@ -250,7 +250,7 @@ def _parse_dt_pair(s: str):
     naive-local (legacy behavior). DB column is naive — callers that care
     about tz semantics should set ``CalendarEvent.is_utc`` accordingly.
     """
-    from datetime import timezone as _tz
+    from datetime import timezone, timezone as _tz
     s = (s or "").strip()
     if not s:
         raise ValueError("empty datetime string")
@@ -294,13 +294,13 @@ def _parse_dt(s: str) -> datetime:
         # Strip tz for the legacy callers — they expect naive. Real tz
         # handling lives in _parse_dt_pair.
         if parsed.tzinfo is not None:
-            from datetime import timezone as _tz
+            from datetime import timezone, timezone as _tz
             return parsed.astimezone(_tz.utc).replace(tzinfo=None)
         return parsed
     except ValueError:
         pass
 
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     lower = s.lower().strip()
 
@@ -961,12 +961,12 @@ def setup_calendar_routes() -> APIRouter:
                 # suffix on output — without this, the frontend would parse
                 # the naive ISO as the user's CURRENT local, which is exactly
                 # the bug where imported events fire reminders at wrong times.
-                from datetime import timezone as _tz
+                from datetime import timezone, timezone as _tz
                 row_is_utc = False
                 if all_day:
-                    start_dt = datetime(dt_val.year, dt_val.month, dt_val.day)
+                    start_dt = datetime(dt_val.year, dt_val.month, dt_val.day)  # noqa: DTZ001 — all-day events are date-only, no timezone
                     dtend = comp.get("dtend")
-                    end_dt = datetime(dtend.dt.year, dtend.dt.month, dtend.dt.day) if dtend else start_dt + timedelta(days=1)
+                    end_dt = datetime(dtend.dt.year, dtend.dt.month, dtend.dt.day) if dtend else start_dt + timedelta(days=1)  # noqa: DTZ001
                 else:
                     if hasattr(dt_val, 'tzinfo') and dt_val.tzinfo is not None:
                         start_dt = dt_val.astimezone(_tz.utc).replace(tzinfo=None)
@@ -1101,7 +1101,7 @@ def setup_calendar_routes() -> APIRouter:
         if not url or not model:
             return {"ok": False, "error": "No LLM endpoint configured"}
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         now_iso = now.strftime("%Y-%m-%dT%H:%M:%S")
         # The model gets only the schema it needs to fill out; we re-validate
         # everything client-side too.

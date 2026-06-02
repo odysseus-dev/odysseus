@@ -1,7 +1,7 @@
 import os
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
@@ -632,7 +632,7 @@ class Memory(Base):
     session_id = Column(String, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Timestamp as Unix timestamp
-    timestamp = Column(Integer, default=lambda: int(datetime.utcnow().timestamp()))
+    timestamp = Column(Integer, default=lambda: int(datetime.now(timezone.utc).timestamp()))
 
     # Relationship to Session
     session = relationship("Session", backref="memories")
@@ -1461,7 +1461,7 @@ def _migrate_seed_email_account():
         if not imap_host and not smtp_host:
             return  # nothing to migrate
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         with engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO email_accounts
@@ -1740,7 +1740,7 @@ def bulk_insert_messages(session_id: str, messages: list):
                     'session_id': session_id,
                     'role': msg['role'],
                     'content': msg['content'],
-                    'timestamp': datetime.utcnow()
+                    'timestamp': datetime.now(timezone.utc)
                 }
                 for msg in messages
             ]
@@ -1751,7 +1751,7 @@ def cleanup_old_sessions(days: int = 30):
     from datetime import timedelta
     
     with get_db_session() as db:
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         
         deleted_count = db.query(Session).filter(
             Session.archived == True,
@@ -1796,7 +1796,7 @@ def update_session_last_accessed(session_id: str):
     with get_db_session() as db:
         db_session = db.query(Session).filter(Session.id == session_id).first()
         if db_session:
-            db_session.last_accessed = datetime.utcnow()
+            db_session.last_accessed = datetime.now(timezone.utc)
             db.commit()
             return True
     return False
@@ -1841,7 +1841,7 @@ def get_upcoming_events(owner, horizon_days: int = 60, limit: int = 40):
     The autonomous email->calendar pass relies on this to avoid disclosing (and
     acting on) other users' calendars."""
     from datetime import timedelta
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     with get_db_session() as db:
         q = db.query(CalendarEvent).join(CalendarCal).filter(
             CalendarEvent.dtstart >= now,

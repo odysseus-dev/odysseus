@@ -4,7 +4,7 @@ import json
 import logging
 import secrets
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -916,14 +916,14 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         from src.llm_core import llm_call_async
         from src.text_helpers import strip_think as _strip_think
         import json as _json, re as _re
-        from datetime import datetime as _dt
+        from datetime import datetime as _dt, timezone
 
         body = await request.json()
         desc = (body.get("description") or "").strip()
         if not desc:
             return {"success": False, "message": "Nothing to parse"}
 
-        now = _dt.now()
+        now = _dt.now(timezone.utc)
         # Give the model the current date/time + weekday so relative phrasing
         # ("tomorrow", "every Monday", "in an hour") resolves correctly.
         ctx = now.strftime("%Y-%m-%d %H:%M (%A)")

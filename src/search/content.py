@@ -8,7 +8,7 @@ import os
 import re
 import logging
 import socket
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List
 from urllib.parse import urljoin, urlparse
 
@@ -222,7 +222,7 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
             with open(cache_file, "r", encoding="utf-8") as f:
                 cached_data = json.load(f)
             timestamp = datetime.fromisoformat(cached_data["timestamp"])
-            if datetime.now() - timestamp < timedelta(hours=2):
+            if datetime.now(timezone.utc) - timestamp < timedelta(hours=2):
                 logger.debug(f"Content cache hit for URL: {url}")
                 return cached_data["data"]
             else:
@@ -357,10 +357,10 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
 def _cache_result(cache_file, cache_key: str, result: dict, url: str):
     """Write a result to the content cache."""
     try:
-        cache_data = {"timestamp": datetime.now().isoformat(), "data": result}
+        cache_data = {"timestamp": datetime.now(timezone.utc).isoformat(), "data": result}
         with open(cache_file, "w", encoding="utf-8") as f:
             json.dump(cache_data, f)
-        content_cache_index[cache_key] = datetime.now()
+        content_cache_index[cache_key] = datetime.now(timezone.utc)
         cleanup_cache(CONTENT_CACHE_DIR, content_cache_index, timedelta(hours=2))
     except Exception as e:
         logger.warning(f"Failed to write content cache for {url}: {e}")

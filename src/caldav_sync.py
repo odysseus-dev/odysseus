@@ -53,7 +53,7 @@ def _to_utc_naive(dt):
             return dt.astimezone(timezone.utc).replace(tzinfo=None), False
         return dt, False  # naive → treat as local
     # date-only (all-day)
-    return datetime(dt.year, dt.month, dt.day), True
+    return datetime(dt.year, dt.month, dt.day), True  # noqa: DTZ001 — all-day CalDAV event, no timezone by spec
 
 
 def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
@@ -94,8 +94,8 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
             result["errors"].append(f"No calendars and URL fallback failed: {e}")
             return result
 
-    start = datetime.utcnow() - timedelta(days=_LOOKBACK_DAYS)
-    end = datetime.utcnow() + timedelta(days=_LOOKAHEAD_DAYS)
+    start = datetime.now(timezone.utc) - timedelta(days=_LOOKBACK_DAYS)
+    end = datetime.now(timezone.utc) + timedelta(days=_LOOKAHEAD_DAYS)
 
     db = SessionLocal()
     try:

@@ -6,7 +6,7 @@ import time
 import uuid
 import re
 from typing import List, Dict, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ class MemoryManager:
                             if text:
                                 memories.append({
                                     "text": text,
-                                    "timestamp": int(datetime.now().timestamp()),
+                                    "timestamp": int(datetime.now(timezone.utc).timestamp()),
                                     "session_id": session_id
                                 })
                     # If we see a heading that suggests memories

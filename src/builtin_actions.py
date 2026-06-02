@@ -7,7 +7,7 @@ scheduler without needing an LLM call.
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Tuple
 
 from src.auth_helpers import owner_filter
@@ -445,7 +445,7 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
                 if newest is not None:
                     STATE_FILE.write_text(json.dumps({
                         "last_created_at": newest.isoformat(),
-                        "last_run_at": datetime.utcnow().isoformat(),
+                        "last_run_at": datetime.now(timezone.utc).isoformat(),
                         "scanned": len(events),
                         "removed": len(removed),
                     }, indent=2), encoding="utf-8")
@@ -580,7 +580,7 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
 
         db = SessionLocal()
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             horizon = now + timedelta(days=30)
             events = db.query(CalendarEvent).filter(
                 CalendarEvent.dtstart >= now,
@@ -773,7 +773,7 @@ async def action_mark_email_boundaries(owner: str, **kwargs) -> Tuple[str, bool]
         import re as _re
         import email as _email_mod
         import asyncio as _aio
-        from datetime import datetime as _dt
+        from datetime import datetime, timezone as _dt
         from routes.email_helpers import _imap_connect, _decode_header, SCHEDULED_DB
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
@@ -967,7 +967,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         import re as _re
         import email as _email_mod
         import asyncio as _aio
-        from datetime import datetime as _dt, timedelta as _td
+        from datetime import datetime, timezone as _dt, timedelta as _td
         from routes.email_helpers import _imap_connect, SCHEDULED_DB
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
@@ -1164,7 +1164,7 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
     """Build a short morning digest: today's calendar events, unread email count
     + top-N senders/subjects, active todos."""
     try:
-        from datetime import datetime as _dt, timedelta as _td
+        from datetime import datetime, timezone as _dt, timedelta as _td
         import json as _json
 
         from core.database import SessionLocal, CalendarEvent, CalendarCal, Note
@@ -1481,7 +1481,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
     try:
         import json as _json
         import time as _time
-        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        from datetime import datetime, timezone as _dt, timezone as _tz, timedelta as _td
         from pathlib import Path as _P
         from core.database import SessionLocal as _SL, Note as _N
 
@@ -1640,7 +1640,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         import re as _re
         import time as _time
         import httpx
-        from datetime import datetime as _dt, timedelta as _td
+        from datetime import datetime, timezone as _dt, timedelta as _td
         from pathlib import Path as _P
         from core.database import SessionLocal as _SL, EmailAccount as _EA
         from routes.email_helpers import _imap_connect, _decode_header
@@ -1956,7 +1956,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         try:
             import sqlite3 as _sql3
             from routes.email_helpers import SCHEDULED_DB, _init_scheduled_db
-            from datetime import datetime as _dt2
+            from datetime import datetime, timezone as _dt2
             _init_scheduled_db()
             _conn = _sql3.connect(SCHEDULED_DB)
             try:

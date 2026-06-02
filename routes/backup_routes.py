@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from core.middleware import require_admin
@@ -42,7 +42,7 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
 
         export_data = {
             "version": 1,
-            "exported_at": datetime.now().isoformat(),
+            "exported_at": datetime.now(timezone.utc).isoformat(),
             "exported_by": user,
             "memories": memories,
             "presets": presets,
@@ -52,7 +52,7 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
             "preferences": preferences,
         }
 
-        filename = f"odysseus_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        filename = f"odysseus_backup_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
         return Response(
             content=json.dumps(export_data, indent=2, ensure_ascii=False),
             media_type="application/json",

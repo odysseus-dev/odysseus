@@ -140,7 +140,7 @@ async def dispatch_reminder(
     if cache_key:
         try:
             import json as _json
-            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            from datetime import datetime as _dt, timedelta as _td, timezone, timezone as _tz
             from pathlib import Path as _P
             _slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
             cache_path = _P(f"data/note_pings_{_slug}.json")
@@ -270,7 +270,7 @@ async def dispatch_reminder(
             from routes.email_routes import _get_email_config
             from email.mime.text import MIMEText
             from email.mime.multipart import MIMEMultipart
-            from datetime import datetime as _dt
+            from datetime import datetime as _dt, timezone
             # `reminder_email_account_id` lets the user pick WHICH email
             # account to send reminders from (when they have several
             # configured in Integrations). Falls back to the default
@@ -331,7 +331,7 @@ async def dispatch_reminder(
                 _t = title or 'Note'
                 _t = _t[len('Reminder:'):].strip() if _t.lower().startswith('reminder:') else _t
                 msg["Subject"] = f"Reminder (Odysseus): {_t}"
-                msg["Date"] = _dt.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+                msg["Date"] = _dt.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
                 msg["X-Odysseus-Origin"] = "odysseus-ui"
                 msg["X-Odysseus-Kind"] = "reminder"
                 msg["X-Odysseus-Ref"] = str(note_id)
@@ -418,7 +418,7 @@ async def dispatch_reminder(
     if (email_sent or ntfy_sent or browser_sent or local_browser_sent) and note_id:
         try:
             import json as _json
-            from datetime import datetime as _dt, timezone as _tz
+            from datetime import datetime as _dt, timezone, timezone as _tz
             from pathlib import Path as _P
             # Per-owner cache so the scanner's prune step on user A's run
             # doesn't drop user B's just-fired entry (review C4).

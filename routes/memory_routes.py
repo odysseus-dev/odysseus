@@ -6,7 +6,7 @@ import os
 import re
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 # Leading list-marker like "1.", "12)", or "3:" plus surrounding whitespace.
@@ -140,7 +140,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         for memory in sorted_memories:
             if "timestamp" in memory:
                 try:
-                    dt = datetime.fromtimestamp(memory["timestamp"])
+                    dt = datetime.fromtimestamp(memory["timestamp"], tz=timezone.utc)
                     memory["timestamp_str"] = dt.strftime("%Y-%m-%d %H:%M:%S")
                 except (ValueError, OSError, OverflowError):
                     memory["timestamp_str"] = "Unknown"

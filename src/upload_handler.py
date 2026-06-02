@@ -9,7 +9,7 @@ import mimetypes
 import shutil
 import tempfile
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 from fastapi import HTTPException, UploadFile
 def secure_filename(filename: str) -> str:
@@ -84,7 +84,7 @@ class UploadHandler:
     
     def get_upload_dir(self):
         """Get date-based upload directory"""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         upload_dir = os.path.join(self.upload_dir, now.strftime("%Y"), now.strftime("%m"), now.strftime("%d"))
         os.makedirs(upload_dir, exist_ok=True)
         return upload_dir
@@ -208,7 +208,7 @@ class UploadHandler:
     def cleanup_old_uploads(self):
         """Remove uploaded files older than CLEANUP_DAYS days."""
         try:
-            cutoff_date = datetime.now() - timedelta(days=self.cleanup_days)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=self.cleanup_days)
             cleaned_count = 0
             
             for root, dirs, files in os.walk(self.upload_dir):
@@ -218,7 +218,7 @@ class UploadHandler:
                 path_parts = root.split(os.sep)
                 if len(path_parts) >= 4:
                     try:
-                        dir_date = datetime(int(path_parts[-3]), int(path_parts[-2]), int(path_parts[-1]))
+                        dir_date = datetime(int(path_parts[-3]), int(path_parts[-2]), int(path_parts[-1]))  # noqa: DTZ001 — date-only comparison against cutoff_date
                         if dir_date < cutoff_date:
                             for file in files:
                                 file_path = os.path.join(root, file)
@@ -520,7 +520,7 @@ class UploadHandler:
         if existing_file:
             logger.info(f"Duplicate file upload detected: {original_filename} -> {existing_file['id']}")
 
-            existing_file["last_accessed"] = datetime.now().isoformat()
+            existing_file["last_accessed"] = datetime.now(timezone.utc).isoformat()
             with self._index_lock:
                 try:
                     current = self._load_upload_index()
@@ -538,7 +538,7 @@ class UploadHandler:
                         # the outer read and the write). Fall through to the
                         # fresh-insert path below; release the lock first.
                         raise LookupError("upload entry vanished mid-dedupe")
-                    existing_file["last_accessed"] = datetime.now().isoformat()
+                    existing_file["last_accessed"] = datetime.now(timezone.utc).isoformat()
                     current[live_key] = existing_file
                     self._atomic_write_json(uploads_db_path, current)
                 except LookupError:
@@ -586,8 +586,8 @@ class UploadHandler:
             "name": safe_filename,
             "hash": file_hash,
             "original_name": original_filename,
-            "uploaded_at": datetime.now().isoformat(),
-            "last_accessed": datetime.now().isoformat(),
+            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+            "last_accessed": datetime.now(timezone.utc).isoformat(),
             "client_ip": client_ip,
             "owner": owner,
         }
