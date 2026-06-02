@@ -669,6 +669,13 @@ function initializeEventListeners() {
     if (modeToggle && modeToggle.checked) { modeToggle.checked = false; modeToggle.dispatchEvent(new Event('change')); }
     // Clear character/persona
     if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
+
+    // Clear and resize input field
+    const msg = el('message');
+    if (msg) {
+      msg.value = '';
+      if (uiModule.autoResize) uiModule.autoResize(msg);
+    }
   }
 
   /** Sync Research indicator button + overflow + tool sidebar active state. */
@@ -3050,15 +3057,7 @@ function initializeEventListeners() {
       if (_resChk && _resChk.checked) _syncResearchIndicator(false);
       if (await _createDirectChatFromPreferredModel()) return;
       // No models at all — show welcome screen
-      sessionModule.setCurrentSessionId(null);
-      if (documentModule && documentModule.isPanelOpen && documentModule.isPanelOpen()) documentModule.closePanel();
-      const docBtn3 = el('overflow-doc-btn');
-      if (docBtn3) docBtn3.classList.remove('active', 'has-docs');
-      const box = el('chat-history');
-      if (box) box.innerHTML = '';
-      if (chatModule && chatModule.showWelcomeScreen) {
-        chatModule.showWelcomeScreen();
-      }
+      _startFreshChat();
       document.querySelectorAll('.session-item.active').forEach(s => s.classList.remove('active'));
     });
   }
@@ -3090,18 +3089,11 @@ function initializeEventListeners() {
       if (!sessionModule) return;
       if (_closeCompareIfActive()) return;
       _deactivateIncognito();
-      if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
       // Clear research toggle when starting a fresh chat (not via research button)
       _syncResearchIndicator(false);
       if (await _createDirectChatFromPreferredModel()) return;
       // No models at all — show welcome screen
-      sessionModule.setCurrentSessionId(null);
-      if (documentModule && documentModule.isPanelOpen && documentModule.isPanelOpen()) documentModule.closePanel();
-      const docBtn2 = el('overflow-doc-btn');
-      if (docBtn2) docBtn2.classList.remove('active', 'has-docs');
-      const box = el('chat-history');
-      if (box) box.innerHTML = '';
-      if (chatModule && chatModule.showWelcomeScreen) chatModule.showWelcomeScreen();
+      _startFreshChat();
       document.querySelectorAll('.session-item.active').forEach(s => s.classList.remove('active'));
     });
   }

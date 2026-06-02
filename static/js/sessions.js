@@ -1813,7 +1813,12 @@ export function createDirectChat(url, modelId, endpointId) {
 
   // Enable input
   const msgInput = document.getElementById('message');
-  if (msgInput) { msgInput.disabled = false; msgInput.value = ''; msgInput.focus(); }
+  if (msgInput) {
+    msgInput.disabled = false;
+    msgInput.value = '';
+    msgInput.focus();
+    if (uiModule.autoResize) uiModule.autoResize(msgInput);
+  }
 }
 
 /** Actually create the session in the DB. Called on first message send. */
