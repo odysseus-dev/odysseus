@@ -376,7 +376,10 @@ class AuthManager:
             return True  # 2FA not enabled, always pass
         secret = user.get("totp_secret")
         if not secret:
-            return True
+            # 2FA is enabled but no secret is stored (corrupt/partially-written
+            # auth.json). Fail closed — returning True here bypassed the second
+            # factor entirely.
+            return False
         # Check backup codes first
         backup = user.get("totp_backup_codes", [])
         if code in backup:
