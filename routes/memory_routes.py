@@ -111,13 +111,13 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     def api_get_memory(request: Request):
         """Return all memory entries with their metadata."""
         user = _owner(request)
-        return {"memory": memory_manager.load(owner=user)}
+        return {"memory": memory_manager.get_memories(owner=user)}
 
     @router.post("/search")
     def search_memories(request: Request, query: str = Form(...), session_id: str = Form(None), category: str = Form(None)):
         """Search across all memories with optional filters."""
         user = _owner(request)
-        memories = memory_manager.load(owner=user)
+        memories = memory_manager.get_memories(owner=user)
 
         if session_id:
             memories = [m for m in memories if m.get("session_id") == session_id]
@@ -133,7 +133,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     def memory_timeline(request: Request):
         """Get memories in chronological order with source session information."""
         user = _owner(request)
-        memories = memory_manager.load(owner=user)
+        memories = memory_manager.get_memories(owner=user)
         sorted_memories = sorted(memories, key=lambda x: x.get("timestamp", 0), reverse=True)
 
         results = []
@@ -167,7 +167,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
             raise HTTPException(404, f"Session {session_id} not found")
 
         user = _owner(request)
-        memories = memory_manager.load(owner=user)
+        memories = memory_manager.get_memories(owner=user)
         session_memories = [m for m in memories if m.get("session_id") == session_id]
 
         session_memories.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
@@ -481,7 +481,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     def get_memory_item(request: Request, memory_id: str):
         """Get a specific memory item by ID."""
         user = _owner(request)
-        memories = memory_manager.load(owner=user)
+        memories = memory_manager.get_memories(owner=user)
         for memory in memories:
             if memory["id"] == memory_id:
                 return {"memory": memory}
@@ -495,6 +495,9 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         all_mem = memory_manager.load_all()
         for i, memory in enumerate(all_mem):
             if memory["id"] == memory_id:
+                # Check if this is an Infinite Brain memory (read-only)
+                if memory.get("_infinite_brain") or memory.get("source") == "infinite_brain":
+                    raise HTTPException(403, "Infinite Brain memories are read-only and cannot be updated")
                 _verify_memory_owner(memory, user)
                 all_mem[i]["text"] = text.strip()
                 if category:
@@ -515,13 +518,14 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         """Delete a memory item by its ID."""
         user = _owner(request)
         all_mem = memory_manager.load_all()
-
         # Find and verify ownership before deleting
         target = next((m for m in all_mem if m["id"] == memory_id), None)
         if not target:
             raise HTTPException(404, f"Memory item {memory_id} not found")
+        # Check if this is an Infinite Brain memory (read-only)
+        if target.get("_infinite_brain") or target.get("source") == "infinite_brain":
+            raise HTTPException(403, "Infinite Brain memories are read-only and cannot be deleted")
         _verify_memory_owner(target, user)
-
         all_mem = [m for m in all_mem if m["id"] != memory_id]
         memory_manager.save(all_mem)
         # Sync vector index

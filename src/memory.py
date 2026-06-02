@@ -323,7 +323,8 @@ class MemoryManager:
                                 continue
 
                             rel_path = os.path.relpath(file_path, infinite_brain_base)
-                            memory_id = f"ib_{hash(rel_path) & 0x7FFFFFFF:08x}"
+                            import hashlib
+                            memory_id = "ib_" + hashlib.sha256(rel_path.encode("utf-8")).hexdigest()[:16]
 
                             memory_entry = {
                                 "id": memory_id,
@@ -333,6 +334,8 @@ class MemoryManager:
                                 "owner": "system",
                                 "category": "fact",
                                 "uses": 0,
+                                "readOnly": True,
+                                "mutationAllowed": False,
                                 "_infinite_brain": True,
                                 "_source_file": rel_path,
                             }

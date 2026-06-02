@@ -11,6 +11,7 @@ from sqlalchemy import func
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user
+from src.gnexus_governance.infinite_brain_manager import get_infinite_brain_manager
 
 logger = logging.getLogger(__name__)
 
@@ -325,9 +326,28 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     "updated_at": (doc.updated_at.isoformat() + "Z") if doc.updated_at else None,
                 })
 
+            # Add Infinite Brain documents (read-only)
+            ib_manager = get_infinite_brain_manager()
+            ib_docs = ib_manager.get_document_records()
+            for ib_doc in ib_docs:
+                documents.append({
+                    "id": ib_doc["id"],
+                    "session_id": None,  # Infinite Brain docs are not tied to a session
+                    "session_name": None,
+                    "title": ib_doc["title"],
+                    "language": ib_doc.get("language", "text"),
+                    "preview": (ib_doc["content"] or "")[:500],
+                    "version_count": 1,  # Infinite Brain docs have no versioning
+                    "created_at": ib_doc["timestamp"],
+                    "updated_at": ib_doc["timestamp"],
+                    "_infinite_brain": True,
+                    "readOnly": True,
+                    "mutationAllowed": False,
+                })
+
             return {
                 "documents": documents,
-                "total": total,
+                "total": total + len(ib_docs),  # Include Infinite Brain docs in total
                 "languages": languages,
                 "session_count": session_count,
             }
@@ -368,10 +388,30 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
-            if not doc:
-                raise HTTPException(404, "Document not found")
-            _verify_doc_owner(db, doc, user)
-            return _doc_to_dict(doc)
+            if doc:
+                _verify_doc_owner(db, doc, user)
+                return _doc_to_dict(doc)
+            # If not found in regular documents, check Infinite Brain
+            ib_manager = get_infinite_brain_manager()
+            ib_docs = ib_manager.get_document_records()
+            for ib_doc in ib_docs:
+                if ib_doc["id"] == doc_id:
+                    # Return a dict similar to _doc_to_dict but for Infinite Brain
+                    return {
+                        "id": ib_doc["id"],
+                        "session_id": None,
+                        "session_name": None,
+                        "title": ib_doc["title"],
+                        "language": ib_doc.get("language", "text"),
+                        "preview": (ib_doc["content"] or "")[:500],
+                        "version_count": 1,
+                        "created_at": ib_doc["timestamp"],
+                        "updated_at": ib_doc["timestamp"],
+                        "_infinite_brain": True,
+                        "readOnly": True,
+                        "mutationAllowed": False,
+                    }
+            raise HTTPException(404, "Document not found")
         finally:
             db.close()
 
@@ -381,6 +421,12 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         user = get_current_user(request)
         db = SessionLocal()
         try:
+            # First check if this is an Infinite Brain document (read-only)
+            ib_manager = get_infinite_brain_manager()
+            ib_docs = ib_manager.get_document_records()
+            for ib_doc in ib_docs:
+                if ib_doc["id"] == doc_id:
+                    raise HTTPException(403, "Infinite Brain documents are read-only and cannot be archived")
             doc = db.query(Document).filter(Document.id == doc_id).first()
             if not doc:
                 raise HTTPException(404, "Document not found")
@@ -397,17 +443,18 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         """Re-run pypdf+VL text extraction against the PDF linked to this doc
         and merge the result into the doc's markdown content. Idempotent — the
         existing body (everything below the title heading) is replaced.
-
         Lets the AI see PDF contents for old docs that were imported before
         text extraction was wired, plus for scanned/image-only PDFs where the
         VL model picks up text the basic pypdf path missed."""
-        import re
-        from src.document_processor import _process_pdf
-        from src.pdf_form_doc import find_source_upload_id
-
         user = get_current_user(request)
         db = SessionLocal()
         try:
+            # First check if this is an Infinite Brain document (read-only)
+            ib_manager = get_infinite_brain_manager()
+            ib_docs = ib_manager.get_document_records()
+            for ib_doc in ib_docs:
+                if ib_doc["id"] == doc_id:
+                    raise HTTPException(403, "Infinite Brain documents are read-only and cannot have text extracted")
             doc = db.query(Document).filter(Document.id == doc_id).first()
             if not doc:
                 raise HTTPException(404, "Document not found")
@@ -520,6 +567,12 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         user = get_current_user(request)
         db = SessionLocal()
         try:
+            # First check if this is an Infinite Brain document (read-only)
+            ib_manager = get_infinite_brain_manager()
+            ib_docs = ib_manager.get_document_records()
+            for ib_doc in ib_docs:
+                if ib_doc["id"] == doc_id:
+                    raise HTTPException(403, "Infinite Brain documents are read-only and cannot be updated")
             doc = db.query(Document).filter(Document.id == doc_id).first()
             if not doc:
                 raise HTTPException(404, "Document not found")
@@ -610,6 +663,12 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         user = get_current_user(request)
         db = SessionLocal()
         try:
+            # First check if this is an Infinite Brain document (read-only)
+            ib_manager = get_infinite_brain_manager()
+            ib_docs = ib_manager.get_document_records()
+            for ib_doc in ib_docs:
+                if ib_doc["id"] == doc_id:
+                    raise HTTPException(403, "Infinite Brain documents are read-only and cannot be deleted")
             doc = db.query(Document).filter(Document.id == doc_id).first()
             if not doc:
                 raise HTTPException(404, "Document not found")
