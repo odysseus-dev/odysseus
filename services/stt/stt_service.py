@@ -59,17 +59,29 @@ class STTService:
         if self._whisper_model is None:
             try:
                 from faster_whisper import WhisperModel
-                settings = self._load_settings()
-                model_size = settings.get("stt_model", "base")
-                # Use CPU by default; will use CUDA if available
-                import torch
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-                compute_type = "float16" if device == "cuda" else "int8"
-                self._whisper_model = WhisperModel(model_size, device=device, compute_type=compute_type)
-                logger.info(f"faster-whisper model '{model_size}' loaded on {device}")
             except ImportError:
                 logger.warning("faster-whisper not installed. Install with: pip install faster-whisper")
                 return None
+            try:
+                settings = self._load_settings()
+                model_size = settings.get("stt_model", "base")
+                # faster-whisper runs on CTranslate2, not torch. torch is only
+                # used (optionally) to detect a CUDA device for acceleration —
+                # if it's missing or unusable we just run on CPU. Keeping this
+                # probe separate (and tolerant of any failure, e.g. a broken
+                # CUDA/torch install that raises OSError on import) means a
+                # torch-less or torch-broken machine still does CPU
+                # transcription instead of failing with a misleading
+                # "faster-whisper not installed" error.
+                try:
+                    import torch
+                    use_cuda = torch.cuda.is_available()
+                except Exception:
+                    use_cuda = False
+                device = "cuda" if use_cuda else "cpu"
+                compute_type = "float16" if device == "cuda" else "int8"
+                self._whisper_model = WhisperModel(model_size, device=device, compute_type=compute_type)
+                logger.info(f"faster-whisper model '{model_size}' loaded on {device}")
             except Exception as e:
                 logger.error(f"Failed to load whisper model: {e}")
                 return None
