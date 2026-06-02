@@ -401,7 +401,7 @@ def _detect_windows():
         $r.avail_gb = [math]::Round($os.FreePhysicalMemory / 1048576, 1)
         $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
         $r.cpu_name = $cpu.Name
-        $r.cpu_cores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum; 
+        $r.cpu_cores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum
         $r.arch = $cpu.AddressWidth
         # GPU detection via nvidia-smi (fastest) or WMI fallback
         try { 
@@ -421,14 +421,26 @@ def _detect_windows():
         catch {}
         if (-not $r.gpu_name) { 
             $wmiGpu = Get-CimInstance Win32_VideoController | Where-Object { $_.AdapterRAM -gt 0 } | Select-Object -First 1
+            $GPUDriverKey = "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0*"
+            $GPUDeviceID = $wmiGpu.PNPDeviceID.Split('&')[0..1] -join '&'
+            $VRAMfromRegistry = Get-ItemProperty -Path $GPUDriverKey |
+            Where-Object { $_.MatchingDeviceId -like "${GPUDeviceID}*" } |
+            # Sometimes there happen to be multiple driver classes for the same gpu.
+            Select-Object -ExpandProperty HardwareInformation.qwMemorySize -ErrorAction SilentlyContinue -First 1
             if ($wmiGpu) { 
                 $r.gpu_name = $wmiGpu.Name
-                $r.gpu_vram_gb = [math]::Round($wmiGpu.AdapterRAM / 1073741824, 1)
+                # Edge case: driver is broken, otherwise $wmiGpu.AdapterRAM is redundant
+                if ($VRAMfromRegistry -ge $wmiGpu.AdapterRAM) {
+                    $r.gpu_vram_gb = [math]::Round($VRAMfromRegistry / 1073741824, 1)
+                }
+                else {
+                    $r.gpu_vram_gb = [math]::Round($wmiGpu.AdapterRAM / 1073741824, 1)
+                }
                 $r.gpu_count = 1
                 # WMI doesn't tell us CUDA/ROCm
-                $r.gpu_backend = 'cpu_x86'; 
+                $r.gpu_backend = 'cpu_x86';
             } 
-        }; 
+        }
         $r | ConvertTo-Json -Compress
     """
     )
