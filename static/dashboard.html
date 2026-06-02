@@ -110,11 +110,13 @@ el.style.display=counts[g]?"":"none";
 document.getElementById("search").addEventListener("input",e=>render(e.target.value));
 render();
 
-// Stats
-fetch("http://localhost:8378/api/stats",{headers:{"Authorization":"Bearer "+localStorage.getItem("bridge_token")||""}}).then(r=>r.json()).then(d=>{
+// Stats (via Caddy proxy — same origin, no CORS)
+fetch("/bridge/api/stats").then(r=>r.json()).then(d=>{
+const total=(d.tasks?.done||0)+(d.tasks?.in_progress||0)+(d.tasks?.pending||0);
+const agents=Object.values(d.agents||{}).reduce((a,b)=>a+b,0);
 document.getElementById("stats").innerHTML=`
-<div class="stat"><div class="num">${(d.tasks?.done||0)+(d.tasks?.in_progress||0)+(d.tasks?.pending||0)}</div><div class="label">Tasks</div></div>
-<div class="stat"><div class="num">${Object.values(d.agents||{}).reduce((a,b)=>a+b,0)}</div><div class="label">Agents</div></div>
+<div class="stat"><div class="num">${total}</div><div class="label">Tasks</div></div>
+<div class="stat"><div class="num">${agents}</div><div class="label">Agents</div></div>
 <div class="stat"><div class="num">${d.memory_count||0}</div><div class="label">Memories</div></div>
 <div class="stat"><div class="num">${d.event_count||0}</div><div class="label">Events</div></div>
 <div class="stat"><div class="num">${d.log_count||0}</div><div class="label">Logs</div></div>

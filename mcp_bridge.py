@@ -234,7 +234,11 @@ def create_app():
 
     async def rest_api(request: Request):
         """Generic REST API handler."""
-        if not check_auth(dict(request.headers)):
+        path = request.url.path
+        # Public endpoints (no auth required)
+        if path in ("/api/health", "/api/stats"):
+            pass
+        elif not check_auth(dict(request.headers)):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
 
         method = request.method
