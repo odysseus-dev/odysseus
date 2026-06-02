@@ -1487,12 +1487,21 @@ async def stream_agent_loop(
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
+        from src.context_budget import compute_input_token_budget
+        from src.settings import is_setting_overridden
 
         soft_budget = int(get_setting("agent_input_token_budget", 6000) or 0)
         if soft_budget > 0:
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
-            effective_budget = min(context_length or soft_budget, soft_budget)
+            # Scale the default budget to the model's context window so long-context
+            # models aren't silently capped at 6000; an explicit user setting is
+            # still honoured (clamped to the window). (#1170)
+            effective_budget = compute_input_token_budget(
+                soft_budget,
+                context_length,
+                is_setting_overridden("agent_input_token_budget"),
+            )
             trimmed_messages = trim_for_context(
                 messages,
                 effective_budget,
