@@ -18,7 +18,7 @@ on a GET would be unsafe (Lax cookies ride top-level GET navigations), so GET
 
 import html
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from core.middleware import require_admin
@@ -232,5 +232,97 @@ def setup_companion_routes() -> APIRouter:
   device must be on the same network, and the server must bind to your LAN.</p>
 </div></body></html>"""
         return HTMLResponse(page)
+
+    @router.get("/system/update-check")
+    def system_update_check(request: Request):
+        """Admin-only: report whether a newer Odysseus release is available.
+
+        Compares the running APP_VERSION against the latest release published at
+        UPDATE_CHECK_URL (the upstream GitHub repo by default). Read-only and
+        side-effect free — it never touches the container, only the actual
+        update (via the `odysseus-update` CLI) does. A network failure degrades
+        to reachable=false with an error string rather than a 500, so a client
+        can show "couldn't check" instead of breaking."""
+        require_admin(request)
+        from datetime import datetime, timezone
+
+        from core.constants import APP_VERSION, UPDATE_CHECK_URL
+        from companion import system as _system
+
+        result = {
+            "current": APP_VERSION,
+            "latest": None,
+            "update_available": False,
+            "reachable": False,
+            "source": UPDATE_CHECK_URL,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            rel = _system.fetch_latest_release(UPDATE_CHECK_URL)
+        except Exception as e:  # network/parse/HTTP — never surface as a 500
+            result["error"] = str(e)
+            return result
+        result["reachable"] = True
+        result["latest"] = rel.get("tag")
+        result["release_name"] = rel.get("name")
+        result["release_url"] = rel.get("html_url")
+        result["published_at"] = rel.get("published_at")
+        result["update_available"] = _system.update_available(APP_VERSION, rel.get("tag"))
+        return result
+
+    @router.get("/system/db-export")
+    def system_db_export(request: Request):
+        """Admin-only: download a consistent snapshot of the SQLite database.
+
+        Streams a point-in-time copy of app.db taken with SQLite's online
+        `.backup` API, so it's safe to pull while the server is serving. Only
+        file-backed SQLite is supported (a Postgres DATABASE_URL returns 400).
+
+        Security: the snapshot contains EVERY user's data plus the encrypted
+        columns within it. It's gated to admins and should be treated as a full
+        credential dump — the Fernet key (data/.app_key) is needed to decrypt
+        those columns and is deliberately NOT included here."""
+        require_admin(request)
+        import os
+        import tempfile
+        from datetime import datetime
+
+        from fastapi.responses import FileResponse
+        from starlette.background import BackgroundTask
+
+        from core.constants import BASE_DIR
+        from core.database import DATABASE_URL
+        from companion import system as _system
+
+        db_path = _system.resolve_sqlite_path(DATABASE_URL, BASE_DIR)
+        if db_path is None:
+            raise HTTPException(400, "Database export is only supported for SQLite databases.")
+        if not db_path.is_file():
+            raise HTTPException(404, "Database file not found.")
+
+        fd, tmp_path = tempfile.mkstemp(prefix="odysseus-db-", suffix=".sqlite")
+        os.close(fd)
+        try:
+            _system.safe_sqlite_snapshot(db_path, tmp_path)
+        except Exception as e:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise HTTPException(500, f"Database snapshot failed: {e}")
+
+        def _cleanup():
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+        filename = f"odysseus-db-{datetime.now().strftime('%Y%m%d-%H%M%S')}.sqlite"
+        return FileResponse(
+            tmp_path,
+            media_type="application/octet-stream",
+            filename=filename,
+            background=BackgroundTask(_cleanup),
+        )
 
     return router

@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""odysseus-update — check for and apply Odysseus container updates.
+
+Two subcommands:
+
+    odysseus-update check                 # is a newer release available?
+    odysseus-update apply                 # snapshot → pull → rebuild → recreate
+    odysseus-update apply --yes           # actually run it (dry-run otherwise)
+    odysseus-update apply --service odysseus --no-backup
+
+`check` compares the running APP_VERSION against the latest release published
+upstream (GitHub by default; override via ODYSSEUS_UPDATE_CHECK_URL / ODYSSEUS_REPO).
+
+`apply` updates the running stack safely. It is a DRY-RUN by default — it prints
+the exact commands it would run and exits. Pass --yes to execute. The steps:
+
+  1. snapshot data/ via `odysseus-backup snapshot` (skip with --no-backup),
+  2. `docker compose pull`  — fetch updated images,
+  3. `docker compose up -d --build` — rebuild `build:`-based services
+     (the odysseus image is built locally) and recreate containers.
+
+It deliberately does NOT `git pull`: this workspace carries a local companion
+overlay, and clobbering it automatically would be surprising. To pick up new
+*source*, update the checkout yourself first, then run `apply`.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "_lib"))
+from cli import quiet_logs, emit, fail, common_parser, run, REPO_ROOT  # noqa: E402
+
+quiet_logs()
+
+
+def _detect_compose() -> list[str] | None:
+    """Return the working compose base command, preferring Compose v2.
+
+    Tries `docker compose` (v2 plugin) then `docker-compose` (v1 standalone);
+    returns the first that responds, or None if neither is installed.
+    """
+    for cand in (["docker", "compose"], ["docker-compose"]):
+        try:
+            subprocess.run(cand + ["version"], capture_output=True, check=True)
+            return cand
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    return None
+
+
+def cmd_check(args):
+    """Compare the running version against the latest published release."""
+    from core.constants import APP_VERSION, UPDATE_CHECK_URL
+    from companion import system as _system
+
+    out = {
+        "current": APP_VERSION,
+        "latest": None,
+        "update_available": False,
+        "reachable": False,
+        "source": UPDATE_CHECK_URL,
+    }
+    try:
+        rel = _system.fetch_latest_release(UPDATE_CHECK_URL, timeout=args.timeout)
+    except Exception as e:
+        out["error"] = str(e)
+        emit(out, args)
+        return
+    out["reachable"] = True
+    out["latest"] = rel.get("tag")
+    out["release_name"] = rel.get("name")
+    out["release_url"] = rel.get("html_url")
+    out["published_at"] = rel.get("published_at")
+    out["update_available"] = _system.update_available(APP_VERSION, rel.get("tag"))
+    emit(out, args)
+
+
+def cmd_apply(args):
+    """Snapshot, then pull + rebuild + recreate the compose stack."""
+    compose_file = REPO_ROOT / "docker-compose.yml"
+    if not compose_file.is_file():
+        fail(f"no docker-compose.yml at {compose_file}")
+    base = _detect_compose()
+    if base is None and args.yes:
+        fail("docker compose not found (need Compose v2 `docker compose` or v1 `docker-compose`)")
+    # For a dry-run preview we still want to show the plan even where Docker
+    # isn't installed (e.g. previewing from a dev box). Fall back to the v2 name.
+    compose = base or ["docker", "compose"]
+
+    svc = [args.service] if args.service else []
+    steps: list[tuple[list[str], str]] = []
+    if not args.no_backup:
+        steps.append((
+            [sys.executable, str(REPO_ROOT / "scripts" / "odysseus-backup"), "snapshot"],
+            "snapshot data/ before updating",
+        ))
+    steps.append((compose + ["pull"] + svc, "pull updated images"))
+    steps.append((compose + ["up", "-d", "--build"] + svc, "rebuild + recreate containers"))
+
+    plan = [{"cmd": cmd, "why": why} for cmd, why in steps]
+    if not args.yes:
+        out = {"dry_run": True, "note": "pass --yes to execute", "plan": plan}
+        if base is None:
+            out["warning"] = "docker compose not detected; showing default plan"
+        emit(out, args)
+        return
+
+    ran = []
+    for cmd, why in steps:
+        sys.stderr.write(f"→ {why}: {' '.join(cmd)}\n")
+        result = subprocess.run(cmd, cwd=str(REPO_ROOT))
+        if result.returncode != 0:
+            fail(f"step failed ({why}): {' '.join(cmd)} → exit {result.returncode}")
+        ran.append(cmd)
+    emit({"ok": True, "ran": ran}, args)
+
+
+def _build_parser():
+    p = common_parser("odysseus-update", "Check for and apply Odysseus container updates.")
+    common = p._common_parents[0]
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    pc = sub.add_parser("check", parents=[common], help="report whether a newer release is available")
+    pc.add_argument("--timeout", type=float, default=6.0, help="network timeout in seconds (default 6)")
+    pc.set_defaults(func=cmd_check)
+
+    pa = sub.add_parser("apply", parents=[common], help="snapshot, pull, rebuild and recreate the stack")
+    pa.add_argument("--yes", action="store_true", help="execute (otherwise dry-run prints the plan)")
+    pa.add_argument("--no-backup", action="store_true", help="skip the pre-update data/ snapshot")
+    pa.add_argument("--service", help="limit to one compose service (default: whole stack)")
+    pa.set_defaults(func=cmd_apply)
+
+    return p
+
+
+if __name__ == "__main__":
+    sys.exit(run(_build_parser()))

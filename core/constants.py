@@ -4,6 +4,16 @@ import os
 
 APP_VERSION = "0.9.1"
 
+# Update checks — where to look for a newer release. The companion update-check
+# endpoint and the `odysseus-update` CLI compare APP_VERSION against the latest
+# release published here. Override the repo (or the full URL) via env so forks
+# and self-hosters can point at their own release feed.
+GITHUB_REPO = os.getenv("ODYSSEUS_REPO", "pewdiepie-archdaemon/odysseus")
+UPDATE_CHECK_URL = os.getenv(
+    "ODYSSEUS_UPDATE_CHECK_URL",
+    f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+)
+
 # Base paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/"
 STATIC_DIR = os.path.join(BASE_DIR, "static")
