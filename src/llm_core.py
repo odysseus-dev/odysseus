@@ -571,7 +571,44 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
                 cleaned.append(item)
         elif "content" in item:
             cleaned.append(item)
-    return cleaned
+
+    # Merge consecutive user messages to satisfy strict role alternation requirements.
+    merged = []
+    for item in cleaned:
+        if not merged:
+            merged.append(item)
+            continue
+
+        last = merged[-1]
+        if last["role"] == "user" and item["role"] == "user":
+            last_copy = dict(last)
+
+            # Content:
+            last_content = last_copy.get("content")
+            item_content = item.get("content")
+
+            # Convert contents to string if they exist, or keep None/empty
+            last_str = str(last_content) if last_content is not None else ""
+            item_str = str(item_content) if item_content is not None else ""
+
+            if last_str and item_str:
+                new_content = f"{last_str}\n\n{item_str}"
+            elif last_str:
+                new_content = last_str
+            else:
+                new_content = item_str if item_str else None
+
+            if new_content is not None:
+                last_copy["content"] = new_content
+            elif "content" in last_copy:
+                del last_copy["content"]
+
+            merged[-1] = last_copy
+        else:
+            merged.append(item)
+
+    return merged
+
 
 def _normalize_anthropic_url(url: str) -> str:
     """Ensure Anthropic URL points to /v1/messages."""
