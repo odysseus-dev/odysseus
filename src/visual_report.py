@@ -37,6 +37,8 @@ def _autolink_urls(md_text: str) -> str:
 
     Skips URLs already inside markdown link syntax [text](url).
     """
+    if not isinstance(md_text, str):
+        return md_text
     # Match bare URLs not already inside ](...)
     return re.sub(
         r'(?<!\]\()(?<!\()(https?://[^\s\)<>]+)',
@@ -67,6 +69,8 @@ def _md_to_html(md_text: str) -> str:
 
 def _extract_headings(md_text: str) -> List[Dict[str, str]]:
     """Pull h2/h3 headings from markdown for table of contents."""
+    if not isinstance(md_text, str):
+        return []
     headings = []
     seen_slugs: Dict[str, int] = {}
 
