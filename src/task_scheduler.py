@@ -203,6 +203,20 @@ RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
 })
 
 
+def _digest_windows(now):
+    """(label, start, end) buckets for the calendar check-in digest.
+
+    The windows are contiguous so no event is dropped between buckets — an
+    earlier version started the 30-day window at now+8d while the week window
+    ended at now+7d, so events ~7-8 days out fell into no bucket.
+    """
+    return [
+        ("today_tomorrow", now, now + timedelta(days=2)),
+        ("this_week", now + timedelta(days=2), now + timedelta(days=7)),
+        ("next_30_days", now + timedelta(days=7), now + timedelta(days=30)),
+    ]
+
+
 class TaskScheduler:
     def __init__(self, session_manager):
         self._session_manager = session_manager
@@ -1082,11 +1096,7 @@ class TaskScheduler:
             from core.database import SessionLocal as _SL, CalendarEvent as _CE
             _db = _SL()
             try:
-                for label, start, end in [
-                    ("today_tomorrow", now, now + timedelta(days=2)),
-                    ("this_week",      now + timedelta(days=2), now + timedelta(days=7)),
-                    ("next_30_days",   now + timedelta(days=8), now + timedelta(days=30)),
-                ]:
+                for label, start, end in _digest_windows(now):
                     # Strip timezone for naive DB comparison
                     _s = start.replace(tzinfo=None) if start.tzinfo else start
                     _e = end.replace(tzinfo=None) if end.tzinfo else end
