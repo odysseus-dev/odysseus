@@ -31,16 +31,27 @@ _endpoint_resolver = sys.modules.get("src.endpoint_resolver")
 if _endpoint_resolver is not None and not getattr(_endpoint_resolver, "__file__", None):
     sys.modules.pop("src.endpoint_resolver", None)
     sys.modules.pop("routes.model_routes", None)
+    _src_pkg = sys.modules.get("src")
+    if isinstance(_src_pkg, types.ModuleType) and hasattr(_src_pkg, "endpoint_resolver"):
+        delattr(_src_pkg, "endpoint_resolver")
 
-if "core.database" not in sys.modules:
+_core_db = sys.modules.get("core.database")
+if _core_db is None or not isinstance(_core_db, types.ModuleType):
     _core_db = types.ModuleType("core.database")
-    for _name in [
-        "SessionLocal", "ModelEndpoint", "Session", "ChatMessage", "Document",
-        "DocumentVersion", "GalleryImage", "GalleryAlbum", "Note",
-        "CalendarCal", "CalendarEvent", "ScheduledTask", "TaskRun", "McpServer",
-    ]:
-        setattr(_core_db, _name, MagicMock())
     sys.modules["core.database"] = _core_db
+for _name in [
+    "SessionLocal", "ModelEndpoint", "Session", "ChatMessage", "Document",
+    "DocumentVersion", "GalleryImage", "GalleryAlbum", "Note",
+    "CalendarCal", "CalendarEvent", "ScheduledTask", "TaskRun", "McpServer",
+]:
+    if not hasattr(_core_db, _name):
+        setattr(_core_db, _name, MagicMock())
+if not hasattr(_core_db, "DATABASE_URL"):
+    _core_db.DATABASE_URL = "sqlite:///:memory:"
+if not hasattr(_core_db, "engine"):
+    _core_db.engine = MagicMock()
+if "core" in sys.modules:
+    setattr(sys.modules["core"], "database", _core_db)
 
 import routes.model_routes as model_routes
 import src.endpoint_resolver as endpoint_resolver
@@ -52,6 +63,14 @@ from routes.model_routes import (
     _rewrite_loopback_for_docker,
     _PROVIDER_CURATED,
 )
+
+
+@pytest.fixture(autouse=True)
+def _restore_real_endpoint_resolver(monkeypatch):
+    monkeypatch.setitem(sys.modules, "src.endpoint_resolver", endpoint_resolver)
+    _src_pkg = sys.modules.get("src")
+    if isinstance(_src_pkg, types.ModuleType):
+        monkeypatch.setattr(_src_pkg, "endpoint_resolver", endpoint_resolver, raising=False)
 
 
 def _patch_resolve(monkeypatch):

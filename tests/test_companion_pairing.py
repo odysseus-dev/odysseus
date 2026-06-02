@@ -72,7 +72,10 @@ def _pairing_db_stub(monkeypatch):
 
 for _name, _attrs in {
     "core.auth": {"AuthManager": MagicMock()},
-    "src.endpoint_resolver": {"build_chat_url": (lambda u: u)},
+    "src.endpoint_resolver": {
+        "build_chat_url": (lambda u: u),
+        "resolve_url": (lambda u: u),
+    },
 }.items():
     if _name not in sys.modules:
         _mm = types.ModuleType(_name)
