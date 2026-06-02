@@ -562,11 +562,18 @@ def _build_anthropic_headers(headers):
     return h
 
 def _parse_anthropic_response(data: dict) -> str:
-    """Extract text from Anthropic response."""
-    for block in data.get("content", []):
-        if block.get("type") == "text":
-            return block.get("text", "")
-    return ""
+    """Extract text from an Anthropic response.
+
+    The Messages API `content` is an array that can hold more than one text
+    block (e.g. text split around a tool_use block, or citation-segmented
+    text). Concatenate them all instead of returning only the first, which
+    silently dropped the rest of the reply.
+    """
+    return "".join(
+        block.get("text", "")
+        for block in data.get("content", [])
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
 
 
 def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
