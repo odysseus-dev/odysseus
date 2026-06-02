@@ -1875,6 +1875,10 @@ function _onSessionListKeydown(e) {
   const item = e.target.closest('.list-item[data-session-id]');
   if (!item) return;
 
+  if (e.target.closest('.session-rename-input')) {
+    return;
+  }
+
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault();
     // Get all visible session items across all containers
