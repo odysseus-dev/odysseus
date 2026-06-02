@@ -148,6 +148,32 @@ def _docker_host_gateway_reachable() -> bool:
     except OSError:
         return False
 
+def _container_loopback_reachable(base_url: str, timeout: float = 0.2) -> bool:
+    """True when the requested loopback host:port is already reachable from
+    inside the current container.
+
+    This distinguishes "a model server running alongside Odysseus in the same
+    container" from "a model server running on the Docker host". Only the
+    latter should be rewritten to host.docker.internal.
+    """
+    try:
+        parsed = urlparse(base_url)
+    except Exception:
+        return False
+    host = (parsed.hostname or "").lower()
+    port = parsed.port
+    if host not in _LOOPBACK_HOSTS or not port:
+        return False
+    probe_host = "::1" if host == "::1" else "127.0.0.1"
+    family = socket.AF_INET6 if probe_host == "::1" else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            sock.connect((probe_host, port))
+        return True
+    except OSError:
+        return False
+
 
 def _rewrite_loopback_for_docker(base_url: str, *, container_local: bool = False) -> str:
     """Rewrite a loopback model-endpoint URL to ``host.docker.internal`` when
@@ -176,6 +202,8 @@ def _rewrite_loopback_for_docker(base_url: str, *, container_local: bool = False
     if host in _ANY_BIND_HOSTS and not _docker_host_gateway_reachable():
         netloc = "127.0.0.1" + (f":{parsed.port}" if parsed.port else "")
         return urlunparse(parsed._replace(netloc=netloc))
+    if _container_loopback_reachable(base_url):
+        return base_url
     if not _docker_host_gateway_reachable():
         return base_url
     netloc = "host.docker.internal" + (f":{parsed.port}" if parsed.port else "")
