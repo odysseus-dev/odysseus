@@ -1527,7 +1527,14 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             "tavily_api_key", "serper_api_key", "app_public_url",
         }
         def _is_secret(k):
-            return k in _SECRET_KEYS or any(t in k for t in ("api_key", "_key", "token", "secret", "password"))
+            # `token` must be a suffix, not a substring: otherwise the int
+            # setting `agent_input_token_budget` (which even has a "token budget"
+            # alias to set it from chat) is wrongly classified as a credential.
+            return (
+                k in _SECRET_KEYS
+                or k.endswith("token")
+                or any(t in k for t in ("api_key", "_key", "secret", "password"))
+            )
 
         # Friendly aliases → real keys, so natural phrasing resolves.
         _ALIASES_SET = {
