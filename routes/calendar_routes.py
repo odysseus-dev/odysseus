@@ -12,7 +12,7 @@ from dateutil.rrule import rrulestr, rruleset
 from dateutil.rrule import DAILY, WEEKLY, MONTHLY, YEARLY
 
 from core.database import SessionLocal, CalendarCal, CalendarEvent
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, require_user
 
 logger = logging.getLogger(__name__)
 
@@ -28,16 +28,17 @@ _SINGLE_USER_MODE = _os.environ.get("ODYSSEUS_SINGLE_USER", "1") != "0"
 
 
 def _require_user(request: Request) -> str:
-    """Return the authenticated user. In multi-user mode an unauthenticated
-    request raises 401; in single-user mode it falls through to
-    FALLBACK_OWNER. Prevents the silent cross-user data write that would
-    happen if a request slipped past auth middleware in a real deployment."""
-    u = get_current_user(request)
-    if u:
-        return u
-    if _SINGLE_USER_MODE:
-        return FALLBACK_OWNER
-    raise HTTPException(401, "Authentication required")
+    """Return the authenticated user. Uses require_user so AUTH_ENABLED=false
+    and single-user mode both work: require_user returns "" when auth is
+    disabled or unconfigured, and only raises 401 when auth is configured but
+    the caller is unauthenticated. Falls back to FALLBACK_OWNER for calendar
+    writes so data isn't stored under an empty owner in single-user mode."""
+    user = require_user(request)
+    if user:
+        return user
+    # require_user returned "" — auth is off or unconfigured (single-user).
+    # Use FALLBACK_OWNER so calendar rows have a stable owner for filtering.
+    return FALLBACK_OWNER
 
 
 def _get_or_404_calendar(db, cal_id: str, owner: str) -> CalendarCal:
@@ -62,6 +63,24 @@ def _get_or_404_event(db, uid: str, owner: str) -> CalendarEvent:
     if owner and cal and (cal.owner is None or cal.owner != owner):
         raise HTTPException(404, "Event not found")
     return ev
+
+
+def _ics_escape(text: str) -> str:
+    """Escape a value for an iCalendar TEXT field (RFC 5545 §3.3.11).
+
+    Backslash, semicolon and comma are structural in TEXT values and must be
+    escaped, and newlines become a literal ``\\n``. Backslash is escaped first
+    so the escapes we add aren't re-escaped.
+    """
+    return (
+        (text or "")
+        .replace("\\", "\\\\")
+        .replace(";", "\\;")
+        .replace(",", "\\,")
+        .replace("\r\n", "\\n")
+        .replace("\n", "\\n")
+        .replace("\r", "\\n")
+    )
 
 
 def _resolve_base_uid(uid: str) -> str:
@@ -1037,7 +1056,7 @@ def setup_calendar_routes() -> APIRouter:
             for ev in events:
                 lines.append("BEGIN:VEVENT")
                 lines.append(f"UID:{ev.uid}")
-                lines.append(f"SUMMARY:{ev.summary or ''}")
+                lines.append(f"SUMMARY:{_ics_escape(ev.summary or '')}")
                 if ev.all_day:
                     lines.append(f"DTSTART;VALUE=DATE:{ev.dtstart.strftime('%Y%m%d')}")
                     lines.append(f"DTEND;VALUE=DATE:{ev.dtend.strftime('%Y%m%d')}")
@@ -1045,10 +1064,9 @@ def setup_calendar_routes() -> APIRouter:
                     lines.append(f"DTSTART:{ev.dtstart.strftime('%Y%m%dT%H%M%S')}")
                     lines.append(f"DTEND:{ev.dtend.strftime('%Y%m%dT%H%M%S')}")
                 if ev.description:
-                    desc = ev.description.replace(chr(10), '\\n')
-                    lines.append(f"DESCRIPTION:{desc}")
+                    lines.append(f"DESCRIPTION:{_ics_escape(ev.description)}")
                 if ev.location:
-                    lines.append(f"LOCATION:{ev.location}")
+                    lines.append(f"LOCATION:{_ics_escape(ev.location)}")
                 if ev.rrule:
                     lines.append(f"RRULE:{ev.rrule}")
                 lines.append("END:VEVENT")

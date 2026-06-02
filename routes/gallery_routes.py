@@ -3,6 +3,9 @@
 import os
 import hashlib
 import logging
+import re
+import uuid
+from pathlib import Path
 from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -16,6 +19,14 @@ from routes.gallery_helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_gallery_filename(filename: str) -> str:
+    """Return a local filename safe to join under generated_images."""
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(filename or "").name)[:128]
+    if not safe_name or safe_name in {".", ".."}:
+        safe_name = uuid.uuid4().hex[:12]
+    return safe_name
 
 def setup_gallery_routes() -> APIRouter:
     router = APIRouter(tags=["gallery"])
@@ -122,7 +133,7 @@ def setup_gallery_routes() -> APIRouter:
             content = await file.read()
             img_dir = Path("data/generated_images")
             img_dir.mkdir(parents=True, exist_ok=True)
-            img_path = img_dir / img.filename
+            img_path = img_dir / _sanitize_gallery_filename(img.filename)
             img_path.write_bytes(content)
 
             # Refresh dimensions in case the editor resized the canvas.
@@ -1125,7 +1136,7 @@ def setup_gallery_routes() -> APIRouter:
             db = SessionLocal()
             try:
                 for ep in db.query(ModelEndpoint).all():
-                    if ep.base_url.rstrip("/").rstrip("/v1") == base.rstrip("/v1"):
+                    if ep.base_url.rstrip("/").removesuffix("/v1").rstrip("/") == base.rstrip("/").removesuffix("/v1").rstrip("/"):
                         api_key = ep.api_key
                         break
             finally:
@@ -1696,7 +1707,7 @@ def setup_gallery_routes() -> APIRouter:
                 return {"error": "No vision-capable endpoint configured"}
 
             # Call vision model — format differs between Anthropic and OpenAI
-            from src.llm_core import _detect_provider
+            from src.llm_core import _detect_provider, _restricts_temperature, _uses_max_completion_tokens
             provider = _detect_provider(chat_url)
             tag_prompt = (
                 "Analyze this photo. Return ONLY a comma-separated list of tags. "
@@ -1721,6 +1732,7 @@ def setup_gallery_routes() -> APIRouter:
                     }],
                 }
             else:
+                _tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model_name) else "max_tokens"
                 payload = {
                     "model": model_name,
                     "messages": [{
@@ -1730,9 +1742,12 @@ def setup_gallery_routes() -> APIRouter:
                             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
                         ],
                     }],
-                    "max_tokens": 200,
+                    _tok_key: 200,
                     "temperature": 0.3,
                 }
+                # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
+                if _restricts_temperature(model_name):
+                    payload.pop("temperature", None)
 
             h = {"Content-Type": "application/json"}
             if headers:

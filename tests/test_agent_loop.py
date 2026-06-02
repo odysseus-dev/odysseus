@@ -1,5 +1,5 @@
-"""Tests for agent_loop.py — _detect_admin_intent and _compute_final_metrics.
-Uses mock imports to avoid loading the full app stack."""
+"""Tests for agent_loop.py — _detect_admin_intent, _compute_final_metrics,
+and _append_tool_results. Uses mock imports to avoid loading the full app stack."""
 
 import sys
 from unittest.mock import MagicMock
@@ -15,7 +15,11 @@ for mod in [
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
 
-from src.agent_loop import _detect_admin_intent, _compute_final_metrics
+from src.agent_loop import (
+    _detect_admin_intent,
+    _compute_final_metrics,
+    _append_tool_results,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -239,3 +243,176 @@ class TestComputeFinalMetrics:
         m = _compute_final_metrics(**self._base_args(tool_events=[], round_texts=[]))
         assert "tool_events" not in m
         assert "round_texts" not in m
+
+
+# ---------------------------------------------------------------------------
+# _append_tool_results — native tool-call message shaping
+# ---------------------------------------------------------------------------
+
+class TestAppendToolResultsNativeContent:
+    """After a native tool call with no prose, the assistant message's content
+    must be JSON null (None), not an empty string. Google Gemini's
+    OpenAI-compatible endpoint and Ollama both reject `tool_calls` + ""
+    content with HTTP 400, which breaks every tool-using turn."""
+
+    def _native(self):
+        return [{"id": "call_abc", "name": "web_fetch", "arguments": '{"url": "https://example.com"}'}]
+
+    def test_empty_text_yields_null_content(self):
+        messages = []
+        _append_tool_results(
+            messages, "", self._native(), [{}], ["page text"],
+            used_native=True, round_num=1,
+        )
+        assistant = messages[0]
+        assert assistant["role"] == "assistant"
+        assert assistant["content"] is None  # NOT ""
+        assert assistant["tool_calls"][0]["id"] == "call_abc"
+        assert assistant["tool_calls"][0]["type"] == "function"
+        # tool result follows as a role:tool message keyed by tool_call_id
+        assert messages[1]["role"] == "tool"
+        assert messages[1]["tool_call_id"] == "call_abc"
+        assert messages[1]["content"] == "page text"
+
+    def test_whitespace_only_text_yields_null_content(self):
+        messages = []
+        _append_tool_results(
+            messages, "   \n\t  ", self._native(), [{}], ["r"],
+            used_native=True, round_num=2,
+        )
+        assert messages[0]["content"] is None
+
+    def test_real_prose_is_preserved(self):
+        messages = []
+        _append_tool_results(
+            messages, "Let me check that page.", self._native(), [{}], ["r"],
+            used_native=True, round_num=1,
+        )
+        assert messages[0]["content"] == "Let me check that page."
+
+    def test_non_native_path_unaffected(self):
+        # The text-block fallback path still wraps results in a user message.
+        messages = []
+        _append_tool_results(
+            messages, "thinking...", [], ["tool output"], [],
+            used_native=False, round_num=1,
+        )
+        assert messages[0]["role"] == "assistant"
+        assert messages[0]["content"] == "thinking..."
+        assert messages[1]["role"] == "user"
+        assert "tool output" in messages[1]["content"]
+
+
+class TestAppendToolResultsThoughtSignature:
+    """Gemini 3 returns an opaque thought_signature (in extra_content) with each
+    function call and rejects the follow-up turn with HTTP 400 unless it is
+    echoed back on the assistant tool_call. _append_tool_results must replay it
+    when present, and omit the field entirely otherwise (other providers never
+    send it)."""
+
+    def test_extra_content_is_replayed_when_present(self):
+        native = [{
+            "id": "call_g",
+            "name": "app_api",
+            "arguments": '{"action": "get_memory"}',
+            "extra_content": {"google": {"thought_signature": "EuIDCt8DAQ=="}},
+        }]
+        messages = []
+        _append_tool_results(
+            messages, "", native, [{}], ["mem"],
+            used_native=True, round_num=1,
+        )
+        tc = messages[0]["tool_calls"][0]
+        assert tc["extra_content"] == {"google": {"thought_signature": "EuIDCt8DAQ=="}}
+        # function payload is still well-formed alongside it
+        assert tc["function"]["name"] == "app_api"
+        assert tc["id"] == "call_g"
+
+    def test_no_extra_content_key_when_absent(self):
+        native = [{"id": "call_o", "name": "app_api", "arguments": "{}"}]
+        messages = []
+        _append_tool_results(
+            messages, "", native, [{}], ["r"],
+            used_native=True, round_num=1,
+        )
+        # No empty/None extra_content leaks onto non-Gemini tool calls.
+        assert "extra_content" not in messages[0]["tool_calls"][0]
+
+
+# ---------------------------------------------------------------------------
+# web_search sources extraction — key lookup regression (#443)
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+
+class TestWebSearchSourcesKeyLookup:
+    """The web_search tool returns {"output": ..., "exit_code": 0}.
+    The sources-extraction block in stream_agent_loop must read from the
+    "output" key, not only from "results"/"stdout" (which web_search never
+    sets).  Without the fix the SOURCES marker is never found, no
+    web_sources SSE event is emitted, and the raw JSON blob leaks into the
+    LLM's round-2 context."""
+
+    _SOURCES = [{"title": "Example", "url": "https://example.com", "snippet": "test"}]
+
+    def _make_result(self, key: str = "output") -> dict:
+        sources_json = _json.dumps(self._SOURCES)
+        text = f"Search results here.\n\n<!-- SOURCES:{sources_json} -->"
+        return {key: text, "exit_code": 0}
+
+    # ── Regression: the old lookup missed "output" ──────────────────────
+
+    def test_old_lookup_missed_output_key(self):
+        """Documents the bug: result.get('results') and result.get('stdout')
+        are both absent when web_search returns its canonical {"output": ...}
+        shape, so _src_text was always '' and the if-block never ran."""
+        result = self._make_result("output")
+        old_src_text = result.get("results") or result.get("stdout") or ""
+        assert old_src_text == "", "confirms the pre-fix behaviour"
+
+    def test_fixed_lookup_finds_output_key(self):
+        """After the fix, "output" is checked first so _src_text is non-empty."""
+        result = self._make_result("output")
+        src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+        assert src_text != ""
+        assert "SOURCES" in src_text
+
+    # ── Marker extraction works once _src_text is non-empty ─────────────
+
+    def test_sources_extracted_from_output(self):
+        result = self._make_result("output")
+        src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+        marker = "<!-- SOURCES:"
+        idx = src_text.find(marker)
+        end = src_text.find(" -->", idx)
+        extracted = _json.loads(src_text[idx + len(marker):end])
+        assert extracted == self._SOURCES
+
+    def test_marker_stripped_from_output_key(self):
+        """After extraction the "output" value is cleaned so the LLM never
+        sees the raw JSON blob in its round-2 context."""
+        result = self._make_result("output")
+        src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+        marker = "<!-- SOURCES:"
+        idx = src_text.find(marker)
+        clean = src_text[:idx].rstrip()
+        # Apply to the correct key (was the bug: only "results"/"stdout" were updated)
+        if "output" in result:
+            result["output"] = clean
+        assert "SOURCES" not in result["output"]
+        assert result["output"] == "Search results here."
+
+    # ── Backward compat: "results"/"stdout" keys still work ─────────────
+
+    def test_results_key_still_works(self):
+        result = self._make_result("results")
+        src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+        assert src_text != ""
+        assert "SOURCES" in src_text
+
+    def test_stdout_key_still_works(self):
+        result = self._make_result("stdout")
+        src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+        assert src_text != ""
+        assert "SOURCES" in src_text

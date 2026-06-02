@@ -7,6 +7,7 @@ import spinnerModule from './spinner.js';
 import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { attachColorPicker } from './colorPicker.js';
+import { bindMenuDismiss } from './escMenuStack.js';
 import {
   WEEKDAYS, MONTHS, MON_SHORT,
   CAL_PALETTE, CAL_COLORS, _CAL_CUSTOM_GRADIENT, _TYPE_PALETTE,
@@ -426,9 +427,10 @@ function _clampDropdown(dropdown, anchorRect) {
 }
 
 function _showEventMoreMenu(ev, anchor) {
-  document.querySelectorAll('.cal-event-dropdown').forEach(d => d.remove());
+  document.querySelectorAll('.cal-event-dropdown').forEach(d => { if (typeof d._dismiss === 'function') d._dismiss(); else d.remove(); });
   const dropdown = document.createElement('div');
   dropdown.className = 'cal-event-dropdown';
+  let closeMenu = () => dropdown.remove();
   const rect = anchor.getBoundingClientRect();
   dropdown.style.cssText = `position:fixed;z-index:10001;min-width:180px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;left:0px;visibility:hidden;`;
 
@@ -443,12 +445,12 @@ function _showEventMoreMenu(ev, anchor) {
   const _editIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
 
   dropdown.appendChild(_item(_editIcon, 'Edit', () => {
-    dropdown.remove();
+    closeMenu();
     _showEventForm(ev);
   }));
 
   dropdown.appendChild(_item(_trashIcon, 'Delete', async () => {
-    dropdown.remove();
+    closeMenu();
     const name = ev.summary ? `"${ev.summary}"` : 'this event';
     const ok = await uiModule.styledConfirm(`Delete ${name}?`, { confirmText: 'Delete', danger: true });
     if (!ok) return;
@@ -459,14 +461,7 @@ function _showEventMoreMenu(ev, anchor) {
   dropdown._anchorRect = rect;
   _clampDropdown(dropdown, rect);
   dropdown.style.visibility = '';
-  const close = (ev2) => {
-    if (!dropdown.contains(ev2.target) && ev2.target !== anchor) {
-      dropdown.remove();
-      document.removeEventListener('click', close, true);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close, true), 10);
-}
+  closeMenu = bindMenuDismiss(dropdown, () => dropdown.remove(), (ev2) => !dropdown.contains(ev2.target) && ev2.target !== anchor);}
 
 async function _createEventReminder(ev, dueDate) {
   // Store the reminder as an absolute UTC instant (with the Z suffix) so the

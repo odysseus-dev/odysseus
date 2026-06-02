@@ -67,6 +67,8 @@ class DeleteUserRequest(BaseModel):
 class RenameUserRequest(BaseModel):
     username: str
 
+class SetOpenRegistrationRequest(BaseModel):
+    enabled: bool
 
 SESSION_COOKIE = "odysseus_session"
 
@@ -178,9 +180,11 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(401, "Not authenticated")
         if len(body.new_password) < 8:
             raise HTTPException(400, "Password must be at least 8 characters")
+        current_token = request.cookies.get(SESSION_COOKIE)
         ok = await asyncio.to_thread(auth_manager.change_password, user, body.current_password, body.new_password)
         if not ok:
             raise HTTPException(400, "Current password is incorrect")
+        await asyncio.to_thread(auth_manager.revoke_user_sessions, user, current_token)
         return {"ok": True}
 
     # ------------------------------------------------------------------
@@ -331,14 +335,30 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, "Cannot rename user")
         return {"ok": True, "username": new_username, "renamed_self": old_username == user}
 
-    @router.post("/signup-toggle")
+    @router.post("/signup-toggle", deprecated=True)
     async def toggle_signup(request: Request):
-        """Toggle open registration on/off. Admin only."""
+        """
+        Toggle open registration on/off. Admin only.
+
+        DEPRECATED: This endpoint uses toggle semantics which can lead to unsafe state changes.
+        Use PUT /open-signup instead.
+
+        This endpoint is kept for backward compatibility and may be removed in future versions.
+        """
         user = _get_current_user(request)
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
         auth_manager.signup_enabled = not auth_manager.signup_enabled
         return {"ok": True, "signup_enabled": auth_manager.signup_enabled}
+
+    @router.put("/open-signup")
+    async def set_signup_enabled(body: SetOpenRegistrationRequest, request: Request):
+        """Set open signup enabled state. Admin only."""
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        auth_manager.signup_enabled = body.enabled
+        return {"ok": True,"signup_enabled": auth_manager.signup_enabled}
 
     @router.delete("/users")
     async def admin_delete_user(body: DeleteUserRequest, request: Request):

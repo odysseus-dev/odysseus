@@ -1,76 +1,78 @@
 # routes/model_routes.py
 """Routes for model and provider management."""
+import os
 import re
 import uuid
 import json
+import socket
 import time as _time
 import logging
 import httpx
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 from fastapi import APIRouter, HTTPException, Form, Query, Body, Request
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from core.database import SessionLocal, ModelEndpoint, Session as DbSession
 from core.middleware import require_admin
-from src.llm_core import _detect_provider, ANTHROPIC_MODELS
+from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
-from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
-from src.auth_helpers import owner_filter
+from src.endpoint_resolver import (
+    normalize_base as _normalize_base,
+    build_chat_url,
+    build_models_url,
+    build_headers,
+)
+from src.auth_helpers import _auth_disabled, owner_filter
 
 logger = logging.getLogger(__name__)
 
 
-def _anthropic_api_root(base: str) -> str:
-    """Return Anthropic's API root without duplicating /v1."""
-    base = (base or "").strip().rstrip("/")
-    host = urlparse(base).hostname or ""
-    if host.endswith("anthropic.com") and base.endswith("/v1"):
-        return base[:-3].rstrip("/")
-    return base
+# Loopback hosts a user might type for a local model server (LM Studio,
+# llama.cpp, vLLM, …). Inside Docker these point at the *container*, not the
+# host the server actually runs on.
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 
 
-def _ollama_api_root(base: str) -> str:
-    """Return Ollama's native API root without depending on deferred imports."""
-    base = (base or "").strip().rstrip("/")
-    parsed = urlparse(base)
-    host = parsed.hostname or ""
-    path = (parsed.path or "").rstrip("/")
-    if path.endswith("/api"):
-        return base
-    if host.endswith("ollama.com"):
-        root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
-        return root.rstrip("/") + "/api"
-    return base
+def _docker_host_gateway_reachable() -> bool:
+    """True when we run inside a container whose host is reachable via
+    ``host.docker.internal`` (compose maps it to ``host-gateway``). Returns
+    False on native installs and on container setups without the mapping, so
+    the loopback rewrite below stays a no-op there."""
+    in_container = os.path.exists("/.dockerenv")
+    if not in_container:
+        try:
+            with open("/proc/1/cgroup", encoding="utf-8") as fh:
+                in_container = any(t in fh.read() for t in ("docker", "containerd", "kubepods"))
+        except OSError:
+            in_container = False
+    if not in_container:
+        return False
+    try:
+        socket.getaddrinfo("host.docker.internal", None)
+        return True
+    except OSError:
+        return False
 
 
-def _models_url(base: str) -> str:
-    """Return provider-specific model-list URL for route-local probing."""
-    provider = _detect_provider(base)
-    host = urlparse(base).hostname or ""
-    if provider == "anthropic" or host.endswith("anthropic.com"):
-        return _anthropic_api_root(base) + "/v1/models"
-    if provider == "ollama" or host.endswith("ollama.com"):
-        return _ollama_api_root(base) + "/tags"
-    if provider == "venice" or host.endswith("venice.ai"):
-        # Venice lists image/tts/video models too; ?type=text keeps chat models.
-        return base.rstrip("/") + "/models?type=text"
-    return base.rstrip("/") + "/models"
-
-
-def _provider_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
-    """Build provider auth headers without depending on import-time stubs."""
-    if not api_key:
-        return {}
-    provider = _detect_provider(base)
-    host = urlparse(base).hostname or ""
-    if provider == "anthropic" or host.endswith("anthropic.com"):
-        return {
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        }
-    return {"Authorization": f"Bearer {api_key}"}
+def _rewrite_loopback_for_docker(base_url: str) -> str:
+    """Rewrite a loopback model-endpoint URL to ``host.docker.internal`` when
+    running in Docker. A URL like ``http://localhost:1234/v1`` (the LM Studio
+    default) otherwise targets the Odysseus container itself, so the probe gets
+    a connection error and the endpoint is rejected with a misleading "No
+    models found for that provider/key". The Ollama paths already handle this;
+    this extends the same fix to OpenAI-compatible local servers."""
+    try:
+        parsed = urlparse(base_url)
+    except Exception:
+        return base_url
+    if (parsed.hostname or "").lower() not in _LOOPBACK_HOSTS:
+        return base_url
+    if not _docker_host_gateway_reachable():
+        return base_url
+    netloc = "host.docker.internal" + (f":{parsed.port}" if parsed.port else "")
+    return urlunparse(parsed._replace(netloc=netloc))
 
 
 # ── Curated model lists per provider ──
@@ -87,9 +89,12 @@ _PROVIDER_CURATED = {
         "claude-sonnet-4-5", "claude-haiku-3-5",
     ],
     "zai": [
-        "glm-5", "glm-4.7", "glm-4.7-flash",
+        "glm-5", "glm-5.1", "glm-5v-turbo", "glm-4.7", "glm-4.7-flash",
         "glm-4.6", "glm-4.6v",
         "glm-4.5", "glm-4.5v", "glm-4.5-air", "glm-4.5-flash",
+    ],
+    "zai-coding": [
+        "glm-5.1", "glm-5v-turbo", "glm-5-turbo", "glm-4.7", "glm-4.5-air",
     ],
     "deepseek": [
         "deepseek-chat", "deepseek-reasoner",
@@ -125,32 +130,41 @@ _PROVIDER_CURATED = {
     ],
 }
 
-# Map URL substrings → curated-list keys for providers whose _detect_provider()
+# Map hostnames → curated-list keys for providers whose _detect_provider()
 # returns a generic value (e.g. "openai") but deserve their own curated list.
 # "openrouter" is a sentinel meaning "no curation — show all models as curated".
-_URL_TO_CURATED = {
-    "z.ai": "zai",
-    "api.deepseek.com": "deepseek",
-    "api.groq.com": "groq",
-    "api.mistral.ai": "mistral",
-    "api.together.xyz": "together",
-    "api.fireworks.ai": "fireworks",
-    "generativelanguage.googleapis.com": "google",
-    "api.x.ai": "xai",
-    "openrouter.ai": "openrouter",
-    "ollama.com": "ollama",
-    "api.venice.ai": "venice",
-}
+# Entries are matched by hostname equality or subdomain suffix (via _host_match),
+# so e.g. "deepseek.com" covers api.deepseek.com without matching the substring
+# inside an unrelated URL.
+_HOST_TO_CURATED = (
+    ("z.ai", "zai"),
+    ("deepseek.com", "deepseek"),
+    ("groq.com", "groq"),
+    ("mistral.ai", "mistral"),
+    ("together.xyz", "together"),
+    ("together.ai", "together"),
+    ("fireworks.ai", "fireworks"),
+    ("googleapis.com", "google"),
+    ("x.ai", "xai"),
+    ("openrouter.ai", "openrouter"),
+    ("ollama.com", "ollama"),
+    ("venice.ai", "venice"),
+)
 
 
 def _match_provider_curated(base_url: str, provider: str) -> str:
     """Return the curated-list key for a given endpoint.
 
-    Checks the base URL against _URL_TO_CURATED first, then falls back
-    to the raw provider string from _detect_provider().
+    Checks path-based overrides first (for hosts serving multiple plans),
+    then matches the base URL's hostname against known providers, and
+    finally falls back to the raw provider string from _detect_provider().
     """
-    for substring, key in _URL_TO_CURATED.items():
-        if substring in (base_url or ""):
+    # Path-based overrides for hosts that serve multiple curated lists.
+    parsed = urlparse(base_url)
+    if _host_match(base_url, "z.ai") and "/api/coding" in (parsed.path or ""):
+        return "zai-coding"
+    for domain, key in _HOST_TO_CURATED:
+        if _host_match(base_url, domain):
             return key
     return provider
 
@@ -241,16 +255,20 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
     elif provider == "ollama":
         from src.llm_core import _build_ollama_payload
         target_url = build_chat_url(base)
-        h = _provider_headers(api_key, base)
+        h = build_headers(api_key, base)
         h["Content-Type"] = "application/json"
         payload = _build_ollama_payload(model_id, messages, 0.0, 5, stream=False, tools=_test_tools)
     else:
         target_url = build_chat_url(base)
-        h = _provider_headers(api_key, base)
+        h = build_headers(api_key, base)
         h["Content-Type"] = "application/json"
-        from src.llm_core import _uses_max_completion_tokens
+        from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
         _max_key = "max_completion_tokens" if _uses_max_completion_tokens(model_id) else "max_tokens"
-        payload = {"model": model_id, "messages": messages, _max_key: 5, "temperature": 0.0}
+        payload = {"model": model_id, "messages": messages, _max_key: 5}
+        # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature, so a
+        # probe that hardcodes one falsely reports a working endpoint as failing.
+        if not _restricts_temperature(model_id):
+            payload["temperature"] = 0.0
         if _test_tools:
             payload["tools"] = _test_tools
 
@@ -314,7 +332,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     base = resolve_url(_normalize_base(base_url))
     if _detect_provider(base) == "anthropic":
         # Try Anthropic's /v1/models endpoint first
-        url = _anthropic_api_root(base) + "/v1/models"
+        url = build_models_url(base)
         headers = {"anthropic-version": "2023-06-01"}
         if api_key:
             headers["x-api-key"] = api_key
@@ -337,8 +355,8 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
                 return []
             logger.warning(f"Anthropic /v1/models failed, using hardcoded list: {e}")
         return list(ANTHROPIC_MODELS)
-    url = _models_url(base)
-    headers = _provider_headers(api_key, base)
+    url = build_models_url(base)
+    headers = build_headers(api_key, base)
     try:
         r = httpx.get(url, headers=headers, timeout=timeout)
         r.raise_for_status()
@@ -349,6 +367,13 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         if not models:
             models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
         if models:
+            # Z.AI coding plan omits some working models from /models;
+            # append curated-only entries for that endpoint only.
+            if _host_match(base, "z.ai") and "/api/coding" in (urlparse(base).path or ""):
+                _ck = _match_provider_curated(base, None)
+                for _e in _PROVIDER_CURATED.get(_ck, []):
+                    if _e not in set(models) and not any(m.startswith(_e) for m in models):
+                        models.append(_e)
             return models
     except httpx.HTTPStatusError as e:
         if api_key:
@@ -393,7 +418,24 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    # Ollama exposes /v1/models (OpenAI-compatible) AND native /api/version,
+    # /api/tags. The OpenAI-style GET base + "/models" returns 404 when the
+    # base is the host root or the native /api root (e.g. http://localhost:11434,
+    # http://localhost:11434/api) because /models lives under /v1 there. Treat
+    # 4xx on a port-11434 / Ollama-named base as "try the native paths" rather
+    # than as a definitive offline verdict — Ollama is reachable, it just
+    # doesn't speak OpenAI on that prefix. Without this gate the quickstart
+    # marks an alive Ollama as offline whenever cached_models is empty (issue
+    # #1025): _probe_endpoint() falls through to /api/tags on the same 404, but
+    # _ping_endpoint() was returning before that fallback could run.
+    parsed_base = urlparse(base)
+    looks_like_ollama = (
+        parsed_base.port == 11434
+        or "ollama" in (parsed_base.hostname or "").lower()
+    )
+
     url = base + "/models"
+    last_error: Optional[str] = None
     try:
         r = httpx.get(url, headers=headers, timeout=timeout)
         if 300 <= r.status_code < 400:
@@ -405,17 +447,21 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
                     "error": "That is Odysseus, not a model server. Use the Ollama URL, usually http://host.docker.internal:11434/v1 in Docker.",
                 }
             return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code} redirect"}
-        if r.status_code < 500:
-            return {"reachable": r.status_code < 400, "status_code": r.status_code, "error": None if r.status_code < 400 else f"HTTP {r.status_code}"}
+        if r.status_code < 400:
+            return {"reachable": True, "status_code": r.status_code, "error": None}
+        if r.status_code < 500 and not looks_like_ollama:
+            return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code}"}
+        last_error = f"HTTP {r.status_code}"
     except Exception as e:
         last_error = str(e)[:120]
-    else:
-        last_error = f"HTTP {r.status_code}"
 
     try:
-        parsed = urlparse(base)
-        if parsed.port == 11434 or "ollama" in (parsed.hostname or "").lower():
-            root = base[:-3].rstrip("/") if base.endswith("/v1") else base
+        if looks_like_ollama:
+            root = base
+            for suffix in ("/v1", "/api"):
+                if root.endswith(suffix):
+                    root = root[: -len(suffix)].rstrip("/")
+                    break
             for path in ("/api/version", "/api/tags"):
                 try:
                     r = httpx.get(root + path, timeout=timeout)
@@ -428,6 +474,40 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         pass
 
     return {"reachable": False, "status_code": None, "error": last_error}
+
+
+
+def _model_endpoint_error_message(base_url: str, ping: Dict[str, Any] = None) -> str:
+    """Return a provider-aware error message for failed endpoint probes."""
+    ping = ping or {}
+    error = ping.get("error")
+    parsed = urlparse(base_url)
+    host = (parsed.hostname or "").lower()
+    is_ollama = parsed.port == 11434 or "ollama" in host or "ollama" in base_url.lower()
+
+    if is_ollama:
+        parts = ["No Ollama models found for that endpoint."]
+        if error:
+            parts.append(f"Last probe error: {error}.")
+        parts.append("Check that Ollama is running and that the base URL is correct.")
+        parts.append("For native/local installs, use http://localhost:11434/v1.")
+        parts.append("For Docker, use http://host.docker.internal:11434/v1 when Ollama runs on the host.")
+        parts.append("Run `ollama list` to confirm at least one model is installed.")
+        return " ".join(parts)
+
+    if error:
+        return f"No models found for that provider/key. Last probe error: {error}."
+
+    return "No models found for that provider/key."
+
+
+def _visible_models(cached_models, hidden_models):
+    """Filter cached model IDs by hidden_models. Returns list of visible IDs."""
+    all_models = json.loads(cached_models) if isinstance(cached_models, str) else (cached_models or [])
+    if not hidden_models:
+        return all_models
+    hidden = set(json.loads(hidden_models) if isinstance(hidden_models, str) else (hidden_models or []))
+    return [m for m in all_models if m not in hidden]
 
 
 def setup_model_routes(model_discovery):
@@ -606,7 +686,7 @@ def setup_model_routes(model_discovery):
         # list to unauthenticated callers.
         try:
             auth_mgr = getattr(request.app.state, "auth_manager", None)
-            if not owner and auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
+            if not owner and not _auth_disabled() and auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
                 raise HTTPException(401, "Not authenticated")
         except HTTPException:
             raise
@@ -727,8 +807,8 @@ def setup_model_routes(model_discovery):
                     entry["error"] = str(e)
                     entry["model_count"] = 0
             else:
-                url = _models_url(base)
-                headers = _provider_headers(ep.api_key, base)
+                url = build_models_url(base)
+                headers = build_headers(ep.api_key, base)
                 try:
                     t0 = _time.time()
                     r = httpx.get(url, headers=headers, timeout=5)
@@ -871,8 +951,9 @@ def setup_model_routes(model_discovery):
     _PROVIDERS_CACHE_TTL = 30  # seconds
 
     @router.get("/providers")
-    def providers(refresh: bool = False):
+    def providers(request: Request, refresh: bool = False):
         """Get all available providers (cached for 30s)."""
+        require_admin(request)
         now = _time.time()
         if not refresh and _providers_cache["data"] is not None and (now - _providers_cache["time"]) < _PROVIDERS_CACHE_TTL:
             return _providers_cache["data"]
@@ -951,17 +1032,15 @@ def setup_model_routes(model_discovery):
         shared: str = Form("true"),
     ):
         require_admin(request)
-        base_url = base_url.strip().rstrip("/")
-        # Normalize: strip trailing /models, /chat/completions, /v1/messages etc to get clean base
-        for suffix in ["/models", "/chat/completions", "/completions", "/v1/messages"]:
-            if base_url.endswith(suffix):
-                base_url = base_url[:-len(suffix)].rstrip("/")
         base_url = _normalize_base(base_url)
         if not base_url:
             raise HTTPException(400, "Base URL is required")
         # Resolve hostname via Tailscale if DNS fails
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
+        # In Docker, rewrite a loopback URL to host.docker.internal so the probe
+        # — and the saved URL used for chat — reach the host, not the container.
+        base_url = _rewrite_loopback_for_docker(base_url)
 
         # Auto-generate name from URL if not provided
         if not name.strip():
@@ -1005,7 +1084,7 @@ def setup_model_routes(model_discovery):
         if should_probe and not model_ids:
             ping = _ping_endpoint(base_url, api_key.strip() or None, timeout=_probe_timeout)
         if require_model_list and not model_ids:
-            raise HTTPException(400, "No models found for that provider/key")
+            raise HTTPException(400, _model_endpoint_error_message(base_url, ping))
 
         ep_id = str(uuid.uuid4())[:8]
         db = SessionLocal()
@@ -1032,11 +1111,15 @@ def setup_model_routes(model_discovery):
             )
             db.add(ep)
             db.commit()
-            # Auto-set as default chat endpoint if none configured yet
+            # Auto-set as default chat endpoint if none configured yet. Seed
+            # the first CHAT model (not raw model_ids[0]) so we don't pin the
+            # global default to an embedding/tts/etc. entry a provider happens
+            # to list first.
             settings = _load_settings()
             if not settings.get("default_endpoint_id"):
+                from src.endpoint_resolver import _first_chat_model
                 settings["default_endpoint_id"] = ep.id
-                settings["default_model"] = model_ids[0] if model_ids else ""
+                settings["default_model"] = _first_chat_model(model_ids) or ""
                 _save_settings(settings)
             _invalidate_models_cache()
             _local_probe_cache["data"] = None
@@ -1061,14 +1144,12 @@ def setup_model_routes(model_discovery):
         api_key: str = Form(""),
     ):
         require_admin(request)
-        base_url = base_url.strip().rstrip("/")
-        for suffix in ["/models", "/chat/completions", "/completions", "/v1/messages"]:
-            if base_url.endswith(suffix):
-                base_url = base_url[:-len(suffix)].rstrip("/")
+        base_url = _normalize_base(base_url)
         if not base_url:
             raise HTTPException(400, "Base URL is required")
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
+        base_url = _rewrite_loopback_for_docker(base_url)
         probe_timeout = 3 if (":11434" in base_url or "ollama" in base_url.lower()) else 2
         models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
         ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
@@ -1281,9 +1362,9 @@ def setup_model_routes(model_discovery):
             chat_url = build_chat_url(base)
             if not model and getattr(ep, "cached_models", None):
                 try:
-                    models = _json.loads(ep.cached_models) if isinstance(ep.cached_models, str) else ep.cached_models
-                    if models:
-                        model = models[0]
+                    visible = _visible_models(ep.cached_models, getattr(ep, "hidden_models", None))
+                    if visible:
+                        model = visible[0]
                 except Exception:
                     pass
             return {"endpoint_id": ep.id, "endpoint_url": chat_url, "model": model}
@@ -1317,16 +1398,34 @@ def setup_model_routes(model_discovery):
                     ep.name = body["name"].strip() or ep.name
                 if "model_type" in body and isinstance(body["model_type"], str):
                     ep.model_type = body["model_type"].strip() or ep.model_type
+                # Rotating an API key used to require DELETE+POST, which wiped
+                # endpoint_url/model from every session referencing the old base
+                # URL. Allow in-place updates so the admin can change the key
+                # (or correct a typo'd base URL) without nuking session state.
+                if "api_key" in body and isinstance(body["api_key"], str):
+                    _new_key = body["api_key"].strip()
+                    # Empty string means "clear it" (e.g. local Ollama no longer needs a key).
+                    ep.api_key = _new_key or None
+                if "base_url" in body and isinstance(body["base_url"], str):
+                    _new_base = body["base_url"].strip().rstrip("/")
+                    for _suffix in ("/models", "/chat/completions", "/completions", "/v1/messages"):
+                        if _new_base.endswith(_suffix):
+                            _new_base = _new_base[: -len(_suffix)].rstrip("/")
+                    _new_base = _normalize_base(_new_base)
+                    if _new_base:
+                        ep.base_url = _new_base
             else:
                 ep.is_enabled = not ep.is_enabled
             db.commit()
             _invalidate_models_cache()
+            _local_probe_cache["data"] = None
             return {
                 "id": ep.id,
                 "is_enabled": ep.is_enabled,
                 "supports_tools": ep.supports_tools,
                 "name": ep.name,
                 "model_type": ep.model_type,
+                "base_url": ep.base_url,
             }
         finally:
             db.close()
@@ -1382,12 +1481,18 @@ def setup_model_routes(model_discovery):
         return sess in variants or sess.startswith(base + "/")
 
     def _clear_sessions_for_endpoint(db, base_url: str) -> int:
+        """Drop stored auth for sessions using an endpoint being deleted.
+
+        Keep the session's endpoint URL and model intact. If the admin is
+        replacing an endpoint with the same URL, clearing those fields leaves
+        the UI looking selected while chat requests arrive with an empty model.
+        The chat-time orphan guard still clears truly dead endpoints when no
+        matching enabled endpoint exists.
+        """
         cleared = 0
         rows = db.query(DbSession).filter(DbSession.endpoint_url.isnot(None)).all()
         for row in rows:
             if _session_uses_endpoint_url(row.endpoint_url or "", base_url):
-                row.endpoint_url = ""
-                row.model = ""
                 row.headers = {}
                 row.updated_at = datetime.utcnow()
                 cleared += 1
@@ -1405,8 +1510,6 @@ def setup_model_routes(model_discovery):
         try:
             for sess in list(getattr(manager, "sessions", {}).values()):
                 if _session_uses_endpoint_url(getattr(sess, "endpoint_url", "") or "", base_url):
-                    sess.endpoint_url = ""
-                    sess.model = ""
                     sess.headers = {}
                     cleared += 1
         except Exception:

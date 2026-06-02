@@ -15,7 +15,7 @@ export const _TALON_FROM = '(?:From|Från|Von|De|Da|От|Od|Van|差出人|发件
 export const _TALON_SENT = '(?:Sent|Skickat|Gesendet|Envoy[ée]|Inviato|Enviado|Verzonden|Отправлено|Wysłane|Date|送信日時|发送时间|寄件日期|Sendt|Lähetetty|Tarih|Datum|Data|Datum)';
 export const _TALON_SUBJ = '(?:Subject|Ämne|Betreff|Objet|Oggetto|Asunto|Onderwerp|Тема|Temat|件名|主题|主旨|Emne|Aihe|Onderwerp|Konu)';
 export const _TALON_TO   = '(?:To|Till|An|À|A|Voor|Para|Naar|Кому|Do|宛先|收件人|Emri|Komu)';
-export const _TALON_ORIG_RE = /(?:^|\n)[\s>]*[-_=]{3,}\s*(?:Original\s+Message|Ursprüngliche\s+Nachricht|Mensaje\s+original|Messaggio\s+originale|Message\s+d['’]origine|Oorspronkelijk\s+bericht|Original\s+meddelande|Vor[ ]asal[a]\s+meddelande|原文|原始邮件|転送)\s*[-_=]{3,}/i;
+export const _TALON_ORIG_RE = /(?:^|\n)[\s>]*[-_=]{3,}\s*(?:Original\s+Message|Forwarded\s+message|Ursprüngliche\s+Nachricht|Mensaje\s+original|Messaggio\s+originale|Message\s+d['’]origine|Oorspronkelijk\s+bericht|Original\s+meddelande|Vor[ ]asal[a]\s+meddelande|原文|原始邮件|転送)\s*[-_=]{3,}/i;
 
 // Minimum plain-text length of a "signature" before we bother folding it.
 // Short closings ("Cheers, John") stay inline — folding them would add

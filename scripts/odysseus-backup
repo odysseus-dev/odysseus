@@ -24,9 +24,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "_lib"))
 from cli import quiet_logs, emit, fail, common_parser, run, REPO_ROOT as _REPO_ROOT
 quiet_logs()
 
-import argparse, json, logging, os, sqlite3, subprocess, sys, tarfile, tempfile
+import argparse, json, logging, os, shutil, sqlite3, subprocess, sys, tarfile, tempfile
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 _DATA_DIR = _REPO_ROOT / "data"
 _BACKUP_DIR = _REPO_ROOT / "backups"
@@ -70,7 +70,7 @@ def cmd_snapshot(args):
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    sqlite_dbs = [p for p in _DATA_DIR.rglob("*.db") if p.is_file()]
+    sqlite_dbs = [p for p in _DATA_DIR.rglob("*.db") if p.is_file() and not p.is_symlink()]
     files_added = 0
     total_bytes = 0
 
@@ -87,7 +87,7 @@ def cmd_snapshot(args):
 
         with tarfile.open(out_path, "w:gz") as tar:
             for p in sorted(_DATA_DIR.rglob("*")):
-                if not p.is_file():
+                if not p.is_file() or p.is_symlink():
                     continue
                 rel = p.relative_to(_DATA_DIR.parent)
                 # Skip user-asked-to-skip categories
@@ -143,6 +143,7 @@ def cmd_verify(args):
     try:
         with tarfile.open(path, "r:gz") as tar:
             members = tar.getmembers()
+            _validate_restore_members(members)
     except (tarfile.TarError, OSError) as e:
         fail(f"tarball is corrupt: {e}")
     emit({
@@ -154,6 +155,35 @@ def cmd_verify(args):
     }, args)
 
 
+def _validate_restore_members(members):
+    """Reject archive entries that can escape data/ during restore."""
+    for m in members:
+        rel = PurePosixPath(m.name)
+        if rel.is_absolute() or ".." in rel.parts:
+            fail(f"refusing tarball with absolute/parent path: {m.name!r}")
+        if not rel.parts or rel.parts[0] != "data":
+            fail(f"refusing tarball with entry outside data/: {m.name!r}")
+        if m.issym() or m.islnk():
+            fail(f"refusing tarball with link entry: {m.name!r}")
+        if not (m.isdir() or m.isfile()):
+            fail(f"refusing tarball with special file entry: {m.name!r}")
+
+
+def _extract_restore_members(tar, members, root: Path) -> None:
+    """Extract only regular files/directories after validation."""
+    for m in members:
+        target = root.joinpath(*PurePosixPath(m.name).parts)
+        if m.isdir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        src = tar.extractfile(m)
+        if src is None:
+            fail(f"extract failed: could not read {m.name!r}")
+        with src, open(target, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+
+
 def cmd_restore(args):
     """Overwrite `data/` from a tarball. Destructive; requires --yes."""
     path = Path(args.path)
@@ -161,26 +191,25 @@ def cmd_restore(args):
         fail(f"no file at {path}")
     if not args.yes:
         fail("restore is destructive — pass --yes to confirm overwriting data/")
-    # Sanity check: tarball entries must all be under `data/`. If anyone
-    # crafted a malicious tarball with `../etc/passwd`, refuse.
+    # Sanity check: tarball entries must all be safe, regular files/dirs under
+    # `data/`. Avoid extractall() so symlink/hardlink entries can't redirect a
+    # later write outside the repo.
+    stash = None
     with tarfile.open(path, "r:gz") as tar:
-        for m in tar.getmembers():
-            if m.name.startswith("/") or ".." in Path(m.name).parts:
-                fail(f"refusing tarball with absolute/parent path: {m.name!r}")
-            if not m.name.startswith("data/") and m.name != "data":
-                fail(f"refusing tarball with entry outside data/: {m.name!r}")
+        members = tar.getmembers()
+        _validate_restore_members(members)
         # Save a safety copy of current data/ before extracting.
-        if _DATA_DIR.exists():
+        if _DATA_DIR.exists() or _DATA_DIR.is_symlink():
             stash = _REPO_ROOT / f"data.before-restore-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
             os.rename(_DATA_DIR, stash)
         try:
-            tar.extractall(path=_REPO_ROOT)
+            _extract_restore_members(tar, members, _REPO_ROOT)
         except Exception as e:
             fail(f"extract failed: {e}")
     emit({
         "ok": True,
         "restored_from": str(path),
-        "previous_data_stashed_at": str(stash) if _DATA_DIR.exists() else None,
+        "previous_data_stashed_at": str(stash) if stash else None,
     }, args)
 
 
