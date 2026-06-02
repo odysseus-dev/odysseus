@@ -61,13 +61,14 @@ services:
       # Find yours with:  id -u  /  id -g
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+    devices:
+      - "nvidia.com/gpu=all"
     depends_on:
       searxng:
         condition: service_healthy
       chromadb:
         condition: service_started
     restart: unless-stopped
-
   chromadb:
     image: docker.io/chromadb/chroma:latest
     ports:
@@ -77,7 +78,6 @@ services:
     environment:
       - ANONYMIZED_TELEMETRY=FALSE
     restart: unless-stopped
-
   searxng:
     # Pinned, not :latest — odysseus waits on searxng's healthcheck
     # (depends_on: condition: service_healthy), so a broken upstream `latest`
@@ -127,7 +127,6 @@ services:
       retries: 20
       start_period: 10s
     restart: unless-stopped
-
   ntfy:
     image: docker.io/binwiederhier/ntfy
     command: serve
@@ -138,7 +137,6 @@ services:
     environment:
       - NTFY_BASE_URL=${NTFY_BASE_URL:-http://localhost:8091}
     restart: unless-stopped
-
 volumes:
   searxng-data:
   chromadb-data:
