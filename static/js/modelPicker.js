@@ -284,17 +284,28 @@ function _initModelPickerDropdown() {
       const el = document.createElement('div');
       el.className = 'mp-section-label';
       el.textContent = label;
+      // Stable selector for automation: target a specific section by name.
+      el.setAttribute('data-testid', 'model-picker-section');
+      el.setAttribute('data-section', label.toLowerCase());
       listEl.appendChild(el);
     }
     function _addEmpty(text) {
       const empty = document.createElement('div');
       empty.className = 'model-switch-empty';
       empty.textContent = text;
+      empty.setAttribute('data-testid', 'model-picker-empty');
       listEl.appendChild(empty);
     }
     function _addRow(m) {
       const row = document.createElement('div');
       row.className = 'model-switch-item';
+      // Stable selectors for automation:
+      //   [data-testid="model-picker-option"]                  → all options
+      //   [data-testid="model-picker-option"][data-model-id=X] → a specific model
+      row.setAttribute('data-testid', 'model-picker-option');
+      row.setAttribute('data-model-id', m.mid);
+      if (m.endpointId) row.setAttribute('data-endpoint-id', String(m.endpointId));
+      if (m.stale) row.setAttribute('data-stale', 'true');
       if (m.stale) {
         row.classList.add('model-switch-stale');
         row.style.opacity = '0.45';
@@ -331,6 +342,8 @@ function _initModelPickerDropdown() {
       favDot.type = 'button';
       favDot.className = 'mp-fav-dot' + (favs.includes(m.mid) ? ' active' : '');
       favDot.textContent = '●';
+      favDot.setAttribute('data-testid', 'model-picker-favorite');
+      favDot.setAttribute('data-model-id', m.mid);
       const _setFavState = (on) => {
         favDot.classList.toggle('active', on);
         favDot.title = on ? 'Remove from favorites' : 'Add to favorites';
@@ -418,6 +431,11 @@ function _initModelPickerDropdown() {
         const isCollapsed = _collapsedProviders.has(provider);
         const header = document.createElement('div');
         header.className = 'mp-provider-header';
+        // Stable selectors for automation:
+        //   [data-testid="model-picker-provider-header"][data-provider=X]
+        header.setAttribute('data-testid', 'model-picker-provider-header');
+        header.setAttribute('data-provider', provider);
+        header.setAttribute('data-collapsed', isCollapsed ? 'true' : 'false');
         header.innerHTML =
           `<svg class="mp-provider-chevron${isCollapsed ? ' collapsed' : ''}" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`
           + `<span class="mp-provider-name">${_providerDisplayName(provider)}</span>`
@@ -440,6 +458,8 @@ function _initModelPickerDropdown() {
         if (!isCollapsed) {
           const group = document.createElement('div');
           group.className = 'mp-provider-group' + (_justExpandedProvider === provider ? ' mp-just-expanded' : '');
+          group.setAttribute('data-testid', 'model-picker-provider-group');
+          group.setAttribute('data-provider', provider);
           models.forEach(m => {
             _addRow(m);
             // Move the just-appended row into the group container
