@@ -502,14 +502,37 @@ def _parse_anthropic_response(data: dict) -> str:
 
 
 def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
-    """Strip Odysseus-only metadata before sending messages to providers."""
+    """Strip Odysseus-only metadata before sending messages to providers.
+
+    Per the OpenAI chat format: user/system messages must have content; a tool
+    message needs content + tool_call_id; an assistant message may carry content,
+    tool_calls, or both. The old guard required content on every message, which
+    dropped a valid assistant message that has only tool_calls — e.g. the
+    follow-up message _append_tool_results builds for a no-prose native tool call
+    (content=None, since Gemini/Ollama reject tool_calls alongside ""). Dropping
+    it leaves the tool result dangling and breaks the next round.
+    """
     allowed = {"role", "content", "name", "tool_call_id", "tool_calls", "function_call"}
     cleaned = []
     for msg in messages or []:
         if not isinstance(msg, dict):
             continue
         item = {k: v for k, v in msg.items() if k in allowed and v is not None}
-        if "role" in item and "content" in item:
+        role = item.get("role")
+        if not role:
+            continue
+        if role == "assistant":
+            # Re-add an explicit content=None when the message is tool-calls-only
+            # (the None was stripped above) so the provider gets the spec-correct
+            # `content: null`, not an omitted key.
+            if "content" not in item and item.get("tool_calls"):
+                item["content"] = None
+            if "content" in item or item.get("tool_calls"):
+                cleaned.append(item)
+        elif role == "tool":
+            if "content" in item and "tool_call_id" in item:
+                cleaned.append(item)
+        elif "content" in item:
             cleaned.append(item)
     return cleaned
 
