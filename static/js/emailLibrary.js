@@ -1047,24 +1047,10 @@ export function openEmailLibrary(opts = {}) {
     _bulkAction('delete');
   });
 
-  // ESC to close + Arrow nav + Delete on the selected / currently-expanded email.
   state._libEscHandler = (e) => {
     const modal = document.getElementById('email-lib-modal');
     if (!modal || modal.classList.contains('hidden')) return;
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation?.();
-      if (state._selectMode) {
-        state._selectMode = false;
-        state._selectedUids.clear();
-        _updateBulkBar();
-        _renderGrid();
-        return;
-      }
-      closeEmailLibrary();
-      return;
-    }
+    if (e.key === 'Escape') return;
     // Don't hijack arrows / delete while the user is typing somewhere.
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
@@ -4906,3 +4892,19 @@ async function _createEmailReplyReminder(em, dueDate) {
 //   - srcdoc (defensive — iframe is already nuked).
 //   - inline `style` declarations containing javascript: or expression().
 // _sanitizeHtml / _escLinkify live in ./emailLibrary/utils.js
+
+export function handleEscape() {
+  if (!state._libOpen) return false;
+  if (state._selectMode) {
+    state._selectMode = false;
+    state._selectedUids.clear();
+    _updateBulkBar();
+    _renderGrid();
+    return true;
+  }
+  closeEmailLibrary();
+  return true;
+}
+
+const emailLibraryModule = { openEmailLibrary, closeEmailLibrary, isOpen, handleEscape };
+window.emailLibraryModule = emailLibraryModule;

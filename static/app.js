@@ -50,6 +50,12 @@ window.sessionModule = sessionModule;
 window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
+window.galleryModule = galleryModule;
+window.tasksModule = tasksModule;
+window.calendarModule = calendarModule;
+window.notesModule = notesModule;
+window.settingsModule = settingsModule;
+window.documentModule = documentModule;
 
 // Redirect to login on 401 from any fetch
 const _origFetch = window.fetch;
@@ -443,115 +449,7 @@ function initializeEventListeners() {
 
   // Settings dropdown removed — items are now inline in sidebar section
 
-  
-
-
-  // Close popups one by one with Escape key (topmost first)
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      // If a confirm dialog is open, let it handle the Escape
-      const confirmOverlay = document.getElementById('styled-confirm-overlay');
-      if (confirmOverlay && !confirmOverlay.classList.contains('hidden')) return;
-
-      // If editing a memory inline, cancel the edit instead of closing the modal
-      const editingMemory = document.querySelector('.memory-item-editing');
-      if (editingMemory) {
-        if (window.memoryModule) window.memoryModule.renderMemoryList();
-        return;
-      }
-
-      // Priority order: topmost overlay first. Close exactly one per press
-      // so a window stacked on another (e.g. scoreboard over compare) only
-      // dismisses the top one, not both.
-
-      // Scoreboard sits on top of the compare window — close it first.
-      const scoreboardOverlay = document.getElementById('scoreboard-overlay');
-      if (scoreboardOverlay) {
-        scoreboardOverlay.remove();
-        return;
-      }
-
-      if (searchChatModule && searchChatModule.isOpen()) {
-        searchChatModule.closeSearch();
-        return;
-      }
-
-      // Compare model selector
-      const cmpOverlay = document.getElementById('compare-model-overlay');
-      if (cmpOverlay) {
-        cmpOverlay.remove();
-        return;
-      }
-
-      // Theme popup
-      const themeModal = document.getElementById('theme-modal');
-      if (themeModal && !themeModal.classList.contains('hidden')) {
-        themeModule.closePopup();
-        return;
-      }
-
-      // Calendar owns a few inner Escape layers (settings panel, event form,
-      // then the calendar modal itself). Let calendar.js handle those instead
-      // of falling through to unrelated page-level fallbacks like document
-      // panel minimize.
-      const calendarModal = document.getElementById('calendar-modal');
-      if (calendarModal && !calendarModal.classList.contains('hidden') && getComputedStyle(calendarModal).display !== 'none') {
-        return;
-      }
-
-      // Close one modal at a time (last in DOM = topmost)
-      // Map modal id → sidebar list-item id to clear active state
-      const modalItemMap = {
-        'cookbook-modal': null,
-        'rename-session-modal': null,
-        'rename-ai-modal': null,
-        'custom-preset-modal': null,
-        'memory-modal': null,
-      };
-
-      // Dynamic modals (removed from DOM on close)
-      const dynamicModals = ['library-modal', 'archive-modal', 'doclib-modal', 'gallery-modal', 'tasks-modal'];
-      for (const id of dynamicModals) {
-        const m = document.getElementById(id);
-        if (id === 'gallery-modal') {
-          const editor = document.getElementById('gallery-editor-container');
-          const editing = !!window.__galleryEditLive || !!(
-            editor &&
-            getComputedStyle(editor).display !== 'none' &&
-            editor.querySelector('.gallery-editor')
-          );
-          if (editing) {
-            e.preventDefault();
-            e.stopImmediatePropagation();
-            return;
-          }
-        }
-        if (m) { dismissModal(m); return; }
-      }
-
-      for (const modalId of Object.keys(modalItemMap)) {
-        const modal = el(modalId);
-        if (modal && !modal.classList.contains('hidden')) {
-          dismissModal(modal);
-          return;
-        }
-      }
-
-      // No modals/popups open — minimize the document panel if open.
-      // Esc should tab the doc down to a dock chip (same as the chevron),
-      // NOT fully close it — closePanel('down') registers the chip +
-      // Modals.minimize so the doc is preserved and restorable.
-      if (documentModule && documentModule.isPanelOpen()) {
-        // If there's a text selection in the document editor, let Escape clear that first
-        const docTextarea = document.getElementById('doc-editor-textarea');
-        if (docTextarea && docTextarea.selectionStart !== docTextarea.selectionEnd) {
-          return;
-        }
-        documentModule.closePanel('down');
-        return;
-      }
-    }
-  });
+    // Centralized keydown Escape handling has been moved to ui.js central arbiter.
 
   // ── Shared modal dismiss helper ──
   const _modalSidebarMap = {

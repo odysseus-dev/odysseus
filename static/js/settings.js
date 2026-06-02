@@ -84,23 +84,6 @@ function initClose() {
     if (uiModule.isTouchInsideModal()) return;
     if (e.target === modalEl) close();
   });
-  document.addEventListener('keydown', e => {
-    if (e.key !== 'Escape' || !modalEl || modalEl.classList.contains('hidden')) return;
-    // If an integration edit/add form is open inside the modal, close
-    // just that — don't dismiss the whole settings modal. (Pressing
-    // ESC mid-edit and losing the modal was a fast-typing footgun.)
-    const innerForm = modalEl.querySelector('#unified-intg-form, #set-email-accounts-form');
-    if (innerForm && innerForm.style.display !== 'none' && innerForm.children.length > 0) {
-      e.preventDefault();
-      e.stopPropagation();
-      innerForm.style.display = 'none';
-      innerForm.innerHTML = '';
-      return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-    close();
-  });
 }
 
 /* ── Appearance-tab opacity slider ──
@@ -4367,7 +4350,19 @@ export function close() {
   }
 }
 
-const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints };
+export function handleEscape() {
+  if (!modalEl || modalEl.classList.contains('hidden')) return false;
+  const innerForm = modalEl.querySelector('#unified-intg-form, #set-email-accounts-form');
+  if (innerForm && innerForm.style.display !== 'none' && innerForm.children.length > 0) {
+    innerForm.style.display = 'none';
+    innerForm.innerHTML = '';
+    return true;
+  }
+  close();
+  return true;
+}
+
+const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints, handleEscape };
 
 
 export default settingsModule;

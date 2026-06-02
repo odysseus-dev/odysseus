@@ -1214,12 +1214,6 @@ if (!window._odyEscExpandGuard) {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || e.defaultPrevented) return;
 
-    // Find the single thing to close, in priority order. The first hit wins.
-    // Important: if a thinking block is open we MUST handle it ourselves and
-    // not fall through to closing a modal — even if its header is missing
-    // (the live-stream chat rebuilds thinking DOM mid-stream so the header
-    // can briefly be absent). Toggling the `expanded` class directly is the
-    // fallback so ESC never bypasses the thinking block to hit a modal.
     if (_closeHoveredWindow()) {
       e.stopImmediatePropagation(); e.preventDefault();
       return;
@@ -1235,54 +1229,103 @@ if (!window._odyEscExpandGuard) {
     }
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-    const expanded = document.querySelector('.doclib-card-expanded');
-    const think = document.querySelector('.thinking-content.expanded');
-    if (expanded) {
+
+    // Check confirm overlay first (runs on top of modals)
+    const confirmOverlay = document.getElementById('styled-confirm-overlay');
+    if (confirmOverlay && !confirmOverlay.classList.contains('hidden')) {
       e.stopImmediatePropagation(); e.preventDefault();
-      try { expanded.click(); } catch {}
+      document.getElementById('styled-confirm-cancel')?.click();
       return;
     }
-    if (think) {
+
+    // Check prompt overlay
+    const promptOverlay = document.getElementById('styled-prompt-overlay');
+    if (promptOverlay && !promptOverlay.classList.contains('hidden')) {
       e.stopImmediatePropagation(); e.preventDefault();
-      const thinkHeader = think.closest('.thinking-section')?.querySelector('.thinking-header[data-thinking-id]');
-      if (thinkHeader) { try { thinkHeader.click(); } catch {} }
-      else {
-        // No header found — collapse the content directly.
-        try { think.classList.remove('expanded'); } catch {}
-      }
+      document.getElementById('styled-prompt-cancel')?.click();
       return;
     }
-    const galleryEditor = document.getElementById('gallery-editor-container');
-    const galleryModal = galleryEditor?.closest('.modal');
-    const galleryEditing = !!(
-      galleryEditor &&
-      galleryModal &&
-      !galleryModal.classList.contains('hidden') &&
-      getComputedStyle(galleryEditor).display !== 'none' &&
-      galleryEditor.querySelector('.gallery-editor')
-    );
-    if (galleryEditing) {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      return;
-    }
-    const settingsModal = document.getElementById('settings-modal');
-    if (settingsModal && _isVisible(settingsModal)) {
-      const innerForm = settingsModal.querySelector('#unified-intg-form, #set-email-accounts-form');
-      if (innerForm && innerForm.style.display !== 'none' && innerForm.children.length > 0) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        innerForm.style.display = 'none';
-        innerForm.innerHTML = '';
+
+    // Find the topmost visible modal or panel
+    const topModal = pickTopModal();
+    if (topModal) {
+      // 1) If the topmost modal contains an expanded card, collapse that first
+      const expandedInTop = topModal.querySelector('.doclib-card-expanded');
+      if (expandedInTop) {
+        e.stopImmediatePropagation(); e.preventDefault();
+        try { expandedInTop.click(); } catch {}
         return;
       }
+
+      // 2) If a thinking block is open in the topmost modal, handle it
+      const think = topModal.querySelector('.thinking-content.expanded');
+      if (think) {
+        e.stopImmediatePropagation(); e.preventDefault();
+        const thinkHeader = think.closest('.thinking-section')?.querySelector('.thinking-header[data-thinking-id]');
+        if (thinkHeader) { try { thinkHeader.click(); } catch {} }
+        else {
+          try { think.classList.remove('expanded'); } catch {}
+        }
+        return;
+      }
+
+      // 3) Delegate to the module's custom handleEscape method if available
+      let handled = false;
+      if (topModal.id === 'gallery-modal' && window.galleryModule?.handleEscape) {
+        handled = window.galleryModule.handleEscape();
+      } else if (topModal.id === 'tasks-modal' && window.tasksModule?.handleEscape) {
+        handled = window.tasksModule.handleEscape();
+      } else if (topModal.id === 'calendar-modal' && window.calendarModule?.handleEscape) {
+        handled = window.calendarModule.handleEscape();
+      } else if (topModal.id === 'doclib-modal' && window.documentLibraryModule?.handleEscape) {
+        handled = window.documentLibraryModule.handleEscape();
+      } else if (topModal.id === 'email-lib-modal' && window.emailLibraryModule?.handleEscape) {
+        handled = window.emailLibraryModule.handleEscape();
+      } else if (topModal.id === 'settings-modal' && window.settingsModule?.handleEscape) {
+        handled = window.settingsModule.handleEscape();
+      }
+
+      if (handled) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        return;
+      }
+
+      // Fallback: Click the close button
+      const closeBtn = topModal.querySelector('.close-btn, .modal-close, .modal-close-btn, [data-action="close"]');
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      if (closeBtn) {
+        try { closeBtn.click(); } catch {}
+      } else {
+        try { topModal.classList.add('hidden'); } catch {}
+      }
+      return;
     }
-    const topModal = pickTopModal();
-    if (!topModal) return;
-    const closeBtn = topModal.querySelector('.close-btn, .modal-close-btn, [data-action="close"]');
-    e.stopImmediatePropagation();
-    e.preventDefault();
-    if (closeBtn) { try { closeBtn.click(); } catch {} }
-    else { try { topModal.classList.add('hidden'); } catch {} }
+
+    // 4) What if no modals are open but notes-pane is active?
+    const notesPane = document.getElementById('notes-pane');
+    if (notesPane && !notesPane.classList.contains('notes-pane-leaving') && getComputedStyle(notesPane).display !== 'none') {
+      if (window.notesModule?.handleEscape) {
+        const handled = window.notesModule.handleEscape();
+        if (handled) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          return;
+        }
+      }
+    }
+
+    // 5) Fallback to minimizing the document editor panel if no other panel/modal is active
+    if (window.documentModule && window.documentModule.isPanelOpen && window.documentModule.isPanelOpen()) {
+      const docTextarea = document.getElementById('doc-editor-textarea');
+      if (docTextarea && docTextarea.selectionStart !== docTextarea.selectionEnd) {
+        return; // let browser clear text selection first
+      }
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      window.documentModule.closePanel('down');
+      return;
+    }
   }, true);
 }

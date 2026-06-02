@@ -1336,15 +1336,6 @@ export function openPanel() {
       _copyNote(id, btn);
       return;
     }
-    if (e.key !== 'Escape') return;
-    if (inField) return;
-    if (_selectMode) { _exitSelectMode(); return; }
-    if (_showingArchived) {
-      // Mirror the archive toggle button: flip back to active notes.
-      document.getElementById('notes-archive-toggle')?.click();
-      return;
-    }
-    _forceCloseNotesPanel();
   };
   document.addEventListener('keydown', _notesKeydownHandler);
 
@@ -4997,10 +4988,20 @@ async function _initReminders() {
     }
   } catch {}
 }
+export function handleEscape() {
+  if (!_open) return false;
+  if (_selectMode) { _exitSelectMode(); return true; }
+  if (_showingArchived) {
+    document.getElementById('notes-archive-toggle')?.click();
+    return true;
+  }
+  _forceCloseNotesPanel();
+  return true;
+}
 
-const notesModule = { openPanel, closePanel, togglePanel, isPanelOpen, openNotes: openPanel, closeNotes: closePanel, isNotesOpen: isPanelOpen, refreshDueBadge };
+const notesModule = { openPanel, closePanel, togglePanel, isPanelOpen, openNotes: openPanel, closeNotes: closePanel, isNotesOpen: isPanelOpen, refreshDueBadge, handleEscape };
 export default notesModule;
-export { openPanel as openNotes, closePanel as closeNotes, isPanelOpen as isNotesOpen };
+export { openPanel as openNotes, closePanel as closeNotes, isPanelOpen as isNotesOpen, handleEscape };
 window.notesModule = notesModule;
 
 // Start reminder loop on module load (after a short delay so app loads first)

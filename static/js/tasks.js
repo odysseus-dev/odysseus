@@ -2554,27 +2554,7 @@ export function openTasks(focusId) {
     if (e.target === modal) closeTasks();
   });
 
-  _escHandler = (e) => {
-    if (e.key === 'Escape') {
-      if (_viewingRuns) {
-        _viewingRuns = null;
-        _renderMainView();
-        return;
-      }
-      // If we're on the "Add" tab inside the new-task form (preset already
-      // picked), step back to the preset picker instead of closing the modal.
-      // Detect by: Add tab active + the form's name input is mounted.
-      const _modal = document.getElementById('tasks-modal');
-      const _addActive = _modal?.querySelector('.tasks-tab.active[data-tab="new"]');
-      const _formMounted = _modal?.querySelector('#task-form-name');
-      if (_addActive && _formMounted) {
-        _showPresetPicker();
-        return;
-      }
-      closeTasks();
-    }
-  };
-  document.addEventListener('keydown', _escHandler);
+  _escHandler = (e) => {};
 
   // Paint the scaffolding immediately so the modal-enter animation reveals a
   // populated shell (header/search/sort/empty list with a spinner row) instead
@@ -2682,6 +2662,24 @@ async function _pollTaskNotifications() {
   }
 }
 
+export function handleEscape() {
+  if (!_open) return false;
+  if (_viewingRuns) {
+    _viewingRuns = null;
+    _renderMainView();
+    return true;
+  }
+  const modal = document.getElementById('tasks-modal');
+  const addActive = modal?.querySelector('.tasks-tab.active[data-tab="new"]');
+  const formMounted = modal?.querySelector('#task-form-name');
+  if (addActive && formMounted) {
+    _showPresetPicker();
+    return true;
+  }
+  closeTasks();
+  return true;
+}
+
 function startNotificationPolling() {
   if (_notifInterval) return;
   _notifInterval = setInterval(_pollTaskNotifications, 30000);
@@ -2697,6 +2695,6 @@ function stopNotificationPolling() {
 // Start polling on module load
 startNotificationPolling();
 
-const tasksModule = { openTasks, closeTasks, isTasksOpen, startNotificationPolling, stopNotificationPolling };
+const tasksModule = { openTasks, closeTasks, isTasksOpen, startNotificationPolling, stopNotificationPolling, handleEscape };
 export default tasksModule;
 window.tasksModule = tasksModule;

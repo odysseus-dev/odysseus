@@ -76,7 +76,6 @@ function _hlSearch(text) {
                        '<mark class="doclib-search-hl">$1</mark>');
   } catch { return esc; }
 }
-let _libraryEscHandler = null;
 let _librarySelectMode = false;
 let _librarySelectedIds = new Set();
 let _libraryImportMode = false;
@@ -3297,20 +3296,6 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (e.target === modal) closeLibrary();
     });
 
-    // Escape key
-    _libraryEscHandler = (e) => {
-      if (e.key === 'Escape') {
-        // Collapse expanded card first, then close modal on second Escape
-        const expanded = document.querySelector('#doclib-grid .doclib-card-expanded');
-        if (expanded) {
-          _collapseExpandedCard(expanded);
-        } else {
-          closeLibrary();
-        }
-      }
-    };
-    document.addEventListener('keydown', _libraryEscHandler);
-
     // Toggle active on tool button
     const btn = document.getElementById('tool-doclib-btn');
     if (btn) btn.classList.add('active');
@@ -3339,11 +3324,6 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
     }
 
-    if (_libraryEscHandler) {
-      document.removeEventListener('keydown', _libraryEscHandler);
-      _libraryEscHandler = null;
-    }
-
     const btn = document.getElementById('tool-doclib-btn');
     if (btn) btn.classList.remove('active');
   }
@@ -3351,3 +3331,17 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
   export function isLibraryOpen() {
     return _libraryOpen;
   }
+
+  export function handleEscape() {
+    if (!_libraryOpen) return false;
+    const expanded = document.querySelector('#doclib-grid .doclib-card-expanded');
+    if (expanded) {
+      _collapseExpandedCard(expanded);
+      return true;
+    }
+    closeLibrary();
+    return true;
+  }
+
+  const documentLibraryModule = { openLibrary, closeLibrary, isLibraryOpen, initLibrary, handleEscape };
+  window.documentLibraryModule = documentLibraryModule;

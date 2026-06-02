@@ -3191,19 +3191,12 @@ function openCalendar() {
   _view = 'month';
   _scrollToTodayOnOpen = true;  // first render lands on today's row
   _escHandler = (e) => {
-    if (e.key === 'Escape') {
-      // Layer Esc: close the topmost calendar surface first, only fall through
-      // to closing the whole calendar when nothing else is on top.
-      const settings = document.getElementById('cal-settings-panel');
-      if (settings) { settings.remove(); return; }
-      if (document.querySelector('.cal-form')) { _render(); return; }
-      closeCalendar();
-    }
-    else if (e.key === 'ArrowLeft') document.getElementById('cal-prev')?.click();
+    const tag = (e.target?.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target?.isContentEditable) return;
+
+    if (e.key === 'ArrowLeft') document.getElementById('cal-prev')?.click();
     else if (e.key === 'ArrowRight') document.getElementById('cal-next')?.click();
     else if (e.key === 't' || e.key === 'T') document.getElementById('cal-today')?.click();
-    // Cmd/Ctrl+Z is handled by the module-level `_calUndoBound` listener,
-    // which consumes the shared `_calUndoStack`. Don't duplicate here.
   };
   document.addEventListener('keydown', _escHandler);
   const body = document.getElementById('cal-body');
@@ -3335,9 +3328,18 @@ window.addEventListener('calendar-refresh', () => {
     .catch(() => {});
 });
 
+export function handleEscape() {
+  if (!_open) return false;
+  const settings = document.getElementById('cal-settings-panel');
+  if (settings) { settings.remove(); return true; }
+  if (document.querySelector('.cal-form')) { _render(); return true; }
+  closeCalendar();
+  return true;
+}
+
 // Calendar reminders are stored as Notes. The Notes reminder loop owns
 // notification dispatch so calendar reminders do not fire twice.
 
-const calendarModule = { openCalendar, closeCalendar, isCalendarOpen };
-export { openCalendar, openCalendarTo, closeCalendar, isCalendarOpen };
+const calendarModule = { openCalendar, closeCalendar, isCalendarOpen, handleEscape };
+export { openCalendar, openCalendarTo, closeCalendar, isCalendarOpen, handleEscape };
 export default calendarModule;

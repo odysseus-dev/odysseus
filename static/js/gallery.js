@@ -2686,38 +2686,6 @@ export function openGallery() {
   });
 
   _escHandler = (e) => {
-    if (e.key === 'Escape') {
-      // While the image editor is visible, Escape is reserved for the
-      // editor (cancel transform/lasso/crop, dismiss size prompt, etc.).
-      // Don't close the gallery — users would lose their in-progress edit.
-      // We check the editor container's visibility AND the isEditorOpen()
-      // flag so a crop popup, transform handles, etc. all keep Esc.
-      const editorContainer = document.getElementById('gallery-editor-container');
-      const editorVisible = !!(
-        editorContainer &&
-        getComputedStyle(editorContainer).display !== 'none' &&
-        editorContainer.querySelector('.gallery-editor')
-      );
-      if (editorVisible || isEditorOpen()) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        return;
-      }
-      const detail = document.getElementById('gallery-detail');
-      if (detail && detail.style.display !== 'none') {
-        // Click Back so Esc and the visible button always do the same thing —
-        // future tweaks to Back's teardown automatically apply to Esc too.
-        // stopImmediatePropagation blocks app.js's generic dynamic-modal Esc
-        // handler that would otherwise close the whole gallery underneath us.
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        const back = document.getElementById('gallery-detail-back');
-        if (back) back.click(); else detail.style.display = 'none';
-      } else {
-        closeGallery();
-      }
-      return;
-    }
     // Arrow-key navigation inside detail view (ignore when typing in inputs)
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     const detail = document.getElementById('gallery-detail');
@@ -2730,9 +2698,7 @@ export function openGallery() {
       btn.click();
     }
   };
-  // Capture phase + stopImmediatePropagation (see _escHandler) so app.js's
-  // generic dynamic-modal Esc dismiss doesn't close the whole gallery before
-  // we get a chance to close just the photo detail.
+  // Capture phase listener for detail navigation
   document.addEventListener('keydown', _escHandler, true);
 
   const btn = document.getElementById('tool-gallery-btn');
@@ -2808,6 +2774,27 @@ export function isGalleryOpen() {
   return _open;
 }
 
+export function handleEscape() {
+  if (!_open) return false;
+  const editorContainer = document.getElementById('gallery-editor-container');
+  const editorVisible = !!(
+    editorContainer &&
+    getComputedStyle(editorContainer).display !== 'none' &&
+    editorContainer.querySelector('.gallery-editor')
+  );
+  if (editorVisible || isEditorOpen()) {
+    return true; // handled/ignore
+  }
+  const detail = document.getElementById('gallery-detail');
+  if (detail && detail.style.display !== 'none') {
+    const back = document.getElementById('gallery-detail-back');
+    if (back) back.click(); else detail.style.display = 'none';
+    return true; // handled
+  }
+  closeGallery();
+  return true; // handled
+}
+
 // ---- Utilities ----
 
 function _esc(str) {
@@ -2830,6 +2817,7 @@ const galleryModule = {
   openGallery,
   closeGallery,
   isGalleryOpen,
+  handleEscape,
 };
 
 export default galleryModule;
