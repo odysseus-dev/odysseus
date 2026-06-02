@@ -54,6 +54,17 @@ const PROVIDER_PREFIXES = {
   gemini: 'AQ.',
   google: 'AQ.',
 };
+
+const PROVIDER_CONSOLE_URLS = {
+  deepseek: 'https://platform.deepseek.com/api_keys',
+  openai: 'https://platform.openai.com/api-keys',
+  openrouter: 'https://openrouter.ai/keys',
+  xai: 'https://console.x.ai/',
+  anthropic: 'https://console.anthropic.com/settings/keys',
+  groq: 'https://console.groq.com/keys',
+  gemini: 'https://aistudio.google.com/app/apikey',
+  google: 'https://aistudio.google.com/app/apikey',
+};
 const SETUP_PROVIDER_URLS = {
   deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/v1' },
   openai: { name: 'OpenAI', url: 'https://api.openai.com/v1' },
@@ -5973,6 +5984,10 @@ export function initSlashCommands(deps) {
       const providerName = providerEl.textContent.trim();
       const key = providerName.toLowerCase();
       const prefix = PROVIDER_PREFIXES[key] || 'sk-';
+      const consoleUrl = PROVIDER_CONSOLE_URLS[key];
+      if (consoleUrl) {
+        window.open(consoleUrl, '_blank', 'noopener,noreferrer');
+      }
       const messageInput = document.getElementById('message');
       if (messageInput) {
         const text = providerName + ' ' + prefix;
