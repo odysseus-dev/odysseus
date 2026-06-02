@@ -1448,7 +1448,9 @@ async def stream_agent_loop(
     except Exception as _e:
         logger.debug(f"endpoint supports_tools lookup failed: {_e}")
     _model_supports_tools = any(kw in _model_lc for kw in (
-        "deepseek", "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
+        # "deepseek" intentionally omitted: deepseek-r1 on Ollama returns HTTP 400
+        # for tool calls. Cloud API (api.deepseek.com) is caught by _API_HOSTS above.
+        "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
         "qwen3", "qwen2.5", "mixtral", "mistral", "llama-3.1", "llama-3.2",
         "llama-3.3", "llama-4",
         # Local-served models that follow OpenAI-style function calling
