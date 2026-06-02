@@ -423,6 +423,14 @@ export function _buildServeCmd(f, modelName, backend) {
     // speed things up. Only emitted when set, so manual/older flows are unchanged.
     const _ncm = (f.n_cpu_moe ?? '').toString().trim();
     const _kv = (f.cache_type ?? '').toString().trim();
+    const _llamaNum = (v) => {
+      const s = String(v || '').trim();
+      return /^\d+$/.test(s) ? s : '';
+    };
+    const _llamaCsv = (v) => {
+      const s = String(v || '').replace(/\s+/g, '');
+      return /^\d+(?:\.\d+)?(?:,\d+(?:\.\d+)?)*$/.test(s) ? s : '';
+    };
     let _lcExtra = '';
     let _lcpExtra = '';
     if (_ncm !== '' && Number(_ncm) > 0) {
@@ -437,6 +445,27 @@ export function _buildServeCmd(f, modelName, backend) {
       _lcExtra += ` --cache-type-k ${_kv} --cache-type-v ${_kv}`;
       // llama-cpp-python exposes these as type_k/type_v; pass through best-effort.
       _lcpExtra += ` --type_k ${_kv} --type_v ${_kv}`;
+    }
+    const _llamaFit = String(f.llama_fit || '').trim();
+    if (['on', 'off'].includes(_llamaFit)) _lcExtra += ` --fit ${_llamaFit}`;
+    if (f.llama_no_mmap) _lcExtra += ' --no-mmap';
+    if (f.llama_no_warmup) _lcExtra += ' --no-warmup';
+    const _llamaSplitMode = String(f.llama_split_mode || '').trim();
+    if (['none', 'layer', 'row', 'tensor'].includes(_llamaSplitMode)) _lcExtra += ` --split-mode ${_llamaSplitMode}`;
+    const _llamaTensorSplit = _llamaCsv(f.llama_tensor_split);
+    if (_llamaTensorSplit) _lcExtra += ` --tensor-split ${_llamaTensorSplit}`;
+    const _llamaMainGpu = _llamaNum(f.llama_main_gpu);
+    if (_llamaMainGpu) _lcExtra += ` --main-gpu ${_llamaMainGpu}`;
+    const _llamaParallel = _llamaNum(f.llama_parallel);
+    if (_llamaParallel) _lcExtra += ` --parallel ${_llamaParallel}`;
+    const _llamaBatch = _llamaNum(f.llama_batch_size);
+    if (_llamaBatch) _lcExtra += ` --batch-size ${_llamaBatch}`;
+    const _llamaUBatch = _llamaNum(f.llama_ubatch_size);
+    if (_llamaUBatch) _lcExtra += ` --ubatch-size ${_llamaUBatch}`;
+    if (f.llama_speculative_mtp) {
+      const specTokens = parseInt(f.llama_spec_tokens, 10);
+      const specN = Number.isFinite(specTokens) && specTokens > 0 ? specTokens : 3;
+      _lcExtra += ` --spec-type draft-mtp --spec-draft-n-max ${specN}`;
     }
     // Vision: serve the multimodal projector so the model can read images. The
     // mmproj path is resolved at runtime (find mmproj-*.gguf next to the model);

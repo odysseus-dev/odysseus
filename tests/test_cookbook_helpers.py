@@ -15,6 +15,7 @@ from routes.cookbook_helpers import (
     _safe_env_prefix,
     _validate_gpus,
     _validate_repo_id,
+    _validate_serve_cmd,
     _validate_serve_model_id,
     _validate_ssh_port,
 )
@@ -129,6 +130,23 @@ def test_serve_runner_preserves_command_exit_code():
     assert "ODYSSEUS_CMD_EXIT=$?" in script
     assert 'echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="' in script
     assert 'echo "=== Process exited with code $? ==="' not in script
+
+
+def test_validate_serve_cmd_accepts_llama_advanced_controls():
+    cmd = (
+        "MODEL_FILE=$(printf %s ${HOME}'/.cache/huggingface/hub/models--Qwen--Qwen3-GGUF/snapshots/model.gguf') "
+        '&& { [ -n "$MODEL_FILE" ] && [ -f "$MODEL_FILE" ]; } '
+        '|| { echo "ERROR: No GGUF found on this host."; exit 1; } && '
+        'GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0,1 llama-server '
+        '--model "$MODEL_FILE" --host 0.0.0.0 --port 8000 -ngl 99 -c 131072 '
+        '--n-cpu-moe 0 --cache-type-k q8_0 --cache-type-v q8_0 --flash-attn on '
+        '--fit off --split-mode tensor --tensor-split 50,50 --main-gpu 0 '
+        '--parallel 1 --batch-size 2048 --ubatch-size 512 --no-mmap --no-warmup '
+        '--spec-type draft-mtp --spec-draft-n-max 3 '
+        '|| python3 -m llama_cpp.server --model "$MODEL_FILE" --host 0.0.0.0 --port 8000'
+    )
+
+    assert _validate_serve_cmd(cmd) == cmd
 
 
 def test_ollama_serve_defaults_to_loopback_bind():
