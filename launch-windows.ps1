@@ -105,6 +105,14 @@ if (-not $pyExe) {
     }
 }
 
+if ($pyExe -like "*WindowsApps*python.exe") {
+    $pyCmd = Get-Command py -ErrorAction SilentlyContinue
+    if ($pyCmd) {
+        $pyExe = $pyCmd.Source
+        $pyArgs = @("-3.11")
+    }
+}
+
 if (-not $pyExe) {
     Fail "Couldn't find Python 3.11+ for Windows setup. Install Python 3.11+ (or open the Python launcher with 'py -3.11') from https://www.python.org/downloads/, then re-run this script."
 }
