@@ -651,7 +651,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
     if action == "view":
         if not name:
             return {"error": "name is required for view", "exit_code": 1}
-        md = sm.read_skill_md(name)
+        md = sm.read_skill_md(name, owner=owner)
         if md is None:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
         return {"results": md}
@@ -662,7 +662,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         ref = (args.get("path") or "").strip()
         if not ref:
             return {"error": "path is required for view_ref", "exit_code": 1}
-        text = sm.read_skill_reference(name, ref)
+        text = sm.read_skill_reference(name, ref, owner=owner)
         if text is None:
             return {"error": f"Reference {ref!r} not found under {name!r}", "exit_code": 1}
         return {"results": text}
@@ -747,7 +747,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         new_str = args.get("new_string", "")
         if not isinstance(old, str) or not old:
             return {"error": "old_string is required and must be non-empty", "exit_code": 1}
-        md = sm.read_skill_md(name)
+        md = sm.read_skill_md(name, owner=owner)
         if md is None:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
         count = md.count(old)

@@ -1320,16 +1320,34 @@ def setup_model_routes(model_discovery):
                     ep.name = body["name"].strip() or ep.name
                 if "model_type" in body and isinstance(body["model_type"], str):
                     ep.model_type = body["model_type"].strip() or ep.model_type
+                # Rotating an API key used to require DELETE+POST, which wiped
+                # endpoint_url/model from every session referencing the old base
+                # URL. Allow in-place updates so the admin can change the key
+                # (or correct a typo'd base URL) without nuking session state.
+                if "api_key" in body and isinstance(body["api_key"], str):
+                    _new_key = body["api_key"].strip()
+                    # Empty string means "clear it" (e.g. local Ollama no longer needs a key).
+                    ep.api_key = _new_key or None
+                if "base_url" in body and isinstance(body["base_url"], str):
+                    _new_base = body["base_url"].strip().rstrip("/")
+                    for _suffix in ("/models", "/chat/completions", "/completions", "/v1/messages"):
+                        if _new_base.endswith(_suffix):
+                            _new_base = _new_base[: -len(_suffix)].rstrip("/")
+                    _new_base = _normalize_base(_new_base)
+                    if _new_base:
+                        ep.base_url = _new_base
             else:
                 ep.is_enabled = not ep.is_enabled
             db.commit()
             _invalidate_models_cache()
+            _local_probe_cache["data"] = None
             return {
                 "id": ep.id,
                 "is_enabled": ep.is_enabled,
                 "supports_tools": ep.supports_tools,
                 "name": ep.name,
                 "model_type": ep.model_type,
+                "base_url": ep.base_url,
             }
         finally:
             db.close()

@@ -164,7 +164,7 @@ class ResearchHandler:
         llm_endpoint: str,
         llm_model: str,
         max_time: int = 300,
-        hard_timeout: int = 600,
+        hard_timeout: int = None,
         llm_headers: dict = None,
         on_complete: callable = None,
         prior_report: str = "",
@@ -182,6 +182,18 @@ class ResearchHandler:
         max_rounds is the safety cap; the AI's _should_stop decision (after
         min_rounds) terminates the loop earlier in normal operation.
         """
+        # Resolve the hard wall-clock timeout from settings when the caller
+        # didn't pin one. Local / edge models routinely need more than the
+        # old 600s default to finish a deep-research synthesis.
+        if hard_timeout is None:
+            from src.settings import get_setting
+            hard_timeout = _bounded_int(
+                get_setting("research_run_timeout_seconds", 1800),
+                default=1800,
+                minimum=60,
+                maximum=86400,
+            )
+
         # Cancel any existing research for this session
         if session_id in self._active_tasks:
             existing = self._active_tasks[session_id]

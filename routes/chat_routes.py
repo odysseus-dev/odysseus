@@ -96,6 +96,65 @@ def _clear_orphaned_session_endpoint(sess) -> bool:
         db.close()
 
 
+def _recover_empty_session_model(sess, session_id: str) -> bool:
+    """Re-populate sess.model from the matching endpoint's cached models.
+
+    Covers the window between endpoint setup and the first chat send: the
+    picker showed a model in the dropdown but the session record never got
+    written (Issue #587 — UI uses the cached endpoint list, not s.model).
+    Without this, we'd POST the upstream with model="" and get a generic
+    401/503 instead of using the model the user already picked.
+
+    Returns True iff sess.model was repaired.
+    """
+    if getattr(sess, "model", None):
+        return False
+    db = SessionLocal()
+    try:
+        # Prefer the endpoint whose base URL matches the session — we know the
+        # user already pointed this session at that endpoint, so its first
+        # cached model is the most defensible default.
+        ep = None
+        if getattr(sess, "endpoint_url", ""):
+            endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+            for cand in endpoints:
+                if _session_url_matches_endpoint(sess.endpoint_url or "", cand.base_url or ""):
+                    ep = cand
+                    break
+        if not ep:
+            return False
+        try:
+            cached = json.loads(ep.cached_models) if isinstance(ep.cached_models, str) else (ep.cached_models or [])
+        except Exception:
+            cached = []
+        if not cached:
+            return False
+        model = cached[0]
+        if not isinstance(model, str) or not model.strip():
+            return False
+        model = model.strip()
+        # Persist so the next request, websocket reconnect, or page reload
+        # picks up the same model (we'd otherwise re-pick on every send
+        # and silently switch on the user if the cached order shifts).
+        db_session = db.query(DBSession).filter(DBSession.id == session_id).first()
+        if db_session:
+            db_session.model = model
+            db_session.updated_at = datetime.utcnow()
+            db.commit()
+        sess.model = model
+        logger.info(
+            "Recovered empty session model for %s — picked %r from endpoint %s",
+            session_id, model, ep.id,
+        )
+        return True
+    except Exception as e:
+        db.rollback()
+        logger.warning("Failed to recover empty session model for %s: %s", session_id, e)
+        return False
+    finally:
+        db.close()
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -132,6 +191,16 @@ def setup_chat_routes(
             raise HTTPException(404, f"Session '{session}' not found")
         if _clear_orphaned_session_endpoint(sess):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
+
+        # Empty model + live endpoint = setup race (Issue #587). Repair from
+        # the endpoint's cached model list before privilege checks, which
+        # otherwise see "" and behave inconsistently with the allowlist.
+        _recover_empty_session_model(sess, session)
+        if not getattr(sess, "model", "").strip():
+            raise HTTPException(
+                400,
+                "No model selected for this chat. Open the model picker and choose one before sending.",
+            )
 
         # Same allowed_models + daily-cap gate as chat_stream (mirror so the
         # non-streaming path can't be used to bypass).
@@ -272,6 +341,18 @@ def setup_chat_routes(
             sess = session_manager.get_session(session)
             if _clear_orphaned_session_endpoint(sess):
                 raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
+            # Issue #587: picker shows a model from the endpoint cache but
+            # s.model never made it onto the DB row (first-send race after
+            # endpoint setup, or a previous endpoint delete/recreate). Pull
+            # the first cached model off the matching endpoint so the
+            # upstream isn't called with model="" (which surfaces as a
+            # generic 401/503).
+            _recover_empty_session_model(sess, session)
+            if not getattr(sess, "model", "").strip():
+                raise HTTPException(
+                    400,
+                    "No model selected for this chat. Open the model picker and choose one before sending.",
+                )
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))
         except (ValueError, ValidationError):

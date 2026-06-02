@@ -1318,7 +1318,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
             name = skill.get("name")
             if not name:
                 continue
-            md = sm.read_skill_md(name) or ""
+            md = sm.read_skill_md(name, owner=owner) or ""
             if not md:
                 tally["skipped"] += 1
                 per_skill_log.append(f"{name}: skipped (no SKILL.md)")

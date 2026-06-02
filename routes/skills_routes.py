@@ -766,7 +766,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
         except Exception:
             pass
 
-    md = skills_manager.read_skill_md(name)
+    md = skills_manager.read_skill_md(name, owner=owner)
     if not md:
         log(f"{name}: no source — skipped")
         return {"skill": name, "result": "skipped"}
@@ -1246,7 +1246,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         if not match:
             raise HTTPException(404, "Skill not found")
         _verify_owner(match, user)
-        md = skills_manager.read_skill_md(match.get("name"))
+        md = skills_manager.read_skill_md(match.get("name"), owner=user)
         if md is None:
             raise HTTPException(404, "Skill source unavailable (legacy entry?)")
         return {"name": match.get("name"), "markdown": md}
@@ -1273,7 +1273,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             raise HTTPException(404, "Skill not found")
         _verify_owner(match, user)
         name = match.get("name")
-        md = skills_manager.read_skill_md(name) or ""
+        md = skills_manager.read_skill_md(name, owner=user) or ""
 
         if not task:
             task = _skill_test_task(match)
