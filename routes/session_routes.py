@@ -11,12 +11,18 @@ from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, effective_user
 
 
 def _verify_session_owner(request: Request, session_id: str):
-    """Verify the current user owns the session. Raises 404 if not."""
-    user = get_current_user(request)
+    """Verify the current user owns the session. Raises 404 if not.
+
+    Uses effective_user so a paired mobile (bearer-token) caller is checked
+    against the token's real owner, not the "api" pseudo-user — otherwise the
+    phone could only ever touch sessions it created itself, siloed from the
+    owner's desktop chats. No-op change for cookie sessions.
+    """
+    user = effective_user(request)
     if not user:
         raise HTTPException(403, "Authentication required")
     db = SessionLocal()
@@ -63,7 +69,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     
     @router.get("/sessions")
     def list_sessions(request: Request):
-        user = get_current_user(request)
+        # effective_user: a paired phone lists the token owner's real sessions
+        # (the same ones the desktop UI shows), not the empty "api" silo.
+        user = effective_user(request)
         # Lazy purge: incognito sessions are ephemeral by design — wipe leftovers
         # from the DB and session_manager so they vanish on the next page refresh.
         # BUT: skip sessions that were created within the last 10 minutes.
@@ -217,7 +225,10 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 model_to_use = found
         
         sid = str(uuid.uuid4())
-        user = get_current_user(request)
+        # effective_user: sessions a paired phone creates are owned by the real
+        # token owner, so they show up in (and can be continued from) the
+        # desktop UI too — not stranded under the "api" pseudo-user.
+        user = effective_user(request)
         session = session_manager.create_session(
             session_id=sid,
             name=name or "",

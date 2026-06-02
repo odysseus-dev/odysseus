@@ -1365,8 +1365,27 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             <span>System</span>
           </button>
+          <button class="settings-nav-item admin-only" data-settings-tab="mobile">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
+            <span>Mobile App</span>
+          </button>
         </div>
         <div class="settings-panels">
+
+        <!-- ═══ MOBILE APP TAB ═══ -->
+
+        <div data-settings-panel="mobile" class="hidden">
+          <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>Pair Odysseus Mobile</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:10px">Control this Odysseus from your phone over the local network with the <strong>Odysseus Mobile</strong> app. Scan the QR below from the app's pairing screen, or type the details in by hand.</div>
+            <div id="companion-pair-out" style="text-align:center"></div>
+            <button type="button" class="admin-btn-add" id="companion-pair-btn">Generate pairing code</button>
+            <div class="admin-toggle-sub" style="margin-top:12px;opacity:0.6;font-size:11px;line-height:1.5">
+              Each code mints a new chat-scoped API token (shown once) — manage or revoke them under <strong>Account → API tokens</strong>.
+              The phone must be on the same Wi-Fi, and the server must be bound to your LAN (<code>APP_BIND=0.0.0.0</code> / <code>--host 0.0.0.0</code>).
+            </div>
+          </div>
+        </div>
 
         <!-- ═══ AI TAB ═══ -->
 
@@ -2250,6 +2269,7 @@
 <script type="module" src="/static/js/theme.js"></script>
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js"></script>
+<script type="module" src="/static/js/companionPair.js"></script>
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->

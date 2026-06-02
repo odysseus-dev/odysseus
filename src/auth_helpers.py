@@ -9,6 +9,28 @@ def get_current_user(request: Request) -> Optional[str]:
     return getattr(request.state, 'current_user', None)
 
 
+def effective_user(request: Request) -> Optional[str]:
+    """The real human behind the request, for ownership/attribution.
+
+    Cookie sessions resolve to the logged-in username. Bearer `ody_` callers
+    (the mobile app) come through as the sandboxed pseudo-user "api" so they
+    can't wander into cookie/user routes by default — but their token was
+    minted by, and belongs to, a real owner stamped on
+    request.state.api_token_owner. Routes that should attribute a token's
+    actions to that owner (sessions, chat history) call this instead of
+    get_current_user, so the phone sees and creates the SAME data as the
+    owner's desktop UI rather than a separate "api"-owned silo.
+
+    For cookie sessions this is identical to get_current_user, so swapping a
+    route over is a no-op for browser users.
+    """
+    if getattr(request.state, "api_token", False):
+        owner = getattr(request.state, "api_token_owner", None)
+        if owner:
+            return owner
+    return get_current_user(request)
+
+
 def require_user(request: Request) -> str:
     """FastAPI dependency: reject unauthenticated callers, even if upstream
     middleware was bypassed (LOCALHOST_BYPASS, AUTH_ENABLED=false, SSRF from
