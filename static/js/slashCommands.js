@@ -2394,7 +2394,7 @@ async function _cmdTourCompare(args, ctx) {
         '<div class="tour-nav">' +
           '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
           '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-          '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
+          '<button class="tour-btn-arrow" data-act="next" aria-label="' + (isLast ? 'Finish' : 'Next') + '">' + (isLast ? '✓' : '→') + '</button>' +
         '</div>';
       requestAnimationFrame(() => {
         _positionTooltip(target);
@@ -2680,7 +2680,7 @@ async function _cmdTourCookbook(args, ctx) {
         '<div class="tour-nav">' +
           '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
           '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-          '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
+          '<button class="tour-btn-arrow" data-act="next" aria-label="' + (isLast ? 'Finish' : 'Next') + '">' + (isLast ? '✓' : '→') + '</button>' +
         '</div>';
       requestAnimationFrame(() => {
         _positionTooltip(target, placement);
@@ -2917,7 +2917,7 @@ async function _cmdTourTheme(args, ctx) {
           '<div class="tour-nav">' +
             '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
             '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
+            '<button class="tour-btn-arrow" data-act="next" aria-label="' + (isLast ? 'Finish' : 'Next') + '">' + (isLast ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
           _positionTooltip(target, placement);
@@ -3161,7 +3161,7 @@ async function _cmdTourSettings(args, ctx) {
           '<div class="tour-nav">' +
             '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
             '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
+            '<button class="tour-btn-arrow" data-act="next" aria-label="' + (isLast ? 'Finish' : 'Next') + '">' + (isLast ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
           _positionTooltip(target, placement);
@@ -3393,7 +3393,7 @@ async function _cmdTourGallery(args, ctx) {
           '<div class="tour-nav">' +
             '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
             '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
+            '<button class="tour-btn-arrow" data-act="next" aria-label="' + (isLast ? 'Finish' : 'Next') + '">' + (isLast ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
           _positionTooltip(target, placement);
@@ -3606,7 +3606,7 @@ async function _cmdTourNotes(args, ctx) {
           '<div class="tour-nav">' +
             '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
             '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
+            '<button class="tour-btn-arrow" data-act="next" aria-label="' + (isLast ? 'Finish' : 'Next') + '">' + (isLast ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
           _positionTooltip(target, placement);
@@ -3806,7 +3806,7 @@ async function _cmdTourBrain(args, ctx) {
           '<div class="tour-nav">' +
             '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
             '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
+            '<button class="tour-btn-arrow" data-act="next" aria-label="' + (isLast ? 'Finish' : 'Next') + '">' + (isLast ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
           _positionTooltip(target, placement);
@@ -4243,7 +4243,7 @@ async function _cmdTourResearch(args, ctx) {
         '<div class="tour-nav">' +
           '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
           '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-          '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
+          '<button class="tour-btn-arrow" data-act="next" aria-label="' + (isLast ? 'Finish' : 'Next') + '">' + (isLast ? '✓' : '→') + '</button>' +
         '</div>';
       requestAnimationFrame(() => {
         _positionTooltip(target, placement);
@@ -4459,7 +4459,7 @@ async function _cmdTourLibrary(args, ctx) {
         '<div class="tour-nav">' +
           '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
           '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-          '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
+          '<button class="tour-btn-arrow" data-act="next" aria-label="' + (isLast ? 'Finish' : 'Next') + '">' + (isLast ? '✓' : '→') + '</button>' +
         '</div>';
       requestAnimationFrame(() => {
         _positionTooltip(target, placement);

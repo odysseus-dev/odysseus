@@ -828,7 +828,7 @@ export function openEmailLibrary(opts = {}) {
             <div class="email-search-row" style="display:flex;gap:6px;align-items:flex-start;">
             <div class="email-search-wrap" style="position:relative;flex:1;min-width:140px;">
               <input type="text" id="email-lib-search" placeholder="Search emails\u2026" class="memory-search-input" style="width:100%;padding-right:96px;" />
-              <button class="memory-toolbar-btn email-undone-toggle email-undone-toggle-inline" id="email-undone-btn" title="Show only emails not marked as done (undone)" aria-label="Show only unread emails">
+              <button class="memory-toolbar-btn email-undone-toggle email-undone-toggle-inline" id="email-undone-btn" title="Show only emails not marked as done (undone)" aria-label="Show only emails not marked as done">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
               </button>
               <button class="memory-toolbar-btn email-reminder-toggle-inline hidden" id="email-reminder-btn" title="Show Odysseus reminder emails" aria-label="Show reminder emails">
@@ -2320,11 +2320,13 @@ async function _toggleCardPreview(card, em) {
         attsToggle.addEventListener('click', (ev) => {
           ev.stopPropagation();
           attsWrap.classList.toggle('collapsed');
+          attsToggle.setAttribute('aria-expanded', attsWrap.classList.contains('collapsed') ? 'false' : 'true');
         });
         attsToggle.addEventListener('keydown', (ev) => {
           if (ev.key === 'Enter' || ev.key === ' ') {
             ev.preventDefault();
             attsWrap.classList.toggle('collapsed');
+            attsToggle.setAttribute('aria-expanded', attsWrap.classList.contains('collapsed') ? 'false' : 'true');
           }
         });
       }
@@ -3080,8 +3082,10 @@ function _showCachedSummary(reader, summary, btn) {
   const _flip = () => {
     panel.classList.toggle('collapsed');
     _setSummaryCollapsedPref(panel.classList.contains('collapsed'));
+    if (toggle) toggle.setAttribute('aria-expanded', panel.classList.contains('collapsed') ? 'false' : 'true');
   };
   if (toggle) {
+    toggle.setAttribute('aria-expanded', panel.classList.contains('collapsed') ? 'false' : 'true');
     toggle.addEventListener('click', (ev) => { ev.stopPropagation(); _flip(); });
     toggle.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); _flip(); }
@@ -4342,9 +4346,11 @@ async function _generateSummary(reader, data, btn) {
   body.insertBefore(panel, body.firstChild);
   const _genToggle = panel.querySelector('.email-summary-toggle');
   if (_genToggle) {
+    _genToggle.setAttribute('aria-expanded', panel.classList.contains('collapsed') ? 'false' : 'true');
     const _genFlip = () => {
       panel.classList.toggle('collapsed');
       _setSummaryCollapsedPref(panel.classList.contains('collapsed'));
+      _genToggle.setAttribute('aria-expanded', panel.classList.contains('collapsed') ? 'false' : 'true');
     };
     _genToggle.addEventListener('click', (ev) => { ev.stopPropagation(); _genFlip(); });
     _genToggle.addEventListener('keydown', (ev) => {
