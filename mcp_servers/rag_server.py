@@ -120,6 +120,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         directory = arguments.get("directory", "").strip()
         if not directory:
             return [TextContent(type="text", text="Error: remove_directory needs a directory path")]
+        # Expand ~ to match add_directory, which indexes the expanded path.
+        # Without this, removing "~/docs" never matches the stored absolute path.
+        directory = os.path.expanduser(directory)
         if not _personal_docs_manager:
             return [TextContent(type="text", text="Error: Personal docs manager not available")]
         try:
