@@ -15,4 +15,4 @@ services:
       - /dev/dri
     group_add:
       - video
-      - render
+      - ${RENDER_GID:-render}

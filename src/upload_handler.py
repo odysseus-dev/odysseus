@@ -8,7 +8,7 @@ import hashlib
 import mimetypes
 import threading
 from datetime import datetime, timedelta
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from fastapi import HTTPException, UploadFile
 def secure_filename(filename: str) -> str:
     """Sanitize a filename (replaces werkzeug.utils.secure_filename)."""
@@ -28,6 +28,14 @@ def secure_filename(filename: str) -> str:
 import logging
 
 logger = logging.getLogger(__name__)
+
+UPLOAD_ID_RE = re.compile(r"^[0-9a-fA-F]{32}\.[A-Za-z0-9]+$")
+
+
+def is_valid_upload_id(upload_id: str) -> bool:
+    """Return True when *upload_id* matches the canonical uploads.json id format."""
+    return UPLOAD_ID_RE.fullmatch(upload_id or "") is not None
+
 
 class UploadHandler:
     def __init__(self, base_dir: str, upload_dir: str):
@@ -120,7 +128,8 @@ class UploadHandler:
     def is_document_file(self, filename: str, content_type: str = None) -> bool:
         """Check if a file is a document based on extension or content type."""
         document_extensions = {
-            '.pdf', '.docx', '.txt', '.py', '.js', '.html', '.htm', 
+            '.pdf', '.docx', '.xlsx', '.pptx', '.xls', '.epub',
+            '.txt', '.py', '.js', '.html', '.htm',
             '.css', '.json', '.md', '.csv', '.log', '.xml', '.yml', 
             '.yaml', '.sql', '.sh', '.bash', '.c', '.cpp', '.h', 
             '.java', '.go', '.rs', '.php', '.rb', '.ts', '.jsx', '.tsx'
@@ -128,6 +137,10 @@ class UploadHandler:
         document_mime_types = {
             'application/pdf', 
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/vnd.ms-excel',
+            'application/epub+zip',
             'text/plain'
         }
         
@@ -223,8 +236,107 @@ class UploadHandler:
     
     def validate_upload_id(self, upload_id: str) -> bool:
         """Validate that the upload ID matches the expected pattern."""
-        pattern = r'^[0-9a-fA-F]{32}\.[A-Za-z0-9]+$'
-        return re.fullmatch(pattern, upload_id) is not None
+        return is_valid_upload_id(upload_id)
+
+    def _inside_upload_dir(self, path: str) -> bool:
+        """Check if path is inside the upload directory."""
+        base = os.path.realpath(self.upload_dir)
+        p = os.path.realpath(path)
+        try:
+            return os.path.commonpath([base, p]) == base
+        except Exception:
+            return False
+
+    def _load_upload_index(self) -> Dict[str, Any]:
+        uploads_db_path = os.path.join(self.upload_dir, "uploads.json")
+        if not os.path.exists(uploads_db_path):
+            return {}
+        try:
+            with open(uploads_db_path, "r") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception as e:
+            logger.warning(f"Failed to read uploads database: {e}")
+            return {}
+
+    def get_upload_info(self, upload_id: str) -> Optional[Dict[str, Any]]:
+        """Return the uploads.json metadata row for an upload ID, if present."""
+        if not self.validate_upload_id(upload_id):
+            return None
+        for info in self._load_upload_index().values():
+            if isinstance(info, dict) and info.get("id") == upload_id:
+                return dict(info)
+        return None
+
+    def _find_upload_path(self, upload_id: str) -> Optional[str]:
+        """Find an upload file by ID while staying inside upload_dir."""
+        if not self.validate_upload_id(upload_id):
+            return None
+
+        direct = os.path.join(self.upload_dir, upload_id)
+        if os.path.exists(direct) and self._inside_upload_dir(direct):
+            return direct
+
+        for root, _dirs, files in os.walk(self.upload_dir, followlinks=False):
+            if upload_id in files:
+                path = os.path.join(root, upload_id)
+                if self._inside_upload_dir(path):
+                    return path
+        return None
+
+    def resolve_upload(
+        self,
+        upload_id: str,
+        owner: Optional[str] = None,
+        auth_manager: Any = None,
+        allow_admin: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        """Resolve an upload ID to metadata only if the caller may read it.
+
+        This is the owner-aware lookup used by internal processors. Public
+        download routes already perform owner checks; chat/document paths must
+        do the same before reading file bytes server-side.
+        """
+        if not self.validate_upload_id(upload_id):
+            logger.warning(f"Invalid upload ID format: {upload_id}")
+            return None
+
+        auth_configured = bool(auth_manager and getattr(auth_manager, "is_configured", False))
+        if auth_configured and not owner:
+            return None
+
+        info = self.get_upload_info(upload_id) or {}
+        is_admin = False
+        if allow_admin and owner and auth_manager and hasattr(auth_manager, "is_admin"):
+            try:
+                is_admin = bool(auth_manager.is_admin(owner))
+            except Exception:
+                is_admin = False
+
+        if owner and not is_admin:
+            if info.get("owner") != owner:
+                logger.warning("Upload %s denied for owner %s", upload_id, owner)
+                return None
+        if not owner and info.get("owner") is not None:
+            logger.warning("Upload %s denied without an authenticated owner", upload_id)
+            return None
+
+        path = info.get("path")
+        if not path or not os.path.exists(path) or not self._inside_upload_dir(path):
+            path = self._find_upload_path(upload_id)
+        if not path:
+            return None
+        if not self._inside_upload_dir(path):
+            logger.warning(f"Upload path outside upload directory: {path}")
+            return None
+
+        resolved = dict(info)
+        resolved.setdefault("id", upload_id)
+        resolved["path"] = path
+        resolved.setdefault("name", os.path.basename(path))
+        resolved.setdefault("original_name", resolved["name"])
+        resolved.setdefault("mime", mimetypes.guess_type(path)[0] or "application/octet-stream")
+        return resolved
     
     def cleanup_rate_limits(self):
         """Remove stale entries from upload_rate_log."""

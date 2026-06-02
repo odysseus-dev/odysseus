@@ -8,6 +8,7 @@ import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { modelColor } from './chatRenderer.js';
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 // Shared state/functions injected by init()
 let _envState;
@@ -39,6 +40,48 @@ let _nextAvailablePort;
 const SERVE_STATE_KEY = 'cookbook-serve-state';
 
 let _cachedAllModels = [];
+
+function _repoLooksAwqLike(model, repo) {
+  const q = String(model?.quant || '').toUpperCase();
+  const n = `${repo || ''} ${model?.repo_id || ''} ${model?.name || ''} ${model?.path || ''}`.toLowerCase();
+  return /^AWQ|^GPTQ/.test(q) || q === 'FP8' || /\b(awq|gptq|fp8)\b/i.test(n);
+}
+
+function _repoLooksGgufLike(model, repo) {
+  const q = String(model?.quant || '').toUpperCase();
+  const n = `${repo || ''} ${model?.repo_id || ''} ${model?.name || ''} ${model?.path || ''}`.toLowerCase();
+  return !!model?.is_gguf || /^Q[2-8]/.test(q) || /^IQ/.test(q) || q === 'GGUF' || n.includes('gguf');
+}
+
+function _serveBackendWarning(model, repo, backend, fields = {}) {
+  const awqLike = _repoLooksAwqLike(model, repo);
+  const ggufLike = _repoLooksGgufLike(model, repo);
+  if (awqLike && (backend === 'llamacpp' || backend === 'ollama')) {
+    return {
+      title: 'AWQ needs vLLM or SGLang',
+      body: 'This model looks like AWQ/GPTQ/FP8 safetensors. llama.cpp and Ollama need GGUF files, so this backend cannot serve it. Choose vLLM/SGLang on a CUDA/ROCm GPU server, or download a GGUF version for llama.cpp/Ollama.',
+    };
+  }
+  if (awqLike && _isMetal() && (backend === 'vllm' || backend === 'sglang')) {
+    return {
+      title: 'AWQ is not a unified-memory path',
+      body: 'This model looks like AWQ/GPTQ/FP8 safetensors. AWQ is for vLLM/SGLang on CUDA/ROCm-style GPU servers, not local unified-memory llama.cpp/Ollama serving. For unified memory, download a GGUF model and use llama.cpp/Ollama.',
+    };
+  }
+  if (awqLike && fields.unified_mem) {
+    return {
+      title: 'AWQ is not a unified-memory path',
+      body: 'This model looks like AWQ/GPTQ/FP8 safetensors, but unified-memory local serving expects GGUF. Use vLLM/SGLang on a compatible GPU server, or download a GGUF version for llama.cpp/Ollama.',
+    };
+  }
+  if (ggufLike && (backend === 'vllm' || backend === 'sglang')) {
+    return {
+      title: 'GGUF needs llama.cpp or Ollama',
+      body: 'This model looks like GGUF. vLLM/SGLang expect HuggingFace safetensors-style repos. Choose llama.cpp/Ollama for GGUF, or download a safetensors model for vLLM/SGLang.',
+    };
+  }
+  return null;
+}
 
 function _hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj || {}, key);
@@ -193,18 +236,19 @@ function _rerenderCachedModels() {
   list.querySelectorAll('.hwfit-cached-menu-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      // Toggle: if a dropdown for THIS button is already open, close it.
+      // Toggle: if a dropdown for THIS button is already open, close it
+      // (through its own dismiss so the Escape-stack entry goes with it).
       const existing = document.querySelector('.hwfit-cached-dropdown');
       if (existing && existing._anchor === btn) {
-        existing.remove();
-        btn.classList.remove('cookbook-menu-active');
+        if (typeof existing._dismiss === 'function') existing._dismiss();
+        else { existing.remove(); btn.classList.remove('cookbook-menu-active'); }
         return;
       }
       // Otherwise close any other open menu (and clear its anchor's active
       // state) before opening fresh.
       document.querySelectorAll('.hwfit-cached-dropdown').forEach(d => {
         if (d._anchor) d._anchor.classList.remove('cookbook-menu-active');
-        d.remove();
+        if (typeof d._dismiss === 'function') d._dismiss(); else d.remove();
       });
       const item = btn.closest('.memory-item');
       const repo = item?.dataset.repo;
@@ -215,6 +259,9 @@ function _rerenderCachedModels() {
       dropdown.className = 'hwfit-cached-dropdown';
       dropdown._anchor = btn;
       btn.classList.add('cookbook-menu-active');
+      // Shared close — used by every item, the mobile Cancel, outside-click,
+      // and the Escape arbiter (reassigned to the registry-aware close below).
+      let closeDropdown = () => { dropdown.remove(); btn.classList.remove('cookbook-menu-active'); };
       const _di = (svg) => `<span class="dropdown-icon">${svg}</span>`;
       const _serveIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
       const _retryIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
@@ -230,8 +277,7 @@ function _rerenderCachedModels() {
         div.className = 'dropdown-item-compact' + (opt.danger ? ' dropdown-item-danger' : '');
         div.innerHTML = _di(opt.icon) + '<span>' + opt.label + '</span>';
         div.addEventListener('click', () => {
-          dropdown.remove();
-          btn.classList.remove('cookbook-menu-active');
+          closeDropdown();
           if (opt.action === 'serve') item.click();
           else if (opt.action === 'delete') _deleteCachedModel(repo, item, false, m);
           else if (opt.action === 'retry') _retryCachedModel(repo, m);
@@ -264,10 +310,7 @@ function _rerenderCachedModels() {
       const cancelDiv = document.createElement('div');
       cancelDiv.className = 'dropdown-item-compact dropdown-cancel-mobile';
       cancelDiv.innerHTML = _di(_cancelIco) + '<span>Cancel</span>';
-      cancelDiv.addEventListener('click', () => {
-        dropdown.remove();
-        btn.classList.remove('cookbook-menu-active');
-      });
+      cancelDiv.addEventListener('click', () => { closeDropdown(); });
       dropdown.appendChild(cancelDiv);
       const rect = btn.getBoundingClientRect();
       dropdown.style.cssText = `position:fixed;z-index:10001;visibility:hidden;top:0;right:${window.innerWidth-rect.right}px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,0.3);font-size:12px;`;
@@ -290,8 +333,7 @@ function _rerenderCachedModels() {
         dropdown.style.top = top + 'px';
         dropdown.style.visibility = '';
       }
-      const close = (ev) => { if (!dropdown.contains(ev.target) && ev.target !== btn) { dropdown.remove(); btn.classList.remove('cookbook-menu-active'); document.removeEventListener('click', close, true); } };
-      setTimeout(() => document.addEventListener('click', close, true), 0);
+      closeDropdown = bindMenuDismiss(dropdown, () => { dropdown.remove(); btn.classList.remove('cookbook-menu-active'); }, (ev) => !dropdown.contains(ev.target) && ev.target !== btn);
     });
   });
 
@@ -324,12 +366,6 @@ function _rerenderCachedModels() {
         c.style.alignItems = '';
       });
 
-      // Capture grid height
-      const _tb = list.closest('.admin-card')?.querySelector('.memory-toolbar');
-      const _tbH = _tb ? _tb.offsetHeight : 0;
-      list.style.minHeight = (list.offsetHeight + _tbH) + 'px';
-      list.style.maxHeight = (list.offsetHeight + _tbH) + 'px';
-
       const shortName = repo.split('/').pop();
       const _es = _envState;
       // The venv set per-server in Settings (server.envPath). Used as the venv
@@ -350,8 +386,13 @@ function _rerenderCachedModels() {
         ? _byRepo[repo]
         : (_lastUsed || (_isLegacyFlat ? _allSs : {}));
       const detectedBackend = _detectBackend(m).backend;
-      const defaultBackend = detectedBackend;
-      const savedMatchesBackend = (ss.backend || 'vllm') === detectedBackend;
+      const _allowedBackends = new Set(_isWindows()
+        ? ['llamacpp']
+        : (_isMetal() ? ['llamacpp', 'ollama'] : ['vllm', 'sglang', 'llamacpp', 'ollama', 'diffusers']));
+      const defaultBackend = (ss._forceBackend && ss.backend && _allowedBackends.has(ss.backend))
+        ? ss.backend
+        : detectedBackend;
+      const savedMatchesBackend = !!ss._forceBackend || (ss.backend || 'vllm') === detectedBackend;
       const sv = (k, def) => (ss[k] !== undefined && savedMatchesBackend) ? ss[k] : def;
       const defaultTp = defaultBackend === 'llamacpp' ? '1' : sv('tp', '1');
       const detectedGpuIds = _allGpuIds(_getGpuToggleTotal?.());
@@ -386,12 +427,13 @@ function _rerenderCachedModels() {
         : _isMetal()
         // Diffusers (diffusion_server.py) is CUDA-only — omit it on Metal.
         ? [['llamacpp','llama.cpp'],['ollama','Ollama']]
-        : [['vllm','vLLM'],['sglang','SGLang'],['llamacpp','llama.cpp'],['diffusers','Diffusers']];
+        : [['vllm','vLLM'],['sglang','SGLang'],['llamacpp','llama.cpp'],['ollama','Ollama'],['diffusers','Diffusers']];
       const backendOpts = _backendChoices.map(([v,l]) => `<option value="${v}"${defaultBackend===v?' selected':''}>${l}</option>`).join('');
-      panelHtml += `<label>${_l('Backend','Inference engine: vLLM, SGLang, llama.cpp, or Diffusers')}<select class="hwfit-sf" data-field="backend">${backendOpts}</select></label>`;
+      panelHtml += `<label>${_l('Backend','Inference engine: vLLM, SGLang, llama.cpp, Ollama, or Diffusers')}<select class="hwfit-sf" data-field="backend">${backendOpts}</select></label>`;
       panelHtml += `<input type="hidden" class="hwfit-sf" data-field="host" value="${esc(_es.remoteHost || '')}" />`;
       panelHtml += `<label>${_l('venv','Path to Python venv or conda env activate script')}<input type="text" class="hwfit-sf hwfit-sf-wide" data-field="venv" value="${esc(sv('venv', _es.envPath || _srvVenv || ''))}" placeholder="~/venv" /></label>`;
-      panelHtml += `<label>${_l('Port','HTTP port for the API server')}<input type="text" class="hwfit-sf" data-field="port" value="${esc(sv('port', _nextAvailablePort()))}" /></label>`;
+      const defaultPort = defaultBackend === 'ollama' ? '11434' : _nextAvailablePort();
+      panelHtml += `<label>${_l('Port','HTTP port for the API server')}<input type="text" class="hwfit-sf" data-field="port" value="${esc(sv('port', defaultPort))}" /></label>`;
       const _activeGpus = (defaultGpus || '').split(',').map(s => s.trim()).filter(Boolean);
       const detectedGpuCount = Number(_getGpuToggleTotal?.() || 0);
       const _gpuMax = Math.max(detectedGpuCount || 8, ...(_activeGpus.map(Number).filter(n => !isNaN(n)).map(n => n + 1)));
@@ -666,10 +708,11 @@ function _rerenderCachedModels() {
       // reflects the stored presets. Standard Odysseus .dropdown look, positioned
       // fixed at the toggle and right-aligned to it.
       function _showSavedConfigMenu(anchor) {
-        document.querySelectorAll('.cookbook-saved-menu').forEach(d => d.remove());
+        document.querySelectorAll('.cookbook-saved-menu').forEach(d => { if (typeof d._dismiss === 'function') d._dismiss(); else d.remove(); });
         const modelSlots = _presetsForModel(_loadPresets(), repo);
         const dropdown = document.createElement('div');
         dropdown.className = 'dropdown cookbook-saved-menu';
+        let closeMenu = () => { dropdown.remove(); anchor.classList.remove('cookbook-menu-active'); };
         const rect = anchor.getBoundingClientRect();
         const minW = 190;
         // Cap width/height to the viewport and start hidden — we clamp the final
@@ -710,7 +753,7 @@ function _rerenderCachedModels() {
             if (e.target === del) return;
             e.stopPropagation();
             // Close the menu FIRST so it always dismisses, even if loading throws.
-            dropdown.remove();
+            closeMenu();
             _loadSlotIntoPanel(idx);
             // Confirm the click landed — loading is silent otherwise, so it was
             // unclear the settings actually changed.
@@ -751,14 +794,7 @@ function _rerenderCachedModels() {
         dropdown.style.left = `${left}px`;
         dropdown.style.top = `${top}px`;
         dropdown.style.visibility = '';
-        const close = (ev) => {
-          if (!dropdown.contains(ev.target) && ev.target !== anchor && !anchor.contains(ev.target)) {
-            dropdown.remove();
-            anchor.classList.remove('cookbook-menu-active');
-            document.removeEventListener('click', close, true);
-          }
-        };
-        setTimeout(() => document.addEventListener('click', close, true), 10);
+        closeMenu = bindMenuDismiss(dropdown, () => { dropdown.remove(); anchor.classList.remove('cookbook-menu-active'); }, (ev) => !dropdown.contains(ev.target) && ev.target !== anchor && !anchor.contains(ev.target));
       }
 
       // "Save" segment — save the current config directly.
@@ -766,7 +802,7 @@ function _rerenderCachedModels() {
       if (savedSaveBtn) {
         savedSaveBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
-          document.querySelectorAll('.cookbook-saved-menu').forEach(d => d.remove());
+          document.querySelectorAll('.cookbook-saved-menu').forEach(dismissOrRemove);
           await _saveCurrentConfig();
         });
       }
@@ -775,9 +811,10 @@ function _rerenderCachedModels() {
       if (savedArrowBtn) {
         savedArrowBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          if (document.querySelector('.cookbook-saved-menu')) {
-            document.querySelectorAll('.cookbook-saved-menu').forEach(d => d.remove());
-            savedArrowBtn.classList.remove('cookbook-menu-active');
+          const openSaved = document.querySelector('.cookbook-saved-menu');
+          if (openSaved) {
+            if (typeof openSaved._dismiss === 'function') openSaved._dismiss();
+            else { openSaved.remove(); savedArrowBtn.classList.remove('cookbook-menu-active'); }
             return;
           }
           savedArrowBtn.classList.add('cookbook-menu-active');
@@ -822,9 +859,10 @@ function _rerenderCachedModels() {
       if (_splitArrow) {
         _splitArrow.addEventListener('click', (ev) => {
           ev.stopPropagation();
-          document.querySelectorAll('.cookbook-gpu-split-menu').forEach(m => m.remove());
+          document.querySelectorAll('.cookbook-gpu-split-menu').forEach(m => { if (typeof m._dismiss === 'function') m._dismiss(); else m.remove(); });
           const menu = document.createElement('div');
           menu.className = 'cookbook-task-dropdown cookbook-gpu-split-menu';
+          let closeMenu = () => menu.remove();
           const mk = (label, cls, onClick) => {
             const it = document.createElement('div');
             it.className = 'dropdown-item-compact' + (cls ? ' ' + cls : '');
@@ -832,7 +870,7 @@ function _rerenderCachedModels() {
             it.textContent = label;
             it.addEventListener('click', (e) => {
               e.stopPropagation();
-              menu.remove();
+              closeMenu();
               if (onClick) onClick();
             });
             return it;
@@ -859,18 +897,11 @@ function _rerenderCachedModels() {
             }
             menu.style.top = top + 'px';
           }
-          const close = (e) => {
-            if (!menu.contains(e.target) && e.target !== _splitArrow) {
-              menu.remove();
-              document.removeEventListener('click', close);
-              window.removeEventListener('scroll', _scrollClose, true);
-            }
-          };
-          const _scrollClose = () => { menu.remove(); document.removeEventListener('click', close); window.removeEventListener('scroll', _scrollClose, true); };
-          setTimeout(() => {
-            document.addEventListener('click', close);
-            window.addEventListener('scroll', _scrollClose, true);
-          }, 0);
+          // Close on outside click or Escape (via the registry); also dismiss
+          // on scroll since the popup is fixed-positioned to the arrow.
+          const _scrollClose = () => closeMenu();
+          closeMenu = bindMenuDismiss(menu, () => { menu.remove(); window.removeEventListener('scroll', _scrollClose, true); }, (e) => !menu.contains(e.target) && e.target !== _splitArrow);
+          window.addEventListener('scroll', _scrollClose, true);
         });
       }
       const _withSpinner = async (btn, fn) => {
@@ -949,9 +980,24 @@ function _rerenderCachedModels() {
           document.body.appendChild(popup);
           panel._gpuProbe.popup = popup;
 
+          // Position below the button using viewport coords (popup is
+          // position:fixed). Measure the popup AFTER it's in the DOM so
+          // we get the real rendered size, then clamp both axes so the
+          // popup stays fully visible — GPU buttons near the right edge
+          // of the modal previously anchored the popup mostly off-screen.
           const r = anchorBtn.getBoundingClientRect();
-          popup.style.left = `${Math.max(8, r.left)}px`;
-          popup.style.top  = `${r.bottom + 4 + window.scrollY}px`;
+          const vw = window.innerWidth  || document.documentElement.clientWidth;
+          const vh = window.innerHeight || document.documentElement.clientHeight;
+          const pw = popup.offsetWidth  || 320;
+          const ph = popup.offsetHeight || 200;
+          let left = r.left;
+          let top  = r.bottom + 4;
+          // Push left so the popup doesn't overflow the right edge.
+          if (left + pw > vw - 8) left = Math.max(8, vw - pw - 8);
+          // If there isn't room below, render above the button instead.
+          if (top + ph > vh - 8) top = Math.max(8, r.top - ph - 4);
+          popup.style.left = `${left}px`;
+          popup.style.top  = `${top}px`;
 
           popup.querySelector('.cookbook-gpu-popup-close')?.addEventListener('click', _closeProbePopup);
           popup.querySelectorAll('.cookbook-gpu-kill').forEach(btn => {
@@ -1195,7 +1241,16 @@ function _rerenderCachedModels() {
           if (el.type === 'checkbox') serveState[el.dataset.field] = el.checked;
           else serveState[el.dataset.field] = el.value;
         });
-        serveState.backend = (_detectBackend(m).backend) || serveState.backend || 'vllm';
+        serveState.backend = serveState.backend || (_detectBackend(m).backend) || 'vllm';
+        const backendWarning = _serveBackendWarning(m, repo, serveState.backend, serveState);
+        if (backendWarning) {
+          await window.styledConfirm(backendWarning.body, {
+            title: backendWarning.title,
+            confirmText: 'Edit settings',
+            cancelText: 'Close',
+          });
+          return;
+        }
         // Save in the { _byRepo, _lastUsed } schema — no legacy flat keys at
         // the root so per-model state doesn't leak between models.
         try {
@@ -1508,7 +1563,10 @@ export async function _fetchCachedModels() {
     const data = await res.json();
     _dlWp.destroy();
 
-    const ready = data.models.filter(m => m.status === 'ready' && !m.size.includes('MB'));
+    // CHANGELOG: 'ready' already excludes partial downloads;
+    // show every complete model regardless of size/backend.
+    const ready = data.models.filter(m => m.status === 'ready');
+
     const downloading = data.models.filter(m => m.status === 'downloading');
     const allModels = [...ready, ...downloading];
     _cachedAllModels = allModels;
@@ -1537,7 +1595,8 @@ export async function _fetchCachedModels() {
     for (const m of allModels) {
       const n = (m.repo_id || '').toLowerCase();
       let tag = 'other';
-      if (m.is_diffusion || /flux|sdxl|stable-diffusion|z-image|qwen-image|diffusion|dreamshar/i.test(n)) tag = 'image';
+      if (m.backend === 'ollama' || m.is_ollama) tag = 'llm';
+      else if (m.is_diffusion || /flux|sdxl|stable-diffusion|z-image|qwen-image|diffusion|dreamshar/i.test(n)) tag = 'image';
       else if (/whisper|stt|asr/i.test(n)) tag = 'stt';
       else if (/tts|cosyvoice|parler/i.test(n)) tag = 'tts';
       else if (/embed|bge|minilm|e5-/i.test(n)) tag = 'embedding';
@@ -1548,6 +1607,10 @@ export async function _fetchCachedModels() {
       m._family = '';
       for (const [re, fam] of _families) {
         if (re.test(n)) { m._family = fam; _familyMap[fam] = (_familyMap[fam] || 0) + 1; break; }
+      }
+      if ((m.backend === 'ollama' || m.is_ollama) && !m._family) {
+        m._family = 'ollama';
+        _familyMap.ollama = (_familyMap.ollama || 0) + 1;
       }
     }
 

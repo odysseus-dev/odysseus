@@ -15,6 +15,7 @@ and `email_pollers.py` (the background loops):
 import os
 import imaplib
 import smtplib
+import ssl
 import email as email_mod
 import email.header
 import email.utils
@@ -32,7 +33,7 @@ from fastapi import Query, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List
 
-from src.auth_helpers import get_current_user
+from src.auth_helpers import _auth_disabled, get_current_user
 from src.secret_storage import decrypt as _decrypt
 
 logger = logging.getLogger(__name__)
@@ -50,17 +51,29 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
     port = int(cfg.get("smtp_port") or 465)
     user = cfg.get("smtp_user") or ""
     password = cfg.get("smtp_password") or ""
-    if port == 587:
-        with smtplib.SMTP(host, port, timeout=timeout) as smtp:
+    def _send_starttls(starttls_port: int = 587) -> None:
+        with smtplib.SMTP(host, starttls_port, timeout=timeout) as smtp:
             smtp.starttls()
             if user and password:
                 smtp.login(user, password)
             smtp.sendmail(from_addr, recipients, message)
+
+    if port == 587:
+        _send_starttls(587)
         return
-    with smtplib.SMTP_SSL(host, port, timeout=timeout) as smtp:
-        if user and password:
-            smtp.login(user, password)
-        smtp.sendmail(from_addr, recipients, message)
+
+    try:
+        with smtplib.SMTP_SSL(host, port, timeout=timeout) as smtp:
+            if user and password:
+                smtp.login(user, password)
+            smtp.sendmail(from_addr, recipients, message)
+        return
+    except (TimeoutError, ssl.SSLError) as e:
+        if port == 465:
+            logger.warning("SMTP implicit TLS on %s:465 failed (%s); retrying STARTTLS on 587", host, e)
+            _send_starttls(587)
+            return
+        raise
 
 
 def _strip_think(text: str) -> str:
@@ -82,8 +95,8 @@ def _strip_think(text: str) -> str:
 import re as _re_reply
 # Accept REPLY / SUMMARY / OUTPUT as the opening fence so the same extractor
 # serves replies and summaries (any fenced final-output block).
-_REPLY_OPEN_RE = _re_reply.compile(r"<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>>", _re_reply.I)
-_REPLY_CLOSE_RE = _re_reply.compile(r"<<<\s*END\s*>>>", _re_reply.I)
+_REPLY_OPEN_RE = _re_reply.compile(r"<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+", _re_reply.I)
+_REPLY_CLOSE_RE = _re_reply.compile(r"<<<\s*END\s*>>+", _re_reply.I)
 
 
 def _extract_reply(text: str) -> str:
@@ -139,6 +152,8 @@ def _require_auth(request: Request) -> str:
     u = get_current_user(request)
     if u:
         return u
+    if _auth_disabled():
+        return ""
     auth_mgr = getattr(request.app.state, "auth_manager", None)
     if auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
         raise HTTPException(401, "Not authenticated")
@@ -254,6 +269,20 @@ ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 COMPOSE_UPLOADS_DIR = ATTACHMENTS_DIR / "_compose"
 COMPOSE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 SCHEDULED_DB = DATA_DIR / "scheduled_emails.db"
+
+
+def attachment_extract_dir(folder: str, uid: str) -> Path:
+    """Containment-safe extraction directory for an attachment.
+
+    `folder` and `uid` are user-controlled (query/path params). Flatten them to
+    a single safe path segment so a value like folder='../../tmp' can't escape
+    ATTACHMENTS_DIR, then assert containment as belt-and-suspenders."""
+    key = re.sub(r"[^A-Za-z0-9._-]", "_", f"{folder}_{uid}") or "_"
+    target = (ATTACHMENTS_DIR / key).resolve()
+    base = ATTACHMENTS_DIR.resolve()
+    if target != base and base not in target.parents:
+        raise HTTPException(400, "Invalid attachment location")
+    return target
 
 
 def _init_scheduled_db():

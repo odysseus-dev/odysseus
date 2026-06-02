@@ -37,6 +37,7 @@
 //                        Default true when onEnterFullscreen is supplied.
 
 import { makeEdgeDockController } from './modalSnap.js';
+import { makeWindowResizable } from './windowResize.js';
 
 const SNAP_PX = 6;        // cursor distance from top edge for fullscreen snap
 const UNSNAP_PX = 24;     // cursor distance from top before fullscreen exits
@@ -69,6 +70,26 @@ export function makeWindowDraggable(modal, options = {}) {
 
   header.style.cursor = 'move';
   header.style.userSelect = 'none';
+
+  // Edge/corner resize. Every draggable window also becomes resizable — the
+  // same gesture a native desktop window uses (grab an edge or corner, drag).
+  // Skipped on mobile (windows are full-screen sheets there) and while the
+  // window is fullscreen-snapped or docked. Wired here so all ~12 callsites
+  // get it without per-file changes.
+  if (options.enableResize !== false) {
+    const _dockClasses = ['modal-right-docked', 'modal-left-docked'];
+    makeWindowResizable(content, {
+      modal,
+      mobileSkip,
+      minWidth: options.minWidth,
+      minHeight: options.minHeight,
+      isLocked: () => (fsClass && modal && modal.classList.contains(fsClass))
+        || (modal && _dockClasses.some((c) => modal.classList.contains(c))),
+      storageKey: options.resizeStorageKey
+        || (modal && modal.id ? 'winsize-' + modal.id
+          : (content.id ? 'winsize-' + content.id : null)),
+    });
+  }
 
   const rightDock = enableDock ? makeEdgeDockController(modal, 'right') : null;
   // Left dock is opt-in (enableLeftDock). For most windows it's off — the

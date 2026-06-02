@@ -152,6 +152,44 @@ def _process_pdf(path: str) -> str:
         return f"\n\n[PDF processing failed: {str(e)}]"
 
 
+def _truncate_inline(text: str, limit: int = 15000) -> tuple[str, str]:
+    """Cap inline document text so a huge file can't blow the model's context."""
+    text = (text or "").strip()
+    if len(text) > limit:
+        return text[:limit], "\n[…truncated for inline context.]"
+    return text, ""
+
+
+def _process_office_document(path: str, display_name: str) -> str:
+    """Extract an Office/EPUB document to Markdown via the optional markitdown dep.
+
+    Falls back to a friendly banner when markitdown is unavailable or finds no
+    text, so a missing optional dependency never breaks the chat path.
+    """
+    from src.markitdown_runtime import (
+        is_markitdown_format,
+        convert_to_markdown,
+        load_markitdown,
+    )
+
+    if not is_markitdown_format(path):
+        return "\n\n[Attached document file]"
+
+    markdown = convert_to_markdown(path)
+    if markdown and markdown.strip():
+        title = os.path.splitext(os.path.basename(path))[0]
+        body, marker = _truncate_inline(markdown)
+        return f"\n\n[Document content — {title}]:\n{body}{marker}"
+
+    # No content: tell the user whether to install the optional dep or whether
+    # the document simply had no extractable text.
+    try:
+        load_markitdown()
+        return f"\n\n[Attached document: {display_name} — no extractable text found.]"
+    except RuntimeError as exc:
+        return f"\n\n[Attached document: {display_name} — {exc}]"
+
+
 def _load_vl_settings() -> dict:
     """Load admin settings from disk."""
     try:
@@ -257,6 +295,8 @@ def build_user_content(
     upload_handler,
     session_id: str | None = None,
     auto_opened_docs: list[Dict[str, Any]] | None = None,
+    owner: str | None = None,
+    resolved_uploads: dict[str, Dict[str, Any]] | None = None,
 ) -> str | List[Dict[str, Any]]:
     """Build user content with attachments (text, images, audio, documents).
 
@@ -268,33 +308,30 @@ def build_user_content(
     """
     content = [{"type": "text", "text": text}]
 
-    for fid in attachment_ids:
-        if not upload_handler.validate_upload_id(fid):
-            logger.warning(f"Invalid attachment ID format: {fid}")
+    for fid in attachment_ids or []:
+        upload_info = (resolved_uploads or {}).get(fid)
+        if upload_info is None and hasattr(upload_handler, "resolve_upload"):
+            upload_info = upload_handler.resolve_upload(fid, owner=owner)
+        if upload_info is None:
+            logger.warning(f"Attachment {fid} not found or not authorized")
             continue
 
-        path = os.path.join(upload_dir, fid)
-        if not (upload_handler.inside_base_dir(path) and os.path.exists(path)):
-            found = False
-            for root, dirs, files in os.walk(upload_dir):
-                if fid in files and not fid.endswith(".json"):
-                    path = os.path.join(root, fid)
-                    if upload_handler.inside_base_dir(path):
-                        found = True
-                        logger.info(f"Found attachment {fid} at {path}")
-                        break
-            if not found:
-                logger.warning(f"Attachment {fid} not found in upload directories")
-                continue
-
-        if not upload_handler.inside_base_dir(path):
+        path = upload_info.get("path")
+        if not path or not os.path.exists(path):
+            logger.warning(f"Attachment {fid} path is missing")
+            continue
+        if hasattr(upload_handler, "_inside_upload_dir") and not upload_handler._inside_upload_dir(path):
+            logger.warning(f"Attachment {fid} path is outside upload directory: {path}")
+            continue
+        if not hasattr(upload_handler, "_inside_upload_dir") and not upload_handler.inside_base_dir(path):
             logger.warning(f"Attachment {fid} path is outside base directory: {path}")
             continue
 
         _, ext = os.path.splitext(path.lower())
-        mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        mime = upload_info.get("mime") or mimetypes.guess_type(path)[0] or "application/octet-stream"
+        display_name = upload_info.get("name") or upload_info.get("original_name") or path
 
-        if upload_handler.is_image_file(path, mime):
+        if upload_handler.is_image_file(display_name, mime):
             try:
                 with open(path, "rb") as image_file:
                     encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
@@ -310,7 +347,7 @@ def build_user_content(
                 else:
                     content.insert(0, {"type": "text", "text": "[Image attached but could not be processed]"})
 
-        elif upload_handler.is_audio_file(path, mime):
+        elif upload_handler.is_audio_file(display_name, mime):
             try:
                 with open(path, "rb") as audio_file:
                     encoded_string = base64.b64encode(audio_file.read()).decode("utf-8")
@@ -326,7 +363,7 @@ def build_user_content(
                 else:
                     content.insert(0, {"type": "text", "text": "[Audio attached but could not be processed]"})
 
-        elif upload_handler.is_document_file(path, mime):
+        elif upload_handler.is_document_file(display_name, mime):
             if mime == "application/pdf":
                 extracted_text = None
                 if session_id:
@@ -430,7 +467,7 @@ def build_user_content(
             elif mime.startswith("text/") or _is_text_file(path):
                 extracted_text = _process_text_file(path)
             else:
-                extracted_text = "\n\n[Attached document file]"
+                extracted_text = _process_office_document(path, display_name)
 
             if content and content[0]["type"] == "text":
                 content[0]["text"] += extracted_text

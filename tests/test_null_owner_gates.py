@@ -33,12 +33,14 @@ for _stub in [
         m = types.ModuleType(_stub)
         # Provide the names the importers will look up.
         if _stub == "core.database":
+            m.Base = MagicMock()
             m.SessionLocal = MagicMock()
             m.CalendarCal = MagicMock()
             m.CalendarEvent = MagicMock()
             m.Document = MagicMock()
             m.DocumentVersion = MagicMock()
             m.Session = MagicMock()
+            m.ChatMessage = MagicMock()
             m.GalleryImage = MagicMock()
             m.GalleryAlbum = MagicMock()
             m.Note = MagicMock()
@@ -165,3 +167,54 @@ def test_gallery_owner_filter_passes_user():
     # logged-in users.
     fake_q.filter.assert_called_once()
     assert out is fake_q.filter.return_value
+
+
+# ---------------------------------------------------------------------------
+# webhook._caller_owns_session  (POST /api/v1/chat sync-chat endpoint)
+# ---------------------------------------------------------------------------
+# This is the FOURTH place the `owner and owner != user` pattern showed up:
+# the token-authenticated sync-chat endpoint let any chat-scoped token resume
+# a null-owner session by passing its id, leaking its history and reusing the
+# owner's endpoint credentials. The gate must fail closed, exactly like the
+# calendar/notes/gallery gates above and _verify_session_owner.
+
+def _import_webhook_helper():
+    """Import routes.webhook_routes without dragging in the real webhook
+    manager / database. Stub src.webhook_manager (only referenced by an
+    import line) and ensure core.database exposes the names the import chain
+    (core/__init__ → session_manager) looks up."""
+    for _name in ("Webhook", "ChatMessage"):
+        setattr(sys.modules["core.database"], _name, MagicMock())
+    if "src.webhook_manager" not in sys.modules:
+        wm = types.ModuleType("src.webhook_manager")
+        wm.WebhookManager = MagicMock()
+        wm.validate_webhook_url = MagicMock()
+        wm.validate_events = MagicMock()
+        sys.modules["src.webhook_manager"] = wm
+    return __import__(
+        "routes.webhook_routes", fromlist=["_caller_owns_session"]
+    )
+
+
+def test_sync_chat_gate_rejects_null_owner_session():
+    wh_mod = _import_webhook_helper()
+    # Legacy/migrated session with no owner must NOT be resumable by a token.
+    assert wh_mod._caller_owns_session(None, "alice") is False
+
+
+def test_sync_chat_gate_rejects_cross_owner_session():
+    wh_mod = _import_webhook_helper()
+    assert wh_mod._caller_owns_session("bob", "alice") is False
+
+
+def test_sync_chat_gate_rejects_unresolvable_caller():
+    wh_mod = _import_webhook_helper()
+    # If the token's owner can't be resolved, fail closed rather than opening
+    # up null-owner sessions.
+    assert wh_mod._caller_owns_session(None, None) is False
+    assert wh_mod._caller_owns_session("alice", None) is False
+
+
+def test_sync_chat_gate_accepts_matching_owner():
+    wh_mod = _import_webhook_helper()
+    assert wh_mod._caller_owns_session("alice", "alice") is True

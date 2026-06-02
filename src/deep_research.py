@@ -199,7 +199,7 @@ class DeepResearcher:
         self.max_urls_per_round = max_urls_per_round
         self.max_content_chars = max_content_chars
         self.max_report_tokens = max_report_tokens
-        self.extraction_timeout = min(600, max(15, int(extraction_timeout or 90)))
+        self.extraction_timeout = min(3600, max(15, int(extraction_timeout or 90)))
         self.extraction_concurrency = min(12, max(1, int(extraction_concurrency or 3)))
         self.min_rounds = min_rounds
         self.max_empty_rounds = max_empty_rounds

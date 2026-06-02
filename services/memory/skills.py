@@ -363,19 +363,33 @@ class SkillsManager:
 
         return sk.to_dict()
 
-    def update_skill(self, skill_id: str, updates: Dict) -> bool:
+    def update_skill(self, skill_id: str, updates: Dict, owner: Optional[str] = None) -> bool:
         """`skill_id` is the slug name. Allows updating any field plus
-        renames if `name` changes (file is moved on disk)."""
+        renames if `name` changes (file is moved on disk).
+
+        The call is owner-scoped: it matches a skill on disk only if
+        `skill.owner == owner` (string compare; both empty-string and
+        None mean "ownerless"). When `owner is None` (the default), the
+        call only matches skills whose own `owner` field is empty —
+        callers that want to edit an owned skill must pass the matching
+        owner explicitly. This prevents a caller with one owner from
+        mutating a file owned by another user that happens to share
+        the same slug across category directories. The `owner` key in
+        `updates` is also ignored — ownership is not an editable field
+        via this path; rename or admin tooling is required for that.
+        """
         for path in self._iter_skill_files():
             sk = self._read_skill(path)
             if not sk or sk.name != skill_id:
                 continue
+            if (sk.owner or "") != (owner or ""):
+                continue
+
             old_dir = os.path.dirname(path)
 
-            # Apply updates in a Skill-shape friendly way
             scalar_keys = (
                 "description", "version", "category", "status", "confidence",
-                "source", "teacher_model", "owner", "when_to_use",
+                "source", "teacher_model", "when_to_use",
                 "body_extra",
             )
             for k in scalar_keys:
@@ -421,10 +435,12 @@ class SkillsManager:
             return True
         return False
 
-    def delete_skill(self, skill_id: str) -> bool:
+    def delete_skill(self, skill_id: str, owner: Optional[str] = None) -> bool:
         for path in self._iter_skill_files():
             sk = self._read_skill(path)
             if not sk or sk.name != skill_id:
+                continue
+            if (sk.owner or "") != (owner or ""):
                 continue
             skill_dir = os.path.dirname(path)
             try:
@@ -456,23 +472,28 @@ class SkillsManager:
     # Reading a single skill (used by the skill_view tool)
     # ----------------------------------------------------------------------
 
-    def read_skill_md(self, name: str) -> Optional[str]:
+    def read_skill_md(self, name: str, owner: Optional[str] = None) -> Optional[str]:
         for path in self._iter_skill_files():
             sk = self._read_skill(path)
-            if sk and sk.name == name:
-                try:
-                    with open(path, encoding="utf-8") as f:
-                        return f.read()
-                except Exception:
-                    return None
+            if not sk or sk.name != name:
+                continue
+            if (sk.owner or "") != (owner or ""):
+                continue
+            try:
+                with open(path, encoding="utf-8") as f:
+                    return f.read()
+            except Exception:
+                return None
         return None
 
-    def read_skill_reference(self, name: str, ref_path: str) -> Optional[str]:
+    def read_skill_reference(self, name: str, ref_path: str, owner: Optional[str] = None) -> Optional[str]:
         """Read a sub-file under the skill's directory (references/, etc).
         Refuses path traversal."""
         for path in self._iter_skill_files():
             sk = self._read_skill(path)
             if not sk or sk.name != name:
+                continue
+            if (sk.owner or "") != (owner or ""):
                 continue
             base = os.path.realpath(os.path.dirname(path))
             target = os.path.realpath(os.path.join(base, ref_path))

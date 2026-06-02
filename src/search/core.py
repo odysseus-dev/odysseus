@@ -207,7 +207,10 @@ def invalidate_search_cache(query: Optional[str] = None) -> None:
         search_cache_index.clear()
         logger.info("All search cache entries have been cleared.")
     else:
-        cache_key = generate_cache_key(f"{query}|10|None")
+        # Match the key the write path stores: searxng_search_results replaces
+        # the caller's default count with the configured _get_result_count()
+        # (default 5), so a hardcoded "|10|None" never matched a real entry.
+        cache_key = generate_cache_key(f"{query}|{_get_result_count()}|None")
         cache_file = SEARCH_CACHE_DIR / f"{cache_key}.cache"
         if cache_file.exists():
             try:

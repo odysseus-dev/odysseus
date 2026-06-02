@@ -1495,6 +1495,9 @@ function _initSynapse() {
   const canvas = document.createElement('canvas');
   canvas.id = 'synapse-canvas';
   canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;';
+  // Decorative background effect — hide from assistive tech so screen readers
+  // don't announce an empty canvas and axe's "region" rule doesn't flag it.
+  canvas.setAttribute('aria-hidden', 'true');
   document.body.prepend(canvas);
   const ctx = canvas.getContext('2d');
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1588,6 +1591,9 @@ function _initRain() {
   const canvas = document.createElement('canvas');
   canvas.id = 'rain-canvas';
   canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;';
+  // Decorative background effect — hide from assistive tech so screen readers
+  // don't announce an empty canvas and axe's "region" rule doesn't flag it.
+  canvas.setAttribute('aria-hidden', 'true');
   document.body.prepend(canvas);
   const ctx = canvas.getContext('2d');
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1660,6 +1666,9 @@ function _initConstellations() {
   const canvas = document.createElement('canvas');
   canvas.id = 'constellations-canvas';
   canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;';
+  // Decorative background effect — hide from assistive tech so screen readers
+  // don't announce an empty canvas and axe's "region" rule doesn't flag it.
+  canvas.setAttribute('aria-hidden', 'true');
   document.body.prepend(canvas);
   const ctx = canvas.getContext('2d');
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1763,6 +1772,9 @@ function _initPerlinFlow() {
   const canvas = document.createElement('canvas');
   canvas.id = 'perlin-flow-canvas';
   canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;';
+  // Decorative background effect — hide from assistive tech so screen readers
+  // don't announce an empty canvas and axe's "region" rule doesn't flag it.
+  canvas.setAttribute('aria-hidden', 'true');
   document.body.prepend(canvas);
   const ctx = canvas.getContext('2d');
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1818,6 +1830,9 @@ function _initPetals() {
   const canvas = document.createElement('canvas');
   canvas.id = 'petals-canvas';
   canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;';
+  // Decorative background effect — hide from assistive tech so screen readers
+  // don't announce an empty canvas and axe's "region" rule doesn't flag it.
+  canvas.setAttribute('aria-hidden', 'true');
   document.body.prepend(canvas);
   const ctx = canvas.getContext('2d');
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1872,6 +1887,9 @@ function _initSparkles() {
   const canvas = document.createElement('canvas');
   canvas.id = 'sparkles-canvas';
   canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;';
+  // Decorative background effect — hide from assistive tech so screen readers
+  // don't announce an empty canvas and axe's "region" rule doesn't flag it.
+  canvas.setAttribute('aria-hidden', 'true');
   document.body.prepend(canvas);
   const ctx = canvas.getContext('2d');
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1927,6 +1945,9 @@ function _initEmbers() {
   const canvas = document.createElement('canvas');
   canvas.id = 'embers-canvas';
   canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;';
+  // Decorative background effect — hide from assistive tech so screen readers
+  // don't announce an empty canvas and axe's "region" rule doesn't flag it.
+  canvas.setAttribute('aria-hidden', 'true');
   document.body.prepend(canvas);
   const ctx = canvas.getContext('2d');
   const dpr = Math.min(window.devicePixelRatio || 1, 2);

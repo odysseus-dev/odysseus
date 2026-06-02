@@ -48,6 +48,28 @@ let _removedHwChips = new Set();
 
 export let _gpuToggleTotal = 0; // real GPU count from first scan, never overridden
 
+function _firstGgufSource(model) {
+  const sources = Array.isArray(model?.gguf_sources) ? model.gguf_sources : [];
+  return sources.find(src => src && src.repo) || null;
+}
+
+function _looksLikeGgufRepo(model) {
+  const haystack = `${model?.quant_repo || ''} ${model?.repo_id || ''} ${model?.path || ''} ${model?.name || ''}`.toLowerCase();
+  return !!model?.is_gguf || haystack.includes('gguf') || haystack.includes('.gguf');
+}
+
+function _downloadSourceRepo(model, backend) {
+  if (backend === 'llamacpp') {
+    const ggufSource = _firstGgufSource(model);
+    if (ggufSource) return { repo: ggufSource.repo, kind: 'GGUF' };
+    if (_looksLikeGgufRepo(model)) {
+      const repo = model?.quant_repo || model?.repo_id || model?.name;
+      if (repo) return { repo, kind: 'GGUF' };
+    }
+  }
+  return { repo: model?.quant_repo || model?.name || '', kind: '' };
+}
+
 // Reset GPU-toggle state so the next scan re-renders the RAM/GPU buttons for a
 // (possibly different) server, WITHOUT clearing the markup now — clearing it made
 // the buttons flicker out and back in. The old buttons stay visible until the
@@ -171,6 +193,8 @@ export function _renderGpuToggles(system) {
         if (quantSel) {
           if (count <= 1) {
             quantSel.value = 'Q4_K_M'; // RAM or 1 GPU -> Q4 sweet spot
+          } else if (String(system?.backend || '').toLowerCase() === 'rocm') {
+            quantSel.value = 'Q4_K_M'; // ROCm default stays GGUF/local-safe; AWQ is explicit only
           } else {
             quantSel.value = 'AWQ-4bit'; // Multi-GPU -> AWQ for vLLM
           }
@@ -497,6 +521,11 @@ export async function _hwfitFetch(fresh = false) {
       const asc = sortSel?.dataset.reverse === '1';   // reversed → ascending (lowest first)
       const field = { score: 'score', vram: 'required_gb', speed: 'speed_tps', params: 'params_b', context: 'context' }[sortKey] || 'score';
       data.models.sort((a, b) => {
+        if (sortKey === 'fit') {
+          const rank = { perfect: 4, good: 3, marginal: 2, too_tight: 1, no_fit: 0 };
+          const av = rank[a.fit_level] || 0, bv = rank[b.fit_level] || 0;
+          return asc ? av - bv : bv - av;
+        }
         const av = Number(a[field]) || 0, bv = Number(b[field]) || 0;
         return asc ? av - bv : bv - av;
       });
@@ -695,7 +724,7 @@ function _wireManualHardwareControls(el) {
 export const _fitColors = { perfect: 'var(--green, #50fa7b)', good: 'var(--yellow, #f1fa8c)', marginal: 'var(--orange, #ffb86c)', too_tight: 'var(--red, #ff5555)' };
 
 export const _hwfitColumns = [
-  { key: 'score', label: 'Fit',    cls: 'hwfit-fit' },
+  { key: 'fit', label: 'Fit',    cls: 'hwfit-fit' },
   { key: null,    label: 'Model',  cls: 'hwfit-name' },
   { key: 'params',label: 'Param', cls: 'hwfit-c-params' },
   { key: null,    label: 'Quant',  cls: 'hwfit-c-quant' },
@@ -847,13 +876,13 @@ export function _expandModelRow(row, modelData) {
   const isLlamaCpp = backend === 'llamacpp';
   const ctx = modelData.context || 8192;
 
-  const dlRepo = modelData.quant_repo || modelData.name;
-  const hfUrl = `https://huggingface.co/${dlRepo}`;
+  const dlSource = _downloadSourceRepo(modelData, backend);
+  const hfUrl = `https://huggingface.co/${dlSource.repo}`;
   let html = `<div class="hwfit-action-panel" data-model-name="${esc(modelData.name)}">`;
   html += `<div class="hwfit-panel-header">`;
-  html += `<span class="hwfit-panel-model">${esc(modelData.name)}${modelData.quant_repo ? ` <span style="opacity:0.5;font-size:10px;">(${esc(modelData.quant)})</span>` : ''}</span>`;
+  html += `<span class="hwfit-panel-model">${esc(modelData.name)}${dlSource.kind ? ` <span style="opacity:0.5;font-size:10px;">(${esc(dlSource.kind)} ${esc(modelData.quant || '')})</span>` : (modelData.quant_repo ? ` <span style="opacity:0.5;font-size:10px;">(${esc(modelData.quant)})</span>` : '')}</span>`;
   html += `<span class="hwfit-panel-badge">${esc(label)}</span>`;
-  html += `<a href="${esc(hfUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="View on HuggingFace">HF \u2197</a>`;
+  html += `<a href="${esc(hfUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="View download source on HuggingFace">HF \u2197</a>`;
   html += `</div>`;
   html += `<div class="hwfit-panel-actions">`;
   html += `<button class="cookbook-btn hwfit-dl-btn">Download</button>`;
@@ -887,7 +916,30 @@ export function _expandModelRow(row, modelData) {
   const quickRunBtn = panel.querySelector('.hwfit-quickrun-btn');
   if (quickRunBtn) {
     quickRunBtn.addEventListener('click', async () => {
-      _syncHostFromScanDropdown();
+      const _qrHost = _syncHostFromScanDropdown();
+
+      // Don't serve a model that isn't downloaded yet. vLLM/SGLang would
+      // background-pull at launch, so the serve task shows up as "running" in
+      // the Running tab while nothing is actually served (and llama.cpp just
+      // errors "No GGUF found"). The Configure button and the Serve tab already
+      // gate on the cached-model list — mirror that here. When the model isn't
+      // present, honor the button's "Download" half by kicking off the download
+      // instead, then the user can Run again to serve once it finishes.
+      const _short = modelData.name.split('/').pop();
+      const _downloaded = _cachedModelIds && (
+        _cachedModelIds.has(modelData.name)
+        || [..._cachedModelIds].some(id => id === modelData.name || id.endsWith('/' + _short))
+      );
+      if (_cachedModelIds && !_downloaded) {
+        uiModule.showToast('Model not downloaded yet — starting download. Run again to serve once it finishes.');
+        if (backend === 'ollama') {
+          _runPanelCmd(panel, _buildDownloadCmd(modelData, backend), { timeout: 0 });
+        } else {
+          _runModelDownload(panel, modelData, backend, _qrHost);
+        }
+        return;
+      }
+
       quickRunBtn.disabled = true;
       quickRunBtn.textContent = 'Starting...';
 

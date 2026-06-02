@@ -156,6 +156,13 @@ import createResearchSynapse from './researchSynapse.js';
     initSlashCommands({ apiBase, isStreaming: () => isStreaming });
     // Initialize email inbox
     emailInbox.init(documentModule);
+    // Wire the slash-command autocomplete popup on the chat composer. The
+    // dispatcher already handles the typed command — this just surfaces the
+    // registry as a discoverable menu when the user starts a message with /.
+    import('./slashAutocomplete.js').then(mod => {
+      const ta = document.getElementById('message');
+      if (ta && mod.initSlashAutocomplete) mod.initSlashAutocomplete(ta);
+    }).catch(() => {});
   }
 
   // addMessage, createMsgFooter, displayMetrics, hideWelcomeScreen, showWelcomeScreen
@@ -505,6 +512,10 @@ import createResearchSynapse from './researchSynapse.js';
 
     // Declare accumulated outside try block so it's accessible in catch
     let accumulated = '';
+    // Are we currently inside an unclosed <think> block? Toggled per think/answer
+    // cycle so a multi-round agent response (one reasoning phase PER round) wraps each
+    // round's reasoning in its own <think>…</think> instead of leaking rounds 2+ as text.
+    let _thinkOpen = false;
     let holder = null;
     let finalMeta = null;
     let finalModelName = null;
@@ -512,6 +523,9 @@ import createResearchSynapse from './researchSynapse.js';
     let timedOut = false;
     let processingProbeTimer = null;
     let processingProbeAbort = null;
+    let _renderStream = () => {};
+    let _cancelThinkingTimer = () => {};
+    let _removeThinkingSpinner = () => {};
     const clearProcessingProbe = () => {
       if (processingProbeTimer) {
         clearTimeout(processingProbeTimer);
@@ -986,13 +1000,13 @@ import createResearchSynapse from './researchSynapse.js';
       }
       const esc = uiModule.esc;
       // Remove thinking spinner helper
-      function _removeThinkingSpinner() {
+      _removeThinkingSpinner = () => {
         const el = document.querySelector('.agent-thinking-dots');
         if (el) {
           if (el._spinner) el._spinner.destroy();
           el.remove();
         }
-      }
+      };
 
       // Tool-aware thinking spinner
       let _lastToolName = '';
@@ -1056,9 +1070,9 @@ import createResearchSynapse from './researchSynapse.js';
           }
         }, 400);
       }
-      function _cancelThinkingTimer() {
+      _cancelThinkingTimer = () => {
         if (_textPauseTimer) { clearTimeout(_textPauseTimer); _textPauseTimer = null; }
-      }
+      };
 
       // Document streaming state (text-fence detection)
       let _docFenceOpened = false;
@@ -1085,7 +1099,7 @@ import createResearchSynapse from './researchSynapse.js';
       }
 
       // Direct render helper for streaming text
-      function _renderStream() {
+      _renderStream = () => {
         let dt = stripToolBlocks(roundText);
         const bodyEl = roundHolder.querySelector('.body');
         const contentEl = _ensureStreamLayout(bodyEl);
@@ -1184,7 +1198,7 @@ import createResearchSynapse from './researchSynapse.js';
         contentEl._prevTextLen = contentEl.textContent.length;
         if (window.hljs) contentEl.querySelectorAll('pre code').forEach((b) => window.hljs.highlightElement(b));
         uiModule.scrollHistory();
-      }
+      };
 
       // Walk text nodes, skip past `prevLen` characters of old text,
       // wrap everything after that in <span class="token-new"> for fade-in
@@ -1213,6 +1227,7 @@ import createResearchSynapse from './researchSynapse.js';
       }
 
       let _nextIsError = false;
+      let _streamSawDone = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1255,6 +1270,7 @@ import createResearchSynapse from './researchSynapse.js';
             }
 
             if (data === '[DONE]') {
+              _streamSawDone = true;
               // Always update background map if entry exists (even if user switched back)
               var bgDone = _backgroundStreams.get(streamSessionId);
               if (bgDone) {
@@ -1345,12 +1361,15 @@ import createResearchSynapse from './researchSynapse.js';
                 if (_threadAbove && _threadAbove.classList.contains('agent-thread') && !_threadAbove.classList.contains('has-bottom')) {
                   _threadAbove.classList.add('has-bottom');
                 }
-                // VLLM reasoning tokens: wrap in <think> tags for the thinking UI
+                // VLLM reasoning tokens: wrap in <think> tags for the thinking UI.
+                // Stateful open/close (not a whole-message substring check) so each round
+                // of a multi-round agent response gets its own <think>…</think> — otherwise
+                // only round 1 is wrapped and rounds 2+ reasoning leaks into the answer.
                 let _delta = json.delta;
                 if (json.thinking) {
-                  if (!accumulated.includes('<think>')) _delta = '<think>' + _delta;
-                } else if (accumulated.includes('<think>') && !accumulated.includes('</think>')) {
-                  _delta = '</think>' + _delta;
+                  if (!_thinkOpen) { _delta = '<think>' + _delta; _thinkOpen = true; }
+                } else if (_thinkOpen) {
+                  _delta = '</think>' + _delta; _thinkOpen = false;
                 }
                 const wasEmpty = !accumulated;
                 accumulated += _delta;
@@ -1757,6 +1776,26 @@ import createResearchSynapse from './researchSynapse.js';
                     roleEl.textContent = _modelLabel + ' ';
                     _applyModelColor(roleEl, json.model);
                     if (tsSpan) roleEl.appendChild(tsSpan);
+                  }
+                }
+              } else if (json.type === 'fallback') {
+                // The selected model failed and another provider answered. Make
+                // it visible so a misconfigured provider is never silently
+                // masked under the selected model's name.
+                if (!_isBg) {
+                  var _selM = _shortModel(json.selected_model || '');
+                  var _ansM = _shortModel(json.answered_by || '');
+                  uiModule.showToast('⚠ ' + _selM + ' failed — answered by ' + _ansM, 6000);
+                  if (holder) {
+                    var _rEl = holder.querySelector('.role');
+                    if (_rEl) {
+                      var _tsS = _rEl.querySelector('.role-timestamp');
+                      _rEl.textContent = _ansM + ' (fallback) ';
+                      _rEl.title = (json.selected_model || '') + ' failed' +
+                        (json.reason ? ': ' + json.reason : '') + ' — answered by ' + (json.answered_by || '');
+                      _applyModelColor(_rEl, json.answered_by);
+                      if (_tsS) _rEl.appendChild(_tsS);
+                    }
                   }
                 }
               } else if (json.type === 'attachments') {
@@ -2218,6 +2257,10 @@ import createResearchSynapse from './researchSynapse.js';
             }
           }
         }
+      }
+
+      if (!_streamSawDone) {
+        throw new Error('Stream closed before completion');
       }
 
       _renderStream();

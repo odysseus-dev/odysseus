@@ -1787,6 +1787,32 @@ def get_session_by_id(session_id: str):
     with get_db_session() as db:
         return db.query(Session).filter(Session.id == session_id).first()
 
+def get_upcoming_events(owner, horizon_days: int = 60, limit: int = 40):
+    """Upcoming, non-cancelled events as {uid, title, start} dicts, soonest first.
+
+    owner=None means NO owner scoping (single-user / legacy). Multi-user callers
+    MUST pass the owning username — otherwise they read every tenant's events.
+    The autonomous email->calendar pass relies on this to avoid disclosing (and
+    acting on) other users' calendars."""
+    from datetime import timedelta
+    now = datetime.utcnow()
+    with get_db_session() as db:
+        q = db.query(CalendarEvent).join(CalendarCal).filter(
+            CalendarEvent.dtstart >= now,
+            CalendarEvent.dtstart <= now + timedelta(days=horizon_days),
+            CalendarEvent.status != "cancelled",
+        )
+        if owner is not None:
+            q = q.filter(CalendarCal.owner == owner)
+        return [
+            {
+                "uid": e.uid,
+                "title": e.summary or "",
+                "start": e.dtstart.isoformat() if e.dtstart else "",
+            }
+            for e in q.order_by(CalendarEvent.dtstart).limit(limit).all()
+        ]
+
 def archive_session(session_id: str):
     """Archive a session"""
     with get_db_session() as db:

@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from typing import List, Optional
+from urllib.parse import urljoin, urlparse, parse_qs
 
 import httpx
 from bs4 import BeautifulSoup
@@ -75,6 +76,56 @@ def _get_result_count() -> int:
         return 5
 
 
+# Canonical SafeSearch levels: "strict" (default), "moderate", "off".
+# Each provider has its own knob name and value space — see _safesearch_for(...).
+_SAFESEARCH_LEVELS = ("strict", "moderate", "off")
+
+
+def _get_safesearch_level() -> str:
+    """Return the configured SafeSearch level, normalized to one of
+    _SAFESEARCH_LEVELS. Defaults to 'strict' to avoid adult / spammy URLs
+    bleeding into research and web_search results."""
+    settings = _get_search_settings()
+    raw = (settings.get("search_safesearch") or "strict").strip().lower()
+    if raw in _SAFESEARCH_LEVELS:
+        return raw
+    # Accept a few common aliases so a manually-edited config doesn't
+    # silently lose SafeSearch — fall back to strict on anything unknown.
+    aliases = {
+        "on": "strict", "high": "strict", "2": "strict",
+        "medium": "moderate", "1": "moderate", "default": "moderate",
+        "none": "off", "disabled": "off", "0": "off",
+    }
+    return aliases.get(raw, "strict")
+
+
+def _safesearch_for(provider: str) -> Optional[str]:
+    """Translate the canonical level into the per-provider param value.
+    Returns None when SafeSearch should be omitted entirely for a provider
+    (some APIs default to filtered and treat missing-param as "off")."""
+    level = _get_safesearch_level()
+    if provider == "searxng":
+        # SearXNG: integer 0/1/2
+        return {"strict": "2", "moderate": "1", "off": "0"}[level]
+    if provider == "brave":
+        # Brave: strict / moderate / off
+        return level
+    if provider == "duckduckgo_lib":
+        # duckduckgo-search library: on / moderate / off
+        return {"strict": "on", "moderate": "moderate", "off": "off"}[level]
+    if provider == "duckduckgo_html":
+        # DDG HTML endpoint kp: 1 strict / -1 moderate / -2 off
+        return {"strict": "1", "moderate": "-1", "off": "-2"}[level]
+    if provider == "google_pse":
+        # Google PSE: 'active' filters explicit; 'off' disables. Treat
+        # moderate the same as active — Google PSE has no middle tier.
+        return None if level == "off" else "active"
+    if provider == "serper":
+        # Serper proxies Google's `safe` param.
+        return None if level == "off" else "active"
+    return None
+
+
 # ── SearXNG ──
 
 _NEWS_HINTS = ("news", "nyheter", "headlines", "breaking", "latest", "today", "idag")
@@ -105,7 +156,8 @@ def searxng_search_api(query: str, count: int = 10, categories: str = "general",
     # Pin English for ALL searches — without it SearXNG mixes languages and
     # brand-ambiguous terms bleed in foreign SEO pages (Honda "Odyssey" JP,
     # Japanese "Trojan" malware blogs, Chinese math forums for "Polyphemus").
-    params = {"q": query, "format": "json", "language": "en"}
+    params = {"q": query, "format": "json", "language": "en",
+              "safesearch": _safesearch_for("searxng")}
     q_lc = query.lower()
     is_news = time_filter is not None or any(h in q_lc for h in _NEWS_HINTS)
     if is_news and categories == "general":
@@ -154,6 +206,7 @@ def searxng_search_api(query: str, count: int = 10, categories: str = "general",
                 "format": "json",
                 "language": "en",
                 "categories": "general",
+                "safesearch": _safesearch_for("searxng"),
             }
             if _GENERAL_ENGINES:
                 fallback["engines"] = _GENERAL_ENGINES
@@ -204,7 +257,7 @@ def searxng_search(query, max_results=10):
     try:
         response = httpx.get(
             f"{instance}/search",
-            params={"q": query},
+            params={"q": query, "safesearch": _safesearch_for("searxng")},
             headers=req_headers,
             timeout=10,
         )
@@ -249,7 +302,8 @@ def _brave_search_impl(query: str, count: int, time_filter: Optional[str] = None
         return []
 
     headers = {"X-Subscription-Token": brave_api_key, "Accept": "application/json"}
-    params = {"q": enhanced_query, "count": count}
+    params = {"q": enhanced_query, "count": count,
+              "safesearch": _safesearch_for("brave")}
     if time_filter:
         time_map = {"day": "day", "week": "week", "month": "month", "year": "year"}
         if time_filter in time_map:
@@ -298,13 +352,42 @@ def _brave_search_impl(query: str, count: int, time_filter: Optional[str] = None
 
 # ── DuckDuckGo (free, no key) ──
 
+def _is_duckduckgo_host(host: str) -> bool:
+    """True only for duckduckgo.com and its subdomains — not substring look-alikes
+    such as ``duckduckgo.com.evil.com`` or ``notduckduckgo.com``."""
+    host = (host or "").lower()
+    return host == "duckduckgo.com" or host.endswith(".duckduckgo.com")
+
+
+def _resolve_ddg_redirect(raw: str) -> str:
+    """Resolve a DuckDuckGo /l/?uddg= redirect URL to its destination."""
+    if not raw:
+        return raw
+    # Handle protocol-relative URLs
+    resolved = raw
+    if resolved.startswith("//"):
+        resolved = "https:" + resolved
+    elif resolved.startswith("/"):
+        resolved = urljoin("https://html.duckduckgo.com", resolved)
+    # Extract the actual URL from DuckDuckGo's /l/?uddg= redirect
+    try:
+        parsed = urlparse(resolved)
+        if _is_duckduckgo_host(parsed.hostname) and parsed.path.rstrip("/") == "/l":
+            qs = parse_qs(parsed.query)
+            if "uddg" in qs:
+                return qs["uddg"][0]
+    except Exception:
+        pass
+    return resolved
+
+
 def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
     """Search using DuckDuckGo via the duckduckgo-search library. No API key needed."""
     def _html_fallback() -> List[dict]:
         try:
             response = httpx.get(
                 "https://html.duckduckgo.com/html/",
-                params={"q": query},
+                params={"q": query, "kp": _safesearch_for("duckduckgo_html")},
                 headers={"User-Agent": "Mozilla/5.0"},
                 timeout=REQUEST_TIMEOUT,
             )
@@ -315,7 +398,7 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
                 link = result.select_one(".result__a")
                 if not link:
                     continue
-                url = link.get("href", "")
+                url = _resolve_ddg_redirect(link.get("href", ""))
                 if not url:
                     continue
                 snippet_el = result.select_one(".result__snippet")
@@ -343,7 +426,8 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
 
     try:
         ddgs = DDGS()
-        raw = ddgs.text(query, max_results=count, timelimit=timelimit)
+        raw = ddgs.text(query, max_results=count, timelimit=timelimit,
+                        safesearch=_safesearch_for("duckduckgo_lib"))
         results = []
         for item in raw:
             url = item.get("href", "")
@@ -385,6 +469,9 @@ def google_pse_search(query: str, count: int = 10, time_filter: Optional[str] = 
         "q": query,
         "num": min(count, 10),  # Google PSE max is 10 per request
     }
+    safe = _safesearch_for("google_pse")
+    if safe:
+        params["safe"] = safe
     if time_filter:
         # dateRestrict: d[number], w[number], m[number], y[number]
         time_map = {"day": "d1", "week": "w1", "month": "m1", "year": "y1"}
@@ -489,6 +576,9 @@ def serper_search(query: str, count: int = 10, time_filter: Optional[str] = None
         "q": query,
         "num": count,
     }
+    safe = _safesearch_for("serper")
+    if safe:
+        payload["safe"] = safe
     if time_filter:
         time_map = {"day": "qdr:d", "week": "qdr:w", "month": "qdr:m", "year": "qdr:y"}
         if time_filter in time_map:
