@@ -34386,3 +34386,87 @@ body.theme-frosted .modal {
   border-color: var(--border);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   Accessibility: Skip-to-content link
+   Visually hidden until focused via keyboard Tab.
+   ═══════════════════════════════════════════════════════════════ */
+.skip-to-content {
+  position: absolute;
+  top: -100%;
+  left: 8px;
+  z-index: 100000;
+  padding: 8px 16px;
+  background: var(--red, #e06c75);
+  color: var(--bg, #282c34);
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 0 0 6px 6px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: top 0.15s ease;
+}
+.skip-to-content:focus {
+  top: 0;
+  outline: 2px solid var(--fg, #fff);
+  outline-offset: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Accessibility: Enhanced focus-visible styles
+   Clear, high-contrast focus ring for keyboard navigation.
+   ═══════════════════════════════════════════════════════════════ */
+/* Links: underline + outline for maximum visibility */
+a:focus-visible {
+  outline: 2px solid var(--red, #e06c75);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+/* Buttons: consistent ring across all button types */
+button:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--red, #e06c75);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* Text inputs, textareas, selects */
+input[type="text"]:focus-visible,
+input[type="number"]:focus-visible,
+input[type="email"]:focus-visible,
+input[type="search"]:focus-visible,
+input[type="url"]:focus-visible,
+input[type="password"]:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--red, #e06c75);
+  outline-offset: 1px;
+}
+/* Checkbox and radio: visible ring on the control itself */
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+  outline: 2px solid var(--red, #e06c75);
+  outline-offset: 2px;
+}
+/* Modal content: ring when a modal receives focus */
+.modal-content:focus-visible {
+  outline: 2px solid var(--red, #e06c75);
+  outline-offset: 4px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Accessibility: prefers-reduced-motion
+   Disable animations and transitions for users who prefer
+   reduced motion. This is a comprehensive catch-all plus
+   specific overrides for high-frequency animated elements.
+   ═══════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  /* Global catch-all: disable all CSS animations and transitions */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

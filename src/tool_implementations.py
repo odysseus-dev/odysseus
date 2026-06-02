@@ -68,14 +68,28 @@ def _parse_tool_args(content):
 # Active document state
 # ---------------------------------------------------------------------------
 
-_active_document_id: Optional[str] = None
+# Per-session active document tracking.  The old single global caused cross-
+# session "random document insertion": session A's document would be injected
+# into session B's context because the global pointed at whatever doc was
+# last touched by *any* session.
+_active_document_ids: Dict[str, Optional[str]] = {}
+# Fallback for callers that don't supply a session_id (e.g. the agent-loop
+# system-prompt builder that only knows the doc object, not the session).
+_active_document_id_legacy: Optional[str] = None
 _active_model: Optional[str] = None
 
 
-def set_active_document(doc_id: Optional[str]):
-    """Set the active document ID for document tool execution."""
-    global _active_document_id
-    _active_document_id = doc_id
+def set_active_document(doc_id: Optional[str], session_id: Optional[str] = None):
+    """Set the active document ID for document tool execution.
+
+    When *session_id* is supplied the mapping is stored per-session so that
+    concurrent requests from different sessions never bleed into each other.
+    Without *session_id* the legacy global is updated (backwards compat).
+    """
+    global _active_document_id_legacy
+    if session_id:
+        _active_document_ids[session_id] = doc_id
+    _active_document_id_legacy = doc_id
 
 
 def set_active_model(model: Optional[str]):
@@ -84,8 +98,11 @@ def set_active_model(model: Optional[str]):
     _active_model = model
 
 
-def get_active_document():
-    return _active_document_id
+def get_active_document(session_id: Optional[str] = None) -> Optional[str]:
+    """Return the active document ID, preferring the per-session entry."""
+    if session_id and session_id in _active_document_ids:
+        return _active_document_ids[session_id]
+    return _active_document_id_legacy
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +281,7 @@ async def do_create_document(content_block: str, session_id: Optional[str] = Non
         db.add(ver)
         db.commit()
 
-        set_active_document(doc_id)
+        set_active_document(doc_id, session_id=session_id)
         try:
             from src.event_bus import fire_event
             fire_event("document_created", _owner)
@@ -286,12 +303,12 @@ async def do_create_document(content_block: str, session_id: Optional[str] = Non
         db.close()
 
 
-async def do_update_document(content: str, doc_id: Optional[str] = None) -> Dict:
+async def do_update_document(content: str, doc_id: Optional[str] = None, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """Update an existing document. Content = full new document text."""
     import uuid
     from src.database import SessionLocal, Document, DocumentVersion
 
-    target_id = doc_id or _active_document_id
+    target_id = doc_id or get_active_document(session_id)
 
     db = SessionLocal()
     try:
@@ -299,10 +316,17 @@ async def do_update_document(content: str, doc_id: Optional[str] = None) -> Dict
         if target_id:
             doc = db.query(Document).filter(Document.id == target_id).first()
         if not doc:
-            doc = db.query(Document).order_by(Document.updated_at.desc()).first()
+            # Fallback: scope to the current session (and owner) so we never
+            # silently edit another session/user's most-recent document.
+            q = db.query(Document).filter(Document.is_active == True)
+            if session_id:
+                q = q.filter(Document.session_id == session_id)
+            elif owner:
+                q = q.filter(Document.owner == owner)
+            doc = q.order_by(Document.updated_at.desc()).first()
             if doc:
                 target_id = doc.id
-                set_active_document(target_id)
+                set_active_document(target_id, session_id=session_id)
                 logger.info(f"update_document: fell back to most recent doc id={target_id}")
         if not doc:
             return {"error": "No documents exist to update"}
@@ -350,12 +374,12 @@ def parse_edit_blocks(content: str) -> list:
     return edits
 
 
-async def do_edit_document(content: str, doc_id: Optional[str] = None) -> Dict:
+async def do_edit_document(content: str, doc_id: Optional[str] = None, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """Apply targeted FIND/REPLACE edits to an existing document."""
     import uuid
     from src.database import SessionLocal, Document, DocumentVersion
 
-    target_id = doc_id or _active_document_id
+    target_id = doc_id or get_active_document(session_id)
 
     edits = parse_edit_blocks(content)
     if not edits:
@@ -367,12 +391,17 @@ async def do_edit_document(content: str, doc_id: Optional[str] = None) -> Dict:
         if target_id:
             doc = db.query(Document).filter(Document.id == target_id).first()
         if not doc:
-            # Fallback: most recently updated document. Avoids "no active doc" errors
-            # after server restart or when the agent loses track of which doc to edit.
-            doc = db.query(Document).order_by(Document.updated_at.desc()).first()
+            # Fallback: scope to the current session (and owner) so we never
+            # silently edit another session/user's most-recent document.
+            q = db.query(Document).filter(Document.is_active == True)
+            if session_id:
+                q = q.filter(Document.session_id == session_id)
+            elif owner:
+                q = q.filter(Document.owner == owner)
+            doc = q.order_by(Document.updated_at.desc()).first()
             if doc:
                 target_id = doc.id
-                set_active_document(target_id)
+                set_active_document(target_id, session_id=session_id)
                 logger.info(f"edit_document: fell back to most recent doc id={target_id} title={doc.title!r}")
         if not doc:
             return {"error": "No documents exist to edit"}
@@ -1333,7 +1362,7 @@ async def do_manage_tokens(content: str, owner: Optional[str] = None) -> Dict:
 # Document management tool (delete, list, organize)
 # ---------------------------------------------------------------------------
 
-async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict:
+async def do_manage_documents(content: str, owner: Optional[str] = None, session_id: Optional[str] = None) -> Dict:
     """Manage documents: list, read/view/open, delete, tidy.
 
     Output format mirrors `manage_session`: list rows include a
@@ -1420,20 +1449,25 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
             }
 
         elif action == "delete":
-            doc_id = args.get("document_id") or args.get("id") or args.get("uid") or _active_document_id
+            doc_id = args.get("document_id") or args.get("id") or args.get("uid") or get_active_document(session_id)
             doc = None
             if doc_id:
                 doc = db.query(Document).filter(Document.id == doc_id).first()
             if not doc:
-                # Fallback: most recently updated doc (likely what the user means)
-                doc = db.query(Document).filter(Document.is_active == True).order_by(Document.updated_at.desc()).first()
+                # Fallback: most recently updated doc scoped to this session/owner
+                q = db.query(Document).filter(Document.is_active == True)
+                if session_id:
+                    q = q.filter(Document.session_id == session_id)
+                elif owner:
+                    q = q.filter(Document.owner == owner)
+                doc = q.order_by(Document.updated_at.desc()).first()
             if not doc:
                 return {"error": "No document to delete", "exit_code": 1}
             title = doc.title
             doc.is_active = False
             db.commit()
-            if _active_document_id == doc.id:
-                set_active_document(None)
+            if get_active_document(session_id) == doc.id:
+                set_active_document(None, session_id=session_id)
             return {"response": f"Deleted document '{title}'", "exit_code": 0}
 
         elif action == "tidy":
