@@ -11,6 +11,7 @@ import Storage from '../storage.js';
 import uiModule from '../ui.js';
 import spinnerModule from '../spinner.js';
 import { bindMenuDismiss } from '../escMenuStack.js';
+import { t } from '../i18n.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -269,7 +270,7 @@ async function copyPaneResponse(paneIdx) {
     ta.value = text; document.body.appendChild(ta); ta.select();
     document.execCommand('copy'); ta.remove();
   }
-  if (uiModule) uiModule.showToast(lastAi._imageData ? 'Prompt copied!' : 'Copied!');
+  if (uiModule) uiModule.showToast(lastAi._imageData ? t('compare.panes.toast.promptCopied') : t('compare.panes.toast.copied'));
 }
 
 // ── Add / create / remove panes ──

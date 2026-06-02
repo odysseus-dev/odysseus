@@ -2,6 +2,7 @@
 // Odysseus UI — Main Application Orchestrator
 // ES6 module — entry point, no exports (wires all modules together)
 // ============================================
+import { initI18n, t as i18nT, onLocaleChange, applyTranslations, setChatMeta } from './js/i18n.js';
 import Storage from './js/storage.js';
 import uiModule from './js/ui.js';
 import fileHandlerModule from './js/fileHandler.js';
@@ -45,11 +46,41 @@ import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
 const API_BASE = window.location.origin;
+window.i18nT = i18nT;
 window.themeModule = themeModule;
 window.sessionModule = sessionModule;
 window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
+
+function _applyWelcomeI18nCopy() {
+  const welcomeScreen = el('welcome-screen');
+  if (welcomeScreen) applyTranslations(welcomeScreen);
+  const incognitoBtn = el('incognito-btn');
+  if (incognitoBtn) {
+    const chk = el('incognito-toggle');
+    incognitoBtn.title = chk?.checked ? i18nT('chat.incognito.disableTitle') : i18nT('chat.incognito.enableTitle');
+    const label = incognitoBtn.querySelector('.incognito-label');
+    if (label) label.textContent = i18nT('chat.incognito.label');
+  }
+  const welcomeSub = el('welcome-sub');
+  const tipEl = el('welcome-tip');
+  if (welcomeSub && !welcomeSub.dataset.researchOrigText && !welcomeSub.dataset.originalText) {
+    applyTranslations(welcomeSub.parentElement || document);
+  }
+  if (tipEl && !tipEl.dataset.researchOrigTip && !tipEl.dataset.originalTip) {
+    tipEl.textContent = i18nT('welcome.tip.default');
+  }
+}
+
+let _welcomeLocaleHookBound = false;
+function _bindWelcomeLocaleHook() {
+  if (_welcomeLocaleHookBound) return;
+  _welcomeLocaleHookBound = true;
+  onLocaleChange(() => {
+    _applyWelcomeI18nCopy();
+  });
+}
 
 // Redirect to login on 401 from any fetch
 const _origFetch = window.fetch;
@@ -1478,7 +1509,7 @@ function initializeEventListeners() {
           if (meta) {
             meta.name = newName;
             const ver = window._appVersion ? ` v${window._appVersion}` : '';
-            el('current-meta').textContent = `Session: ${meta.name}${meta.model ? ' ' + meta.model.split('/').pop() : ''}${meta.rag ? ' [RAG]' : ''}${ver}`;
+            setChatMeta('custom', `${meta.name}${meta.model ? ' ' + meta.model.split('/').pop() : ''}${meta.rag ? ' [RAG]' : ''}${ver}`);
           }
           // Refresh the sessions list
         await sessionModule.loadSessions();
@@ -1619,10 +1650,10 @@ function initializeEventListeners() {
   const SPLASH_COUNT_KEY = 'odysseus-tool-splash-counts';
   const SPLASH_MAX = 2;
   const _toolSplashes = {
-    web: { role: 'Web Search', text: 'Searches the web for relevant information to include in the response. Results are fetched and summarized before the AI answers.' },
-    bash: { role: 'Shell Access', text: 'Gives the AI access to a sandboxed shell for running commands, installing packages, and executing scripts. Use with caution.' },
-    builder: { role: 'Tool Builder', text: 'Create custom mini-apps and tools the AI can use. Describe what you need and the AI will build a tool you can reuse across conversations.' },
-    research: { role: 'Deep Research', text: 'Multi-round web search with source analysis. Takes longer but produces comprehensive, well-sourced answers. Your next message will trigger a deep research cycle.' },
+    web: { roleKey: 'chat.webSearch', textKey: 'chat.toolSplash.web.text' },
+    bash: { roleKey: 'chat.tool.shellAccess', textKey: 'chat.toolSplash.bash.text' },
+    builder: { roleKey: 'chat.toolSplash.builder.role', textKey: 'chat.toolSplash.builder.text' },
+    research: { roleKey: 'chat.toolSplash.research.role', textKey: 'chat.toolSplash.research.text' },
   };
   function _showToolSplash(key) {
     const splash = _toolSplashes[key];
@@ -1641,7 +1672,16 @@ function initializeEventListeners() {
     if (!chatBox) return;
     const div = document.createElement('div');
     div.className = 'msg msg-ai tool-splash';
-    div.innerHTML = '<div class="role">' + splash.role + '</div><div class="body" style="opacity:0.7;font-size:0.92em">' + splash.text + '</div>';
+    const roleEl = document.createElement('div');
+    roleEl.className = 'role';
+    roleEl.textContent = i18nT(splash.roleKey);
+    const bodyEl = document.createElement('div');
+    bodyEl.className = 'body';
+    bodyEl.style.opacity = '0.7';
+    bodyEl.style.fontSize = '0.92em';
+    bodyEl.textContent = i18nT(splash.textKey);
+    div.appendChild(roleEl);
+    div.appendChild(bodyEl);
     chatBox.appendChild(div);
     if (uiModule) uiModule.scrollHistory();
   }
@@ -2267,13 +2307,13 @@ function initializeEventListeners() {
       chk.checked = !chk.checked;
       incognitoBtn.classList.toggle('active', chk.checked);
       const tipEl = el('welcome-tip');
-      incognitoBtn.title = chk.checked ? 'Disable Nobody mode' : 'Enable Nobody mode — no memory, no history saved';
+      incognitoBtn.title = chk.checked ? i18nT('chat.incognito.disableTitle') : i18nT('chat.incognito.enableTitle');
       const welcomeName = document.querySelector('.welcome-name');
       if (chk.checked) {
-        incognitoBtn.innerHTML = INCOGNITO_EYE_CLOSED + '<span class="incognito-label">Nobody</span>';
+        incognitoBtn.innerHTML = INCOGNITO_EYE_CLOSED + `<span class="incognito-label">${i18nT('chat.incognito.label')}</span>`;
         if (welcomeName) {
           welcomeName.dataset.originalHtml = welcomeName.innerHTML;
-          welcomeName.innerHTML = '<svg class="welcome-boat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>Nobody';
+          welcomeName.innerHTML = '<svg class="welcome-boat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>' + i18nT('chat.incognito.welcomeName');
           // Restart the L→R clip-wipe reveal on the new label
           welcomeName.style.animation = 'none';
           welcomeName.offsetHeight;
@@ -2301,7 +2341,7 @@ function initializeEventListeners() {
         ts.research = false; ts.mode = 'chat';
         Storage.setJSON(Storage.KEYS.TOGGLES, ts);
       } else {
-        incognitoBtn.innerHTML = INCOGNITO_EYE_OPEN + '<span class="incognito-label">Nobody</span>';
+        incognitoBtn.innerHTML = INCOGNITO_EYE_OPEN + `<span class="incognito-label">${i18nT('chat.incognito.label')}</span>`;
         if (welcomeName && welcomeName.dataset.originalHtml) {
           welcomeName.innerHTML = welcomeName.dataset.originalHtml;
           // Restart the L→R clip-wipe reveal on the restored label
@@ -3371,6 +3411,10 @@ function initializeEventListeners() {
 function startOdysseusApp() {
   if (window.__odysseusAppStarted) return;
   window.__odysseusAppStarted = true;
+  void initI18n().then(() => {
+    _applyWelcomeI18nCopy();
+    _bindWelcomeLocaleHook();
+  });
   // Set CSS variables
   document.documentElement.style.setProperty('--line-height', '20px');
 
@@ -3960,7 +4004,7 @@ function startOdysseusApp() {
     const hasModels = modelsBox && modelsBox.querySelector('.models-row');
     if (!hasModels) {
       const tip = document.getElementById('welcome-tip');
-      if (tip) tip.textContent = 'Add an AI endpoint from Settings in the sidebar, or paste an endpoint/API key into the chat.';
+      if (tip) tip.textContent = i18nT('welcome.tip.noModels');
     }
   }).catch(() => {});
   modelsModule.refreshProviders();

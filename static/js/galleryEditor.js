@@ -5,6 +5,7 @@
 import uiModule from './ui.js';
 import dragSortModule from './dragSort.js';
 import spinnerModule from './spinner.js';
+import { t } from './i18n.js';
 import { attachColorPicker } from './colorPicker.js';
 import modalManager from './modalManager.js';
 import { canvasCoords as _canvasCoords } from './editor/canvas-coords.js';
@@ -1728,7 +1729,7 @@ function _loadLayerAlphaAsSelection(layer) {
   state.wandLayerId = layer.id;
   state.wandLastSeed = null;
   composite();
-  if (uiModule) uiModule.showToast('Layer pixels selected');
+  if (uiModule) uiModule.showToast(t('editor.gallery.toast.layerPixelsSelected'));
 }
 
 // Invert the active selection: lasso (point list — turn into a polygon
@@ -1747,7 +1748,7 @@ function _invertSelection() {
     }
     ctx.putImageData(data, 0, 0);
     composite();
-    if (uiModule) uiModule.showToast('Selection inverted');
+    if (uiModule) uiModule.showToast(t('editor.gallery.toast.selectionInverted'));
     return true;
   }
   if (state.lassoPoints.length >= 3 && !state.lassoActive) {
@@ -1772,7 +1773,7 @@ function _invertSelection() {
     state.lassoPoints = [];
     state.lassoActive = false;
     composite();
-    if (uiModule) uiModule.showToast('Selection inverted (converted to wand)');
+    if (uiModule) uiModule.showToast(t('editor.gallery.toast.selectionInvertedConvertedToWand'));
     return true;
   }
   return false;
@@ -1855,7 +1856,7 @@ function _wandToMask() {
   state.wandLastSeed = null;
   composite();
   _renderLayerPanel();
-  if (uiModule) uiModule.showToast('Selection added to mask');
+  if (uiModule) uiModule.showToast(t('editor.gallery.toast.selectionAddedToMask'));
 }
 
 // Reveal/hide the small "X" badge on the Lasso and Wand tool buttons
@@ -1951,7 +1952,7 @@ function _wandCopyToNewLayer() {
   composite();
   _renderLayerPanel();
   _revealLayerPanel();
-  if (uiModule) uiModule.showToast('Copied to new layer');
+  if (uiModule) uiModule.showToast(t('editor.gallery.toast.copiedToNewLayer'));
 }
 
 function _lassoDeleteSelection() {
@@ -1978,7 +1979,7 @@ function _lassoDeleteSelection() {
 
   state.lassoPoints = [];
   composite();
-  uiModule.showToast('Selection deleted');
+  uiModule.showToast(t('editor.gallery.toast.selectionDeleted'));
 }
 
 function _lassoCopyToLayer() {
@@ -2016,7 +2017,7 @@ function _lassoCopyToLayer() {
   _renderLayerPanel();
   _revealLayerPanel();
   composite();
-  uiModule.showToast('Selection copied to new layer');
+  uiModule.showToast(t('editor.gallery.toast.selectionCopiedToNewLayer'));
 }
 
 function _lassoToMask() {
@@ -2052,7 +2053,7 @@ function _lassoToMask() {
   state.lassoPoints = [];
   composite();
   _renderLayerPanel();
-  uiModule.showToast('Selection added to mask');
+  uiModule.showToast(t('editor.gallery.toast.selectionAddedToMask'));
 }
 
 // ── Edge feather ──
@@ -2133,7 +2134,7 @@ function _filterSliderPrompt(title, params, onPreview) {
 // entry we pre-saved so the canceled run leaves no trace.
 async function _applyLiveBlur({ title, params, label, renderer }) {
   const layer = activeLayer();
-  if (!layer || layer.locked) { if (uiModule) uiModule.showToast('Select an unlocked layer'); return; }
+  if (!layer || layer.locked) { if (uiModule) uiModule.showToast(t('editor.layer.toast.selectUnlockedLayer')); return; }
   const w = layer.canvas.width, h = layer.canvas.height;
   const snap = document.createElement('canvas');
   snap.width = w; snap.height = h;
@@ -2700,7 +2701,7 @@ function _buildEditor(container) {
     layer.ctx.drawImage(stencil, 0, 0);
     composite();
     _renderLayerPanel();
-    if (uiModule) uiModule.showToast('Filled');
+    if (uiModule) uiModule.showToast(t('editor.gallery.toast.filled'));
   }
 
   // AI model selectors (Gen, Inpaint, per-tool) — full
@@ -2746,7 +2747,7 @@ function _buildEditor(container) {
         throw new Error(`HTTP ${resp.status}${detail ? `: ${detail}` : ''}`);
       }
       const totalMs = Math.round(performance.now() - t0);
-      if (uiModule) uiModule.showToast(`Saved over original (${(blob.size / 1024 / 1024).toFixed(1)}MB · ${(totalMs / 1000).toFixed(1)}s)`, 4000);
+      if (uiModule) uiModule.showToast(t('editor.gallery.toast.savedOverOriginal', { sizeMb: (blob.size / 1024 / 1024).toFixed(1), seconds: (totalMs / 1000).toFixed(1) }), 4000);
       window.dispatchEvent(new CustomEvent('gallery-refresh'));
       savedOk = true;
     } catch (e) {
@@ -2758,7 +2759,7 @@ function _buildEditor(container) {
       } else {
         msg += sizeMB;
       }
-      if (uiModule) uiModule.showToast('Failed to save: ' + msg, 6000);
+      if (uiModule) uiModule.showToast(t('editor.gallery.toast.failedToSave', { error: msg }), 6000);
     } finally {
       endBusy();
       if (savedOk) _flashSaveButtonOk();
@@ -3114,7 +3115,7 @@ export async function exportToGallery() {
     }
     const totalMs = Math.round(performance.now() - t0);
     window.dispatchEvent(new CustomEvent('gallery-refresh'));
-    if (uiModule) uiModule.showToast(`Saved copy to gallery (${(blob.size / 1024 / 1024).toFixed(1)}MB · ${(totalMs / 1000).toFixed(1)}s)`, 4000);
+    if (uiModule) uiModule.showToast(t('editor.gallery.toast.savedCopyToGallery', { sizeMb: (blob.size / 1024 / 1024).toFixed(1), seconds: (totalMs / 1000).toFixed(1) }), 4000);
     savedOk = true;
     if (state.draftId) {
       _clearDraftServer(state.draftId);
@@ -3129,7 +3130,7 @@ export async function exportToGallery() {
     } else {
       msg += sizeMB;
     }
-    if (uiModule) uiModule.showToast('Save failed: ' + msg, 6000);
+    if (uiModule) uiModule.showToast(t('editor.gallery.toast.saveFailed', { error: msg }), 6000);
   } finally {
     endBusy();
     if (savedOk) _flashSaveButtonOk();
@@ -3153,7 +3154,7 @@ function _openCookbookForDependency(pkgName) {
     // on window for some reason.
     const btn = document.getElementById('tool-cookbook-btn');
     if (btn) btn.click();
-    else if (uiModule) uiModule.showToast(`Open Cookbook to install ${pkgName}`, 6000);
+    else if (uiModule) uiModule.showToast(t('editor.gallery.toast.openCookbookToInstall', { package: pkgName }), 6000);
     return;
   }
   cookbook.open({ tab: 'Dependencies' });
@@ -3261,7 +3262,7 @@ function _openCookbookForImg2img() {
     tryServe();
     return;
   }
-  if (uiModule) uiModule.showToast('Open Cookbook from the sidebar to serve an img2img model', 6000);
+  if (uiModule) uiModule.showToast(t('editor.gallery.toast.openCookbookToServeImg2img'), 6000);
 }
 
 export function downloadPNG() {
@@ -3277,7 +3278,7 @@ export function downloadPNG() {
 // survives the round-trip. Use Load Project to restore.
 function _saveProject() {
   if (!state.layers.length) {
-    if (uiModule) uiModule.showToast('Nothing to save');
+    if (uiModule) uiModule.showToast(t('editor.gallery.toast.nothingToSave'));
     return;
   }
   const project = {
@@ -3307,7 +3308,7 @@ function _saveProject() {
   a.download = 'project.geproj.json';
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-  if (uiModule) uiModule.showToast('Project saved', 3000);
+  if (uiModule) uiModule.showToast(t('editor.gallery.toast.projectSaved'), 3000);
 }
 
 // Open-file picker for Load Project. Restores layers + canvas size.
@@ -3322,16 +3323,16 @@ function _loadProjectPrompt() {
       const text = await file.text();
       const proj = JSON.parse(text);
       if (proj.type !== 'odysseus-gallery-editor-project') {
-        if (uiModule) uiModule.showToast('Not a project file', 5000);
+        if (uiModule) uiModule.showToast(t('editor.gallery.toast.notAProjectFile'), 5000);
         return;
       }
       await _restoreDraft(proj);
       composite();
       _renderLayerPanel();
       _fitZoom();
-      if (uiModule) uiModule.showToast('Project loaded', 3000);
+      if (uiModule) uiModule.showToast(t('editor.gallery.toast.projectLoaded'), 3000);
     } catch (e) {
-      if (uiModule) uiModule.showToast('Load failed: ' + (e.message || e), 6000);
+      if (uiModule) uiModule.showToast(t('editor.gallery.toast.loadFailed', { error: e.message || e }), 6000);
     }
   });
   inp.click();
@@ -3380,7 +3381,7 @@ function _promptCanvasSize(opts) {
     }
     function onOk() {
       const dims = _parseCanvasSizePrompt(wInput.value, hInput.value, initialW, initialH);
-      if (!dims) { uiModule.showToast('Invalid size'); return; }
+      if (!dims) { uiModule.showToast(t('editor.toast.invalidSize')); return; }
       cleanup(dims);
     }
     function onCancel() { cleanup(null); }
@@ -3546,7 +3547,7 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
         if (!state.editorOpen) return;
         if (!d) {
           _unmountEditorLoading();
-          if (uiModule) uiModule.showToast('Draft not found');
+          if (uiModule) uiModule.showToast(t('editor.gallery.toast.draftNotFound'));
           closeEditor();
           return;
         }
@@ -3562,14 +3563,14 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
           const sizeLabel = document.getElementById('ge-canvas-size');
           if (sizeLabel) sizeLabel.textContent = `${state.imgWidth}×${state.imgHeight}`;
           _unmountEditorLoading();
-          if (uiModule) uiModule.showToast('Resumed draft');
+          if (uiModule) uiModule.showToast(t('editor.gallery.toast.resumedDraft'));
         });
       })
       .catch(err => {
         if (!state.editorOpen) return;
         _unmountEditorLoading();
         console.warn('[ge] draft load failed', err);
-        if (uiModule) uiModule.showToast('Failed to load draft');
+        if (uiModule) uiModule.showToast(t('editor.gallery.toast.failedToLoadDraft'));
         closeEditor();
       });
   }
@@ -3633,7 +3634,7 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
       const sizeLabel = document.getElementById('ge-canvas-size');
       if (sizeLabel) sizeLabel.textContent = `${state.imgWidth}×${state.imgHeight}`;
       _unmountEditorLoading();
-      if (uiModule) uiModule.showToast('Resumed previous edit');
+      if (uiModule) uiModule.showToast(t('editor.gallery.toast.resumedPreviousEdit'));
       return 'restored';
     });
   }).then(restored => {
@@ -3680,7 +3681,7 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
   img.onerror = (e) => {
     console.error('[_loadSourceImage] onerror — failed to load', imageUrl, e);
     _removeLoading();
-    if (uiModule) uiModule.showToast('Failed to load image');
+    if (uiModule) uiModule.showToast(t('editor.gallery.toast.failedToLoadImage'));
     closeEditor();
   };
   img.src = imageUrl;
@@ -3707,7 +3708,7 @@ function _setEditTabLabel(name) {
 export function closeEditor() {
   const editorMounted = _galleryEditMounted();
   if ((state.editorOpen || editorMounted) && !window.__galleryAllowCloseEditor) {
-    try { uiModule.showToast('Close the edit tab first'); } catch {}
+    try { uiModule.showToast(t('gallery.toast.closeEditTabFirst')); } catch {}
     return false;
   }
   // Flush any pending debounced persist + fire one final save so closing

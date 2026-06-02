@@ -7,6 +7,7 @@
 import uiModule from './ui.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
 import { registerMenuDismiss } from './escMenuStack.js';
+import { t } from './i18n.js';
 
 // Human-friendly badge label for a task's internal status. Avoids surfacing
 // the word "error" in the sidebar — a server the user stopped or one that
@@ -928,7 +929,7 @@ function _autoSaveWorkingConfig(task) {
   });
   _savePresets(presets);
   task._autoSaved = true;
-  uiModule.showToast('Saved working config');
+  uiModule.showToast(t('cookbook.running.toast.savedWorkingConfig'));
 }
 
 // ── Cross-device sync ──
@@ -1053,7 +1054,7 @@ async function _retryTask(el, task) {
       _removeTask(task.sessionId);
       _launchServeTask(task.name, task.payload.repo_id, task.payload._cmd, task.payload._fields, task.remoteHost || '');
     } else {
-      uiModule.showToast('Retrying download — progress may look reset while HuggingFace checks cached files, then it should resume.', 7000);
+      uiModule.showToast(t('cookbook.running.toast.retryingDownloadMayLookReset'), 7000);
       _updateTask(task.sessionId, {
         status: 'running',
         output: `${task.output || ''}\n\n[odysseus] Retrying download. Progress may briefly look like a fresh download while HuggingFace checks cached/incomplete files; cached partial files will be reused when available.`.trim(),
@@ -1076,13 +1077,13 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
       body: JSON.stringify(_payload),
     });
     if (!res.ok) {
-      uiModule.showToast('Download failed: HTTP ' + res.status);
+      uiModule.showToast(t('cookbook.download.toast.downloadFailedHttp', { status: res.status }));
       if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
       return;
     }
     const data = await res.json();
     if (!data.ok) {
-      uiModule.showToast('Download failed: ' + (data.error || ''));
+      uiModule.showToast(t('cookbook.download.toast.downloadFailedError', { error: data.error || '' }));
       if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
       return;
     }
@@ -1107,9 +1108,9 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
     } else {
       _addTask(data.session_id, name, 'download', _payload);
     }
-    uiModule.showToast(`Downloading ${name}...`);
+    uiModule.showToast(t('cookbook.download.toast.downloading', { name }));
   } catch (e) {
-    uiModule.showToast('Download failed: ' + e.message);
+    uiModule.showToast(t('cookbook.download.toast.downloadFailedError', { error: e.message }));
     if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
   }
 }
@@ -1158,7 +1159,7 @@ export async function _serveAutoFix(panel, envVar) {
   const origHost = _envState.remoteHost;
   if (task.remoteHost) _envState.remoteHost = task.remoteHost;
   try {
-    uiModule.showToast(`Retrying with ${envVar}...`);
+    uiModule.showToast(t('cookbook.running.toast.retryingWithVar', { variable: envVar }));
     await _launchServeTask(task.name, task.payload.repo_id, newCmd);
   } finally {
     // Always restore — otherwise a thrown launch leaves the global host stuck
@@ -1173,7 +1174,7 @@ export async function _serveAutoFix(panel, envVar) {
 // adjusted setting, instead of blindly relaunching).
 async function _openServeEditForTask(task, cmdOverride, fieldOverrides = null) {
   const repo = task.payload?.repo_id;
-  if (!repo) { uiModule.showToast('No model info on this task'); return; }
+  if (!repo) { uiModule.showToast(t('cookbook.running.toast.noModelInfoOnTask')); return; }
   const cmd = cmdOverride || task.payload?._cmd;
   // A modified cmd must be re-parsed; otherwise prefer the exact launch fields.
   let fields = cmdOverride
@@ -1197,7 +1198,7 @@ async function _openServeEditForTask(task, cmdOverride, fieldOverrides = null) {
     await openServePanelForRepo(repo, fields);
   } catch (err) {
     console.error('[cookbook] open serve panel failed', err);
-    uiModule.showToast('Could not open serve panel');
+    uiModule.showToast(t('cookbook.running.toast.couldNotOpenServePanel'));
   }
 }
 
@@ -1231,7 +1232,7 @@ export async function _serveAutoRetryReplace(panel, flag, value) {
   const origHost = _envState.remoteHost;
   if (task.remoteHost) _envState.remoteHost = task.remoteHost;
   try {
-    uiModule.showToast(`Retrying with ${flag} ${value}...`);
+    uiModule.showToast(t('cookbook.running.toast.retryingWithFlagValue', { flag, value }));
     await _launchServeTask(task.name, task.payload.repo_id, newCmd);
   } finally {
     _envState.remoteHost = origHost;
@@ -1264,7 +1265,7 @@ export async function _serveAutoRetryRemove(panel, flag) {
   const origHost = _envState.remoteHost;
   if (task.remoteHost) _envState.remoteHost = task.remoteHost;
   try {
-    uiModule.showToast(`Retrying without ${flag}...`);
+    uiModule.showToast(t('cookbook.running.toast.retryingWithoutFlag', { flag }));
     await _launchServeTask(task.name, task.payload.repo_id, newCmd);
   } finally {
     _envState.remoteHost = origHost;
@@ -1298,7 +1299,7 @@ export async function _serveAutoRetry(panel, flag) {
   const origHost = _envState.remoteHost;
   if (task.remoteHost) _envState.remoteHost = task.remoteHost;
   try {
-    uiModule.showToast(`Retrying with ${flag}...`);
+    uiModule.showToast(t('cookbook.running.toast.retryingWithFlag', { flag }));
     await _launchServeTask(task.name, task.payload.repo_id, newCmd);
   } finally {
     _envState.remoteHost = origHost;
@@ -1471,7 +1472,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
       // + log full payload so the user can copy the error.
       const err = data.error || data.detail || res.statusText || 'unknown';
       console.error('[cookbook] /api/model/serve failed', { status: res.status, body: data });
-      uiModule.showToast('Failed to start: ' + String(err).slice(0, 200), 9000);
+      uiModule.showToast(t('cookbook.running.toast.failedToStart', { error: String(err).slice(0, 200) }), 9000);
       return;
     }
 
@@ -1481,9 +1482,9 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     // with these precise settings (not just the last-used-for-repo state).
     const payload = { repo_id: repo, remote_host: _host || undefined, ssh_port: _sp || undefined, _cmd: cmd, _fields: fields || undefined, _env: _usedEnv, _envPath: _usedEnvPath, _gpus: _usedGpus };
     _addTask(data.session_id, shortName, 'serve', payload);
-    uiModule.showToast(`Serving ${shortName}...`);
+    uiModule.showToast(t('cookbook.running.toast.serving', { name: shortName }));
   } catch (e) {
-    uiModule.showToast('Failed: ' + e.message);
+    uiModule.showToast(t('cookbook.running.toast.failed', { error: e.message }));
   }
 }
 
@@ -1577,7 +1578,7 @@ export function _renderRunningTab() {
       '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">' +
       '<h2 style="margin:0;padding:0;line-height:1;">Running <span id="running-count" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal">' + activeCount + '</span></h2>' +
       '</div>' +
-      '<p class="memory-desc doclib-desc" style="margin-top:6px;">Active downloads and serving processes.</p>' +
+      '<p class="memory-desc doclib-desc" style="margin-top:6px;">' + t('cookbook.running.desc') + '</p>' +
       '</div>';
     const firstGroup = body.querySelector('.cookbook-group');
     if (firstGroup) body.insertBefore(group, firstGroup);
@@ -1665,7 +1666,7 @@ export function _renderRunningTab() {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();  // don't toggle the section collapse (was an inline onclick, blocked by CSP)
       const host = btn.dataset.clearServer;
-      if (!await window.styledConfirm(`Clear finished tasks on ${_serverName(host)}?`, { confirmText: 'Clear' })) return;
+      if (!await window.styledConfirm(t('cookbook.running.confirm.clearFinishedTasksOnHost', { host: _serverName(host) }), { confirmText: t('common.clear') })) return;
       const allTasks = _loadTasks();
       const toRemove = allTasks.filter(t => (t.remoteHost || '') === host && _canClearTask(t));
       const remaining = allTasks.filter(t => (t.remoteHost || '') !== host || !_canClearTask(t));
@@ -1703,15 +1704,15 @@ export function _renderRunningTab() {
       e.stopPropagation();  // don't toggle the section collapse
       const host = btn.dataset.stopServer;
       const running = _loadTasks().filter(t => (t.remoteHost || '') === host && t.status === 'running');
-      if (!running.length) { uiModule.showToast(`Nothing running on ${_serverName(host)}`); return; }
-      if (!await window.styledConfirm(`Stop ${running.length} running task${running.length > 1 ? 's' : ''} on ${_serverName(host)}?`, { confirmText: 'Stop all' })) return;
+      if (!running.length) { uiModule.showToast(t('cookbook.running.toast.nothingRunningOnHost', { host: _serverName(host) })); return; }
+      if (!await window.styledConfirm(t('cookbook.running.confirm.stopRunningTasksOnHost', { count: running.length, suffix: running.length > 1 ? 's' : '', host: _serverName(host) }), { confirmText: t('cookbook.running.confirmText.stopAll') })) return;
       // Reuse each task's own Stop action so it does the full teardown
       // (send C-c, drop the endpoint, mark stopped) consistently.
       running.forEach(t => {
         const el = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
         el?.querySelector('.cookbook-task-action-stop')?.click();
       });
-      uiModule.showToast(`Stopped ${running.length} task${running.length > 1 ? 's' : ''} on ${_serverName(host)}`);
+      uiModule.showToast(t('cookbook.running.toast.stoppedTasksOnHost', { count: running.length, suffix: running.length > 1 ? 's' : '', host: _serverName(host) }));
     });
   });
 
@@ -1842,7 +1843,7 @@ export function _renderRunningTab() {
         _serveBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
           const repo = task.payload?.repo_id || task.name;
-          if (!repo) { uiModule.showToast('No model info on this task'); return; }
+          if (!repo) { uiModule.showToast(t('cookbook.running.toast.noModelInfoOnTask')); return; }
           // Point the active server at the one it downloaded to.
           const _tHost = task.remoteHost || '';
           _envState.remoteHost = _tHost;
@@ -1858,7 +1859,7 @@ export function _renderRunningTab() {
             // Serving it supersedes the finished download — clear the card from
             // the Running tab (smooth exit) now that we've jumped to Serve.
             _animateOutThenRemove(el, task.sessionId);
-          } catch (err) { uiModule.showToast('Could not open Serve: ' + err.message); }
+          } catch (err) { uiModule.showToast(t('cookbook.running.toast.couldNotOpenServe', { error: err.message })); }
         });
       }
     }
@@ -1954,8 +1955,8 @@ export function _renderRunningTab() {
         // Save serve — save current launch config as a preset.
         if (task.type === 'serve' && task.payload?._cmd) {
           items.push({ label: 'Save serve', action: 'save', custom: () => {
-            if (!_saveTaskAsPreset(task)) { uiModule.showToast('Already saved'); return; }
-            uiModule.showToast('Saved to presets');
+            if (!_saveTaskAsPreset(task)) { uiModule.showToast(t('cookbook.running.toast.alreadySaved')); return; }
+            uiModule.showToast(t('cookbook.running.toast.savedToPresets'));
             _renderRunningTab();
           }});
         }
@@ -1991,7 +1992,7 @@ export function _renderRunningTab() {
               const eps = await (await fetch('/api/model-endpoints', { credentials: 'same-origin' })).json();
               const existing = eps.find(e => e.base_url === baseUrl);
               if (existing) {
-                uiModule.showToast(`Already registered as "${existing.name}"`);
+                uiModule.showToast(t('cookbook.running.toast.alreadyRegisteredAs', { name: existing.name }));
                 task._endpointAdded = true;
                 _updateTask(task.sessionId, { _endpointAdded: true });
                 _refreshModelsAfterEndpointChange();
@@ -2011,7 +2012,7 @@ export function _renderRunningTab() {
               if (res.ok) {
                 task._endpointAdded = true;
                 _updateTask(task.sessionId, { _endpointAdded: true });
-                uiModule.showToast(`Endpoint registered: ${host}:${port}`);
+                uiModule.showToast(t('cookbook.running.toast.endpointRegistered', { host, port }));
                 _refreshModelsAfterEndpointChange();
                 // Added with skip_probe → probe until the (possibly still
                 // warming) server answers, so it flips online on its own.
@@ -2043,7 +2044,7 @@ export function _renderRunningTab() {
           items.push({ label: 'Copy crash report', action: 'copy-crash-report', custom: () => {
             const out = (el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
             _copyText(_buildCrashReport(task, out));
-            uiModule.showToast('Copied crash report');
+            uiModule.showToast(t('cookbook.running.toast.copiedCrashReport'));
           }});
         }
         // Copy the last 50 lines of the task's output/log.
@@ -2051,7 +2052,7 @@ export function _renderRunningTab() {
           const out = (el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
           const last = out.split('\n').slice(-50).join('\n');
           _copyText(last);
-          uiModule.showToast('Copied last 50 lines');
+          uiModule.showToast(t('cookbook.running.toast.copiedLastLines'));
         }});
         items.push({ label: 'Remove', action: 'kill', danger: true });
         // Cancel = mobile-only dismiss item. Same pattern as the email kebab:
@@ -2555,7 +2556,7 @@ async function _reconnectTask(el, task) {
                 _dlRetryCount.set(_dlKey, _dlN + 1);
                 badge.textContent = `retrying (${_dlN + 1}/${_DL_MAX_AUTO_RETRY})…`;
                 badge.className = 'cookbook-task-status cookbook-task-running';
-                uiModule.showToast(`Download interrupted — retrying (${_dlN + 1}/${_DL_MAX_AUTO_RETRY}), resumes where it stopped…`, 6000);
+                uiModule.showToast(t('cookbook.running.toast.downloadInterruptedRetrying', { attempt: _dlN + 1, max: _DL_MAX_AUTO_RETRY }), 6000);
                 const _p = task.payload, _nm = task.name;
                 try {
                   await fetch('/api/shell/exec', {
@@ -2714,7 +2715,7 @@ async function _reconnectTask(el, task) {
                 task._endpointAdded = true;
                 _updateTask(task.sessionId, { _endpointAdded: true });
                 _autoSaveWorkingConfig(task);   // endpoint live → remember these settings
-                uiModule.showToast(`Model endpoint added: ${host}:${port}`);
+                uiModule.showToast(t('cookbook.running.toast.modelEndpointAdded', { host, port }));
                 // Retry-probe until the warming server answers, so it
                 // flips online without a manual enable/disable toggle.
                 const _epData = await res.json().catch(() => ({}));
@@ -2733,7 +2734,7 @@ async function _reconnectTask(el, task) {
                       if (mid && window.sessionModule?.createDirectChat) {
                         window.sessionModule.createDirectChat(url, mid, item.endpoint_id);
                         if (window.sessionModule?.updateModelPicker) window.sessionModule.updateModelPicker();
-                        uiModule.showToast(`Switched to ${mid.split('/').pop()}`);
+                        uiModule.showToast(t('cookbook.running.toast.switchedTo', { model: mid.split('/').pop() }));
                         return;
                       }
                     }
@@ -2962,7 +2963,7 @@ async function _probeEndpointUntilOnline(epId, host, port) {
         window.dispatchEvent(new CustomEvent('ge:model-endpoints-updated', {
           detail: { baseUrl: ep.base_url || `http://${host}:${port}/v1`, host, port, model: (ep.models || [])[0] || '' },
         }));
-        uiModule.showToast(`${host}:${port} is online`);
+        uiModule.showToast(t('cookbook.running.toast.endpointOnline', { host, port }));
         return;
       }
     } catch (_) { /* keep retrying */ }
@@ -3108,7 +3109,7 @@ async function _pollBackgroundStatus() {
         })
         .then(async (res) => {
           if (res && res.ok) {
-            uiModule.showToast(`Model endpoint added: ${host}:${port}`);
+            uiModule.showToast(t('cookbook.running.toast.modelEndpointAdded', { host, port }));
             const data = await res.json().catch(() => ({}));
             // A just-started server often can't answer the 1s add-time
             // probe, so it lands "offline". Retry-probe in the background

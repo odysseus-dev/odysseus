@@ -6,6 +6,7 @@
 
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
+import { t } from './i18n.js';
 
 let API_BASE = '';
 
@@ -88,7 +89,7 @@ export async function loadPersonalDocs() {
 }
 
 async function _deleteFile(filepath, displayName) {
-  if (!await uiModule.styledConfirm(`Remove "${displayName}" from RAG?`, { confirmText: 'Remove', danger: true })) return;
+  if (!await uiModule.styledConfirm(t('rag.confirm.removeFromRag', { name: displayName }), { confirmText: t('common.remove'), danger: true })) return;
   try {
     const res = await fetch(`${API_BASE}/api/personal/file?filepath=${encodeURIComponent(filepath)}`, {
       method: 'DELETE',

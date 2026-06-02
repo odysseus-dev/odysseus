@@ -12,6 +12,7 @@
 // derived from pointer velocity (slower → thicker), which gives signatures
 // their characteristic ink-bleed feel.
 
+import { t } from './i18n.js';
 const API_BASE = window.location.origin;
 
 // Last signature the user picked or created in this session. Lets the export
@@ -487,7 +488,7 @@ export function pick(opts = {}) {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const id = btn.dataset.id;
-        if (!await window.styledConfirm('Delete this signature?', { confirmText: 'Delete', danger: true })) return;
+        if (!await window.styledConfirm(t('signature.confirm.deleteSignature'), { confirmText: t('common.delete'), danger: true })) return;
         await _deleteSignature(id);
         btn.closest('.sig-tile')?.remove();
       });

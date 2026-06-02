@@ -35,6 +35,7 @@
  * }} deps
  */
 import { state } from './state.js';
+import { t } from '../i18n.js';
 import {
   layerHasAdjustments,
   isLayerEmpty,
@@ -268,7 +269,7 @@ export function createLayerPanelRenderer(deps) {
         state.activeLayerId = copy.id;
         composite();
         render();
-        if (uiModule) uiModule.showToast('Layer duplicated');
+        if (uiModule) uiModule.showToast(t('editor.layer.toast.layerDuplicated'));
       });
       controls.appendChild(dupBtn);
 
@@ -339,7 +340,7 @@ export function createLayerPanelRenderer(deps) {
           mergeLayerDownAtIndex(i);
           composite();
           render();
-          uiModule.showToast('Layer merged down');
+          uiModule.showToast(t('editor.layer.toast.layerMergedDown'));
         });
         controls.appendChild(mergeDownBtn);
       }

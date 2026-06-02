@@ -7,6 +7,7 @@
 
 import uiModule from './ui.js';
 import * as spinnerModule from './spinner.js';
+import { t, onLocaleChange } from './i18n.js';
 
 const API = window.location.origin;
 let skills = [];
@@ -573,18 +574,21 @@ async function _saveBuiltinEdit(card, name) {
       body: JSON.stringify({ text: ta.value }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    uiModule.showToast('Built-in capability updated');
+    uiModule.showToast(t('skills.toast.builtinUpdated'));
     builtinSkills = [];  // force reload of built-in list (refreshes "edited" badge)
     await loadSkills();
   } catch (e) { uiModule.showError('Save failed: ' + e.message); }
 }
 
 async function _revertBuiltin(name) {
-  if (!(await uiModule.styledConfirm(`Revert "${name}" to its original built-in instructions?`, { confirmText: 'Revert', danger: true }))) return;
+  if (!(await uiModule.styledConfirm(
+    t('skills.confirm.revertBuiltin', { name }),
+    { confirmText: t('skills.action.revert'), danger: true }
+  ))) return;
   try {
     const res = await fetch(`${API}/api/skills/builtin/${encodeURIComponent(name)}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    uiModule.showToast('Reverted to default');
+    uiModule.showToast(t('skills.toast.revertedToDefault'));
     builtinSkills = [];
     await loadSkills();
   } catch (e) { uiModule.showError('Revert failed: ' + e.message); }
@@ -621,7 +625,7 @@ function renderSkillsList() {
   const showBuiltin = false;
 
   if (!sorted.length && !showBuiltin) {
-    container.innerHTML = `<div style="text-align:center;opacity:0.4;padding:24px 0;font-size:11px;">${loaded ? 'No skills yet, use agent for it to auto extract them.' : 'Loading…'}</div>`;
+    container.innerHTML = `<div style="text-align:center;opacity:0.4;padding:24px 0;font-size:11px;">${loaded ? t('skills.empty.none') : t('skills.empty.loading')}</div>`;
     return;
   }
 
@@ -1042,7 +1046,7 @@ async function _saveSkillEdit(card, name) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     // Refresh the cached markdown so the preload/expand show the new text.
     _mdCache.set(name, ta.value);
-    uiModule.showToast('Saved');
+    uiModule.showToast(t('skills.toast.saved'));
     await loadSkills();  // re-render (frontmatter changes like name/status may have changed)
   } catch (e) {
     uiModule.showError('Save failed: ' + e.message);
@@ -1050,7 +1054,10 @@ async function _saveSkillEdit(card, name) {
 }
 
 async function _deleteSkill(name, card = null) {
-  if (!(await uiModule.styledConfirm(`Delete skill "${name}"? This removes the SKILL.md.`, { confirmText: 'Delete', danger: true }))) return;
+  if (!(await uiModule.styledConfirm(
+    t('skills.confirm.deleteSkill', { name }),
+    { confirmText: t('common.delete'), danger: true }
+  ))) return;
   // Locate the card if the caller didn't hand one over, so we can collapse it
   // away gracefully (same fade+shrink as the document library) instead of
   // re-rendering the whole list.
@@ -1070,7 +1077,7 @@ async function _deleteSkill(name, card = null) {
     } else {
       await loadSkills();
     }
-    uiModule.showToast('Skill deleted');
+    uiModule.showToast(t('skills.toast.deleted'));
   } catch (e) { uiModule.showError('Delete failed: ' + e.message); }
 }
 
@@ -1082,7 +1089,7 @@ async function _setSkillStatus(name, status) {
       body: JSON.stringify({ status }),
     });
     await loadSkills();
-    uiModule.showToast(status === 'published' ? 'Skill approved' : 'Skill moved to draft');
+    uiModule.showToast(status === 'published' ? t('skills.toast.approved') : t('skills.toast.movedToDraft'));
   } catch (e) { uiModule.showError('Update failed: ' + e.message); }
 }
 
@@ -1413,7 +1420,7 @@ async function _auditAllSkills(opts = {}) {
       ? `${names.length} selected ${names.length === 1 ? 'skill' : 'skills'}`
       : `${names.length} visible ${names.length === 1 ? 'skill' : 'skills'}`;
     if (!names.length) {
-      uiModule.showToast(explicitNames ? 'No selected skills to audit' : 'No visible skills to audit');
+      uiModule.showToast(explicitNames ? t('skills.toast.noSelectedToAudit') : t('skills.toast.noVisibleToAudit'));
       return;
     }
     const confirmed = await _confirmAuditSkills(label);
@@ -1615,7 +1622,7 @@ function _updateBulkBar() {
   const delNonPassingBtn = document.getElementById('skills-bulk-delete-nonpassing');
   const pubBtn = document.getElementById('skills-bulk-publish');
   const auditBtn = document.getElementById('skills-bulk-audit');
-  if (countEl) countEl.textContent = `${_selectedNames.size} Selected`;
+  if (countEl) countEl.textContent = t('common.bulk.selectedCount', { count: _selectedNames.size });
   if (delBtn) delBtn.disabled = _selectedNames.size === 0;
   if (auditBtn) auditBtn.disabled = _selectedNames.size === 0;
   if (delNonPassingBtn) {
@@ -1647,8 +1654,11 @@ async function _bulkDelete() {
   if (!_selectedNames.size) return;
   const n = _selectedNames.size;
   const ok = await uiModule.styledConfirm(
-    `Delete ${n} ${n === 1 ? 'skill' : 'skills'}? This removes their SKILL.md files.`,
-    { confirmText: 'Delete', danger: true }
+    t('skills.confirm.bulkDelete', {
+      count: n,
+      item: n === 1 ? t('skills.word.skill') : t('skills.word.skills'),
+    }),
+    { confirmText: t('common.delete'), danger: true }
   );
   if (!ok) return;
   let deleted = 0;
@@ -1669,7 +1679,7 @@ async function _bulkDelete() {
   if (deletedNames.length) await new Promise(resolve => setTimeout(resolve, 320));
   _exitSelectMode();
   await loadSkills();
-  uiModule.showToast(`Deleted ${deleted}`);
+  uiModule.showToast(t('skills.toast.deletedCount', { count: deleted }));
 }
 
 async function _loadSkillApprovalThreshold() {
@@ -1699,14 +1709,18 @@ function _selectedNonPassingSkills() {
 async function _bulkDeleteNonPassing() {
   const targets = _selectedNonPassingSkills();
   if (!targets.length) {
-    uiModule.showToast('No selected non-passing skills');
+    uiModule.showToast(t('skills.toast.noSelectedNonPassing'));
     return;
   }
   const thresholdPct = Math.round(_skillApprovalThreshold * 100);
   const names = targets.map(sk => sk.name || sk.id).filter(Boolean);
   const ok = await uiModule.styledConfirm(
-    `Delete ${names.length} selected non-passing ${names.length === 1 ? 'skill' : 'skills'}? This removes duplicates, generic/irrelevant skills, failed audits, and anything below ${thresholdPct}%.`,
-    { confirmText: 'Delete non passing', danger: true }
+    t('skills.confirm.bulkDeleteNonPassing', {
+      count: names.length,
+      item: names.length === 1 ? t('skills.word.skill') : t('skills.word.skills'),
+      thresholdPct,
+    }),
+    { confirmText: t('skills.action.deleteNonPassing'), danger: true }
   );
   if (!ok) return;
   let deleted = 0;
@@ -1728,7 +1742,7 @@ async function _bulkDeleteNonPassing() {
   if (deletedNames.length) await new Promise(resolve => setTimeout(resolve, 320));
   _exitSelectMode();
   await loadSkills();
-  uiModule.showToast(`Deleted ${deleted} non-passing`);
+  uiModule.showToast(t('skills.toast.deletedNonPassingCount', { count: deleted }));
 }
 
 async function _bulkApprove() {
@@ -1748,7 +1762,7 @@ async function _bulkApprove() {
   }
   _exitSelectMode();
   await loadSkills();
-  uiModule.showToast(`Published ${published}`);
+  uiModule.showToast(t('skills.toast.publishedCount', { count: published }));
 }
 
 async function _bulkAudit() {
@@ -1809,7 +1823,7 @@ async function _showSkillSource(name) {
         body: JSON.stringify({ markdown: ta.value }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      uiModule.showToast('Saved');
+      uiModule.showToast(t('skills.toast.saved'));
       wrap.remove();
       await loadSkills();
     } catch (e) {
@@ -1859,7 +1873,7 @@ async function addSkill() {
      'new-skill-category']
       .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     await loadSkills();
-    uiModule.showToast('Skill added (draft)');
+    uiModule.showToast(t('skills.toast.addedDraft'));
   } catch (err) {
     uiModule.showError('Failed to add skill: ' + err.message);
   }
@@ -1899,6 +1913,10 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('new-skill-name')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') addSkill();
   });
+});
+
+onLocaleChange(() => {
+  if (document.getElementById('skills-list')) renderSkillsList();
 });
 
 export default { loadSkills, openSkill };

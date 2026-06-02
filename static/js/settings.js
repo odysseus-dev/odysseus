@@ -7,6 +7,7 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { clearDockSide } from './modalSnap.js';
 import { sortModelIds } from './modelSort.js';
 import { isAltGrEvent } from './platform.js';
+import { t } from './i18n.js';
 
 let initialized = false;
 let modalEl = null;
@@ -1054,13 +1055,13 @@ async function initSttSettings() {
    ═══════════════════════════════════════════ */
 
 var _searchProviderHints = {
-  searxng: 'Self-hosted SearXNG instance. Leave URL empty to use the SEARXNG_INSTANCE env var.',
-  duckduckgo: 'Free search — no API key required. Works out of the box.',
-  brave: 'Get your API key from brave.com/search/api',
-  google_pse: 'Requires a Google API key and a Programmable Search Engine ID (CX). Create one at programmablesearchengine.google.com',
-  tavily: 'AI-optimized search. 1,000 free credits/month at tavily.com',
-  serper: 'Google results via API. 2,500 free queries at serper.dev',
-  disabled: 'Web search and deep research tools will be unavailable.',
+  searxng: () => t('settings.search.hint.searxng'),
+  duckduckgo: () => t('settings.search.hint.duckduckgo'),
+  brave: () => t('settings.search.hint.brave'),
+  google_pse: () => t('settings.search.hint.google_pse'),
+  tavily: () => t('settings.search.hint.tavily'),
+  serper: () => t('settings.search.hint.serper'),
+  disabled: () => t('settings.search.hint.disabled'),
 };
 var _searchNeedsKey = { brave: 1, google_pse: 1, tavily: 1, serper: 1 };
 var _searchLabels = {
@@ -1098,7 +1099,7 @@ async function initSearchSettings() {
     urlRow.style.display = prov === 'searxng' ? 'flex' : 'none';
     keyRow.style.display = _searchNeedsKey[prov] ? 'flex' : 'none';
     cxRow.style.display = prov === 'google_pse' ? 'flex' : 'none';
-    hint.textContent = _searchProviderHints[prov] || '';
+    hint.textContent = typeof _searchProviderHints[prov] === 'function' ? _searchProviderHints[prov]() : (_searchProviderHints[prov] || '');
     if (prov === 'brave') keyInput.placeholder = 'Brave API key';
     else if (prov === 'google_pse') keyInput.placeholder = 'Google API key';
     else if (prov === 'tavily') keyInput.placeholder = 'Tavily API key';
@@ -1151,12 +1152,12 @@ async function initSearchSettings() {
       var kf = keyFieldFor(active);
       var hasKey = kf ? ((s[kf] || '').trim() || (s.search_api_key || '').trim()) : false;
       if (_searchNeedsKey[active]) {
-        extra = hasKey ? ' (key set)' : ' (no key)';
+        extra = hasKey ? t('settings.search.keySet') : t('settings.search.noKey');
       } else if (active === 'searxng' && (s.search_url || '').trim()) {
         extra = ' (' + s.search_url + ')';
       }
       var count = s.search_result_count || 5;
-      msg.textContent = 'Active: ' + label + extra + ' \u00b7 ' + count + ' results';
+      msg.textContent = t('settings.search.active', { provider: label, extra, count });
       msg.style.color = active === 'disabled' ? 'var(--red)' : (_searchNeedsKey[active] && !hasKey) ? 'var(--red)' : 'var(--fg)';
     } catch (e) { /* ignore */ }
   }
@@ -1594,7 +1595,7 @@ function initAppearance() {
       if (window.UI_VIS_ADMIN_ONLY && window.UI_VIS_ADMIN_ONLY.has(key) && !chk.checked && !window._isAdmin) {
         chk.checked = true;
         if (uiModule && uiModule.showToast) {
-          uiModule.showToast('Only admins can hide Settings.');
+          uiModule.showToast(t('settings.toast.onlyAdminsCanHideSettings'));
         }
         return;
       }
@@ -1605,19 +1606,21 @@ function initAppearance() {
       if (key === 'sidebar-settings-btn' && !chk.checked) {
         var ok = true;
         try {
-          ok = await (uiModule && uiModule.styledConfirm
-            ? uiModule.styledConfirm(
-                'Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.',
-                { confirmText: 'Hide', cancelText: 'Cancel' }
-              )
-            : Promise.resolve(window.confirm('Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.')));
+          ok = await (
+            uiModule && uiModule.styledConfirm
+              ? uiModule.styledConfirm(
+                  t('settings.confirm.hideSettingsCogDetails'),
+                  { confirmText: t('settings.confirmText.hide'), cancelText: t('common.cancel') }
+                )
+              : Promise.resolve(window.confirm(t('settings.confirm.hideSettingsCogDetails')))
+          );
         } catch (_) { ok = false; }
         if (!ok) {
           chk.checked = true;
           return;
         }
         if (uiModule && uiModule.showToast) {
-          uiModule.showToast('Settings cog hidden — type /settings to bring it back.', 5000);
+          uiModule.showToast(t('settings.toast.settingsCogHiddenTypeSettings'), 5000);
         }
       }
 
@@ -1716,34 +1719,34 @@ const SHORTCUT_ICONS = {
   open_theme:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg>',
 };
 
-const SHORTCUT_LABELS = {
-  search:         'Search conversations',
-  toggle_sidebar: 'Toggle sidebar',
-  new_session:    'New session',
-  fav_session:    'Favorite session',
-  delete_session: 'Delete session',
-  cancel:         'Cancel / close',
-  tts:            'Play/stop TTS',
-  incognito:      'Toggle incognito',
-  settings:       'Toggle Window',
-  focus_input:    'Focus chat input',
-  open_calendar:  'Open Calendar',
-  open_compare:   'Open Compare',
-  open_cookbook:  'Open Cookbook',
-  open_research:  'Open Deep Research',
-  open_gallery:   'Open Gallery',
-  open_library:   'Open Library',
-  open_memory:    'Open Memory',
-  open_notes:     'Open Notes',
-  open_tasks:     'Open Tasks',
-  open_theme:     'Open Theme',
+const SHORTCUT_LABEL_KEYS = {
+  search: 'settings.shortcuts.label.search',
+  toggle_sidebar: 'settings.shortcuts.label.toggle_sidebar',
+  new_session: 'settings.shortcuts.label.new_session',
+  fav_session: 'settings.shortcuts.label.fav_session',
+  delete_session: 'settings.shortcuts.label.delete_session',
+  cancel: 'settings.shortcuts.label.cancel',
+  tts: 'settings.shortcuts.label.tts',
+  incognito: 'settings.shortcuts.label.incognito',
+  settings: 'settings.shortcuts.label.settings',
+  focus_input: 'settings.shortcuts.label.focus_input',
+  open_calendar: 'settings.shortcuts.label.open_calendar',
+  open_compare: 'settings.shortcuts.label.open_compare',
+  open_cookbook: 'settings.shortcuts.label.open_cookbook',
+  open_research: 'settings.shortcuts.label.open_research',
+  open_gallery: 'settings.shortcuts.label.open_gallery',
+  open_library: 'settings.shortcuts.label.open_library',
+  open_memory: 'settings.shortcuts.label.open_memory',
+  open_notes: 'settings.shortcuts.label.open_notes',
+  open_tasks: 'settings.shortcuts.label.open_tasks',
+  open_theme: 'settings.shortcuts.label.open_theme',
 };
 
 const SHORTCUT_CATEGORIES = [
-  { name: 'Navigation', keys: ['search', 'toggle_sidebar', 'focus_input', 'settings'] },
-  { name: 'Sessions', keys: ['new_session', 'fav_session', 'delete_session'] },
-  { name: 'Tools', keys: ['incognito', 'tts', 'cancel'] },
-  { name: 'Open Tools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_notes', 'open_tasks', 'open_theme'] },
+  { nameKey: 'settings.shortcuts.category.navigation', keys: ['search', 'toggle_sidebar', 'focus_input', 'settings'] },
+  { nameKey: 'settings.shortcuts.category.sessions', keys: ['new_session', 'fav_session', 'delete_session'] },
+  { nameKey: 'settings.shortcuts.category.tools', keys: ['incognito', 'tts', 'cancel'] },
+  { nameKey: 'settings.shortcuts.category.openTools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_notes', 'open_tasks', 'open_theme'] },
 ];
 
 function _formatKeyCaps(combo) {
@@ -1811,7 +1814,7 @@ async function initShortcuts() {
     for (const cat of SHORTCUT_CATEGORIES) {
       const catHeader = document.createElement('div');
       catHeader.className = 'shortcut-category';
-      catHeader.textContent = cat.name;
+      catHeader.textContent = t(cat.nameKey);
       listEl.appendChild(catHeader);
 
       for (const action of cat.keys) {
@@ -1819,7 +1822,7 @@ async function initShortcuts() {
         const combo = keybinds[action];
         // Unbound shortcuts (empty combo) still render so the user can
         // assign one \u2014 they show a "Set" affordance instead of keycaps.
-        const label = SHORTCUT_LABELS[action] || action;
+        const label = t(SHORTCUT_LABEL_KEYS[action] || action);
         const icon = SHORTCUT_ICONS[action] || '';
         const isCustom = combo !== (SHORTCUT_DEFAULTS[action] || '');
         const hasConflict = combo && conflicts.has(action);
@@ -1951,7 +1954,7 @@ async function initShortcuts() {
       });
       // Update global keybinds so they take effect immediately
       window._odysseusKeybinds = keybinds;
-      if (uiModule && uiModule.showToast) uiModule.showToast('Shortcut saved');
+      if (uiModule && uiModule.showToast) uiModule.showToast(t('settings.shortcuts.toast.saved'));
     } catch (e) {
       console.error('Failed to save keybinds:', e);
     }
@@ -1962,7 +1965,7 @@ async function initShortcuts() {
       keybinds = { ...SHORTCUT_DEFAULTS };
       render();
       await saveKeybinds();
-      if (uiModule && uiModule.showToast) uiModule.showToast('Shortcuts reset to defaults');
+      if (uiModule && uiModule.showToast) uiModule.showToast(t('settings.shortcuts.toast.resetDefaults'));
     });
   }
 
@@ -1980,8 +1983,8 @@ function initAccount() {
       const nameEl = el('settings-account-username');
       const roleEl = el('settings-account-role');
       const avatarEl = el('settings-account-avatar');
-      if (nameEl) nameEl.textContent = d.username || 'Unknown';
-      if (roleEl) roleEl.textContent = d.is_admin ? 'Admin' : 'User';
+      if (nameEl) nameEl.textContent = d.username || t('settings.account.unknownUser');
+      if (roleEl) roleEl.textContent = d.is_admin ? t('settings.account.roleAdmin') : t('settings.account.roleUser');
       if (avatarEl) {
         const initial = (d.username || '?')[0].toUpperCase();
         avatarEl.textContent = initial;
@@ -1997,9 +2000,9 @@ function initAccount() {
       const nw = el('settings-pw-new').value;
       const conf = el('settings-pw-confirm').value;
       msgEl.style.color = '';
-      if (!cur || !nw) { msgEl.textContent = 'Fill in all fields'; msgEl.style.color = 'var(--red)'; return; }
-      if (nw.length < 8) { msgEl.textContent = 'Min 8 characters'; msgEl.style.color = 'var(--red)'; return; }
-      if (nw !== conf) { msgEl.textContent = 'Passwords don\'t match'; msgEl.style.color = 'var(--red)'; return; }
+      if (!cur || !nw) { msgEl.textContent = t('settings.account.password.fillAllFields'); msgEl.style.color = 'var(--red)'; return; }
+      if (nw.length < 8) { msgEl.textContent = t('settings.account.password.minChars'); msgEl.style.color = 'var(--red)'; return; }
+      if (nw !== conf) { msgEl.textContent = t('settings.account.password.mismatch'); msgEl.style.color = 'var(--red)'; return; }
       saveBtn.disabled = true;
       try {
         const res = await fetch('/api/auth/change-password', {
@@ -2007,9 +2010,9 @@ function initAccount() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ current_password: cur, new_password: nw })
         });
-        if (!res.ok) { const d = await res.json(); throw new Error(d.detail || 'Failed'); }
+        if (!res.ok) { const d = await res.json(); throw new Error(d.detail || t('settings.account.password.failed')); }
         msgEl.style.color = 'var(--green)';
-        msgEl.textContent = 'Password updated';
+        msgEl.textContent = t('settings.account.password.updated');
         el('settings-pw-current').value = '';
         el('settings-pw-new').value = '';
         el('settings-pw-confirm').value = '';
@@ -2033,41 +2036,41 @@ function initAccount() {
           // 2FA is ON — show disable option
           tfaContent.innerHTML = `
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-              <span style="color:var(--color-save-green, #4caf50);font-size:12px;font-weight:600;">&#x2713; Enabled</span>
-              <span style="font-size:11px;opacity:0.5;">Authenticator app required on login</span>
+              <span style="color:var(--color-save-green, #4caf50);font-size:12px;font-weight:600;">${t('settings.account.twoFactor.enabled')}</span>
+              <span style="font-size:11px;opacity:0.5;">${t('settings.account.twoFactor.enabledDesc')}</span>
             </div>
-            <input id="tfa-disable-pw" type="password" placeholder="Enter password to disable" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;width:100%;box-sizing:border-box;margin-bottom:6px;">
+            <input id="tfa-disable-pw" type="password" placeholder="${t('settings.account.twoFactor.disablePasswordPlaceholder')}" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;width:100%;box-sizing:border-box;margin-bottom:6px;">
             <div class="settings-row" style="justify-content:flex-end;">
               <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
-              <button class="admin-btn-add" id="tfa-disable-btn" style="opacity:0.7;">Disable 2FA</button>
+              <button class="admin-btn-add" id="tfa-disable-btn" style="opacity:0.7;">${t('settings.account.twoFactor.disable')}</button>
             </div>`;
           el('tfa-disable-btn').addEventListener('click', async () => {
             const pw = el('tfa-disable-pw').value;
             const msg = el('tfa-msg');
-            if (!pw) { msg.textContent = 'Enter your password'; msg.style.color = 'var(--red)'; return; }
+            if (!pw) { msg.textContent = t('settings.account.twoFactor.enterPassword'); msg.style.color = 'var(--red)'; return; }
             try {
               const r = await fetch('/api/auth/2fa/disable', {
                 method: 'POST', credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ password: pw })
               });
-              if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Failed'); }
+              if (!r.ok) { const d = await r.json(); throw new Error(d.detail || t('settings.account.twoFactor.failed')); }
               render2FA();
             } catch (e) { msg.textContent = e.message; msg.style.color = 'var(--red)'; }
           });
         } else {
           // 2FA is OFF — show setup button
           tfaContent.innerHTML = `
-            <div style="font-size:12px;opacity:0.6;margin-bottom:8px;">Add an extra layer of security with an authenticator app (Aegis, Google Authenticator, etc.)</div>
+            <div style="font-size:12px;opacity:0.6;margin-bottom:8px;">${t('settings.account.twoFactor.setupDesc')}</div>
             <div class="settings-row" style="justify-content:flex-end;">
               <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
-              <button class="admin-btn-add" id="tfa-setup-btn">Set Up 2FA</button>
+              <button class="admin-btn-add" id="tfa-setup-btn">${t('settings.account.twoFactor.setup')}</button>
             </div>`;
           el('tfa-setup-btn').addEventListener('click', async () => {
             const msg = el('tfa-msg');
             try {
               const r = await fetch('/api/auth/2fa/setup', { method: 'POST', credentials: 'same-origin' });
-              if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Failed'); }
+              if (!r.ok) { const d = await r.json(); throw new Error(d.detail || t('settings.account.twoFactor.failed')); }
               const setup = await r.json();
               // Show QR code + manual secret + verify input
               tfaContent.innerHTML = `
@@ -2075,36 +2078,36 @@ function initAccount() {
                   <img src="${setup.qr_code}" alt="QR Code" style="border-radius:8px;max-width:200px;">
                 </div>
                 <div style="font-size:11px;opacity:0.5;text-align:center;margin-bottom:8px;">
-                  Scan with your authenticator app, or enter manually:
+                  ${t('settings.account.twoFactor.scanOrEnter')}
                 </div>
                 <div style="font-family:monospace;font-size:12px;text-align:center;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;margin-bottom:12px;word-break:break-all;user-select:all;cursor:text;">${setup.secret}</div>
-                <input id="tfa-verify-code" type="text" placeholder="Enter 6-digit code to verify" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:13px;box-sizing:border-box;text-align:center;letter-spacing:3px;margin-bottom:6px;">
+                <input id="tfa-verify-code" type="text" placeholder="${t('settings.account.twoFactor.verifyPlaceholder')}" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:13px;box-sizing:border-box;text-align:center;letter-spacing:3px;margin-bottom:6px;">
                 <div class="settings-row" style="justify-content:flex-end;">
                   <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
-                  <button class="admin-btn-add" id="tfa-cancel-btn" style="opacity:0.5;">Cancel</button>
-                  <button class="admin-btn-add" id="tfa-verify-btn">Verify & Enable</button>
+                  <button class="admin-btn-add" id="tfa-cancel-btn" style="opacity:0.5;">${t('common.cancel')}</button>
+                  <button class="admin-btn-add" id="tfa-verify-btn">${t('settings.account.twoFactor.verifyAndEnable')}</button>
                 </div>`;
               el('tfa-verify-code').focus();
               el('tfa-cancel-btn').addEventListener('click', () => render2FA());
               el('tfa-verify-btn').addEventListener('click', async () => {
                 const code = el('tfa-verify-code').value.trim();
                 const vmsg = el('tfa-msg');
-                if (!code) { vmsg.textContent = 'Enter the code'; vmsg.style.color = 'var(--red)'; return; }
+                if (!code) { vmsg.textContent = t('settings.account.twoFactor.enterCode'); vmsg.style.color = 'var(--red)'; return; }
                 try {
                   const vr = await fetch('/api/auth/2fa/confirm', {
                     method: 'POST', credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ code })
                   });
-                  if (!vr.ok) { const d = await vr.json(); throw new Error(d.detail || 'Invalid code'); }
+                  if (!vr.ok) { const d = await vr.json(); throw new Error(d.detail || t('settings.account.twoFactor.invalidCode')); }
                   const result = await vr.json();
                   // Show backup codes
                   const codes = result.backup_codes || [];
                   tfaContent.innerHTML = `
-                    <div style="color:var(--color-save-green, #4caf50);font-size:13px;font-weight:600;margin-bottom:8px;">&#x2713; 2FA Enabled!</div>
-                    <div style="font-size:12px;opacity:0.7;margin-bottom:8px;">Save these backup codes somewhere safe. Each can be used once if you lose your authenticator:</div>
+                    <div style="color:var(--color-save-green, #4caf50);font-size:13px;font-weight:600;margin-bottom:8px;">${t('settings.account.twoFactor.enabledSuccess')}</div>
+                    <div style="font-size:12px;opacity:0.7;margin-bottom:8px;">${t('settings.account.twoFactor.backupCodesDesc')}</div>
                     <div style="font-family:monospace;font-size:12px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;columns:2;column-gap:16px;margin-bottom:8px;">${codes.map(c => '<div style="margin-bottom:2px;">' + c + '</div>').join('')}</div>
-                    <button class="admin-btn-add" id="tfa-done-btn">Done</button>`;
+                    <button class="admin-btn-add" id="tfa-done-btn">${t('settings.account.twoFactor.done')}</button>`;
                   el('tfa-done-btn').addEventListener('click', () => render2FA());
                 } catch (e) { vmsg.textContent = e.message; vmsg.style.color = 'var(--red)'; }
               });
@@ -2112,7 +2115,7 @@ function initAccount() {
           });
         }
       } catch (_) {
-        tfaContent.innerHTML = '<div style="font-size:11px;opacity:0.4;">Could not load 2FA status</div>';
+        tfaContent.innerHTML = `<div style="font-size:11px;opacity:0.4;">${t('settings.account.twoFactor.loadFailed')}</div>`;
       }
     }
     render2FA();
@@ -2578,7 +2581,7 @@ async function initEmailAccountsSettings() {
       });
       row.querySelector('.email-acc-del-btn')?.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (!await window.styledConfirm(`Delete account "${accs.find(a => a.id === id)?.name}"?`, { confirmText: 'Delete', danger: true })) return;
+        if (!await window.styledConfirm(t('settings.confirm.deleteAccountNamed', { name: accs.find(a => a.id === id)?.name }), { confirmText: t('common.delete'), danger: true })) return;
         await fetch(`/api/email/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
         renderList();
       });
@@ -2951,7 +2954,7 @@ async function initIntegrations() {
       const data = await res.json();
       const items = data.integrations || [];
       if (!items.length) {
-        listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center;">No integrations configured</div>';
+        listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center;">' + t('settings.integrations.none') + '</div>';
         return;
       }
       listEl.innerHTML = items.map(i => `
@@ -3071,7 +3074,7 @@ async function initIntegrations() {
 
   // Delete
   async function doDelete(id) {
-    if (!await window.styledConfirm('Delete this integration?', { confirmText: 'Delete', danger: true })) return;
+    if (!await window.styledConfirm(t('settings.confirm.deleteIntegration'), { confirmText: t('common.delete'), danger: true })) return;
     try {
       await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
       if (editingId === id) { formCard.style.display = 'none'; editingId = null; }
@@ -3198,7 +3201,7 @@ async function initUnifiedIntegrations() {
         <button type="button" class="admin-btn-sm intg-open-email-settings" style="white-space:nowrap;">Email settings</button>
       </div>` : '';
     if (items.length === 0) {
-      listEl.innerHTML = noticeHtml + '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">No integrations configured</div>';
+      listEl.innerHTML = noticeHtml + '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">' + t('settings.integrations.none') + '</div>';
     } else {
       listEl.innerHTML = noticeHtml + items.map(renderCard).join('');
     }
@@ -3222,7 +3225,7 @@ async function initUnifiedIntegrations() {
     listEl.querySelectorAll('.intg-del-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (!await window.styledConfirm('Remove this integration?', { confirmText: 'Remove', danger: true })) return;
+        if (!await window.styledConfirm(t('settings.confirm.removeIntegration'), { confirmText: t('common.remove'), danger: true })) return;
         const type = btn.dataset.intgType;
         const id = btn.dataset.intgId;
         try {
@@ -3658,8 +3661,8 @@ async function initUnifiedIntegrations() {
       });
       row.querySelector('.contact-del')?.addEventListener('click', async () => {
         const ok = uiModule.styledConfirm
-          ? await uiModule.styledConfirm('Delete this contact?', { confirmText: 'Delete', danger: true })
-          : window.confirm('Delete this contact?');
+          ? await uiModule.styledConfirm(t('settings.confirm.deleteContact'), { confirmText: t('common.delete'), danger: true })
+          : window.confirm(t('settings.confirm.deleteContact'));
         if (!ok) return;
         try {
           await fetch('/api/contacts/' + encodeURIComponent(uid), { method: 'DELETE', credentials: 'same-origin' });
@@ -4168,7 +4171,7 @@ async function initUnifiedIntegrations() {
     });
 
     el('uf-vault-logout').addEventListener('click', async () => {
-      if (!await window.styledConfirm('Log out of Bitwarden CLI? You\'ll need to re-enter your master password to log back in.', { confirmText: 'Log out' })) return;
+      if (!await window.styledConfirm(t('settings.confirm.logOutBitwardenCli'), { confirmText: t('settings.account.logout') })) return;
       msg('Logging out...');
       try {
         await fetch('/api/vault/logout', { method: 'POST', credentials: 'same-origin' });

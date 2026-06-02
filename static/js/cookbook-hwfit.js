@@ -29,6 +29,7 @@ import {
 } from './cookbook.js';
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
+import { t } from './i18n.js';
 
 // ── What Fits? (hardware model fitting) ──
 
@@ -811,17 +812,21 @@ function _modeLabel(model) {
   return String(model?.run_mode || '').replace('_', '+');
 }
 
-export const _hwfitColumns = [
-  { key: 'fit', label: 'Fit',    cls: 'hwfit-fit' },
-  { key: null,    label: 'Model',  cls: 'hwfit-name' },
-  { key: 'params',label: 'Param', cls: 'hwfit-c-params' },
-  { key: null,    label: 'Quant',  cls: 'hwfit-c-quant' },
-  { key: 'vram',  label: 'VRAM',   cls: 'hwfit-c-vram' },
-  { key: 'context',label: 'Ctx',   cls: 'hwfit-c-ctx' },
-  { key: 'speed', label: 'Speed',  cls: 'hwfit-c-speed' },
-  { key: 'score', label: 'Score',  cls: 'hwfit-c-score' },
-  { key: null,    label: 'Mode',   cls: 'hwfit-c-mode' },
-];
+export function _hwfitColumnDefs() {
+  return [
+    { key: 'fit', label: t('cookbook.hwfit.col.fit'), cls: 'hwfit-fit' },
+    { key: null, label: t('cookbook.hwfit.col.model'), cls: 'hwfit-name' },
+    { key: 'params', label: t('cookbook.hwfit.col.param'), cls: 'hwfit-c-params' },
+    { key: null, label: t('cookbook.hwfit.col.quant'), cls: 'hwfit-c-quant' },
+    { key: 'vram', label: t('cookbook.hwfit.col.vram'), cls: 'hwfit-c-vram' },
+    { key: 'context', label: t('cookbook.hwfit.col.ctx'), cls: 'hwfit-c-ctx' },
+    { key: 'speed', label: t('cookbook.hwfit.col.speed'), cls: 'hwfit-c-speed' },
+    { key: 'score', label: t('cookbook.hwfit.col.score'), cls: 'hwfit-c-score' },
+    { key: null, label: t('cookbook.hwfit.col.mode'), cls: 'hwfit-c-mode' },
+  ];
+}
+
+export const _hwfitColumns = _hwfitColumnDefs();
 
 export function _hwfitRenderList(el, models) {
   if (!el) return;
@@ -846,7 +851,7 @@ export function _hwfitRenderList(el, models) {
   const currentSort = sortSel?.value || 'score';
   const isReversed = sortSel?.dataset.reverse === '1';
   let html = '<div class="hwfit-row hwfit-header">';
-  for (const col of _hwfitColumns) {
+  for (const col of _hwfitColumnDefs()) {
     const sortable = col.key ? ' hwfit-sortable' : '';
     const active = col.key === currentSort ? ' hwfit-sort-active' : '';
     let arrow = '';
@@ -867,7 +872,8 @@ export function _hwfitRenderList(el, models) {
     const tps = tpsRaw > 0 ? (tpsRaw >= 100 ? Math.round(tpsRaw) : tpsRaw.toFixed(1)) : '?';
     const pcount = m.parameter_count || '?';
     const ctx = m.context ? (m.context >= 1024 ? (m.context / 1024).toFixed(0) + 'k' : m.context) : '?';
-    const fitLabel = (m.fit_level || '').replace('_', ' ');
+    const fitKey = m.fit_level || 'no_fit';
+    const fitLabel = t(`cookbook.hwfit.fit.${fitKey}`);
     const modeLabel = _modeLabel(m);
     const vramLabel = m.required_gb ? m.required_gb.toFixed(1) + 'G' : '?';
     const moeBadge = m.is_moe ? '<span class="hwfit-badge hwfit-moe">MoE</span>' : '';
@@ -1022,7 +1028,7 @@ export function _expandModelRow(row, modelData) {
         || [..._cachedModelIds].some(id => id === modelData.name || id.endsWith('/' + _short))
       );
       if (_cachedModelIds && !_downloaded) {
-        uiModule.showToast('Model not downloaded yet — starting download. Run again to serve once it finishes.');
+        uiModule.showToast(t('cookbook.hwfit.toast.modelNotDownloadedStarting'));
         if (backend === 'ollama') {
           _runPanelCmd(panel, _buildDownloadCmd(modelData, backend), { timeout: 0 });
         } else {
@@ -1130,7 +1136,7 @@ export function _expandModelRow(row, modelData) {
           const shortName = modelData.name.split('/').pop();
           _addTask(data.session_id, shortName, 'serve', { _cmd: cmd, model: modelData.name, backend: runBackend, remote_host: host });
           _renderRunningTab();
-          uiModule.showToast(`Launching ${shortName}...`);
+          uiModule.showToast(t('cookbook.hwfit.toast.launching', { name: shortName }));
           // Switch to Running tab
           const runTab = document.querySelector('.cookbook-tab[data-backend="Running"]');
           if (runTab) runTab.click();
@@ -1160,7 +1166,7 @@ export function _expandModelRow(row, modelData) {
         || [..._cachedModelIds].some(id => id === repo || id.endsWith('/' + short))
       );
       if (_cachedModelIds && !downloaded) {
-        uiModule.showToast('Download the model first, then configure from Serve tab');
+        uiModule.showToast(t('cookbook.hwfit.toast.downloadFirstThenServeTab'));
         return;
       }
       // Downloaded (or cache state unknown) — open the Serve panel, which switches
@@ -1169,7 +1175,7 @@ export function _expandModelRow(row, modelData) {
         const { openServePanelForRepo } = await import('./cookbookServe.js');
         await openServePanelForRepo(repo);
       } catch (e) {
-        uiModule.showToast('Could not open Serve: ' + (e && e.message ? e.message : e));
+        uiModule.showToast(t('cookbook.hwfit.toast.couldNotOpenServe', { error: (e && e.message ? e.message : e) }));
       }
     });
   }
@@ -1534,7 +1540,7 @@ export function _hwfitInit() {
         const cmd = entry.querySelector('.cookbook-server-key-command')?.value?.trim() || '';
         if (!cmd || cmd.startsWith('Enter ')) return;
         await _copyText(cmd);
-        uiModule.showToast('SSH setup command copied');
+        uiModule.showToast(t('cookbook.hwfit.toast.sshSetupCommandCopied'));
       });
     }
     entry.querySelectorAll('input, select').forEach(el => {
@@ -1592,9 +1598,9 @@ export function _hwfitInit() {
                 || 'this server';
       let ok = true;
       if (uiModule && uiModule.styledConfirm) {
-        ok = await uiModule.styledConfirm(`Remove "${name}"?`, { confirmText: 'Remove', danger: true });
+        ok = await uiModule.styledConfirm(t('cookbook.hwfit.confirm.removeNamed', { name }), { confirmText: t('common.remove'), danger: true });
       } else {
-        ok = confirm(`Remove "${name}"?`);
+        ok = confirm(t('cookbook.hwfit.confirm.removeNamed', { name }));
       }
       if (!ok) return;
       entry.remove();
@@ -1625,7 +1631,7 @@ export function _hwfitInit() {
           if (data.ok) {
             setupBtn.textContent = '\u2713 Done';
             setupBtn.style.color = '#50fa7b';
-            uiModule.showToast(`Setup complete (${data.platform})`);
+            uiModule.showToast(t('cookbook.hwfit.toast.setupCompletePlatform', { platform: data.platform }));
             // Store detected platform on the server entry
             if (data.platform) {
               entry.dataset.platform = data.platform;
@@ -1674,7 +1680,7 @@ export function _hwfitInit() {
     // Model dir add/remove
     const addDirBtn = entry.querySelector('.cookbook-modeldir-add');
     if (addDirBtn) addDirBtn.addEventListener('click', () => {
-      const raw = prompt('Model directory path:', '/data/models');
+      const raw = prompt(t('cookbook.hwfit.prompt.modelDirectoryPath'), '/data/models');
       if (!raw) return;
       const dir = raw.replaceAll('\u2715', '').replaceAll('\u2716', '').trim();
       if (!dir) return;

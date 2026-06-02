@@ -6,6 +6,7 @@ import themeModule from '../theme.js';
 import createResearchSynapse from '../researchSynapse.js';
 import spinnerModule from '../spinner.js';
 import { sortModelIds } from '../modelSort.js';
+import { t, applyTranslations } from '../i18n.js';
 
 // jobId -> { synapse, status } — survives across _renderJobs() rebuilds so
 // the SVG keeps its accumulated nodes/edges between progress events.
@@ -250,6 +251,7 @@ export function openPanel(focusJobId) {
     ? 'width:100vw;max-width:100vw;height:90dvh;max-height:90dvh;border-radius:14px 14px 0 0;background:var(--bg);'
     : 'width:min(640px, 92vw);max-height:85vh;background:var(--bg);';
   pane.innerHTML = _buildPanelHTML();
+  applyTranslations(pane);
 
   overlay.appendChild(pane);
   document.body.appendChild(overlay);
@@ -328,7 +330,7 @@ function _buildPanelHTML() {
     `<option value="${p}">${p || 'Default'}</option>`
   ).join('');
 
-  let roundOpts = '<option value="0" selected>Auto</option>';
+  let roundOpts = '<option value="0" selected data-i18n="research.panel.roundsAuto">Auto</option>';
   for (let i = 1; i <= 20; i++) {
     roundOpts += `<option value="${i}">${i}</option>`;
   }
@@ -338,54 +340,54 @@ function _buildPanelHTML() {
 
   return `
     <div class="modal-header research-pane-header">
-      <h4><span style="position:relative;top:-1px;left:6px;display:inline-flex;vertical-align:middle;">${_searchIcon}</span><span style="margin-left:6px;">Deep Research</span></h4>
+      <h4><span style="position:relative;top:-1px;left:6px;display:inline-flex;vertical-align:middle;">${_searchIcon}</span><span style="margin-left:6px;" data-i18n="research.panel.header">Deep Research</span></h4>
       <div class="research-pane-header-actions">
-        <button id="research-panel-minimize" class="modal-minimize-btn" type="button" title="Minimize"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="18" x2="19" y2="18"/></svg></button>
-        <button id="research-panel-close" class="close-btn" title="Close">&#x2716;</button>
+        <button id="research-panel-minimize" class="modal-minimize-btn" type="button" data-i18n-title="research.panel.minimizeTitle" title="Minimize"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="18" x2="19" y2="18"/></svg></button>
+        <button id="research-panel-close" class="close-btn" data-i18n-title="research.panel.closeTitle" title="Close">&#x2716;</button>
       </div>
     </div>
     <div class="modal-body research-pane-body" data-no-swipe-dismiss>
       <div class="research-new-job">
         <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
-          <h2 style="margin:0;padding:0;line-height:1;">Research <span id="research-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+          <h2 style="margin:0;padding:0;line-height:1;"><span data-i18n="research.panel.title">Research</span> <span id="research-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
         </div>
         <p class="memory-desc doclib-desc" style="margin-top:6px;display:flex;align-items:center;gap:6px;">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.8;"><path d="M6 18h8"/><path d="M3 22h18"/><path d="M14 22a7 7 0 1 0 0-14h-1"/><path d="M9 14h2"/><path d="M9 12a2 2 0 0 1-2-2V6h4v4a2 2 0 0 1-2 2Z"/><path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3"/></svg>
-          <span>Multi-step web research with an LLM-in-the-loop agent</span>
+          <span data-i18n="research.panel.desc">Multi-step web research with an LLM-in-the-loop agent</span>
         </p>
-        <div id="research-no-past-hint" class="memory-desc doclib-desc" style="display:none;margin-top:-2px;font-size:11px;opacity:0.7;">All past research found in <button type="button" class="research-library-link">Library, Research</button></div>
-        <textarea id="research-query" class="research-query" placeholder="e.g. Trace Odysseus's ten-year journey home from Troy — every island, monster, and detour, and why each one cost him" rows="4"></textarea>
+        <div id="research-no-past-hint" class="memory-desc doclib-desc" style="display:none;margin-top:-2px;font-size:11px;opacity:0.7;"><span data-i18n="research.panel.noPastPrefix">All past research found in</span> <button type="button" class="research-library-link" data-i18n="research.panel.libraryLink">Library, Research</button></div>
+        <textarea id="research-query" class="research-query" data-i18n-placeholder="research.panel.queryPlaceholder" placeholder="e.g. Trace Odysseus's ten-year journey home from Troy — every island, monster, and detour, and why each one cost him" rows="4"></textarea>
         <div class="research-category-row" id="research-category-row">
-          <button class="research-cat active" data-cat="" title="LLM auto-detects the best format">Auto</button>
-          <button class="research-cat" data-cat="product">Product</button>
-          <button class="research-cat" data-cat="comparison">Compare</button>
-          <button class="research-cat" data-cat="howto">How-to</button>
-          <button class="research-cat" data-cat="factcheck">Fact-check</button>
+          <button class="research-cat active" data-cat="" data-i18n-title="research.panel.cat.autoTitle" title="LLM auto-detects the best format"><span data-i18n="research.panel.cat.auto">Auto</span></button>
+          <button class="research-cat" data-cat="product" data-i18n="research.panel.cat.product">Product</button>
+          <button class="research-cat" data-cat="comparison" data-i18n="research.panel.cat.comparison">Compare</button>
+          <button class="research-cat" data-cat="howto" data-i18n="research.panel.cat.howto">How-to</button>
+          <button class="research-cat" data-cat="factcheck" data-i18n="research.panel.cat.factcheck">Fact-check</button>
         </div>
         <button id="research-settings-toggle" class="research-settings-toggle${chevronCls}">
-          Settings<span class="research-settings-chevron">${_chevronIcon}</span>
+          <span data-i18n="research.panel.settings">Settings</span><span class="research-settings-chevron">${_chevronIcon}</span>
         </button>
         <div id="research-settings-body" class="research-settings-row"${settingsHidden}>
           <label class="research-setting">
-            <span class="research-setting-label">Rounds</span>
+            <span class="research-setting-label" data-i18n="research.panel.rounds">Rounds</span>
             <select id="research-rounds">${roundOpts}</select>
           </label>
           <label class="research-setting">
-            <span class="research-setting-label">Search engine</span>
+            <span class="research-setting-label" data-i18n="research.panel.searchEngine">Search engine</span>
             <select id="research-search-provider">${providerOpts}</select>
           </label>
           <label class="research-setting">
-            <span class="research-setting-label">Endpoint</span>
-            <select id="research-endpoint"><option value="">Default</option></select>
+            <span class="research-setting-label" data-i18n="research.panel.endpoint">Endpoint</span>
+            <select id="research-endpoint"><option value="" data-i18n="research.panel.default">Default</option></select>
           </label>
           <label class="research-setting">
-            <span class="research-setting-label">Model</span>
-            <select id="research-model"><option value="">Default</option></select>
+            <span class="research-setting-label" data-i18n="research.panel.model">Model</span>
+            <select id="research-model"><option value="" data-i18n="research.panel.default">Default</option></select>
           </label>
         </div>
         <div class="research-controls-row">
-          <button id="research-add-btn" class="research-add-btn"><span class="research-add-plus">+</span> Queue</button>
-          <button id="research-start-btn" class="research-start-btn">${_playIcon} Start</button>
+          <button id="research-add-btn" class="research-add-btn"><span class="research-add-plus">+</span> <span data-i18n="research.panel.queue">Queue</span></button>
+          <button id="research-start-btn" class="research-start-btn">${_playIcon} <span data-i18n="research.panel.start">Start</span></button>
         </div>
       </div>
       <div id="research-jobs-list" class="research-jobs-list" data-no-swipe-dismiss></div>
@@ -790,7 +792,7 @@ function _renderJobs() {
     if (key === 'past') {
       const hint = document.createElement('div');
       hint.className = 'memory-desc doclib-desc research-library-hint';
-      hint.innerHTML = 'All past research found in <button type="button" class="research-library-link">Library, Research</button>';
+      hint.innerHTML = `<span data-i18n="research.panel.noPastPrefix">${t('research.panel.noPastPrefix')}</span> <button type="button" class="research-library-link" data-i18n="research.panel.libraryLink">${t('research.panel.libraryLink')}</button>`;
       hint.querySelector('.research-library-link').addEventListener('click', (e) => {
         e.stopPropagation();
         // Close the research panel first so the Library opens ABOVE it on mobile
@@ -1023,7 +1025,7 @@ function _buildJobCard(job) {
     card.querySelector('[data-action="delete"]').addEventListener('click', async (e) => {
       e.stopPropagation();
       if (window.styledConfirm) {
-        const ok = await window.styledConfirm('Delete this research? This permanently removes it from disk.', { confirmText: 'Delete', danger: true });
+        const ok = await window.styledConfirm(t('research.confirm.deletePermanently'), { confirmText: t('common.delete'), danger: true });
         if (!ok) return;
       }
       try { await fetch(`${_apiBase}/api/research/${job.id}`, { method: 'DELETE', credentials: 'same-origin' }); } catch {}

@@ -17,6 +17,7 @@
  */
 import { state } from '../state.js';
 import { canvasCoords } from '../canvas-coords.js';
+import { t } from '../../i18n.js';
 
 export function createCloneTool({ activeLayer, saveState, strokeTo, showToast }) {
   return {
@@ -50,7 +51,7 @@ export function createCloneTool({ activeLayer, saveState, strokeTo, showToast })
         state.cloneSourceY = coords.y;
         state.cloneSourceLayerId = (layer && layer.id) || state.activeLayerId;
         state.cloneSourceSnapshot = null; // captured at first stroke
-        showToast('Clone source set');
+        showToast(t('editor.clone.toast.sourceSet'));
         return;
       }
       if (state.cloneSourceX === null || state.cloneSourceY === null) {

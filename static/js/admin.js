@@ -5,6 +5,7 @@ import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { providerLogo } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
+import { t } from './i18n.js';
 
 let initialized = false;
 let modalEl = null;
@@ -1197,7 +1198,17 @@ async function loadBuiltinTools() {
       groups[cat].push({ ...t, ...meta });
     }
 
-    // Category order
+    const TOOL_CAT_KEYS = {
+      Code: 'admin.tools.category.code',
+      Search: 'admin.tools.category.search',
+      Documents: 'admin.tools.category.documents',
+      Media: 'admin.tools.category.media',
+      Knowledge: 'admin.tools.category.knowledge',
+      'Multi-Agent': 'admin.tools.category.multiAgent',
+      Sessions: 'admin.tools.category.sessions',
+      System: 'admin.tools.category.system',
+      Other: 'admin.tools.category.other',
+    };
     const catOrder = ['Code', 'Search', 'Documents', 'Media', 'Knowledge', 'Multi-Agent', 'Sessions', 'System', 'Other'];
     let html = '';
     for (const cat of catOrder) {
@@ -1209,7 +1220,7 @@ async function loadBuiltinTools() {
       const allEnabled = enabledCount === totalCount;
       html += `<div class="admin-tool-category">
         <div class="admin-tool-cat-header" data-tool-cat="${catId}" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
-          <span>${esc(cat)}</span>
+          <span>${esc(t(TOOL_CAT_KEYS[cat] || cat))}</span>
           <span style="display:flex;align-items:center;gap:6px;" class="admin-tool-cat-right">
             <span class="admin-tool-cat-count" style="font-size:10px;opacity:0.5;">${enabledCount}/${totalCount}</span>
             <label class="admin-switch" style="flex-shrink:0;">
@@ -1220,16 +1231,20 @@ async function loadBuiltinTools() {
           </span>
         </div>
         <div class="admin-tool-cat-body hidden" id="${catId}">`;
-      for (const t of items) {
+      for (const tool of items) {
+        const nameKey = `admin.tool.${tool.id}.name`;
+        const descKey = `admin.tool.${tool.id}.desc`;
+        const toolName = t(nameKey) !== nameKey ? t(nameKey) : tool.name;
+        const toolDesc = t(descKey) !== descKey ? t(descKey) : tool.desc;
         html += `
         <div class="admin-tool-row">
           <div class="admin-tool-info">
-            <span class="admin-tool-name">${esc(t.name)}</span>
-            <span class="admin-tool-desc">${esc(t.desc)}</span>
+            <span class="admin-tool-name">${esc(toolName)}</span>
+            <span class="admin-tool-desc">${esc(toolDesc)}</span>
           </div>
-          <span class="admin-tool-ctx" title="Approximate context tokens used">${esc(t.ctx)}</span>
+          <span class="admin-tool-ctx" title="Approximate context tokens used">${esc(tool.ctx)}</span>
           <label class="admin-switch" style="flex-shrink:0;">
-            <input type="checkbox" data-tool-id="${esc(t.id)}" ${t.enabled ? 'checked' : ''}>
+            <input type="checkbox" data-tool-id="${esc(tool.id)}" ${tool.enabled ? 'checked' : ''}>
             <span class="admin-slider"></span>
           </label>
         </div>`;
@@ -1959,10 +1974,10 @@ function initBackup() {
   el('adm-exportDataBtn').addEventListener('click', async () => {
     const btn = el('adm-exportDataBtn');
     const msg = el('adm-backupMsg');
-    btn.disabled = true; btn.textContent = 'Exporting...'; msg.textContent = '';
+    btn.disabled = true; btn.textContent = t('settings.system.backup.exporting'); msg.textContent = '';
     try {
       const res = await fetch('/api/export', { credentials: 'same-origin' });
-      if (!res.ok) throw new Error('Export failed');
+      if (!res.ok) throw new Error(t('settings.system.backup.exportFailed'));
       const blob = await res.blob();
       const disposition = res.headers.get('Content-Disposition') || '';
       const match = disposition.match(/filename=(.+)/);
@@ -1972,9 +1987,9 @@ function initBackup() {
       a.download = filename;
       a.click();
       URL.revokeObjectURL(a.href);
-      msg.textContent = 'Export downloaded.'; msg.className = 'admin-success';
-    } catch (e) { msg.textContent = 'Export failed: ' + e.message; msg.className = 'admin-error'; }
-    btn.disabled = false; btn.textContent = 'Export Data';
+      msg.textContent = t('toast.exported'); msg.className = 'admin-success';
+    } catch (e) { msg.textContent = t('settings.system.backup.exportFailedWithReason', { reason: e.message }); msg.className = 'admin-error'; }
+    btn.disabled = false; btn.textContent = t('settings.system.backup.export');
   });
 
   const fileInput = el('adm-importFile');
@@ -1984,7 +1999,7 @@ function initBackup() {
     if (!file) return;
     const msg = el('adm-backupMsg');
     const btn = el('adm-importDataBtn');
-    btn.disabled = true; btn.textContent = 'Importing...'; msg.textContent = '';
+    btn.disabled = true; btn.textContent = t('settings.system.backup.importing'); msg.textContent = '';
     try {
       const text = await file.text();
       const data = JSON.parse(text);
@@ -1995,12 +2010,12 @@ function initBackup() {
       });
       const result = await res.json();
       if (res.ok && result.ok) {
-        msg.textContent = result.message || 'Import successful.'; msg.className = 'admin-success';
+        msg.textContent = result.message || t('toast.imported'); msg.className = 'admin-success';
       } else {
-        msg.textContent = result.message || result.detail || 'Import failed'; msg.className = 'admin-error';
+        msg.textContent = result.message || result.detail || t('settings.system.backup.importFailed'); msg.className = 'admin-error';
       }
-    } catch (e) { msg.textContent = 'Import failed: ' + e.message; msg.className = 'admin-error'; }
-    btn.disabled = false; btn.textContent = 'Import Data';
+    } catch (e) { msg.textContent = t('settings.system.backup.importFailedWithReason', { reason: e.message }); msg.className = 'admin-error'; }
+    btn.disabled = false; btn.textContent = t('settings.system.backup.import');
   });
 }
 
@@ -2019,20 +2034,20 @@ function initDangerZone() {
     btn.addEventListener('click', async () => {
       const kind = btn.dataset.wipeKind;
       const label = _LABELS[kind] || kind;
-      if (!await uiModule.styledConfirm(`Wipe ALL ${label}? This cannot be undone.`, { confirmText: 'Wipe', danger: true })) return;
-      if (!await uiModule.styledConfirm(`Really wipe every one of your ${label}?`, { confirmText: 'Yes, wipe everything', danger: true })) return;
-      btn.disabled = true; const prev = btn.textContent; btn.textContent = 'Wiping…';
+      if (!await uiModule.styledConfirm(t('settings.system.danger.confirmWipeAll', { label }), { confirmText: t('settings.system.danger.wipeBtn'), danger: true })) return;
+      if (!await uiModule.styledConfirm(t('settings.system.danger.confirmWipeAllAgain', { label }), { confirmText: t('settings.system.danger.confirmWipeEverything'), danger: true })) return;
+      btn.disabled = true; const prev = btn.textContent; btn.textContent = t('settings.system.danger.wiping');
       if (_wipeMsg) { _wipeMsg.textContent = ''; _wipeMsg.className = ''; }
       try {
         const res = await fetch(`/api/admin/wipe/${kind}`, { method: 'DELETE', credentials: 'same-origin' });
         const data = await res.json().catch(() => ({}));
         if (res.ok) {
-          if (_wipeMsg) { _wipeMsg.textContent = `Wiped ${data.count ?? 0} ${label}.`; _wipeMsg.className = 'admin-success'; }
+          if (_wipeMsg) { _wipeMsg.textContent = t('settings.system.danger.wipedCount', { count: data.count ?? 0, label }); _wipeMsg.className = 'admin-success'; }
         } else {
-          if (_wipeMsg) { _wipeMsg.textContent = data.detail || 'Failed'; _wipeMsg.className = 'admin-error'; }
+          if (_wipeMsg) { _wipeMsg.textContent = data.detail || t('common.error'); _wipeMsg.className = 'admin-error'; }
         }
       } catch (e) {
-        if (_wipeMsg) { _wipeMsg.textContent = 'Request failed: ' + e.message; _wipeMsg.className = 'admin-error'; }
+        if (_wipeMsg) { _wipeMsg.textContent = t('settings.system.danger.requestFailed', { reason: e.message }); _wipeMsg.className = 'admin-error'; }
       }
       btn.disabled = false; btn.textContent = prev;
     });

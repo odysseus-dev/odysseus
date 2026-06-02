@@ -9,6 +9,7 @@ import { providerLogo } from './providers.js';
 import { PROMPT_TEMPLATES, getAllPresets } from './presets.js';
 import { sortModelObjects } from './modelSort.js';
 import Storage from './storage.js';
+import { t } from './i18n.js';
 
 let API_BASE = '';
 let _active = false;
@@ -90,19 +91,19 @@ function _initGroupTab() {
     const charSel = document.createElement('select');
     charSel.className = 'preset-input';
     charSel.style.cssText = 'font-size:11px;flex:1;height:26px;';
-    charSel.innerHTML = '<option value="">Empty...</option>' +
+    charSel.innerHTML = `<option value="">${t('group.option.empty')}</option>` +
       characters.map(c => '<option value="' + c.id + '">' + uiModule.esc(c.name) + '</option>').join('');
 
     const modelSel = document.createElement('select');
     modelSel.className = 'preset-input';
     modelSel.style.cssText = 'font-size:11px;flex:1;height:26px;';
-    modelSel.innerHTML = '<option value="">Model…</option>' +
+    modelSel.innerHTML = `<option value="">${t('group.option.model')}</option>` +
       models.map(m => '<option value="' + m.mid + '">' + uiModule.esc(m.display) + '</option>').join('');
 
     // Auto-add when model is selected
     modelSel.addEventListener('change', () => {
       if (!modelSel.value) return;
-      if (_groupParticipants.length >= 8) { uiModule.showToast('Max 8'); return; }
+      if (_groupParticipants.length >= 8) { uiModule.showToast(t('group.toast.maxParticipants')); return; }
       const entry = { character: null, model: null };
       entry.model = models.find(m => m.mid === modelSel.value) || null;
       if (charSel.value) entry.character = characters.find(c => c.id === charSel.value) || null;
@@ -149,7 +150,7 @@ function _initGroupTab() {
       return m;
     }).filter(Boolean);
 
-    if (picked.length < 2) { uiModule.showToast('Need at least 2 participants — add models or characters'); return; }
+    if (picked.length < 2) { uiModule.showToast(t('group.toast.needAtLeastTwo')); return; }
 
     const modal = document.getElementById('custom-preset-modal');
     if (modal) modal.classList.add('hidden');
@@ -192,13 +193,13 @@ function _initGroupTab() {
       } catch (e) {}
     }
 
-    uiModule.showToast('Group chat ready — ' + picked.length + ' participants');
+    uiModule.showToast(t('group.toast.readyCount', { count: picked.length }));
   });
 
   const groupTab = document.querySelector('.preset-tab[data-chartab="group"]');
-  if (groupTab) groupTab.addEventListener('click', () => {
+    if (groupTab) groupTab.addEventListener('click', () => {
     _modelsCache = null;
-    if (startBtn) startBtn.textContent = 'Start Group';
+    if (startBtn) startBtn.textContent = t('group.action.startGroup');
     _loadGroupPresets();
     if (_groupParticipants.length === 0) {
       setTimeout(() => addBtn.click(), 100);
@@ -260,7 +261,10 @@ function _initGroupTab() {
         // Long-press / right-click to delete
         chip.addEventListener('contextmenu', async (e) => {
           e.preventDefault();
-          if (await window.styledConfirm('Delete preset "' + (g.name || 'Group') + '"?', { confirmText: 'Delete', danger: true })) {
+          if (await window.styledConfirm(
+            t('group.confirm.deletePreset', { name: g.name || t('group.word.group') }),
+            { confirmText: t('common.delete'), danger: true }
+          )) {
             groups.splice(idx, 1);
             fetch(API_BASE + '/api/presets/groups', {
               method: 'POST', credentials: 'same-origin',
@@ -277,7 +281,7 @@ function _initGroupTab() {
   document.querySelectorAll('.preset-tab[data-chartab]').forEach(tab => {
     if (tab.dataset.chartab !== 'group') {
       tab.addEventListener('click', () => {
-        if (startBtn) startBtn.textContent = 'Start';
+        if (startBtn) startBtn.textContent = t('common.start');
       });
     }
   });
@@ -332,7 +336,7 @@ export async function showModelPicker() {
     // Header
     const header = document.createElement('div');
     header.className = 'modal-header';
-    header.innerHTML = '<h4>Group Chat — Select Models</h4>';
+    header.innerHTML = `<h4>${t('group.modal.selectModelsTitle')}</h4>`;
     const closeBtn = document.createElement('button');
     closeBtn.className = 'close-btn';
     closeBtn.innerHTML = '&#x2716;';
@@ -348,10 +352,10 @@ export async function showModelPicker() {
     modeRow.style.cssText = 'display:flex;gap:8px;margin-bottom:10px;align-items:center;font-size:12px;';
     modeRow.innerHTML = `
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
-        <input type="radio" name="group-mode" value="parallel" ${_mode === 'parallel' ? 'checked' : ''}> All respond
+        <input type="radio" name="group-mode" value="parallel" ${_mode === 'parallel' ? 'checked' : ''}> ${t('group.mode.allRespond')}
       </label>
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
-        <input type="radio" name="group-mode" value="round-robin" ${_mode === 'round-robin' ? 'checked' : ''}> Round-robin
+        <input type="radio" name="group-mode" value="round-robin" ${_mode === 'round-robin' ? 'checked' : ''}> ${t('group.mode.roundRobin')}
       </label>
     `;
     body.appendChild(modeRow);
@@ -359,7 +363,7 @@ export async function showModelPicker() {
     // Search
     const search = document.createElement('input');
     search.type = 'text';
-    search.placeholder = 'Filter models…';
+    search.placeholder = t('group.search.filterModels');
     search.className = 'memory-search-input';
     search.style.marginBottom = '8px';
     body.appendChild(search);
@@ -373,8 +377,8 @@ export async function showModelPicker() {
     const footer = document.createElement('div');
     footer.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-top:10px;';
     footer.innerHTML = `
-      <span id="group-selected-count" style="font-size:11px;opacity:0.5;">0 selected</span>
-      <button id="group-start-btn" class="btn-primary" disabled style="padding:6px 16px;font-size:12px;">Start Group Chat</button>
+      <span id="group-selected-count" style="font-size:11px;opacity:0.5;">${t('group.count.selected', { count: 0 })}</span>
+      <button id="group-start-btn" class="btn-primary" disabled style="padding:6px 16px;font-size:12px;">${t('group.action.startGroupChat')}</button>
     `;
     body.appendChild(footer);
 
@@ -414,7 +418,7 @@ export async function showModelPicker() {
     }
 
     async function render(filter) {
-      list.innerHTML = '<div style="opacity:0.4;padding:8px;font-size:12px;">Loading models…</div>';
+      list.innerHTML = `<div style="opacity:0.4;padding:8px;font-size:12px;">${t('group.loading.models')}</div>`;
       const all = await getAllModels();
       const q = (filter || '').toLowerCase();
       all.forEach(m => {
@@ -437,12 +441,12 @@ export async function showModelPicker() {
         });
         row.querySelector('input').addEventListener('change', (e) => {
           if (e.target.checked) {
-            if (selected.size >= 8) { e.target.checked = false; uiModule.showToast('Max 8 models'); return; }
+            if (selected.size >= 8) { e.target.checked = false; uiModule.showToast(t('group.toast.maxModels')); return; }
             selected.add(m.mid);
           } else {
             selected.delete(m.mid);
           }
-          document.getElementById('group-selected-count').textContent = selected.size + ' selected';
+          document.getElementById('group-selected-count').textContent = t('group.count.selected', { count: selected.size });
           document.getElementById('group-start-btn').disabled = selected.size < 2;
           row.style.background = selected.has(m.mid) ? 'color-mix(in srgb, var(--accent, var(--red)) 12%, transparent)' : '';
         });
@@ -467,7 +471,7 @@ export async function showModelPicker() {
       body.innerHTML = '';
       const stepTitle = document.createElement('div');
       stepTitle.style.cssText = 'font-size:12px;opacity:0.5;margin-bottom:8px;';
-      stepTitle.textContent = 'Assign characters (optional)';
+      stepTitle.textContent = t('group.step.assignCharactersOptional');
       body.appendChild(stepTitle);
 
       // Build character options
@@ -484,7 +488,7 @@ export async function showModelPicker() {
         `;
         const sel = document.createElement('select');
         sel.style.cssText = 'font-size:11px;padding:3px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--fg);max-width:140px;';
-        let optsHtml = '<option value="">No character</option>';
+        let optsHtml = `<option value="">${t('group.option.noCharacter')}</option>`;
         characters.forEach(c => {
           optsHtml += `<option value="${c.id}">${uiModule.esc(c.name)}</option>`;
         });
@@ -505,7 +509,7 @@ export async function showModelPicker() {
       const goBtn = document.createElement('button');
       goBtn.className = 'btn-primary';
       goBtn.style.cssText = 'margin-top:10px;padding:6px 16px;font-size:12px;width:100%;';
-      goBtn.textContent = 'Start Group Chat';
+      goBtn.textContent = t('group.action.startGroupChat');
       goBtn.addEventListener('click', () => {
         // Attach character info to picked models
         picked.forEach(m => {
@@ -776,7 +780,7 @@ async function _syncAllResponses(holders) {
 
 async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
   if (!sessionId) {
-    holderEl.querySelector('.body').innerHTML = '<i style="opacity:0.5;">[Session creation failed]</i>';
+    holderEl.querySelector('.body').innerHTML = `<i style="opacity:0.5;">[${t('group.error.sessionCreationFailed')}]</i>`;
     return;
   }
 
@@ -888,7 +892,7 @@ async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
     if (markdownModule.renderMermaid) markdownModule.renderMermaid(holderEl);
     holderEl.appendChild(chatRenderer.createMsgFooter(holderEl));
   } else if (!bodyEl.querySelector('.agent-tool-event') && !bodyEl.querySelector('img')) {
-    bodyEl.innerHTML = '<i style="opacity:0.5;">[No response]</i>';
+    bodyEl.innerHTML = `<i style="opacity:0.5;">[${t('group.empty.noResponse')}]</i>`;
   }
 
   holderEl.dataset.raw = accumulated;

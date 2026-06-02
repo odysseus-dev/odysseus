@@ -37,6 +37,8 @@
  */
 import { state } from './state.js';
 
+import { t } from '../i18n.js';
+
 export function wireTopbarMenus({
   closeOtherTopbarMenus, registerDocClickAway,
   saveState, composite, fitZoom,
@@ -50,7 +52,7 @@ export function wireTopbarMenus({
   // can call it.
   function applyResize(newW, newH) {
     if (!newW || !newH || newW < 1 || newH < 1) {
-      uiModule.showToast('Invalid size');
+      uiModule.showToast(t('editor.toast.invalidSize'));
       return;
     }
     saveState('Resize canvas');
@@ -74,7 +76,7 @@ export function wireTopbarMenus({
     if (sizeLabel) sizeLabel.textContent = `${newW}×${newH}`;
     fitZoom();
     composite();
-    uiModule.showToast(`Canvas resized to ${newW}×${newH}`);
+    uiModule.showToast(t('editor.topbarMenus.toast.canvasResized', { width: newW, height: newH }));
   }
 
   async function resizeCustomPrompt() {

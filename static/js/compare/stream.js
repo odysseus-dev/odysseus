@@ -6,6 +6,7 @@ import markdownModule from '../markdown.js';
 import spinnerModule from '../spinner.js';
 import uiModule from '../ui.js';
 import presetsModule from '../presets.js';
+import { t } from '../i18n.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -481,7 +482,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
         else { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
         copyBtn.textContent = '\u2713';
         setTimeout(() => { copyBtn.textContent = '\u2398'; }, 1500);
-        if (uiModule) uiModule.showToast('Prompt copied!');
+        if (uiModule) uiModule.showToast(t('compare.stream.toast.promptCopied'));
       });
       actions.appendChild(copyBtn);
 

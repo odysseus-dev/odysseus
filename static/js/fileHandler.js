@@ -6,6 +6,7 @@
 
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
+import { t } from './i18n.js';
 
 let pendingFiles = [];
 let uploaded = [];
@@ -91,7 +92,7 @@ export function renderAttachStrip() {
     const x = document.createElement('button');
     x.className = 'thumb-collapsed-x';
     x.textContent = '\u00d7';
-    x.title = 'Remove all';
+    x.title = t('file.title.removeAll');
     x.addEventListener('click', (e) => { e.stopPropagation(); clearPending(); });
     badge.appendChild(x);
     strip.appendChild(badge);
@@ -122,7 +123,7 @@ function _createChip(f, idx) {
   }
   const x = document.createElement('button');
   x.textContent = '\u00d7';
-  x.setAttribute('aria-label', 'Remove attachment');
+  x.setAttribute('aria-label', t('file.aria.removeAttachment'));
   x.addEventListener('click', (e) => { e.stopPropagation(); removePending(idx); });
   chip.appendChild(x);
   return chip;
@@ -180,7 +181,7 @@ export async function uploadPending() {
       // pendingFiles so the strip re-renders for a retry (see finally below).
       let detail = '';
       try { const e = await res.json(); detail = e.detail || e.error || ''; } catch (_) {}
-      _showToast('Upload failed' + (detail ? ': ' + detail : ` (HTTP ${res.status})`));
+      _showToast(t('file.toast.uploadFailed', { detail: detail ? `: ${detail}` : ` (HTTP ${res.status})` }));
       return [];
     }
     const data = await res.json();
@@ -209,7 +210,7 @@ const MAX_FILES = 10;
 export function addFiles(files) {
   for (const f of files) {
     if (pendingFiles.length >= MAX_FILES) {
-      _showToast(`Max ${MAX_FILES} files allowed`);
+      _showToast(t('file.toast.maxFilesAllowed', { count: MAX_FILES }));
       break;
     }
     pendingFiles.push(f);

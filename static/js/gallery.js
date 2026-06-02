@@ -6,6 +6,7 @@ import uiModule from './ui.js';
 import { openEditor, closeEditor, isEditorOpen } from './galleryEditor.js';
 import spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import { t, applyTranslations } from './i18n.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -335,7 +336,7 @@ async function _handleGalleryDrop(e) {
   if (looksLikeFolderUri) {
     uiModule.showError('Browsers can’t read folders dropped from native file managers (Thunar/Nautilus). Use the "Upload album" tile in the Albums tab instead.');
   } else if (entries.length || dtItems.length) {
-    uiModule.showToast('No images found in that drop');
+    uiModule.showToast(t('gallery.toast.noImagesFoundInDrop'));
   }
 }
 
@@ -377,7 +378,7 @@ function _renderAlbums() {
     // Order: All, then the heart, then any active tag chips (to the right of
     // both), then the active-album chip. No favorites-within-an-album view, so
     // the heart is hidden while an album is active.
-    let fhtml = `<button class="gallery-chip${!_activeAlbum && !_favoritesOnly ? ' active' : ''}" data-album="">All</button>`;
+    let fhtml = `<button class="gallery-chip${!_activeAlbum && !_favoritesOnly ? ' active' : ''}" data-album="">${t('gallery.chip.all')}</button>`;
     if (!_activeAlbum) {
       fhtml += `<button class="gallery-chip gallery-chip-fav${_favoritesOnly ? ' active' : ''}" data-fav="true" title="Favorites">&#9829;</button>`;
     }
@@ -448,7 +449,7 @@ function _ensureAlbumsToolbar(container) {
   container.innerHTML = `
     <div class="gallery-toolbar" id="gallery-albums-toolbar">
       <div class="gallery-search-wrap">
-        <input type="text" class="gallery-search" id="gallery-albums-search" placeholder="Search albums..." />
+        <input type="text" class="gallery-search" id="gallery-albums-search" data-i18n-placeholder="gallery.albums.searchPlaceholder" placeholder="Search albums..." />
       </div>
       <button class="gallery-select-btn gallery-toolbar-action" id="gallery-albums-select-btn" title="Select for bulk actions" style="position:relative;top:2px;"><span style="position:relative;top:1px;">Select</span></button>
     </div>
@@ -489,7 +490,7 @@ function _ensureAlbumsToolbar(container) {
   });
   container.querySelector('#gallery-albums-bulk-delete').addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!_albumSelected.size) { uiModule.showToast('Select albums first'); return; }
+    if (!_albumSelected.size) { uiModule.showToast(t('gallery.toast.selectAlbumsFirst')); return; }
     _bulkDeleteAlbums([..._albumSelected]);
   });
 }
@@ -527,14 +528,14 @@ function _renderAlbumsGrid() {
   if (!_albums.length) {
     wrap.innerHTML = `
       <div class="gallery-albums-empty">
-        <p>No albums yet.</p>
-        <button class="gallery-select-btn" id="gallery-albums-new">+ New album</button>
+        <p data-i18n="gallery.albums.empty">No albums yet.</p>
+        <button class="gallery-select-btn" id="gallery-albums-new" data-i18n="gallery.albums.new">+ New album</button>
       </div>`;
     _wireAlbumsEvents(wrap);
     return;
   }
   if (!albums.length) {
-    wrap.innerHTML = `<div class="gallery-albums-empty"><p>No albums match "${_esc(_albumSearch)}".</p></div>`;
+    wrap.innerHTML = `<div class="gallery-albums-empty"><p>${t('gallery.albums.emptySearch', { query: _esc(_albumSearch) })}</p></div>`;
     return;
   }
 
@@ -695,7 +696,7 @@ function _wireAlbumsEvents(scope) {
       e.stopPropagation();
       pop.hidden = true;
       const album = _albums.find(a => a.id === id);
-      const newName = prompt('Rename album:', album?.name || '');
+      const newName = prompt(t('gallery.prompt.renameAlbum'), album?.name || '');
       if (!newName || !newName.trim() || newName.trim() === album?.name) return;
       const r = await fetch(`${API_BASE}/api/gallery/albums/${id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -704,7 +705,7 @@ function _wireAlbumsEvents(scope) {
       if (r.ok) {
         await _fetchAlbums();
         _renderAlbumsTab();
-        if (uiModule) uiModule.showToast('Album renamed');
+        if (uiModule) uiModule.showToast(t('gallery.toast.albumRenamed'));
       } else if (uiModule) {
         uiModule.showError('Rename failed');
       }
@@ -714,8 +715,8 @@ function _wireAlbumsEvents(scope) {
       pop.hidden = true;
       const album = _albums.find(a => a.id === id);
       const ok = await uiModule.styledConfirm(
-        `Delete album "${album?.name || ''}"? Photos inside will stay in your library.`,
-        { confirmText: 'Delete', danger: true },
+        t('gallery.confirm.deleteAlbumKeepPhotos', { name: album?.name || '' }),
+        { confirmText: t('common.delete'), danger: true },
       );
       if (!ok) return;
       const r = await fetch(`${API_BASE}/api/gallery/albums/${id}`, {
@@ -726,7 +727,7 @@ function _wireAlbumsEvents(scope) {
         await _fetchAlbums();
         _renderAlbumsTab();
         _renderAlbums();
-        if (uiModule) uiModule.showToast('Album deleted');
+        if (uiModule) uiModule.showToast(t('gallery.toast.albumDeleted'));
       } else if (uiModule) {
         uiModule.showError('Delete failed');
       }
@@ -735,8 +736,8 @@ function _wireAlbumsEvents(scope) {
 
   document.getElementById('gallery-albums-new')?.addEventListener('click', async () => {
     const name = (uiModule.styledPrompt
-      ? await uiModule.styledPrompt('Name your new album.', { title: 'New album', placeholder: 'e.g. Vacation 2026', confirmText: 'Create' })
-      : prompt('Album name:'));
+      ? await uiModule.styledPrompt(t('gallery.prompt.nameNewAlbum'), { title: t('gallery.title.newAlbum'), placeholder: t('gallery.placeholder.albumNameExample'), confirmText: t('gallery.button.create') })
+      : prompt(t('gallery.prompt.albumName')));
     if (!name?.trim()) return;
     await fetch(`${API_BASE}/api/gallery/albums`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -759,7 +760,7 @@ function _wireAlbumsEvents(scope) {
       const images = all.filter(_isMediaFile);
       picker.remove();
       if (!images.length) {
-        if (uiModule) uiModule.showToast('No images or videos in that folder');
+        if (uiModule) uiModule.showToast(t('gallery.toast.noMediaInFolder'));
         return;
       }
       // Derive folder name from the first file's relative path (e.g.
@@ -767,7 +768,7 @@ function _wireAlbumsEvents(scope) {
       const rel = images[0].webkitRelativePath || '';
       let folderName = rel.split('/')[0] || '';
       if (!folderName) {
-        folderName = prompt('Album name for these photos:') || '';
+        folderName = prompt(t('gallery.prompt.albumNameForPhotos')) || '';
         if (!folderName.trim()) return;
       }
       // Reuse an existing album with the same name; otherwise create one.
@@ -799,8 +800,8 @@ function _wireAlbumsEvents(scope) {
 async function _bulkDeleteAlbums(ids) {
   if (!ids.length) return;
   const ok = await uiModule.styledConfirm(
-    `Delete ${ids.length} album${ids.length > 1 ? 's' : ''}? Photos inside will stay in your library.`,
-    { confirmText: 'Delete', danger: true },
+    t('gallery.confirm.deleteAlbumsKeepPhotos', { count: ids.length }),
+    { confirmText: t('common.delete'), danger: true },
   );
   if (!ok) return;
   let failed = 0;
@@ -812,7 +813,7 @@ async function _bulkDeleteAlbums(ids) {
     else if (_activeAlbum === id) _activeAlbum = null;
   }
   if (failed) uiModule.showError(`Failed to delete ${failed} of ${ids.length} albums`);
-  else if (uiModule) uiModule.showToast(`Deleted ${ids.length} album${ids.length > 1 ? 's' : ''}`);
+  else if (uiModule) uiModule.showToast(t('gallery.toast.deletedAlbumsCount', { count: ids.length }));
   _setAlbumSelectMode(false);
   await _fetchAlbums();
   _renderAlbumsTab();
@@ -954,8 +955,8 @@ function _draftsPaint() {
       e.stopPropagation();
       const id = btn.dataset.draftId;
       if (!id) return;
-      const ok = await uiModule.styledConfirm('Delete this project?', {
-        confirmText: 'Delete', cancelText: 'Cancel', danger: true,
+      const ok = await uiModule.styledConfirm(t('gallery.confirm.deleteProject'), {
+        confirmText: t('common.delete'), cancelText: t('common.cancel'), danger: true,
       });
       if (!ok) return;
       // Graceful exit: fade + shrink the card before the grid re-renders.
@@ -1026,8 +1027,8 @@ function _draftsWireOnce() {
   document.getElementById('gallery-editor-drafts-bulk-delete')?.addEventListener('click', async () => {
     if (!_draftsSelected.size) return;
     const n = _draftsSelected.size;
-    const ok = await uiModule.styledConfirm(`Delete ${n} project${n === 1 ? '' : 's'}?`, {
-      confirmText: 'Delete', cancelText: 'Cancel', danger: true,
+    const ok = await uiModule.styledConfirm(t('gallery.confirm.deleteProjectsCount', { count: n }), {
+      confirmText: t('common.delete'), cancelText: t('common.cancel'), danger: true,
     });
     if (!ok) return;
     const ids = [..._draftsSelected];
@@ -1083,16 +1084,16 @@ function _renderEditorLanding() {
   container.innerHTML = `
     <div class="gallery-editor-landing">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.6"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-      <h3>Image Editor <span class="ge-alpha-tag">Alpha</span></h3>
-      <p>Start a blank canvas, or open a photo from your gallery to edit it.</p>
+      <h3>${t('gallery.editor.title')} <span class="ge-alpha-tag">${t('gallery.editor.alpha')}</span></h3>
+      <p>${t('gallery.editor.landingDesc')}</p>
       <div class="gallery-editor-landing-actions">
-        <button class="gallery-select-btn" id="gallery-editor-new">New canvas...</button>
-        <button class="gallery-select-btn" id="gallery-editor-pick">Browse photos</button>
+        <button class="gallery-select-btn" id="gallery-editor-new">${t('gallery.editor.newCanvas')}</button>
+        <button class="gallery-select-btn" id="gallery-editor-pick">${t('gallery.editor.browsePhotos')}</button>
       </div>
       <label class="gallery-editor-template-label">
-        Or pick a template
+        ${t('gallery.editor.orTemplate')}
         <select class="gallery-editor-template-select" id="gallery-editor-template">
-          <option value="">Select a size…</option>
+          <option value="">${t('gallery.editor.templatePlaceholder')}</option>
           ${optionsHtml}
         </select>
       </label>
@@ -1176,12 +1177,12 @@ function _renderGrid() {
     <div class="gallery-card gallery-card-upload" id="gallery-upload-tile" title="Upload photos or videos">
       <div class="gallery-card-upload-inner">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        <div class="gallery-card-upload-label">Upload</div>
+        <div class="gallery-card-upload-label">${t('gallery.upload')}</div>
       </div>
     </div>`;
 
   if (_items.length === 0) {
-    grid.innerHTML = uploadTile + '<div class="gallery-empty">No photos yet. Click Upload or drag-and-drop to get started!</div>';
+    grid.innerHTML = uploadTile + `<div class="gallery-empty">${t('gallery.empty')}</div>`;
     _wireUploadTile();
     if (loadMore) loadMore.style.display = 'none';
     return;
@@ -1558,7 +1559,7 @@ function _openDetail(img) {
       cleanup();
       if (data.ok) {
         img.ai_tags = clearMode ? '' : data.ai_tags;
-        uiModule.showToast(clearMode ? 'AI tags cleared' : 'AI tags added');
+        uiModule.showToast(clearMode ? t('gallery.toast.aiTagsCleared') : t('gallery.toast.aiTagsAdded'));
         _openDetail(img); // re-render detail
       } else {
         uiModule.showError(data.error || (clearMode ? 'Clear failed' : 'AI tagging failed'));
@@ -1721,7 +1722,7 @@ function _openDetail(img) {
         });
       }
       cleanup();
-      uiModule.showToast('Rotated');
+      uiModule.showToast(t('gallery.toast.rotated'));
       _fetchLibrary(false);
     } catch (e) {
       cleanup();
@@ -1742,7 +1743,7 @@ function _openDetail(img) {
         body: JSON.stringify({ cover_id: img.id }),
       });
       if (r.ok) {
-        uiModule.showToast('Album cover updated');
+        uiModule.showToast(t('gallery.toast.albumCoverUpdated'));
         await _fetchAlbums();
       } else {
         uiModule.showError('Failed to set cover');
@@ -1753,7 +1754,7 @@ function _openDetail(img) {
   });
 
   document.getElementById('gallery-delete-btn').addEventListener('click', async () => {
-    if (!await uiModule.styledConfirm('Delete this photo? This cannot be undone.', { confirmText: 'Delete', danger: true })) return;
+    if (!await uiModule.styledConfirm(t('gallery.confirm.deletePhotoCannotUndo'), { confirmText: t('common.delete'), danger: true })) return;
     const ok = await _deleteImage(img.id);
     if (!ok) {
       uiModule.showError('Failed to delete photo');
@@ -1764,7 +1765,7 @@ function _openDetail(img) {
     _total = Math.max(0, _total - 1);
     _renderGrid();
     _renderStats();
-    if (uiModule) uiModule.showToast('Photo deleted');
+    if (uiModule) uiModule.showToast(t('gallery.toast.photoDeleted'));
   });
 
   // Tag input — Enter saves; also strips a leading '#' from each tag so
@@ -1785,7 +1786,7 @@ function _openDetail(img) {
         });
         if (!r.ok) throw new Error('Failed');
         img.prompt = newName;
-        if (uiModule) uiModule.showToast('Renamed');
+        if (uiModule) uiModule.showToast(t('toast.renamed'));
         window.dispatchEvent(new CustomEvent('gallery-refresh'));
       } catch {
         if (uiModule) uiModule.showError('Failed to rename');
@@ -1864,7 +1865,7 @@ function _openDetail(img) {
     const ok = await _patchImage(img.id, { album_id: albumId || '' });
     if (!ok) { uiModule.showError('Failed to update album'); return; }
     img.album_id = albumId || null;
-    uiModule.showToast(albumId ? 'Added to album' : 'Removed from album');
+    uiModule.showToast(albumId ? t('gallery.toast.addedToAlbum') : t('gallery.toast.removedFromAlbum'));
   });
 }
 
@@ -1910,26 +1911,26 @@ export function openGallery() {
   modal.innerHTML = `
     <div class="modal-content gallery-modal-content">
       <div class="modal-header">
-        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>Gallery <span id="gallery-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal;margin-left:8px"></span></h4>
+        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span data-i18n="gallery.title">Gallery</span> <span id="gallery-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal;margin-left:8px"></span></h4>
         <button class="modal-close" id="gallery-close">&times;</button>
       </div>
       <div class="gallery-tabs">
         <button class="gallery-tab active" data-tab="images">
           <span class="gallery-tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></span>
-          <span class="gallery-tab-label">Photos</span>
+          <span class="gallery-tab-label" data-i18n="gallery.tab.photos">Photos</span>
         </button>
         <button class="gallery-tab" data-tab="albums">
           <span class="gallery-tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
-          <span class="gallery-tab-label">Albums</span>
+          <span class="gallery-tab-label" data-i18n="gallery.tab.albums">Albums</span>
         </button>
         <button class="gallery-tab" data-tab="editor" id="gallery-editor-tab">
           <span class="gallery-tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span>
-          <span class="gallery-tab-label">Edit</span>
+          <span class="gallery-tab-label" data-i18n="gallery.tab.edit">Edit</span>
           <span class="gallery-tab-close" id="gallery-editor-tab-close" title="Close edit" aria-label="Close edit">×</span>
         </button>
         <button class="gallery-tab" data-tab="settings">
           <span class="gallery-tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
-          <span class="gallery-tab-label">Settings</span>
+          <span class="gallery-tab-label" data-i18n="gallery.tab.settings">Settings</span>
         </button>
       </div>
       <div class="modal-body">
@@ -1944,24 +1945,24 @@ export function openGallery() {
         <div class="gallery-album-chips gallery-people-chips" id="gallery-people-chips" style="display:none"></div>
         <div class="gallery-toolbar">
           <div class="gallery-search-wrap">
-            <input type="text" class="gallery-search" id="gallery-search" placeholder="Search photos, tags..." />
+            <input type="text" class="gallery-search" id="gallery-search" data-i18n-placeholder="gallery.searchPlaceholder" placeholder="Search photos, tags..." />
             <span class="gallery-search-enter-hint" aria-hidden="true"><svg class="gallery-enter-key" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>to tag</span>
           </div>
           <span class="gallery-toolbar-break" aria-hidden="true"></span>
           <select class="gallery-model-filter" id="gallery-model-filter">
-            <option value="">All sources</option>
+            <option value="" data-i18n="gallery.filter.allSources">All sources</option>
           </select>
           <select class="gallery-sort" id="gallery-sort">
-            <option value="shuffle">Random</option>
-            <option value="recent">Recent</option>
-            <option value="oldest">Oldest</option>
+            <option value="shuffle" data-i18n="gallery.sort.random">Random</option>
+            <option value="recent" data-i18n="gallery.sort.recent">Recent</option>
+            <option value="oldest" data-i18n="gallery.sort.oldest">Oldest</option>
           </select>
-          <button class="gallery-select-btn gallery-toolbar-action" id="gallery-select-btn" title="Select for bulk actions"><span style="position:relative;top:1px;">Select</span></button>
+          <button class="gallery-select-btn gallery-toolbar-action" id="gallery-select-btn" title="Select for bulk actions"><span style="position:relative;top:1px;" data-i18n="gallery.select">Select</span></button>
         </div>
         <div class="gallery-album-chips" id="gallery-filter-chips" style="margin-top:0;"></div>
         <div class="memory-bulk-bar hidden" id="gallery-bulk-bar" style="margin-bottom:4px;">
-          <label class="memory-bulk-check-all" style="position:relative;top:-1px;"><input type="checkbox" id="gallery-bulk-select-all"> All</label>
-          <span id="gallery-bulk-count" style="position:relative;top:-1px;">0 selected</span>
+          <label class="memory-bulk-check-all" style="position:relative;top:-1px;"><input type="checkbox" id="gallery-bulk-select-all"> <span data-i18n="gallery.bulk.all">All</span></label>
+          <span id="gallery-bulk-count" style="position:relative;top:-1px;" data-i18n="gallery.bulk.selected">0 selected</span>
           <button class="memory-toolbar-btn" id="gallery-bulk-actions" style="position:relative;top:-3px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Actions <span style="opacity:0.55;font-size:9px;">▼</span></button>
           <button class="memory-toolbar-btn" id="gallery-bulk-cancel" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-3px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
@@ -1975,7 +1976,7 @@ export function openGallery() {
         <div class="gallery-settings-container" id="gallery-settings-container" style="display:none;">
           <div class="admin-card">
             <h2>AI Tagging <span id="gallery-tag-count" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal;"></span></h2>
-            <p class="memory-desc doclib-desc">Auto-tag photos by content with your <a href="#" id="gallery-vision-link" class="ge-vision-link">vision model</a>. Your own tags are kept.</p>
+            <p class="memory-desc doclib-desc">${t('gallery.desc.prefix')} <a href="#" id="gallery-vision-link" class="ge-vision-link">${t('gallery.desc.visionLink')}</a>${t('gallery.desc.suffix')}</p>
             <div id="gallery-tag-bar" style="display:none;padding:8px 0 0;">
               <div style="background:var(--border);border-radius:4px;overflow:hidden;height:6px;">
                 <div id="gallery-tag-progress" style="height:100%;background:var(--accent, var(--red));width:0%;transition:width 0.2s;"></div>
@@ -1998,6 +1999,7 @@ export function openGallery() {
     </div>
   `;
   document.body.appendChild(modal);
+  applyTranslations(modal);
   Modals.register('gallery-modal', {
     railBtnId: 'rail-gallery',
     sidebarBtnId: 'tool-gallery-btn',
@@ -2015,7 +2017,7 @@ export function openGallery() {
     if (isEditorOpen()) {
       const ok = await uiModule.styledConfirm(
         'Close Gallery and the active edit?',
-        { confirmText: 'Close', danger: true },
+        { confirmText: t('common.close'), danger: true },
       );
       if (!ok) return;
       window.__galleryAllowCloseEditor = true;
@@ -2036,7 +2038,7 @@ export function openGallery() {
       if (isEditorOpen()) {
         const ok = await uiModule.styledConfirm(
           'Close the edit? Any unsaved changes will be lost.',
-          { confirmText: 'Close', danger: true },
+          { confirmText: t('common.close'), danger: true },
         );
         if (!ok) return;
       }
@@ -2244,8 +2246,8 @@ export function openGallery() {
       if (_tagging) {
         _tagCancelRequested = true;
         const _se = document.getElementById('gallery-tag-status');
-        if (_se) _se.textContent = 'Cancelling…';
-        tagAllBtn.textContent = 'Cancelling…';
+        if (_se) _se.textContent = t('gallery.status.cancellingFancy');
+        tagAllBtn.textContent = t('gallery.status.cancellingFancy');
         tagAllBtn.disabled = true;
         return;
       }
@@ -2263,14 +2265,14 @@ export function openGallery() {
         listRes = await r.json();
       } catch (e) { uiModule.showError('Failed to fetch tag queue'); return; }
       if (!listRes.ok || !Array.isArray(listRes.image_ids) || listRes.image_ids.length === 0) {
-        uiModule.showToast(`No untagged photos in ${scope}`);
+        uiModule.showToast(t('gallery.toast.noUntaggedPhotosInScope', { scope }));
         return;
       }
       const total = listRes.image_ids.length;
       const untagged = listRes.total_untagged || total;
       if (!await uiModule.styledConfirm(
-        `Tag ${total} of ${untagged} untagged photo${total > 1 ? 's' : ''} in ${scope}?`,
-        { confirmText: 'Tag All' }
+        t('gallery.confirm.tagBatchInScope', { total, untagged, scope }),
+        { confirmText: t('gallery.button.tagAll') }
       )) return;
 
       const bar = document.getElementById('gallery-tag-bar');
@@ -2284,9 +2286,9 @@ export function openGallery() {
       _tagging = true;
       _tagCancelRequested = false;
       tagAllBtn.classList.add('active', 'gallery-tag-cancelling');
-      tagAllBtn.textContent = 'Cancel';
+      tagAllBtn.textContent = t('common.cancel');
       if (cancelBtn) cancelBtn.style.display = 'none';   // start button covers it now
-      cancelBtn.onclick = () => { _tagCancelRequested = true; statusEl.textContent = 'Cancelling...'; };
+      cancelBtn.onclick = () => { _tagCancelRequested = true; statusEl.textContent = t('gallery.status.cancelling'); };
 
       let done = 0, failed = 0;
       for (const id of listRes.image_ids) {
@@ -2314,7 +2316,7 @@ export function openGallery() {
       if (cancelBtn) cancelBtn.style.display = '';
       setTimeout(() => { bar.style.display = 'none'; }, 3000);
       await _fetchLibrary(false);
-      if (uiModule) uiModule.showToast(`Tagged ${done - failed} photo${(done - failed) !== 1 ? 's' : ''}`);
+      if (uiModule) uiModule.showToast(t('gallery.toast.taggedPhotosCount', { count: done - failed }));
     });
   }
 
@@ -2342,8 +2344,8 @@ export function openGallery() {
       if (clearAiTagsBtn.disabled) return;
       if (moreMenu) { moreMenu.hidden = true; moreMenu.style.display = 'none'; }
       if (!await uiModule.styledConfirm(
-        'Remove all AI-generated tags from every photo? Your own tags are kept.',
-        { confirmText: 'Clear AI Tags', danger: true }
+        t('gallery.confirm.clearAllAiTagsKeepOwn'),
+        { confirmText: t('gallery.button.clearAiTags'), danger: true }
       )) return;
       clearAiTagsBtn.disabled = true;
       try {
@@ -2352,7 +2354,7 @@ export function openGallery() {
         });
         const d = await r.json();
         if (!d.ok) throw new Error(d.error || 'Clear failed');
-        uiModule.showToast(`Cleared AI tags on ${d.cleared} photo${d.cleared === 1 ? '' : 's'}`);
+        uiModule.showToast(t('gallery.toast.clearedAiTagsCount', { count: d.cleared }));
         await _fetchLibrary(false);
       } catch (e) {
         uiModule.showError(`Failed to clear AI tags: ${e.message || e}`);
@@ -2388,7 +2390,7 @@ export function openGallery() {
     _selectMode = on;
     selectBtn.classList.toggle('active', on);
     // The Select button doubles as Cancel while active (mirrors the library).
-    selectBtn.textContent = on ? 'Cancel' : 'Select';
+    selectBtn.textContent = on ? t('common.cancel') : t('common.select');
     bulkBar.classList.toggle('hidden', !on);
     // Body-level signal so the CSS rule that hides per-thumbnail overlay
     // buttons (favorite/download) applies to every card — including cards
@@ -2530,12 +2532,12 @@ export function openGallery() {
     const _delIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
     const _cancelIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
     const items = [
-      { label: 'Favorite', icon: _favIco, action: () => _bulkFavorite(_selectedIds()) },
-      { label: 'Add tag…', icon: _tagIco, action: () => _bulkTag(_selectedIds()) },
-      { label: 'Download', icon: _dlIco, action: () => _bulkDownload(_selectedIds()) },
-      { label: 'Delete', icon: _delIco, danger: true, action: () => _bulkDelete(_selectedIds()) },
+      { label: t('gallery.menu.favorite'), icon: _favIco, action: () => _bulkFavorite(_selectedIds()) },
+      { label: t('gallery.menu.addTag'), icon: _tagIco, action: () => _bulkTag(_selectedIds()) },
+      { label: t('gallery.menu.download'), icon: _dlIco, action: () => _bulkDownload(_selectedIds()) },
+      { label: t('common.delete'), icon: _delIco, danger: true, action: () => _bulkDelete(_selectedIds()) },
       { separator: true },
-      { label: 'Cancel', icon: _cancelIco, action: () => _exitSelectMode() },
+      { label: t('common.cancel'), icon: _cancelIco, action: () => _exitSelectMode() },
     ];
     for (const a of items) {
       if (a.separator) {
@@ -2568,20 +2570,20 @@ export function openGallery() {
     // the anchor, so the button itself has to do its own dismiss.
     const existing = document.querySelector('.gallery-bulk-menu');
     if (existing) { existing.remove(); return; }
-    if (!_selectedIds().length) { uiModule.showToast('Select photos first'); return; }
+    if (!_selectedIds().length) { uiModule.showToast(t('gallery.toast.selectPhotosFirst')); return; }
     _showGalleryBulkMenu(e.currentTarget);
   });
 
   async function _bulkDelete(ids) {
     if (!ids.length) return;
-    if (!await uiModule.styledConfirm(`Delete ${ids.length} photo${ids.length > 1 ? 's' : ''}? This cannot be undone.`, { confirmText: 'Delete', danger: true })) return;
+    if (!await uiModule.styledConfirm(t('gallery.confirm.deletePhotosCountCannotUndo', { count: ids.length }), { confirmText: t('common.delete'), danger: true })) return;
     const deleted = [], failed = [];
     for (const id of ids) { const ok = await _deleteImage(id); (ok ? deleted : failed).push(id); }
     if (failed.length) uiModule.showError(`Failed to delete ${failed.length} of ${ids.length} photos`);
     _items = _items.filter(i => !deleted.includes(i.id));
     _total = Math.max(0, _total - deleted.length);
     _exitSelectMode();
-    if (uiModule) uiModule.showToast(`${deleted.length} photo${deleted.length > 1 ? 's' : ''} deleted`);
+    if (uiModule) uiModule.showToast(t('gallery.toast.deletedPhotosCount', { count: deleted.length }));
     // If we just emptied a FILTERED view (e.g. deleted every photo under a tag),
     // drop the filters and reload the full library so the user isn't stranded on
     // a blank screen with a now-empty tag/album/favorites filter still active.
@@ -2602,7 +2604,7 @@ export function openGallery() {
     // flood of individual downloads.
     if (ids.length > 5) {
       try {
-        if (uiModule) uiModule.showToast(`Zipping ${ids.length} photos…`);
+        if (uiModule) uiModule.showToast(t('gallery.toast.zippingPhotos', { count: ids.length }));
         const res = await fetch(`${API_BASE}/api/gallery/download-zip`, {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
@@ -2619,7 +2621,7 @@ export function openGallery() {
         a.remove();
         setTimeout(() => URL.revokeObjectURL(objUrl), 2000);
         _exitSelectMode();
-        if (uiModule) uiModule.showToast(`Downloaded ${ids.length} photos (zip)`);
+        if (uiModule) uiModule.showToast(t('gallery.toast.downloadedPhotosZip', { count: ids.length }));
       } catch (e) {
         if (uiModule) uiModule.showError('Failed to create zip');
       }
@@ -2647,7 +2649,7 @@ export function openGallery() {
       } catch (_) { /* skip failures */ }
     }
     _exitSelectMode();
-    if (uiModule) uiModule.showToast(`Downloading ${n} photo${n === 1 ? '' : 's'}`);
+    if (uiModule) uiModule.showToast(t('gallery.toast.downloadingPhotosCount', { count: n }));
   }
 
   async function _bulkFavorite(ids) {
@@ -2659,11 +2661,11 @@ export function openGallery() {
       }
     }
     _renderGrid(); _exitSelectMode();
-    if (uiModule) uiModule.showToast(`Favorited ${n} photo${n > 1 ? 's' : ''}`);
+    if (uiModule) uiModule.showToast(t('gallery.toast.favoritedPhotosCount', { count: n }));
   }
 
   async function _bulkTag(ids) {
-    const tag = (await uiModule.styledPrompt('', { title: 'Add tag to selected', placeholder: 'tag', confirmText: 'Add', maxLength: 60 }) || '').trim().replace(/^#+/, '').trim();
+    const tag = (await uiModule.styledPrompt('', { title: t('gallery.title.addTagToSelected'), placeholder: t('gallery.placeholder.tag'), confirmText: t('common.add'), maxLength: 60 }) || '').trim().replace(/^#+/, '').trim();
     if (!tag) return;
     let n = 0;
     for (const id of ids) {
@@ -2677,7 +2679,7 @@ export function openGallery() {
       }
     }
     _exitSelectMode();
-    if (uiModule) uiModule.showToast(`Tagged ${n} photo${n === 1 ? '' : 's'} “${tag}”`);
+    if (uiModule) uiModule.showToast(t('gallery.toast.taggedPhotosWithTag', { count: n, tag }));
   }
 
   modal.addEventListener('click', (e) => {
@@ -2759,7 +2761,7 @@ export function openGallery() {
 function _doCloseGallery() {
   const editorMounted = !!document.querySelector('#gallery-editor-container .gallery-editor');
   if ((window.__galleryEditLive || isEditorOpen() || editorMounted) && !window.__galleryAllowCloseEditor) {
-    if (uiModule) uiModule.showToast('Close the edit tab first');
+    if (uiModule) uiModule.showToast(t('gallery.toast.closeEditTabFirst'));
     return;
   }
   _open = false;

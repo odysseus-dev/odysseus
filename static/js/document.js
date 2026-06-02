@@ -16,6 +16,7 @@ import spinnerModule from './spinner.js';
 import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js';
 import signatureModule from './signature.js';
 import * as Modals from './modalManager.js';
+import { t } from './i18n.js';
 
   let API_BASE = '';
   let isOpen = false;
@@ -96,7 +97,7 @@ import * as Modals from './modalManager.js';
     const accounts = await _getEmailAccountsCached();
     const activeAccount = accounts.find(a => String(a.id) === String(activeAccountId));
     if (!activeAccount || _accountCanSend(activeAccount)) return activeAccountId;
-    if (uiModule) uiModule.showToast('Selected email account is receive-only; using your SMTP account.');
+    if (uiModule) uiModule.showToast(t('document.toast.receiveOnlyAccountUsingSmtp'));
     return null;
   }
 
@@ -721,14 +722,14 @@ import * as Modals from './modalManager.js';
       sep.textContent = '|';
       jumpBar.appendChild(sep);
       const topBtn = document.createElement('button');
-      topBtn.textContent = '↑ Top';
+      topBtn.textContent = t('document.button.top');
       topBtn.className = _smallBtnClass;
       topBtn.style.cssText = _smallBtnStyle;
       topBtn.addEventListener('click', () => body.scrollTo({ top: 0, behavior: 'smooth' }));
       jumpBar.appendChild(topBtn);
       const botBtn = document.createElement('button');
-      botBtn.textContent = '↓ Bottom';
-      botBtn.title = 'Jump to the last page (signature fields are usually here)';
+      botBtn.textContent = t('document.button.bottom');
+      botBtn.title = t('document.title.jumpToLastPage');
       botBtn.className = _smallBtnClass;
       botBtn.style.cssText = _smallBtnStyle;
       botBtn.addEventListener('click', () => body.scrollTo({ top: body.scrollHeight, behavior: 'smooth' }));
@@ -762,7 +763,7 @@ import * as Modals from './modalManager.js';
             thumb.style.cssText = 'max-height:32px;max-width:140px;object-fit:contain;border:1px solid var(--border);border-radius:3px;background:#fff;display:none;';
             const clearBtn = document.createElement('button');
             clearBtn.textContent = '×';
-            clearBtn.title = 'Remove signature from this field';
+            clearBtn.title = t('document.title.removeSignatureFromField');
             clearBtn.className = 'confirm-btn confirm-btn-secondary';
             clearBtn.style.cssText = 'padding:0 8px;font-size:0.85rem;line-height:1;display:none;';
             const apply = (sig) => {
@@ -770,16 +771,16 @@ import * as Modals from './modalManager.js';
               thumb.src = sig.dataUrl;
               thumb.style.display = '';
               clearBtn.style.display = '';
-              btn.textContent = 'Change';
+              btn.textContent = t('document.button.change');
             };
             const clear = () => {
               delete wrap.dataset.signatureId;
               thumb.removeAttribute('src');
               thumb.style.display = 'none';
               clearBtn.style.display = 'none';
-              btn.textContent = 'Sign here';
+              btn.textContent = t('document.button.signHere');
             };
-            btn.textContent = 'Sign here';
+            btn.textContent = t('document.button.signHere');
             btn.addEventListener('click', async () => {
               const sig = await signatureModule.pick();
               if (sig) apply(sig);
@@ -804,8 +805,8 @@ import * as Modals from './modalManager.js';
             ti.dataset.fieldName = f.name;
             ti.dataset.fieldType = f.type;
             const today = document.createElement('button');
-            today.textContent = 'Today';
-            today.title = "Set to today's date";
+            today.textContent = t('document.button.today');
+            today.title = t('document.title.setTodayDate');
             today.className = 'confirm-btn confirm-btn-secondary';
             today.style.cssText = 'padding:3px 8px;font-size:0.72rem;';
             today.addEventListener('click', () => {
@@ -827,7 +828,7 @@ import * as Modals from './modalManager.js';
             input.className = 'pdf-export-input';
             const blank = document.createElement('option');
             blank.value = '';
-            blank.textContent = '— (none) —';
+            blank.textContent = t('document.option.none');
             input.appendChild(blank);
             for (const o of f.options) {
               const opt = document.createElement('option');
@@ -1224,7 +1225,7 @@ import * as Modals from './modalManager.js';
               el.style.background = 'color-mix(in srgb, var(--accent, var(--red)) 10%, transparent)';
               const span = document.createElement('span');
               span.style.cssText = 'color:var(--accent, var(--red));font-size:11px;';
-              span.textContent = 'Sign here';
+              span.textContent = t('document.button.signHere');
               el.appendChild(span);
             }
           };
@@ -1282,8 +1283,8 @@ import * as Modals from './modalManager.js';
         if (isDate) {
           const today = document.createElement('button');
           today.type = 'button';
-          today.textContent = 'Today';
-          today.title = "Set to today's date";
+          today.textContent = t('document.button.today');
+          today.title = t('document.title.setTodayDate');
           today.style.cssText = `position:absolute;left:calc(${lPct}% + ${wPct}%);top:${tPct}%;height:${hPct}%;margin-left:4px;padding:0 6px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);background:rgba(255,255,255,0.95);color:var(--accent, var(--red));border-radius:3px;cursor:pointer;font-size:10px;line-height:1;white-space:nowrap;`;
           today.addEventListener('click', () => {
             const d = new Date();
@@ -1410,18 +1411,18 @@ import * as Modals from './modalManager.js';
     const del = document.createElement('button');
     del.type = 'button';
     del.textContent = '✖';
-    del.title = 'Delete annotation';
+    del.title = t('document.title.deleteAnnotation');
     del.style.cssText = `position:absolute;top:${OFF}px;right:${OFF}px;width:${HS}px;height:${HS}px;padding:0 0 0 1px;border:1px solid var(--accent, var(--red));background:#fff;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:11px;line-height:1;display:${HIDE};font-weight:bold;touch-action:none;`;
 
     // ☰ drag handle — same size as the × button.
     const grip = document.createElement('div');
-    grip.title = 'Drag to move';
+    grip.title = t('document.title.dragToMove');
     grip.textContent = '☰';
     grip.style.cssText = `position:absolute;top:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:3px;cursor:move;font-size:11px;line-height:${HS - 2}px;text-align:center;display:${HIDE};touch-action:none;`;
 
     // ↘ resize handle — same size as the × button.
     const resize = document.createElement('div');
-    resize.title = 'Drag to resize';
+    resize.title = t('document.title.dragToResize');
     resize.style.cssText = `position:absolute;bottom:${OFF}px;right:${OFF}px;width:${HS}px;height:${HS}px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:3px;cursor:nwse-resize;display:${HIDE};touch-action:none;`;
     resize.innerHTML = '<svg width="14" height="14" viewBox="0 0 10 10" style="display:block;margin:auto;height:100%;"><path d="M2 8 L8 2 M5 8 L8 5" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>';
 
@@ -1430,7 +1431,7 @@ import * as Modals from './modalManager.js';
       menuBtn = document.createElement('button');
       menuBtn.type = 'button';
       menuBtn.textContent = '…';
-      menuBtn.title = 'Text annotation options';
+      menuBtn.title = t('document.title.textAnnotationOptions');
       menuBtn.style.cssText = `position:absolute;bottom:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;padding:0;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:15px;line-height:0.8;display:${HIDE};font-weight:bold;touch-action:none;`;
     }
 
@@ -1467,7 +1468,7 @@ import * as Modals from './modalManager.js';
           input.style.background = 'color-mix(in srgb, var(--accent, var(--red)) 10%, transparent)';
           input.style.border = '1px dashed color-mix(in srgb, var(--accent, var(--red)) 65%, transparent)';
           const span = document.createElement('span');
-          span.textContent = 'Sign here';
+          span.textContent = t('document.button.signHere');
           input.appendChild(span);
           return;
         }
@@ -1759,7 +1760,7 @@ import * as Modals from './modalManager.js';
 
     _setPdfSaveStatus('saving');
     const btn = document.getElementById('doc-pdf-ai-fill-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Thinking…'; }
+    if (btn) { btn.disabled = true; btn.textContent = t('document.button.thinking'); }
     try {
       const res = await fetch(`${API_BASE}/api/document/${docId}/ai-fill-annotations`, {
         method: 'POST',
@@ -1774,7 +1775,7 @@ import * as Modals from './modalManager.js';
       const proposed = (data && data.annotations) || [];
       if (!proposed.length) {
         _setPdfSaveStatus('idle');
-        if (uiModule && uiModule.showToast) uiModule.showToast('AI found nothing to fill');
+        if (uiModule && uiModule.showToast) uiModule.showToast(t('document.toast.aiFoundNothingToFill'));
         return;
       }
       // Merge into markdown via the same _writeAnnotations path: parse current,
@@ -1806,13 +1807,13 @@ import * as Modals from './modalManager.js';
         throw new Error(t || r2.statusText);
       }
       _setPdfSaveStatus('saved');
-      if (uiModule && uiModule.showToast) uiModule.showToast(`AI added ${proposed.length} annotations`);
+      if (uiModule && uiModule.showToast) uiModule.showToast(t('document.toast.aiAddedAnnotations', { count: proposed.length }));
       _renderPdfPane();
     } catch (e) {
       console.error('AI fill failed:', e);
       _setPdfSaveStatus('error', `AI fill failed: ${e.message || e}`);
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = 'AI fill'; }
+      if (btn) { btn.disabled = false; btn.textContent = t('document.button.aiFill'); }
     }
   }
 
@@ -2038,11 +2039,11 @@ import * as Modals from './modalManager.js';
       const _replyable = !!(_ad && _ad.sourceEmailUid && _ad.sourceEmailFolder);
       if (_replyable && _copyBtn.dataset.mode !== 'reply') {
         _copyBtn.dataset.mode = 'reply';
-        _copyBtn.title = 'Reply to the sender with this filled file attached';
+        _copyBtn.title = t('document.title.replyWithFilledFile');
         _copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>Attach';
       } else if (!_replyable && _copyBtn.dataset.mode !== 'copy') {
         _copyBtn.dataset.mode = 'copy';
-        _copyBtn.title = 'Copy document';
+        _copyBtn.title = t('document.title.copyDocument');
         _copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy';
       }
     }
@@ -2970,7 +2971,7 @@ import * as Modals from './modalManager.js';
     try {
       let canceled = false;
       if (uiModule) {
-        uiModule.showToast('Sending', {
+        uiModule.showToast(t('document.toast.sending'), {
           duration: 3200,
           leadingIcon: 'spinner',
           action: 'Cancel',
@@ -2983,7 +2984,7 @@ import * as Modals from './modalManager.js';
       if (canceled) {
         _restoreDetachedEmailDoc(detachedEmailDoc);
         detachedEmailDoc = null;
-        if (uiModule) uiModule.showToast('Send canceled');
+        if (uiModule) uiModule.showToast(t('document.toast.sendCanceled'));
         return;
       }
 
@@ -3009,7 +3010,7 @@ import * as Modals from './modalManager.js';
       if (!res.ok && data && !data.error) data.error = `Send failed (${res.status})`;
       if (data.success) {
         if (uiModule) {
-          uiModule.showToast('Message sent', {
+          uiModule.showToast(t('document.toast.messageSent'), {
             duration: 7000,
             leadingIcon: 'check',
             action: 'View Message',
@@ -3098,7 +3099,7 @@ import * as Modals from './modalManager.js';
     const body = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
     const bodyHtml = _rich ? _rich.innerHTML : null;
     const btn = document.getElementById('doc-email-draft-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+    if (btn) { btn.disabled = true; btn.textContent = t('document.button.saving'); }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 18000);
     try {
@@ -3120,7 +3121,7 @@ import * as Modals from './modalManager.js';
       });
       const data = await res.json();
       if (data.success) {
-        if (uiModule) uiModule.showToast('Draft saved to mailbox');
+        if (uiModule) uiModule.showToast(t('document.toast.draftSavedMailbox'));
       } else {
         if (uiModule) uiModule.showError(data.error || 'Failed to save draft');
       }
@@ -3129,7 +3130,7 @@ import * as Modals from './modalManager.js';
       if (uiModule) uiModule.showError(timedOut ? 'Saving draft timed out' : 'Failed to save draft');
     } finally {
       clearTimeout(timeout);
-      if (btn) { btn.disabled = false; btn.textContent = 'Draft'; }
+      if (btn) { btn.disabled = false; btn.textContent = t('document.button.draft'); }
     }
   }
 
@@ -3276,7 +3277,7 @@ import * as Modals from './modalManager.js';
           newBody = cleanReply + (currentBody ? '\n\n' + currentBody : '');
         }
         await _streamEmailBodyText(textarea, newBody);
-        if (uiModule) uiModule.showToast(`AI draft inserted (${data.model_used || 'AI'})`);
+        if (uiModule) uiModule.showToast(t('document.toast.aiDraftInserted', { model: data.model_used || 'AI' }));
       } else {
         if (uiModule) uiModule.showError(data.error || 'Failed to generate reply');
       }
@@ -3417,7 +3418,7 @@ import * as Modals from './modalManager.js';
         });
         const data = await res.json();
         if (data.success) {
-          if (uiModule) uiModule.showToast(`Scheduled for ${new Date(localDt).toLocaleString()}`);
+        if (uiModule) uiModule.showToast(t('document.toast.scheduledFor', { datetime: new Date(localDt).toLocaleString() }));
           cleanup();
           // Close the document
           _closeWithoutDeleting(true);
@@ -3593,7 +3594,7 @@ import * as Modals from './modalManager.js';
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: '' }),
       }).then(() => {
-        if (toast && uiModule) uiModule.showToast('Document unlinked from session');
+        if (toast && uiModule) uiModule.showToast(t('document.toast.unlinkedFromSession'));
       }).catch(() => {});
     } else {
       fetch(`${API_BASE}/api/document/${docId}`, { method: 'DELETE' }).catch(() => {});
@@ -4619,13 +4620,13 @@ import * as Modals from './modalManager.js';
         if (!res.ok) throw new Error('Failed');
         const versions = await res.json();
         if (versions.length < 2) {
-          if (uiModule) uiModule.showToast('No previous version to compare');
+          if (uiModule) uiModule.showToast(t('document.toast.noPreviousVersion'));
           return;
         }
         // versions are sorted desc — [0] is latest, [1] is previous
         const prevContent = versions[1].content || '';
         if (prevContent === current) {
-          if (uiModule) uiModule.showToast('No changes from previous version');
+          if (uiModule) uiModule.showToast(t('document.toast.noChangesFromPreviousVersion'));
           return;
         }
         enterDiffMode(prevContent, current);
@@ -5900,7 +5901,7 @@ import * as Modals from './modalManager.js';
     const quote = quoteIdx >= 0 ? lines.slice(quoteIdx).join('\n') : '';
     const ownText = _emailReplyOwnText(fields.body || '');
     if (ownText && !/^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText)) {
-      if (uiModule) uiModule.showToast('AI reply ready, but draft was edited');
+      if (uiModule) uiModule.showToast(t('document.toast.aiReplyReadyButDraftEdited'));
       return;
     }
     const body = String(replyText || '').trim() + (quote ? `\n\n${quote}` : '');
@@ -6531,7 +6532,7 @@ import * as Modals from './modalManager.js';
       badge = document.createElement('span');
       badge.id = 'doc-selection-badge';
       badge.className = 'doc-selection-badge';
-      badge.title = 'Selected regions — type in chat to edit';
+      badge.title = t('document.title.selectedRegionsTypeToEdit');
       // Sits directly under the formatting toolbar so it reads as part
       // of the toolbar row, not buried in the page header. Falls back
       // to the editor header if the toolbar isn't on screen.
@@ -7160,7 +7161,7 @@ import * as Modals from './modalManager.js';
 
     if (_diffChunks.length === 0) {
       _diffModeActive = false;
-      if (uiModule) uiModule.showToast('No changes');
+      if (uiModule) uiModule.showToast(t('document.toast.noChanges'));
       return;
     }
 
@@ -7261,12 +7262,12 @@ import * as Modals from './modalManager.js';
 
     const acceptAll = document.createElement('button');
     acceptAll.className = 'diff-toolbar-btn diff-toolbar-btn-accept';
-    acceptAll.textContent = 'Accept All';
+    acceptAll.textContent = t('document.button.acceptAll');
     acceptAll.addEventListener('click', () => _resolveAllChunks(true));
 
     const rejectAll = document.createElement('button');
     rejectAll.className = 'diff-toolbar-btn diff-toolbar-btn-reject';
-    rejectAll.textContent = 'Reject All';
+    rejectAll.textContent = t('document.button.rejectAll');
     rejectAll.addEventListener('click', () => _resolveAllChunks(false));
 
     toolbar.appendChild(status);
@@ -7303,13 +7304,13 @@ import * as Modals from './modalManager.js';
 
         const acceptBtn = document.createElement('button');
         acceptBtn.className = 'diff-chunk-btn diff-chunk-btn-accept';
-        acceptBtn.title = 'Accept change';
+        acceptBtn.title = t('document.title.acceptChange');
         acceptBtn.innerHTML = '✓';
         acceptBtn.addEventListener('click', (e) => { e.stopPropagation(); _resolveChunk(chunk.id, true); });
 
         const rejectBtn = document.createElement('button');
         rejectBtn.className = 'diff-chunk-btn diff-chunk-btn-reject';
-        rejectBtn.title = 'Reject change';
+        rejectBtn.title = t('document.title.rejectChange');
         rejectBtn.innerHTML = '✗';
         rejectBtn.addEventListener('click', (e) => { e.stopPropagation(); _resolveChunk(chunk.id, false); });
 
@@ -7697,7 +7698,7 @@ import * as Modals from './modalManager.js';
         await navigator.clipboard.writeText(textarea.value);
       } catch (e) { /* ignore */ }
     }
-    if (uiModule) uiModule.showToast('Copied to clipboard');
+    if (uiModule) uiModule.showToast(t('document.toast.copiedToClipboard'));
   }
 
   /* ---- Per-tab context menu ---- */
@@ -7855,7 +7856,7 @@ import * as Modals from './modalManager.js';
   async function _sendSignedReply(docId) {
     const doc = docs.get(docId);
     if (!doc || !doc.sourceEmailUid) return;
-    if (uiModule) uiModule.showToast('Preparing signed reply…');
+    if (uiModule) uiModule.showToast(t('document.toast.preparingSignedReply'));
     let result;
     try {
       const res = await fetch(`${API_BASE}/api/document/${encodeURIComponent(docId)}/prepare-signed-reply`, {
@@ -7884,7 +7885,7 @@ import * as Modals from './modalManager.js';
         d._composeAtts = (d._composeAtts || []).concat([att]);
         await loadDocument(d.id);
         _renderComposeAttachments();
-        if (uiModule) uiModule.showToast(`Added "${att.filename}" to the reply draft`);
+        if (uiModule) uiModule.showToast(t('document.toast.addedAttachmentToReplyDraft', { filename: att.filename }));
         return;
       }
     }
@@ -7947,7 +7948,7 @@ import * as Modals from './modalManager.js';
 
     await loadDocument(draftId);
     _renderComposeAttachments();
-    if (uiModule) uiModule.showToast(`Reply draft ready — "${att.filename}" attached`);
+    if (uiModule) uiModule.showToast(t('document.toast.replyDraftReadyAttached', { filename: att.filename }));
   }
 
   /** Save manual edits */
@@ -7971,7 +7972,7 @@ import * as Modals from './modalManager.js';
         docs.get(activeDocId).content = textarea.value;
       }
       _syncDocIndicator();
-      if (!silent && uiModule) uiModule.showToast('Document saved');
+      if (!silent && uiModule) uiModule.showToast(t('document.toast.saved'));
     } catch (e) {
       console.error('Failed to save document:', e);
       if (!silent && uiModule) uiModule.showError('Failed to save document');
@@ -8173,13 +8174,13 @@ import * as Modals from './modalManager.js';
     // Import lives at the top of the same dropdown — it's a sibling action
     // ("bring something IN" vs "send something OUT"), and the footer was
     // getting too cramped for dedicated icons.
-    options.push({ label: 'Import from library', fn: () => openLibrary() });
-    options.push({ label: 'Import from device', fn: () => _importFromDevice(), _divider: true });
-    if (isForm) options.push({ label: 'Filled PDF (.pdf)', fn: _downloadFilledPdf });
+    options.push({ label: t('document.menu.importFromLibrary'), fn: () => openLibrary() });
+    options.push({ label: t('document.menu.importFromDevice'), fn: () => _importFromDevice(), _divider: true });
+    if (isForm) options.push({ label: t('document.menu.filledPdf'), fn: _downloadFilledPdf });
     options.push(
-      { label: 'Export Markdown', fn: exportDocument },
-      { label: 'Print as PDF', fn: exportAsPdf },
-      { label: 'Export as Word', fn: exportAsDocx },
+      { label: t('document.menu.exportMarkdown'), fn: exportDocument },
+      { label: t('document.menu.printAsPdf'), fn: exportAsPdf },
+      { label: t('document.menu.exportAsWord'), fn: exportAsDocx },
     );
 
     options.forEach(opt => {
@@ -8242,7 +8243,7 @@ import * as Modals from './modalManager.js';
     a.download = _getExportBaseName() + '.html';
     a.click();
     URL.revokeObjectURL(a.href);
-    if (uiModule) uiModule.showToast('Exported as HTML');
+    if (uiModule) uiModule.showToast(t('document.toast.exportedHtml'));
   }
 
   async function exportAsPdf() {
@@ -8276,7 +8277,7 @@ import * as Modals from './modalManager.js';
       html2canvas: { scale: 2 },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
     }).from(container).save();
-    if (uiModule) uiModule.showToast('Exporting PDF...');
+    if (uiModule) uiModule.showToast(t('document.toast.exportingPdf'));
   }
 
   async function exportAsDocx() {
@@ -8324,7 +8325,7 @@ import * as Modals from './modalManager.js';
     a.download = baseName + '.docx';
     a.click();
     URL.revokeObjectURL(a.href);
-    if (uiModule) uiModule.showToast('Exported as DOCX');
+    if (uiModule) uiModule.showToast(t('document.toast.exportedDocx'));
   }
 
   /** Delete the active document */
@@ -8333,8 +8334,8 @@ import * as Modals from './modalManager.js';
     const doc = docs.get(activeDocId);
     const name = doc ? doc.title : 'this document';
     const ok = uiModule && uiModule.styledConfirm
-      ? await uiModule.styledConfirm(`Delete "${name}"?`, { confirmText: 'Delete', danger: true })
-      : confirm(`Delete "${name}"?`);
+      ? await uiModule.styledConfirm(t('document.confirm.deleteNamed', { name }), { confirmText: t('common.delete'), danger: true })
+      : confirm(t('document.confirm.deleteNamed', { name }));
     if (!ok) return;
     try {
       const res = await fetch(`${API_BASE}/api/document/${activeDocId}`, { method: 'DELETE' });
@@ -8351,7 +8352,7 @@ import * as Modals from './modalManager.js';
         activeDocId = null;
         closePanel();
       }
-      if (uiModule) uiModule.showToast('Document deleted');
+      if (uiModule) uiModule.showToast(t('document.toast.deleted'));
     } catch (e) {
       console.error('Failed to delete document:', e);
       if (uiModule) uiModule.showError('Failed to delete document');
@@ -9408,7 +9409,7 @@ import * as Modals from './modalManager.js';
         d.version = doc.version_count || 1;
       }
       await loadVersionHistory();
-      if (uiModule) uiModule.showToast(`Restored to v${num}`);
+      if (uiModule) uiModule.showToast(t('document.toast.restoredVersion', { version: num }));
     } catch (e) {
       console.error('Failed to restore version:', e);
       if (uiModule) uiModule.showError('Failed to restore version');

@@ -33,6 +33,7 @@
  * @returns {(endpoint: string, extraPayload: object, layerName: string, btn: HTMLButtonElement, opts?: { busyLabel?: string }) => Promise<void>}
  */
 import { state } from './state.js';
+import { t } from '../i18n.js';
 
 const KNOWN_DEPS = ['realesrgan', 'rembg'];
 
@@ -103,7 +104,7 @@ export function createApplyImageTool({
         renderLayerPanel();
         if (uiModule) uiModule.showToast(layerName + ' complete', 4500);
       };
-      img.onerror = () => { if (uiModule) uiModule.showToast('Failed to load result', 6000); };
+      img.onerror = () => { if (uiModule) uiModule.showToast(t('editor.aiToolRunner.toast.failedToLoadResult'), 6000); };
       img.src = 'data:image/png;base64,' + data.image;
     } catch (e) {
       // Detect known failure modes and surface an action-toast.

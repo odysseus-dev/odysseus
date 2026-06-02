@@ -20924,12 +20924,56 @@ body.gallery-selecting .gallery-dl-btn,
   padding: 16px 20px;
   min-width: 0;
 }
+
+/* Language selector (Settings → System) — two-segment pill toggle */
+.locale-seg {
+  display: inline-flex;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+}
+.locale-seg::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 50%;
+  height: 100%;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  border-radius: 9px;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 0;
+}
+.locale-seg.is-es::before { transform: translateX(100%); }
+.locale-seg-btn {
+  background: none;
+  border: none;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+  cursor: pointer;
+  padding: 0 16px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  position: relative;
+  z-index: 1;
+  min-width: 88px;
+}
+.locale-seg-btn.active {
+  color: var(--fg);
+}
+.locale-seg-btn:not(.active):hover {
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+
 .settings-appearance-panel {
   flex-direction: column;
 }
 .settings-appearance-panel:not(.hidden) {
   display: flex;
 }
+.settings-appearance-panel > .settings-language-card { order: 0; }
 .settings-appearance-panel > .admin-card:nth-of-type(1) { order: 3; }
 .settings-appearance-panel > .admin-card:nth-of-type(2) { order: 1; }
 .settings-appearance-panel > .admin-card:nth-of-type(3) { order: 2; }

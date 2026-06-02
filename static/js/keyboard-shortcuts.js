@@ -3,6 +3,7 @@
 // ============================================
 
 import { IS_MAC, isAltGrEvent } from './platform.js';
+import { t, setChatMeta } from './i18n.js';
 
 const _defaultKeybinds = {
   search: 'ctrl+k', toggle_sidebar: 'ctrl+alt+b', new_session: 'ctrl+alt+n',
@@ -188,7 +189,7 @@ export function initKeyboardShortcuts(modules) {
       fetch(`${API_BASE}/api/session/${sid}/important`, { method: 'POST', body: fd });
       s.is_important = newVal;
       sessionModule.renderSessionList();
-      uiModule.showToast(newVal ? 'Session favorited' : 'Session unfavorited');
+      uiModule.showToast(newVal ? t('keyboardShortcuts.toast.sessionFavorited') : t('keyboardShortcuts.toast.sessionUnfavorited'));
       return;
     }
     if (_matchesCombo(e, kb.delete_session)) {
@@ -197,8 +198,8 @@ export function initKeyboardShortcuts(modules) {
       if (!sid) return;
       const s = sessionModule.getSessions().find(x => x.id === sid);
       if (!s) return;
-      if (s.is_important) { uiModule.showToast('Unstar before deleting'); return; }
-      uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true }).then(ok => {
+      if (s.is_important) { uiModule.showToast(t('keyboardShortcuts.toast.unstarBeforeDeleting')); return; }
+      uiModule.styledConfirm(t('confirm.deleteSession'), { confirmText: t('common.delete'), danger: true }).then(ok => {
         if (!ok) return;
         const allSessions = sessionModule.getSessions();
         const idx = allSessions.findIndex(x => x.id === sid);
@@ -211,7 +212,7 @@ export function initKeyboardShortcuts(modules) {
           } else {
             sessionModule.setCurrentSessionId(null);
             el('chat-history').innerHTML = '';
-            el('current-meta').textContent = 'Odysseus Chat';
+            setChatMeta('default');
             Storage.remove('lastSessionId');
             if (chatModule && chatModule.showWelcomeScreen) chatModule.showWelcomeScreen();
           }

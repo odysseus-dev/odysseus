@@ -1,6 +1,7 @@
 // static/js/codeRunner.js
 
 import * as uiModule from './ui.js';
+import { t } from './i18n.js';
 
 /**
  * In-browser code runner for Python (Pyodide), JavaScript, and HTML
@@ -66,13 +67,13 @@ function showOutput(panel, text, isError) {
       } catch (_) {}
       if (!ok && navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(text).then(() => {
-          if (uiModule.showToast) uiModule.showToast('Copied');
+          if (uiModule.showToast) uiModule.showToast(t('codeRunner.toast.copied'));
           cbtn.textContent = 'Copied!';
           setTimeout(() => { cbtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy'; }, 1500);
-        }).catch(() => { if (uiModule.showToast) uiModule.showToast('Copy failed'); });
+        }).catch(() => { if (uiModule.showToast) uiModule.showToast(t('codeRunner.toast.copyFailed')); });
         return;
       }
-      if (uiModule.showToast) uiModule.showToast(ok ? 'Copied' : 'Copy failed');
+      if (uiModule.showToast) uiModule.showToast(ok ? t('codeRunner.toast.copied') : t('codeRunner.toast.copyFailed'));
       const orig = cbtn.innerHTML;
       cbtn.textContent = ok ? 'Copied!' : 'Copy failed';
       setTimeout(() => { cbtn.innerHTML = orig; }, 1500);
@@ -122,7 +123,7 @@ function addCopyBtn_unused(panel, text) {
       try { await navigator.clipboard.writeText(text); ok = true; } catch (_) {}
     }
     if (uiModule && uiModule.showToast) {
-      uiModule.showToast(ok ? 'Copied' : 'Copy failed');
+      uiModule.showToast(ok ? t('codeRunner.toast.copied') : t('codeRunner.toast.copyFailed'));
     }
     const _orig = btn.innerHTML;
     btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';

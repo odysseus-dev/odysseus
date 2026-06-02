@@ -9,6 +9,7 @@ import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { modelColor } from './chatRenderer.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { t } from './i18n.js';
 
 // Shared state/functions injected by init()
 let _envState;
@@ -792,7 +793,7 @@ function _rerenderCachedModels() {
         if (Number.isFinite(v) && v > cap) {
           _ctxEl0.value = String(cap);
           _ctxEl0.title = `Capped to ${panel._modelCtxMax > 0 ? "this model's trained limit" : "the maximum sane context"} (${cap}).`;
-          if (announce) uiModule.showToast(`Context capped to ${cap}`);
+          if (announce) uiModule.showToast(t('cookbook.serve.toast.contextCappedTo', { cap }));
           updateCmd();
         }
       }
@@ -1076,10 +1077,10 @@ function _rerenderCachedModels() {
         const _norm = s => String(s || '').replace(/\s+/g, ' ').trim();
         const _existing = modelSlots.find(p => _norm(p.cmd) === _norm(cmd));
         if (_existing) {
-          await window.styledConfirm(`This config is already saved as "${_existing.label || 'Unnamed'}".`, { confirmText: 'OK', cancelText: 'Close' });
+          await window.styledConfirm(t('cookbook.serve.confirm.configAlreadySavedAs', { label: _existing.label || t('cookbook.common.unnamed') }), { confirmText: t('common.ok'), cancelText: t('common.close') });
           return false;
         }
-        if (modelSlots.length >= 5) { uiModule.showToast('Max 5 saves per model'); return false; }
+        if (modelSlots.length >= 5) { uiModule.showToast(t('cookbook.serve.toast.maxFiveSavesPerModel')); return false; }
         const label = await uiModule.styledPrompt('Name this config so you can recall it later.', {
           title: 'Save Config', placeholder: 'e.g. LoRA, 8-bit, fast', confirmText: 'Save',
         });
@@ -1092,7 +1093,7 @@ function _rerenderCachedModels() {
         });
         presets.push({ name: shortName, model: repo, cmd, remoteHost: host, port: fields.port || '8000', label, fields });
         _savePresets(presets);
-        uiModule.showToast(`Saved "${label}"`);
+        uiModule.showToast(t('cookbook.serve.toast.savedNamed', { label }));
         _updateSavedToggleLabel();
         return true;
       }
@@ -1150,7 +1151,7 @@ function _rerenderCachedModels() {
             _loadSlotIntoPanel(idx);
             // Confirm the click landed — loading is silent otherwise, so it was
             // unclear the settings actually changed.
-            uiModule.showToast(`Loaded "${p.label || `Config ${idx + 1}`}"`);
+            uiModule.showToast(t('cookbook.serve.toast.loadedNamed', { label: p.label || t('cookbook.serve.label.configNumber', { index: idx + 1 }) }));
             // Briefly flash the command box so the user sees the panel update.
             const _cmdBox = panel.querySelector('.hwfit-serve-cmd');
             if (_cmdBox) {
@@ -1161,7 +1162,7 @@ function _rerenderCachedModels() {
           del.addEventListener('click', async (e) => {
             e.stopPropagation();
             const label = p.label || `Config ${idx + 1}`;
-            if (!await window.styledConfirm(`Delete saved config "${label}"?`, { confirmText: 'Delete', danger: true })) return;
+            if (!await window.styledConfirm(t('cookbook.serve.confirm.deleteSavedConfig', { label }), { confirmText: t('common.delete'), danger: true })) return;
             const cur = _loadPresets();
             const toRemove = _presetsForModel(cur, repo)[idx];
             if (toRemove) {
@@ -1169,7 +1170,7 @@ function _rerenderCachedModels() {
               if (gi >= 0) cur.splice(gi, 1);
               _savePresets(cur);
             }
-            uiModule.showToast(`Deleted "${label}"`);
+            uiModule.showToast(t('cookbook.serve.toast.deletedNamed', { label }));
             _updateSavedToggleLabel();
             _showSavedConfigMenu(anchor);   // rebuild in place
           });
@@ -1233,7 +1234,7 @@ function _rerenderCachedModels() {
               .map(g => g.name));
             if (names.size > 1 && !panel._mixedGpuWarned) {
               panel._mixedGpuWarned = true;   // once per panel, don't nag
-              uiModule.showToast('Mixed GPU types selected — tensor-parallel needs identical GPUs. Pick one pool (e.g. all the same card).', 7000);
+              uiModule.showToast(t('cookbook.serve.toast.mixedGpuTypesSelected'), 7000);
             } else if (names.size <= 1) {
               panel._mixedGpuWarned = false;  // reset once they're back to one pool
             }
@@ -1336,10 +1337,10 @@ function _rerenderCachedModels() {
           try { data = await res.json(); } catch (_) { data = {}; }
           if (!res.ok || !data.ok) {
             const err = data.error || data.detail || res.statusText || 'unknown';
-            uiModule.showToast(`Kill PID ${pid} failed: ${err}`, 6000);
+            uiModule.showToast(t('cookbook.serve.toast.killPidFailed', { pid, error: err }), 6000);
             return false;
           }
-          uiModule.showToast(`Sent SIG${sig} to PID ${pid}`, 3000);
+          uiModule.showToast(t('cookbook.serve.toast.sentSignalToPid', { sig, pid }), 3000);
           return true;
         };
 
@@ -1399,7 +1400,7 @@ function _rerenderCachedModels() {
               const row = btn.closest('.cookbook-gpu-proc');
               const pid = parseInt(row.dataset.pid);
               const sig = btn.dataset.sig;
-              if (sig === 'KILL' && !await window.styledConfirm(`SIGKILL PID ${pid}? This force-terminates without cleanup.`, { confirmText: 'SIGKILL', danger: true })) return;
+              if (sig === 'KILL' && !await window.styledConfirm(t('cookbook.serve.confirm.sigkillPidNoCleanup', { pid }), { confirmText: t('cookbook.common.sigkill'), danger: true })) return;
               btn.disabled = true;
               btn.textContent = '…';
               const ok = await _doKill(pid, sig, hostVal);
@@ -1440,11 +1441,11 @@ function _rerenderCachedModels() {
           if (!res.ok) {
             const err = data.detail || data.error || res.statusText || `HTTP ${res.status}`;
             const hint = res.status === 404 ? ' — server may need a restart to pick up new endpoint' : '';
-            if (!silent) uiModule.showToast('GPU probe failed: ' + err + hint, 8000);
+            if (!silent) uiModule.showToast(t('cookbook.serve.toast.gpuProbeFailed', { error: err + hint }), 8000);
             return null;
           }
           if (!data.ok) {
-            if (!silent) uiModule.showToast('GPU probe failed: ' + (data.error || 'unknown'), 6000);
+            if (!silent) uiModule.showToast(t('cookbook.serve.toast.gpuProbeFailed', { error: data.error || t('cookbook.common.unknown') }), 6000);
             return null;
           }
           panel._gpuProbe.byIdx = new Map(data.gpus.map(g => [g.index, g]));
@@ -1476,7 +1477,7 @@ function _rerenderCachedModels() {
           });
           if (!silent) {
             if (data.gpus.length === 0) {
-              uiModule.showToast('No GPU memory probe data available', 4000);
+              uiModule.showToast(t('cookbook.serve.toast.noGpuMemoryProbeData'), 4000);
             } else {
               const summary = data.gpus.map(g => {
                 const procs = (g.processes && g.processes.length) || 0;
@@ -1490,7 +1491,7 @@ function _rerenderCachedModels() {
 
         _probeBtn.addEventListener('click', async () => {
           try { await _withSpinner(_probeBtn, () => _runProbe(false)); }
-          catch (e) { uiModule.showToast('GPU probe error: ' + e.message, 6000); }
+          catch (e) { uiModule.showToast(t('cookbook.serve.toast.gpuProbeError', { error: e.message }), 6000); }
         });
 
         // Auto-probe (silent) on open so the GPU buttons reflect the real count
@@ -1510,11 +1511,11 @@ function _rerenderCachedModels() {
                   for (const p of (g.processes || [])) pids.push({ pid: p.pid, name: p.name });
                 }
                 if (pids.length === 0) {
-                  uiModule.showToast('No GPU processes to clear', 3000);
+                  uiModule.showToast(t('cookbook.serve.toast.noGpuProcessesToClear'), 3000);
                   return;
                 }
                 const summary = pids.map(p => `${p.pid} (${p.name})`).join(', ');
-                if (!await window.styledConfirm(`Clear server GPU memory by sending SIGTERM to ${pids.length} process(es)?\n\n${summary}\n\nIf any survive, the next prompt can force-kill them with SIGKILL.`, { confirmText: 'SIGTERM', danger: true })) return;
+                if (!await window.styledConfirm(t('cookbook.serve.confirm.clearServerGpuMemorySigterm', { count: pids.length, summary }), { confirmText: t('cookbook.common.sigterm'), danger: true })) return;
                 // First pass: SIGTERM
                 const hostVal = panel._gpuProbe.host;
                 const results = await Promise.all(pids.map(p =>
@@ -1525,7 +1526,7 @@ function _rerenderCachedModels() {
                   }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }))
                 ));
                 const okCount = results.filter(r => r.ok).length;
-                uiModule.showToast(`SIGTERM → ${okCount}/${pids.length} processes`, 5000);
+                uiModule.showToast(t('cookbook.serve.toast.sigtermProcesses', { ok: okCount, total: pids.length }), 5000);
                 // Wait, then re-probe; if survivors, offer SIGKILL
                 await new Promise(r => setTimeout(r, 1500));
                 const after = await _runProbe();
@@ -1537,10 +1538,10 @@ function _rerenderCachedModels() {
                   }
                 }
                 if (survivors.length === 0) {
-                  uiModule.showToast(`Cleared ${pids.length} GPU process(es)`, 4000);
+                  uiModule.showToast(t('cookbook.serve.toast.clearedGpuProcesses', { count: pids.length }), 4000);
                   return;
                 }
-                if (!await window.styledConfirm(`${survivors.length} process(es) survived SIGTERM:\n\n${survivors.map(p => p.pid + ' (' + p.name + ')').join(', ')}\n\nForce-kill with SIGKILL?`, { confirmText: 'SIGKILL', danger: true })) return;
+                if (!await window.styledConfirm(t('cookbook.serve.confirm.survivorsAfterSigtermSigkill', { count: survivors.length, list: survivors.map(p => p.pid + ' (' + p.name + ')').join(', ') }), { confirmText: t('cookbook.common.sigkill'), danger: true })) return;
                 const killResults = await Promise.all(survivors.map(p =>
                   fetch('/api/cookbook/kill-pid', {
                     method: 'POST', credentials: 'same-origin',
@@ -1549,12 +1550,12 @@ function _rerenderCachedModels() {
                   }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }))
                 ));
                 const killOk = killResults.filter(r => r.ok).length;
-                uiModule.showToast(`SIGKILL → ${killOk}/${survivors.length} processes`, 5000);
+                uiModule.showToast(t('cookbook.serve.toast.sigkillProcesses', { ok: killOk, total: survivors.length }), 5000);
                 await new Promise(r => setTimeout(r, 800));
                 await _runProbe();
               });
             } catch (e) {
-              uiModule.showToast('Clear Server error: ' + e.message, 6000);
+              uiModule.showToast(t('cookbook.serve.toast.clearServerError', { error: e.message }), 6000);
             }
           });
         }
@@ -1739,7 +1740,7 @@ function _resolveCacheHost() {
 }
 
 async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = null) {
-  if (!skipConfirm && !(await uiModule.styledConfirm(`Delete ${repo} from cache?`, { confirmText: 'Delete', danger: true }))) return;
+  if (!skipConfirm && !(await uiModule.styledConfirm(t('cookbook.serve.confirm.deleteFromCache', { repo }), { confirmText: t('common.delete'), danger: true }))) return;
   const m = model || _cachedAllModels.find(x => x.repo_id === repo);
   // Delete the EXACT on-disk path the scan reported. Models in a custom
   // model dir live at <path>/<repo>; HF-cache models at
@@ -1897,7 +1898,7 @@ export async function openServePanelForRepo(repo, fields) {
     }
     await new Promise(r => setTimeout(r, 100));
   }
-  uiModule.showToast('Model not found in cache — switch to the Serve tab manually');
+  uiModule.showToast(t('cookbook.serve.toast.modelNotFoundInCache'));
   return false;
 }
 
@@ -1977,9 +1978,9 @@ export async function _fetchCachedModels() {
 
     if (!allModels.length) {
       if (!host) {
-        list.innerHTML = '<div class="hwfit-loading" style="flex-direction:column;gap:6px;text-align:center;"><div>No cached models found</div><div style="font-size:11px;opacity:0.55;max-width:420px;line-height:1.4;">Docker Local uses Odysseus’s cache in <code>data/huggingface</code>. Download a model here, or copy an existing host HuggingFace cache into that folder once.</div></div>';
+        list.innerHTML = `<div class="hwfit-loading" style="flex-direction:column;gap:6px;text-align:center;"><div>${t('cookbook.serve.noCached')}</div><div style="font-size:11px;opacity:0.55;max-width:420px;line-height:1.4;">${t('cookbook.serve.noCachedDockerHint')}</div></div>`;
       } else {
-        list.innerHTML = '<div class="hwfit-loading">No cached models found</div>';
+        list.innerHTML = `<div class="hwfit-loading">${t('cookbook.serve.noCached')}</div>`;
       }
       document.getElementById('serve-tags').innerHTML = '';
       return;

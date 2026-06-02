@@ -9,6 +9,7 @@ import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibO
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
 import { buildReplyAllCc } from './emailLibrary/replyRecipients.js';
+import { t, setChatMeta } from './i18n.js';
 
 const API_BASE = window.location.origin;
 const _acct = () => window.__odysseusActiveEmailAccount
@@ -676,7 +677,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
       } else {
         let draftToastTimer = null;
         draftToastTimer = setTimeout(() => {
-          import('./ui.js').then(m => m.showToast && m.showToast('Drafting AI reply', { duration: 3000, leadingIcon: 'spinner' })).catch(() => {});
+          import('./ui.js').then(m => m.showToast && m.showToast(t('emailInbox.toast.draftingAiReply'), { duration: 3000, leadingIcon: 'spinner' })).catch(() => {});
         }, 450);
         try {
           let currentModel = '';
@@ -1062,7 +1063,7 @@ async function _createReplyReminder(em, dueDate) {
     if (!res.ok) throw new Error('Failed');
     const { showToast } = await import('./ui.js');
     const fmt = dueDate.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-    showToast(`Reminder set for ${fmt}`);
+    showToast(t('emailInbox.toast.reminderSetFor', { datetime: fmt }));
     // Request notification permission if needed
     if ('Notification' in window && Notification.permission === 'default') {
       try { Notification.requestPermission(); } catch {}
@@ -1086,7 +1087,7 @@ async function _archiveEmail(em) {
 async function _deleteEmail(em) {
   const subject = em.subject || '(no subject)';
   const { styledConfirm } = await import('./ui.js');
-  const ok = await styledConfirm(`Delete "${subject}"?`, { confirmText: 'Delete', cancelText: 'Cancel', danger: true });
+  const ok = await styledConfirm(t('email.confirm.deleteNamed', { subject }), { confirmText: t('common.delete'), cancelText: t('common.cancel'), danger: true });
   if (!ok) return;
   try {
     await fetch(`${API_BASE}/api/email/delete/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`, { method: 'DELETE' });
@@ -1143,8 +1144,7 @@ async function _createEmailChat(emailData) {
     if (url && model) {
       await sessionModule.createDirectChat(url, model, endpointId);
       // Set a helpful title in the chat meta
-      const meta = document.getElementById('current-meta');
-      if (meta) meta.textContent = `Email: ${(emailData.subject || '').slice(0, 60)}`;
+      setChatMeta('custom', t('chat.meta.email', { subject: (emailData.subject || '').slice(0, 60) }));
     }
   } catch (e) {
     console.error('Failed to create email chat:', e);

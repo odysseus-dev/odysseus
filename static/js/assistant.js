@@ -8,6 +8,7 @@
 import uiModule from './ui.js';
 import { selectSession } from './sessions.js';
 import { sortModelIds } from './modelSort.js';
+import { t } from './i18n.js';
 
 const API = '/api/assistant';
 
@@ -24,7 +25,7 @@ export async function openAssistantChat() {
   try {
     const info = await _fetchJSON(`${API}/session`);
     if (!info?.session_id) {
-      uiModule.showToast('Assistant session unavailable');
+      uiModule.showToast(t('assistant.toast.sessionUnavailable'));
       return;
     }
     await selectSession(info.session_id);
@@ -32,7 +33,7 @@ export async function openAssistantChat() {
     _cachedSettings = null;
   } catch (e) {
     console.error('openAssistantChat failed:', e);
-    uiModule.showToast('Could not open assistant');
+    uiModule.showToast(t('assistant.toast.openFailed'));
   }
 }
 
@@ -69,10 +70,10 @@ async function _runCheckInNow(taskId) {
       method: 'POST',
       credentials: 'same-origin',
     });
-    uiModule.showToast('Check-in running…');
+    uiModule.showToast(t('assistant.toast.checkinRunning'));
   } catch (e) {
     console.error(e);
-    uiModule.showToast('Could not run check-in');
+    uiModule.showToast(t('assistant.toast.checkinFailed'));
   }
 }
 
@@ -359,11 +360,11 @@ function _renderSettingsBody(body, data, tzList) {
     };
     try {
       await _saveSettings(payload);
-      uiModule.showToast('Assistant settings saved');
+      uiModule.showToast(t('assistant.toast.settingsSaved'));
       _closeModal();
     } catch (e) {
       console.error(e);
-      uiModule.showToast('Save failed');
+      uiModule.showToast(t('assistant.toast.saveFailed'));
     }
   });
   body.querySelectorAll('.assistant-checkin-run').forEach((btn) => {

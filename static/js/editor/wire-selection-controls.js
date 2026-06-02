@@ -39,6 +39,7 @@
  * }} deps
  */
 import { state } from './state.js';
+import { t } from '../i18n.js';
 
 const EYE_OPEN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_OFF  = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>';
@@ -159,7 +160,7 @@ export function wireSelectionControls({
   document.getElementById('ge-wand-rembg')?.addEventListener('click', async () => {
     const btn = document.getElementById('ge-wand-rembg');
     const hint = buildSelectionHintMask();
-    if (!hint) { if (uiModule) uiModule.showToast('Click to make a wand selection first'); return; }
+    if (!hint) { if (uiModule) uiModule.showToast(t('editor.selection.toast.clickWandSelectionFirst')); return; }
     await applyImageTool('/api/image/remove-bg', { hint_mask: hint }, 'BG Removed', btn);
     wandClear();
   });

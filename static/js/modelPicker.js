@@ -5,6 +5,7 @@ import { providerLogo } from './providers.js';
 import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { sortModelObjects } from './modelSort.js';
+import { t } from './i18n.js';
 
 const API_BASE = window.location.origin;
 
@@ -349,7 +350,7 @@ function _initModelPickerDropdown() {
         const idx = favs.indexOf(m.mid);
         if (nowFav && idx < 0) favs.push(m.mid);
         else if (!nowFav && idx >= 0) favs.splice(idx, 1);
-        if (uiModule && uiModule.showToast) uiModule.showToast(nowFav ? 'Favorited' : 'Unfavorited');
+        if (uiModule && uiModule.showToast) uiModule.showToast(nowFav ? t('models.toast.favorited') : t('models.toast.unfavorited'));
         // In browse mode the Favorites section membership changed — rebuild
         // (cheap: Recent + Favorites). In search mode the row stays put, so
         // the in-place favorite update above is enough.
@@ -477,7 +478,7 @@ function _initModelPickerDropdown() {
       _deps.setPendingChat({ url: m.url, modelId: m.mid, endpointId: m.endpointId });
       // Header stays as session name — model switch only updates picker
       updateModelPicker();
-      uiModule.showToast(`Using ${m.display}`);
+      uiModule.showToast(t('modelPicker.toast.usingModel', { model: m.display }));
       return;
     } else if (!currentSessionId) {
       // No session yet — create one with this model
@@ -505,7 +506,7 @@ function _initModelPickerDropdown() {
     }
     // Update picker visibility — model is now set
     updateModelPicker();
-    uiModule.showToast(`Using ${m.display}`);
+    uiModule.showToast(t('modelPicker.toast.usingModel', { model: m.display }));
   }
 
   document.addEventListener('odysseus:auto-select-model', async (e) => {

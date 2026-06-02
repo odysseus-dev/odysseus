@@ -8,6 +8,7 @@ import themeModule from './theme.js';
 import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopMenu, dismissOrRemove } from './escMenuStack.js';
+import { t, applyTranslations, onLocaleChange } from './i18n.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -219,7 +220,7 @@ _initHoverCardSpaceToggle();
 export async function copyToClipboard(text) {
   try {
     await navigator.clipboard.writeText(text);
-    showToast('Copied');
+    showToast(t('toast.copied'));
   }
   catch {
     const ta = document.createElement('textarea');
@@ -229,7 +230,7 @@ export async function copyToClipboard(text) {
     ta.select();
     document.execCommand('copy');
     document.body.removeChild(ta);
-    showToast('Copied');
+    showToast(t('toast.copied'));
   }
 }
 
@@ -586,7 +587,7 @@ export function el(id) {
  * Styled confirm dialog — replaces native browser confirm().
  * Returns a Promise<boolean>.
  */
-export function styledConfirm(message, { confirmText = 'Confirm', cancelText = 'Cancel', danger = false } = {}) {
+export function styledConfirm(message, { confirmText = t('common.confirm'), cancelText = t('common.cancel'), danger = false } = {}) {
   return new Promise(resolve => {
     // Reuse or create the modal
     let overlay = document.getElementById('styled-confirm-overlay');
@@ -596,7 +597,7 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
       overlay.className = 'modal';
       overlay.innerHTML =
         '<div class="modal-content styled-confirm-box" role="dialog" aria-modal="true" aria-labelledby="styled-confirm-title" aria-describedby="styled-confirm-msg">' +
-          '<div class="modal-header"><h4 id="styled-confirm-title">Confirm</h4></div>' +
+          '<div class="modal-header"><h4 id="styled-confirm-title" data-i18n="common.confirm">Confirm</h4></div>' +
           '<div class="modal-body"><p id="styled-confirm-msg"></p></div>' +
           '<div class="modal-footer">' +
             '<button id="styled-confirm-cancel"></button>' +
@@ -604,6 +605,7 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
           '</div>' +
         '</div>';
       document.body.appendChild(overlay);
+      applyTranslations(overlay);
     }
 
     const msgEl = document.getElementById('styled-confirm-msg');
@@ -668,11 +670,11 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
  * Resolves to the trimmed string the user typed, or null on Cancel / Escape / backdrop.
  */
 export function styledPrompt(message, {
-  title = 'Name',
+  title = t('common.name'),
   defaultValue = '',
   placeholder = '',
-  confirmText = 'Save',
-  cancelText = 'Cancel',
+  confirmText = t('common.save'),
+  cancelText = t('common.cancel'),
   maxLength = 80,
 } = {}) {
   return new Promise(resolve => {
@@ -870,7 +872,13 @@ export default uiModule;
 // uiModule. Usage: `if (!await window.styledConfirm(msg, { danger:true })) return;`
 if (typeof window !== 'undefined') {
   window.styledConfirm = styledConfirm;
+  window.t = t;
 }
+
+onLocaleChange(() => {
+  const confirmOverlay = document.getElementById('styled-confirm-overlay');
+  if (confirmOverlay) applyTranslations(confirmOverlay);
+});
 
 // ── Mobile: clear enter animation so inline transform works for dragging ──
 // The CSS `animation: sheet-enter ... forwards` holds the final transform,
