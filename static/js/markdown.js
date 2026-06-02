@@ -286,6 +286,65 @@ function createThinkingSection(thinkingContent, index = 0, thinkingTime = null) 
 const _EMOJI_RE = /\p{Extended_Pictographic}/u;
 const _emojiSeg = (typeof Intl !== 'undefined' && Intl.Segmenter)
   ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+const _EMOJI_SHORTCODE_TEST_RE = /:([a-z0-9_+\-]+):/i;
+const _EMOJI_SHORTCODE_RE = /:([a-z0-9_+\-]+):/gi;
+const _EMOJI_SHORTCODE_MAP = Object.freeze({
+  '+1': '\u{1F44D}',
+  '-1': '\u{1F44E}',
+  '100': '\u{1F4AF}',
+  bell: '\u{1F514}',
+  black_heart: '\u{1F5A4}',
+  blue_heart: '\u{1F499}',
+  blush: '\u{1F60A}',
+  book: '\u{1F4D6}',
+  books: '\u{1F4DA}',
+  broken_heart: '\u{1F494}',
+  bulb: '\u{1F4A1}',
+  check: '\u2705',
+  clap: '\u{1F44F}',
+  coffee: '\u2615',
+  cross_mark: '\u274C',
+  eyes: '\u{1F440}',
+  fire: '\u{1F525}',
+  green_heart: '\u{1F49A}',
+  grin: '\u{1F601}',
+  grinning: '\u{1F600}',
+  heart: '\u2764\uFE0F',
+  hourglass: '\u231B',
+  joy: '\u{1F602}',
+  key: '\u{1F511}',
+  laughing: '\u{1F606}',
+  light_bulb: '\u{1F4A1}',
+  link: '\u{1F517}',
+  lock: '\u{1F512}',
+  memo: '\u{1F4DD}',
+  ok_hand: '\u{1F44C}',
+  pray: '\u{1F64F}',
+  purple_heart: '\u{1F49C}',
+  question: '\u2753',
+  raised_hands: '\u{1F64C}',
+  red_heart: '\u2764\uFE0F',
+  rocket: '\u{1F680}',
+  rofl: '\u{1F923}',
+  smile: '\u{1F604}',
+  smiley: '\u{1F603}',
+  sparkles: '\u2728',
+  star: '\u2B50',
+  tada: '\u{1F389}',
+  thinking: '\u{1F914}',
+  thumbs_down: '\u{1F44E}',
+  thumbs_up: '\u{1F44D}',
+  thumbsup: '\u{1F44D}',
+  unlock: '\u{1F513}',
+  warning: '\u26A0\uFE0F',
+  wave: '\u{1F44B}',
+  waving_hand: '\u{1F44B}',
+  white_check_mark: '\u2705',
+  white_heart: '\u{1F90D}',
+  wink: '\u{1F609}',
+  x: '\u274C',
+  zap: '\u26A1',
+});
 
 function _emojiCodepoints(emoji) {
   // Twemoji filename rule: strip U+FE0F unless the sequence has a ZWJ (U+200D).
@@ -311,13 +370,22 @@ function _svgifyText(text) {
   }
   return out;
 }
+function _hasEmojiShortcode(text) {
+  return _EMOJI_SHORTCODE_TEST_RE.test(text);
+}
+function _svgifyShortcodes(text) {
+  return String(text || '').replace(_EMOJI_SHORTCODE_RE, (match, name) => {
+    const emoji = _EMOJI_SHORTCODE_MAP[String(name || '').toLowerCase()];
+    return emoji ? _emojiImg(emoji) : match;
+  });
+}
 /** When "Text-only Emojis" is on, keep Unicode in HTML so deEmojify() can strip them. */
 function _useSvgEmoji() {
   return typeof document === 'undefined' || !document.body?.classList.contains('text-emojis');
 }
 
 export function svgifyEmoji(html) {
-  if (!_useSvgEmoji() || !html || !_EMOJI_RE.test(html)) return html;
+  if (!_useSvgEmoji() || !html || (!_EMOJI_RE.test(html) && !_hasEmojiShortcode(html))) return html;
   const parts = html.split(/(<[^>]*>)/);   // odd indices = tags
   let codeDepth = 0;
   for (let i = 0; i < parts.length; i++) {
@@ -327,7 +395,9 @@ export function svgifyEmoji(html) {
       else if (/^<\/(pre|code)\s*>/.test(t)) codeDepth = Math.max(0, codeDepth - 1);
       continue;
     }
-    if (codeDepth === 0 && _EMOJI_RE.test(parts[i])) parts[i] = _svgifyText(parts[i]);
+    if (codeDepth === 0 && (_EMOJI_RE.test(parts[i]) || _hasEmojiShortcode(parts[i]))) {
+      parts[i] = _svgifyShortcodes(_svgifyText(parts[i]));
+    }
   }
   return parts.join('');
 }

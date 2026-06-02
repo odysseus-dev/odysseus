@@ -99,3 +99,30 @@ def test_table_separator_row_not_rendered_as_data(node_available):
     assert "<th" in html
     assert "<td" in html
     assert "---" not in html
+
+
+def test_emoji_shortcode_renders_as_monochrome_span(node_available):
+    html = _run_markdown_case("Hello :wave:")
+
+    assert ":wave:" not in html
+    assert 'class="emoji"' in html
+    assert 'aria-label="' + "\U0001F44B" + '"' in html
+    assert 'aria-label="<span' not in html
+    assert "/api/emoji/1f44b.svg" in html
+
+
+def test_emoji_shortcode_is_not_rendered_inside_code(node_available):
+    html = _run_markdown_case("Inline `:wave:`\n\n```text\n:rocket:\n```")
+
+    assert "<code>:wave:</code>" in html
+    assert '<code class="language-text" data-lang="text">:rocket:</code>' in html
+    assert 'class="emoji"' not in html
+
+
+def test_text_only_emoji_default_matches_unchecked_control():
+    app_js = (_REPO / "static" / "app.js").read_text(encoding="utf-8")
+    index_html = (_REPO / "static" / "index.html").read_text(encoding="utf-8")
+
+    assert "const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn', 'text-emojis']);" in app_js
+    assert "applyTextEmojis(state['text-emojis'] === true)" in app_js
+    assert '<input type="checkbox" data-ui-key="text-emojis">' in index_html
