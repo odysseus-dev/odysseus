@@ -25,6 +25,19 @@ GALLERY_UPLOAD_MAX_BYTES = int(os.getenv("ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES", st
 GALLERY_TRANSFORM_UPLOAD_MAX_BYTES = int(os.getenv("ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES", str(25 * 1024 * 1024)))
 
 
+def _current_user_is_admin(request: Request, user: str | None) -> bool:
+    if not user:
+        return False
+    auth_mgr = getattr(request.app.state, "auth_manager", None)
+    is_admin = getattr(auth_mgr, "is_admin", None)
+    if not callable(is_admin):
+        return False
+    try:
+        return bool(is_admin(user))
+    except Exception:
+        return False
+
+
 def _sanitize_gallery_filename(filename: str) -> str:
     """Return a local filename safe to join under generated_images."""
     safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(str(filename or "")).name)[:128]
@@ -1042,7 +1055,10 @@ def setup_gallery_routes() -> APIRouter:
             try:
                 ep = _visible_image_endpoint_for_base(db, _target, user)
                 if ep:
+                    base = (ep.base_url or base).rstrip("/")
                     api_key = ep.api_key
+                elif user and not _current_user_is_admin(request, user):
+                    raise HTTPException(403, "Choose a registered image endpoint")
             finally:
                 db.close()
 
@@ -1233,7 +1249,10 @@ def setup_gallery_routes() -> APIRouter:
             try:
                 ep = _visible_image_endpoint_for_base(db, base, user)
                 if ep:
+                    base = (ep.base_url or base).rstrip("/")
                     api_key = ep.api_key
+                elif user and not _current_user_is_admin(request, user):
+                    raise HTTPException(403, "Choose a registered image endpoint")
             finally:
                 db.close()
 

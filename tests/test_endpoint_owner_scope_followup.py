@@ -49,6 +49,8 @@ def test_gallery_image_endpoint_lookups_are_owner_scoped():
     body = Path("routes/gallery_routes.py").read_text(encoding="utf-8")
 
     assert body.count("owner_filter(q, ModelEndpoint, user)") >= 6
+    assert "def _current_user_is_admin" in body
+    assert body.count('raise HTTPException(403, "Choose a registered image endpoint")') == 2
     for marker in (
         "async def gallery_ai_upscale",
         "async def gallery_style_transfer",
