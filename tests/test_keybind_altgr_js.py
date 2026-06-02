@@ -185,18 +185,19 @@ def test_plain_ctrl_shortcut_unaffected():
 
 # --- The remaining Ctrl/Cmd-key handlers route through the shared guard -------
 #
-# Follow-up to the original AltGr fix: three more keydown handlers gated only on
+# Follow-up to the original AltGr fix: four more keydown handlers gated only on
 # `(e.ctrlKey || e.metaKey)` could false-fire on the no-glyph AltGr keystroke the
-# same way (right Alt reported as Ctrl+Alt). They live as inline, DOM-coupled
-# listeners inside large modules (document.js / notes.js) with no `node` unit
-# harness — so, exactly like test_document_deeplink.py, we pin the source-level
-# invariant that each one is wired through the already-behaviorally-tested
-# `isAltGrEvent` predicate above. notes.js Ctrl+C is deliberately NOT rewired: its
+# same way. They live as inline, DOM-coupled listeners inside large modules
+# (document.js / notes.js / calendar.js) with no `node` unit harness — so, exactly
+# like test_document_deeplink.py, we pin the source-level invariant that each one
+# is wired through the already-behaviorally-tested `isAltGrEvent` predicate above.
+# notes.js Ctrl+C is deliberately NOT rewired: its
 # pre-existing `&& !e.altKey` already excludes AltGr, and swapping it would loosen
 # Mac Cmd+Option+C — so we pin that it stays put.
 
 _DOCUMENT_JS = _REPO / "static" / "js" / "document.js"
 _NOTES_JS = _REPO / "static" / "js" / "notes.js"
+_CALENDAR_JS = _REPO / "static" / "js" / "calendar.js"
 
 
 def _src(path: Path) -> str:
@@ -209,6 +210,10 @@ def test_document_js_imports_shared_altgr_guard():
 
 def test_notes_js_imports_shared_altgr_guard():
     assert "import { isAltGrEvent } from './platform.js';" in _src(_NOTES_JS)
+
+
+def test_calendar_js_imports_shared_altgr_guard():
+    assert "import { isAltGrEvent } from './platform.js';" in _src(_CALENDAR_JS)
 
 
 def test_markdown_format_shortcut_guards_altgr():
@@ -235,6 +240,15 @@ def test_notes_undo_shortcut_guards_altgr():
     assert (
         "(e.ctrlKey || e.metaKey) && !isAltGrEvent(e) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey"
         in _src(_NOTES_JS)
+    )
+
+
+def test_calendar_undo_shortcut_guards_altgr():
+    # Calendar Ctrl+Z undo — same document-level, inField-gated handler as notes.js
+    # Ctrl+Z, but written as an early-return, so the guard sits in the bail clause.
+    assert (
+        "!(e.ctrlKey || e.metaKey) || isAltGrEvent(e) || e.key !== 'z' || e.shiftKey"
+        in _src(_CALENDAR_JS)
     )
 
 
