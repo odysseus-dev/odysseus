@@ -1064,8 +1064,7 @@ def setup_calendar_routes() -> APIRouter:
                     lines.append(f"DTSTART:{ev.dtstart.strftime('%Y%m%dT%H%M%S')}")
                     lines.append(f"DTEND:{ev.dtend.strftime('%Y%m%dT%H%M%S')}")
                 if ev.description:
-                    desc = ev.description.replace(chr(10), '\\n')
-                    lines.append(f"DESCRIPTION:{desc}")
+                    lines.append(f"DESCRIPTION:{_ics_escape(ev.description)}")
                 if ev.location:
                     lines.append(f"LOCATION:{_ics_escape(ev.location)}")
                 if ev.rrule:
