@@ -195,7 +195,7 @@ def refresh() -> Dict[str, Dict[str, Any]]:
         exit_path = Path(rec.get("exit_path", ""))
         if exit_path.exists():
             try:
-                code = int(exit_path.read_text().strip() or "1")
+                code = int(exit_path.read_text(encoding="utf-8", errors="replace").strip() or "1")
             except Exception:
                 code = 1
             rec["exit_code"] = code
