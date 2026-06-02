@@ -711,6 +711,7 @@ def setup_chat_routes(
                         prior_findings=_prior_findings,
                         prior_urls=_prior_urls,
                         on_complete=_on_research_done,
+                        owner=_user,
                     )
 
                     _heartbeat_counter = 0
