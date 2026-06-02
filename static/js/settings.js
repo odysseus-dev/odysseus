@@ -1115,7 +1115,7 @@ async function initSearchSettings() {
       countCustomInput.style.display = 'none';
     } else {
       countSel.value = 'custom';
-      countCustomInput.value = val;
+      countCustomInput.value = Math.max(1, Math.min(100, val));
       countCustomInput.style.display = 'block';
     }
   }
@@ -1165,7 +1165,17 @@ async function initSearchSettings() {
   async function saveSearch() {
     try {
       var prov = provSel.value;
-      var resultCount = countSel.value === 'custom' ? parseInt(countCustomInput.value, 10) : parseInt(countSel.value, 10);
+      var resultCount;
+      if (countSel.value === 'custom') {
+        var customVal = parseInt(countCustomInput.value, 10);
+        if (isNaN(customVal) || customVal < 1 || customVal > 100) {
+          resultCount = _settings.search_result_count || 5;
+        } else {
+          resultCount = customVal;
+        }
+      } else {
+        resultCount = parseInt(countSel.value, 10);
+      }
       var payload = {
         search_provider: prov,
         search_result_count: resultCount,
