@@ -670,10 +670,11 @@ async def _generate_win_detached(cmd: str, request: Request):
 
     bash = find_bash()
     if bash:
+        from core.platform_compat import win_to_bash_path
         script_path = TMUX_LOG_DIR / f"{session_id}.sh"
         script_path.write_text(
-            f"{cmd} > {shlex.quote(str(log_path))} 2>&1\n"
-            f"echo $? > {shlex.quote(str(exit_path))}\n",
+            f"{cmd} > {shlex.quote(win_to_bash_path(str(log_path)))} 2>&1\n"
+            f"echo $? > {shlex.quote(win_to_bash_path(str(exit_path)))}\n",
             encoding="utf-8",
         )
         argv = [bash, str(script_path)]

@@ -358,13 +358,15 @@ def setup_cookbook_routes() -> APIRouter:
         pid_path = TMUX_LOG_DIR / f"{session_id}.pid"
         bash = find_bash()
         if bash:
-            # Run the existing bash wrapper verbatim through Git Bash, redirecting
-            # all output to the log the poller reads. Paths handed to bash use
-            # POSIX form + shell-quoting so drive paths / spaces survive.
+            from core.platform_compat import win_to_bash_path
+            # Run the existing bash wrapper verbatim through the resolved
+            # bash (Git Bash or WSL), redirecting all output to the log the
+            # poller reads. Paths are converted via win_to_bash_path so they
+            # resolve under whichever bash flavour is in use.
             inner = TMUX_LOG_DIR / f"{session_id}_run.sh"
             inner.write_text("\n".join(bash_lines) + "\n", encoding="utf-8")
-            lp = shlex.quote(log_path.as_posix())
-            ip = shlex.quote(inner.as_posix())
+            lp = shlex.quote(win_to_bash_path(str(log_path)))
+            ip = shlex.quote(win_to_bash_path(str(inner)))
             script_path = TMUX_LOG_DIR / f"{session_id}.sh"
             script_path.write_text(
                 f"bash {ip} > {lp} 2>&1\n",

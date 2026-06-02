@@ -137,12 +137,12 @@ def _local_tooling_path_export(executable: str) -> str:
         bin_dir = posixpath.dirname(executable)
     else:
         bin_dir = os.path.dirname(os.path.abspath(executable))
-    # On Windows the bin dir is a native path like C:\...\Scripts. Git Bash
-    # needs MSYS2-style POSIX paths (/c/Users/...) on PATH to resolve
-    # executables — neither backslash paths nor C:/ drive-letter paths work.
-    if os.name == "nt" and len(bin_dir) >= 2 and bin_dir[1] == ":":
-        drive = bin_dir[0].lower()
-        bin_dir = "/" + drive + bin_dir[2:].replace("\\", "/")
+    # On Windows the bin dir is a native path like C:\...\Scripts. The
+    # resolved bash (Git Bash or WSL) each need a different POSIX form —
+    # win_to_bash_path picks /c/... or /mnt/c/... based on bash_flavour().
+    if os.name == "nt":
+        from core.platform_compat import win_to_bash_path
+        bin_dir = win_to_bash_path(bin_dir)
     # Escape for a double-quoted context: $PATH must still expand, but spaces
     # and shell metacharacters in the path must be preserved literally.
     esc = (

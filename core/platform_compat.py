@@ -132,6 +132,7 @@ def kill_process_tree(pid: Optional[int]) -> None:
 
 # ── Shell / executable resolution ───────────────────────────────────────────
 _BASH_CACHE: Optional[str] = None
+_BASH_FLAVOUR: Optional[str] = None  # "git", "wsl", or "posix"
 _BASH_PROBED = False
 
 # Common Git-for-Windows install locations to probe when bash isn't on PATH.
@@ -195,9 +196,11 @@ def find_bash() -> Optional[str]:
     cached.
 
     On Windows, Git Bash (MSYS2) is strongly preferred over WSL bash because
-    Cookbook scripts use native Windows paths that WSL cannot resolve.
+    it shares the native Windows filesystem. WSL bash is kept as a fallback
+    and callers use :func:`bash_flavour` / :func:`win_to_bash_path` to
+    translate paths into the form the resolved bash understands.
     """
-    global _BASH_CACHE, _BASH_PROBED
+    global _BASH_CACHE, _BASH_FLAVOUR, _BASH_PROBED
     if _BASH_PROBED:
         return _BASH_CACHE
     _BASH_PROBED = True
@@ -215,10 +218,52 @@ def find_bash() -> Optional[str]:
                     break
             if not found:
                 found = wsl_fallback
-    elif not found:
-        pass  # POSIX: which_tool already checked
+        _BASH_FLAVOUR = "wsl" if (found and _is_wsl_bash(found)) else "git" if found else None
+    else:
+        _BASH_FLAVOUR = "posix" if found else None
     _BASH_CACHE = found
     return found
+
+
+def bash_flavour() -> Optional[str]:
+    """Return the flavour of bash that :func:`find_bash` resolved.
+
+    Possible values (after ``find_bash`` has been called at least once):
+
+    * ``"git"``   — Git Bash / MSYS2 on Windows. Paths use ``/c/...``.
+    * ``"wsl"``   — WSL bash on Windows. Paths use ``/mnt/c/...``.
+    * ``"posix"`` — Native POSIX bash (Linux / macOS).
+    * ``None``    — No bash found, or ``find_bash`` not yet called.
+    """
+    if not _BASH_PROBED:
+        find_bash()
+    return _BASH_FLAVOUR
+
+
+def win_to_bash_path(win_path: str) -> str:
+    """Convert a Windows path to the form understood by the resolved bash.
+
+    Git Bash (MSYS2) uses ``/c/Users/...``; WSL uses ``/mnt/c/Users/...``.
+    On POSIX or when the path is already POSIX-style, returns it unchanged.
+
+    Must be called after :func:`find_bash` so the flavour is known. If no
+    bash was found, falls back to the Git Bash convention (harmless — the
+    path won't be used without a bash anyway).
+    """
+    if not win_path:
+        return win_path
+    # Normalise backslashes first
+    p = win_path.replace("\\", "/")
+    # Only translate if it looks like a drive-letter path (C:/...)
+    if len(p) >= 2 and p[1] == ":":
+        drive = p[0].lower()
+        rest = p[2:]  # includes the leading /
+        flavour = bash_flavour()
+        if flavour == "wsl":
+            return f"/mnt/{drive}{rest}"
+        # Git Bash (default for Windows)
+        return f"/{drive}{rest}"
+    return p
 
 
 def has_bash() -> bool:

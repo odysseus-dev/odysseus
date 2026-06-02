@@ -94,16 +94,17 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
     # exit status.
     bash = find_bash()
     if bash:
+        from core.platform_compat import win_to_bash_path
         # POSIX, or Windows with Git Bash/WSL. The user command goes in its OWN
         # script file, run as a child `bash` — an `exit` inside it only ends
         # that child (so the wrapper still records the exit code), and an
         # unbalanced paren / trailing line-continuation in the command can't
         # break the wrapper. `$?` is the child's real exit status. Paths are
-        # emitted as POSIX (forward-slash) + shell-quoted so Git Bash on Windows
-        # handles drive paths and spaces correctly.
+        # converted via win_to_bash_path so they resolve under Git Bash (/c/...)
+        # or WSL (/mnt/c/...) transparently.
         cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
         cmd_path.write_text(command + "\n", encoding="utf-8")
-        lp, xp, cp = (shlex.quote(p.as_posix()) for p in (log_path, exit_path, cmd_path))
+        lp, xp, cp = (shlex.quote(win_to_bash_path(str(p))) for p in (log_path, exit_path, cmd_path))
         script_path = _JOBS_DIR / f"{job_id}.sh"
         script_path.write_text(
             f"bash {cp} > {lp} 2>&1\n"
