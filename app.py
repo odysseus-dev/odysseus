@@ -47,7 +47,10 @@ from core.exceptions import (
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
+from src.endpoint_resolver import _in_docker 
+
 from starlette.responses import RedirectResponse
+
 
 # ========= LOGGING =========
 logging.basicConfig(
@@ -738,14 +741,7 @@ async def health_check() -> Dict[str, str]:
 
 @app.get("/api/runtime")
 async def runtime_info() -> Dict[str, object]:
-    in_docker = os.path.exists("/.dockerenv")
-    if not in_docker:
-        try:
-            with open("/proc/1/cgroup", "r", encoding="utf-8", errors="ignore") as fh:
-                cg = fh.read()
-            in_docker = any(marker in cg for marker in ("docker", "containerd", "kubepods"))
-        except Exception:
-            in_docker = False
+    in_docker = _in_docker()
     ollama_url = (
         os.getenv("OLLAMA_BASE_URL")
         or os.getenv("OLLAMA_URL")

@@ -6,6 +6,7 @@ Consolidates the 4+ copies of normalize_base / resolve_endpoint logic into one p
 
 import json
 import logging
+import os
 import socket
 import subprocess
 from typing import Optional, Tuple, Dict
@@ -15,6 +16,26 @@ from src.database import SessionLocal, ModelEndpoint
 from src.llm_core import _detect_provider
 
 logger = logging.getLogger(__name__)
+
+_in_docker_cache: Optional[bool] = None
+
+
+def _in_docker() -> bool:
+    """Return True when the process is running inside a Docker container."""
+    global _in_docker_cache
+    if _in_docker_cache is not None:
+        return _in_docker_cache
+    if os.path.exists("/.dockerenv"):
+        _in_docker_cache = True
+        return True
+    try:
+        with open("/proc/1/cgroup", "r", encoding="utf-8", errors="ignore") as fh:
+            cg = fh.read()
+        _in_docker_cache = any(m in cg for m in ("docker", "containerd", "kubepods"))
+    except Exception:
+        # /proc/1/cgroup absent on macOS — definitely not Docker
+        _in_docker_cache = False
+    return _in_docker_cache
 
 # Model-name substrings that are NOT chat/generation models. When an endpoint
 # has no explicit model configured we pick the first CHAT model from its list —
@@ -80,14 +101,31 @@ def _resolve_tailscale_host(hostname: str) -> Optional[str]:
 
 
 def resolve_url(url: str) -> str:
-    """If a URL's hostname can't be resolved via DNS, try Tailscale."""
+    """Normalise a user-supplied endpoint URL for use by the backend.
+
+    Two rewrites are applied in order:
+    1. Docker host rewrite: inside a container, ``localhost`` / ``127.0.0.1``
+       refer to the container itself, not the host machine.  Rewrite them to
+       ``host.docker.internal`` so connections reach host-side services such
+       as Ollama.
+    2. Tailscale fallback: if the hostname still can't be resolved via DNS,
+       try to find it in ``tailscale status``.
+    """
     parsed = urlparse(url)
     hostname = parsed.hostname
     if not hostname:
         return url
+
+    # Rewrite localhost/loopback → host.docker.internal when inside Docker
+    if _in_docker() and hostname in ("localhost", "127.0.0.1"):
+        port = parsed.port
+        netloc = f"host.docker.internal:{port}" if port else "host.docker.internal"
+        url = urlunparse(parsed._replace(netloc=netloc))
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+
     ip = _resolve_tailscale_host(hostname)
     if ip:
-        # Replace hostname with IP in the URL
         netloc = ip
         if parsed.port:
             netloc = f"{ip}:{parsed.port}"

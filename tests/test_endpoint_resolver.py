@@ -1,5 +1,8 @@
 """Tests for endpoint_resolver — pure functions tested directly to avoid import pollution."""
 import re
+import sys
+import types
+from unittest.mock import patch, mock_open
 from urllib.parse import urlparse
 
 
@@ -137,3 +140,91 @@ class TestBuildHeaders:
 
     def test_empty_key(self):
         assert build_headers("", "https://api.openai.com/v1") == {}
+
+
+# ---------------------------------------------------------------------------
+# _in_docker — import directly since it touches the filesystem
+# ---------------------------------------------------------------------------
+
+def _get_in_docker():
+    """Import _in_docker with a fresh cache each call."""
+    import src.endpoint_resolver as m
+    m._in_docker_cache = None  # reset cache between tests
+    return m._in_docker
+
+
+class TestInDocker:
+    def setup_method(self):
+        import src.endpoint_resolver as m
+        m._in_docker_cache = None
+
+    def test_dockerenv_present(self):
+        with patch("os.path.exists", return_value=True):
+            assert _get_in_docker()() is True
+
+    def test_cgroup_contains_docker(self):
+        with patch("os.path.exists", return_value=False), \
+             patch("builtins.open", mock_open(read_data="12:devices:/docker/abc123")):
+            assert _get_in_docker()() is True
+
+    def test_cgroup_no_docker_marker(self):
+        with patch("os.path.exists", return_value=False), \
+             patch("builtins.open", mock_open(read_data="0::/")):
+            assert _get_in_docker()() is False
+
+    def test_no_dockerenv_no_proc(self):
+        """macOS / Windows: /proc/1/cgroup absent — must return False, not raise."""
+        with patch("os.path.exists", return_value=False), \
+             patch("builtins.open", side_effect=FileNotFoundError):
+            assert _get_in_docker()() is False
+
+    def test_result_is_cached(self):
+        import src.endpoint_resolver as m
+        m._in_docker_cache = None
+        with patch("os.path.exists", return_value=True):
+            _get_in_docker()()
+        assert m._in_docker_cache is True
+        # Second call must use cache, not re-check filesystem
+        with patch("os.path.exists", side_effect=AssertionError("should not be called")):
+            assert m._in_docker() is True
+
+
+# ---------------------------------------------------------------------------
+# resolve_url — localhost rewriting when inside Docker
+# ---------------------------------------------------------------------------
+
+import src.endpoint_resolver as _er
+
+
+class TestResolveUrlDockerRewrite:
+    def setup_method(self):
+        _er._in_docker_cache = None
+
+    def _resolve(self, url, in_docker):
+        with patch.object(_er, "_in_docker", return_value=in_docker), \
+             patch.object(_er, "_resolve_tailscale_host", return_value=None):
+            return _er.resolve_url(url)
+
+    def test_localhost_rewritten_in_docker(self):
+        result = self._resolve("http://localhost:11434/v1", in_docker=True)
+        assert result == "http://host.docker.internal:11434/v1"
+
+    def test_loopback_ip_rewritten_in_docker(self):
+        result = self._resolve("http://127.0.0.1:11434/v1", in_docker=True)
+        assert result == "http://host.docker.internal:11434/v1"
+
+    def test_localhost_not_rewritten_outside_docker(self):
+        result = self._resolve("http://localhost:11434/v1", in_docker=False)
+        assert result == "http://localhost:11434/v1"
+
+    def test_external_host_untouched_in_docker(self):
+        result = self._resolve("http://192.168.1.10:11434/v1", in_docker=True)
+        assert result == "http://192.168.1.10:11434/v1"
+
+    def test_port_preserved_after_rewrite(self):
+        result = self._resolve("http://localhost:8080/v1", in_docker=True)
+        assert "host.docker.internal:8080" in result
+
+    def test_empty_url_unchanged(self):
+        result = self._resolve("", in_docker=True)
+        assert result == ""
