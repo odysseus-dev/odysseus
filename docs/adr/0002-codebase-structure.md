@@ -4,7 +4,8 @@
 
 **Status:** Accepted
 **Date:** 2026-06-01
-**Supersedes:** None (complements ADR-0001)
+**Supersedes:** None
+**Complements:** ADR-0001 (self-hosted local-first workspace philosophy)
 
 ## Context
 
@@ -52,6 +53,17 @@ All user data is isolated by owner ID. Every query that touches user-owned data 
 | Upward import | `src/app_initializer.py` imports from `services.memory.skills` — consider `src/` facade |
 | Duplication | `memory.py`, `memory_vector.py`, `research_handler.py`, `youtube_handler.py` exist in both `src/` and `services/` |
 | Duplication | `search/` directory duplicated between `src/search/` and `services/search/` with diverging implementations |
+
+## Agent Skills Infrastructure
+
+Added in issue #876 to support engineering skills (`to-issues`, `triage`, `diagnose`, `tdd`, `improve-codebase-architecture`):
+
+- **`AGENTS.md`** — agent skills configuration (issue tracker, triage labels, domain docs)
+- **`CONTEXT.md`** — domain glossary with source references, trimmed to avoid drift
+- **`docs/agents/`** — agent workflow conventions (issue tracker, triage labels, domain doc structure)
+- **`docs/adr/`** — architectural decisions, created lazily by `/grill-with-docs`
+
+See `docs/agents/domain.md` for how skills should consume this documentation.
 
 ## Future Work (not in scope)
 
