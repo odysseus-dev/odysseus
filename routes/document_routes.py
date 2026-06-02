@@ -11,11 +11,11 @@ from sqlalchemy import func
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user
-
-logger = logging.getLogger(__name__)
-
-
-
+from src.tool_implementations import (
+    clear_active_document,
+    _looks_like_email_document,
+    _sniff_doc_language,
+)
 from routes.document_helpers import (
     DocumentCreate, DocumentUpdate, DocumentPatch,
     _doc_to_dict, _version_to_dict,
@@ -23,6 +23,8 @@ from routes.document_helpers import (
     _slug, _resolve_user_upload_path, _assert_pdf_marker_upload_owned, _derive_title,
     _PDF_RENDER_SCALE,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
@@ -75,10 +77,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # to markdown for prose.
             language = req.language
             if not language:
-                from src.tool_implementations import _looks_like_email_document, _sniff_doc_language
                 language = _sniff_doc_language(req.content)
-            else:
-                from src.tool_implementations import _looks_like_email_document
             if _looks_like_email_document(req.content, req.title):
                 language = "email"
 
@@ -595,7 +594,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 doc.session_id = req.session_id if req.session_id else None
                 if not doc.session_id:
                     try:
-                        from src.tool_implementations import clear_active_document
                         clear_active_document(doc_id)
                     except Exception:
                         logger.debug("active document clear failed during unlink", exc_info=True)
@@ -620,7 +618,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if not doc:
                 raise HTTPException(404, "Document not found")
             _verify_doc_owner(db, doc, user)
-            from src.tool_implementations import clear_active_document
             cleared = clear_active_document(doc_id)
             return {"status": "closed", "id": doc_id, "cleared": cleared}
         finally:
@@ -639,7 +636,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             doc.is_active = False
             db.commit()
             try:
-                from src.tool_implementations import clear_active_document
                 clear_active_document(doc_id)
             except Exception:
                 logger.debug("active document clear failed during delete", exc_info=True)

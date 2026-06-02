@@ -20,6 +20,7 @@ from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
 from src.prompt_security import untrusted_context_message
+from src.tool_implementations import resolve_active_document_for_chat
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user
 from routes.session_routes import _verify_session_owner
@@ -486,51 +487,25 @@ def setup_chat_routes(
         active_doc = None
         _doc_db = SessionLocal()
         try:
-            from src.tool_implementations import get_closed_documents, set_active_document
-            _closed_doc_ids = get_closed_documents()
-            if active_doc_closed and not active_doc_id:
-                set_active_document(None)
-            if active_doc_id:
-                logger.info(f"[doc-inject] active_doc_id from frontend: {active_doc_id}")
-                # Scope to the caller's documents. The session and in-memory
-                # fallbacks below are already owner/session-bound; this
-                # explicit-id path looked up by id alone, so a user could
-                # inject another user's document by passing its id.
-                _doc_q = _doc_db.query(DBDocument).filter(DBDocument.id == active_doc_id)
-                active_doc = _owner_session_filter(_doc_q, ctx.user).first()
-                if active_doc:
-                    set_active_document(active_doc.id)
-                    logger.info(f"[doc-inject] found by ID: title={active_doc.title!r}, lang={active_doc.language!r}, is_active={active_doc.is_active}, content_len={len(active_doc.current_content or '')}")
-                else:
-                    logger.warning(f"[doc-inject] NOT FOUND by ID {active_doc_id}")
-            if not active_doc and not active_doc_closed:
-                _session_doc_q = _doc_db.query(DBDocument).filter(
-                    DBDocument.session_id == session,
-                    DBDocument.is_active == True
+            active_doc = resolve_active_document_for_chat(
+                _doc_db,
+                DBDocument,
+                _owner_session_filter,
+                session_id=session,
+                owner=ctx.user,
+                active_doc_id=active_doc_id,
+                active_doc_closed=active_doc_closed,
+            )
+            if active_doc:
+                logger.info(
+                    "[doc-inject] resolved active doc: title=%r, lang=%r, "
+                    "is_active=%s, session_id=%r, content_len=%s",
+                    active_doc.title,
+                    active_doc.language,
+                    active_doc.is_active,
+                    active_doc.session_id,
+                    len(active_doc.current_content or ""),
                 )
-                if _closed_doc_ids:
-                    _session_doc_q = _session_doc_q.filter(~DBDocument.id.in_(_closed_doc_ids))
-                active_doc = _owner_session_filter(_session_doc_q, ctx.user).order_by(DBDocument.updated_at.desc()).first()
-                if active_doc:
-                    logger.info(f"[doc-inject] found by session fallback: title={active_doc.title!r}")
-            # Last resort: the document the agent itself just created/edited
-            # (tracked in-memory by the tool layer). This rescues docs that
-            # got orphaned from their session (session_id NULL) — otherwise
-            # neither lookup above can associate them with this conversation,
-            # so the agent never sees what it just wrote. Guarded so we never
-            # leak a doc that belongs to a DIFFERENT session.
-            if not active_doc and not active_doc_closed:
-                try:
-                    from src.tool_implementations import get_active_document
-                    _mem_id = get_active_document()
-                    if _mem_id and _mem_id not in _closed_doc_ids:
-                        _mem_q = _doc_db.query(DBDocument).filter(DBDocument.id == _mem_id)
-                        cand = _owner_session_filter(_mem_q, ctx.user).first()
-                        if cand and (not cand.session_id or cand.session_id == session):
-                            active_doc = cand
-                            logger.info(f"[doc-inject] found by in-memory active id: title={active_doc.title!r} (session_id={cand.session_id!r})")
-                except Exception as _e:
-                    logger.debug(f"[doc-inject] in-memory fallback failed: {_e}")
             if not active_doc:
                 logger.info(f"[doc-inject] no active doc for session {session}")
             if active_doc:

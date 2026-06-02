@@ -5,13 +5,21 @@ import types
 from src import tool_implementations as tools
 
 
-def test_clear_active_document_only_clears_matching_doc():
+def test_closing_doc_b_does_not_clear_active_doc_a():
     tools._closed_document_ids.clear()
     tools.set_active_document("doc-a")
     try:
         assert tools.clear_active_document("doc-b") is False
         assert tools.get_active_document() == "doc-a"
+    finally:
+        tools.set_active_document(None)
+        tools._closed_document_ids.clear()
 
+
+def test_setting_closed_doc_reopens_it_for_context():
+    tools._closed_document_ids.clear()
+    tools.set_active_document("doc-a")
+    try:
         assert tools.clear_active_document("doc-a") is True
         assert tools.get_active_document() is None
         assert "doc-a" in tools.get_closed_documents()
@@ -21,6 +29,180 @@ def test_clear_active_document_only_clears_matching_doc():
     finally:
         tools.set_active_document(None)
         tools._closed_document_ids.clear()
+
+
+def test_closed_document_ids_are_bounded():
+    tools._closed_document_ids.clear()
+    try:
+        for i in range(tools._CLOSED_DOCUMENT_IDS_LIMIT + 5):
+            tools.clear_active_document(f"doc-{i}")
+
+        closed = tools.get_closed_documents()
+        assert len(closed) == tools._CLOSED_DOCUMENT_IDS_LIMIT
+        assert "doc-0" not in closed
+        assert f"doc-{tools._CLOSED_DOCUMENT_IDS_LIMIT + 4}" in closed
+    finally:
+        tools.set_active_document(None)
+        tools._closed_document_ids.clear()
+
+
+class _ChatExpr:
+    def __init__(self, op, field=None, value=None, inner=None):
+        self.op = op
+        self.field = field
+        self.value = value
+        self.inner = inner
+
+    def __invert__(self):
+        return _ChatExpr("not", inner=self)
+
+
+class _ChatColumn:
+    def __init__(self, name):
+        self.name = name
+
+    def __eq__(self, value):
+        return _ChatExpr("eq", self.name, value)
+
+    def in_(self, values):
+        return _ChatExpr("in", self.name, set(values))
+
+    def desc(self):
+        return ("desc", self.name)
+
+
+class _ChatDocumentModel:
+    id = _ChatColumn("id")
+    owner = _ChatColumn("owner")
+    session_id = _ChatColumn("session_id")
+    is_active = _ChatColumn("is_active")
+    updated_at = _ChatColumn("updated_at")
+
+
+class _ChatDoc:
+    def __init__(self, doc_id, *, owner="alice", session_id="session-a", is_active=True, updated_at=0):
+        self.id = doc_id
+        self.owner = owner
+        self.session_id = session_id
+        self.is_active = is_active
+        self.updated_at = updated_at
+
+
+def _chat_matches(doc, expr):
+    if expr.op == "eq":
+        return getattr(doc, expr.field) == expr.value
+    if expr.op == "in":
+        return getattr(doc, expr.field) in expr.value
+    if expr.op == "not":
+        return not _chat_matches(doc, expr.inner)
+    raise AssertionError(f"unknown op {expr.op}")
+
+
+class _ChatQuery:
+    def __init__(self, docs):
+        self.docs = docs
+        self.filters = []
+        self.sort_desc = None
+
+    def filter(self, *clauses):
+        self.filters.extend(c for c in clauses if isinstance(c, _ChatExpr))
+        return self
+
+    def order_by(self, *args):
+        for arg in args:
+            if isinstance(arg, tuple) and arg[0] == "desc":
+                self.sort_desc = arg[1]
+        return self
+
+    def first(self):
+        docs = [d for d in self.docs if all(_chat_matches(d, f) for f in self.filters)]
+        if self.sort_desc:
+            docs.sort(key=lambda d: getattr(d, self.sort_desc), reverse=True)
+        return docs[0] if docs else None
+
+
+class _ChatDb:
+    def __init__(self, docs):
+        self.docs = docs
+
+    def query(self, *args):
+        return _ChatQuery(self.docs)
+
+
+def _chat_owner_filter(query, owner):
+    return query.filter(_ChatDocumentModel.owner == owner)
+
+
+def _reset_active_doc_state():
+    tools.set_active_document(None)
+    tools._closed_document_ids.clear()
+
+
+def test_closed_doc_is_not_injected_by_session_fallback():
+    _reset_active_doc_state()
+    try:
+        doc_a = _ChatDoc("doc-a", updated_at=10)
+        tools.set_active_document("doc-a")
+        tools.clear_active_document("doc-a")
+
+        resolved = tools.resolve_active_document_for_chat(
+            _ChatDb([doc_a]),
+            _ChatDocumentModel,
+            _chat_owner_filter,
+            session_id="session-a",
+            owner="alice",
+            active_doc_closed=False,
+        )
+
+        assert resolved is None
+    finally:
+        _reset_active_doc_state()
+
+
+def test_explicit_active_doc_reopens_closed_doc():
+    _reset_active_doc_state()
+    try:
+        doc_a = _ChatDoc("doc-a", updated_at=10)
+        tools.clear_active_document("doc-a")
+        assert "doc-a" in tools.get_closed_documents()
+
+        resolved = tools.resolve_active_document_for_chat(
+            _ChatDb([doc_a]),
+            _ChatDocumentModel,
+            _chat_owner_filter,
+            session_id="session-a",
+            owner="alice",
+            active_doc_id="doc-a",
+            active_doc_closed=False,
+        )
+
+        assert resolved is doc_a
+        assert tools.get_active_document() == "doc-a"
+        assert "doc-a" not in tools.get_closed_documents()
+    finally:
+        _reset_active_doc_state()
+
+
+def test_normal_closed_turn_does_not_clear_other_active_doc():
+    _reset_active_doc_state()
+    try:
+        doc_a = _ChatDoc("doc-a", owner="alice", session_id="session-a")
+        tools.set_active_document("doc-a")
+
+        resolved = tools.resolve_active_document_for_chat(
+            _ChatDb([doc_a]),
+            _ChatDocumentModel,
+            _chat_owner_filter,
+            session_id="session-b",
+            owner="bob",
+            active_doc_closed=True,
+        )
+
+        assert resolved is None
+        assert tools.get_active_document() == "doc-a"
+        assert not tools.get_closed_documents()
+    finally:
+        _reset_active_doc_state()
 
 
 class _Column:

@@ -31,24 +31,3 @@ def test_failed_document_load_surfaces_user_error():
     js = (_REPO / "static" / "js" / "document.js").read_text(encoding="utf-8")
     assert "uiModule.showError" in js
     assert "Document not found" in js
-
-
-def test_document_close_clears_agent_active_context():
-    """Closing a tab/panel must notify the backend so the next agent turn
-    cannot rediscover the closed document as active context."""
-    js = (_REPO / "static" / "js" / "document.js").read_text(encoding="utf-8")
-    chat_js = (_REPO / "static" / "js" / "chat.js").read_text(encoding="utf-8")
-    routes = (_REPO / "routes" / "document_routes.py").read_text(encoding="utf-8")
-    chat = (_REPO / "routes" / "chat_routes.py").read_text(encoding="utf-8")
-
-    assert "/api/document/${encodeURIComponent(docId)}/close" in js
-    assert "_clearServerActiveDocument(docId)" in js
-    assert "_clearServerActiveDocument(closingDocId)" in js
-    assert "fd.append('active_doc_state', 'open')" in chat_js
-    assert "fd.append('active_doc_state', 'closed')" in chat_js
-    assert '@router.post("/api/document/{doc_id}/close")' in routes
-    assert "clear_active_document(doc_id)" in routes
-    assert 'active_doc_state = form_data.get("active_doc_state", "").strip().lower()' in chat
-    assert "active_doc_closed = active_doc_state == \"closed\"" in chat
-    assert "get_closed_documents()" in chat
-    assert "_session_doc_q.filter(~DBDocument.id.in_(_closed_doc_ids))" in chat

@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 MAX_OUTPUT_CHARS = 10_000
@@ -69,7 +70,10 @@ def _parse_tool_args(content):
 # ---------------------------------------------------------------------------
 
 _active_document_id: Optional[str] = None
-_closed_document_ids: set[str] = set()
+# Keep only recent UI-close markers. The frontend sends active_doc_state on
+# every chat turn, so this cache is a compatibility guard, not durable state.
+_CLOSED_DOCUMENT_IDS_LIMIT = 256
+_closed_document_ids: OrderedDict[str, None] = OrderedDict()
 _active_model: Optional[str] = None
 
 
@@ -78,7 +82,14 @@ def set_active_document(doc_id: Optional[str]):
     global _active_document_id
     _active_document_id = doc_id
     if doc_id:
-        _closed_document_ids.discard(doc_id)
+        _closed_document_ids.pop(doc_id, None)
+
+
+def _mark_document_closed(doc_id: str) -> None:
+    _closed_document_ids[doc_id] = None
+    _closed_document_ids.move_to_end(doc_id)
+    while len(_closed_document_ids) > _CLOSED_DOCUMENT_IDS_LIMIT:
+        _closed_document_ids.popitem(last=False)
 
 
 def clear_active_document(doc_id: Optional[str] = None) -> bool:
@@ -90,7 +101,7 @@ def clear_active_document(doc_id: Optional[str] = None) -> bool:
     """
     global _active_document_id
     if doc_id:
-        _closed_document_ids.add(doc_id)
+        _mark_document_closed(doc_id)
     if doc_id is None or _active_document_id == doc_id:
         _active_document_id = None
         return True
@@ -98,7 +109,55 @@ def clear_active_document(doc_id: Optional[str] = None) -> bool:
 
 
 def get_closed_documents() -> set[str]:
-    return set(_closed_document_ids)
+    return set(_closed_document_ids.keys())
+
+
+def resolve_active_document_for_chat(
+    db,
+    Document,
+    owner_filter,
+    *,
+    session_id: str,
+    owner: Optional[str],
+    active_doc_id: str = "",
+    active_doc_closed: bool = False,
+):
+    """Resolve the editor document that should be visible to an agent turn."""
+    active_doc = None
+    active_doc_id = (active_doc_id or "").strip()
+    closed_doc_ids = get_closed_documents()
+
+    if active_doc_id:
+        # Scope frontend-supplied IDs to the caller's documents. Resolving by
+        # id alone would let another user's document be injected into context.
+        q = db.query(Document).filter(Document.id == active_doc_id)
+        active_doc = owner_filter(q, owner).first()
+        if active_doc:
+            set_active_document(active_doc.id)
+
+    if not active_doc and not active_doc_closed:
+        # Fallback to the latest active document linked to this chat session,
+        # while honoring UI-close markers from recent close/unlink events.
+        q = db.query(Document).filter(
+            Document.session_id == session_id,
+            Document.is_active == True,
+        )
+        if closed_doc_ids:
+            q = q.filter(~Document.id.in_(closed_doc_ids))
+        active_doc = owner_filter(q, owner).order_by(Document.updated_at.desc()).first()
+
+    # Last resort: the document the agent itself just created/edited (tracked
+    # in-memory by the tool layer). This rescues docs that got orphaned from
+    # their session (session_id NULL), while preserving the session/owner guard.
+    if not active_doc and not active_doc_closed:
+        mem_id = get_active_document()
+        if mem_id and mem_id not in closed_doc_ids:
+            q = db.query(Document).filter(Document.id == mem_id)
+            cand = owner_filter(q, owner).first()
+            if cand and (not cand.session_id or cand.session_id == session_id):
+                active_doc = cand
+
+    return active_doc
 
 
 def set_active_model(model: Optional[str]):
