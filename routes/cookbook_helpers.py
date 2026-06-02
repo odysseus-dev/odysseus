@@ -152,13 +152,25 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     """Build a bash pip install fallback chain.
 
     Try the active interpreter/environment first. `--user` is invalid inside
-    many venvs, so keep the user-site fallback for PEP-668 system Pythons only
-    after the venv-safe attempt has failed.
+    many venvs, so only attempt the --user fallback when NOT inside a venv.
     """
     upgrade_flag = " -U" if upgrade else ""
     base = f"{python_cmd} install -q{upgrade_flag} {package} 2>/dev/null"
     user = f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {package} 2>/dev/null"
-    return f"{base} || {user}"
+    # Derive the python executable for the venv detection check.
+    # Must use the same interpreter that pip belongs to; hardcoding
+    # python3 breaks when pip lives in a venv that only has "python".
+    if " -m pip" in python_cmd:
+        python_exe = python_cmd.replace(" -m pip", "")
+    elif python_cmd.strip() == "pip":
+        python_exe = "python"
+    elif python_cmd.strip() == "pip3":
+        python_exe = "python3"
+    else:
+        python_exe = "python3"
+    venv_check = f'{python_exe} -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"'
+    # venv_check exits 0 (true) when IN a venv; --user is only valid outside one.
+    return f"{base} || {{ {venv_check} || {user}; }}"
 
 
 def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:

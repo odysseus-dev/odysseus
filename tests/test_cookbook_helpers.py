@@ -92,8 +92,9 @@ def test_pip_install_fallback_chain_prefers_venv_safe_install():
 def test_pip_install_fallback_chain_allows_custom_python_command():
     chain = _pip_install_fallback_chain("hf_transfer", python_cmd="pip", upgrade=False)
     assert chain == (
-        "pip install -q hf_transfer 2>/dev/null || "
-        "pip install --user --break-system-packages -q hf_transfer 2>/dev/null"
+        'pip install -q hf_transfer 2>/dev/null || { '
+        'python -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"'
+        ' || pip install --user --break-system-packages -q hf_transfer 2>/dev/null; }'
     )
 
 
