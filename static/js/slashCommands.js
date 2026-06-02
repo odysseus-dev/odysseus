@@ -270,6 +270,7 @@ function slashReply(text) {
       btn.type = 'button';
       btn.className = 'copy-code';
       btn.setAttribute('data-code', pre.textContent);
+      btn.setAttribute('aria-label', 'Copy code');
       btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
       pre.appendChild(btn);
     }
@@ -398,7 +399,8 @@ function typewriterBlocksReply(blocks, options = {}) {
         useBtn.type = 'button';
         useBtn.className = 'use-code';
         useBtn.title = 'Use in Chat';
-        useBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>';
+        useBtn.setAttribute('aria-label', 'Use in Chat');
+        useBtn.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>';
         const copyText = block.copyText || block.text || '';
         const useNow = (e) => {
           e.preventDefault();
@@ -426,6 +428,7 @@ function typewriterBlocksReply(blocks, options = {}) {
         btn.className = 'copy-code';
         btn.setAttribute('data-code', copyText);
         btn.title = 'Copy';
+        btn.setAttribute('aria-label', 'Copy code');
         btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
         const copyNow = (e) => {
           e.preventDefault();
@@ -2045,9 +2048,9 @@ async function _cmdDemo(args, ctx) {
       tooltip.innerHTML = `<div class="tour-text">${text}</div>
         ${breathing ? '<div style="font-size:0.72rem;opacity:0.35;margin-bottom:6px">Click the highlighted element to continue</div>' : ''}
         <div class="tour-nav" style="${breathing ? 'justify-content:center' : ''}">
-          ${breathing ? '' : `<button class="tour-btn-arrow${isFirst ? ' disabled' : ''}" data-act="back">\u2190</button>`}
+          ${breathing ? '' : `<button class="tour-btn-arrow${isFirst ? ' disabled' : ''}" data-act="back" aria-label="Back">\u2190</button>`}
           <button class="tour-btn-skip" data-act="skip">${stepOpts.finishLabel ? 'finish tour' : 'skip tour'}</button>
-          ${breathing ? '' : `<button class="tour-btn-arrow${pulseNext ? ' tour-btn-arrow-pulse' : ''}" data-act="next">\u2192</button>`}
+          ${breathing ? '' : `<button class="tour-btn-arrow${pulseNext ? ' tour-btn-arrow-pulse' : ''}" data-act="next" aria-label="Next">\u2192</button>`}
         </div>`;
 
       // Position based on the fully-rendered tooltip so it doesn't jump as
@@ -2389,9 +2392,9 @@ async function _cmdTourCompare(args, ctx) {
       tooltip.innerHTML =
         '<div class="tour-text">' + text + '</div>' + hint +
         '<div class="tour-nav">' +
-          '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
+          '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
           '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-          '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
+          '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
         '</div>';
       requestAnimationFrame(() => {
         _positionTooltip(target);
@@ -2675,9 +2678,9 @@ async function _cmdTourCookbook(args, ctx) {
       tooltip.innerHTML =
         '<div class="tour-text">' + text + '</div>' +
         '<div class="tour-nav">' +
-          '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
+          '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
           '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-          '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
+          '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
         '</div>';
       requestAnimationFrame(() => {
         _positionTooltip(target, placement);
@@ -2912,9 +2915,9 @@ async function _cmdTourTheme(args, ctx) {
         tooltip.innerHTML =
           '<div class="tour-text">' + text + '</div>' +
           '<div class="tour-nav">' +
-            '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
+            '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
             '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
+            '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
           _positionTooltip(target, placement);
@@ -3156,9 +3159,9 @@ async function _cmdTourSettings(args, ctx) {
         tooltip.innerHTML =
           '<div class="tour-text">' + text + '</div>' +
           '<div class="tour-nav">' +
-            '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
+            '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
             '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
+            '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
           _positionTooltip(target, placement);
@@ -3388,9 +3391,9 @@ async function _cmdTourGallery(args, ctx) {
         tooltip.innerHTML =
           '<div class="tour-text">' + text + '</div>' +
           '<div class="tour-nav">' +
-            '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
+            '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
             '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
+            '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
           _positionTooltip(target, placement);
@@ -3601,9 +3604,9 @@ async function _cmdTourNotes(args, ctx) {
         tooltip.innerHTML =
           '<div class="tour-text">' + text + '</div>' +
           '<div class="tour-nav">' +
-            '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
+            '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
             '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
+            '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
           _positionTooltip(target, placement);
@@ -3801,9 +3804,9 @@ async function _cmdTourBrain(args, ctx) {
         tooltip.innerHTML =
           '<div class="tour-text">' + text + '</div>' +
           '<div class="tour-nav">' +
-            '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
+            '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
             '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
+            '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
           _positionTooltip(target, placement);
@@ -3990,9 +3993,9 @@ async function _runTaskTour(steps, doneText, opts) {
         tooltip.innerHTML =
           '<div class="tour-text">' + step.text + '</div>' +
           '<div class="tour-nav">' +
-            '<button class="tour-btn-arrow' + (i === 0 ? ' disabled' : '') + '" data-act="back">←</button>' +
+            '<button class="tour-btn-arrow' + (i === 0 ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
             '<button class="tour-btn-skip" data-act="skip">' + (i === steps.length - 1 ? 'done' : 'skip tour') + '</button>' +
-            '<button class="tour-btn-arrow" data-act="next">' + (i === steps.length - 1 ? '✓' : '→') + '</button>' +
+            '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (i === steps.length - 1 ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
           positionTooltip(target);
@@ -4238,9 +4241,9 @@ async function _cmdTourResearch(args, ctx) {
       tooltip.innerHTML =
         '<div class="tour-text">' + text + '</div>' +
         '<div class="tour-nav">' +
-          '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
+          '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
           '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-          '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
+          '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
         '</div>';
       requestAnimationFrame(() => {
         _positionTooltip(target, placement);
@@ -4454,9 +4457,9 @@ async function _cmdTourLibrary(args, ctx) {
       tooltip.innerHTML =
         '<div class="tour-text">' + text + '</div>' +
         '<div class="tour-nav">' +
-          '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
+          '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back" aria-label="Back">←</button>' +
           '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
-          '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
+          '<button class="tour-btn-arrow" data-act="next" aria-label="Next">' + (isLast ? '✓' : '→') + '</button>' +
         '</div>';
       requestAnimationFrame(() => {
         _positionTooltip(target, placement);
@@ -4899,6 +4902,7 @@ async function _cmdShortcuts(args, ctx) {
   btn.type = 'button';
   btn.className = 'copy-code';
   btn.setAttribute('data-code', pre.textContent);
+  btn.setAttribute('aria-label', 'Copy code');
   btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
   pre.appendChild(btn);
   body.appendChild(pre);
