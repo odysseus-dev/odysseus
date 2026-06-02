@@ -34,6 +34,11 @@ _HELPER = _REPO / "static" / "js" / "keyboard-shortcuts.js"
 _PLATFORM = _REPO / "static" / "js" / "platform.js"
 _HAS_NODE = shutil.which("node") is not None
 
+# Every test here shells out to `node`; skip the whole module when it is absent
+# rather than repeating the mark per test (same convention as test_compare_js.py
+# / test_reply_recipients_js.py).
+pytestmark = pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+
 
 def _run(js: str) -> str:
     proc = subprocess.run(
@@ -44,14 +49,20 @@ def _run(js: str) -> str:
     return proc.stdout.strip()
 
 
-def _is_altgr(altgraph: bool, is_mac: bool = False, has_modifier_state: bool = True) -> bool:
+def _is_altgr(
+    altgraph: bool,
+    is_mac: bool = False,
+    has_modifier_state: bool = True,
+    ctrl: bool = True,
+    alt: bool = True,
+) -> bool:
     """Return isAltGrEvent(ev, is_mac) — the predicate every guard routes through."""
     modifier = (
         f"ev.getModifierState = (m) => m === 'AltGraph' ? {json.dumps(altgraph)} : false;"
         if has_modifier_state else "")
     js = f"""
     import {{ isAltGrEvent }} from '{_PLATFORM.as_uri()}';
-    const ev = {{ ctrlKey: true, altKey: true }};
+    const ev = {{ ctrlKey: {json.dumps(ctrl)}, altKey: {json.dumps(alt)} }};
     {modifier}
     console.log(JSON.stringify(isAltGrEvent(ev, {json.dumps(is_mac)})));
     """
@@ -86,26 +97,32 @@ def _matches(event: dict, combo: str, altgraph: bool, is_mac: bool = False) -> b
 
 # --- The shared predicate (covers all three guards) --------------------------
 
-@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_isaltgr_true_for_altgr_keystroke_off_mac():
     # AZERTY/QWERTZ user holds AltGr: browser sets ctrlKey+altKey+AltGraph.
     assert _is_altgr(altgraph=True, is_mac=False) is True
 
 
-@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_isaltgr_false_for_genuine_ctrl_alt():
     # A real left Ctrl+Alt press leaves AltGraph unset.
     assert _is_altgr(altgraph=False, is_mac=False) is False
 
 
-@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_isaltgr_false_when_altgraph_set_but_not_ctrl_alt():
+    # The collision we defend against is specifically "AltGr reported AS
+    # Ctrl+Alt". An event that asserts AltGraph WITHOUT presenting as Ctrl+Alt
+    # (e.g. a Linux ISO_Level3_Shift layout, or a stray modifier state) must NOT
+    # be swallowed — only a genuine Ctrl+Alt-presenting AltGr keystroke is.
+    assert _is_altgr(altgraph=True, ctrl=False, alt=False) is False
+    assert _is_altgr(altgraph=True, ctrl=True, alt=False) is False
+    assert _is_altgr(altgraph=True, ctrl=False, alt=True) is False
+
+
 def test_isaltgr_false_on_mac_even_with_altgraph():
     # macOS reports AltGraph=true for the Option key, but Ctrl+Option / Cmd+Option
     # are legitimate Mac shortcuts, so the predicate must never swallow them.
     assert _is_altgr(altgraph=True, is_mac=True) is False
 
 
-@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_isaltgr_false_when_getmodifierstate_missing():
     # Defensive: an event without getModifierState must not throw or report AltGr.
     assert _is_altgr(altgraph=False, is_mac=False, has_modifier_state=False) is False
@@ -113,7 +130,6 @@ def test_isaltgr_false_when_getmodifierstate_missing():
 
 # --- The navigator-derived IS_MAC default (dead in node without a stub) -------
 
-@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_is_mac_from_navigator_platform():
     # navigator.platform reports "MacIntel" on EVERY Mac — Apple Silicon
     # (M1/M2/M3...) included; the string was frozen for compatibility, so there
@@ -121,7 +137,6 @@ def test_is_mac_from_navigator_platform():
     assert _is_mac_default(platform="MacIntel") is True
 
 
-@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_is_mac_apple_silicon_reports_macintel():
     # Pin the quirk explicitly: an Apple Silicon Mac's UA still says Macintosh
     # and its platform still says MacIntel, so the carve-out protects it too.
@@ -131,20 +146,17 @@ def test_is_mac_apple_silicon_reports_macintel():
     ) is True
 
 
-@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_is_mac_from_user_agent_when_platform_blank():
     # iPadOS / some browsers report a Mac userAgent with an unhelpful platform.
     assert _is_mac_default(platform="", user_agent="Mozilla/5.0 (Macintosh; ...)") is True
 
 
-@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_is_not_mac_on_windows():
     assert _is_mac_default(platform="Win32", user_agent="Mozilla/5.0 (Windows NT 10.0)") is False
 
 
 # --- _matchesCombo integration (the matcher predicate, end to end) -----------
 
-@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_altgr_keystroke_does_not_trigger_ctrl_alt_shortcut():
     # AZERTY/QWERTZ user holds AltGr over a key that yields 'n'. This must NOT
     # fire the destructive new_session combo.
@@ -152,14 +164,12 @@ def test_altgr_keystroke_does_not_trigger_ctrl_alt_shortcut():
     assert _matches(ev, "ctrl+alt+n", altgraph=True, is_mac=False) is False
 
 
-@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_genuine_ctrl_alt_still_matches():
     # A real left Ctrl+Alt press (AltGraph not set) must still work.
     ev = {"ctrlKey": True, "altKey": True, "shiftKey": False, "key": "n"}
     assert _matches(ev, "ctrl+alt+n", altgraph=False, is_mac=False) is True
 
 
-@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_mac_option_combo_still_matches():
     # macOS reports AltGraph=true for the Option key, but Ctrl+Option / Cmd+Option
     # are legitimate Mac shortcuts. On macOS the guard must NOT swallow them.
@@ -167,7 +177,6 @@ def test_mac_option_combo_still_matches():
     assert _matches(ev, "ctrl+alt+n", altgraph=True, is_mac=True) is True
 
 
-@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_plain_ctrl_shortcut_unaffected():
     # Non-alt combos were never AltGr-ambiguous and must keep matching.
     ev = {"ctrlKey": True, "altKey": False, "shiftKey": False, "key": "k"}
