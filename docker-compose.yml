@@ -79,7 +79,12 @@ services:
     restart: unless-stopped
 
   searxng:
-    image: docker.io/searxng/searxng:latest
+    # Pinned, not :latest — odysseus waits on searxng's healthcheck
+    # (depends_on: condition: service_healthy), so a broken upstream `latest`
+    # tag blocks the whole app from starting. 2026.6.2 crashes on boot with
+    # `KeyError: 'default_doi_resolver'`, failing the healthcheck (issue #1414).
+    # Bump this deliberately after verifying a newer tag boots clean.
+    image: docker.io/searxng/searxng:2026.5.31-7159b8aed
     entrypoint:
       - /bin/sh
       - -c

@@ -28,9 +28,12 @@ def _load() -> dict:
     if not _PATH.exists():
         return {}
     try:
-        return json.loads(_PATH.read_text())
+        data = json.loads(_PATH.read_text())
     except json.JSONDecodeError as e:
         fail(f"presets.json corrupt: {e}")
+    if not isinstance(data, dict):
+        fail("presets.json corrupt: expected an object")
+    return data
 
 
 def _save(data: dict) -> None:

@@ -43,6 +43,18 @@ def is_valid_upload_id(upload_id: str) -> bool:
     return UPLOAD_ID_RE.fullmatch(upload_id or "") is not None
 
 
+def count_recent_uploads(timestamps, now: float, window: float = 10.0) -> int:
+    """Number of upload events in *timestamps* within the last *window* seconds.
+
+    Used by the per-IP concurrency guard. The count is of genuine prior upload
+    events — it must NOT scale with how many files are in the *current* request,
+    or a single multi-file batch would reject itself (issue #1346)."""
+    if not timestamps:
+        return 0
+    cutoff = now - window
+    return sum(1 for t in timestamps if t > cutoff)
+
+
 class UploadHandler:
     def __init__(self, base_dir: str, upload_dir: str):
         self.base_dir = base_dir
@@ -50,7 +62,13 @@ class UploadHandler:
         self.max_upload_size = 10 * 1024 * 1024  # 10MB
         self.max_concurrent_uploads = 3
         self.cleanup_days = 30
-        self.upload_rate_limit = 5  # Max 5 uploads per minute per IP
+        # Per-IP per-minute cap. save_upload() counts EACH file, and the chat
+        # composer lets a user attach up to MAX_FILES (10, static/js/fileHandler.js)
+        # in one batch — so this must comfortably exceed 10, or a single 6+ file
+        # attach is rejected mid-batch (issue #1346: "5 work, 6 fail"). Burst abuse
+        # is separately bounded by max_concurrent_uploads. Headroom for a few full
+        # batches per minute.
+        self.upload_rate_limit = 60  # max 60 file-uploads per minute per IP
         self.upload_rate_window = 60  # 60 seconds
         
         # Track upload rates
