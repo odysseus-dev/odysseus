@@ -304,7 +304,7 @@ export function showToast(msg, durationOrOpts) {
   toastEl.textContent = '';
   toastEl.classList.remove('error');
 
-  let duration = 1200, actionLabel = null, onAction = null, actionHint = null, actionIcon = null, leadingIcon = null;
+  let duration = 5000, actionLabel = null, onAction = null, actionHint = null, actionIcon = null, leadingIcon = null;
   if (typeof durationOrOpts === 'object' && durationOrOpts) {
     duration = durationOrOpts.duration || 5000;
     actionLabel = durationOrOpts.action;
@@ -437,7 +437,7 @@ export function showError(msg) {
   toastEl._hideTimer = setTimeout(() => {
     toastEl.classList.add('exiting');
     toastEl.classList.remove('show');
-  }, 3000);
+  }, 5000);
 }
 
 /**
