@@ -1,14 +1,16 @@
 # routes/model_routes.py
 """Routes for model and provider management."""
+import os
 import re
 import uuid
 import json
+import socket
 import time as _time
 import logging
 import httpx
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 from fastapi import APIRouter, HTTPException, Form, Query, Body, Request
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
@@ -25,6 +27,52 @@ from src.endpoint_resolver import (
 from src.auth_helpers import _auth_disabled, owner_filter
 
 logger = logging.getLogger(__name__)
+
+
+# Loopback hosts a user might type for a local model server (LM Studio,
+# llama.cpp, vLLM, …). Inside Docker these point at the *container*, not the
+# host the server actually runs on.
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+
+def _docker_host_gateway_reachable() -> bool:
+    """True when we run inside a container whose host is reachable via
+    ``host.docker.internal`` (compose maps it to ``host-gateway``). Returns
+    False on native installs and on container setups without the mapping, so
+    the loopback rewrite below stays a no-op there."""
+    in_container = os.path.exists("/.dockerenv")
+    if not in_container:
+        try:
+            with open("/proc/1/cgroup", encoding="utf-8") as fh:
+                in_container = any(t in fh.read() for t in ("docker", "containerd", "kubepods"))
+        except OSError:
+            in_container = False
+    if not in_container:
+        return False
+    try:
+        socket.getaddrinfo("host.docker.internal", None)
+        return True
+    except OSError:
+        return False
+
+
+def _rewrite_loopback_for_docker(base_url: str) -> str:
+    """Rewrite a loopback model-endpoint URL to ``host.docker.internal`` when
+    running in Docker. A URL like ``http://localhost:1234/v1`` (the LM Studio
+    default) otherwise targets the Odysseus container itself, so the probe gets
+    a connection error and the endpoint is rejected with a misleading "No
+    models found for that provider/key". The Ollama paths already handle this;
+    this extends the same fix to OpenAI-compatible local servers."""
+    try:
+        parsed = urlparse(base_url)
+    except Exception:
+        return base_url
+    if (parsed.hostname or "").lower() not in _LOOPBACK_HOSTS:
+        return base_url
+    if not _docker_host_gateway_reachable():
+        return base_url
+    netloc = "host.docker.internal" + (f":{parsed.port}" if parsed.port else "")
+    return urlunparse(parsed._replace(netloc=netloc))
 
 
 # ── Curated model lists per provider ──
@@ -938,6 +986,9 @@ def setup_model_routes(model_discovery):
         # Resolve hostname via Tailscale if DNS fails
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
+        # In Docker, rewrite a loopback URL to host.docker.internal so the probe
+        # — and the saved URL used for chat — reach the host, not the container.
+        base_url = _rewrite_loopback_for_docker(base_url)
 
         # Auto-generate name from URL if not provided
         if not name.strip():
@@ -1046,6 +1097,7 @@ def setup_model_routes(model_discovery):
             raise HTTPException(400, "Base URL is required")
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
+        base_url = _rewrite_loopback_for_docker(base_url)
         probe_timeout = 3 if (":11434" in base_url or "ollama" in base_url.lower()) else 2
         models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
         ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)

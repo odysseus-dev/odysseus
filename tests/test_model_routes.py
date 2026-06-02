@@ -316,3 +316,57 @@ def test_generic_endpoint_error_message_preserves_probe_error():
     )
 
     assert msg == "No models found for that provider/key. Last probe error: HTTP 401."
+
+
+# ── _rewrite_loopback_for_docker (issue #25: LM Studio on host loopback) ──
+
+class TestDockerLoopbackRewrite:
+    def test_rewrites_loopback_when_in_docker(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: True)
+        assert (model_routes._rewrite_loopback_for_docker("http://localhost:1234/v1")
+                == "http://host.docker.internal:1234/v1")
+        assert (model_routes._rewrite_loopback_for_docker("http://127.0.0.1:1234/v1")
+                == "http://host.docker.internal:1234/v1")
+
+    def test_no_rewrite_when_not_in_docker(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: False)
+        assert (model_routes._rewrite_loopback_for_docker("http://localhost:1234/v1")
+                == "http://localhost:1234/v1")
+
+    def test_non_loopback_untouched_even_in_docker(self, monkeypatch):
+        # Cloud and LAN hosts must never be rewritten or they would break.
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: True)
+        assert (model_routes._rewrite_loopback_for_docker("https://api.openai.com/v1")
+                == "https://api.openai.com/v1")
+        assert (model_routes._rewrite_loopback_for_docker("http://192.168.1.50:1234/v1")
+                == "http://192.168.1.50:1234/v1")
+
+
+class TestDockerHostGatewayReachable:
+    def test_native_host_is_false_and_skips_dns(self, monkeypatch):
+        monkeypatch.setattr(model_routes.os.path, "exists", lambda p: False)
+
+        def _no_cgroup(*a, **k):
+            raise FileNotFoundError
+
+        monkeypatch.setattr("builtins.open", _no_cgroup)
+
+        def _must_not_run(*a, **k):
+            raise AssertionError("getaddrinfo must not run on native hosts")
+
+        monkeypatch.setattr(model_routes.socket, "getaddrinfo", _must_not_run)
+        assert model_routes._docker_host_gateway_reachable() is False
+
+    def test_container_with_host_gateway_is_true(self, monkeypatch):
+        monkeypatch.setattr(model_routes.os.path, "exists", lambda p: p == "/.dockerenv")
+        monkeypatch.setattr(model_routes.socket, "getaddrinfo", lambda *a, **k: [("ok",)])
+        assert model_routes._docker_host_gateway_reachable() is True
+
+    def test_container_without_host_gateway_is_false(self, monkeypatch):
+        monkeypatch.setattr(model_routes.os.path, "exists", lambda p: p == "/.dockerenv")
+
+        def _fail(*a, **k):
+            raise OSError("name or service not known")
+
+        monkeypatch.setattr(model_routes.socket, "getaddrinfo", _fail)
+        assert model_routes._docker_host_gateway_reachable() is False
