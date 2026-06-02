@@ -1076,11 +1076,12 @@ async function _deleteSkill(name, card = null) {
 
 async function _setSkillStatus(name, status) {
   try {
-    await fetch(`${API}/api/skills/${encodeURIComponent(name)}`, {
+    const res = await fetch(`${API}/api/skills/${encodeURIComponent(name)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     await loadSkills();
     uiModule.showToast(status === 'published' ? 'Skill approved' : 'Skill moved to draft');
   } catch (e) { uiModule.showError('Update failed: ' + e.message); }
@@ -1787,7 +1788,7 @@ async function _showSkillSource(name) {
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:8px">
         <textarea id="skill-md-textarea" spellcheck="false" style="flex:1;min-height:50vh;width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);box-sizing:border-box"></textarea>
-        <p class="memory-desc" style="margin:0">Edit the frontmatter and body directly. Save replaces the file via PUT /api/skills/{name}.</p>
+        <p class="memory-desc" style="margin:0">Edit the frontmatter and body directly. Save replaces the file via POST /api/skills/{name}/markdown.</p>
       </div>
     </div>
   `;

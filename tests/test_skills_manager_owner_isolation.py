@@ -262,3 +262,42 @@ def test_update_skill_positive_scoping(tmp_path):
     assert "bob original" in after_bob and "alice updated" not in after_bob, (
         "Bob's file was mutated by Alice's update_skill call — cross-tenant leak."
     )
+
+
+def test_publish_skill_requires_owner_scoping(tmp_path):
+    """Regression for issue #1227: PUT publish returned 404 because the route
+    called update_skill without owner=user on owner-stamped skills."""
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir(parents=True, exist_ok=True)
+
+    skill_dir = skills_root / "general" / "caveman-mode"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    path = skill_dir / "SKILL.md"
+    path.write_text(textwrap.dedent("""\
+        ---
+        name: caveman-mode
+        description: test
+        version: 1.0.0
+        category: general
+        tags: []
+        status: draft
+        confidence: 0.8
+        source: user
+        owner: alice
+        created: 2026-01-01T00:00:00Z
+        ---
+
+        # When to use
+        test
+
+        # Procedure
+        - step 1
+        """), encoding="utf-8")
+
+    sm = SkillsManager(str(tmp_path))
+
+    assert sm.update_skill("caveman-mode", {"status": "published"}) is False
+    assert "status: draft" in path.read_text(encoding="utf-8")
+
+    assert sm.update_skill("caveman-mode", {"status": "published"}, owner="alice") is True
+    assert "status: published" in path.read_text(encoding="utf-8")
