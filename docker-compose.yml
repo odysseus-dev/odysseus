@@ -70,8 +70,11 @@ services:
 
   chromadb:
     image: docker.io/chromadb/chroma:latest
-    ports:
-      - "${CHROMADB_BIND:-127.0.0.1}:8100:8000"
+    # No host port — only Odysseus needs ChromaDB, via Docker-internal
+    # chromadb:8000. If you need to query ChromaDB from the host (e.g.
+    # curl http://localhost:8100/api/v1/heartbeat), uncomment below:
+    # ports:
+    #   - "127.0.0.1:8100:8000"
     volumes:
       - chromadb-data:/chroma/chroma
     environment:
@@ -93,8 +96,11 @@ services:
           sed "s|__SEARXNG_SECRET__|$$secret|g" /tmp/searxng-settings.yml.template > /etc/searxng/settings.yml
         fi
         exec /usr/local/searxng/entrypoint.sh
-    ports:
-      - "127.0.0.1:8080:8080"
+    # No host port — only Odysseus needs SearXNG, via Docker-internal
+    # searxng:8080. If you need the SearXNG UI from the host (e.g.
+    # http://localhost:8080 for testing queries), uncomment below:
+    # ports:
+    #   - "127.0.0.1:8080:8080"
     volumes:
       - searxng-data:/etc/searxng
       - ./config/searxng/settings.yml:/tmp/searxng-settings.yml.template:ro,z
