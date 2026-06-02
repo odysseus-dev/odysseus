@@ -740,15 +740,18 @@ def setup_calendar_routes() -> APIRouter:
             db.add(ev)
             db.commit()
 
+            resp = {"ok": True, "uid": uid}
             if cal.source == "caldav":
                 from src.caldav_sync import push_event_create
-                await push_event_create(
+                push_err = await push_event_create(
                     owner, cal.id, uid, data.summary,
                     data.description or "", data.location or "",
                     dtstart, dtend, data.all_day, data.rrule or "",
                 )
+                if push_err:
+                    resp["sync_warning"] = f"Saved locally but remote sync failed: {push_err}"
 
-            return {"ok": True, "uid": uid}
+            return resp
         except HTTPException:
             raise
         except Exception as e:
@@ -795,18 +798,21 @@ def setup_calendar_routes() -> APIRouter:
                 ev.color = data.color if data.color else None
             db.commit()
 
+            resp = {"ok": True}
             cal = db.query(CalendarCal).filter(
                 CalendarCal.id == ev.calendar_id
             ).first()
             if cal and cal.source == "caldav":
                 from src.caldav_sync import push_event_update
-                await push_event_update(
+                push_err = await push_event_update(
                     owner, cal.id, ev.uid, ev.summary,
                     ev.description or "", ev.location or "",
                     ev.dtstart, ev.dtend, ev.all_day, ev.rrule or "",
                 )
+                if push_err:
+                    resp["sync_warning"] = f"Saved locally but remote sync failed: {push_err}"
 
-            return {"ok": True}
+            return resp
         except HTTPException:
             raise
         except Exception as e:
@@ -836,11 +842,14 @@ def setup_calendar_routes() -> APIRouter:
             db.delete(ev)
             db.commit()
 
+            resp = {"ok": True}
             if cal and cal.source == "caldav":
                 from src.caldav_sync import push_event_delete
-                await push_event_delete(owner, cal_id, event_uid)
+                push_err = await push_event_delete(owner, cal_id, event_uid)
+                if push_err:
+                    resp["sync_warning"] = f"Deleted locally but remote sync failed: {push_err}"
 
-            return {"ok": True}
+            return resp
         except HTTPException:
             raise
         except Exception as e:

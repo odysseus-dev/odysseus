@@ -296,138 +296,167 @@ def _find_remote_calendar(client, cal_id: str):
 def _build_vcal(uid: str, summary: str, description: str, location: str,
                 dtstart: datetime, dtend: datetime, all_day: bool,
                 rrule: str = "") -> str:
-    """Build a minimal iCalendar VCALENDAR string for a single VEVENT."""
-    def _fmt(dt: datetime, all_day: bool) -> str:
-        if all_day:
-            return dt.strftime("%Y%m%d")
-        return dt.strftime("%Y%m%dT%H%M%SZ")
+    """Build a properly escaped iCalendar VCALENDAR string for a single VEVENT.
 
-    start_str = _fmt(dtstart, all_day)
-    end_str = _fmt(dtend, all_day)
-    dt_param = ";VALUE=DATE" if all_day else ""
+    Uses the `icalendar` package (already a project dependency for the pull
+    path) so that SUMMARY, DESCRIPTION, LOCATION, etc. are correctly escaped
+    and folded per RFC 5545 — commas, semicolons, backslashes, newlines, and
+    long lines are all handled automatically."""
+    from icalendar import Calendar as iCal, Event as iEvent, vDate, vDatetime
 
-    lines = [
-        "BEGIN:VCALENDAR",
-        "VERSION:2.0",
-        "PRODID:-//Odysseus//CalDAV Push//EN",
-        "BEGIN:VEVENT",
-        f"UID:{uid}",
-        f"DTSTART{dt_param}:{start_str}",
-        f"DTEND{dt_param}:{end_str}",
-        f"SUMMARY:{summary}",
-    ]
+    cal = iCal()
+    cal.add("prodid", "-//Odysseus//CalDAV Push//EN")
+    cal.add("version", "2.0")
+
+    ev = iEvent()
+    ev.add("uid", uid)
+    ev.add("summary", summary)
     if description:
-        lines.append(f"DESCRIPTION:{description}")
+        ev.add("description", description)
     if location:
-        lines.append(f"LOCATION:{location}")
+        ev.add("location", location)
+
+    if all_day:
+        ev.add("dtstart", dtstart.date())
+        ev.add("dtend", dtend.date())
+    else:
+        ev.add("dtstart", dtstart.replace(tzinfo=timezone.utc))
+        ev.add("dtend", dtend.replace(tzinfo=timezone.utc))
+
     if rrule:
-        lines.append(f"RRULE:{rrule}")
-    lines += ["END:VEVENT", "END:VCALENDAR"]
-    return "\r\n".join(lines)
+        from icalendar import vRecur
+        ev.add("rrule", vRecur.from_ical(rrule))
+
+    cal.add_component(ev)
+    return cal.to_ical().decode("utf-8")
 
 
 def _push_create_blocking(owner: str, cal_id: str, uid: str,
                           summary: str, description: str, location: str,
                           dtstart: datetime, dtend: datetime,
-                          all_day: bool, rrule: str = "") -> None:
-    """Create an event on the remote CalDAV server."""
+                          all_day: bool, rrule: str = "") -> str | None:
+    """Create an event on the remote CalDAV server.
+    Returns None on success, or an error message string on failure."""
     import caldav
 
     creds = _get_caldav_creds(owner)
     if not creds:
-        return
+        return "CalDAV not configured"
     url, user, pw = creds
     client = caldav.DAVClient(url=url, username=user, password=pw)
     remote_cal = _find_remote_calendar(client, cal_id)
     if not remote_cal:
-        logger.warning("CalDAV push-create: no remote calendar for %s", cal_id)
-        return
+        return f"Remote calendar not found for {cal_id}"
 
     vcal = _build_vcal(uid, summary, description, location,
                        dtstart, dtend, all_day, rrule)
     remote_cal.add_event(vcal)
     logger.info("CalDAV push-create: %s on %s", uid, cal_id)
+    return None
 
 
 def _push_update_blocking(owner: str, cal_id: str, uid: str,
                           summary: str, description: str, location: str,
                           dtstart: datetime, dtend: datetime,
-                          all_day: bool, rrule: str = "") -> None:
-    """Update an existing event on the remote CalDAV server."""
+                          all_day: bool, rrule: str = "") -> str | None:
+    """Update an existing event on the remote CalDAV server.
+    Fetches the existing remote event by UID and replaces its data
+    to avoid creating duplicates. Falls back to add_event if the
+    remote event is not found (e.g. locally created, not yet synced).
+    Returns None on success, or an error message string on failure."""
     import caldav
 
     creds = _get_caldav_creds(owner)
     if not creds:
-        return
+        return "CalDAV not configured"
     url, user, pw = creds
     client = caldav.DAVClient(url=url, username=user, password=pw)
     remote_cal = _find_remote_calendar(client, cal_id)
     if not remote_cal:
-        logger.warning("CalDAV push-update: no remote calendar for %s", cal_id)
-        return
+        return f"Remote calendar not found for {cal_id}"
 
-    # CalDAV uses PUT with the same UID to replace an event.
     vcal = _build_vcal(uid, summary, description, location,
                        dtstart, dtend, all_day, rrule)
-    remote_cal.add_event(vcal)
-    logger.info("CalDAV push-update: %s on %s", uid, cal_id)
+
+    # Try to fetch the existing remote event and update in-place
+    # to avoid creating a duplicate resource.
+    try:
+        remote_event = remote_cal.event_by_uid(uid)
+        remote_event.data = vcal
+        remote_event.save()
+        logger.info("CalDAV push-update (in-place): %s on %s", uid, cal_id)
+    except Exception:
+        # Event doesn't exist remotely yet — create it.
+        remote_cal.add_event(vcal)
+        logger.info("CalDAV push-update (created): %s on %s", uid, cal_id)
+    return None
 
 
-def _push_delete_blocking(owner: str, cal_id: str, uid: str) -> None:
-    """Delete an event from the remote CalDAV server by UID."""
+def _push_delete_blocking(owner: str, cal_id: str, uid: str) -> str | None:
+    """Delete an event from the remote CalDAV server by UID.
+    Returns None on success, or an error message string on failure."""
     import caldav
 
     creds = _get_caldav_creds(owner)
     if not creds:
-        return
+        return "CalDAV not configured"
     url, user, pw = creds
     client = caldav.DAVClient(url=url, username=user, password=pw)
     remote_cal = _find_remote_calendar(client, cal_id)
     if not remote_cal:
-        logger.warning("CalDAV push-delete: no remote calendar for %s", cal_id)
-        return
+        return f"Remote calendar not found for {cal_id}"
 
     try:
         event = remote_cal.event_by_uid(uid)
         event.delete()
         logger.info("CalDAV push-delete: %s from %s", uid, cal_id)
+        return None
     except Exception as e:
-        logger.warning("CalDAV push-delete failed for %s: %s", uid, e)
+        return f"Failed to delete remote event {uid}: {e}"
 
 
 async def push_event_create(owner: str, cal_id: str, uid: str,
                             summary: str, description: str, location: str,
                             dtstart: datetime, dtend: datetime,
-                            all_day: bool, rrule: str = "") -> None:
-    """Push a newly created event to the remote CalDAV server (async)."""
+                            all_day: bool, rrule: str = "") -> str | None:
+    """Push a newly created event to the remote CalDAV server (async).
+    Returns None on success, or an error message string on failure."""
     try:
-        await asyncio.to_thread(
+        return await asyncio.to_thread(
             _push_create_blocking, owner, cal_id, uid,
             summary, description, location, dtstart, dtend, all_day, rrule,
         )
     except Exception as e:
-        logger.error("CalDAV push-create failed: %s", e)
+        msg = f"CalDAV push-create failed: {e}"
+        logger.error(msg)
+        return msg
 
 
 async def push_event_update(owner: str, cal_id: str, uid: str,
                             summary: str, description: str, location: str,
                             dtstart: datetime, dtend: datetime,
-                            all_day: bool, rrule: str = "") -> None:
-    """Push an event update to the remote CalDAV server (async)."""
+                            all_day: bool, rrule: str = "") -> str | None:
+    """Push an event update to the remote CalDAV server (async).
+    Returns None on success, or an error message string on failure."""
     try:
-        await asyncio.to_thread(
+        return await asyncio.to_thread(
             _push_update_blocking, owner, cal_id, uid,
             summary, description, location, dtstart, dtend, all_day, rrule,
         )
     except Exception as e:
-        logger.error("CalDAV push-update failed: %s", e)
+        msg = f"CalDAV push-update failed: {e}"
+        logger.error(msg)
+        return msg
 
 
-async def push_event_delete(owner: str, cal_id: str, uid: str) -> None:
-    """Push an event deletion to the remote CalDAV server (async)."""
+async def push_event_delete(owner: str, cal_id: str, uid: str) -> str | None:
+    """Push an event deletion to the remote CalDAV server (async).
+    Returns None on success, or an error message string on failure."""
     try:
-        await asyncio.to_thread(
+        return await asyncio.to_thread(
             _push_delete_blocking, owner, cal_id, uid,
         )
     except Exception as e:
-        logger.error("CalDAV push-delete failed: %s", e)
+        msg = f"CalDAV push-delete failed: {e}"
+        logger.error(msg)
+        return msg
