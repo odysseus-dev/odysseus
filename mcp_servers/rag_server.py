@@ -101,7 +101,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text=f"Error: {e}")]
 
     elif action == "add_directory":
-        directory = arguments.get("directory", "").strip()
+        _dir = arguments.get("directory")
+        directory = _dir.strip() if isinstance(_dir, str) else ""
         if not directory:
             return [TextContent(type="text", text="Error: add_directory needs a directory path")]
         directory = os.path.expanduser(directory)
@@ -126,7 +127,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text=f"Error: Failed to index directory: {e}")]
 
     elif action == "remove_directory":
-        directory = arguments.get("directory", "").strip()
+        _dir = arguments.get("directory")
+        directory = _dir.strip() if isinstance(_dir, str) else ""
         if not directory:
             return [TextContent(type="text", text="Error: remove_directory needs a directory path")]
         # Expand ~ to match add_directory, which indexes the expanded path.
