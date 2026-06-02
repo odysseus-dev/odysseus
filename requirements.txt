@@ -9,7 +9,13 @@ SQLAlchemy
 pypdf
 beautifulsoup4
 charset-normalizer
-numpy
+# Cap below 2.4: numpy 2.4+ is built with an x86-64-v2 baseline and crashes on
+# older CPUs that lack those instructions ("NumPy was built with baseline
+# optimizations (X86_V2) but your machine doesn't support (X86_V2)", issue #1515).
+# 2.3.x is the last line that runs on pre-x86-64-v2 hardware. Self-hosted users
+# often run exactly that older hardware. Bump deliberately once a newer line
+# drops the baseline requirement (or the project stops targeting old CPUs).
+numpy<2.4
 # Vector store + local embeddings for RAG, semantic memory, and tool
 # selection. Used on core agent paths, so installed by default — the app
 # still degrades to keyword fallback if they're ever missing.
