@@ -140,27 +140,26 @@
                 ${self.packages.${system}.default}/bin/odysseus-setup
                 echo "-----------------------------------------------------"
                 echo "Make sure you remember your admin username and temporary password!"
-
-                # Pause the terminal so the user can copy their credentials before the UI launches
-                read -p "Press enter to continue to the dashboard!" < /dev/tty
             else
-                echo "Setup has already been executed... Starting application"
+                echo "Setup has already been executed..."
             fi
 
-            # 2. Background Process Automation (Tmux)
-            # We run process-compose inside a detached tmux session so the user
-            # can safely close their terminal window without killing the server.
-            if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-              # Reconnect to the existing background session
-              tmux attach -t "$SESSION_NAME"
-            else
-              # Start a new background session and launch the process manager
-              tmux new -s "$SESSION_NAME" "process-compose up"
-            fi
-
-            # 3. Clean Exit
-            # Once the user kills the tmux session (e.g., via odysseus-down), safely exit the Nix shell
-            exit
+            echo ""
+            echo "How to run Odysseus:"
+            echo ""
+            echo "  Recommended - start the whole stack (ChromaDB + app) together:"
+            echo "    process-compose up          # foreground, Ctrl-C to stop"
+            echo "    process-compose up -D       # detached; 'process-compose down' to stop"
+            echo "                                # 'process-compose attach' to view logs/TUI"
+            echo ""
+            echo "  Keep it running after you close the terminal (detached tmux):"
+            echo "    tmux new -s $SESSION_NAME 'process-compose up'   # start in background"
+            echo "    tmux attach -t $SESSION_NAME                     # reattach later"
+            echo "    tmux kill-session -t $SESSION_NAME               # stop everything"
+            echo ""
+            echo "  Or run the pieces manually in separate shells:"
+            echo "    chroma run --path ./data/chroma --host 0.0.0.0 --port 8100"
+            echo "    odysseus"
           '';
         };
 
