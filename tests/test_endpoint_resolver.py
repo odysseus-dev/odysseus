@@ -140,6 +140,22 @@ class TestBuildHeadersVenice:
         assert build_headers("vn-abc", "https://api.venice.ai/api/v1") == {"Authorization": "Bearer vn-abc"}
 
 
+class TestOpenAICompatibleUnaffected:
+    """Venice's ?type=text model filter must not leak to other OpenAI-compatible providers."""
+
+    def test_generic_openai_compatible_models_url_unchanged(self):
+        # Self-hosted vLLM / LM Studio / etc. still hit plain /models
+        assert build_models_url("http://localhost:8000/v1") == "http://localhost:8000/v1/models"
+        assert build_models_url("https://api.together.xyz/v1") == "https://api.together.xyz/v1/models"
+
+    def test_generic_openai_compatible_chat_url_unchanged(self):
+        assert build_chat_url("http://localhost:8000/v1") == "http://localhost:8000/v1/chat/completions"
+
+    def test_generic_openai_compatible_detected_as_openai(self):
+        assert _detect_provider("http://localhost:8000/v1") == "openai"
+        assert _detect_provider("https://api.together.xyz/v1") == "openai"
+
+
 class TestBuildHeaders:
     def test_no_key(self):
         assert build_headers(None, "https://api.openai.com/v1") == {}
