@@ -222,6 +222,13 @@ Ollama must listen outside its own loopback interface:
 OLLAMA_HOST=0.0.0.0:11434 ollama serve
 ```
 
+This connects Odysseus in Docker to an Ollama server that is already running on
+your host machine; it does not start Ollama inside the container.
+`host.docker.internal` is Docker's hostname for the host machine from inside the
+container. Cookbook **Serve** is a separate workflow for serving downloaded
+models through Odysseus/llama.cpp, so Windows users with an existing Ollama
+install usually only need to add the endpoint in Settings.
+
 **Useful checks.**
 
 ```bash
