@@ -1,5 +1,6 @@
 import os
 import platform
+import re
 import shutil
 import subprocess
 import time
@@ -130,6 +131,33 @@ def _detect_nvidia():
     }
 
 
+def classify_amd_gfx(gfx):
+    """Map an AMD ISA target (e.g. "gfx1200") to (gfx, family).
+
+    family is one of:
+      "rdna"    — consumer Radeon RX (gfx10xx RDNA1/2, gfx11xx RDNA3, gfx12xx RDNA4)
+      "cdna"    — datacenter Instinct (gfx908 MI100, gfx90a MI200, gfx94x/95x MI300+)
+      "gcn"     — older GCN/Vega (gfx900/906)
+      "unknown" — empty/unrecognized; callers must treat conservatively
+
+    This drives the serving decision: vLLM/SGLang on ROCm are validated on CDNA
+    but fragile on consumer RDNA (AWQ kernels largely unsupported, FP8 needs
+    out-of-tree patches), so RDNA is steered to GGUF/llama.cpp.
+    """
+    gfx = (gfx or "").lower().strip()
+    m = re.fullmatch(r"gfx(\d+[a-f]?)", gfx)
+    if not m:
+        return "", "unknown"
+    digits = m.group(1)
+    if digits[:2] in ("10", "11", "12"):
+        return gfx, "rdna"
+    if digits in ("908", "90a") or digits[:2] in ("94", "95"):
+        return gfx, "cdna"
+    if digits[:1] == "9":
+        return gfx, "gcn"
+    return gfx, "unknown"
+
+
 def _detect_amd():
     """Detect AMD GPUs. Handles both discrete cards (with mem_info_vram_total)
     and APUs / unified-memory SoCs like Strix Halo (which expose
@@ -154,6 +182,17 @@ def _detect_amd():
             return [e for e in os.listdir("/sys/class/drm") if e.startswith("card") and "-" not in e]
         except Exception:
             return []
+
+    def _amd_arch():
+        """Best-effort AMD GPU ISA + family from rocminfo.
+
+        rocminfo is the source of truth; its GPU agents report a `Name: gfxNNNN`
+        line (CPU agents report a brand string, not a gfx target), so the first
+        gfx match is the GPU ISA. Returns (gfx, family) — see classify_amd_gfx.
+        """
+        info = _run(["rocminfo"]) or _run(["/opt/rocm/bin/rocminfo"]) or ""
+        m = re.search(r"gfx\d+[a-f]?", info)
+        return classify_amd_gfx(m.group(0) if m else "")
 
     try:
         cards = []
@@ -187,6 +226,7 @@ def _detect_amd():
             return None
         total_vram = sum(c["vram_gb"] for c in cards)
         groups = _group_gpus(cards)
+        gfx, family = _amd_arch()
         # NOTE: for APUs with BIOS UMA carveout (e.g. Strix Halo), vis_vram_total
         # is the real usable GPU memory — it's physically backed but reserved
         # by BIOS so it doesn't appear in /proc/meminfo. Don't cap it at system
@@ -200,6 +240,13 @@ def _detect_amd():
             "homogeneous": len(groups) <= 1,
             "backend": "rocm",
             "unified_memory": is_apu,
+            # AMD ISA/family so downstream can tell datacenter Instinct (CDNA,
+            # where vLLM/SGLang run AWQ/GPTQ reliably) from consumer Radeon
+            # (RDNA, where the practical path is GGUF via llama.cpp). Empty/
+            # "unknown" when rocminfo isn't available — callers must treat
+            # unknown conservatively, not assume vLLM works.
+            "gpu_arch": gfx,
+            "gpu_family": family,
         }
     except Exception:
         return None
