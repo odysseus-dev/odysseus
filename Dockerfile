@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM --platform=linux/arm64 ubuntu:22.04
 
 # System deps. tmux is required by Cookbook for background downloads/serves.
 # openssh-client is required for Cookbook remote server tests, setup, probes,
@@ -8,14 +8,15 @@ FROM python:3.12-slim
 # nodejs/npm provide npx for the optional built-in Browser MCP server.
 # gosu lets the entrypoint drop privileges cleanly so signals still reach
 # uvicorn directly (no extra shell layer like `su`/`sudo` would add).
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get clean && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     curl \
     git \
     nodejs \
     npm \
-    tmux \
     openssh-client \
     gosu \
     && rm -rf /var/lib/apt/lists/*
