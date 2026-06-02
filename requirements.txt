@@ -2,6 +2,7 @@ fastapi
 uvicorn
 python-multipart
 python-dotenv
+PySocks
 httpx[socks]
 niquests[socks]
 pydantic>=2.0
