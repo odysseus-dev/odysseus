@@ -512,6 +512,10 @@ import createResearchSynapse from './researchSynapse.js';
 
     // Declare accumulated outside try block so it's accessible in catch
     let accumulated = '';
+    // Are we currently inside an unclosed <think> block? Toggled per think/answer
+    // cycle so a multi-round agent response (one reasoning phase PER round) wraps each
+    // round's reasoning in its own <think>…</think> instead of leaking rounds 2+ as text.
+    let _thinkOpen = false;
     let holder = null;
     let finalMeta = null;
     let finalModelName = null;
@@ -960,6 +964,11 @@ import createResearchSynapse from './researchSynapse.js';
         return;
       }
 
+      // Mark the chat log busy while streaming so screen readers wait for the
+      // settled response instead of announcing every token. Cleared in finally.
+      const _chatLog = document.getElementById('chat-history');
+      if (_chatLog) _chatLog.setAttribute('aria-busy', 'true');
+
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -1357,12 +1366,15 @@ import createResearchSynapse from './researchSynapse.js';
                 if (_threadAbove && _threadAbove.classList.contains('agent-thread') && !_threadAbove.classList.contains('has-bottom')) {
                   _threadAbove.classList.add('has-bottom');
                 }
-                // VLLM reasoning tokens: wrap in <think> tags for the thinking UI
+                // VLLM reasoning tokens: wrap in <think> tags for the thinking UI.
+                // Stateful open/close (not a whole-message substring check) so each round
+                // of a multi-round agent response gets its own <think>…</think> — otherwise
+                // only round 1 is wrapped and rounds 2+ reasoning leaks into the answer.
                 let _delta = json.delta;
                 if (json.thinking) {
-                  if (!accumulated.includes('<think>')) _delta = '<think>' + _delta;
-                } else if (accumulated.includes('<think>') && !accumulated.includes('</think>')) {
-                  _delta = '</think>' + _delta;
+                  if (!_thinkOpen) { _delta = '<think>' + _delta; _thinkOpen = true; }
+                } else if (_thinkOpen) {
+                  _delta = '</think>' + _delta; _thinkOpen = false;
                 }
                 const wasEmpty = !accumulated;
                 accumulated += _delta;
@@ -2695,6 +2707,9 @@ import createResearchSynapse from './researchSynapse.js';
       }
     } finally {
       clearProcessingProbe();
+      // Streaming done — let screen readers announce the settled response.
+      const _chatLogDone = document.getElementById('chat-history');
+      if (_chatLogDone) _chatLogDone.setAttribute('aria-busy', 'false');
       // Always clean up research tracking regardless of background state
       _researchingStreamIds.delete(streamSessionId);
       if (_researchingStreamIds.size === 0) {
@@ -3409,7 +3424,7 @@ import createResearchSynapse from './researchSynapse.js';
 
     // Also submit on Enter (without shift)
     editor.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         saveBtn.click();
       }
