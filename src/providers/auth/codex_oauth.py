@@ -56,6 +56,17 @@ DEFAULT_DEVICE_CODE_TTL_SECONDS = 15 * 60
 
 _HTTP_TIMEOUT = httpx.Timeout(20.0)
 
+
+def _new_async_client():
+    """Single construction point for the device-code/refresh HTTP client.
+
+    Centralized so the call sites share one config and tests can inject an
+    ``httpx.MockTransport`` here — no network-mocking dependency required.
+    Return type is inferred (``httpx.AsyncClient``) to stay parity-clean with
+    the prior inline construction."""
+    return httpx.AsyncClient(timeout=_HTTP_TIMEOUT)
+
+
 # OAuth error codes that mean the refresh token is dead → user must reconnect.
 _RELOGIN_ERROR_CODES = frozenset(
     {"invalid_grant", "invalid_token", "invalid_request", "refresh_token_reused"}
@@ -200,7 +211,7 @@ async def poll_device_token(
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
 
     owns = client is None
-    client = client or httpx.AsyncClient(timeout=_HTTP_TIMEOUT)
+    client = client or _new_async_client()
     try:
         resp = await client.post(DEVICE_TOKEN_URL, json=body, headers=headers)
     except httpx.HTTPError as exc:
@@ -278,7 +289,7 @@ async def _post_json(
     client: Optional[httpx.AsyncClient], url: str, body: dict, headers: dict, *, what: str
 ) -> dict:
     owns = client is None
-    client = client or httpx.AsyncClient(timeout=_HTTP_TIMEOUT)
+    client = client or _new_async_client()
     try:
         resp = await client.post(url, json=body, headers=headers)
     except httpx.HTTPError as exc:
@@ -297,7 +308,7 @@ async def _post_form(
 ) -> dict:
     headers = {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"}
     owns = client is None
-    client = client or httpx.AsyncClient(timeout=_HTTP_TIMEOUT)
+    client = client or _new_async_client()
     try:
         resp = await client.post(TOKEN_URL, data=form, headers=headers)
     except httpx.HTTPError as exc:

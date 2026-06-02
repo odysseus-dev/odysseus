@@ -164,7 +164,7 @@ async def _run_login_poll(attempt_id: str) -> None:
         return
     deadline = data.expires_at or (_utcnow_naive() + timedelta(seconds=cx.DEFAULT_DEVICE_CODE_TTL_SECONDS))
 
-    async with httpx.AsyncClient(timeout=cx._HTTP_TIMEOUT) as client:
+    async with cx._new_async_client() as client:
         while _utcnow_naive() < deadline:
             if _attempt_status(attempt_id) != "pending":
                 return  # cancelled or already resolved
