@@ -1,4 +1,4 @@
-"""Gnexus App Dock read-only scanner.
+r"""Gnexus App Dock read-only scanner.
 
 Discovers app/tool candidates under C:\Users\iamcy\CymaticsDev without executing
 commands, installing packages, or mutating project contents.
