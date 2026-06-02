@@ -23,6 +23,7 @@ Fixes #
 - [ ] I searched [open issues](https://github.com/pewdiepie-archdaemon/odysseus/issues) and [open PRs](https://github.com/pewdiepie-archdaemon/odysseus/pulls) — this is not a duplicate.
 - [ ] This PR targets `main`
 - [ ] My changes are limited to the scope described above — no unrelated refactors or whitespace changes mixed in.
+- [ ] I have linked a [issue(s)](https://github.com/pewdiepie-archdaemon/odysseus/issues) to this PR.
 
 ## How to Test
 
