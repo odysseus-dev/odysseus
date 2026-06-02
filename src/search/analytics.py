@@ -65,7 +65,14 @@ def _load_analytics() -> Dict[str, Any]:
         return default
     try:
         with open(ANALYTICS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        # Merge over defaults so a file written by an older schema (or a
+        # partial write) still has every counter — _record_query indexes
+        # these keys directly and would otherwise raise KeyError.
+        merged = _default_analytics()
+        if isinstance(data, dict):
+            merged.update(data)
+        return merged
     except Exception as e:
         logger.warning(f"Failed to load analytics file: {e}")
         return _default_analytics()
