@@ -7,3 +7,11 @@ search:
   formats:
     - html
     - json
+
+engines:
+  - name: radio browser
+    disabled: true
+  - name: ahmia
+    disabled: true
+  - name: torch
+    disabled: true
