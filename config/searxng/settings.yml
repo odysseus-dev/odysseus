@@ -5,13 +5,6 @@ doi_resolvers:
 
 default_doi_resolver: "oadoi.org"
 
-use_default_settings:
-  engines:
-    remove:
-      - ahmia
-      - torch
-      - radio browser
-
 server:
   secret_key: "__SEARXNG_SECRET__"
   limiter: false
