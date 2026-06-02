@@ -5,6 +5,7 @@
  */
 
 import uiModule from './ui.js';
+import { splitTableRow } from './markdown/tableRow.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -535,7 +536,7 @@ export function mdToHtml(src) {
     let html = '<table style="border-collapse: collapse; width: 100%; margin: 10px 0;">';
 
     rows.forEach((row, idx) => {
-      const cells = row.split('|').filter(cell => cell.trim() !== '');
+      const cells = splitTableRow(row);
       if (cells.length === 0) return;
 
       html += idx === 1 ? '<tbody>' : '';
