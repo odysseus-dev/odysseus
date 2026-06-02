@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from src.endpoint_resolver import resolve_endpoint
-from src.auth_helpers import get_current_user
+from src.auth_helpers import _auth_disabled, get_current_user
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
 
@@ -58,6 +58,8 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         verify the session belongs to this user."""
         user = get_current_user(request)
         if not user:
+            if _auth_disabled():
+                return ""
             raise HTTPException(401, "Not authenticated")
         return user
 
