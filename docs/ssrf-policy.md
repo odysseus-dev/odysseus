@@ -36,8 +36,15 @@ Current trusted configured-endpoint handling:
   `security_notice` metadata. Set rejects metadata-service targets but
   continues to allow loopback, LAN, and Tailscale embedding servers.
 
-CalDAV/CardDAV and ntfy should use `trusted_user_configured_endpoint` in
-separate endpoint-specific PRs if they need the same response metadata.
+- `routes.calendar_routes`: CalDAV config get/save/test returns
+  `security_notice` metadata. Save/test reject metadata-service targets but
+  continue to allow loopback, LAN, and Tailscale CalDAV servers.
+- `routes.contacts_routes`: CardDAV config get/update returns
+  `security_notice` metadata. Update rejects metadata-service targets but
+  continues to allow loopback, LAN, and Tailscale CardDAV servers.
+
+ntfy should use `trusted_user_configured_endpoint` in a separate
+endpoint-specific PR if it needs the same response metadata.
 
 ## Address Classes
 

@@ -26,3 +26,23 @@ def test_embedding_endpoint_routes_surface_trusted_security_notice():
     assert "security_notice = _trusted_endpoint_notice_or_error(url)" in text
     assert '"security_notice": trusted_endpoint_notice(url) if url else None' in text
     assert '"security_notice": security_notice' in text
+
+def test_caldav_routes_surface_trusted_security_notice():
+    text = Path("routes/calendar_routes.py").read_text(encoding="utf-8")
+
+    assert "from src.ssrf_guard import trusted_endpoint_notice" in text
+    assert "def _trusted_endpoint_notice_or_error(url: str)" in text
+    assert 'security_notice = _trusted_endpoint_notice_or_error(cfg["url"])' in text
+    assert "security_notice = _trusted_endpoint_notice_or_error(url)" in text
+    assert '"security_notice": trusted_endpoint_notice(url) if url else None' in text
+    assert '"security_notice": security_notice' in text
+
+
+def test_carddav_routes_surface_trusted_security_notice():
+    text = Path("routes/contacts_routes.py").read_text(encoding="utf-8")
+
+    assert "from src.ssrf_guard import trusted_endpoint_notice" in text
+    assert "def _trusted_endpoint_notice_or_error(url: str)" in text
+    assert 'security_notice = _trusted_endpoint_notice_or_error((data.get("carddav_url") or "").strip())' in text
+    assert 'cfg["security_notice"] = trusted_endpoint_notice(url) if url else None' in text
+    assert '"security_notice": security_notice' in text

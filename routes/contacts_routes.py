@@ -18,9 +18,18 @@ from fastapi import APIRouter, Query, Depends, Response
 from typing import List, Dict, Optional
 
 from src.auth_helpers import require_user
+from src.ssrf_guard import trusted_endpoint_notice
 from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
+
+
+def _trusted_endpoint_notice_or_error(url: str) -> dict:
+    notice = trusted_endpoint_notice(url)
+    if not notice.get("allowed"):
+        from fastapi import HTTPException
+        raise HTTPException(400, notice.get("warning") or "Endpoint URL is not allowed")
+    return notice
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 SETTINGS_FILE = DATA_DIR / "settings.json"
@@ -730,21 +739,26 @@ def setup_contacts_routes():
     @router.get("/config")
     async def get_config(_admin: str = Depends(require_admin)):
         cfg = _get_carddav_config()
+        url = cfg["url"]
         # Mask password
         if cfg["password"]:
             cfg["password"] = "***"
+        cfg["security_notice"] = trusted_endpoint_notice(url) if url else None
         return cfg
 
     @router.put("/config")
     async def update_config(data: dict, _admin: str = Depends(require_admin)):
         settings = _load_settings()
+        security_notice = None
+        if "carddav_url" in data and (data.get("carddav_url") or "").strip():
+            security_notice = _trusted_endpoint_notice_or_error((data.get("carddav_url") or "").strip())
         for key in ("carddav_url", "carddav_username", "carddav_password"):
             if key in data:
                 settings[key] = data[key]
         _save_settings(settings)
         # Force re-fetch
         _contact_cache["fetched_at"] = None
-        return {"success": True}
+        return {"success": True, "security_notice": security_notice}
 
     @router.delete("/clear")
     async def clear_contacts(_admin: str = Depends(require_admin)):

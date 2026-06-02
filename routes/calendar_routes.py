@@ -13,8 +13,17 @@ from dateutil.rrule import DAILY, WEEKLY, MONTHLY, YEARLY
 
 from core.database import SessionLocal, CalendarCal, CalendarEvent
 from src.auth_helpers import get_current_user, require_user
+from src.ssrf_guard import trusted_endpoint_notice
 
 logger = logging.getLogger(__name__)
+
+
+def _trusted_endpoint_notice_or_error(url: str) -> dict:
+    notice = trusted_endpoint_notice(url)
+    if not notice.get("allowed"):
+        raise HTTPException(400, notice.get("warning") or "Endpoint URL is not allowed")
+    return notice
+
 
 # Single-user fallback identity. Used only when:
 #   1. The app is configured for single-user (no auth middleware), AND
@@ -512,12 +521,14 @@ def setup_calendar_routes() -> APIRouter:
         cfg = (_load_for_user(owner) or {}).get("caldav", {}) or {}
         # Surface url+username but never hand the password back to the
         # client — saved-state UI shouldn't leak the credential.
+        url = cfg.get("url", "") or ""
         return {
-            "url": cfg.get("url", "") or "",
+            "url": url,
             "username": cfg.get("username", "") or "",
             "password": "",
             "has_password": bool(cfg.get("password")),
-            "local": not bool(cfg.get("url")),
+            "local": not bool(url),
+            "security_notice": trusted_endpoint_notice(url) if url else None,
         }
 
     @router.post("/config")
@@ -536,6 +547,7 @@ def setup_calendar_routes() -> APIRouter:
             _save_for_user(owner, prefs)
             return {"ok": True, "cleared": True}
         cfg["url"] = body.get("url", "").strip()
+        security_notice = _trusted_endpoint_notice_or_error(cfg["url"])
         cfg["username"] = (body.get("username") or "").strip()
         # Preserve the stored password when the client sends an empty
         # one (edit form re-submitted without re-typing the password).
@@ -543,7 +555,7 @@ def setup_calendar_routes() -> APIRouter:
             cfg["password"] = body["password"]
         prefs["caldav"] = cfg
         _save_for_user(owner, prefs)
-        return {"ok": True}
+        return {"ok": True, "security_notice": security_notice}
 
     @router.post("/test")
     async def test_connection(request: Request):
@@ -570,6 +582,7 @@ def setup_calendar_routes() -> APIRouter:
             pw = pw or (cfg.get("password") or "")
         if not (url and user and pw):
             return {"ok": False, "error": "Missing URL, username, or password"}
+        security_notice = _trusted_endpoint_notice_or_error(url)
         import httpx
         propfind_body = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -587,7 +600,7 @@ def setup_calendar_routes() -> APIRouter:
             # 207 = Multi-Status — standard CalDAV success. 200 also
             # acceptable. Anything else (401/403/404/5xx) means trouble.
             if r.status_code in (200, 207):
-                return {"ok": True}
+                return {"ok": True, "security_notice": security_notice}
             if r.status_code == 401:
                 return {"ok": False, "error": "Auth failed — check username/password"}
             if r.status_code == 403:
