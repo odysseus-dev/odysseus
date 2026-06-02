@@ -311,6 +311,26 @@ def fire_message_event(request, webhook_manager, session_id: str, sess, message:
     fire_event("message_sent", user)
 
 
+def _owned_endpoint_by_domain(db, domain, owner):
+    """ModelEndpoint whose base_url contains `domain` and is VISIBLE to `owner`
+    (their own rows + legacy null-owner "shared" rows); None otherwise.
+
+    Owner-scoped on purpose. ModelEndpoint is per-user (core/database.py: non-null
+    owner = private, "the model picker only shows the endpoint to that user") and
+    holds a decrypted `api_key`. resolve_session_auth copies the matched row's
+    api_key into the session headers and PERSISTS it, so an UNSCOPED match would
+    let a user create a session pointed at another user's endpoint host (with no
+    key of its own), send one message, and have that owner's api_key copied into
+    the session they own — then spend it on every call. The session's own owner is
+    the right scope (the endpoint must be one that owner can see). Mirrors
+    session_routes._owned_endpoint. A null/empty owner is a no-op (single-user /
+    legacy mode).
+    """
+    from src.auth_helpers import owner_filter
+    q = db.query(ModelEndpoint).filter(ModelEndpoint.base_url.contains(domain))
+    return owner_filter(q, ModelEndpoint, owner).first()
+
+
 def resolve_session_auth(sess, session_id: str):
     """Ensure session has auth headers — resolve from endpoint DB if missing."""
     has_auth = sess.headers and isinstance(sess.headers, dict) and any(
@@ -325,7 +345,8 @@ def resolve_session_auth(sess, session_id: str):
         try:
             domain = sess.endpoint_url.split("//")[1].split("/")[0] if "//" in sess.endpoint_url else ""
             if domain:
-                ep = db.query(ModelEndpoint).filter(ModelEndpoint.base_url.contains(domain)).first()
+                # Owner-scoped: never adopt another user's private endpoint key.
+                ep = _owned_endpoint_by_domain(db, domain, getattr(sess, "owner", None))
                 if ep and ep.api_key:
                     sess.headers = build_headers(ep.api_key, ep.base_url)
                     db.query(DBSession).filter(DBSession.id == session_id).update(
