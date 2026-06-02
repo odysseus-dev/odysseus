@@ -304,6 +304,12 @@ def _classify_endpoint(base_url: str) -> str:
 def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
+    try:
+        from src.codex_model_provider import codex_available_models, is_codex_provider_url
+        if is_codex_provider_url(base_url):
+            return [m["id"] for m in codex_available_models()]
+    except Exception:
+        pass
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
     if _detect_provider(base) == "anthropic":
@@ -381,6 +387,14 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
 
 def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> Dict[str, Any]:
     """Reachability probe that does not require installed/listed models."""
+    try:
+        from src.codex_model_provider import codex_model_provider_enabled, is_codex_provider_url
+        if is_codex_provider_url(base_url):
+            if codex_model_provider_enabled():
+                return {"reachable": True, "status_code": 200, "error": None}
+            return {"reachable": False, "status_code": None, "error": "Codex provider disabled"}
+    except Exception:
+        pass
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
     headers = {}
@@ -468,6 +482,12 @@ def setup_model_routes(model_discovery):
                     now = _time.time()
                     to_probe = []
                     for ep in endpoints:
+                        try:
+                            from src.codex_model_provider import is_codex_provider_url
+                            if is_codex_provider_url(ep.base_url):
+                                continue
+                        except Exception:
+                            pass
                         ts, fails = _probe_failures.get(ep.id, (0, 0))
                         if fails >= 3 and (now - ts) < 300:
                             continue
@@ -549,6 +569,13 @@ def setup_model_routes(model_discovery):
             # Build correct URL based on provider
             chat_url = build_chat_url(base)
             category = _classify_endpoint(base)
+            try:
+                from src.codex_model_provider import codex_model_provider_enabled, is_codex_provider_url
+                is_subscription = is_codex_provider_url(base)
+                if is_subscription and not codex_model_provider_enabled():
+                    model_ids = []
+            except Exception:
+                is_subscription = False
 
             if model_ids:
                 curated_key = _match_provider_curated(base, None)
@@ -565,6 +592,8 @@ def setup_model_routes(model_discovery):
                     "endpoint_name": ep.name,
                     "category": category,
                     "model_type": ep_model_type,
+                    "is_subscription": is_subscription,
+                    "experimental": is_subscription,
                 })
             else:
                 # Endpoint unreachable but still show it greyed out
@@ -580,6 +609,8 @@ def setup_model_routes(model_discovery):
                     "endpoint_name": ep.name,
                     "category": category,
                     "model_type": ep_model_type,
+                    "is_subscription": is_subscription,
+                    "experimental": is_subscription,
                     "offline": True,
                 })
 
@@ -911,6 +942,15 @@ def setup_model_routes(model_discovery):
                     ping = _ping_endpoint(r.base_url, r.api_key, timeout=1.0)
                     if ping.get("reachable"):
                         status = "empty"
+                try:
+                    from src.codex_model_provider import codex_model_provider_enabled, is_codex_provider_url
+                    is_subscription = is_codex_provider_url(r.base_url)
+                    if is_subscription and not codex_model_provider_enabled():
+                        visible = []
+                        status = "offline"
+                        ping = {"error": "Codex provider disabled"}
+                except Exception:
+                    is_subscription = False
                 results.append({
                     "id": r.id,
                     "name": r.name,
@@ -924,6 +964,8 @@ def setup_model_routes(model_discovery):
                     "ping_error": (ping or {}).get("error") if ping else None,
                     "model_type": getattr(r, "model_type", None) or "llm",
                     "supports_tools": getattr(r, "supports_tools", None),
+                    "is_subscription": is_subscription,
+                    "experimental": is_subscription,
                 })
             return results
         finally:
@@ -1139,8 +1181,14 @@ def setup_model_routes(model_discovery):
                     hidden = set(json.loads(ep.hidden_models))
                 except Exception:
                     pass
-            # Try live probe, fall back to cached
-            all_models = _probe_endpoint(ep.base_url, ep.api_key, timeout=3)
+            try:
+                from src.codex_model_provider import is_codex_provider_url
+                is_codex = is_codex_provider_url(ep.base_url)
+            except Exception:
+                is_codex = False
+            # Try live probe for HTTP endpoints, fall back to cached. Codex is a
+            # virtual CLI provider, so it never has a /models URL to probe.
+            all_models = [] if is_codex else _probe_endpoint(ep.base_url, ep.api_key, timeout=3)
             if all_models:
                 ep.cached_models = json.dumps(all_models)
                 db.commit()

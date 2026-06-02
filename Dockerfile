@@ -20,6 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     && rm -rf /var/lib/apt/lists/*
 
+# Optional Codex / ChatGPT integration uses the official Codex CLI.
+RUN npm install -g @openai/codex
+
 WORKDIR /app
 
 # Install Python deps first (layer cache)

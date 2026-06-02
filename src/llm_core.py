@@ -215,6 +215,12 @@ def _parse_ollama_response(data: dict) -> str:
 def _detect_provider(url: str) -> str:
     """Detect API provider from URL."""
     u = (url or "").lower()
+    try:
+        from src.codex_model_provider import is_codex_provider_url
+        if is_codex_provider_url(url):
+            return "codex_cli"
+    except Exception:
+        pass
     if _is_ollama_native_url(url):
         return "ollama"
     if "anthropic.com" in u:
@@ -239,6 +245,8 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
 def _provider_label(url: str) -> str:
     """Human-friendly provider name for error messages."""
     u = (url or "").lower()
+    if u.startswith("codex-cli://"):
+        return "Codex / ChatGPT"
     if "anthropic.com" in u: return "Anthropic"
     if "ollama.com" in u: return "Ollama Cloud"
     if "api.x.ai" in u or "x.ai/" in u: return "xAI"
@@ -472,6 +480,9 @@ def _normalize_anthropic_url(url: str) -> str:
 def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT, headers: Optional[Dict] = None) -> List[str]:
     """List available model IDs from an endpoint."""
     provider = _detect_provider(base_chat_url)
+    if provider == "codex_cli":
+        from src.codex_model_provider import codex_available_models
+        return [m["id"] for m in codex_available_models()]
     if provider == "anthropic":
         return list(ANTHROPIC_MODELS)
     try:
@@ -550,6 +561,16 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         messages_copy = non_sys
 
     provider = _detect_provider(url)
+    if provider == "codex_cli":
+        from src.codex_model_provider import codex_complete_chat
+        try:
+            result = asyncio.run(codex_complete_chat(messages_copy, model=model, timeout_seconds=timeout))
+        except RuntimeError:
+            raise HTTPException(501, "Codex provider requires the async chat path")
+        if not result.get("ok"):
+            raise HTTPException(502, result.get("error") or result.get("status") or "Codex CLI failed")
+        return result.get("message") or ""
+
     cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens)
     cached_response = _get_cached_response(cache_key)
     if cached_response:
@@ -662,6 +683,13 @@ async def llm_call_async(
     else:
         messages_copy = non_sys
 
+    if provider == "codex_cli":
+        from src.codex_model_provider import codex_complete_chat
+        result = await codex_complete_chat(messages_copy, model=model, timeout_seconds=timeout)
+        if not result.get("ok"):
+            raise HTTPException(502, result.get("error") or result.get("status") or "Codex CLI failed")
+        return result.get("message") or ""
+
     cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens)
     cached_response = _get_cached_response(cache_key)
     if cached_response:
@@ -765,6 +793,12 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         messages_copy = [{"role": "system", "content": "\n\n".join(sys_parts)}] + non_sys
     else:
         messages_copy = non_sys
+
+    if provider == "codex_cli":
+        from src.codex_model_provider import stream_codex_chat
+        async for chunk in stream_codex_chat(messages_copy, model=model, timeout_seconds=timeout):
+            yield chunk
+        return
 
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
@@ -1082,11 +1116,20 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
 
     last_error = None
     for i, (url, model, headers) in enumerate(cands):
+        try:
+            from src.codex_model_provider import is_codex_provider_url
+            no_metered_fallback = is_codex_provider_url(url)
+        except Exception:
+            no_metered_fallback = False
         is_last = (i == len(cands) - 1)
         emitted = False
         retried = False
         async for chunk in stream_llm(url, model, messages, headers=headers, **kwargs):
             if chunk.startswith("event: error"):
+                if no_metered_fallback:
+                    yield chunk
+                    emitted = True
+                    continue
                 if not emitted and not is_last:
                     # Pre-content failure with fallbacks left — swallow and
                     # move to the next candidate.

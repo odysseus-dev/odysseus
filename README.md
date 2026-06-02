@@ -230,6 +230,7 @@ Key settings:
 | `CODEX_BIN` | `codex` | Optional path/name for the official Codex CLI used by Settings -> Integrations -> Codex / ChatGPT sign-in. |
 | `CODEX_HOME` | Codex default | Optional Codex credential/config home. If unset, the Codex CLI uses its own default, normally `~/.codex`. |
 | `ODYSSEUS_CODEX_AUTH_ENABLED` | `true` | Enables the admin-gated Codex / ChatGPT device-code auth UI. Set to `false` to hide/disable the flow. |
+| `ODYSSEUS_CODEX_MODEL_PROVIDER_ENABLED` | `false` | Enables the experimental Add Models -> ChatGPT subscription provider backed by `codex exec`. |
 | `SEARXNG_INSTANCE` | `http://localhost:8080` | SearXNG URL. Docker overrides this to `http://searxng:8080`. |
 | `SEARXNG_SECRET` | generated on first Docker boot | Optional SearXNG cookie/CSRF secret. Leave blank unless you need to pin it. |
 | `AUTH_ENABLED` | `true` | Enable/disable login |
@@ -267,6 +268,21 @@ Security notes:
 - The Codex sign-in routes are admin-gated because logout/unlink affects the Codex identity available to the Odysseus host.
 - If you run Odysseus in Docker, mount a persistent, private Codex home and set strict host permissions, or sign-in state will be lost when the container is recreated.
 - Device-code auth can be disabled by a ChatGPT workspace admin. In that case the UI reports the Codex CLI failure and you must use a supported Codex login method outside Odysseus.
+
+
+### Codex / ChatGPT Subscription Model Provider
+
+The sign-in above can optionally become a chat model source. Set `ODYSSEUS_CODEX_MODEL_PROVIDER_ENABLED=true`, restart Odysseus, sign in under **Settings -> Integrations -> Codex / ChatGPT**, then open **Settings -> Add Models -> ChatGPT subscription** and click **Add**.
+
+This path is intentionally narrow:
+
+- It uses the official Codex CLI as the credential authority. Odysseus does not read or store Codex access or refresh tokens.
+- It registers an owner-scoped virtual endpoint, `codex-cli://chat`, with no API key field.
+- It is chat-only, non-streaming, and starts a fresh `codex exec` process for each message.
+- It does not enable agent tools, tool-call event mapping, or Codex session resume.
+- If the Codex provider fails, Odysseus returns that error instead of falling through to metered API fallbacks.
+
+Docker installs persist Codex state at `./data/codex` and set `CODEX_HOME=/app/.codex` by default. Keep that host directory private, just like any other credential store.
 
 MCP is not used for this authentication path. Odysseus MCP settings manage tool servers and are admin-only command execution plumbing; Codex account login belongs with provider/integration setup and should remain isolated from MCP server registration.
 

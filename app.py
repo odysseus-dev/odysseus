@@ -619,6 +619,9 @@ app.include_router(setup_font_routes())
 from routes.codex_auth_routes import setup_codex_auth_routes
 app.include_router(setup_codex_auth_routes())
 
+from routes.codex_model_provider_routes import setup_codex_model_provider_routes
+app.include_router(setup_codex_model_provider_routes())
+
 
 # MCP (Model Context Protocol)
 from src.mcp_manager import McpManager

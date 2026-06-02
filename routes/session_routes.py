@@ -9,8 +9,8 @@ import logging
 from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
-from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
-from src.auth_helpers import get_current_user
+from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, ModelEndpoint
+from src.auth_helpers import get_current_user, owner_filter
 
 
 def _verify_session_owner(request: Request, session_id: str):
@@ -25,6 +25,44 @@ def _verify_session_owner(request: Request, session_id: str):
             raise HTTPException(404, f"Session {session_id} not found")
         if row.owner != user:
             raise HTTPException(404, f"Session {session_id} not found")
+    finally:
+        db.close()
+
+def _current_user_is_admin(request: Request, user: str) -> bool:
+    try:
+        auth_mgr = getattr(request.app.state, "auth_manager", None)
+        if user and auth_mgr is not None and getattr(auth_mgr, "is_admin", None):
+            return bool(auth_mgr.is_admin(user))
+    except Exception:
+        pass
+    return False
+
+
+def _verify_codex_endpoint_visible(request: Request, endpoint_id: str = "") -> None:
+    """Require a visible owner-scoped Codex endpoint before skipping validation."""
+    from src.codex_model_provider import (
+        CODEX_PROVIDER_ENDPOINT_URL,
+        codex_endpoint_id_for_owner,
+        codex_model_provider_enabled,
+    )
+
+    if not codex_model_provider_enabled():
+        raise HTTPException(403, "Codex model provider is disabled")
+
+    user = get_current_user(request) or ""
+    ep_id = (endpoint_id or "").strip() or codex_endpoint_id_for_owner(user)
+    is_admin = _current_user_is_admin(request, user)
+    db = SessionLocal()
+    try:
+        q = db.query(ModelEndpoint).filter(
+            ModelEndpoint.id == ep_id,
+            ModelEndpoint.base_url == CODEX_PROVIDER_ENDPOINT_URL,
+            ModelEndpoint.is_enabled == True,
+        )
+        if user and not is_admin:
+            q = owner_filter(q, ModelEndpoint, user)
+        if q.first() is None:
+            raise HTTPException(403, "Codex model endpoint is not enabled for this user")
     finally:
         db.close()
 
@@ -171,6 +209,15 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         endpoint_id: str = Form(""),
     ):
         skip_val = str(skip_validation).lower() == "true"
+        try:
+            from src.codex_model_provider import is_codex_provider_selection
+            if is_codex_provider_selection(endpoint_url, model):
+                _verify_codex_endpoint_visible(request, endpoint_id)
+                skip_val = True
+        except HTTPException:
+            raise
+        except Exception:
+            pass
 
         if not endpoint_url and not skip_val:
             raise HTTPException(400, "endpoint_url is required (choose from /api/models)")
@@ -287,8 +334,17 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db.close()
         # Switch model/endpoint mid-session
         if model is not None and endpoint_url is not None:
-            if endpoint_id:
-                from core.database import ModelEndpoint
+            _is_codex_patch = False
+            try:
+                from src.codex_model_provider import is_codex_provider_selection
+                _is_codex_patch = is_codex_provider_selection(endpoint_url, model)
+                if _is_codex_patch:
+                    _verify_codex_endpoint_visible(request, endpoint_id or "")
+            except HTTPException:
+                raise
+            except Exception:
+                _is_codex_patch = False
+            if endpoint_id and not _is_codex_patch:
                 _db = SessionLocal()
                 try:
                     ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()

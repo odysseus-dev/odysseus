@@ -22,7 +22,7 @@ from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user
-from routes.session_routes import _verify_session_owner
+from routes.session_routes import _verify_codex_endpoint_visible, _verify_session_owner
 from core.database import SessionLocal, get_session_mode, set_session_mode
 from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
@@ -132,6 +132,14 @@ def setup_chat_routes(
             raise HTTPException(404, f"Session '{session}' not found")
         if _clear_orphaned_session_endpoint(sess):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
+        try:
+            from src.codex_model_provider import is_codex_provider_selection
+            if is_codex_provider_selection(sess.endpoint_url, sess.model):
+                _verify_codex_endpoint_visible(request)
+        except HTTPException:
+            raise
+        except Exception:
+            pass
 
         # Same allowed_models + daily-cap gate as chat_stream (mirror so the
         # non-streaming path can't be used to bypass).
@@ -272,6 +280,14 @@ def setup_chat_routes(
             sess = session_manager.get_session(session)
             if _clear_orphaned_session_endpoint(sess):
                 raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
+            try:
+                from src.codex_model_provider import is_codex_provider_selection
+                if is_codex_provider_selection(sess.endpoint_url, sess.model):
+                    _verify_codex_endpoint_visible(request)
+            except HTTPException:
+                raise
+            except Exception:
+                pass
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))
         except (ValueError, ValidationError):

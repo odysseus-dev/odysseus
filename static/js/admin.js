@@ -363,6 +363,146 @@ async function _selectAddedModelInChat(endpoint) {
   } catch (_) {}
 }
 
+
+function _setCodexProviderMessage(data, showReady = true) {
+  const msg = el('adm-codexProviderMsg');
+  const select = el('adm-codexProviderModel');
+  const addBtn = el('adm-codexProviderAddBtn');
+  const testBtn = el('adm-codexProviderTestBtn');
+  if (!msg) return;
+  const models = (data && Array.isArray(data.models)) ? data.models : [];
+  if (select) {
+    const current = select.value;
+    select.innerHTML = models.map((m) => {
+      const id = esc(String(m.id || m));
+      const label = esc(String(m.display || m.id || m));
+      return `<option value="${id}">${label}</option>`;
+    }).join('');
+    if (current && Array.from(select.options).some(o => o.value === current)) select.value = current;
+  }
+  const available = data && data.status === 'available' && data.chat_supported;
+  if (addBtn) addBtn.disabled = !available;
+  if (testBtn) testBtn.disabled = !available;
+  if (!data) {
+    msg.textContent = '';
+    msg.className = '';
+    return;
+  }
+  if (available) {
+    msg.textContent = showReady ? 'Ready - signed in with Codex.' : '';
+    msg.className = showReady ? 'admin-success' : '';
+    return;
+  }
+  if (data.status === 'disabled') {
+    msg.textContent = 'Subscription provider is off on this server.';
+  } else if (data.status === 'sign_in_required' || data.authenticated === false) {
+    msg.textContent = 'Sign in under Integrations first.';
+  } else if (data.status === 'cli_unavailable') {
+    msg.textContent = 'Codex CLI is not available on this server.';
+  } else {
+    msg.textContent = data.error || 'Codex subscription provider is not ready.';
+  }
+  msg.className = 'admin-error';
+}
+
+async function _loadCodexProviderStatus(showReady = true) {
+  const msg = el('adm-codexProviderMsg');
+  try {
+    const res = await fetch('/api/codex-model-provider/status', { credentials: 'same-origin' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || 'Status check failed');
+    _setCodexProviderMessage(data, showReady);
+    return data;
+  } catch (e) {
+    if (msg) {
+      msg.textContent = e && e.message ? e.message : 'Status check failed';
+      msg.className = 'admin-error';
+    }
+    return null;
+  }
+}
+
+function _initCodexProviderControls() {
+  const section = el('adm-add-codex');
+  if (!section) return;
+  const checkBtn = el('adm-codexProviderStatusBtn');
+  const addBtn = el('adm-codexProviderAddBtn');
+  const testBtn = el('adm-codexProviderTestBtn');
+  const select = el('adm-codexProviderModel');
+  if (addBtn) addBtn.disabled = true;
+  if (testBtn) testBtn.disabled = true;
+  _loadCodexProviderStatus(false);
+  if (checkBtn) {
+    checkBtn.addEventListener('click', async () => {
+      checkBtn.disabled = true;
+      checkBtn.textContent = 'Checking...';
+      await _loadCodexProviderStatus(true);
+      checkBtn.disabled = false;
+      checkBtn.textContent = 'Check';
+    });
+  }
+  if (testBtn) {
+    testBtn.addEventListener('click', async () => {
+      const msg = el('adm-codexProviderMsg');
+      testBtn.disabled = true;
+      testBtn.textContent = 'Testing...';
+      if (msg) { msg.textContent = 'Testing Codex...'; msg.className = ''; }
+      try {
+        const res = await fetch('/api/codex-model-provider/test-chat', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: select ? select.value : '',
+            prompt: 'Reply with exactly: codex provider test ok',
+            timeout_seconds: 120,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.ok) {
+          if (msg) { msg.textContent = 'Test reply received.'; msg.className = 'admin-success'; }
+        } else if (msg) {
+          msg.textContent = data.error || data.detail || 'Test failed';
+          msg.className = 'admin-error';
+        }
+      } catch (e) {
+        if (msg) { msg.textContent = 'Test failed'; msg.className = 'admin-error'; }
+      }
+      testBtn.disabled = false;
+      testBtn.textContent = 'Test';
+    });
+  }
+  if (addBtn) {
+    addBtn.addEventListener('click', async () => {
+      const msg = el('adm-codexProviderMsg');
+      addBtn.disabled = true;
+      addBtn.textContent = 'Adding...';
+      try {
+        const res = await fetch('/api/codex-model-provider/add-model', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: select ? select.value : '' }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.ok) {
+          if (data.endpoint && data.endpoint.id) _recentlyAddedEpId = String(data.endpoint.id);
+          await loadEndpoints();
+          await _selectAddedModelInChat(data.endpoint);
+          if (msg) { msg.textContent = 'Added ChatGPT subscription model.'; msg.className = 'admin-success'; }
+        } else if (msg) {
+          msg.textContent = data.detail || data.error || 'Add failed';
+          msg.className = 'admin-error';
+        }
+      } catch (e) {
+        if (msg) { msg.textContent = 'Add failed'; msg.className = 'admin-error'; }
+      }
+      addBtn.disabled = false;
+      addBtn.textContent = 'Add';
+    });
+  }
+}
+
 async function loadEndpoints() {
   const listLocal = el('adm-epList-local');
   const listApi = el('adm-epList-api');
@@ -418,6 +558,8 @@ async function loadEndpoints() {
               <span class="admin-user-name">${esc(ep.name)}</span>
               ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
               ${statusBadge}
+              ${ep.is_subscription ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 18%, transparent);color:var(--accent);">subscription</span>' : ''}
+              ${ep.experimental ? '<span class="admin-badge">experimental</span>' : ''}
               ${ep.is_enabled ? '' : '<span class="admin-badge admin-badge-off">disabled</span>'}
               ${hasModels ? '<span style="font-size:10px;opacity:0.4;">Click to manage models</span>' : ''}
             </div>
@@ -637,6 +779,7 @@ async function _saveEpModelState(epId, panel) {
 function initEndpointForm() {
   const provider = el('adm-epProvider');
   const urlInput = el('adm-epUrl');
+  _initCodexProviderControls();
 
   // Custom provider picker — mirrors the (now hidden) <select id="adm-epProvider">
   // so the rest of this function (which reads provider.value and dispatches
@@ -1010,7 +1153,7 @@ function initEndpointForm() {
   // Collapsible Add-Models subsections (API / Local). Both start collapsed
   // so the card is compact; the last-used state is remembered per section
   // in localStorage so a frequent API-adder doesn't re-expand every time.
-  document.querySelectorAll('#adm-add-api, #adm-add-local').forEach((sec) => {
+  document.querySelectorAll('#adm-add-codex, #adm-add-api, #adm-add-local').forEach((sec) => {
     const head = sec.querySelector('.adm-section-toggle');
     if (!head) return;
     const key = 'odysseus.addModels.' + sec.id + '.open';
