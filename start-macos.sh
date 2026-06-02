@@ -118,9 +118,9 @@ if [ ! -d venv ]; then
   "$PY" -m venv venv
 fi
 echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
-"$PY" -m pip install --quiet --upgrade pip
+./venv/bin/python -m pip install --quiet --upgrade pip
 # Not --quiet: this is the slow step, so show progress (and any real errors).
-"$PY" -m pip install -r requirements.txt
+./venv/bin/python -m pip install -r requirements.txt
 
 # 4. First-run setup: creates data dirs and prints an initial admin password
 #    the first time (idempotent — does nothing if already set up). Suppress its
@@ -179,4 +179,4 @@ if [ -n "$TAILSCALE_URL" ]; then
 fi
 echo "  (this takes a few seconds; press Ctrl+C here to stop)"
 echo
-"$PY" -m uvicorn app:app --host "$HOST" --port "$PORT"
+./venv/bin/python -m uvicorn app:app --host "$HOST" --port "$PORT"
