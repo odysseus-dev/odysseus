@@ -281,6 +281,12 @@ def estimate_tokens(messages: List[Dict]) -> int:
             total += int(len(content) * 0.3)
         elif isinstance(content, list):
             for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    total += int(len(item.get("text", "")) * 0.3)
+                if isinstance(item, dict):
+                    if item.get("type") == "text":
+                        total += int(len(item.get("text", "")) * 0.3)
+                    elif item.get("type") == "image_url":
+                        url = (item.get("image_url") or {}).get("url", "")
+                        if url.startswith("data:"):
+                            b64_part = url.split(",", 1)[-1] if "," in url else url
+                            total += int(len(b64_part) * 0.075)
     return total

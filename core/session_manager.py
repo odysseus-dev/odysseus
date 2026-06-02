@@ -117,9 +117,17 @@ class SessionManager:
                 if meta is None: meta = {}
                 meta['_db_id'] = db_msg.id
                 meta.setdefault('timestamp', _message_timestamp_iso(db_msg.timestamp))
+                content = db_msg.content
+                if isinstance(content, str) and content.startswith('['):
+                    try:
+                        parsed = json.loads(content)
+                        if isinstance(parsed, list):
+                            content = parsed
+                    except (json.JSONDecodeError, ValueError):
+                        pass
                 history.append(ChatMessage(
                     role=db_msg.role,
-                    content=db_msg.content,
+                    content=content,
                     metadata=meta,
                 ))
         else:
@@ -132,9 +140,17 @@ class SessionManager:
                 if meta is None: meta = {}
                 meta['_db_id'] = db_msg.id
                 meta.setdefault('timestamp', _message_timestamp_iso(db_msg.timestamp))
+                content = db_msg.content
+                if isinstance(content, str) and content.startswith('['):
+                    try:
+                        parsed = json.loads(content)
+                        if isinstance(parsed, list):
+                            content = parsed
+                    except (json.JSONDecodeError, ValueError):
+                        pass
                 history.append(ChatMessage(
                     role=db_msg.role,
-                    content=db_msg.content,
+                    content=content,
                     metadata=meta,
                 ))
 
@@ -192,11 +208,14 @@ class SessionManager:
             if message.metadata is None:
                 message.metadata = {}
             message.metadata.setdefault('timestamp', _message_timestamp_iso(msg_time))
+            content_val = message.content
+            if isinstance(content_val, list):
+                content_val = json.dumps(content_val)
             db_message = DbChatMessage(
                 id=msg_id,
                 session_id=session_id,
                 role=message.role,
-                content=message.content,
+                content=content_val,
                 meta_data=json.dumps(message.metadata) if message.metadata else None,
                 timestamp=msg_time,
             )
@@ -272,11 +291,14 @@ class SessionManager:
             now = datetime.now(timezone.utc)
             for i, message in enumerate(messages):
                 msg_id = str(uuid.uuid4())
+                content_val = message.content
+                if isinstance(content_val, list):
+                    content_val = json.dumps(content_val)
                 db_message = DbChatMessage(
                     id=msg_id,
                     session_id=session_id,
                     role=message.role,
-                    content=message.content,
+                    content=content_val,
                     meta_data=json.dumps(message.metadata) if message.metadata else None,
                     timestamp=now + timedelta(microseconds=i),
                 )
