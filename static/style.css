@@ -35357,3 +35357,53 @@ body.theme-frosted .modal {
   font-family: 'Fira Code', ui-monospace, monospace;
   color: var(--accent, var(--red));
 }
+
+/* ══ iOS focus-zoom fix — touch devices only; desktop sizes untouched ══
+   16px is the threshold below which iOS Safari auto-zooms on focus.
+   Selects and date/time inputs are excluded on purpose — they open native
+   pickers and never zoom. */
+@media (hover: none) and (pointer: coarse) {
+
+  /* 1 ── Catch-all: every text-entry control NOT pinned with its own
+     !important. !important here beats any non-important rule regardless of
+     specificity, so this clears the long tail (settings, admin, memory,
+     notes, calendar, email, gallery, tasks, model picker, etc.). */
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="url"],
+  input[type="tel"],
+  input[type="password"],
+  input[type="number"],
+  input:not([type]),
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* 2 ── Fields that pin their own !important at specificity our catch-all
+     can't beat. Each is matched at equal-or-higher specificity and, being
+     later in the file, wins the tie. */
+  #message { font-size: 16px !important; }                                  /* chat composer (was 13px !important) */
+  .cookbook-dl-repo,
+  .hwfit-search { font-size: 16px !important; }                             /* cookbook repo path + hardware search */
+  .ge-topbar input { font-size: 16px !important; }                          /* image-editor topbar input */
+  .ge-transform-field > input.ge-transform-popup-input {                    /* image-editor transform values */
+    font-size: 16px !important;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  /* Only the sub-16px tiers need bumping; large lands ABOVE 16 so it
+     stays zoom-safe AND visibly larger than medium (otherwise L collapses
+     onto M on touch). All three editor layers move together so the
+     highlight/line-number overlay stays metrically aligned with the textarea. */
+  .doc-font-m .doc-editor-textarea, .doc-font-m .doc-editor-highlight, .doc-font-m .doc-line-numbers {
+    font-size: 16px !important;   /* was 13px */
+  }
+  .doc-font-l .doc-editor-textarea, .doc-font-l .doc-editor-highlight, .doc-font-l .doc-line-numbers {
+    font-size: 18px !important;   /* was 15px — keep L > M */
+  }
+  /* Email compose rich-body. Medium (15px) zooms, so bump it; large (17px)
+     is already ≥16px and never zoomed — leave it so we don't shrink it. */
+  .doc-email-richbody.doc-font-m { font-size: 16px !important; }
+}
