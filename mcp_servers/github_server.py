@@ -6,10 +6,13 @@ per-user Personal Access Token stored encrypted in
 `github_integrations.pat_encrypted` and decrypted at request time.
 
 Routing: a request comes in with no per-user context (MCP is process-wide).
-We resolve which user's PAT to use via the `ODYSSEUS_GH_OWNER` env var that the
-spawner injects when the server is started. For now we run one MCP instance per
-app process, scoped to whichever owner the integration row belongs to.
-Multi-tenant servers can later switch this to per-call routing.
+We resolve which user's PAT to use via the `ODYSSEUS_GH_OWNER` env var if a
+spawner injects it; otherwise we infer the owner from the DB, but ONLY when
+that inference is unambiguous (exactly one enabled integration — the solo
+self-host case). If two or more users have enabled the integration without an
+injected owner, `_resolve_owner` raises `AmbiguousOwnerError` and every tool
+call fails closed, rather than silently acting with an arbitrary user's token.
+True multi-tenant routing (per-call owner) is a documented follow-up.
 
 Tool gating happens upstream in routes/chat_routes.py: the gh_* read tools are
 gated by `allow_github`, and the write tools additionally require
@@ -86,26 +89,49 @@ def _load_pat(owner: str) -> str | None:
     return pat
 
 
+class AmbiguousOwnerError(RuntimeError):
+    """Raised when this process-wide server cannot tell whose PAT to use."""
+
+
 def _resolve_owner() -> str | None:
-    """Owner the MCP server is scoped to. Injected by builtin_mcp's spawner
-    via the ODYSSEUS_GH_OWNER env var when the per-user integration is
-    registered. Falls back to a default for solo-user installs."""
+    """Owner whose PAT this server acts with.
+
+    If ODYSSEUS_GH_OWNER is set (a future per-user spawner can inject it), use
+    it verbatim. Otherwise we infer from the DB — but ONLY when the inference is
+    unambiguous (exactly one enabled integration, the solo-self-host case).
+
+    If two or more users have enabled the integration and no owner was injected,
+    we have no per-call context to tell them apart, so we FAIL CLOSED: raising
+    rather than silently acting as — and with the token of — whichever row
+    happens to sort first. Acting cross-account with the wrong user's
+    credentials is far worse than returning an error."""
     env_owner = os.environ.get("ODYSSEUS_GH_OWNER")
     if env_owner:
         return env_owner
-    # Single-user fallback: return the first integration row's owner, if any.
     path = _db_path()
     if not path.exists():
         return None
     try:
         conn = sqlite3.connect(str(path))
-        row = conn.execute(
-            "SELECT owner FROM github_integrations WHERE enabled = 1 LIMIT 1"
-        ).fetchone()
+        rows = conn.execute(
+            "SELECT owner FROM github_integrations WHERE enabled = 1"
+        ).fetchall()
         conn.close()
-        return row[0] if row else None
     except Exception:
         return None
+    enabled = [r[0] for r in rows]
+    if not enabled:
+        return None
+    if len(enabled) > 1:
+        raise AmbiguousOwnerError(
+            "Multiple Odysseus users have enabled the GitHub integration, but "
+            "this server instance has no per-user context (ODYSSEUS_GH_OWNER is "
+            "unset), so it cannot tell whose PAT to use. Refusing to act with an "
+            "ambiguous identity. Per-user GitHub routing is not supported in this "
+            "deployment mode — keep a single enabled integration, or set "
+            "ODYSSEUS_GH_OWNER for this process."
+        )
+    return enabled[0]
 
 
 async def _gh_request(
@@ -791,12 +817,16 @@ async def _pre_push_secret_scan(
     yet (first push), fall back to the local branch's last 20 commits. Fail-open
     on any error (returns []) so a scan bug never blocks a legitimate push."""
     try:
+        # Scan the commits that THIS push will publish: local <branch> beyond
+        # the remote tracking ref. Use the named branch (not HEAD) so the scan
+        # matches the ref being pushed even when the caller passes a branch
+        # other than the checked-out one.
         cmd = ["git", "-C", str(repo_dir), "log", "-p", "--no-color",
-               f"{remote}/{branch}..HEAD"]
+               f"{remote}/{branch}..{branch}"]
         proc = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=30)
         if proc.returncode != 0 or not (proc.stdout or "").strip():
             cmd_fallback = ["git", "-C", str(repo_dir), "log", "-p", "--no-color",
-                            "--max-count=20", "HEAD"]
+                            "--max-count=20", branch]
             proc = subprocess.run(cmd_fallback, capture_output=True, text=True,
                                   env=env, timeout=30)
             if proc.returncode != 0:
@@ -887,7 +917,20 @@ async def _git_push_subprocess(args: dict) -> dict:
             ),
         }
 
-    cmd = ["git", "-C", str(repo_dir), "push"]
+    cmd = ["git", "-C", str(repo_dir)]
+    if pat:
+        # Plain `git` does NOT consume GH_TOKEN/GITHUB_TOKEN for HTTPS auth —
+        # those are gh-CLI vars. So for an HTTPS GitHub remote we install a
+        # one-shot credential helper that feeds the token (read from the env we
+        # set above, never from argv, so it stays out of the process list).
+        # We blank any inherited helper first so a misconfigured global helper
+        # can't shadow ours. SSH remotes ignore credential helpers entirely, so
+        # this is a no-op there.
+        cmd += [
+            "-c", "credential.helper=",
+            "-c", 'credential.helper=!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f',
+        ]
+    cmd.append("push")
     if set_upstream:
         cmd.append("-u")
     if force:
