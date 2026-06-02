@@ -551,7 +551,7 @@ class TaskScheduler:
                         _ST.next_run.isnot(None),
                     ).order_by(_ST.next_run.asc()).first()
                     if next_run and next_run[0]:
-                        delta = (next_run[0] - datetime.now(timezone.utc)).total_seconds()
+                        delta = (next_run[0] - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
                         sleep_for = max(1.0, min(60.0, delta))
                 finally:
                     _db.close()

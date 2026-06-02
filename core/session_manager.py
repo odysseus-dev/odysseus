@@ -580,7 +580,7 @@ class SessionManager:
 
         try:
             all_sessions = db.query(DbSession).all()
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=auto_archive_days)
+            cutoff_date = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=auto_archive_days)
 
             for db_session in all_sessions:
                 stats['total_checked'] += 1

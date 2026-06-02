@@ -389,7 +389,7 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
             if STATE_FILE.exists():
                 saved = json.loads(STATE_FILE.read_text(encoding="utf-8"))
                 if saved.get("last_created_at"):
-                    last_watermark = datetime.fromisoformat(saved["last_created_at"])
+                    last_watermark = datetime.fromisoformat(saved["last_created_at"]).replace(tzinfo=None)
         except Exception:
             last_watermark = None
 

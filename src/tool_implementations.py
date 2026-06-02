@@ -4078,8 +4078,8 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
         except Exception:
             pass
     cfg["session"] = session
-    from datetime import datetime, timezone, timezone as _dt
-    cfg["unlocked_at"] = _dt.utcnow().isoformat()
+    from datetime import datetime, timezone
+    cfg["unlocked_at"] = datetime.now(timezone.utc).isoformat()
     p.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     try:
         import os as _os
