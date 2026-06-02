@@ -561,7 +561,7 @@ function _initModelPickerDropdown() {
       menu.classList.remove('closing', 'hidden');
       _populate('');
       if (window.modelsModule && window.modelsModule.refreshModels) {
-        window.modelsModule.refreshModels(true).then(() => {
+        window.modelsModule.refreshModels().then(() => {
           if (!menu.classList.contains('hidden')) _populate(search.value || '');
           updateModelPicker();
         }).catch(() => {});
