@@ -5,6 +5,7 @@ import time
 import json
 import logging
 import hashlib
+import threading
 from fastapi import HTTPException
 from typing import Optional, Dict, List
 from urllib.parse import urlparse
@@ -56,6 +57,12 @@ DEAD_HOST_COOLDOWN = 20.0
 _HOST_FAIL_THRESHOLD = 2
 _dead_hosts: Dict[str, float] = {}
 _host_fails: Dict[str, int] = {}
+# Guards the two maps above. The synchronous llm_call() runs inside FastAPI's
+# threadpool (sync routes such as /sessions/auto-sort) while llm_call_async()
+# runs on the event loop, so these maps are mutated from multiple OS threads.
+# Without the lock the get()+1+set on _host_fails is a read-modify-write that
+# loses failure counts under concurrent connect errors (issue #659).
+_host_health_lock = threading.Lock()
 _model_activity: Dict[str, float] = {}
 
 def _model_activity_key(url: str, model: str) -> str:
@@ -81,13 +88,14 @@ def _host_key(url: str) -> str:
 
 def _is_host_dead(url: str) -> bool:
     key = _host_key(url)
-    exp = _dead_hosts.get(key)
-    if exp is None:
-        return False
-    if time.time() >= exp:
-        _dead_hosts.pop(key, None)
-        return False
-    return True
+    with _host_health_lock:
+        exp = _dead_hosts.get(key)
+        if exp is None:
+            return False
+        if time.time() >= exp:
+            _dead_hosts.pop(key, None)
+            return False
+        return True
 
 def _mark_host_dead(url: str) -> bool:
     """Record a connect failure. Only actually cools the host after
@@ -95,17 +103,19 @@ def _mark_host_dead(url: str) -> bool:
     is now cooled (so callers can log accurately), False if it's still
     within its allowed-failure grace."""
     key = _host_key(url)
-    n = _host_fails.get(key, 0) + 1
-    _host_fails[key] = n
-    if n >= _HOST_FAIL_THRESHOLD:
-        _dead_hosts[key] = time.time() + DEAD_HOST_COOLDOWN
-        return True
-    return False
+    with _host_health_lock:
+        n = _host_fails.get(key, 0) + 1
+        _host_fails[key] = n
+        if n >= _HOST_FAIL_THRESHOLD:
+            _dead_hosts[key] = time.time() + DEAD_HOST_COOLDOWN
+            return True
+        return False
 
 def _clear_host_dead(url: str) -> None:
     key = _host_key(url)
-    _dead_hosts.pop(key, None)
-    _host_fails.pop(key, None)
+    with _host_health_lock:
+        _dead_hosts.pop(key, None)
+        _host_fails.pop(key, None)
 
 
 # Shared async HTTP client. Reusing one client keeps connections warm:
@@ -130,7 +140,10 @@ def _set_cached_response(cache_key: str, response: str) -> None:
     if len(_response_cache) > 128:
         keys_to_remove = list(_response_cache.keys())[:64]
         for key in keys_to_remove:
-            del _response_cache[key]
+            # pop(), not del: another thread (sync llm_call runs in FastAPI's
+            # threadpool) may have already evicted the same snapshotted key,
+            # and del would raise KeyError mid-eviction (issue #659).
+            _response_cache.pop(key, None)
     _response_cache[cache_key] = response
 
 # ── Anthropic native API adapter ──
@@ -387,8 +400,8 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
             if m.get("content"):
                 content.append({"type": "text", "text": m["content"]})
             for tc in m["tool_calls"]:
-                fn = tc.get("function", {})
-                args_str = fn.get("arguments", "{}")
+                fn = tc.get("function") or {}
+                args_str = fn.get("arguments") or "{}"
                 try:
                     args = json.loads(args_str) if isinstance(args_str, str) else args_str
                 except (json.JSONDecodeError, TypeError):
@@ -886,26 +899,26 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                         evt = j.get("type", "")
                         if evt == "content_block_start":
                             _anth_block_idx = j.get("index", _anth_block_idx + 1)
-                            cb = j.get("content_block", {})
+                            cb = j.get("content_block") or {}
                             _anth_block_type = cb.get("type", "text")
                             if _anth_block_type == "tool_use":
                                 _anth_tool_blocks[_anth_block_idx] = {
-                                    "id": cb.get("id", f"call_{_anth_block_idx}"),
-                                    "name": cb.get("name", ""),
+                                    "id": cb.get("id") or f"call_{_anth_block_idx}",
+                                    "name": cb.get("name") or "",
                                     "arguments": "",
                                 }
                         elif evt == "content_block_delta":
-                            delta = j.get("delta", {})
+                            delta = j.get("delta") or {}
                             delta_type = delta.get("type", "")
                             if delta_type == "text_delta":
-                                text = delta.get("text", "")
+                                text = delta.get("text") or ""
                                 if text:
                                     yield f'data: {json.dumps({"delta": text})}\n\n'
                             elif delta_type == "input_json_delta":
                                 # Accumulate tool arguments JSON
                                 idx = j.get("index", _anth_block_idx)
                                 if idx in _anth_tool_blocks:
-                                    partial = delta.get("partial_json", "")
+                                    partial = delta.get("partial_json") or ""
                                     _anth_tool_blocks[idx]["arguments"] += partial
                                     # Stream tool arg deltas for doc tools
                                     if partial and _anth_tool_blocks[idx].get("name") in ("create_document", "update_document", "edit_document"):
@@ -1000,14 +1013,14 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                     u = j["usage"]
                                     yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": u.get("prompt_tokens", 0), "output_tokens": u.get("completion_tokens", 0)}})}\n\n'
                                 elif "choices" in j:
-                                    delta = j["choices"][0].get("delta", {})
+                                    delta = j["choices"][0].get("delta") or {}
                                     if isinstance(delta, dict):
                                         # Text content
                                         # Reasoning tokens (VLLM --reasoning-parser, e.g. Qwen3/DeepSeek-R1)
-                                        reasoning = delta.get("reasoning_content", "")
+                                        reasoning = delta.get("reasoning_content") or ""
                                         if reasoning:
                                             yield f'data: {json.dumps({"delta": reasoning, "thinking": True})}\n\n'
-                                        content = delta.get("content", "")
+                                        content = delta.get("content") or ""
                                         if content:
                                             # Some thinking backends start normal content with a
                                             # stray closing tag. Repair only that shape; do not
@@ -1018,13 +1031,13 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             _first_content_sent = True
                                             yield f'data: {json.dumps({"delta": content})}\n\n'
                                         # Native tool calls — accumulate across chunks
-                                        for tc in delta.get("tool_calls", []):
+                                        for tc in delta.get("tool_calls") or []:
                                             idx = tc.get("index", 0)
                                             if idx not in _tc_acc:
                                                 _tc_acc[idx] = {"id": "", "name": "", "arguments": ""}
                                             if tc.get("id"):
                                                 _tc_acc[idx]["id"] = tc["id"]
-                                            func = tc.get("function", {})
+                                            func = tc.get("function") or {}
                                             if func.get("name"):
                                                 _tc_acc[idx]["name"] = func["name"]
                                             if "arguments" in func:

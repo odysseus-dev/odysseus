@@ -1,5 +1,22 @@
 # app.py — slim orchestrator
+import mimetypes
 import os
+
+
+def register_static_mime_types() -> None:
+    """Force stable JS module MIME types across platforms.
+
+    Some native Windows setups inherit stale/incorrect registry mappings for
+    ``.js``/``.mjs``, which can make Starlette serve ES modules with a non-JS
+    ``Content-Type`` and cause the UI to load but fail on click. Re-register the
+    standard MIME types at startup so static assets are served consistently.
+    """
+
+    mimetypes.add_type("text/javascript", ".js")
+    mimetypes.add_type("application/javascript", ".mjs")
+
+
+register_static_mime_types()
 
 # Windows: force HuggingFace/fastembed to COPY model files instead of symlinking.
 # On a network-share/UNC data dir Windows can't follow HF's symlinks ([WinError
@@ -21,6 +38,7 @@ import uuid
 
 import asyncio
 import logging
+import secrets
 from datetime import datetime
 from typing import Dict
 
@@ -133,6 +151,8 @@ auth_manager = AuthManager()
 app.state.auth_manager = auth_manager
 AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
 LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
+if LOCALHOST_BYPASS:
+    logger.warning("LOCALHOST_BYPASS is enabled, loopback requests bypass authentication. Do not expose this instance to a network.")
 
 if AUTH_ENABLED:
     AUTH_EXEMPT_EXACT = {
@@ -222,7 +242,7 @@ if AUTH_ENABLED:
             try:
                 from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN as _ITT
                 _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
-                if _hdr and _hdr == _ITT and _is_trusted_loopback(request):
+                if _hdr and secrets.compare_digest(_hdr, _ITT) and _is_trusted_loopback(request):
                     # Impersonation: when the agent's loopback call sets
                     # X-Odysseus-Owner, attribute the request to that user only
                     # if they exist. Authorization checks remain separate; this
@@ -817,7 +837,6 @@ async def startup_event():
             from src.tool_index import get_tool_index
             idx = await asyncio.to_thread(get_tool_index)
             if idx:
-                await asyncio.to_thread(idx.index_builtin_tools)
                 await asyncio.to_thread(idx.get_tools_for_query, "warmup", 8)
                 logger.info("[startup] Tool index pre-warmed")
         except Exception as e:

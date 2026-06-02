@@ -44,7 +44,7 @@ A full, hover-to-play tour lives on the landing page (`docs/index.html`).
 
 Defaults work out of the box: clone, run, then configure models/search/email
 inside **Settings**. Only edit `.env` for deployment-level overrides like
-`APP_PORT`, `AUTH_ENABLED`, `DATABASE_URL`, or a pre-seeded admin password.
+`APP_BIND`, `APP_PORT`, `AUTH_ENABLED`, `DATABASE_URL`, or a pre-seeded admin password.
 
 On first setup, Odysseus creates an admin account (`admin` unless
 `ODYSSEUS_ADMIN_USER` is set) and prints a temporary password in the terminal.
@@ -61,8 +61,10 @@ cd odysseus
 cp .env.example .env       # optional, but recommended for explicit defaults
 docker compose up -d --build
 ```
-Open `http://localhost:7000` when the containers are healthy. If the port is
-taken, set `APP_PORT=7001` in `.env` and recreate the container.
+Open `http://localhost:7000` when the containers are healthy. Docker Compose
+binds the web UI to `127.0.0.1` by default. If the port is taken, set
+`APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
+only when you intentionally want LAN/reverse-proxy access.
 
 ### Native Linux / macOS
 ```bash
@@ -72,10 +74,11 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 python setup.py
-python -m uvicorn app:app --host 0.0.0.0 --port 7000
+python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
 Requirements: Python 3.11+. Cookbook also needs `tmux` for background model
-downloads and serves.
+downloads and serves. Use `--host 0.0.0.0` only when you intentionally want
+LAN/reverse-proxy access.
 
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
@@ -97,9 +100,9 @@ It launches at `http://127.0.0.1:7860`. To build a clickable app wrapper:
 <summary>Cookbook, GPU, Ollama, and troubleshooting notes</summary>
 
 **Docker bundled services.** Compose starts Odysseus, ChromaDB, SearXNG, and
-ntfy. ChromaDB/SearXNG/ntfy bind host ports to `127.0.0.1` by default, so they
-are reachable from the host but not exposed to your LAN/public internet unless
-you opt in.
+ntfy. Odysseus and the bundled service ports bind to `127.0.0.1` by default, so
+they are reachable from the host but not exposed to your LAN/public internet
+unless you opt in.
 
 **Cookbook storage in Docker.** Downloads live in `./data/huggingface`
 (`~/.cache/huggingface` in the container). Cookbook-installed Python CLIs and
@@ -234,6 +237,8 @@ Key settings:
 | `OPENAI_API_KEY` | -- | Optional OpenAI key. Prefer adding providers in the app unless pre-seeding. |
 | `SEARXNG_INSTANCE` | `http://localhost:8080` | SearXNG URL. Docker overrides this to `http://searxng:8080`. |
 | `SEARXNG_SECRET` | generated on first Docker boot | Optional SearXNG cookie/CSRF secret. Leave blank unless you need to pin it. |
+| `APP_BIND` | `127.0.0.1` | Docker Compose host bind address for the web UI. Use `0.0.0.0` only for intentional LAN/reverse-proxy access. |
+| `APP_PORT` | `7000` | Docker Compose host port for the web UI. |
 | `AUTH_ENABLED` | `true` | Enable/disable login |
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | Database connection string |

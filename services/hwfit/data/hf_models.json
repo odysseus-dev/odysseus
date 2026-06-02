@@ -7035,7 +7035,8 @@
   "gguf_sources": [
    {
     "repo": "unsloth/Qwen3.5-9B-GGUF",
-    "provider": "unsloth"
+    "provider": "unsloth",
+    "file": "Qwen3.5-9B-Q4_K_M.gguf"
    }
   ]
  },
@@ -13733,7 +13734,13 @@
   "architecture": "qwen3",
   "pipeline_tag": "text-generation",
   "release_date": "2026-04-01",
-  "gguf_sources": [],
+  "gguf_sources": [
+   {
+    "repo": "unsloth/Qwen3.6-27B-GGUF",
+    "provider": "unsloth",
+    "file": "Qwen3.6-27B-Q4_K_M.gguf"
+   }
+  ],
   "capabilities": []
  },
  {
@@ -13796,7 +13803,13 @@
   "architecture": "qwen3_moe",
   "pipeline_tag": "text-generation",
   "release_date": "2026-04-01",
-  "gguf_sources": [],
+  "gguf_sources": [
+   {
+    "repo": "unsloth/Qwen3.6-35B-A3B-GGUF",
+    "provider": "unsloth",
+    "file": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+   }
+  ],
   "capabilities": []
  },
  {

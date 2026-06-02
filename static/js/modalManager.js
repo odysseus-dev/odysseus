@@ -27,6 +27,7 @@
 
 import { previewZoneAt, clearPreview, snapModalToZone } from './tileManager.js';
 import { suspendDock, resumeDock, clearRightDock, applyEdgeDock } from './modalSnap.js';
+import { dismissOrRemove } from './escMenuStack.js';
 
 const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized, restoreMinHeight }
 
@@ -1463,7 +1464,7 @@ window.addEventListener('modal-dismissed', (e) => {
   if (id === 'cookbook-modal') {
     document.querySelectorAll(
       '.cookbook-task-dropdown, .cookbook-gpu-split-menu, .hwfit-cached-dropdown, .cookbook-saved-menu, .cookbook-dep-menu'
-    ).forEach(d => d.remove());
+    ).forEach(dismissOrRemove);
   }
 });
 

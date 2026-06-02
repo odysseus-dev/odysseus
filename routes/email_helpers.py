@@ -269,6 +269,20 @@ COMPOSE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 SCHEDULED_DB = DATA_DIR / "scheduled_emails.db"
 
 
+def attachment_extract_dir(folder: str, uid: str) -> Path:
+    """Containment-safe extraction directory for an attachment.
+
+    `folder` and `uid` are user-controlled (query/path params). Flatten them to
+    a single safe path segment so a value like folder='../../tmp' can't escape
+    ATTACHMENTS_DIR, then assert containment as belt-and-suspenders."""
+    key = re.sub(r"[^A-Za-z0-9._-]", "_", f"{folder}_{uid}") or "_"
+    target = (ATTACHMENTS_DIR / key).resolve()
+    base = ATTACHMENTS_DIR.resolve()
+    if target != base and base not in target.parents:
+        raise HTTPException(400, "Invalid attachment location")
+    return target
+
+
 def _init_scheduled_db():
     import sqlite3
     conn = sqlite3.connect(SCHEDULED_DB)

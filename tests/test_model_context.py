@@ -2,6 +2,7 @@
 
 import pytest
 
+import src.model_context as model_context
 from src.model_context import _is_local_endpoint, estimate_tokens, _lookup_known
 
 
@@ -107,3 +108,46 @@ class TestLookupKnown:
         """Models with :free or :extended suffixes should still match."""
         result = _lookup_known("deepseek-r1:free")
         assert result == 64000
+
+
+class TestGetContextLength:
+    def setup_method(self):
+        model_context._context_cache.clear()
+
+    def test_local_endpoint_requeries_same_model_after_restart(self, monkeypatch):
+        calls = []
+
+        def fake_query(endpoint_url, model):
+            calls.append((endpoint_url, model))
+            return 8192 if len(calls) == 1 else 27000
+
+        monkeypatch.setattr(model_context, "_query_context_length", fake_query)
+
+        endpoint = "http://127.0.0.1:8000/v1/chat/completions"
+        model = "Qwen/Qwen3-14B"
+
+        first = model_context.get_context_length(endpoint, model)
+        second = model_context.get_context_length(endpoint, model)
+
+        assert first == 8192
+        assert second == 27000
+        assert len(calls) == 2
+
+    def test_remote_endpoint_keeps_cached_context(self, monkeypatch):
+        calls = []
+
+        def fake_query(endpoint_url, model):
+            calls.append((endpoint_url, model))
+            return 200000 if len(calls) == 1 else 12345
+
+        monkeypatch.setattr(model_context, "_query_context_length", fake_query)
+
+        endpoint = "https://api.openai.com/v1/chat/completions"
+        model = "gpt-5"
+
+        first = model_context.get_context_length(endpoint, model)
+        second = model_context.get_context_length(endpoint, model)
+
+        assert first == 200000
+        assert second == 200000
+        assert len(calls) == 1

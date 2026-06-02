@@ -90,9 +90,9 @@ if [ ! -d venv ]; then
   "$PY" -m venv venv
 fi
 echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
-./venv/bin/python -m pip install --quiet --upgrade pip
+"$PY" -m pip install --quiet --upgrade pip
 # Not --quiet: this is the slow step, so show progress (and any real errors).
-./venv/bin/python -m pip install -r requirements.txt
+"$PY" -m pip install -r requirements.txt
 
 # 4. First-run setup: creates data dirs and prints an initial admin password
 #    the first time (idempotent — does nothing if already set up). Suppress its
@@ -136,4 +136,4 @@ echo
 echo "▶ Starting Odysseus — it will open in your browser at $URL"
 echo "  (this takes a few seconds; press Ctrl+C here to stop)"
 echo
-./venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port "$PORT"
+"$PY" -m uvicorn app:app --host 127.0.0.1 --port "$PORT"

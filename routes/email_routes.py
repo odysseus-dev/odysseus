@@ -48,6 +48,7 @@ from routes.email_helpers import (
     _EMAIL_REPLY_SYS_PROMPT_BASE, _POOL_HOOKS,
     SendEmailRequest, ExtractStyleRequest,
     ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
+    attachment_extract_dir,
 )
 from routes.email_pollers import _start_poller
 
@@ -1390,7 +1391,7 @@ def setup_email_routes():
             msg = email_mod.message_from_bytes(raw)
 
             # Extract to a per-email folder
-            target_dir = ATTACHMENTS_DIR / f"{folder}_{uid}"
+            target_dir = attachment_extract_dir(folder, uid)
             filepath = _extract_attachment_to_disk(msg, index, target_dir)
             if not filepath:
                 return {"error": f"Attachment index {index} not found"}
@@ -1425,7 +1426,7 @@ def setup_email_routes():
             raw = msg_data[0][1]
             msg = email_mod.message_from_bytes(raw)
 
-            target_dir = ATTACHMENTS_DIR / f"{folder}_{uid}"
+            target_dir = attachment_extract_dir(folder, uid)
             filepath = _extract_attachment_to_disk(msg, index, target_dir)
             if not filepath:
                 return {"error": f"Attachment index {index} not found"}
@@ -1633,7 +1634,7 @@ def setup_email_routes():
             raw = msg_data[0][1]
             msg = email_mod.message_from_bytes(raw)
 
-            target_dir = ATTACHMENTS_DIR / f"{folder}_{uid}"
+            target_dir = attachment_extract_dir(folder, uid)
             filepath = _extract_attachment_to_disk(msg, index, target_dir)
             if not filepath:
                 return {"error": f"Attachment index {index} not found"}

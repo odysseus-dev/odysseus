@@ -349,6 +349,27 @@ function _taskIcon(task) {
   return `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4;flex-shrink:0;position:relative;top:-4px;">${path}</svg>`;
 }
 
+const _MODEL_BACKED_ACTIONS = new Set([
+  'summarize_emails',
+  'draft_email_replies',
+  'extract_email_events',
+  'classify_events',
+  'mark_email_boundaries',
+  'learn_sender_signatures',
+  'check_email_urgency',
+  'test_skills',
+  'audit_skills',
+  'consolidate_memory',
+]);
+
+function _taskAiMark(task) {
+  const kind = task?.task_type || task?.kind || '';
+  const action = task?.action || '';
+  const aiAction = _MODEL_BACKED_ACTIONS.has(action);
+  if (!(kind === 'llm' || kind === 'research' || task?.model || task?.endpointUrl || aiAction)) return '';
+  return '<svg class="task-ai-mark" width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-label="Uses model" title="Uses model"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>';
+}
+
 // ---- Custom pickers ----
 
 function _buildTimePicker(containerId, hour, minute) {
@@ -656,14 +677,14 @@ function _renderList() {
     const titleRow = document.createElement('div');
     titleRow.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;';
     const statusBadge = task.status === 'paused'
-      ? `<span class="task-status-badge task-paused-badge" data-task-status-action="resume" title="Click to resume" style="position:relative;top:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg> paused</span>`
+      ? `<span class="task-status-badge task-state-badge task-paused-badge" data-task-status-action="resume" title="Paused - click to resume" style="position:relative;top:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="7 4 19 12 7 20 7 4"/></svg><span class="task-state-label">paused</span></span>`
       : task.status === 'active'
-        ? `<span class="task-status-badge task-active-badge" data-task-status-action="pause" title="Click to pause" style="position:relative;top:4px;">active</span>`
+        ? `<span class="task-status-badge task-state-badge task-active-badge" data-task-status-action="pause" title="Active - click to pause" style="position:relative;top:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg><span class="task-state-label">active</span></span>`
         : '';
     const builtinBadge = task.is_builtin
       ? `<span class="task-builtin-badge${task.is_modified ? ' modified' : ''}" title="${task.is_modified ? 'Built-in task — edited from its default' : 'Built-in task'}">built-in${task.is_modified ? ' · edited' : ''}</span>`
       : '';
-    titleRow.innerHTML = `${_taskIcon(task)}<span class="memory-item-title">${_esc(task.name)}</span>${builtinBadge}<span style="flex:1;"></span>${statusBadge}`;
+    titleRow.innerHTML = `${_taskIcon(task)}<span class="memory-item-title">${_esc(task.name)}</span>${_taskAiMark(task)}${builtinBadge}<span style="flex:1;"></span>${statusBadge}`;
 
     // ... menu button (hover to show)
     const actionsWrap = document.createElement('div');
@@ -701,7 +722,7 @@ function _renderList() {
       runBtn.className = 'task-status-badge task-run-now-badge task-card-run-btn';
       runBtn.title = 'Run now';
       runBtn.style.cssText = 'position:relative;top:1px;margin-right:4px;';
-      runBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Run now</span>';
+      runBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Run</span>';
       runBtn.addEventListener('click', (e) => { e.stopPropagation(); _doRunNow(task.id); });
       actionsWrap.insertBefore(runBtn, menuBtn);
     }
@@ -2298,10 +2319,10 @@ function _renderActivityEntry(entry) {
       <div class="task-log-row is-skipped" data-kind="${_escHtml(entry.kind)}" data-entry-idx="${entryIdx}" style="${styleVars}">
         <div class="task-log-row-head">
           ${statusDot}
-          <span class="task-log-name">${_escHtml(entry.taskName)}</span>
+          <span class="task-log-task-icon">${_taskIcon({ action: entry.action, task_type: entry.kind })}</span>
+          <span class="task-log-name">${_escHtml(entry.taskName)}</span>${_taskAiMark(entry)}
           ${repeatBadge}
           <span class="task-log-skipped-reason">skipped${reason ? ' — ' + _escHtml(reason) : ''}</span>
-          <span style="flex:1"></span>
           <span class="task-log-time" title="${_escHtml(tsAbs)}">${_escHtml(tsLabel)}</span>
         </div>
       </div>
@@ -2311,7 +2332,8 @@ function _renderActivityEntry(entry) {
     <div class="task-log-row${long ? ' is-long' : ''}${_isRunning ? ' is-running' : ''}" data-kind="${_escHtml(entry.kind)}" data-entry-idx="${entryIdx}" style="${styleVars}">
       <div class="task-log-row-head">
         ${statusDot}
-        <span class="task-log-name">${_escHtml(entry.taskName)}</span>
+        <span class="task-log-task-icon">${_taskIcon({ action: entry.action, task_type: entry.kind })}</span>
+        <span class="task-log-name">${_escHtml(entry.taskName)}</span>${_taskAiMark(entry)}
         ${repeatBadge}
         <span style="flex:1"></span>
         ${rightHtml}
@@ -2401,7 +2423,7 @@ function _renderMainView() {
       <p class="memory-desc" style="position:relative;top:-4px;">Scheduled prompts and actions that run automatically. Results appear in a dedicated session.</p>
       <div class="memory-toolbar">
         <div class="memory-category-filters" style="display:flex;align-items:center;gap:6px;">
-          <select class="memory-sort-select" id="tasks-sort" style="position:relative;top:-4px;width:86px;font-size:11px;height:24px;">
+          <select class="memory-sort-select" id="tasks-sort" aria-label="Sort tasks" title="Sort tasks" style="position:relative;top:-4px;width:86px;font-size:11px;height:24px;">
             <option value="recent">Recent</option>
             <option value="name">A–Z</option>
             <option value="status">Status</option>

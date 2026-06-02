@@ -490,6 +490,15 @@ function initializeEventListeners() {
         return;
       }
 
+      // Calendar owns a few inner Escape layers (settings panel, event form,
+      // then the calendar modal itself). Let calendar.js handle those instead
+      // of falling through to unrelated page-level fallbacks like document
+      // panel minimize.
+      const calendarModal = document.getElementById('calendar-modal');
+      if (calendarModal && !calendarModal.classList.contains('hidden') && getComputedStyle(calendarModal).display !== 'none') {
+        return;
+      }
+
       // Close one modal at a time (last in DOM = topmost)
       // Map modal id → sidebar list-item id to clear active state
       const modalItemMap = {

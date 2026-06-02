@@ -245,6 +245,9 @@ export function _detectToolParser(modelName) {
 // ── Backend detection ──
 
 export function _detectBackend(model) {
+  if (model?.backend === 'ollama' || model?.is_ollama) {
+    return { backend: 'ollama', label: 'Ollama' };
+  }
   const q = (model.quant || '').toUpperCase();
   const sysBackend = String(_hwfitCache?.system?.backend || '').toLowerCase();
   const isRocm = sysBackend === 'rocm';
@@ -407,11 +410,9 @@ export function _buildServeCmd(f, modelName, backend) {
       cmd += ` || ${_lcpServer}`;
     }
   } else if (backend === 'ollama') {
-    const ollamaName = modelName.split('/').pop().toLowerCase().replace(/[-_]gguf$/i, '');
     const ollamaPort = f.port || '11434';
     const hostEnv = ollamaPort !== '11434' ? `OLLAMA_HOST=0.0.0.0:${ollamaPort} ` : '';
-    // Start serve in background if not running, then pull model
-    cmd = `${hostEnv}ollama serve &>/dev/null & sleep 2 && ${hostEnv}ollama pull ${ollamaName} && wait`;
+    cmd = `${hostEnv}ollama serve`;
   } else if (backend === 'diffusers') {
     const gpuStr = f.gpus?.trim();
     if (gpuStr) cmd += `CUDA_VISIBLE_DEVICES=${gpuStr} `;
@@ -554,10 +555,12 @@ async function _fetchDependencies() {
       const isLocal = pkg.target === 'local';
       const isSystemDep = pkg.kind === 'system';
       const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
+      const note = pkg.status_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.65;margin-top:3px;">${esc(pkg.status_note)}</div>` : '';
       return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
         + `<div class="cookbook-dep-info">`
         + `<div class="memory-item-title">${esc(pkg.name)}</div>`
         + `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`
+        + note
         + `</div>`
         + `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`
         + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
@@ -1794,6 +1797,7 @@ const shared = {
   _savePresets,
   _copyText,
   _persistEnvState,
+  _refreshDependencies: _fetchDependencies,
   _getGpuToggleTotal: () => _gpuToggleTotal,
   modelLogo,
   esc,

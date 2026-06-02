@@ -1058,56 +1058,53 @@ class TaskScheduler:
         except Exception as e:
             raw["notes_tasks"] = f"Error: {e}"
 
-        # Auto-discover API integrations (Miniflux RSS, etc.) from integrations.json
+        # Auto-discover API integrations (Miniflux RSS, etc.).
         try:
             import httpx
-            from pathlib import Path as _P
-            integrations_file = _P("data/integrations.json")
-            if integrations_file.exists():
-                integrations = json.loads(integrations_file.read_text(encoding="utf-8"))
-                for integ in integrations:
-                    if not integ.get("enabled"):
-                        continue
-                    preset = integ.get("preset", "")
-                    base_url = integ.get("base_url", "").rstrip("/")
-                    api_key = integ.get("api_key", "")
-                    if not base_url:
-                        continue
+            from src.integrations import load_integrations
+            for integ in load_integrations():
+                if not integ.get("enabled"):
+                    continue
+                preset = integ.get("preset", "")
+                base_url = integ.get("base_url", "").rstrip("/")
+                api_key = integ.get("api_key", "")
+                if not base_url:
+                    continue
 
-                    # Build auth headers
-                    headers = {}
-                    if integ.get("auth_type") == "header" and api_key:
-                        headers[integ.get("auth_header", "X-Auth-Token")] = api_key
-                    elif integ.get("auth_type") == "bearer" and api_key:
-                        headers["Authorization"] = f"Bearer {api_key}"
+                # Build auth headers
+                headers = {}
+                if integ.get("auth_type") == "header" and api_key:
+                    headers[integ.get("auth_header", "X-Auth-Token")] = api_key
+                elif integ.get("auth_type") == "bearer" and api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
 
-                    # Miniflux: fetch unread entries (cached 3 min across tasks)
-                    if preset == "miniflux":
-                        async def _fetch_miniflux(_base=base_url, _headers=dict(headers)):
-                            async with httpx.AsyncClient(timeout=10) as client:
-                                resp = await client.get(
-                                    f"{_base}/v1/entries",
-                                    params={"status": "unread", "limit": 15, "order": "published_at", "direction": "desc"},
-                                    headers=_headers,
-                                )
-                                if resp.status_code != 200:
-                                    return None
-                                entries = resp.json().get("entries", []) or []
-                                if not entries:
-                                    return None
-                                lines = []
-                                for e in entries[:15]:
-                                    title = e.get("title", "?")
-                                    feed = (e.get("feed") or {}).get("title", "?")
-                                    url = e.get("url", "")
-                                    lines.append(f"- [{feed}] {title} — {url}")
-                                return "\n".join(lines)
-                        try:
-                            val = await _cached(("miniflux_unread", base_url), 180, _fetch_miniflux)
-                            if val:
-                                raw["rss_miniflux_unread"] = val
-                        except Exception as e:
-                            logger.warning(f"Miniflux fetch failed: {e}")
+                # Miniflux: fetch unread entries (cached 3 min across tasks)
+                if preset == "miniflux":
+                    async def _fetch_miniflux(_base=base_url, _headers=dict(headers)):
+                        async with httpx.AsyncClient(timeout=10) as client:
+                            resp = await client.get(
+                                f"{_base}/v1/entries",
+                                params={"status": "unread", "limit": 15, "order": "published_at", "direction": "desc"},
+                                headers=_headers,
+                            )
+                            if resp.status_code != 200:
+                                return None
+                            entries = resp.json().get("entries", []) or []
+                            if not entries:
+                                return None
+                            lines = []
+                            for e in entries[:15]:
+                                title = e.get("title", "?")
+                                feed = (e.get("feed") or {}).get("title", "?")
+                                url = e.get("url", "")
+                                lines.append(f"- [{feed}] {title} — {url}")
+                            return "\n".join(lines)
+                    try:
+                        val = await _cached(("miniflux_unread", base_url), 180, _fetch_miniflux)
+                        if val:
+                            raw["rss_miniflux_unread"] = val
+                    except Exception as e:
+                        logger.warning(f"Miniflux fetch failed: {e}")
         except Exception as e:
             logger.warning(f"Integrations discovery failed: {e}")
 
