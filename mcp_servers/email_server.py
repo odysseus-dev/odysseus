@@ -417,6 +417,11 @@ def _list_emails(folder="INBOX", max_results=20, unresponded_only=False,
         status, data = conn.uid("SEARCH", None, "(UNSEEN UNANSWERED)")
     elif unread_only:
         status, data = conn.uid("SEARCH", None, "(UNSEEN)")
+    elif unresponded_only:
+        # Was missing — unresponded_only=True (without unread_only) fell through
+        # to "ALL" and returned answered mail too, despite the documented
+        # "emails without replies" behaviour.
+        status, data = conn.uid("SEARCH", None, "(UNANSWERED)")
     else:
         # Include read too — IMAP search "ALL" returns the entire folder
         status, data = conn.uid("SEARCH", None, "ALL")

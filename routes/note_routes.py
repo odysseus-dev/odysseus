@@ -696,7 +696,7 @@ def setup_note_routes(task_scheduler=None):
         # the same dispatch without an HTTP roundtrip + auth cookie.
         return await dispatch_reminder(
             title=title, note_body=note_body, note_id=note_id,
-            owner=_gcu(request) or "",
+            owner=_owner(request) or "",
             queue_browser=False,
         )
 

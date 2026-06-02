@@ -124,7 +124,8 @@ def _clear_user_pref_endpoint_refs(all_prefs: dict, ep_id: str) -> int:
 # Loopback hosts a user might type for a local model server (LM Studio,
 # llama.cpp, vLLM, …). Inside Docker these point at the *container*, not the
 # host the server actually runs on.
-_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+_ANY_BIND_HOSTS = {"0.0.0.0", "::"}
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", *_ANY_BIND_HOSTS}
 
 
 def _docker_host_gateway_reachable() -> bool:
@@ -147,19 +148,61 @@ def _docker_host_gateway_reachable() -> bool:
     except OSError:
         return False
 
+def _container_loopback_reachable(base_url: str, timeout: float = 0.2) -> bool:
+    """True when the requested loopback host:port is already reachable from
+    inside the current container.
 
-def _rewrite_loopback_for_docker(base_url: str) -> str:
+    This distinguishes "a model server running alongside Odysseus in the same
+    container" from "a model server running on the Docker host". Only the
+    latter should be rewritten to host.docker.internal.
+    """
+    try:
+        parsed = urlparse(base_url)
+    except Exception:
+        return False
+    host = (parsed.hostname or "").lower()
+    port = parsed.port
+    if host not in _LOOPBACK_HOSTS or not port:
+        return False
+    probe_host = "::1" if host == "::1" else "127.0.0.1"
+    family = socket.AF_INET6 if probe_host == "::1" else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            sock.connect((probe_host, port))
+        return True
+    except OSError:
+        return False
+
+
+def _rewrite_loopback_for_docker(base_url: str, *, container_local: bool = False) -> str:
     """Rewrite a loopback model-endpoint URL to ``host.docker.internal`` when
     running in Docker. A URL like ``http://localhost:1234/v1`` (the LM Studio
     default) otherwise targets the Odysseus container itself, so the probe gets
     a connection error and the endpoint is rejected with a misleading "No
-    models found for that provider/key". The Ollama paths already handle this;
-    this extends the same fix to OpenAI-compatible local servers."""
+    models found for that provider/key".
+
+    Cookbook local serves are the opposite case: Odysseus started the model
+    server inside the same container/process environment, so the saved endpoint
+    must remain container-local. In that mode, normalize a bind address such as
+    0.0.0.0 to a connectable loopback host, but do not jump to the Docker host.
+    """
     try:
         parsed = urlparse(base_url)
     except Exception:
         return base_url
-    if (parsed.hostname or "").lower() not in _LOOPBACK_HOSTS:
+    host = (parsed.hostname or "").lower()
+    if host not in _LOOPBACK_HOSTS:
+        return base_url
+    if container_local:
+        if host in _ANY_BIND_HOSTS:
+            netloc = "127.0.0.1" + (f":{parsed.port}" if parsed.port else "")
+            return urlunparse(parsed._replace(netloc=netloc))
+        return base_url
+    if host in _ANY_BIND_HOSTS and not _docker_host_gateway_reachable():
+        netloc = "127.0.0.1" + (f":{parsed.port}" if parsed.port else "")
+        return urlunparse(parsed._replace(netloc=netloc))
+    if _container_loopback_reachable(base_url):
         return base_url
     if not _docker_host_gateway_reachable():
         return base_url
@@ -1115,6 +1158,7 @@ def setup_model_routes(model_discovery):
         require_models: str = Form("false"),
         model_type: str = Form("llm"),
         supports_tools: str = Form(""),  # "true"/"false"/"" (unknown)
+        container_local: str = Form("false"),
         # Default `shared=true` → endpoints are visible to all users (the
         # app's historical behaviour). Admins can pass `shared=false` to
         # scope a new endpoint to their own account only.
@@ -1127,9 +1171,10 @@ def setup_model_routes(model_discovery):
         # Resolve hostname via Tailscale if DNS fails
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
-        # In Docker, rewrite a loopback URL to host.docker.internal so the probe
-        # — and the saved URL used for chat — reach the host, not the container.
-        base_url = _rewrite_loopback_for_docker(base_url)
+        # In Docker, manually added loopback URLs usually point at a host-local
+        # server. Cookbook local serves are launched inside Odysseus itself, so
+        # keep those container-local when the frontend marks them as such.
+        base_url = _rewrite_loopback_for_docker(base_url, container_local=_truthy(container_local))
 
         # Auto-generate name from URL if not provided
         if not name.strip():

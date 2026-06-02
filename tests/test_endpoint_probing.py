@@ -49,6 +49,7 @@ from routes.model_routes import (
     _ping_endpoint,
     _probe_single_model,
     _classify_endpoint,
+    _rewrite_loopback_for_docker,
     _PROVIDER_CURATED,
 )
 
@@ -190,6 +191,47 @@ class TestPingEndpoint:
         assert _ping_endpoint("http://localhost:11434/v1") == {
             "reachable": True, "status_code": 200, "error": None,
         }
+
+
+# ── Docker loopback rewrite ──
+
+class TestDockerLoopbackRewrite:
+    def test_manual_loopback_rewrites_to_docker_host_when_available(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: True)
+        monkeypatch.setattr(model_routes, "_container_loopback_reachable", lambda base_url: False)
+        assert (
+            _rewrite_loopback_for_docker("http://localhost:8000/v1")
+            == "http://host.docker.internal:8000/v1"
+        )
+
+    def test_reachable_container_loopback_stays_local_even_without_container_flag(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: True)
+        monkeypatch.setattr(model_routes, "_container_loopback_reachable", lambda base_url: True)
+        assert (
+            _rewrite_loopback_for_docker("http://127.0.0.1:8001/v1")
+            == "http://127.0.0.1:8001/v1"
+        )
+
+    def test_cookbook_container_local_loopback_stays_inside_container(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: True)
+        assert (
+            _rewrite_loopback_for_docker("http://localhost:8000/v1", container_local=True)
+            == "http://localhost:8000/v1"
+        )
+
+    def test_bind_address_becomes_connectable_loopback_for_container_local(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: True)
+        assert (
+            _rewrite_loopback_for_docker("http://0.0.0.0:8000/v1", container_local=True)
+            == "http://127.0.0.1:8000/v1"
+        )
+
+    def test_bind_address_becomes_connectable_loopback_on_native_install(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: False)
+        assert (
+            _rewrite_loopback_for_docker("http://0.0.0.0:8000/v1")
+            == "http://127.0.0.1:8000/v1"
+        )
 
 
 # ── _probe_single_model: completion probe ──

@@ -339,6 +339,37 @@ def test_smoke_duplicate_upload(tmp_path):
     assert len(final) == 1, f"Duplicate upload should not add a new row, got {len(final)}"
 
 
+def test_duplicate_upload_ignores_stale_missing_file(tmp_path):
+    """A stale uploads.json row should not make a new upload point at a
+    file that cleanup already removed from disk."""
+    handler = _make_handler(tmp_path)
+    handler.upload_rate_limit = 100
+    content = b"same-content-after-cleanup"
+
+    first = handler.save_upload(
+        SimpleNamespace(filename="cleanup.txt", file=io.BytesIO(content)),
+        "127.0.0.1",
+        "owner_a",
+    )
+    os.remove(first["path"])
+
+    second = handler.save_upload(
+        SimpleNamespace(filename="cleanup.txt", file=io.BytesIO(content)),
+        "127.0.0.1",
+        "owner_a",
+    )
+
+    assert second.get("is_duplicate") is not True
+    assert second["id"] != first["id"]
+    assert os.path.exists(second["path"])
+
+    with open(_db_path(handler), "r", encoding="utf-8") as f:
+        final = json.load(f)
+    ids = {row.get("id") for row in final.values()}
+    assert first["id"] not in ids
+    assert second["id"] in ids
+
+
 def test_smoke_info_lookup_after_bak_recovery(tmp_path):
     """Smoke test: after a torn write is recovered from the ``.bak`` sibling,
     ``get_upload_info`` still finds the original entry by id."""

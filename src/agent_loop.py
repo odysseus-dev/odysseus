@@ -315,9 +315,10 @@ Bulk delete/archive/mark emails. Use this for "delete all those" after listing e
 {"action": "create_event", "summary": "<event title>", "dtstart": "<natural language or ISO datetime>"}
 ```
 Calendar event management (CalDAV). Actions: `list_events`, `create_event`, `update_event`, `delete_event`, `list_calendars`. \
-For `create_event`: {summary, dtstart, dtend?, duration?, calendar?, location?, description?, reminder_minutes?}. \
+For `create_event`: {summary, dtstart, dtend?, duration?, calendar?, location?, description?, reminder_minutes?, rrule?}. \
 `dtstart` accepts natural language ("tomorrow at 1pm", "in 2 hours", "next monday 9am") or ISO ("2026-05-12T13:00:00"). \
 If `dtend` omitted, defaults to dtstart+1h (or +1d when `all_day: true`). \
+For a RECURRING event pass `rrule` as an iCalendar RRULE string, e.g. `"FREQ=WEEKLY;BYDAY=MO"` (every Monday), `"FREQ=DAILY;COUNT=10"`, or `"FREQ=MONTHLY;BYMONTHDAY=1"` — create ONE event with the rrule, do not loop creating many events. \
 If the user asks for a reminder/alarm before the event, pass `reminder_minutes` as an integer; do not write reminder text into the event description and do NOT also call `manage_notes` for the same reminder because calendar reminders are routed through Notes automatically. \
 `calendar` accepts a name ("Main") or short-id prefix.""",
     "create_session": "- ```create_session``` — Create a new chat. Line 1 = chat name, line 2 = model name. Use for background/parallel work.",
@@ -862,7 +863,7 @@ def _build_system_prompt(
                 # matter how often it's been matched and applied.
                 for _sk in relevant_skills:
                     try:
-                        sm.record_use(_sk.get('name', ''))
+                        sm.record_use(_sk.get('name', ''), owner=owner)
                     except Exception:
                         pass
                 lines.append("## Relevant skills for this request")
@@ -1314,6 +1315,30 @@ async def _run_verifier_subagent(
     return [r.strip() for r in reasons.split(";") if r.strip()]
 
 
+def _empty_response_fallback(
+    full_response: str,
+    round_reasoning: str,
+    tool_events: list,
+) -> tuple:
+    """Return (final_response, sse_chunk_or_none) for the end-of-loop empty-response guard.
+
+    When a thinking model routes all tokens to reasoning_content (leaving
+    content=""), full_response is empty but round_reasoning has content.
+    The reasoning was already streamed as {thinking:true} chunks — do not
+    re-emit it as a normal delta.  Just persist it and yield nothing.
+
+    Returns:
+        (final_response: str, chunk: str | None)
+            chunk is the SSE string to yield, or None if nothing should be emitted.
+    """
+    if full_response.strip() or tool_events:
+        return full_response, None
+    if round_reasoning.strip():
+        return round_reasoning, None
+    _error_msg = "The model returned an empty response. Please try again or switch to a different model."
+    return _error_msg, f'data: {json.dumps({"delta": _error_msg})}\n\n'
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -1487,12 +1512,32 @@ async def stream_agent_loop(
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
+        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX
+        from src.settings import is_setting_overridden
 
         soft_budget = int(get_setting("agent_input_token_budget", 6000) or 0)
         if soft_budget > 0:
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
-            effective_budget = min(context_length or soft_budget, soft_budget)
+            # Honour the configurable ceiling for the auto-derived budget path.
+            # No-op when the user has an explicit `agent_input_token_budget`
+            # (that branch ignores hard_max). Falls back to DEFAULT_HARD_MAX
+            # on missing/malformed values so misconfig can't zero the budget.
+            try:
+                hard_max = int(get_setting("agent_input_token_hard_max", DEFAULT_HARD_MAX) or DEFAULT_HARD_MAX)
+            except (TypeError, ValueError):
+                hard_max = DEFAULT_HARD_MAX
+            if hard_max <= 0:
+                hard_max = DEFAULT_HARD_MAX
+            # Scale the default budget to the model's context window so long-context
+            # models aren't silently capped at 6000; an explicit user setting is
+            # still honoured (clamped to the window). (#1170)
+            effective_budget = compute_input_token_budget(
+                soft_budget,
+                context_length,
+                is_setting_overridden("agent_input_token_budget"),
+                hard_max=hard_max,
+            )
             trimmed_messages = trim_for_context(
                 messages,
                 effective_budget,
@@ -2205,10 +2250,11 @@ async def stream_agent_loop(
 
     # If the response is completely empty and no tools were executed,
     # yield a fallback message so the user is not left hanging.
-    if not full_response.strip() and not tool_events:
-        _error_msg = "The model returned an empty response. Please try again or switch to a different model."
-        yield f'data: {json.dumps({"delta": _error_msg})}\n\n'
-        full_response = _error_msg
+    full_response, _fallback_chunk = _empty_response_fallback(
+        full_response, round_reasoning, tool_events
+    )
+    if _fallback_chunk:
+        yield _fallback_chunk
 
     # --- Final metrics ---
     total_duration = time.time() - total_start

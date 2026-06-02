@@ -88,9 +88,31 @@ def get_active_document():
     return _active_document_id
 
 
+def clear_active_document(doc_id: Optional[str] = None) -> bool:
+    """Clear the in-memory active-document pointer.
+
+    With ``doc_id`` given, only clears when it matches the current pointer, so a
+    different active document is left untouched. Returns True if it was cleared.
+
+    Called when a document is detached from its session or deleted (its tab is
+    closed): without this, the stale pointer makes the last-resort doc-injection
+    path re-surface a closed document in a later, unrelated chat — even one whose
+    session no longer matches — because an unlinked doc has session_id NULL (#1160).
+    """
+    global _active_document_id
+    if doc_id is None or _active_document_id == doc_id:
+        _active_document_id = None
+        return True
+    return False
+
+
 def _owned_document_query(query, Document, owner: Optional[str]):
     if owner is None:
-        return query.filter(False)
+        # A bare Python `False` is not a valid SQL expression — SQLAlchemy 1.4
+        # deprecates it and 2.0 raises ArgumentError. Use the SQL `false()`
+        # literal to return zero rows for an unscoped (owner-less) query.
+        from sqlalchemy import false
+        return query.filter(false())
     return query.filter(Document.owner == owner)
 
 
@@ -888,7 +910,9 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
                 )
 
             task_id = str(_uuid.uuid4())
-            name = args.get("name") or args.get("prompt", args.get("action_name", "Task"))[:50]
+            # Guard each fallback with `or`: args.get("prompt", default) returns
+            # None when the key is present but null, and None[:50] raises.
+            name = args.get("name") or (args.get("prompt") or args.get("action_name") or "Task")[:50]
 
             task = ScheduledTask(
                 id=task_id,
@@ -1503,7 +1527,14 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             "tavily_api_key", "serper_api_key", "app_public_url",
         }
         def _is_secret(k):
-            return k in _SECRET_KEYS or any(t in k for t in ("api_key", "_key", "token", "secret", "password"))
+            # `token` must be a suffix, not a substring: otherwise the int
+            # setting `agent_input_token_budget` (which even has a "token budget"
+            # alias to set it from chat) is wrongly classified as a credential.
+            return (
+                k in _SECRET_KEYS
+                or k.endswith("token")
+                or any(t in k for t in ("api_key", "_key", "secret", "password"))
+            )
 
         # Friendly aliases → real keys, so natural phrasing resolves.
         _ALIASES_SET = {
@@ -1526,7 +1557,10 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             "ntfy topic": "reminder_ntfy_topic",
             "agent tool calls": "agent_max_tool_calls", "max tool calls": "agent_max_tool_calls",
             "agent timeout": "agent_stream_timeout_seconds", "stream timeout": "agent_stream_timeout_seconds",
-            "token budget": "agent_input_token_budget",
+            "token budget": "agent_input_token_budget", "input budget": "agent_input_token_budget",
+            "hard max": "agent_input_token_hard_max",
+            "token budget cap": "agent_input_token_hard_max",
+            "input budget cap": "agent_input_token_hard_max",
         }
         def _resolve(k):
             k2 = (k or "").strip().lower()
@@ -4060,7 +4094,9 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
     if not master_password:
         return {"error": "master_password is required", "exit_code": 1}
 
-    stdout, stderr, rc = await _run_bw(["unlock", master_password, "--raw"])
+    # Do not pass the master password as an argv element. Local process lists
+    # can expose argv to other users; stdin keeps the secret out of `ps`.
+    stdout, stderr, rc = await _run_bw(["unlock", "--raw"], input_text=master_password + "\n")
     if rc != 0:
         return {"error": f"Unlock failed: {stderr[:300]}", "exit_code": 1}
 

@@ -4,8 +4,8 @@
 ``asyncio.create_subprocess_exec(bw_path, *args)`` — every element of ``args``
 becomes a process argument, which is world-readable through ``ps`` /
 ``/proc/<pid>/cmdline``. The master password therefore must be handed to ``bw``
-via the environment (``--passwordenv BW_PASSWORD``), exactly like the existing
-``BW_SESSION`` env passing, and never as a positional argv element.
+out-of-band (stdin or ``--passwordenv BW_PASSWORD``), and never as a positional
+argv element.
 
 The /unlock route previously did ``_run_bw(["unlock", req.master_password,
 "--raw"])`` — leaking the Bitwarden master password (which decrypts the whole
@@ -13,6 +13,7 @@ vault) to any local user for the lifetime of the unlock subprocess.
 """
 
 import os
+import json
 import re
 import sys
 import types
@@ -67,7 +68,7 @@ def _patch_exec(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_bw_password_goes_to_env_not_argv(monkeypatch):
+async def test_run_bw_passwordenv_does_not_put_password_in_argv(monkeypatch):
     captured = _patch_exec(monkeypatch)
     secret = "correct horse battery staple"
     await vr._run_bw(["unlock", "--passwordenv", "BW_PASSWORD", "--raw"],
@@ -86,15 +87,31 @@ async def test_run_bw_without_password_does_not_set_env(monkeypatch):
     assert "BW_PASSWORD" not in captured["env"]
 
 
-def test_unlock_handler_uses_passwordenv_not_argv():
+def test_unlock_handler_feeds_password_on_stdin_not_argv():
     """Source-level guard: the /unlock route must feed the master password via
-    --passwordenv / bw_password=, never as a bare positional argv element."""
+    stdin, never as a bare positional argv element."""
     src = vr.__file__
     with open(src, encoding="utf-8") as fh:
         text = fh.read()
     # The old, vulnerable call shape must be gone.
     assert 'req.master_password, "--raw"' not in text
     assert "[\"unlock\", req.master_password" not in text
-    # And the secure shape must be present.
-    assert "--passwordenv" in text
-    assert re.search(r"bw_password\s*=\s*req\.master_password", text)
+    # And the safer stdin shape must be present.
+    assert "[\"unlock\", \"--raw\"]" in text
+    assert re.search(r'input_text\s*=\s*req\.master_password\s*\+\s*"\\n"', text)
+
+
+def test_tool_vault_unlock_feeds_password_on_stdin_not_argv():
+    text = open("src/tool_implementations.py", encoding="utf-8").read()
+
+    assert '["unlock", master_password, "--raw"]' not in text
+    assert '_run_bw(["unlock", master_password' not in text
+    assert re.search(r'input_text\s*=\s*master_password\s*\+\s*"\\n"', text)
+
+
+def test_load_config_ignores_non_object_json(tmp_path, monkeypatch):
+    vault_file = tmp_path / "vault.json"
+    vault_file.write_text(json.dumps(["not", "a", "config", "object"]), encoding="utf-8")
+    monkeypatch.setattr(vr, "VAULT_FILE", vault_file)
+
+    assert vr._load_config() == {}
