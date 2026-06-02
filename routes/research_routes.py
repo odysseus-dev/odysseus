@@ -492,8 +492,14 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         injects a single system message containing the report and sources so
         the user can ask follow-up questions in a clean conversation.
         """
-        _require_user(request)
+        user = _require_user(request)
         _validate_session_id(session_id)
+        # SECURITY: gate on ownership before reading the persisted research —
+        # otherwise any authenticated user could spin off (and thereby read)
+        # another user's report by guessing its session ID. Mirrors every other
+        # endpoint in this file (see result_peek above).
+        if not _owns_in_memory(session_id, user):
+            raise HTTPException(404, "No research found for this session")
         if session_manager is None:
             raise HTTPException(500, "session_manager not configured")
 
@@ -574,7 +580,6 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
 
         # Create new session
         new_sid = str(uuid.uuid4())
-        user = get_current_user(request)
 
         title_query = (query or "research").strip()
         if len(title_query) > 60:
