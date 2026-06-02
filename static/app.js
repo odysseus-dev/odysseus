@@ -2639,6 +2639,95 @@ function initializeEventListeners() {
 
     // Generic draggable for all .modal elements
     const _sharedDragModalIds = new Set(['settings-modal']);
+    const _modalPositionStoragePrefix = 'odysseus-modal-position-v1:';
+    const _modalMinVisibleX = 96;
+    const _modalMinVisibleY = 56;
+
+    function modalPositionKey(modal) {
+      return modal && modal.id ? _modalPositionStoragePrefix + modal.id : null;
+    }
+
+    function isModalPositionManaged(modal, content) {
+      return !!(
+        modal && content &&
+        !modal.classList.contains('modal-left-docked') &&
+        !modal.classList.contains('modal-right-docked') &&
+        !content.dataset._tileZone &&
+        window.innerWidth > 768
+      );
+    }
+
+    function resetModalPosition(content) {
+      content.style.position = '';
+      content.style.left = '';
+      content.style.top = '';
+      content.style.right = '';
+      content.style.bottom = '';
+      content.style.margin = '';
+    }
+
+    function clampModalPosition(left, top, content) {
+      const rect = content.getBoundingClientRect();
+      const width = rect.width || content.offsetWidth || _modalMinVisibleX;
+      const height = rect.height || content.offsetHeight || _modalMinVisibleY;
+      const maxLeft = Math.max(8, window.innerWidth - Math.min(width, _modalMinVisibleX));
+      const maxTop = Math.max(8, window.innerHeight - Math.min(height, _modalMinVisibleY));
+      return {
+        left: Math.max(8, Math.min(maxLeft, left)),
+        top: Math.max(8, Math.min(maxTop, top))
+      };
+    }
+
+    function applyModalPosition(content, position) {
+      content.style.position = 'fixed';
+      content.style.left = position.left + 'px';
+      content.style.top = position.top + 'px';
+      content.style.right = '';
+      content.style.bottom = '';
+      content.style.margin = '0';
+    }
+
+    function saveModalPosition(modal, content) {
+      if (!isModalPositionManaged(modal, content)) return;
+      const key = modalPositionKey(modal);
+      if (!key) return;
+      try {
+        const rect = content.getBoundingClientRect();
+        const clamped = clampModalPosition(rect.left, rect.top, content);
+        localStorage.setItem(key, JSON.stringify(clamped));
+      } catch {}
+    }
+
+    function restoreModalPosition(modal, content) {
+      if (!isModalPositionManaged(modal, content)) {
+        resetModalPosition(content);
+        return;
+      }
+      const key = modalPositionKey(modal);
+      if (!key) {
+        resetModalPosition(content);
+        return;
+      }
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) {
+          resetModalPosition(content);
+          return;
+        }
+        const parsed = JSON.parse(raw);
+        const left = Number(parsed && parsed.left);
+        const top = Number(parsed && parsed.top);
+        if (!Number.isFinite(left) || !Number.isFinite(top)) {
+          resetModalPosition(content);
+          localStorage.removeItem(key);
+          return;
+        }
+        applyModalPosition(content, clampModalPosition(left, top, content));
+      } catch {
+        resetModalPosition(content);
+      }
+    }
+
     try { document.querySelectorAll('.modal').forEach(m => {
       if (_sharedDragModalIds.has(m.id)) return;
       const content = m.querySelector('.modal-content');
@@ -2646,15 +2735,10 @@ function initializeEventListeners() {
       if (!content || !header) return;
       let dragX, dragY, startLeft, startTop, dragging = false;
 
-      // Reset to flex-centered position each time modal opens
+      // Restore the last manually dragged position each time modal opens.
       new MutationObserver(() => {
         if (!m.classList.contains('hidden')) {
-          content.style.position = '';
-          content.style.left = '';
-          content.style.top = '';
-          content.style.right = '';
-          content.style.bottom = '';
-          content.style.margin = '';
+          restoreModalPosition(m, content);
         }
       }).observe(m, { attributes: true, attributeFilter: ['class'] });
 
@@ -2679,13 +2763,13 @@ function initializeEventListeners() {
       });
       function onDrag(e) {
         if (!dragging) return;
-        content.style.left = (startLeft + e.clientX - dragX) + 'px';
-        content.style.top = (startTop + e.clientY - dragY) + 'px';
+        applyModalPosition(content, clampModalPosition(startLeft + e.clientX - dragX, startTop + e.clientY - dragY, content));
       }
       function stopDrag() {
         dragging = false;
         document.removeEventListener('mousemove', onDrag);
         document.removeEventListener('mouseup', stopDrag);
+        saveModalPosition(m, content);
       }
 
       // Touch drag is desktop-only — on mobile, modals are bottom sheets and
@@ -2704,13 +2788,13 @@ function initializeEventListeners() {
         if (!dragging) return;
         e.preventDefault();
         const t = e.touches[0];
-        content.style.left = (startLeft + t.clientX - dragX) + 'px';
-        content.style.top = (startTop + t.clientY - dragY) + 'px';
+        applyModalPosition(content, clampModalPosition(startLeft + t.clientX - dragX, startTop + t.clientY - dragY, content));
       }
       function stopTouchDrag() {
         dragging = false;
         document.removeEventListener('touchmove', onTouchDrag);
         document.removeEventListener('touchend', stopTouchDrag);
+        saveModalPosition(m, content);
       }
     }); } catch(e) { console.error('Modal drag init error:', e); }
   })();
