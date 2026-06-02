@@ -399,14 +399,15 @@ async def test_admin_agent_tools_require_admin(monkeypatch):
 
     monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
 
-    desc, result = await execute_tool_block(
-        SimpleNamespace(tool_type="manage_tokens", content='{"action":"create","name":"bad"}'),
-        owner="regular-user",
-    )
+    for tool_name in ("manage_tokens", "app_api", "serve_preset"):
+        desc, result = await execute_tool_block(
+            SimpleNamespace(tool_type=tool_name, content='{"action":"create","name":"bad"}'),
+            owner="regular-user",
+        )
 
-    assert desc == "manage_tokens: BLOCKED"
-    assert result["exit_code"] == 1
-    assert "requires an admin" in result["error"]
+        assert desc == f"{tool_name}: BLOCKED"
+        assert result["exit_code"] == 1
+        assert "requires an admin" in result["error"]
 
 
 @pytest.mark.asyncio
@@ -422,7 +423,7 @@ async def test_public_agent_policy_blocks_sensitive_tools(monkeypatch):
 
     monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
 
-    for tool_name in ("send_email", "read_file", "app_api", "mcp__email__send_email"):
+    for tool_name in ("send_email", "read_file", "mcp__email__send_email"):
         desc, result = await execute_tool_block(
             SimpleNamespace(tool_type=tool_name, content="{}"),
             owner="regular-user",
@@ -449,6 +450,7 @@ def test_public_agent_policy_hides_sensitive_tools(monkeypatch):
     assert "send_email" in blocked
     assert "read_file" in blocked
     assert "app_api" in blocked
+    assert "serve_preset" in blocked
     assert "manage_tasks" in blocked
 
 
