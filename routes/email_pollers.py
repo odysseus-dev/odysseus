@@ -731,8 +731,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                     from src.settings import load_settings as _ls
                                     _pub = (_ls().get("app_public_url") or "").rstrip("/")
                                     uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
-                                    from urllib.parse import quote as _q
-                                    open_url = f"{_pub}/#email={_q(_folder, safe='')}:{uid_str}" if _pub else ""
+                                    from urllib.parse import quote as _url_q
+                                    open_url = f"{_pub}/#email={_url_q(_folder, safe='')}:{uid_str}" if _pub else ""
 
                                     alert_subject = f"[{urgency.upper()}] {subject}"
                                     alert_body = (
