@@ -60,12 +60,36 @@ services:
       - -c
       - |
         set -eu
-        if [ ! -s /etc/searxng/settings.yml ] || grep -q 'odysseus-local-searxng-json-2026-05-30\|__SEARXNG_SECRET__' /etc/searxng/settings.yml; then
+        if [ ! -s /etc/searxng/settings.yml ] || grep -q 'odysseus-local-searxng-json-2026-05-30\|__SEARXNG_SECRET__' /etc/searxng/settings.yml || ! grep -q '^doi_resolvers:' /etc/searxng/settings.yml || ! grep -q '^default_doi_resolver:' /etc/searxng/settings.yml; then
           secret="$${SEARXNG_SECRET:-}"
           if [ -z "$$secret" ]; then
             secret="$$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
           fi
-          sed "s|__SEARXNG_SECRET__|$$secret|g" /tmp/searxng-settings.yml.template > /etc/searxng/settings.yml
+          if [ -f /tmp/searxng-settings.yml.template ]; then
+            sed "s|__SEARXNG_SECRET__|$$secret|g" /tmp/searxng-settings.yml.template > /etc/searxng/settings.yml
+          else
+            printf '%s\n' \
+              'doi_resolvers:' \
+              "  oadoi.org: 'https://oadoi.org/'" \
+              "  doi.org: 'https://doi.org/'" \
+              "  doai.io: 'https://dissem.in/'" \
+              '' \
+              "default_doi_resolver: 'oadoi.org'" \
+              '' \
+              'use_default_settings: true' \
+              '' \
+              'server:' \
+              "  secret_key: '$$secret'" \
+              '' \
+              'search:' \
+              '  formats:' \
+              '    - html' \
+              '    - json' \
+              > /etc/searxng/settings.yml
+          fi
+        fi
+        if [ ! -s /etc/searxng/limiter.toml ]; then
+          cp /usr/local/searxng/searx/limiter.toml /etc/searxng/limiter.toml
         fi
         exec /usr/local/searxng/entrypoint.sh
     ports:
