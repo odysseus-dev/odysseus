@@ -89,9 +89,12 @@ _PROVIDER_CURATED = {
         "claude-sonnet-4-5", "claude-haiku-3-5",
     ],
     "zai": [
-        "glm-5", "glm-4.7", "glm-4.7-flash",
+        "glm-5", "glm-5.1", "glm-5v-turbo", "glm-4.7", "glm-4.7-flash",
         "glm-4.6", "glm-4.6v",
         "glm-4.5", "glm-4.5v", "glm-4.5-air", "glm-4.5-flash",
+    ],
+    "zai-coding": [
+        "glm-5.1", "glm-5v-turbo", "glm-5-turbo", "glm-4.7", "glm-4.5-air",
     ],
     "deepseek": [
         "deepseek-chat", "deepseek-reasoner",
@@ -151,9 +154,14 @@ _HOST_TO_CURATED = (
 def _match_provider_curated(base_url: str, provider: str) -> str:
     """Return the curated-list key for a given endpoint.
 
-    Matches the base URL's hostname against known providers; falls back to
-    the raw provider string from _detect_provider().
+    Checks path-based overrides first (for hosts serving multiple plans),
+    then matches the base URL's hostname against known providers, and
+    finally falls back to the raw provider string from _detect_provider().
     """
+    # Path-based overrides for hosts that serve multiple curated lists.
+    parsed = urlparse(base_url)
+    if _host_match(base_url, "z.ai") and "/api/coding" in (parsed.path or ""):
+        return "zai-coding"
     for domain, key in _HOST_TO_CURATED:
         if _host_match(base_url, domain):
             return key
@@ -352,6 +360,13 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         if not models:
             models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
         if models:
+            # Z.AI coding plan omits some working models from /models;
+            # append curated-only entries for that endpoint only.
+            if _host_match(base, "z.ai") and "/api/coding" in (urlparse(base).path or ""):
+                _ck = _match_provider_curated(base, None)
+                for _e in _PROVIDER_CURATED.get(_ck, []):
+                    if _e not in set(models) and not any(m.startswith(_e) for m in models):
+                        models.append(_e)
             return models
     except httpx.HTTPStatusError as e:
         if api_key:
