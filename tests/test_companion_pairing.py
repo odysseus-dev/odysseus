@@ -48,6 +48,8 @@ _db = _DBStub("core.database")
 _db.get_db_session = _get_db_session
 _db.ApiToken = _ApiToken
 sys.modules["core.database"] = _db  # overwrite any minimal stub from a sibling test
+sys.modules.pop("companion.pairing", None)
+sys.modules.pop("companion.routes", None)
 
 for _name, _attrs in {
     "core.auth": {"AuthManager": MagicMock()},
@@ -69,7 +71,8 @@ from core.middleware import require_admin  # noqa: E402
 
 # --- token minting: shown once, hashed at rest -----------------------------
 
-def test_mint_token_returns_raw_once_and_stores_only_a_hash():
+def test_mint_token_returns_raw_once_and_stores_only_a_hash(monkeypatch):
+    monkeypatch.setitem(sys.modules, "core.database", _db)
     token_id, raw = P.mint_token("alice")
     assert raw.startswith("ody_")
     # The persisted row stores a bcrypt hash + prefix, never the plaintext.

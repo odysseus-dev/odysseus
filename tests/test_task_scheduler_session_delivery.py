@@ -1,5 +1,7 @@
 """Regression tests for task-result delivery into chat sessions (issue #326)."""
 import asyncio
+import importlib
+import sys
 import types as _types
 
 import pytest
@@ -8,28 +10,30 @@ sqlalchemy = pytest.importorskip("sqlalchemy")
 if not isinstance(sqlalchemy, _types.ModuleType):
     pytest.skip("sqlalchemy is stubbed in this environment", allow_module_level=True)
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+def _real_modules():
+    for name, mod in list(sys.modules.items()):
+        if name == "sqlalchemy" or name.startswith("sqlalchemy."):
+            if not getattr(mod, "__file__", None):
+                sys.modules.pop(name, None)
+    sys.modules.pop("src.task_scheduler", None)
+    sys.modules.pop("core.database", None)
+    if "core" in sys.modules and not getattr(sys.modules["core"], "__file__", None):
+        sys.modules.pop("core", None)
+    if "core" in sys.modules and hasattr(sys.modules["core"], "database"):
+        delattr(sys.modules["core"], "database")
 
-from core.database import Base, Session as DbSession
-from src.task_scheduler import TaskScheduler
-
-# TEMPORARY ISOLATION WORKAROUND — remove once test_null_owner_gates.py is
-# refactored to use a fixture-scoped stub instead of module-level sys.modules
-# patching.  When collected after test_null_owner_gates (alphabetical order),
-# core.database is already a stub whose Base attribute is a MagicMock, so
-# Base.metadata.create_all() below does nothing and the assertions fail.
-# The test passes correctly in isolation:
-#   pytest tests/test_task_scheduler_session_delivery.py   → 1 passed
-# Full-suite baseline before this PR:  9 failed, 345 passed  (pre-upstream-pull)
-# Full-suite after this PR:            1 failed, 495 passed, 1 skipped
-if type(Base).__name__ == "MagicMock":
-    pytest.skip("core.database is stubbed — run this file in isolation", allow_module_level=True)
+    core_db = importlib.import_module("core.database")
+    task_scheduler = importlib.import_module("src.task_scheduler")
+    return core_db, task_scheduler.TaskScheduler
 
 
 def _make_db():
+    core_db, _TaskScheduler = _real_modules()
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
     engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
+    core_db.Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)()
 
 
@@ -51,13 +55,14 @@ def test_session_delivery_survives_empty_database():
     """On a fresh/wiped database there is no session to inherit endpoint/model
     from, so _resolve_defaults returns None. The delivery must still persist a
     session instead of crashing on the NOT NULL constraint (issue #326)."""
+    core_db, TaskScheduler = _real_modules()
     db = _make_db()
     scheduler = TaskScheduler.__new__(TaskScheduler)
     scheduler._session_manager = None
 
     asyncio.run(scheduler._deliver_task_result(_make_task(), "done", db))
 
-    sessions = db.query(DbSession).all()
+    sessions = db.query(core_db.Session).all()
     assert len(sessions) == 1
     assert sessions[0].endpoint_url == ""
     assert sessions[0].model == ""

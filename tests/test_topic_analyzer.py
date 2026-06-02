@@ -1,6 +1,21 @@
 """Tests for topic keyword matching (src/topic_analyzer.py)."""
+import sys
 from types import SimpleNamespace
 import pytest
+
+for name, mod in list(sys.modules.items()):
+    if name == "sqlalchemy" or name.startswith("sqlalchemy."):
+        if not getattr(mod, "__file__", None):
+            sys.modules.pop(name, None)
+for name in ("core.database", "core.session_manager"):
+    sys.modules.pop(name, None)
+if "core" in sys.modules and not getattr(sys.modules["core"], "__file__", None):
+    sys.modules.pop("core", None)
+if "core" in sys.modules:
+    for attr in ("database", "session_manager"):
+        if hasattr(sys.modules["core"], attr):
+            delattr(sys.modules["core"], attr)
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from core.database import Base, Session as DbSession, ChatMessage as DbChatMessage

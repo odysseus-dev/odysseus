@@ -103,6 +103,8 @@ def _drive_scheduler(monkeypatch, pre_start_setup=None):
     # (stubbed to _never here); filter those out so the test only counts
     # real per-poll task dispatches.
     real_dispatches = [c for c in all_dispatched if c.__name__ != "_never"]
+    for coro in all_dispatched:
+        coro.close()
     return cd, ScheduledTask, TaskRun, real_dispatches
 
 

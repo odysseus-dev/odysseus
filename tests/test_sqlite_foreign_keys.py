@@ -1,4 +1,16 @@
 import pytest
+import sys
+
+for name, mod in list(sys.modules.items()):
+    if name == "sqlalchemy" or name.startswith("sqlalchemy."):
+        if not getattr(mod, "__file__", None):
+            sys.modules.pop(name, None)
+sys.modules.pop("core.database", None)
+if "core" in sys.modules and not getattr(sys.modules["core"], "__file__", None):
+    sys.modules.pop("core", None)
+if "core" in sys.modules and hasattr(sys.modules["core"], "database"):
+    delattr(sys.modules["core"], "database")
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from core.database import Base, Session, ChatMessage
@@ -35,4 +47,3 @@ def test_sqlite_foreign_keys_cascade():
     assert db.query(ChatMessage).count() == 0
     
     db.close()
-
