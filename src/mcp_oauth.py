@@ -8,25 +8,59 @@ encrypted, so the interactive flow runs only once.
 import asyncio
 import json
 import logging
+import os
+import time
 from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse, parse_qs
 
 logger = logging.getLogger(__name__)
 
-# Loopback redirect is allowed for native/desktop OAuth clients (RFC 8252).
-# Remote users complete the flow via paste-back, like the Google MCP path.
-REDIRECT_URI = "http://localhost:7000/api/mcp/oauth/callback"
+# OAuth redirect URI registered with every authorization server via DCR. Loopback
+# is allowed for native/desktop clients (RFC 8252); remote users finish via the
+# paste-back flow. Deployments not reachable at http://localhost:7000 (custom
+# port, reverse proxy, or public domain) must set OAUTH_REDIRECT_BASE_URL (or
+# APP_PUBLIC_URL) to their externally reachable origin so the redirect lands back
+# on Odysseus. APP_PORT is intentionally not used: it is only the Docker host
+# port-map; the app always listens on 7000 inside the container.
+_REDIRECT_BASE = (
+    os.environ.get("OAUTH_REDIRECT_BASE_URL")
+    or os.environ.get("APP_PUBLIC_URL")
+    or "http://localhost:7000"
+).rstrip("/")
+REDIRECT_URI = f"{_REDIRECT_BASE}/api/mcp/oauth/callback"
 
 # How long the background connect waits for the user to authorize before giving up.
 AUTH_WAIT_SECONDS = 300
 
 _pending: Dict[str, asyncio.Future] = {}   # state -> Future[(code, state)]
+_pending_ts: Dict[str, float] = {}         # state -> monotonic timestamp, for pruning
 _auth_urls: Dict[str, str] = {}            # server_id -> authorization URL
 
 
+def _prune_stale() -> None:
+    """Drop abandoned flows whose authorization window has elapsed so the
+    module-level registries don't grow unbounded (e.g. a user who never
+    finishes the browser step)."""
+    now = time.monotonic()
+    for state in [s for s, ts in _pending_ts.items() if now - ts > AUTH_WAIT_SECONDS]:
+        fut = _pending.pop(state, None)
+        _pending_ts.pop(state, None)
+        if fut is not None and not fut.done():
+            fut.cancel()
+
+
+def _discard_pending(state: Optional[str]) -> None:
+    if state is None:
+        return
+    _pending.pop(state, None)
+    _pending_ts.pop(state, None)
+
+
 def register_pending(state: str) -> asyncio.Future:
+    _prune_stale()
     fut = asyncio.get_running_loop().create_future()
     _pending[state] = fut
+    _pending_ts[state] = time.monotonic()
     return fut
 
 
@@ -67,14 +101,19 @@ class DbTokenStorage:
             db.close()
         return {}
 
-    def _save(self, data: dict) -> None:
+    def _update(self, key: str, value: dict) -> None:
+        """Load, set one key, and persist the oauth_tokens JSON in a single
+        session/commit (avoids the load+save double round-trip per write)."""
         from core.database import McpServer
         db = self._sf()
         try:
             srv = db.query(McpServer).filter(McpServer.id == self.server_id).first()
-            if srv is not None:
-                srv.oauth_tokens = json.dumps(data)
-                db.commit()
+            if srv is None:
+                return
+            data = json.loads(srv.oauth_tokens) if srv.oauth_tokens else {}
+            data[key] = value
+            srv.oauth_tokens = json.dumps(data)
+            db.commit()
         finally:
             db.close()
 
@@ -84,9 +123,7 @@ class DbTokenStorage:
         return OAuthToken.model_validate(data) if data else None
 
     async def set_tokens(self, tokens) -> None:
-        data = self._load()
-        data["tokens"] = json.loads(tokens.model_dump_json())
-        self._save(data)
+        self._update("tokens", json.loads(tokens.model_dump_json()))
 
     async def get_client_info(self):
         from mcp.shared.auth import OAuthClientInformationFull
@@ -94,9 +131,7 @@ class DbTokenStorage:
         return OAuthClientInformationFull.model_validate(data) if data else None
 
     async def set_client_info(self, client_info) -> None:
-        data = self._load()
-        data["client_info"] = json.loads(client_info.model_dump_json())
-        self._save(data)
+        self._update("client_info", json.loads(client_info.model_dump_json()))
 
 
 def build_provider(server_id: str, url: str, on_redirect=None):
@@ -116,7 +151,11 @@ def build_provider(server_id: str, url: str, on_redirect=None):
         redirect_uris=[REDIRECT_URI],
         grant_types=["authorization_code", "refresh_token"],
         response_types=["code"],
-        scope="openid email offline_access",
+        # Leave scope unset: the SDK applies the MCP scope-selection strategy and
+        # overwrites this from the server's WWW-Authenticate / protected-resource
+        # metadata before building the auth URL. Hardcoding an OIDC scope here
+        # would break the many MCP servers that are not OpenID providers.
+        scope=None,
         token_endpoint_auth_method="none",
     )
 
@@ -142,7 +181,7 @@ def build_provider(server_id: str, url: str, on_redirect=None):
             code, ret_state = await asyncio.wait_for(fut, timeout=AUTH_WAIT_SECONDS)
             return code, ret_state
         finally:
-            _pending.pop(state, None)
+            _discard_pending(state)
             _auth_urls.pop(server_id, None)
 
     return OAuthClientProvider(

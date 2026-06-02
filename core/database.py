@@ -1257,7 +1257,12 @@ def _migrate_add_disabled_tools():
         logging.getLogger(__name__).warning(f"disabled_tools migration: {e}")
 
 def _migrate_add_mcp_oauth_tokens_column():
-    """Add oauth_tokens column to mcp_servers table if missing."""
+    """Add oauth_tokens column to mcp_servers table if missing.
+
+    The model declares this column as EncryptedText, but the SQL type is plain
+    TEXT on purpose: EncryptedText is a SQLAlchemy TypeDecorator that encrypts at
+    the Python layer and stores the ciphertext as TEXT, so the DB column type is
+    TEXT. This matches the existing encrypted columns (see _migrate_encrypt_*)."""
     try:
         with engine.connect() as conn:
             cols = [r[1] for r in conn.execute(text("PRAGMA table_info(mcp_servers)"))]

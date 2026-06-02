@@ -4203,11 +4203,14 @@ async function initUnifiedIntegrations() {
       const openAuth = (u) => { if (!opened && u) { opened = true; window.open(u, '_blank', 'noopener'); _showMcpPasteback(id); } };
       openAuth(initialAuthUrl);
       const msg = el('uf-mcp-msg');
+      let fails = 0;
       for (let i = 0; i < tries; i++) {
         await new Promise(res => setTimeout(res, 2000));
         try {
           const r = await fetch('/api/mcp/servers', { credentials: 'same-origin' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
           const list = await r.json();
+          fails = 0;
           const s = Array.isArray(list) ? list.find(x => x.id === id) : null;
           if (!s) continue;
           if (s.auth_url) openAuth(s.auth_url);
@@ -4218,8 +4221,13 @@ async function initUnifiedIntegrations() {
           if (s.status === 'error') {
             if (msg) msg.textContent = `Failed: ${s.error || 'unknown'}`; return;
           }
-        } catch (_) {}
+        } catch (e) {
+          // Tolerate a single blip, but surface persistent failures instead of
+          // silently polling until timeout.
+          if (++fails >= 5 && msg) msg.textContent = `Status check failing (${e.message || 'network error'}) — still retrying…`;
+        }
       }
+      if (msg) msg.textContent = 'Authorization timed out. Reconnect from the server list to retry.';
     }
     if (editId && editId !== 'new') {
       // Show management view for existing server

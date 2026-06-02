@@ -264,6 +264,17 @@ class McpManager:
 
     async def disconnect_server(self, server_id: str):
         """Disconnect from an MCP server."""
+        # Cancel any in-flight HTTP/OAuth background connect so it stops
+        # publishing status for a server that may be getting deleted.
+        task = self._connect_tasks.pop(server_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+        try:
+            from src.mcp_oauth import clear_auth_url
+            clear_auth_url(server_id)
+        except Exception:
+            pass
+
         stack = self._stacks.pop(server_id, None)
         if stack:
             try:
