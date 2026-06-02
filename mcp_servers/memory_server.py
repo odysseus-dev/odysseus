@@ -162,7 +162,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 deleted_category = m.get("category", "")
                 break
         original_len = len(memories)
-        memories = [m for m in memories if not m.get("id", "").startswith(memory_id)]
+        # Remove only the single matched id (first prefix match, same as `edit`).
+        # The old `startswith(memory_id)` filter deleted EVERY memory sharing the
+        # prefix — an ambiguous/short id silently wiped multiple entries.
+        memories = [m for m in memories if m.get("id") != full_id]
         if len(memories) == original_len:
             return [TextContent(type="text", text=f"Error: Memory '{memory_id}' not found")]
         _memory_manager.save(memories)
