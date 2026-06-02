@@ -3,6 +3,8 @@
 import json
 import uuid
 import logging
+from collections import defaultdict
+from datetime import datetime, timedelta
 from typing import Dict, Any
 
 from fastapi import APIRouter, Request, HTTPException
@@ -13,6 +15,115 @@ from src.topic_analyzer import analyze_topics
 from routes.session_routes import _verify_session_owner
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_window(last):
+    """Map a window string (``7d``/``30d``/``90d``/``all``) to a UTC cutoff.
+
+    Returns ``None`` for ``all``, missing, or unrecognised input (no cutoff)."""
+    windows = {"7d": 7, "30d": 30, "90d": 90}
+    days = windows.get(last)
+    if days is None:
+        return None
+    return datetime.utcnow() - timedelta(days=days)
+
+
+def _i(value):
+    """Coerce a possibly-missing token/count value to a non-negative int."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _compute_stats(sessions, period, include_daily):
+    """Aggregate usage statistics over plain session objects.
+
+    Pure function over objects exposing the ``sessions`` table columns
+    (``model``, ``mode``, ``total_input_tokens``, ``total_output_tokens``,
+    ``message_count``, ``created_at``, ``last_message_at``, ``id``, ``name``).
+    Kept free of DB/HTTP concerns so it can be unit-tested directly.
+    """
+    total_in = total_out = total_msgs = 0
+    model_agg = defaultdict(lambda: {"sessions": 0, "input_tokens": 0, "output_tokens": 0})
+    mode_agg = defaultdict(lambda: {"sessions": 0, "input_tokens": 0, "output_tokens": 0})
+    daily_agg = defaultdict(lambda: {"sessions": 0, "input_tokens": 0, "output_tokens": 0})
+    session_rows = []
+
+    for s in sessions:
+        in_tok = _i(getattr(s, "total_input_tokens", 0))
+        out_tok = _i(getattr(s, "total_output_tokens", 0))
+        msgs = _i(getattr(s, "message_count", 0))
+        total_in += in_tok
+        total_out += out_tok
+        total_msgs += msgs
+
+        model = getattr(s, "model", None) or "unknown"
+        m = model_agg[model]
+        m["sessions"] += 1
+        m["input_tokens"] += in_tok
+        m["output_tokens"] += out_tok
+
+        mode = getattr(s, "mode", None) or "chat"
+        md = mode_agg[mode]
+        md["sessions"] += 1
+        md["input_tokens"] += in_tok
+        md["output_tokens"] += out_tok
+
+        session_rows.append({
+            "id": getattr(s, "id", None),
+            "name": getattr(s, "name", None),
+            "model": model,
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+            "message_count": msgs,
+            "last_message_at": (
+                getattr(s, "last_message_at").isoformat()
+                if getattr(s, "last_message_at", None) else None
+            ),
+        })
+
+        if include_daily:
+            created = getattr(s, "created_at", None)
+            if created is not None:
+                day = created.date().isoformat()
+                d = daily_agg[day]
+                d["sessions"] += 1
+                d["input_tokens"] += in_tok
+                d["output_tokens"] += out_tok
+
+    top_models = sorted(
+        ({"model": k, **v} for k, v in model_agg.items()),
+        key=lambda x: x["input_tokens"] + x["output_tokens"],
+        reverse=True,
+    )[:10]
+
+    top_sessions = sorted(
+        session_rows,
+        key=lambda x: x["input_tokens"] + x["output_tokens"],
+        reverse=True,
+    )[:5]
+
+    result = {
+        "period": period,
+        "sessions": len(sessions),
+        "messages": total_msgs,
+        "input_tokens": total_in,
+        "output_tokens": total_out,
+        "total_tokens": total_in + total_out,
+        "top_models": top_models,
+        "by_mode": dict(mode_agg),
+        "top_sessions": top_sessions,
+    }
+
+    if include_daily:
+        daily = [
+            {"date": day, **vals}
+            for day, vals in sorted(daily_agg.items())
+        ][-30:]
+        result["daily"] = daily
+
+    return result
 
 
 def setup_history_routes(session_manager) -> APIRouter:
@@ -615,5 +726,32 @@ def setup_history_routes(session_manager) -> APIRouter:
         except Exception as e:
             logger.error(f"Manual compact error {session_id}: {e}")
             raise HTTPException(500, str(e))
+
+    @router.get("/api/history/stats")
+    async def history_stats(request: Request, last: str = "all") -> Dict[str, Any]:
+        """Aggregated usage statistics over the caller's stored sessions.
+
+        Reads only columns odysseus already records (token counts, model,
+        mode) — no billing config, provider keys, or external calls. Scoped
+        to the current user; archived sessions are always excluded.
+        """
+        from src.auth_helpers import get_current_user
+
+        user = get_current_user(request)
+        cutoff = _parse_window(last)
+        include_daily = last in ("7d", "30d")
+
+        db = SessionLocal()
+        try:
+            q = db.query(DbSession).filter(DbSession.archived == False)  # noqa: E712
+            if user:
+                q = q.filter(DbSession.owner == user)
+            if cutoff:
+                q = q.filter(DbSession.created_at >= cutoff)
+            sessions = q.all()
+        finally:
+            db.close()
+
+        return _compute_stats(sessions, last, include_daily)
 
     return router
