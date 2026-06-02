@@ -757,7 +757,12 @@ async def serve_library(request: Request):
 @app.get("/backgrounds")
 async def serve_backgrounds(request: Request):
     """Sandbox page for prototyping background effects. No auth required."""
-    return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/backgrounds.html"))
+    bg_path = abs_join(BASE_DIR, "static/backgrounds.html")
+    # Guard like serve_index: the asset is not always shipped, and an
+    # unguarded open() here 500s the route instead of returning a clean 404.
+    if not os.path.exists(bg_path):
+        raise HTTPException(404, "backgrounds.html not found")
+    return _serve_html_with_nonce(request, bg_path)
 
 @app.get("/login")
 async def serve_login(request: Request):
