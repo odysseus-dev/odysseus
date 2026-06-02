@@ -20098,6 +20098,19 @@ body.gallery-selecting .gallery-dl-btn,
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  /* Cap chip width so a long label (e.g. heterogeneous GPU group
+     "1× RTX 4090 + 1× RTX 3060") wraps to the next row instead of
+     overflowing the modal. Full text stays in the tooltip. */
+  max-width: 100%;
+}
+.hwfit-hw-chip-toggle {
+  /* Allow the chip body to truncate with an ellipsis when the chip
+     itself is capped at its container's width. Without this, the
+     toggle button keeps its intrinsic width and pushes the × button
+     off-screen on narrow viewports. */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .hwfit-hw-chip button,
 .hwfit-hw-chip-dismiss,

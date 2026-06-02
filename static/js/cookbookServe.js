@@ -372,10 +372,16 @@ function _rerenderCachedModels() {
       // load, × to delete) plus a "Save current config" row — see _showSavedConfigMenu.
       // Split button: "Save" saves the current config directly; the arrow opens
       // the dropdown of saved configs (load / delete). Arrow shows the count.
+      // The arrow button shows just the saved-config count next to a "▾".
+      // Spell out what the number means in the tooltip so users don't have
+      // to click it to find out the badge isn't a notification dot.
       const _arrowLabel = _modelPresets.length > 0 ? `${_modelPresets.length} ▾` : '▾';
+      const _arrowTitle = _modelPresets.length > 0
+        ? `${_modelPresets.length} saved launch config${_modelPresets.length === 1 ? '' : 's'} for ${_repoShort} — click ▾ to load or delete`
+        : `No saved launch configs for ${_repoShort} yet — click Save to add one`;
       let _slotsHtml = `<div class="cookbook-serve-slots cookbook-saved-split">`
         + `<button type="button" class="cookbook-slot-btn cookbook-saved-save" title="Save current config"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save</button>`
-        + `<button type="button" class="cookbook-slot-btn cookbook-saved-arrow" title="Saved launch configs">${_arrowLabel}</button>`
+        + `<button type="button" class="cookbook-slot-btn cookbook-saved-arrow" title="${esc(_arrowTitle)}">${_arrowLabel}</button>`
         + `</div>`;
 
       let panelHtml = `<div class="hwfit-serve-panel">${_slotsHtml}`;
@@ -622,11 +628,15 @@ function _rerenderCachedModels() {
         panel.querySelector(`.cookbook-slot-btn[data-slot="${slotIdx}"]`)?.classList.add('active');
       }
 
-      // Keep the arrow button's count in sync with the stored presets.
+      // Keep the arrow button's count + tooltip in sync with stored presets.
       function _updateSavedToggleLabel() {
         const n = _presetsForModel(_loadPresets(), repo).length;
         const t = panel.querySelector('.cookbook-saved-arrow');
-        if (t) t.textContent = n > 0 ? `${n} ▾` : '▾';
+        if (!t) return;
+        t.textContent = n > 0 ? `${n} ▾` : '▾';
+        t.title = n > 0
+          ? `${n} saved launch config${n === 1 ? '' : 's'} for ${_repoShort} — click ▾ to load or delete`
+          : `No saved launch configs for ${_repoShort} yet — click Save to add one`;
       }
 
       // Save the current panel fields as a new named preset (shared by the menu's

@@ -574,8 +574,36 @@ export function _hwfitRenderHw(el, sys) {
   };
   let gpuChip;
   if (sys.gpu_name) {
-    const label = gpuCount > 1 ? `${gpuCount}x ${esc(sys.gpu_name)}` : esc(sys.gpu_name);
-    gpuChip = chip('gpu', label);
+    // Mixed-GPU boxes (#711): `${gpuCount}x ${gpu_name}` uses gpus[0].name for
+    // every card, so a 4090+3060 reads as "2x RTX 4090". Use gpu_groups (the
+    // backend already groups identical cards) to render each pool separately
+    // and put the per-card index+VRAM into the tooltip so it's actually
+    // useful for picking CUDA_VISIBLE_DEVICES.
+    const groups = Array.isArray(sys.gpu_groups) ? sys.gpu_groups : [];
+    // Shorten vendor prefixes so a mixed-GPU label fits in the chip row
+    // without overflowing. Single-GPU label still shows the full name
+    // (that's what users are used to seeing). Tooltip carries the full
+    // unmodified names regardless, so no information is lost.
+    const _shortGpuName = (n) => String(n || '')
+      .replace(/^NVIDIA\s+GeForce\s+/i, '')
+      .replace(/^NVIDIA\s+/i, '')
+      .replace(/^AMD\s+Radeon\s+/i, '')
+      .replace(/^AMD\s+/i, '')
+      .replace(/^Intel\s+/i, '');
+    let label;
+    if (groups.length > 1) {
+      // Heterogeneous: "1× RTX 4090 + 1× RTX 3060"
+      label = groups.map(g => `${g.count}× ${esc(_shortGpuName(g.name))}`).join(' + ');
+    } else if (gpuCount > 1) {
+      label = `${gpuCount}× ${esc(sys.gpu_name)}`;
+    } else {
+      label = esc(sys.gpu_name);
+    }
+    const gpus = Array.isArray(sys.gpus) ? sys.gpus : [];
+    const tip = gpus.length
+      ? gpus.map(g => `GPU ${g.index}: ${g.name} · ${(+g.vram_gb).toFixed(1)} GB`).join('\n')
+      : 'Click to toggle off (X to hide)';
+    gpuChip = chip('gpu', label, tip);
   } else if (sys.gpu_error) {
     gpuChip = _removedHwChips.has('gpu')
       ? ''
