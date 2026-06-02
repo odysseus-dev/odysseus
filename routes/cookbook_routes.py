@@ -1097,7 +1097,15 @@ def setup_cookbook_routes() -> APIRouter:
                     runner_lines,
                     keep_shell_open=not local_windows,
                 )
-                runner_lines.append(req.cmd)
+                if is_pip_install:
+                    # The client may include --user --break-system-packages,
+                    # which pip refuses inside a virtualenv. Use the venv-aware
+                    # fallback chain instead so installs work regardless of
+                    # whether the serve shell inherits a venv from the user's PATH.
+                    _pip_upgrade = bool(req.cmd and ("-U " in req.cmd or "--upgrade " in req.cmd))
+                    runner_lines.append(_pip_install_fallback_chain(req.repo_id, upgrade=_pip_upgrade))
+                else:
+                    runner_lines.append(req.cmd)
                 if local_windows:
                     # Detached background process — no interactive shell to keep open.
                     # Print the exit marker the status poller looks for, then stop.

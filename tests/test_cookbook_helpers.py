@@ -91,6 +91,26 @@ def test_pip_install_fallback_chain_prefers_venv_safe_install():
     assert "|| python3 -m pip install --user --break-system-packages -q -U huggingface_hub" in chain
 
 
+def test_pip_install_fallback_chain_skips_user_flag_inside_venv():
+    """The fallback chain must not run --user when inside a virtualenv.
+
+    pip refuses --user in a venv with "User site-packages are not visible
+    in this virtualenv." The chain guards the --user attempt with a venv
+    check that exits non-zero when IN a venv, skipping the --user branch.
+    """
+    chain = _pip_install_fallback_chain("vllm")
+    # Plain install must come first (works in venvs and system python alike).
+    bare_idx = chain.index("python3 -m pip install -q vllm")
+    # venv check must appear before the --user fallback.
+    venv_check = 'sys.exit(0 if sys.prefix != sys.base_prefix else 1)'
+    assert venv_check in chain
+    venv_idx = chain.index(venv_check)
+    user_idx = chain.index("--user")
+    assert bare_idx < venv_idx < user_idx, (
+        "Chain must try bare install first, then check for venv, then --user"
+    )
+
+
 def test_pip_install_fallback_chain_allows_custom_python_command():
     chain = _pip_install_fallback_chain("hf_transfer", python_cmd="pip", upgrade=False)
     assert chain == (
