@@ -65,6 +65,24 @@ def _get_or_404_event(db, uid: str, owner: str) -> CalendarEvent:
     return ev
 
 
+def _ics_escape(text: str) -> str:
+    """Escape a value for an iCalendar TEXT field (RFC 5545 §3.3.11).
+
+    Backslash, semicolon and comma are structural in TEXT values and must be
+    escaped, and newlines become a literal ``\\n``. Backslash is escaped first
+    so the escapes we add aren't re-escaped.
+    """
+    return (
+        (text or "")
+        .replace("\\", "\\\\")
+        .replace(";", "\\;")
+        .replace(",", "\\,")
+        .replace("\r\n", "\\n")
+        .replace("\n", "\\n")
+        .replace("\r", "\\n")
+    )
+
+
 def _resolve_base_uid(uid: str) -> str:
     """Extract the base series UID from a compound occurrence UID.
 
@@ -1033,23 +1051,23 @@ def setup_calendar_routes() -> APIRouter:
                 "BEGIN:VCALENDAR",
                 "VERSION:2.0",
                 "PRODID:-//Odysseus//Calendar//EN",
-                f"X-WR-CALNAME:{cal.name}",
+                f"X-WR-CALNAME:{_ics_escape(cal.name)}",
             ]
             for ev in events:
                 lines.append("BEGIN:VEVENT")
                 lines.append(f"UID:{ev.uid}")
-                lines.append(f"SUMMARY:{ev.summary or ''}")
+                lines.append(f"SUMMARY:{_ics_escape(ev.summary or '')}")
                 if ev.all_day:
                     lines.append(f"DTSTART;VALUE=DATE:{ev.dtstart.strftime('%Y%m%d')}")
                     lines.append(f"DTEND;VALUE=DATE:{ev.dtend.strftime('%Y%m%d')}")
                 else:
-                    lines.append(f"DTSTART:{ev.dtstart.strftime('%Y%m%dT%H%M%S')}")
-                    lines.append(f"DTEND:{ev.dtend.strftime('%Y%m%dT%H%M%S')}")
+                    _dt_suffix = "Z" if getattr(ev, "is_utc", False) else ""
+                    lines.append(f"DTSTART:{ev.dtstart.strftime('%Y%m%dT%H%M%S')}{_dt_suffix}")
+                    lines.append(f"DTEND:{ev.dtend.strftime('%Y%m%dT%H%M%S')}{_dt_suffix}")
                 if ev.description:
-                    desc = ev.description.replace(chr(10), '\\n')
-                    lines.append(f"DESCRIPTION:{desc}")
+                    lines.append(f"DESCRIPTION:{_ics_escape(ev.description)}")
                 if ev.location:
-                    lines.append(f"LOCATION:{ev.location}")
+                    lines.append(f"LOCATION:{_ics_escape(ev.location)}")
                 if ev.rrule:
                     lines.append(f"RRULE:{ev.rrule}")
                 lines.append("END:VEVENT")

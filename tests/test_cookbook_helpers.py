@@ -15,6 +15,7 @@ from routes.cookbook_helpers import (
     _pip_install_fallback_chain,
     _ollama_bind_from_cmd,
     _safe_env_prefix,
+    _venv_safe_local_pip_install_cmd,
     _validate_gpus,
     _validate_repo_id,
     _validate_serve_cmd,
@@ -155,6 +156,16 @@ def test_pip_install_fallback_chain_tries_user_outside_venv():
         capture_output=True, text=True, timeout=10,
     )
     assert "user_attempt" in result.stdout, "Chain should try --user when not in venv and base fails"
+
+
+def test_venv_safe_local_pip_install_strips_user_flags_only_for_local_venv():
+    cmd = 'python3 -m pip install -U --user --break-system-packages "vllm"'
+
+    cleaned = _venv_safe_local_pip_install_cmd(cmd, local=True, in_venv=True)
+
+    assert cleaned == "python3 -m pip install -U vllm"
+    assert _venv_safe_local_pip_install_cmd(cmd, local=False, in_venv=True) == cmd
+    assert _venv_safe_local_pip_install_cmd(cmd, local=True, in_venv=False) == cmd
 
 
 def test_pip_install_attempt_wraps_in_status_preserving_subshell():

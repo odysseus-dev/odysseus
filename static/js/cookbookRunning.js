@@ -37,7 +37,6 @@ function _taskBadge(task) {
 function _canClearTask(task) {
   if (!task || task.status === 'running') return false;
   if (task.type === 'serve' && (task.status === 'ready' || task._serveReady)) return false;
-  if (task.type === 'download' && task.status === 'done' && !task.payload?._dep) return false;
   return ['done', 'stopped', 'error', 'crashed', 'failed'].includes(task.status);
 }
 
@@ -379,7 +378,7 @@ function _refreshModelsAfterEndpointChange() {
 // ── Download queue — runs one at a time per server ──
 
 function _processQueue() {
-  const tasks = _loadTasks();
+  const tasks = _loadPrunedTasks();
   const running = tasks.filter(t => t.type === 'download' && t.status === 'running');
   const queued = tasks.filter(t => t.type === 'download' && t.status === 'queued');
   if (!queued.length) return;
@@ -433,14 +432,24 @@ async function _startQueuedDownload(task) {
       return;
     }
     const oldId = task.sessionId;
-    const tasks = _loadTasks();
-    const t = tasks.find(t => t.sessionId === oldId);
-    if (t) {
-      t.sessionId = data.session_id;
-      t.id = data.session_id;
-      t.status = 'running';
-      _saveTasks(tasks);
-    }
+    const launchedTask = { ...task, sessionId: data.session_id, id: data.session_id, status: 'running' };
+    const key = _downloadDedupeKey(launchedTask);
+    let found = false;
+    const tasks = _loadTasks().filter(t => {
+      if (t.sessionId === oldId) {
+        found = true;
+        t.sessionId = data.session_id;
+        t.id = data.session_id;
+        t.status = 'running';
+        t._startLaunched = true;
+        return true;
+      }
+      if (t.sessionId === data.session_id) return false;
+      return !(key && t.type === 'download' && t.status === 'queued' && _downloadDedupeKey(t) === key);
+    });
+    if (!found) tasks.push(_stripTaskSecrets(launchedTask));
+    _saveTasks(tasks);
+    _renderRunningTab();
     _startBackgroundMonitor();
     await new Promise(r => setTimeout(r, 2000));
     _renderRunningTab();
@@ -471,6 +480,53 @@ function _normalizeTaskForDisplay(task) {
 export function _loadTasks() {
   try { return (JSON.parse(localStorage.getItem(TASKS_KEY)) || []).map(_normalizeTaskForDisplay); }
   catch { return []; }
+}
+
+function _downloadRepoKey(task) {
+  return String(task?.payload?.repo_id || task?.repo_id || task?.repo || task?.name || '').trim();
+}
+
+function _downloadHostKey(task) {
+  return String(task?.remoteHost || task?.payload?.remote_host || 'local').trim() || 'local';
+}
+
+function _downloadDedupeKey(task) {
+  if (!task || task.type !== 'download') return '';
+  const repo = _downloadRepoKey(task);
+  if (!repo) return '';
+  return `${_downloadHostKey(task)}\n${repo}`;
+}
+
+function _pruneQueuedDownloadDuplicates(tasks) {
+  if (!Array.isArray(tasks) || !tasks.length) return tasks || [];
+  const launched = new Set();
+  for (const task of tasks) {
+    if (task?.type !== 'download' || task.status === 'queued') continue;
+    const key = _downloadDedupeKey(task);
+    if (key) launched.add(key);
+  }
+
+  let changed = false;
+  const seenQueued = new Set();
+  const next = tasks.filter(task => {
+    if (task?.type !== 'download' || task.status !== 'queued') return true;
+    const key = _downloadDedupeKey(task);
+    if (!key) return true;
+    if (launched.has(key) || seenQueued.has(key)) {
+      changed = true;
+      return false;
+    }
+    seenQueued.add(key);
+    return true;
+  });
+  return changed ? next : tasks;
+}
+
+function _loadPrunedTasks() {
+  const tasks = _loadTasks();
+  const pruned = _pruneQueuedDownloadDuplicates(tasks);
+  if (pruned !== tasks) _saveTasks(pruned);
+  return pruned;
 }
 
 // Tombstones for removed tasks. Without these, removing a task only deletes it
@@ -534,6 +590,13 @@ export function _addTask(sessionId, name, type, payload) {
   if (type === 'serve' && payload && payload.repo_id) {
     const _repoId = payload.repo_id;
     tasks = tasks.filter(t => !(t.type === 'download' && t.status === 'done' && t.payload && t.payload.repo_id === _repoId));
+  }
+  if (type === 'download' && payload && payload.repo_id) {
+    const key = _downloadDedupeKey({ type: 'download', payload, remoteHost });
+    tasks = tasks.filter(t => {
+      if (t.sessionId === sessionId) return false;
+      return !(key && t.type === 'download' && t.status === 'queued' && _downloadDedupeKey(t) === key);
+    });
   }
   const task = _stripTaskSecrets({ id: sessionId, sessionId, name, type, status: 'running', output: '', ts: Date.now(), payload: payload || null, remoteHost, sshPort, platform });
   tasks.push(task);
@@ -649,6 +712,53 @@ function _tmuxGracefulKill(task) {
     return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} 'tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null'`;
   }
   return `tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null`;
+}
+
+function _shQuote(value) {
+  return "'" + String(value ?? '').replace(/'/g, "'\\''") + "'";
+}
+
+function _taskLooksOllama(task, outputText = '') {
+  const haystack = `${task?.payload?.backend || ''} ${task?.payload?._cmd || ''} ${task?.payload?._fields?.backend || ''} ${outputText || ''}`;
+  return /\bollama\b/i.test(haystack) || /Ollama API ready on port\s+\d+/i.test(haystack);
+}
+
+function _ollamaBaseUrlForTask(task, outputText = '') {
+  const out = String(outputText || '');
+  const ready = out.match(/Ollama API ready on port\s+\d+:\s*(http:\/\/[^\s]+)/i);
+  if (ready) return ready[1].replace(/\/+$/, '');
+  const cmd = String(task?.payload?._cmd || '');
+  const host = cmd.match(/OLLAMA_HOST=([^\s]+)/)?.[1] || '';
+  const port = host.match(/:(\d+)$/)?.[1] || '11434';
+  return `http://127.0.0.1:${port}`;
+}
+
+function _ollamaModelForTask(task) {
+  return String(task?.payload?.model || task?.payload?.repo_id || task?.name || '').trim();
+}
+
+function _ollamaUnloadCommand(task, outputText = '') {
+  if (!_taskLooksOllama(task, outputText)) return '';
+  const model = _ollamaModelForTask(task);
+  if (!model) return '';
+  const base = _ollamaBaseUrlForTask(task, outputText);
+  const body = JSON.stringify({ model, prompt: '', keep_alive: 0, stream: false });
+  const inner = `curl -sf -X POST ${_shQuote(base + '/api/generate')} -H 'Content-Type: application/json' -d ${_shQuote(body)} >/dev/null 2>&1 || true`;
+  if (task.remoteHost) {
+    return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} ${_shQuote(inner)}`;
+  }
+  return inner;
+}
+
+function _endpointUrlForTask(task, outputText = '') {
+  if (_taskLooksOllama(task, outputText)) {
+    return _ollamaBaseUrlForTask(task, outputText) + '/v1';
+  }
+  const rawHost = task.remoteHost || 'localhost';
+  const host = rawHost.includes('@') ? rawHost.split('@').pop() : rawHost;
+  const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
+  const port = portMatch ? portMatch[1] : '8000';
+  return `http://${host}:${port}/v1`;
 }
 
 // ── Wave animation ──
@@ -909,17 +1019,23 @@ async function _retryTask(el, task) {
       body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
     });
   } catch {}
-  _removeTask(task.sessionId);
   if (task.payload) {
     if (task.type === 'serve' && task.payload._cmd) {
+      _removeTask(task.sessionId);
       _launchServeTask(task.name, task.payload.repo_id, task.payload._cmd, task.payload._fields, task.remoteHost || '');
     } else {
-      _retryDownload(task.name, task.payload);
+      uiModule.showToast('Retrying download — progress may look reset while HuggingFace checks cached files, then it should resume.', 7000);
+      _updateTask(task.sessionId, {
+        status: 'running',
+        output: `${task.output || ''}\n\n[odysseus] Retrying download. Progress may briefly look like a fresh download while HuggingFace checks cached/incomplete files; cached partial files will be reused when available.`.trim(),
+        _retrying: true,
+      });
+      _retryDownload(task.name, task.payload, task.sessionId);
     }
   }
 }
 
-async function _retryDownload(name, payload) {
+async function _retryDownload(name, payload, replaceSessionId = '') {
   try {
     // A retry means the fast hf_transfer path already failed once — fall back to
     // the plain, reliable downloader for this and any further attempt (it resumes
@@ -932,17 +1048,40 @@ async function _retryDownload(name, payload) {
     });
     if (!res.ok) {
       uiModule.showToast('Download failed: HTTP ' + res.status);
+      if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
       return;
     }
     const data = await res.json();
     if (!data.ok) {
       uiModule.showToast('Download failed: ' + (data.error || ''));
+      if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
       return;
     }
-    _addTask(data.session_id, name, 'download', _payload);
+    if (replaceSessionId) {
+      const tasks = _loadTasks();
+      const task = tasks.find(t => t.sessionId === replaceSessionId);
+      if (task) {
+        task.id = data.session_id;
+        task.sessionId = data.session_id;
+        task.status = 'running';
+        task.output = '';
+        task.ts = Date.now();
+        task.payload = _payload;
+        task._retrying = false;
+        _saveTasks(tasks);
+        _soloExpandTaskId = data.session_id;
+        _renderRunningTab();
+        _startBackgroundMonitor();
+      } else {
+        _addTask(data.session_id, name, 'download', _payload);
+      }
+    } else {
+      _addTask(data.session_id, name, 'download', _payload);
+    }
     uiModule.showToast(`Downloading ${name}...`);
   } catch (e) {
     uiModule.showToast('Download failed: ' + e.message);
+    if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
   }
 }
 
@@ -1326,7 +1465,7 @@ export function _renderRunningTab() {
   // event but the matching clear only ran on modal-open, so the highlight
   // persisted indefinitely after tasks finished in the background.
   try {
-    const _activeTasks = _loadTasks().filter(t => t.status === 'running' || t.status === 'queued' || t.status === 'error');
+    const _activeTasks = _loadPrunedTasks().filter(t => t.status === 'running' || t.status === 'queued' || t.status === 'error');
     if (!_activeTasks.length) _clearCookbookNotif();
   } catch {}
 
@@ -1600,6 +1739,8 @@ export function _renderRunningTab() {
         const label = check.querySelector('.cookbook-task-done-label');
         if (label) label.textContent = _clearPillLabel(task);
       }
+      const startNow = el.querySelector('.cookbook-task-start-now');
+      if (startNow) startNow.style.display = (task.type === 'download' && task.status === 'queued') ? '' : 'none';
       const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
       if (terminalDiag) _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
     }
@@ -1626,6 +1767,7 @@ export function _renderRunningTab() {
         <span class="cookbook-task-type${(task.status === 'done' && task.type === 'download') ? ' cookbook-task-type-done' : ''}" data-type="${esc(task.type)}">${esc((task.status === 'done' && task.type === 'download') ? 'finished' : task.type)}</span>
         <span class="cookbook-task-name">${modelLogo(task.name)}${esc(task.name)}</span>
         <span class="cookbook-task-indicator"><span class="cookbook-task-wave" style="display:${task.status === 'running' ? '' : 'none'}"></span><span class="cookbook-task-check" title="Clear" style="display:${_canClearTask(task) ? '' : 'none'}"><svg class="cookbook-task-check-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#50fa7b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cookbook-task-clear-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span class="cookbook-task-done-label">${esc(_clearPillLabel(task))}</span><span class="cookbook-task-clear-label">clear</span></span></span>
+        <button type="button" class="cookbook-task-start-now" title="Start this queued download now" style="display:${(task.type === 'download' && task.status === 'queued') ? '' : 'none'}"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="8 5 19 12 8 19 8 5"/></svg><span>start now</span></button>
         <span class="cookbook-task-status ${_bdg.cls}"${_bdgTitle}>${esc(_bdg.text)}</span>
         <button class="cookbook-task-menu-btn" title="Actions">&#8942;</button>
       </div>
@@ -1699,6 +1841,14 @@ export function _renderRunningTab() {
       _clearChk.addEventListener('click', (e) => {
         e.stopPropagation();
         _animateOutThenRemove(el, task.sessionId);
+      });
+    }
+
+    const _startNowBtn = el.querySelector('.cookbook-task-start-now');
+    if (_startNowBtn) {
+      _startNowBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        _startQueuedDownload(task);
       });
     }
 
@@ -1986,13 +2136,20 @@ export function _renderRunningTab() {
       const badge = el.querySelector('.cookbook-task-status');
       if (badge) { badge.textContent = 'stopping...'; badge.className = 'cookbook-task-status cookbook-task-stopping'; }
       el.dataset.status = 'stopped';
+      const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
       // Drop the model endpoint so the picker stops listing it.
       if (task.type === 'serve' && task.payload) {
-        const rawHost = task.remoteHost || 'localhost';
-        const host = rawHost.includes('@') ? rawHost.split('@').pop() : rawHost;
-        const portMatch = task.payload._cmd?.match(/--port\s+(\d+)/);
-        const port = portMatch ? portMatch[1] : '8000';
-        _removeEndpointByUrl(`http://${host}:${port}/v1`);
+        _removeEndpointByUrl(_endpointUrlForTask(task, outputText));
+      }
+      const ollamaUnload = _ollamaUnloadCommand(task, outputText);
+      if (ollamaUnload) {
+        try {
+          await fetch('/api/shell/exec', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: ollamaUnload }),
+          });
+        } catch {}
       }
       // Gracefully stop (C-c, then kill the session) so it's fully down...
       try {
@@ -2009,23 +2166,29 @@ export function _renderRunningTab() {
 
     // Wire kill
     el.querySelector('.cookbook-task-action-kill').addEventListener('click', () => {
+      const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
+      const ollamaUnload = _ollamaUnloadCommand(task, outputText);
+      if (ollamaUnload) {
+        fetch('/api/shell/exec', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: ollamaUnload }),
+        }).catch(() => {});
+      }
       fetch('/api/shell/exec', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
       }).catch(() => {});
       if (task.type === 'serve' && task.payload) {
-        const rawHost = task.remoteHost || 'localhost';
-        const host = rawHost.includes('@') ? rawHost.split('@').pop() : rawHost;
-        const portMatch = task.payload._cmd?.match(/--port\s+(\d+)/);
-        const port = portMatch ? portMatch[1] : '8000';
-        _removeEndpointByUrl(`http://${host}:${port}/v1`);
+        const endpointUrl = _endpointUrlForTask(task, outputText);
+        _removeEndpointByUrl(endpointUrl);
         const modelName = task.payload.model || task.name || '';
         if (modelName) {
           fetch('/api/model-endpoints', { credentials: 'same-origin' })
             .then(r => r.json())
             .then(eps => {
-              const ep = eps.find(e => e.name === modelName || (e.base_url && e.base_url.includes(':' + port)));
+              const ep = eps.find(e => e.name === modelName || e.base_url === endpointUrl);
               if (ep) fetch(`/api/model-endpoints/${ep.id}`, { method: 'DELETE', credentials: 'same-origin' }).then(() => _refreshModelsAfterEndpointChange());
             }).catch(() => {});
         }
@@ -2168,6 +2331,33 @@ async function _reconnectTask(el, task) {
                 fixes: [{ label: 'Edit serve', action: (panel) => _openServeEditForTask(task) }],
               };
               _showDiagnosis(el, diag, lastOutput);
+            } else if (task.type === 'download') {
+              const isDisk = /no space left|disk quota|enospc/i.test(lastOutput);
+              const isNetwork = /connection|timeout|timed out|incompleteread|chunkedencoding|reset by peer|protocolerror|all connection attempts failed/i.test(lastOutput);
+              const progressMatch = String(lastOutput || '').match(/(\d+)%\|/);
+              const nearDone = progressMatch && Number(progressMatch[1]) >= 80;
+              const diag = {
+                message: isDisk
+                  ? 'Download stopped because this server ran out of disk space.'
+                  : isNetwork
+                  ? 'Download stopped after the HuggingFace connection was interrupted.'
+                  : nearDone
+                  ? 'Download stopped near the end before the final completion marker was captured.'
+                  : 'Download stopped before HuggingFace reported completion.',
+                suggestion: isDisk
+                  ? 'Suggested action: free disk space, then retry the download. HuggingFace resumes incomplete files when possible.'
+                  : nearDone
+                  ? 'Suggested action: retry the download. It may briefly look like it restarted while cached files are checked, then it should reuse incomplete files.'
+                  : 'Suggested action: retry the download. HuggingFace resumes incomplete files when possible.',
+                fixes: [
+                  { label: 'Retry download', action: () => _retryTask(el, task) },
+                  { label: 'Copy last 50 lines', action: () => {
+                    const last = String(lastOutput || '').split('\n').slice(-50).join('\n');
+                    _copyText(last || 'No download log available.');
+                  } },
+                ],
+              };
+              _showDiagnosis(el, diag, lastOutput);
             }
             _showCookbookNotif(true);
           } else {
@@ -2175,7 +2365,7 @@ async function _reconnectTask(el, task) {
             el.dataset.status = 'done';
             const badge = el.querySelector('.cookbook-task-status');
             if (badge) { badge.textContent = _statusLabel('done', task.type); badge.className = 'cookbook-task-status cookbook-task-done'; }
-            const _chk = el.querySelector('.cookbook-task-check'); if (_chk && task.type !== 'download') _chk.style.display = '';
+            const _chk = el.querySelector('.cookbook-task-check'); if (_chk) _chk.style.display = '';
             const _sb = el.querySelector('.cookbook-task-serve-btn'); if (_sb) _sb.style.display = '';
             _showCookbookNotif();
             _refreshDepsAfterInstall(task);
@@ -2804,13 +2994,24 @@ async function _pollBackgroundStatus() {
         const updates = {};
         const nextStatus = live.status === 'completed'
           ? 'done'
-          : (live.status === 'error' ? 'error' : null);
+          : (live.status === 'error'
+            ? 'error'
+            : (live.status === 'stopped' ? (task.type === 'download' ? 'crashed' : 'stopped') : null));
         if (nextStatus && task.status !== nextStatus) {
           updates.status = nextStatus;
           if (nextStatus === 'done' && task.payload?._dep) completedDeps.push(task);
         }
+        if ((live.status === 'running' || live.status === 'ready') && task.status !== live.status) {
+          updates.status = live.status === 'ready' ? 'ready' : 'running';
+        }
         if (live.progress && live.progress !== task.progress) updates.progress = live.progress;
-        if (live.output_tail && live.output_tail !== task.output) updates.output = live.output_tail;
+        if (live.output_tail) {
+          const previous = String(task.output || '');
+          const tail = String(live.output_tail || '');
+          if (tail && !previous.endsWith(tail)) {
+            updates.output = `${previous ? `${previous}\n` : ''}${tail}`.slice(-5000);
+          }
+        }
         if (Object.keys(updates).length) {
           Object.assign(task, updates);
           changed = true;

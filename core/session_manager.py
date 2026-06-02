@@ -29,6 +29,21 @@ def _message_timestamp_iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat().replace("+00:00", "Z")
 
 
+def _parse_msg_content(raw):
+    """Parse message content from DB — deserialises JSON arrays back to lists
+    (multimodal content with image/audio attachments)."""
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str) and raw.startswith('[{') and '"type"' in raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list) and all(isinstance(p, dict) for p in parsed):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return raw
+
+
 class SessionManager:
     """
     Manages chat sessions with database persistence.
@@ -119,7 +134,7 @@ class SessionManager:
                 meta.setdefault('timestamp', _message_timestamp_iso(db_msg.timestamp))
                 history.append(ChatMessage(
                     role=db_msg.role,
-                    content=db_msg.content,
+                    content=_parse_msg_content(db_msg.content),
                     metadata=meta,
                 ))
         else:
@@ -134,7 +149,7 @@ class SessionManager:
                 meta.setdefault('timestamp', _message_timestamp_iso(db_msg.timestamp))
                 history.append(ChatMessage(
                     role=db_msg.role,
-                    content=db_msg.content,
+                    content=_parse_msg_content(db_msg.content),
                     metadata=meta,
                 ))
 
@@ -192,11 +207,17 @@ class SessionManager:
             if message.metadata is None:
                 message.metadata = {}
             message.metadata.setdefault('timestamp', _message_timestamp_iso(msg_time))
+            # Multimodal content (image/audio attachments) is a list — serialize
+            # to JSON so the Text column can store it.  On reload, _db_to_session
+            # detects the JSON-array prefix and parses it back.
+            _content = message.content
+            if isinstance(_content, list):
+                _content = json.dumps(_content)
             db_message = DbChatMessage(
                 id=msg_id,
                 session_id=session_id,
                 role=message.role,
-                content=message.content,
+                content=_content,
                 meta_data=json.dumps(message.metadata) if message.metadata else None,
                 timestamp=msg_time,
             )

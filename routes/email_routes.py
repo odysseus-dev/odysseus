@@ -17,7 +17,6 @@ import sqlite3 as _sql3
 import email as email_mod
 import email.header
 import email.utils
-import imaplib
 import smtplib
 import json
 import re
@@ -41,6 +40,7 @@ from routes.email_helpers import (
     _q, _attach_compose_uploads, _cleanup_compose_uploads,
     _load_settings, _save_settings, _get_email_config,
     _send_smtp_message, _smtp_security_mode,
+    _IMAP_TIMEOUT_SECONDS, _open_imap_connection,
     _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
     _extract_attachment_text, _list_attachments_from_msg,
     _extract_attachment_to_disk, _extract_html, _extract_text,
@@ -457,7 +457,7 @@ def setup_email_routes():
     _IMAP_POOL = {}   # account_id → (conn, last_used_at)
     _IMAP_IDLE_MAX = 60.0
     _WARMING_READS = set()
-    _WARM_READ_LIMIT = 3
+    _WARM_READ_LIMIT = 1
     _WARM_MAX_BYTES = 128 * 1024
     _WARM_RECENT_SECONDS = 7 * 24 * 60 * 60
     _pool_lock = _threading.Lock()
@@ -1046,7 +1046,7 @@ def setup_email_routes():
 
                 # Escape backslash and quote for the IMAP-SEARCH quoted-string.
                 q_escaped = q.replace('\\', '\\\\').replace('"', '\\"')
-                search_cmd = f'(OR FROM "{q_escaped}" TEXT "{q_escaped}")'
+                search_cmd = f'(OR OR FROM "{q_escaped}" SUBJECT "{q_escaped}" TEXT "{q_escaped}")'
 
                 status, data = _imap_uid_search(conn, search_cmd)
                 if status != "OK" or not data[0]:
@@ -3103,13 +3103,12 @@ def setup_email_routes():
             # port (Dovecot on 31143, etc.) would always fail the SSL
             # handshake because they're not actually wrapped in TLS.
             try:
-                if imap_starttls:
-                    conn = imaplib.IMAP4(imap_host, imap_port, timeout=10)
-                    conn.starttls()
-                elif imap_port == 993:
-                    conn = imaplib.IMAP4_SSL(imap_host, imap_port, timeout=10)
-                else:
-                    conn = imaplib.IMAP4(imap_host, imap_port, timeout=10)
+                conn = _open_imap_connection(
+                    imap_host,
+                    imap_port,
+                    starttls=imap_starttls,
+                    timeout=_IMAP_TIMEOUT_SECONDS,
+                )
                 try:
                     conn.login(imap_user, imap_pass)
                     imap_result = {"ok": True}
