@@ -1872,6 +1872,14 @@ export function setCurrentSessionId(id) {
 
 // Session list keyboard navigation: arrows to move, Delete to delete
 function _onSessionListKeydown(e) {
+  // Ignore keys that originate from an inline editable control such as the
+  // session rename input. That input lives *inside* the .list-item row, so its
+  // keydown events bubble up here; without this guard, pressing Backspace (or
+  // Delete/Enter) while renaming would fall through to the delete/select
+  // branches below and remove or switch the very session being renamed
+  // (issue #1007).
+  const t = e.target;
+  if (t && (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
   const item = e.target.closest('.list-item[data-session-id]');
   if (!item) return;
 
