@@ -794,6 +794,80 @@ def setup_cookbook_routes() -> APIRouter:
         finally:
             db.close()
 
+    def _auto_register_llm_endpoint(req: ServeRequest, remote: str | None) -> str | None:
+        """Register a freshly-served LLM as a model endpoint so it appears in the
+        model picker without a manual /setup step — the text-model sibling of
+        _auto_register_image_endpoint.
+
+        Cookbook serve commands launch an OpenAI-compatible server (llama.cpp's
+        llama-server, vLLM, SGLang, or Ollama) on a known port. We point an
+        endpoint at that server's /v1; the picker auto-discovers the model id by
+        probing /v1/models and dims the endpoint until the server is reachable,
+        so registering immediately (before the server finishes loading) is safe.
+        """
+        import re
+        from core.database import SessionLocal, ModelEndpoint
+
+        # Port: an explicit --port wins. Otherwise fall back by backend — Ollama
+        # is the only server in our generated commands that omits --port.
+        port_match = re.search(r'--port\s+(\d+)', req.cmd)
+        if port_match:
+            port = int(port_match.group(1))
+        elif "ollama" in req.cmd:
+            port = 11434
+        else:
+            port = 8080  # llama.cpp's llama-server default — the Apple Silicon path
+
+        # Determine host (mirrors the image path: SSH alias for remote serves).
+        if remote:
+            host = remote.split("@")[-1] if "@" in remote else remote
+        else:
+            host = "localhost"
+
+        base_url = f"http://{host}:{port}/v1"
+
+        short_name = req.repo_id.split("/")[-1] if "/" in req.repo_id else req.repo_id
+        display_name = short_name or "Local model"
+
+        # If the serve command opts models into OpenAI tool-calling, record it so
+        # agent_loop trusts emitted tool_calls instead of the name heuristic.
+        supports_tools = True if "--enable-auto-tool-choice" in req.cmd else None
+
+        db = SessionLocal()
+        try:
+            # Reuse an endpoint already pointed at this URL instead of duplicating.
+            existing = db.query(ModelEndpoint).filter(ModelEndpoint.base_url == base_url).first()
+            if existing:
+                existing.is_enabled = True
+                existing.model_type = "llm"
+                existing.name = display_name
+                if supports_tools is not None:
+                    existing.supports_tools = supports_tools
+                db.commit()
+                logger.info(f"Updated existing local model endpoint: {base_url}")
+                return existing.id
+
+            ep_id = f"local-{uuid.uuid4().hex[:8]}"
+            ep = ModelEndpoint(
+                id=ep_id,
+                name=display_name,
+                base_url=base_url,
+                api_key=None,
+                is_enabled=True,
+                model_type="llm",
+                supports_tools=supports_tools,
+            )
+            db.add(ep)
+            db.commit()
+            logger.info(f"Auto-registered local model endpoint: {display_name} @ {base_url}")
+            return ep_id
+        except Exception as e:
+            logger.error(f"Failed to auto-register local model endpoint: {e}")
+            db.rollback()
+            return None
+        finally:
+            db.close()
+
     @router.post("/api/model/serve")
     async def model_serve(request: Request, req: ServeRequest):
         """Launch a model server in a tmux session (or PowerShell background process on Windows).
@@ -1160,11 +1234,16 @@ def setup_cookbook_routes() -> APIRouter:
                 stderr = (await proc.stderr.read()).decode(errors="replace")
                 return {"ok": False, "error": stderr, "session_id": session_id}
 
-        # Auto-register as model endpoint if serving a diffusion model
+        # Auto-register a model endpoint so the served model shows up in the model
+        # picker with no manual /setup step. Diffusion models get an image
+        # endpoint; any other real model serve (i.e. not a pip-install task) gets
+        # a local LLM endpoint pointed at its /v1.
         endpoint_id = None
         is_diffusion = "diffusion_server.py" in req.cmd
         if is_diffusion:
             endpoint_id = _auto_register_image_endpoint(req, remote)
+        elif not is_pip_install:
+            endpoint_id = _auto_register_llm_endpoint(req, remote)
 
         # Log to assistant
         try:
