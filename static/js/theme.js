@@ -101,6 +101,7 @@ export function saveCustomTheme(name, colors, opts) {
     if (opts.bgEffectIntensity !== undefined) entry.bgEffectIntensity = opts.bgEffectIntensity;
     if (opts.bgEffectSize !== undefined) entry.bgEffectSize = opts.bgEffectSize;
     if (opts.frosted !== undefined) entry.frosted = !!opts.frosted;
+    if (opts.chatTextSize !== undefined) entry.chatTextSize = opts.chatTextSize;
   }
   ct[name] = entry;
   _saveCustomThemes(ct);
@@ -408,6 +409,14 @@ export function applyBgEffectSize(v) {
   document.documentElement.style.setProperty('--bg-effect-size', String(n));
 }
 
+export function applyChatTextScale(percent) {
+  // percent is 80..120. Default 100 (no change) when missing.
+  const n = (percent === undefined || percent === null || isNaN(percent))
+    ? 100
+    : Math.max(80, Math.min(120, Math.round(Number(percent))));
+  document.documentElement.style.setProperty('--chat-font-scale', String(n / 100));
+}
+
 /** Toggle the global "frosted glass" look — applies a translucent + blurred
  *  treatment to every panel, sidebar, modal, dropdown, and popover via CSS
  *  rules scoped to `body.theme-frosted`. */
@@ -458,6 +467,7 @@ export function save(name, colors, opts) {
     if (opts.bgEffectIntensity !== undefined && opts.bgEffectIntensity !== 1) obj.bgEffectIntensity = opts.bgEffectIntensity;
     if (opts.bgEffectSize !== undefined && opts.bgEffectSize !== 1) obj.bgEffectSize = opts.bgEffectSize;
     if (opts.frosted) obj.frosted = true;
+    if (opts.chatTextSize !== undefined && opts.chatTextSize !== 100) obj.chatTextSize = opts.chatTextSize;
   }
   Storage.setJSON(LS_KEY, obj);
   _syncToServer(obj);
@@ -672,6 +682,8 @@ export function initThemeUI() {
     if (sz) opts.bgEffectSize = parseFloat(sz.value) / 100;
     const fr = document.getElementById('theme-frosted-toggle');
     if (fr) opts.frosted = !!fr.checked;
+    const cs = document.getElementById('theme-chat-text-size');
+    if (cs) opts.chatTextSize = parseInt(cs.value, 10);
     return opts;
   }
   function _saveFull(name, colors) { save(name, colors, _getOpts()); }
@@ -700,12 +712,14 @@ export function initThemeUI() {
         const fr = (ct && ct.frosted !== undefined)
           ? !!ct.frosted
           : (THEME_DEFAULT_FROSTED[name] === true);
+        const cts = (ct && ct.chatTextSize !== undefined) ? ct.chatTextSize : 100;
         applyFontDensity(f, d);
         applyBgEffectColor(ec);
         applyBgEffectIntensity(ei);
         applyBgEffectSize(sz);
         applyFrostedGlass(fr);
         applyBgPattern(p);
+        applyChatTextScale(cts);
         const fs = document.getElementById('theme-font-select');
         const ds = document.getElementById('theme-density-select');
         const ps = document.getElementById('theme-bg-pattern-select');
@@ -713,6 +727,8 @@ export function initThemeUI() {
         const eis = document.getElementById('theme-bg-intensity');
         const szs = document.getElementById('theme-bg-size');
         const frs = document.getElementById('theme-frosted-toggle');
+        const cts_el = document.getElementById('theme-chat-text-size');
+        const cts_lbl = document.getElementById('theme-chat-text-size-label');
         if (fs) fs.value = f;
         if (ds) ds.value = d;
         if (ps) ps.value = p;
@@ -720,7 +736,9 @@ export function initThemeUI() {
         if (eis) eis.value = String(Math.round(ei * 100));
         if (szs) szs.value = String(Math.round(sz * 100));
         if (frs) frs.checked = fr;
-        save(name, colors, { font: f, density: d, bgPattern: p, bgEffectColor: ec, bgEffectIntensity: ei, bgEffectSize: sz, frosted: fr });
+        if (cts_el) cts_el.value = String(cts);
+        if (cts_lbl) cts_lbl.textContent = cts + '%';
+        save(name, colors, { font: f, density: d, bgPattern: p, bgEffectColor: ec, bgEffectIntensity: ei, bgEffectSize: sz, frosted: fr, chatTextSize: cts });
       });
     });
     g.querySelectorAll('.theme-delete-btn').forEach(btn => {
@@ -853,6 +871,7 @@ export function initThemeUI() {
           bgPattern: _activeSaved.bgPattern, bgEffectColor: _activeSaved.bgEffectColor,
           bgEffectIntensity: _activeSaved.bgEffectIntensity,
           bgEffectSize: _activeSaved.bgEffectSize,
+          chatTextSize: _activeSaved.chatTextSize,
         });
         _saveFull(_activeName, colors);
       } else {
@@ -922,12 +941,17 @@ export function initThemeUI() {
       syncPickers(colors);
       applyFontDensity(DEFAULT_FONT, DEFAULT_DENSITY);
       applyBgPattern('none');
+      applyChatTextScale(100);
       const fs = document.getElementById('theme-font-select');
       const ds = document.getElementById('theme-density-select');
       const ps = document.getElementById('theme-bg-pattern-select');
+      const cts_el = document.getElementById('theme-chat-text-size');
+      const cts_lbl = document.getElementById('theme-chat-text-size-label');
       if (fs) fs.value = DEFAULT_FONT;
       if (ds) ds.value = DEFAULT_DENSITY;
       if (ps) ps.value = 'none';
+      if (cts_el) cts_el.value = '100';
+      if (cts_lbl) cts_lbl.textContent = '100%';
       grid.querySelectorAll('.theme-swatch').forEach(s => s.classList.remove('active'));
       const darkSwatch = grid.querySelector('[data-theme="dark"]');
       if (darkSwatch) darkSwatch.classList.add('active');
@@ -1001,6 +1025,7 @@ export function initThemeUI() {
           bgPattern: _activeSaved.bgPattern, bgEffectColor: _activeSaved.bgEffectColor,
           bgEffectIntensity: _activeSaved.bgEffectIntensity,
           bgEffectSize: _activeSaved.bgEffectSize,
+          chatTextSize: _activeSaved.chatTextSize,
         });
         _saveFull(_activeName, base);
       } else {
@@ -1085,12 +1110,14 @@ export function initThemeUI() {
   const _initFrosted = (saved && saved.frosted !== undefined)
     ? !!saved.frosted
     : (saved && THEME_DEFAULT_FROSTED[saved.name] === true);
+  const _initChatTextSize = (saved && saved.chatTextSize) || 100;
   applyFontDensity(_initFont, _initDensity);
   applyBgEffectColor(_initEffectColor);
   applyBgEffectIntensity(_initEffectIntensity);
   applyBgEffectSize(_initEffectSize);
   applyFrostedGlass(_initFrosted);
   applyBgPattern(_initPattern);
+  applyChatTextScale(_initChatTextSize);
 
   const fontSelect = document.getElementById('theme-font-select');
   const densitySelect = document.getElementById('theme-density-select');
@@ -1162,6 +1189,19 @@ export function initThemeUI() {
     sizeSlider.value = String(Math.round(_initEffectSize * 100));
     sizeSlider.addEventListener('input', () => {
       applyBgEffectSize(parseFloat(sizeSlider.value) / 100);
+      const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+    });
+  }
+
+  const chatSizeSlider = document.getElementById('theme-chat-text-size');
+  const chatSizeLabel = document.getElementById('theme-chat-text-size-label');
+  if (chatSizeSlider) {
+    chatSizeSlider.value = String(_initChatTextSize);
+    if (chatSizeLabel) chatSizeLabel.textContent = _initChatTextSize + '%';
+    chatSizeSlider.addEventListener('input', () => {
+      const pct = parseInt(chatSizeSlider.value, 10);
+      applyChatTextScale(pct);
+      if (chatSizeLabel) chatSizeLabel.textContent = pct + '%';
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
     });
   }
@@ -1252,6 +1292,7 @@ export function initThemeUI() {
       if (cur && cur.density) obj.density = cur.density;
       if (cur && cur.bgPattern) obj.bgPattern = cur.bgPattern;
       if (cur && cur.bgEffectColor) obj.bgEffectColor = cur.bgEffectColor;
+      if (cur && cur.chatTextSize) obj.chatTextSize = cur.chatTextSize;
       const json = JSON.stringify(obj, null, 2);
       const blob = new Blob([json], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -1301,6 +1342,7 @@ export function initThemeUI() {
       if (parsed.density) opts.density = parsed.density;
       if (parsed.bgPattern) opts.bgPattern = parsed.bgPattern;
       if (parsed.bgEffectColor) opts.bgEffectColor = parsed.bgEffectColor;
+      if (parsed.chatTextSize) opts.chatTextSize = parsed.chatTextSize;
       const result = saveCustomTheme(slug, colorData, opts);
       if (result === 'limit') { saveError.textContent = 'Max ' + MAX_CUSTOM_THEMES + ' custom themes. Delete one first.'; saveError.style.display = 'block'; return; }
       save(slug, colorData, opts);
@@ -1308,6 +1350,7 @@ export function initThemeUI() {
       applyFontDensity(opts.font || DEFAULT_FONT, opts.density || DEFAULT_DENSITY);
       applyBgEffectColor(opts.bgEffectColor || '');
       applyBgPattern(opts.bgPattern || 'none');
+      applyChatTextScale(opts.chatTextSize || 100);
       importAreaEl.classList.add('hidden');
       importActionsEl.classList.add('hidden');
     });
@@ -2046,7 +2089,7 @@ function _initEmbers() {
 const themeModule = { initThemeUI, togglePopup, closePopup, makeDraggable,
                        THEMES, applyColors, applyFontDensity, applyBgPattern,
                        applyBgEffectColor, applyBgEffectIntensity, applyBgEffectSize,
-                       applyFrostedGlass,
+                       applyFrostedGlass, applyChatTextScale,
                        save, getSaved, saveCustomTheme, deleteCustomTheme,
                        getCustomThemes };
 

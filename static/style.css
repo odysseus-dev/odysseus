@@ -146,6 +146,7 @@ html {
 /* ── Background Patterns ── */
 
 :root { --bg-effect-intensity: 1; }
+:root { --chat-font-scale: 1; }
 
 /* Canvas-based effects — single source of truth for intensity */
 #synapse-canvas, #rain-canvas, #constellations-canvas,
@@ -1973,7 +1974,7 @@ body.bg-pattern-sparkles {
       word-break: break-word;
       overflow-wrap: anywhere;
       line-height: 1.5;
-      font-size: 0.95em;
+      font-size: calc(0.95em * var(--chat-font-scale, 1));
       margin: 0;
       overflow: hidden;
       max-width: 100%;
@@ -4026,7 +4027,7 @@ body.bg-pattern-sparkles {
       }
       /* Chat bubbles — AI stretches full width, user stays compact */
       .msg { font-size: 0.85em; }
-      .msg .body { font-size: 0.9em; }
+      .msg .body { font-size: calc(0.9em * var(--chat-font-scale, 1)); }
       .msg-user { max-width: 90% !important; margin-left: auto; margin-right: 4px; }
       .msg-ai, .agent-thread { width: 100% !important; max-width: 100% !important; margin: 8px 0; }
       /* Prevent inner scrollable elements from trapping vertical scroll */

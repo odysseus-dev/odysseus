@@ -84,6 +84,10 @@
       if (t && t.density && t.density !== 'comfortable') {
         document.documentElement.classList.add('density-' + t.density);
       }
+      // Apply chat font scale to avoid a first-paint flash when != 100%
+      if (t && t.chatTextSize && t.chatTextSize !== 100) {
+        s.setProperty('--chat-font-scale', String(t.chatTextSize / 100));
+      }
       // Apply background pattern on body once available
       if (t && t.bgPattern && t.bgPattern !== 'none') {
         document.addEventListener('DOMContentLoaded', function() {
@@ -579,6 +583,12 @@
               <input type="checkbox" id="theme-frosted-toggle">
               <span class="admin-slider"></span>
             </label>
+          </div>
+        </div>
+        <div class="theme-fd-row">
+          <div class="theme-fd-group" style="flex:1 1 0;">
+            <label class="theme-fd-label">Chat Text Size <span id="theme-chat-text-size-label" style="opacity:0.5;font-variant-numeric:tabular-nums">100%</span></label>
+            <input type="range" id="theme-chat-text-size" class="theme-fd-range" min="80" max="120" step="5" value="100">
           </div>
         </div>
         <div class="theme-fd-row">
