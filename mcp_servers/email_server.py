@@ -70,10 +70,12 @@ def _list_accounts_raw() -> list:
     try:
         conn = sqlite3.connect(str(path))
         conn.row_factory = sqlite3.Row
-        rows = conn.execute("""
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(email_accounts)").fetchall()}
+        smtp_security_select = "smtp_security" if "smtp_security" in columns else "'' AS smtp_security"
+        rows = conn.execute(f"""
             SELECT id, name, is_default, enabled,
                    imap_host, imap_port, imap_user, imap_password, imap_starttls,
-                   smtp_host, smtp_port, smtp_user, smtp_password, from_address
+                   smtp_host, smtp_port, {smtp_security_select}, smtp_user, smtp_password, from_address
             FROM email_accounts WHERE enabled = 1
             ORDER BY is_default DESC, created_at ASC
         """).fetchall()
@@ -145,6 +147,7 @@ def _load_config(account: str | None = None) -> dict:
         "imap_starttls": os.environ.get("IMAP_STARTTLS", "true").lower() == "true",
         "smtp_host": os.environ.get("SMTP_HOST", ""),
         "smtp_port": int(os.environ.get("SMTP_PORT", "465")),
+        "smtp_security": os.environ.get("SMTP_SECURITY", ""),
         "smtp_user": os.environ.get("SMTP_USER", ""),
         "smtp_password": os.environ.get("SMTP_PASSWORD", ""),
         "smtp_starttls": os.environ.get("SMTP_STARTTLS", "false").lower() == "true",
@@ -189,6 +192,7 @@ def _load_config(account: str | None = None) -> dict:
         cfg["imap_ssl"] = int(cfg["imap_port"]) == 993 and not cfg["imap_starttls"]
         cfg["smtp_host"] = row["smtp_host"] or cfg["smtp_host"]
         cfg["smtp_port"] = int(row["smtp_port"] or cfg["smtp_port"])
+        cfg["smtp_security"] = row["smtp_security"] or cfg["smtp_security"] or ("starttls" if int(cfg["smtp_port"]) == 587 else "ssl")
         cfg["smtp_user"] = row["smtp_user"] or cfg["smtp_user"]
         cfg["smtp_password"] = _decrypt(row["smtp_password"]) if row["smtp_password"] else cfg["smtp_password"]
         cfg["from_address"] = row["from_address"] or row["imap_user"] or cfg["from_address"]
@@ -739,17 +743,17 @@ def _smtp_connect(account=None, cfg=None):
     if not _smtp_ready(cfg):
         raise ValueError(f"Email account {cfg.get('account_name') or account or 'default'} has no SMTP configured")
     port = int(cfg.get("smtp_port") or 465)
-    # Account rows only store host/port, not the legacy env-level smtp_ssl
-    # toggle. Infer the conventional TLS mode from the port so MCP tools match
-    # the web send path: 465 = implicit SSL, 587 = STARTTLS.
-    if port == 587:
+    security = str(cfg.get("smtp_security") or "").strip().lower()
+    if security not in {"ssl", "starttls", "none"}:
+        security = "starttls" if port == 587 else "ssl"
+    if security == "starttls":
         conn = smtplib.SMTP(
             cfg["smtp_host"],
             port,
             timeout=EMAIL_SOCKET_TIMEOUT,
         )
         conn.starttls()
-    elif cfg.get("smtp_ssl", True):
+    elif security == "ssl":
         conn = smtplib.SMTP_SSL(
             cfg["smtp_host"],
             port,
@@ -761,8 +765,6 @@ def _smtp_connect(account=None, cfg=None):
             port,
             timeout=EMAIL_SOCKET_TIMEOUT,
         )
-        if cfg["smtp_starttls"]:
-            conn.starttls()
     if cfg["smtp_user"] and cfg["smtp_password"]:
         conn.login(cfg["smtp_user"], cfg["smtp_password"])
     return conn

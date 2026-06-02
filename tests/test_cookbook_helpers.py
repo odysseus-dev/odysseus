@@ -10,9 +10,12 @@ from routes.cookbook_helpers import (
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
     _local_tooling_path_export,
+    _pip_install_fallback_chain,
+    _ollama_bind_from_cmd,
     _safe_env_prefix,
     _validate_gpus,
     _validate_repo_id,
+    _validate_serve_cmd,
     _validate_serve_model_id,
     _validate_ssh_port,
 )
@@ -82,6 +85,21 @@ def test_local_tooling_path_export_preserves_spaces_and_expands_path():
     assert line.endswith(':$PATH"')  # $PATH stays expandable in double quotes
 
 
+def test_pip_install_fallback_chain_prefers_venv_safe_install():
+    chain = _pip_install_fallback_chain("huggingface_hub", upgrade=True)
+    assert chain.startswith("python3 -m pip install -q -U huggingface_hub")
+    assert "|| python3 -m pip install --user --break-system-packages -q -U huggingface_hub" in chain
+
+
+def test_pip_install_fallback_chain_allows_custom_python_command():
+    chain = _pip_install_fallback_chain("hf_transfer", python_cmd="pip", upgrade=False)
+    assert chain == (
+        'pip install -q hf_transfer 2>/dev/null || { '
+        'python -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"'
+        ' || pip install --user --break-system-packages -q hf_transfer 2>/dev/null; }'
+    )
+
+
 def test_serve_preflight_failure_keeps_tmux_pane_visible():
     """Dependency preflight failures should remain visible in tmux output.
 
@@ -114,12 +132,68 @@ def test_serve_runner_preserves_command_exit_code():
     assert 'echo "=== Process exited with code $? ==="' not in script
 
 
+def test_validate_serve_cmd_accepts_llama_advanced_controls():
+    cmd = (
+        "MODEL_FILE=$(printf %s ${HOME}'/.cache/huggingface/hub/models--Qwen--Qwen3-GGUF/snapshots/model.gguf') "
+        '&& { [ -n "$MODEL_FILE" ] && [ -f "$MODEL_FILE" ]; } '
+        '|| { echo "ERROR: No GGUF found on this host."; exit 1; } && '
+        'GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0,1 llama-server '
+        '--model "$MODEL_FILE" --host 0.0.0.0 --port 8000 -ngl 99 -c 131072 '
+        '--n-cpu-moe 0 --cache-type-k q8_0 --cache-type-v q8_0 --flash-attn on '
+        '--fit off --split-mode tensor --tensor-split 50,50 --main-gpu 0 '
+        '--parallel 1 --batch-size 2048 --ubatch-size 512 --no-mmap --no-warmup '
+        '--spec-type draft-mtp --spec-draft-n-max 3 '
+        '|| python3 -m llama_cpp.server --model "$MODEL_FILE" --host 0.0.0.0 --port 8000'
+    )
+
+    assert _validate_serve_cmd(cmd) == cmd
+
+
+def test_ollama_serve_defaults_to_loopback_bind():
+    assert _ollama_bind_from_cmd("ollama serve") == ("127.0.0.1", "11434")
+    assert _ollama_bind_from_cmd("ollama run qwen2.5:0.5b") == ("127.0.0.1", "11434")
+
+
+def test_ollama_serve_accepts_remote_reachable_default_bind():
+    assert (
+        _ollama_bind_from_cmd("ollama serve", default_host="0.0.0.0")
+        == ("0.0.0.0", "11434")
+    )
+
+
+def test_ollama_serve_preserves_explicit_bind_opt_in():
+    assert (
+        _ollama_bind_from_cmd("OLLAMA_HOST=0.0.0.0:12345 ollama serve")
+        == ("0.0.0.0", "12345")
+    )
+    assert (
+        _ollama_bind_from_cmd("OLLAMA_HOST=[::1]:11435 ollama serve")
+        == ("[::1]", "11435")
+    )
+
+
+def test_ollama_serve_rejects_unsafe_bind_values():
+    assert (
+        _ollama_bind_from_cmd("OLLAMA_HOST='$HOST:11434' ollama serve")
+        == ("127.0.0.1", "11434")
+    )
+    assert (
+        _ollama_bind_from_cmd("OLLAMA_HOST=127.0.0.1:99999 ollama serve")
+        == ("127.0.0.1", "11434")
+    )
+
+
 def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):
     """Custom download dirs may sit inside the HF hub cache and contain plain
     per-model folders. They must show up in Serve and keep the GGUF signal."""
     plain = tmp_path / "Qwen3.6-27B"
     plain.mkdir()
     (plain / "Qwen3.6-27B-Q4_K_M.gguf").write_bytes(b"gguf")
+    (plain / "Qwen3.6-27B-Q5_K_M-00001-of-00003.gguf").write_bytes(b"part1")
+    (plain / "Qwen3.6-27B-Q5_K_M-00002-of-00003.gguf").write_bytes(b"part2")
+    (plain / "Qwen3.6-27B-Q5_K_M-00003-of-00003.gguf").write_bytes(b"part3")
+    (plain / "Qwen3.6-27B-Q6_K_XL.gguf").write_bytes(b"ggufgguf")
+    (plain / "mmproj-BF16.gguf").write_bytes(b"projector")
 
     hf_internal = tmp_path / "models--Qwen--Qwen3.6-27B"
     (hf_internal / "snapshots" / "abc").mkdir(parents=True)
@@ -138,3 +212,18 @@ def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):
     assert "models--Qwen--Qwen3.6-27B" not in by_repo
     assert by_repo["Qwen3.6-27B"]["is_local_dir"] is True
     assert by_repo["Qwen3.6-27B"]["is_gguf"] is True
+    ggufs = by_repo["Qwen3.6-27B"]["gguf_files"]
+    assert [f["rel_path"] for f in ggufs] == [
+        "Qwen3.6-27B-Q4_K_M.gguf",
+        "Qwen3.6-27B-Q5_K_M-00001-of-00003.gguf",
+        "Qwen3.6-27B-Q6_K_XL.gguf",
+        "mmproj-BF16.gguf",
+    ]
+    assert [f["role"] for f in ggufs] == ["model", "model", "model", "projector"]
+    assert ggufs[0]["quant"] == "Q4_K_M"
+    assert ggufs[1]["quant"] == "Q5_K_M"
+    assert ggufs[1]["split"] is True
+    assert ggufs[1]["parts"] == 3
+    assert ggufs[1]["size_bytes"] == len(b"part1part2part3")
+    assert ggufs[2]["quant"] == "Q6_K_XL"
+    assert ggufs[3]["quant"] == "BF16"

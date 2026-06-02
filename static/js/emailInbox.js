@@ -722,10 +722,12 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
     em.is_read = true;
     if (itemEl) itemEl.classList.remove('email-unread');
 
-    // Get my own address to exclude from Reply All. window._myEmailAddress
-    // is populated from the configured account on init; the empty fallback
-    // simply means "no exclusion" — better than baking in a real address.
-    const myAddress = (window._myEmailAddress || '').toLowerCase();
+    // Addresses to exclude from Reply All. Prefer the full set of configured
+    // accounts (so a multi-account user's other mailboxes are excluded too),
+    // falling back to the single active address. Empty ⇒ no exclusion.
+    const myAddresses = (Array.isArray(window._myEmailAddresses) && window._myEmailAddresses.length)
+      ? window._myEmailAddresses
+      : (window._myEmailAddress ? [window._myEmailAddress] : []);
 
     let toAddress = data.from_address;
     let ccAddresses = '';
@@ -733,7 +735,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
 
     if (mode === 'reply-all') {
       // Build reply-all: TO = original sender, CC = everyone else (To + Cc minus me)
-      ccAddresses = buildReplyAllCc(data, myAddress);
+      ccAddresses = buildReplyAllCc(data, myAddresses);
     } else if (mode === 'forward') {
       toAddress = '';
       subjectPrefix = 'Fwd: ';

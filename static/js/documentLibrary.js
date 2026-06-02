@@ -3130,7 +3130,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       importFileBtn.addEventListener('click', () => fileInput.click());
       fileInput.addEventListener('change', async () => {
         if (fileInput.files.length === 0) return;
-        const files = fileInput.files;
+        const files = Array.from(fileInput.files);
         fileInput.value = '';
         // Swap the import icon for a whirlpool while files upload.
         const _orig = importFileBtn.innerHTML;

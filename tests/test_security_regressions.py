@@ -125,6 +125,18 @@ def test_readme_native_quickstart_uses_loopback():
     assert "Use `--host 0.0.0.0` only when you intentionally want" in readme
 
 
+def test_ollama_cookbook_runner_does_not_force_public_bind():
+    route = Path("routes/cookbook_routes.py").read_text(encoding="utf-8")
+    cookbook_js = Path("static/js/cookbook.js").read_text(encoding="utf-8")
+    assert 'OLLAMA_HOST="0.0.0.0:${ODYSSEUS_OLLAMA_PORT}" ollama serve' not in route
+    assert 'OLLAMA_HOST="${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}" ollama serve' in route
+    assert '_ollama_default_host = "0.0.0.0" if remote else "127.0.0.1"' in route
+    assert "WARNING: remote Ollama will bind" in route
+    assert "OLLAMA_HOST=0.0.0.0:${ollamaPort}" not in cookbook_js
+    assert "const bindHost = _envState.remoteHost ? '0.0.0.0' : '127.0.0.1';" in cookbook_js
+    assert "OLLAMA_HOST=${bindHost}:${ollamaPort}" in cookbook_js
+
+
 def _import_integrations(tmp_path, monkeypatch):
     """Import src.integrations with data + encryption key redirected to tmp."""
     _import_secret_storage(tmp_path, monkeypatch)
@@ -929,3 +941,20 @@ def test_mcp_oauth_page_escapes_reflected_values():
     body = text.split("def _oauth_authorize_page(", 1)[1].split("return f", 1)[0]
     for var in ("auth_url", "server_id", "host"):
         assert f"{var} = html.escape({var}" in body, var
+
+
+def test_chat_active_document_lookup_is_owner_scoped():
+    """The explicit `active_doc_id` path in /api/chat_stream must scope the
+    document lookup to the caller. Resolving by id alone let any user inject
+    another user's document into their own chat context (the session and
+    in-memory fallbacks were already owner/session-bound; this branch wasn't)."""
+    import re
+
+    src = Path(__file__).resolve().parents[1] / "routes" / "chat_routes.py"
+    text = src.read_text()
+    # The frontend-supplied id is resolved through the shared owner filter.
+    assert "_owner_session_filter(_doc_q, ctx.user)" in text
+    # And never by id alone (the previous IDOR shape, whitespace-insensitive).
+    flat = re.sub(r"\s+", " ", text)
+    assert "filter( DBDocument.id == active_doc_id, ).first()" not in flat
+    assert "filter(DBDocument.id == active_doc_id).first()" not in flat

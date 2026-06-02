@@ -10,6 +10,30 @@ def get_current_user(request: Request) -> Optional[str]:
     return getattr(request.state, 'current_user', None)
 
 
+def effective_user(request: Request):
+    """The real human behind the request, for ownership/attribution.
+
+    Cookie sessions resolve to the logged-in username. Bearer ``ody_`` callers
+    come through as the sandboxed pseudo-user "api" so they can't wander into
+    cookie/user routes by default, but their token was minted by, and belongs
+    to, a real owner stamped on ``request.state.api_token_owner``. Routes that
+    should attribute a token's actions to that owner (sessions, chat history)
+    call this instead of :func:`get_current_user`, so a paired client sees and
+    creates the SAME data as the owner's desktop UI rather than a separate
+    "api"-owned silo.
+
+    For cookie sessions this is identical to :func:`get_current_user`, so
+    swapping a route over is a no-op for browser users. A bearer token with no
+    owner falls back to :func:`get_current_user` (the "api" pseudo-user), so it
+    never escalates.
+    """
+    if getattr(request.state, "api_token", False):
+        owner = getattr(request.state, "api_token_owner", None)
+        if owner:
+            return owner
+    return get_current_user(request)
+
+
 def _auth_disabled() -> bool:
     """True when the operator has explicitly turned off auth via .env.
     Mirrors the AUTH_ENABLED parse in app.py / core/middleware.py so the

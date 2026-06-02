@@ -23,6 +23,7 @@ from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user
 from routes.session_routes import _verify_session_owner
+from routes.document_helpers import _owner_session_filter
 from core.database import SessionLocal, get_session_mode, set_session_mode
 from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
@@ -424,9 +425,12 @@ def setup_chat_routes(
         try:
             if active_doc_id:
                 logger.info(f"[doc-inject] active_doc_id from frontend: {active_doc_id}")
-                active_doc = _doc_db.query(DBDocument).filter(
-                    DBDocument.id == active_doc_id,
-                ).first()
+                # Scope to the caller's documents. The session and in-memory
+                # fallbacks below are already owner/session-bound; this
+                # explicit-id path looked up by id alone, so a user could
+                # inject another user's document by passing its id.
+                _doc_q = _doc_db.query(DBDocument).filter(DBDocument.id == active_doc_id)
+                active_doc = _owner_session_filter(_doc_q, ctx.user).first()
                 if active_doc:
                     logger.info(f"[doc-inject] found by ID: title={active_doc.title!r}, lang={active_doc.language!r}, is_active={active_doc.is_active}, content_len={len(active_doc.current_content or '')}")
                 else:
@@ -769,6 +773,7 @@ def setup_chat_routes(
                 return
             elif chat_mode == "chat":
                 _chat_start = time.time()
+                _answered_by = None  # set if the selected model failed and a fallback answered
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
                     _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
@@ -797,9 +802,14 @@ def setup_chat_routes(
                                         full_response += data["delta"]
                                         _stream_set(session, partial=full_response)
                                     yield chunk
+                                elif data.get("type") == "fallback":
+                                    # Selected model failed; a fallback answered.
+                                    # Forward the notice and remember the real model.
+                                    _answered_by = data.get("answered_by") or _answered_by
+                                    yield chunk
                                 elif data.get("type") == "usage":
                                     last_metrics = data.get("data", {})
-                                    last_metrics["model"] = sess.model
+                                    last_metrics["model"] = _answered_by or sess.model
                                     if ctx.context_length and last_metrics.get("input_tokens"):
                                         pct = min(round((last_metrics["input_tokens"] / ctx.context_length) * 100, 1), 100.0)
                                         last_metrics["context_percent"] = pct
@@ -867,6 +877,7 @@ def setup_chat_routes(
                 # ── Agent mode: full agent loop with tools ──
                 _agent_rounds = 0
                 _agent_tool_calls = 0
+                _answered_by = None  # set if the selected model failed and a fallback answered
                 try:
                     from src.settings import get_setting
                     _tool_budget = int(get_setting("agent_max_tool_calls", 0))
@@ -911,9 +922,16 @@ def setup_chat_routes(
                                     elif data.get("type") == "tool_start":
                                         _agent_tool_calls += 1
                                     yield chunk
+                                elif data.get("type") == "fallback":
+                                    # Selected model failed; a fallback answered.
+                                    # Forward the notice and remember the real
+                                    # model so metrics reflect it, not the masked
+                                    # selected model.
+                                    _answered_by = data.get("answered_by") or _answered_by
+                                    yield chunk
                                 elif data.get("type") == "metrics":
                                     last_metrics = data.get("data", {})
-                                    last_metrics["model"] = sess.model
+                                    last_metrics["model"] = _answered_by or sess.model
                                     yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             except json.JSONDecodeError:
                                 yield chunk

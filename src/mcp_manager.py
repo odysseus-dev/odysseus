@@ -12,6 +12,24 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+def _format_mcp_connection_error(name: str, command: str = "", args: Optional[List[str]] = None, error: Exception = None) -> str:
+    """Return a user-actionable MCP connection error message."""
+    args = args or []
+    raw_error = str(error) if error else "Unknown error"
+    command_line = " ".join([command or "", *args]).strip()
+    lower_command = command_line.lower()
+
+    if "@playwright/mcp" in lower_command:
+        return (
+            f"{raw_error}\n\n"
+            "Browser MCP could not start. On fresh installs, cache the Playwright MCP package once before connecting:\n\n"
+            "npx -y @playwright/mcp@latest --version\n\n"
+            "Then restart Odysseus and reconnect the Browser MCP server."
+        )
+
+    return raw_error
+
+
 
 class McpManager:
     """Manages MCP server connections and tool routing."""
@@ -47,7 +65,8 @@ class McpManager:
                 return False
         except Exception as e:
             logger.error(f"Failed to connect MCP server {name} ({server_id}): {e}")
-            self._connections[server_id] = {"status": "error", "error": str(e), "name": name}
+            error_message = _format_mcp_connection_error(name, command or "", args or [], e)
+            self._connections[server_id] = {"status": "error", "error": error_message, "name": name}
             return False
 
     async def _connect_stdio(self, server_id: str, name: str, command: str, args: List[str], env: Dict[str, str]) -> bool:

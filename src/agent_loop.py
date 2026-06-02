@@ -457,6 +457,11 @@ _API_HOSTS = frozenset([
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
     "ollama.com",
+    # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
+    # Without these, `_is_api_model` falls back to keyword sniffing on the
+    # model name, so well-behaved local servers don't get native tool
+    # schemas and the agent silently degrades to fenced-block parsing.
+    "localhost", "127.0.0.1", "host.docker.internal",
 ])
 _MCP_KEYWORDS = frozenset(["browse", "browser", "website", "calendar", "event", "email",
                            "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])
@@ -1096,8 +1101,20 @@ def _append_tool_results(
     `round_reasoning` (DeepSeek / vLLM reasoning-parser deltas) is echoed
     back via `reasoning_content` on the assistant message — DeepSeek's API
     rejects follow-up requests in thinking mode that don't include the
-    prior reasoning. Other vendors ignore the extra field.
+    prior reasoning.
+
+    NOTE: it is NOT universally ignored. Nemotron's chat template re-injects
+    EVERY prior `reasoning_content` as a <think> block, and this agent loop is
+    trimmed only once (before the loop), so across rounds the reasoning piles
+    up unbounded — bloating context and feeding the model its own prior
+    reasoning, which reinforces repetition/looping. So keep reasoning_content
+    on the MOST RECENT assistant turn only: enough for DeepSeek continuity,
+    without the per-round accumulation.
     """
+    # Strip reasoning_content from earlier assistant turns; only the newest keeps it.
+    for _m in messages:
+        if _m.get("role") == "assistant":
+            _m.pop("reasoning_content", None)
     if used_native and native_tool_calls:
         assistant_msg = {"role": "assistant"}
         # When the model emitted ONLY tool calls (no prose), content must be
@@ -1118,6 +1135,11 @@ def _append_tool_results(
                     "name": tc.get("name", ""),
                     "arguments": tc.get("arguments", "{}"),
                 },
+                # Gemini 3 requires the opaque thought_signature it returned with
+                # each function call to be echoed back on the follow-up turn, or
+                # the next request 400s. Replay it when present; other providers
+                # never emit it (their payload builders just ignore the field).
+                **({"extra_content": tc["extra_content"]} if tc.get("extra_content") else {}),
             }
             for j, tc in enumerate(native_tool_calls)
         ]
@@ -1633,6 +1655,12 @@ async def stream_agent_loop(
                         real_output_tokens += u.get("output_tokens", 0)
                         last_round_input_tokens = round_input
                         has_real_usage = True
+                    elif data.get("type") == "fallback":
+                        # The selected model failed and another answered; surface
+                        # the notice so a misconfigured provider isn't masked.
+                        logger.warning(f"[agent] round {round_num} fell back: "
+                                       f"{data.get('selected_model')} -> {data.get('answered_by')}")
+                        yield chunk
                     elif "delta" in data:
                         if not first_token_received:
                             time_to_first_token = time.time() - total_start
@@ -1973,8 +2001,11 @@ async def stream_agent_loop(
                 )
             desc, result = await _tool_task
 
-            # Extract structured web sources from web_search tool output
-            _src_text = result.get("results") or result.get("stdout") or ""
+            # Extract structured web sources from web_search tool output.
+            # web_search returns {"output": ..., "exit_code": 0}; check "output"
+            # first so the <!-- SOURCES:…--> marker is found and stripped even
+            # when the result doesn't carry a "results" or "stdout" key.
+            _src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
             if block.tool_type == "web_search" and _src_text:
                 _src_marker = "<!-- SOURCES:"
                 _src_idx = _src_text.find(_src_marker)
@@ -1986,7 +2017,9 @@ async def stream_agent_loop(
                             yield f'data: {json.dumps({"type": "web_sources", "data": _extracted_sources})}\n\n'
                             # Strip the marker from the result so it doesn't show in chat
                             _clean = _src_text[:_src_idx].rstrip()
-                            if "results" in result:
+                            if "output" in result:
+                                result["output"] = _clean
+                            elif "results" in result:
                                 result["results"] = _clean
                             elif "stdout" in result:
                                 result["stdout"] = _clean
@@ -2132,6 +2165,13 @@ async def stream_agent_loop(
 
         # Separator in accumulated response
         full_response += "\n\n"
+
+    # If the response is completely empty and no tools were executed,
+    # yield a fallback message so the user is not left hanging.
+    if not full_response.strip() and not tool_events:
+        _error_msg = "The model returned an empty response. Please try again or switch to a different model."
+        yield f'data: {json.dumps({"delta": _error_msg})}\n\n'
+        full_response = _error_msg
 
     # --- Final metrics ---
     total_duration = time.time() - total_start
