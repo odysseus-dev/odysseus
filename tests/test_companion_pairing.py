@@ -41,6 +41,8 @@ def _get_db_session():
 # our real get_db_session/ApiToken for the mint test.
 class _DBStub(types.ModuleType):
     def __getattr__(self, name):  # noqa: D401
+        if name == "__all__":
+            raise AttributeError(name)
         return MagicMock()
 
 

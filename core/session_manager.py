@@ -579,8 +579,8 @@ class SessionManager:
     # ------------------------------------------------------------------
 
     def get_sessions_for_user(self, username: Optional[str] = None) -> Dict[str, Session]:
-        """Return sessions for a specific user (or all if username is None)."""
-        if username is None:
+        """Return sessions for a specific user (or all if username is None or empty)."""
+        if not username:
             return self.sessions
         return {
             sid: s for sid, s in self.sessions.items()
