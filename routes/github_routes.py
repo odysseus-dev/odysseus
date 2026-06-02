@@ -130,9 +130,9 @@ def _row_to_dict(row: GitHubIntegration) -> dict:
         "configured": True,
         "github_username": row.github_username,
         "enabled": bool(row.enabled),
-        "write_enabled": bool(getattr(row, "write_enabled", False)),
-        "confirm_before_write": bool(getattr(row, "confirm_before_write", True)),
-        "notify_enabled": bool(getattr(row, "notify_enabled", False)),
+        "write_enabled": bool(row.write_enabled),
+        "confirm_before_write": bool(getattr(row, "confirm_before_write", True)),  # getattr: migration guard
+        "notify_enabled": bool(row.notify_enabled),
         "briefing": briefing,
         "briefing_agent_preview": strip_briefing_prompts(briefing),
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -172,6 +172,7 @@ async def get_unread_notif_count(owner: str) -> int:
     _NOTIF_CACHE_TTL seconds so injecting it into chat doesn't hit GitHub on
     every message. Only runs when the user opted into notify_enabled.
     Best-effort: on any failure returns the last known count (or 0)."""
+    # Phase 1: read-only DB check — is the cache still fresh?
     with SessionLocal() as db:
         row = db.query(GitHubIntegration).filter_by(owner=owner or "").first()
         if not row or not row.enabled or not row.notify_enabled or not row.pat_encrypted:
@@ -180,28 +181,40 @@ async def get_unread_notif_count(owner: str) -> int:
         last = row.last_notif_polled_at
         if last and (now - last).total_seconds() < _NOTIF_CACHE_TTL:
             return int(row.last_notif_count or 0)
+        # Stash what we need for the HTTP call, then close the session.
         pat = row.pat_encrypted
-        if pat.startswith("enc:"):
-            from src.secret_storage import decrypt as _decrypt
-            pat = _decrypt(pat)
-        headers = {
-            "Authorization": f"Bearer {pat}",
-            "Accept": "application/vnd.github+json",
-            "User-Agent": USER_AGENT,
-        }
-        try:
-            async with httpx.AsyncClient(timeout=GH_TIMEOUT) as client:
-                # Default (all=false) returns only unread notifications.
-                resp = await client.get(f"{GH_API}/notifications", headers=headers, params={"per_page": 50})
-            if resp.status_code != 200:
-                return int(row.last_notif_count or 0)
-            count = len(resp.json() or [])
-        except Exception:
-            return int(row.last_notif_count or 0)
-        row.last_notif_count = count
-        row.last_notif_polled_at = now
-        db.commit()
-        return count
+        last_known = int(row.last_notif_count or 0)
+
+    # Phase 2: HTTP call outside the DB session so a slow API doesn't hold a
+    # connection open for up to GH_TIMEOUT seconds.
+    if pat.startswith("enc:"):
+        from src.secret_storage import decrypt as _decrypt
+        pat = _decrypt(pat)
+    headers = {
+        "Authorization": f"Bearer {pat}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": USER_AGENT,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=GH_TIMEOUT) as client:
+            resp = await client.get(f"{GH_API}/notifications", headers=headers, params={"per_page": 50})
+        if resp.status_code != 200:
+            return last_known
+        count = len(resp.json() or [])
+    except Exception:
+        return last_known
+
+    # Phase 3: write back the fresh count + timestamp.
+    try:
+        with SessionLocal() as db:
+            row = db.query(GitHubIntegration).filter_by(owner=owner or "").first()
+            if row:
+                row.last_notif_count = count
+                row.last_notif_polled_at = datetime.utcnow()
+                db.commit()
+    except Exception:
+        pass
+    return count
 
 
 # ── Router setup ──
@@ -272,7 +285,8 @@ def setup_github_routes(mcp_manager=None):
 
     @router.delete("/integration")
     async def delete_integration(request: Request):
-        """Remove the integration entirely. PAT, username, everything — gone."""
+        """Remove the integration row (PAT, username, briefing). On reconnect
+        the briefing reseeds to the default."""
         owner = require_user(request)
         with SessionLocal() as db:
             row = db.query(GitHubIntegration).filter_by(owner=owner or "").first()

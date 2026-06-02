@@ -1,10 +1,9 @@
 """
 github_server.py
 
-MCP server exposing read-only GitHub tools — list the user's PRs, fetch a
-PR's details/diff/comments, and search issues. Authenticated with a per-user
-Personal Access Token stored encrypted in `github_integrations.pat_encrypted`
-and decrypted at request time.
+MCP server exposing GitHub tools (read + gated write). Authenticated with a
+per-user Personal Access Token stored encrypted in
+`github_integrations.pat_encrypted` and decrypted at request time.
 
 Routing: a request comes in with no per-user context (MCP is process-wide).
 We resolve which user's PAT to use via the `ODYSSEUS_GH_OWNER` env var that the
@@ -12,11 +11,11 @@ spawner injects when the server is started. For now we run one MCP instance per
 app process, scoped to whichever owner the integration row belongs to.
 Multi-tenant servers can later switch this to per-call routing.
 
-Tool gating happens upstream in routes/chat_routes.py: the gh_* family is added
-to disabled_tools unless the user has the integration enabled AND toggled it on
-for the turn. These tools are deliberately minimal wrappers around the GitHub
-REST API; the trimming helpers keep response bodies small so we don't shove
-hundreds of KB of JSON into the agent's context on every call.
+Tool gating happens upstream in routes/chat_routes.py: the gh_* read tools are
+gated by `allow_github`, and the write tools additionally require
+`allow_github_write` + the persisted `write_enabled` setting. By the time a
+tool call reaches dispatch here, the chat layer has already authorized it.
+The tools are minimal wrappers; trimming helpers keep responses small.
 """
 
 import json
@@ -465,7 +464,8 @@ TOOLS: list[Tool] = [
             "Push a local git working tree's branch to its remote, using the user's GitHub PAT for "
             "HTTPS authentication. Assumes commits have already been authored locally (this tool does "
             "NOT create commits). Requires repo_path to be a real git working tree on the Odysseus "
-            "host, so it only works when Odysseus runs alongside the user's local clones. "
+            "host, so it only works for local/self-hosted installs where Odysseus runs alongside "
+            "the user's clones (not Docker or cloud-hosted deployments without volume mounts). "
             "When force=true, uses --force-with-lease (refuses if the remote ref advanced since you "
             "last fetched). "
             "ON LEASE REJECTION (`(stale info)` in output): do NOT silently retry with force=true. "

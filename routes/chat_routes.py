@@ -229,79 +229,53 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
         db.close()
 
 
-def _github_is_active(owner: str | None) -> bool:
-    """True iff the user has GitHub configured AND the integration is enabled
-    (master toggle ON in Settings). Used as a defense-in-depth gate alongside
-    the per-turn `allow_github` form flag — a stale tab can carry
-    allow_github=true in its DOM after the user paused the integration in
-    another tab, and we don't want those requests to still invoke gh_* tools.
+class _GitHubState:
+    """Single-query snapshot of the GitHub integration row for a user.
 
-    Failures (missing table on a fresh install, DB error) return False so the
-    chat path never breaks because of GitHub setup state."""
-    try:
-        from core.database import SessionLocal as _SL, GitHubIntegration as _GI
-    except Exception:
-        return False
-    try:
-        with _SL() as db:
-            row = db.query(_GI).filter_by(owner=owner or "").first()
-        return bool(row and row.enabled and row.pat_encrypted)
-    except Exception:
-        return False
+    Every per-turn helper (is_active, write_active, briefing, confirm, notif)
+    was previously its own function doing its own DB query. That's 4-5
+    round-trips per chat message when GitHub is on. This class loads the row
+    once and exposes the derived values as properties.
 
+    All failures (missing table, DB error, unconfigured) result in a safe
+    default (inactive, no briefing, no hint) so the chat path never breaks."""
 
-def _github_write_active(owner: str | None) -> bool:
-    """True iff the integration is active AND the user has persisted write
-    actions on (write_enabled in Settings). Server-side companion to the
-    per-turn allow_github_write form flag: even if a stale tab still sends
-    allow_github_write=true after the user turned writes off, the write tools
-    stay disabled. Failures return False (deny)."""
-    try:
-        from core.database import SessionLocal as _SL, GitHubIntegration as _GI
-    except Exception:
-        return False
-    try:
-        with _SL() as db:
-            row = db.query(_GI).filter_by(owner=owner or "").first()
-        return bool(row and row.enabled and row.pat_encrypted and row.write_enabled)
-    except Exception:
-        return False
+    def __init__(self, owner: str | None):
+        self._row = None
+        try:
+            from core.database import SessionLocal as _SL, GitHubIntegration as _GI
+            with _SL() as db:
+                self._row = db.query(_GI).filter_by(owner=owner or "").first()
+        except Exception:
+            pass
 
+    @property
+    def is_active(self) -> bool:
+        r = self._row
+        return bool(r and r.enabled and r.pat_encrypted)
 
-def _fetch_github_briefing(owner: str | None) -> str | None:
-    """Return the user's GitHub briefing with editing-prompt comments stripped,
-    or None if the integration isn't set up / enabled / has no briefing. Safe to
-    call unconditionally; failures return None so chat never breaks."""
-    try:
-        from core.database import SessionLocal as _SL, GitHubIntegration as _GI
-        from routes.github_routes import strip_briefing_prompts
-    except Exception:
-        return None
-    try:
-        with _SL() as db:
-            row = db.query(_GI).filter_by(owner=owner or "").first()
-        if not row or not row.enabled or not row.briefing:
+    @property
+    def write_active(self) -> bool:
+        r = self._row
+        return bool(r and r.enabled and r.pat_encrypted and r.write_enabled)
+
+    @property
+    def briefing(self) -> str | None:
+        r = self._row
+        if not r or not r.enabled or not r.briefing:
             return None
-        return strip_briefing_prompts(row.briefing) or None
-    except Exception:
-        return None
-
-
-def _fetch_github_confirm_instruction(owner: str | None) -> str | None:
-    """When the user has 'ask before write actions' on (the default), return an
-    instruction that overrides the briefing's WRITE ACTIONS section to require
-    explicit user confirmation before any write. Returns None when the flag is
-    off (agent acts and informs per the briefing)."""
-    try:
-        from core.database import SessionLocal as _SL, GitHubIntegration as _GI
-    except Exception:
-        return None
-    try:
-        with _SL() as db:
-            row = db.query(_GI).filter_by(owner=owner or "").first()
-        if not row or not row.enabled:
+        try:
+            from routes.github_routes import strip_briefing_prompts
+            return strip_briefing_prompts(r.briefing) or None
+        except Exception:
             return None
-        if getattr(row, "confirm_before_write", True):
+
+    @property
+    def confirm_instruction(self) -> str | None:
+        r = self._row
+        if not r or not r.enabled:
+            return None
+        if getattr(r, "confirm_before_write", True):
             return (
                 "IMPORTANT: Before taking ANY write action on GitHub (posting "
                 "comments, opening or editing PRs, pushing commits, closing "
@@ -311,21 +285,35 @@ def _fetch_github_confirm_instruction(owner: str | None) -> str | None:
                 "initiative, even if the user's request implies them."
             )
         return None
-    except Exception:
-        return None
+
+    @property
+    def notify_enabled(self) -> bool:
+        r = self._row
+        return bool(r and r.enabled and r.notify_enabled and r.pat_encrypted)
+
+    @property
+    def _notif_cache_fresh(self) -> bool:
+        r = self._row
+        if not r or not r.last_notif_polled_at:
+            return False
+        from datetime import datetime
+        return (datetime.utcnow() - r.last_notif_polled_at).total_seconds() < 60
+
+    @property
+    def cached_notif_count(self) -> int:
+        r = self._row
+        return int(r.last_notif_count or 0) if r else 0
 
 
-async def _fetch_github_notif_hint(owner: str | None) -> str | None:
+async def _fetch_github_notif_hint(gh: _GitHubState) -> str | None:
     """If the user opted into notifications and has unread ones, return a
-    one-liner telling the agent to surface the count and OFFER to sift through
-    them — not to act on them unprompted. None when notifications are off, the
-    count is zero, or anything fails."""
+    one-liner telling the agent to surface the count and offer to sift through
+    them. None when notifications are off, count is zero, or anything fails."""
+    if not gh.notify_enabled:
+        return None
     try:
         from routes.github_routes import get_unread_notif_count
-    except Exception:
-        return None
-    try:
-        count = await get_unread_notif_count(owner or "")
+        count = await get_unread_notif_count(gh._row.owner if gh._row else "")
     except Exception:
         return None
     if count <= 0:
@@ -584,26 +572,21 @@ def setup_chat_routes(
 
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
 
-        # Per-turn extra system prompts. Extension point: features that opt in
-        # for the turn (e.g. the GitHub briefing) append trusted system-prompt
-        # text here, and build_chat_context layers it onto the preface. Empty
-        # in the base path.
+        # Per-turn extra system prompts. Features that opt in for the turn
+        # append trusted text here; build_chat_context layers it onto the
+        # preface. Empty in the base path.
         _extra_prompts: list[str] = []
 
-        # GitHub briefing: when GitHub is on for this turn, append the user's
-        # (comment-stripped) briefing so the agent works to their standards.
+        # GitHub: one DB query for all GitHub state (active, briefing, confirm,
+        # notifications). Only runs when the toggle is on for the turn.
+        _gh = None
         if str(allow_github).lower() == "true":
-            _gh_brief = _fetch_github_briefing(getattr(sess, "owner", None) or "")
-            if _gh_brief:
-                _extra_prompts.append(_gh_brief)
-            _gh_confirm = _fetch_github_confirm_instruction(getattr(sess, "owner", None) or "")
-            if _gh_confirm:
-                _extra_prompts.append(_gh_confirm)
-
-        # GitHub notifications: when the user opted in, surface the unread count
-        # so the agent can let them know and offer to sift through them.
-        if str(allow_github).lower() == "true":
-            _gh_notif = await _fetch_github_notif_hint(getattr(sess, "owner", None) or "")
+            _gh = _GitHubState(getattr(sess, "owner", None) or "")
+            if _gh.briefing:
+                _extra_prompts.append(_gh.briefing)
+            if _gh.confirm_instruction:
+                _extra_prompts.append(_gh.confirm_instruction)
+            _gh_notif = await _fetch_github_notif_hint(_gh)
             if _gh_notif:
                 _extra_prompts.append(_gh_notif)
 
@@ -705,11 +688,13 @@ def setup_chat_routes(
             "gh_open_pr", "gh_edit_pr", "gh_close_issue",
             "gh_push_commits", "gh_mark_notification_read",
         }
-        _gh_owner = getattr(sess, "owner", None) or ""
-        _gh_active = _github_is_active(_gh_owner)
-        if str(allow_github).lower() != "true" or not _gh_active:
+        # Reuse the _GitHubState loaded above (or create it if GitHub wasn't
+        # toggled on for the turn — in that case we're disabling everything).
+        if not _gh:
+            _gh = _GitHubState(getattr(sess, "owner", None) or "")
+        if str(allow_github).lower() != "true" or not _gh.is_active:
             disabled_tools.update(_gh_read_tools | _gh_write_tools)
-        elif str(allow_github_write).lower() != "true" or not _github_write_active(_gh_owner):
+        elif str(allow_github_write).lower() != "true" or not _gh.write_active:
             # Read tools allowed, but write tools require BOTH the per-turn
             # opt-in AND write_enabled persisted in Settings.
             disabled_tools.update(_gh_write_tools)
