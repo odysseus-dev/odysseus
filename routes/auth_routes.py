@@ -32,6 +32,11 @@ from src.integrations import (
 logger = logging.getLogger(__name__)
 
 
+# Request model for user login
+# - username: account username
+# - password: account password
+# - remember: whether to create a persistent session
+# - totp_code: optional 2FA/TOTP verification code
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -39,45 +44,65 @@ class LoginRequest(BaseModel):
     totp_code: Optional[str] = None
 
 
+# Request model used during first-time system setup
+# Creates the initial administrator account
 class SetupRequest(BaseModel):
     username: str
     password: str
 
 
+# Request model for self-service user registration
 class SignupRequest(BaseModel):
     username: str
     password: str
 
 
+# Request model for changing the current user's password
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
 
 
+# Request model for admin-created user accounts
+# - is_admin determines whether the new account has administrator privileges
 class CreateUserRequest(BaseModel):
     username: str
     password: str
     is_admin: bool = False
 
 
+# Request model for deleting an existing user account
 class DeleteUserRequest(BaseModel):
     username: str
 
 
+# Request model for renaming an existing user account
 class RenameUserRequest(BaseModel):
     username: str
 
+
+# Request model for enabling/disabling public user registration
 class SetOpenRegistrationRequest(BaseModel):
     enabled: bool
 
+
+# Name of the authentication session cookie stored in the browser
 SESSION_COOKIE = "odysseus_session"
 
 
 def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+    # Rate limiter for login attempts
+    # Helps prevent brute-force attacks
     _login_limiter = RateLimiter(max_requests=15, window_seconds=60)
+
+    # Rate limiter for signup requests
+    # Prevents registration abuse and spam account creation
     _signup_limiter = RateLimiter(max_requests=3, window_seconds=300)
+
+    # Rate limiter for first-run setup endpoint
+    # Protects the initial admin creation process
     _setup_limiter = RateLimiter(max_requests=3, window_seconds=300)
 
     def _get_current_user(request: Request) -> Optional[str]:
