@@ -143,6 +143,90 @@ def test_housekeeping_noop_when_ai_changes_nothing():
     assert saved == [], "save() must not be called when there are no changes"
 
 
+def test_housekeeping_resolves_endpoint_per_owner_group():
+    """Housekeeping with owner="" uses each group owner's configured model,
+    not the global/empty-owner model. Alice has a personal utility endpoint;
+    Bob does not, so he falls back to the global model."""
+    memories = [
+        _mem("a1", "Alice note one", "alice"),
+        _mem("a2", "Alice note two", "alice"),
+        _mem("b1", "Bob note one", "bob"),
+        _mem("b2", "Bob note two", "bob"),
+    ]
+
+    def _resolve(kind, owner=""):
+        if owner == "alice":
+            return ("http://alice-endpoint", "alice-model", {})
+        return ("http://global-endpoint", "global-model", {})
+
+    used_models = []
+
+    async def capturing_llm(**kwargs):
+        used_models.append(kwargs["model"])
+        mems = [m for m in memories if m["owner"] == ("alice" if kwargs["model"] == "alice-model" else "bob")]
+        return _keep_response(mems)
+
+    mock_mgr = MagicMock()
+    mock_mgr.load_all.return_value = list(memories)
+    mock_mgr.save.return_value = None
+
+    with patch.dict(sys.modules, {
+        "src.constants": types.SimpleNamespace(DATA_DIR="/fake"),
+        "src.memory": types.SimpleNamespace(MemoryManager=MagicMock(return_value=mock_mgr)),
+        "src.endpoint_resolver": types.SimpleNamespace(resolve_endpoint=_resolve),
+        "src.llm_core": types.SimpleNamespace(llm_call_async=capturing_llm),
+        "src.text_helpers": types.SimpleNamespace(strip_think=lambda s, **kw: s),
+    }):
+        try:
+            asyncio.run(action_consolidate_memory(owner=""))
+        except TaskNoop:
+            pass
+
+    assert "alice-model" in used_models, "Alice's call must use her personal model"
+    assert "global-model" in used_models, "Bob (no personal config) must fall back to global model"
+
+
+def test_housekeeping_enters_ai_path_without_global_model():
+    """No global model configured, but alice has a personal utility endpoint.
+    The AI tidy must still run for alice's group — the outer gate must not
+    block housekeeping when only per-owner models are available."""
+    memories = [
+        _mem("a1", "Alice note one", "alice"),
+        _mem("a2", "Alice note two", "alice"),
+    ]
+
+    def _resolve(kind, owner=""):
+        if owner == "alice":
+            return ("http://alice-endpoint", "alice-model", {})
+        return (None, None, {})  # no global model
+
+    ai_called = []
+
+    async def capturing_llm(**kwargs):
+        ai_called.append(kwargs["model"])
+        return _keep_response([m for m in memories if m["owner"] == "alice"])
+
+    mock_mgr = MagicMock()
+    mock_mgr.load_all.return_value = list(memories)
+    mock_mgr.save.return_value = None
+
+    with patch.dict(sys.modules, {
+        "src.constants": types.SimpleNamespace(DATA_DIR="/fake"),
+        "src.memory": types.SimpleNamespace(MemoryManager=MagicMock(return_value=mock_mgr)),
+        "src.endpoint_resolver": types.SimpleNamespace(resolve_endpoint=_resolve),
+        "src.llm_core": types.SimpleNamespace(llm_call_async=capturing_llm),
+        "src.text_helpers": types.SimpleNamespace(strip_think=lambda s, **kw: s),
+    }):
+        try:
+            asyncio.run(action_consolidate_memory(owner=""))
+        except TaskNoop:
+            pass
+
+    assert ai_called == ["alice-model"], (
+        "AI must run for alice's group even when no global model is configured"
+    )
+
+
 def test_named_owner_ai_prompt_excludes_other_owners_memories():
     """owner="alice" → the AI prompt must contain only alice's memory IDs."""
     memories = [

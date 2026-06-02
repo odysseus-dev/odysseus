@@ -108,7 +108,11 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         if not url or not model:
             url, model, headers = resolve_endpoint("default", owner=owner)
 
-        if url and model:
+        # For housekeeping (owner=""), individual owner groups may have their
+        # own model even when no global model is configured, so always attempt
+        # the AI path and let per-group resolution decide. For named-owner
+        # runs, gate on the resolved model as before.
+        if url and model or not _owner_clean:
             try:
                 from src.text_helpers import strip_think
                 text_limit = 2000
@@ -135,6 +139,9 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                             g_url, g_model, g_headers = url, model, headers
                     else:
                         g_url, g_model, g_headers = url, model, headers
+                    if not g_url or not g_model:
+                        keep_ids.update(m.get("id") for m in group_memories if m.get("id"))
+                        continue
                     try:
                         items = [
                             {
