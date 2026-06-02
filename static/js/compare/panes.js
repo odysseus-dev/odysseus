@@ -380,9 +380,11 @@ async function _addPane(anchorBtn) {
 async function _createAndAppendPane(m) {
   const i = state._selectedModels.length;  // New index
 
-  // Create session
+  // Create session. Blind mode: neutral name so the sidebar / /api/sessions
+  // don't reveal the model before voting (issue #1285).
   const fd = new FormData();
-  fd.append('name', '[CMP] ' + m.name);
+  const _slot = state._parallel ? String.fromCharCode(65 + i) : String(i + 1);
+  fd.append('name', state._blindMode ? '[CMP] Model ' + _slot : '[CMP] ' + m.name);
   fd.append('endpoint_url', m.url || '');
   fd.append('model', m.id || '');
   if (m.endpointId) {
@@ -584,7 +586,10 @@ function _showModelSwapDropdown(paneIdx, titleBtn) {
         fetch(`${state.API_BASE}/api/session/${oldSid}`, { method: 'DELETE' }).catch(() => {});
       }
       const fd = new FormData();
-      fd.append('name', '[CMP] ' + m.name);
+      // Blind mode: neutral name so the swapped-in model isn't revealed via the
+      // sidebar / /api/sessions before voting (issue #1285).
+      const _slot = state._parallel ? String.fromCharCode(65 + paneIdx) : String(paneIdx + 1);
+      fd.append('name', state._blindMode ? '[CMP] Model ' + _slot : '[CMP] ' + m.name);
       fd.append('endpoint_url', m.url || '');
       fd.append('model', m.id || '');
       if (m.endpointId) {

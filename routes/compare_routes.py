@@ -47,12 +47,24 @@ def setup_compare_routes(session_manager: SessionManager):
         sid_a = str(uuid.uuid4())
         sid_b = str(uuid.uuid4())
 
-        # Create ephemeral sessions (prefixed [CMP])
-        for sid, model, endpoint in [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]:
+        blind = str(is_blind).lower() == "true"
+
+        # Create ephemeral sessions (prefixed [CMP]). In blind mode the session
+        # name must NOT reveal the model: the sidebar and /api/sessions expose it,
+        # which let a user map "Model A" to the real model before voting and
+        # defeated blind compare (issue #1285). Use the same neutral slot labels
+        # the pane UI uses ("Model A"/"Model B").
+        for slot, (sid, model, endpoint) in enumerate(
+            [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]
+        ):
             user = getattr(request.state, 'current_user', None)
+            sess_name = (
+                f"[CMP] Model {chr(ord('A') + slot)}"
+                if blind else f"[CMP] {model.split('/')[-1]}"
+            )
             session_manager.create_session(
                 session_id=sid,
-                name=f"[CMP] {model.split('/')[-1]}",
+                name=sess_name,
                 endpoint_url=endpoint,
                 model=model,
                 rag=False,
@@ -76,7 +88,6 @@ def setup_compare_routes(session_manager: SessionManager):
                 db.close()
 
         # Blind mapping: randomly assign left/right
-        blind = str(is_blind).lower() == "true"
         if blind:
             mapping = {"left": "a", "right": "b"}
             if random.random() > 0.5:
@@ -107,12 +118,14 @@ def setup_compare_routes(session_manager: SessionManager):
         session_left = sid_a if mapping["left"] == "a" else sid_b
         session_right = sid_a if mapping["right"] == "a" else sid_b
 
+        # In blind mode, do not echo which model is on which side — the reveal
+        # happens on vote (issue #1285).
         return {
             "id": comp_id,
             "session_left": session_left,
             "session_right": session_right,
-            "model_left": model_a if mapping["left"] == "a" else model_b,
-            "model_right": model_a if mapping["right"] == "a" else model_b,
+            "model_left": None if blind else (model_a if mapping["left"] == "a" else model_b),
+            "model_right": None if blind else (model_a if mapping["right"] == "a" else model_b),
             "is_blind": blind,
             "mapping": mapping,
         }
