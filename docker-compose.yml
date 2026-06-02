@@ -160,7 +160,7 @@ services:
   nexus-news:
     build: ./nexus-news
     ports:
-      - "127.0.0.1:8100:8100"
+      - "127.0.0.1:8101:8100"
     volumes:
       - nexus-news-data:/app/data
       - ./nexus-news/config.yaml:/app/config.yaml:ro
@@ -313,7 +313,7 @@ services:
     environment:
       - MCP_BRIDGE_TOKEN=${MCP_BRIDGE_TOKEN:-}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8378/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8378/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
