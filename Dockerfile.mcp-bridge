@@ -1,0 +1,7 @@
+FROM python:3.12-slim
+WORKDIR /app
+RUN pip install --no-cache-dir starlette sse-starlette uvicorn
+COPY mcp_bridge.py .
+COPY data/tech_duinn/ /app/data/tech_duinn/
+EXPOSE 8378
+CMD ["python", "mcp_bridge.py", "--port", "8378"]

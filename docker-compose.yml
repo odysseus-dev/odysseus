@@ -302,6 +302,23 @@ services:
       - NEXUS_BACKUP_SCHEDULE=0 3 * * *
     restart: unless-stopped
 
+  mcp-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp-bridge
+    ports:
+      - "127.0.0.1:8378:8378"
+    volumes:
+      - ./data/tech_duinn:/app/data/tech_duinn
+    environment:
+      - MCP_BRIDGE_TOKEN=${MCP_BRIDGE_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8378/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
 volumes:
   searxng-data:
   chromadb-data:
