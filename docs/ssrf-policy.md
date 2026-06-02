@@ -43,8 +43,12 @@ Current trusted configured-endpoint handling:
   `security_notice` metadata. Update rejects metadata-service targets but
   continues to allow loopback, LAN, and Tailscale CardDAV servers.
 
-ntfy should use `trusted_user_configured_endpoint` in a separate
-endpoint-specific PR if it needs the same response metadata.
+- `routes.auth_routes`: ntfy integration list/create/update/test returns
+  `security_notice` metadata. Create/update/test reject metadata-service
+  targets but continue to allow loopback, LAN, and Tailscale ntfy servers.
+- `routes.note_routes`: ntfy reminder delivery checks the saved ntfy endpoint
+  with trusted configured-endpoint policy before publishing, so legacy bad
+  metadata-service configs are blocked at send time too.
 
 ## Address Classes
 

@@ -9,6 +9,7 @@ import os
 
 from core.auth import AuthManager
 from src.rate_limiter import RateLimiter
+from src.ssrf_guard import trusted_endpoint_notice
 from src.settings_scrub import scrub_settings
 from src.settings import (
     load_settings as _load_settings,
@@ -30,6 +31,29 @@ from src.integrations import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _integration_security_notice(item: dict):
+    preset = (item.get("preset") or item.get("name", "")).lower()
+    base_url = (item.get("base_url") or "").strip()
+    if preset != "ntfy" or not base_url:
+        return None
+    return trusted_endpoint_notice(base_url)
+
+
+def _ntfy_notice_or_error(item: dict):
+    notice = _integration_security_notice(item)
+    if notice and not notice.get("allowed"):
+        raise HTTPException(400, notice.get("warning") or "Endpoint URL is not allowed")
+    return notice
+
+
+def _mask_integration_with_notice(item: dict) -> dict:
+    masked = mask_integration_secret(item)
+    notice = _integration_security_notice(item)
+    if notice is not None:
+        masked["security_notice"] = notice
+    return masked
 
 
 class LoginRequest(BaseModel):
@@ -431,7 +455,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(403, "Admin only")
         items = load_integrations()
         # Mask API keys for frontend display
-        safe = [mask_integration_secret(item) for item in items]
+        safe = [_mask_integration_with_notice(item) for item in items]
         return {"integrations": safe}
 
     @router.get("/integrations/presets")
@@ -446,8 +470,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
         body = await request.json()
+        _ntfy_notice_or_error(body)
         item = add_integration(body)
-        return {"ok": True, "integration": mask_integration_secret(item)}
+        return {"ok": True, "integration": _mask_integration_with_notice(item)}
 
     @router.put("/integrations/{integration_id}")
     async def update_integration_route(integration_id: str, request: Request):
@@ -456,10 +481,14 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
         body = await request.json()
+        current = get_integration(integration_id) or {}
+        candidate = dict(current)
+        candidate.update(body)
+        _ntfy_notice_or_error(candidate)
         item = update_integration(integration_id, body)
         if not item:
             raise HTTPException(404, "Integration not found")
-        return {"ok": True, "integration": mask_integration_secret(item)}
+        return {"ok": True, "integration": _mask_integration_with_notice(item)}
 
     @router.delete("/integrations/{integration_id}")
     async def delete_integration_route(integration_id: str, request: Request):
@@ -503,6 +532,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             base = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else raw_base.rstrip("/")
             settings = _load_settings()
             topic = (settings.get("reminder_ntfy_topic") or "reminders").strip() or "reminders"
+            security_notice = _ntfy_notice_or_error({**integ, "base_url": base, "preset": "ntfy"})
             full_url = f"{base}/{topic}"
             api_key = integ.get("api_key", "")
             auth_type = (integ.get("auth_type") or "none").lower()
@@ -536,6 +566,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                             f"subscribe to topic \"{topic}\" with server "
                             f"\"{base}\" (or paste the full URL: {full_url})."
                         ),
+                        "security_notice": security_notice,
                     }
                 return {"ok": False, "message": f"ntfy returned HTTP {r.status_code} from {full_url}: {r.text[:200]}"}
             except Exception as e:

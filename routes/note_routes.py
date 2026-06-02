@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from core.database import SessionLocal, Note
 from src.auth_helpers import get_current_user
+from src.ssrf_guard import trusted_endpoint_notice
 from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger(__name__)
@@ -373,6 +374,10 @@ async def dispatch_reminder(
             )
             if intg:
                 base = intg["base_url"].rstrip("/")
+                notice = trusted_endpoint_notice(base)
+                if not notice.get("allowed"):
+                    ntfy_error = notice.get("warning") or "ntfy endpoint URL is not allowed"
+                    raise RuntimeError(ntfy_error)
                 topic = settings.get("reminder_ntfy_topic") or "reminders"
                 ntfy_body = synthesis or note_body or title
                 hdrs = {"Title": title or "Reminder", "Priority": "high", "Tags": "bell"}
