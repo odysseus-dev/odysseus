@@ -601,11 +601,11 @@ def setup_email_routes():
         SECURITY: `owner` is propagated so when `account_id` is missing,
         the fallback config lookup is scoped to this user's accounts only.
         """
+        conn = None
         try:
             conn = _imap_connect(account_id, owner=owner)
             select_status, _ = conn.select(_q(folder), readonly=True)
             if select_status != "OK":
-                conn.logout()
                 return {"emails": [], "total": 0, "folder": folder, "error": f"Folder not found: {folder}"}
 
             from_clause = ""
@@ -931,12 +931,17 @@ def setup_email_routes():
             except Exception as _summary_err:
                 logger.debug(f"Bulk summary attach skipped: {_summary_err}")
 
-            conn.logout()
             return {"emails": emails, "total": total, "folder": folder, "offset": offset}
         except Exception as e:
             logger.error(f"Failed to list emails: {e}")
             detail = str(e).strip()
             return {"emails": [], "total": 0, "error": f"Mail operation failed: {detail[:180]}" if detail else "Mail operation failed"}
+        finally:
+            if conn:
+                try:
+                    conn.logout()
+                except Exception:
+                    pass
 
     @router.get("/list")
     async def list_emails(
