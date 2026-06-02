@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Run tests
+        run: python -m pytest tests/ -q --tb=short
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t odysseus:ci .
+
+      - name: Verify image starts
+        run: |
+          docker run --rm -d --name odysseus-test \
+            -e AUTH_ENABLED=false \
+            -p 7000:7000 \
+            odysseus:ci
+          sleep 5
+          curl -sf http://localhost:7000/api/health || (docker logs odysseus-test; exit 1)
+          docker stop odysseus-test
+
+  js-syntax:
+    name: JS Syntax Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check JS files for syntax errors
+        run: |
+          errors=0
+          for f in $(find static/js -name '*.js' -not -path '*/lib/*'); do
+            if ! node --check "$f" 2>/dev/null; then
+              echo "SYNTAX ERROR: $f"
+              node --check "$f"
+              errors=$((errors + 1))
+            fi
+          done
+          if [ "$errors" -gt 0 ]; then
+            echo "$errors file(s) have syntax errors"
+            exit 1
+          fi
+          echo "All JS files pass syntax check"
