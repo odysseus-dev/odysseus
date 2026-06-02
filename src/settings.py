@@ -96,6 +96,10 @@ DEFAULT_SETTINGS = {
     "agent_stream_timeout_seconds": 300,
     "task_endpoint_id": "",
     "task_model": "",
+    # Relaunch Cookbook serves (vLLM/llama.cpp/etc.) that were running before
+    # a restart. The app does not otherwise resume them — a container restart
+    # kills the tmux-hosted server. See src/serve_autostart.py.
+    "cookbook_serve_autostart": True,
     "default_endpoint_id": "",
     "default_model": "",
     # Ordered fallback chain for the default chat model. Each entry is

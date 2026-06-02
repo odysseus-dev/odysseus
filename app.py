@@ -862,6 +862,18 @@ async def startup_event():
             logger.warning(f"Tool index warmup failed (non-critical): {type(e).__name__}: {e}")
 
     _startup_tasks.append(asyncio.create_task(_warmup_tool_index()))
+
+    # Relaunch Cookbook serves (vLLM/llama.cpp/etc.) that were running before
+    # this restart — the tmux-hosted servers don't survive a restart on their
+    # own. Opt-in via the `cookbook_serve_autostart` setting; never fatal.
+    async def _autostart_serves():
+        try:
+            from src.serve_autostart import autostart_serves
+            await autostart_serves()
+        except Exception as e:
+            logger.warning(f"Serve autostart failed (non-critical): {type(e).__name__}: {e}")
+
+    _startup_tasks.append(asyncio.create_task(_autostart_serves()))
     # Warmup: ping all known LLM endpoints to prime connections
     async def _warmup_endpoints():
         try:
