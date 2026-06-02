@@ -11,6 +11,7 @@ from routes.cookbook_helpers import (
     _append_serve_preflight_exit_lines,
     _local_tooling_path_export,
     _pip_install_fallback_chain,
+    _remote_linux_download_setup_script,
     _ollama_bind_from_cmd,
     _safe_env_prefix,
     _validate_gpus,
@@ -98,6 +99,15 @@ def test_pip_install_fallback_chain_allows_custom_python_command():
         'python -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"'
         ' || pip install --user --break-system-packages -q hf_transfer 2>/dev/null; }'
     )
+
+
+def test_remote_linux_download_setup_avoids_user_install_inside_venv():
+    script = _remote_linux_download_setup_script()
+
+    assert "pip install -q huggingface_hub hf_transfer" in script
+    assert 'python -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"' in script
+    assert "|| pip install --user --break-system-packages -q huggingface_hub hf_transfer" in script
+    assert script.index('python -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"') < script.index("|| pip install --user")
 
 
 def test_serve_preflight_failure_keeps_tmux_pane_visible():

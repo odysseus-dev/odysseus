@@ -38,7 +38,7 @@ from routes.cookbook_helpers import (
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _cached_model_scan_script, _ollama_bind_from_cmd,
-    _pip_install_fallback_chain, ModelDownloadRequest, ServeRequest,
+    _pip_install_fallback_chain, _remote_linux_download_setup_script, ModelDownloadRequest, ServeRequest,
 )
 
 _HF_TOKEN_STATUS_SNIPPET = (
@@ -1244,26 +1244,7 @@ def setup_cookbook_routes() -> APIRouter:
             )
             cmd = f"ssh {pf}{host} '{setup_script}'"
         else:
-            # Linux: auto-install tmux (via whichever package manager is available)
-            # and huggingface_hub + hf_transfer (falling back to --user/--break-system-packages
-            # on PEP-668 locked distros like Arch / newer Debian).
-            setup_script = (
-                # Install tmux if missing — try common package managers; skip if no sudo
-                "if ! command -v tmux >/dev/null 2>&1; then "
-                "  if command -v apt-get >/dev/null 2>&1; then sudo -n apt-get install -y tmux 2>/dev/null; "
-                "  elif command -v pacman >/dev/null 2>&1; then sudo -n pacman -S --noconfirm tmux 2>/dev/null; "
-                "  elif command -v dnf >/dev/null 2>&1; then sudo -n dnf install -y tmux 2>/dev/null; "
-                "  elif command -v apk >/dev/null 2>&1; then sudo -n apk add --no-interactive tmux 2>/dev/null; "
-                "  elif command -v zypper >/dev/null 2>&1; then sudo -n zypper --non-interactive install tmux 2>/dev/null; "
-                "  fi; "
-                "fi; "
-                "command -v tmux >/dev/null 2>&1 || echo 'WARNING: tmux missing and auto-install failed (need passwordless sudo). Install manually.'; "
-                # Install Python bits. Try system install first; fall back to --user --break-system-packages on PEP 668 systems.
-                "pip install -q huggingface_hub hf_transfer 2>/dev/null || "
-                "pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null || "
-                "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null; "
-                "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
-            )
+            setup_script = _remote_linux_download_setup_script()
             cmd = f"ssh {pf}{host} '{setup_script}'"
 
         try:

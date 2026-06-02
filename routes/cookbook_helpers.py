@@ -173,6 +173,25 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     return f"{base} || {{ {venv_check} || {user}; }}"
 
 
+def _remote_linux_download_setup_script() -> str:
+    """Build the SSH Linux setup script used before remote HF downloads."""
+    hf_setup = _pip_install_fallback_chain("huggingface_hub hf_transfer", python_cmd="pip")
+    return (
+        # Install tmux if missing — try common package managers; skip if no sudo
+        "if ! command -v tmux >/dev/null 2>&1; then "
+        "  if command -v apt-get >/dev/null 2>&1; then sudo -n apt-get install -y tmux 2>/dev/null; "
+        "  elif command -v pacman >/dev/null 2>&1; then sudo -n pacman -S --noconfirm tmux 2>/dev/null; "
+        "  elif command -v dnf >/dev/null 2>&1; then sudo -n dnf install -y tmux 2>/dev/null; "
+        "  elif command -v apk >/dev/null 2>&1; then sudo -n apk add --no-interactive tmux 2>/dev/null; "
+        "  elif command -v zypper >/dev/null 2>&1; then sudo -n zypper --non-interactive install tmux 2>/dev/null; "
+        "  fi; "
+        "fi; "
+        "command -v tmux >/dev/null 2>&1 || echo 'WARNING: tmux missing and auto-install failed (need passwordless sudo). Install manually.'; "
+        f"{hf_setup}; "
+        "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
+    )
+
+
 def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
     """Build the standalone Python scanner used by /api/model/cached."""
     lines = [
