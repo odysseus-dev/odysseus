@@ -74,6 +74,34 @@ export function _calBgCss(c, fallback) {
   return c || fallback || 'var(--accent)';
 }
 
+// Pick a readable text colour (near-black / near-white) for a label painted
+// directly on a solid event-colour background — multi-day bars and the week
+// all-day strip do this. The event palette (CAL_COLORS) is deliberately pale,
+// so a fixed `#fff`/`var(--fg)` left titles unreadable on light tints.
+// Returns '' for non-hex colours (CSS vars, `bg:` image sentinels, named
+// colours) so the stylesheet's default colour applies unchanged.
+export function _calTextColor(color) {
+  if (typeof color !== 'string') return '';
+  let hex = color.trim();
+  if (hex[0] !== '#') return '';                 // var(--accent), bg:…, named
+  hex = hex.slice(1);
+  if (hex.length === 3) hex = hex.split('').map((c) => c + c).join('');
+  if (hex.length === 8) hex = hex.slice(0, 6);   // ignore alpha channel
+  if (hex.length !== 6 || /[^0-9a-f]/i.test(hex)) return '';
+  const lin = (v) => {
+    v /= 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  const L = 0.2126 * lin(parseInt(hex.slice(0, 2), 16))
+          + 0.7152 * lin(parseInt(hex.slice(2, 4), 16))
+          + 0.0722 * lin(parseInt(hex.slice(4, 6), 16));
+  // 0.179 is the W3C cross-over luminance where black and white text yield
+  // equal contrast against the background. Using pure black/white (rather than
+  // a near-black) guarantees >= 4.58:1 — clearing WCAG AA — for every colour,
+  // including mid-tones where a softened text colour would dip below 4.5:1.
+  return L > 0.179 ? '#000' : '#fff';
+}
+
 // ── date helpers ──
 
 // `YYYY-MM-DD` string from a Date.

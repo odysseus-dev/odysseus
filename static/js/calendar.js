@@ -12,7 +12,7 @@ import {
   WEEKDAYS, MONTHS, MON_SHORT,
   CAL_PALETTE, CAL_COLORS, _CAL_CUSTOM_GRADIENT, _TYPE_PALETTE,
   _trashIcon, _moreIcon, _bellIcon,
-  _isCalBgImage, _calBgImageUrl, _calBgCss,
+  _isCalBgImage, _calBgImageUrl, _calBgCss, _calTextColor,
   _ds, _addDays, _shiftDT, _tzOffset, _localDateOf,
 } from './calendar/utils.js';
 
@@ -975,7 +975,9 @@ async function _renderMonth() {
       const startColInt = Math.round(startCol);
       const endColInt = Math.round(endCol);
       const span = endColInt - startColInt + 1;
-      h += `<div class="cal-multiday" style="--col:${startColInt};--span:${span};--slot:${barSlot};background:${_calColor(md)}" draggable="true" data-uid="${_e(md.uid)}" title="${_e(md.summary)}">${_e(md.summary)}</div>`;
+      const _mdBg = _calColor(md);
+      const _mdTxt = _calTextColor(_mdBg);
+      h += `<div class="cal-multiday" style="--col:${startColInt};--span:${span};--slot:${barSlot};background:${_mdBg}${_mdTxt ? `;color:${_mdTxt}` : ''}" draggable="true" data-uid="${_e(md.uid)}" title="${_e(md.summary)}">${_e(md.summary)}</div>`;
       barSlot++;
     }
     h += '</div>';
@@ -1141,7 +1143,9 @@ async function _renderWeek() {
     // All-day strip
     colsHtml += `<div class="cal-wk-allday">`;
     for (const ev of allDayEvents) {
-      colsHtml += `<div class="cal-wk-allday-event" data-uid="${_e(ev.uid)}" style="background:${_calColor(ev)};" title="${_e(ev.summary)}">${_e(ev.summary)}</div>`;
+      const _adBg = _calColor(ev);
+      const _adTxt = _calTextColor(_adBg);
+      colsHtml += `<div class="cal-wk-allday-event" data-uid="${_e(ev.uid)}" style="background:${_adBg};${_adTxt ? `color:${_adTxt};` : ''}" title="${_e(ev.summary)}">${_e(ev.summary)}</div>`;
     }
     colsHtml += `</div>`;
     // Hour-grid body
