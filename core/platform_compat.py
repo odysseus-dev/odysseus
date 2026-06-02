@@ -171,6 +171,26 @@ def _windows_bash_fallbacks() -> List[str]:
     return paths
 
 
+def is_wsl_or_stub_bash(path: str) -> bool:
+    """Check if a path points to a WSL shell stub or Windows Store bash stub."""
+    pl = path.lower()
+    return "system32\\bash.exe" in pl or "sysnative\\bash.exe" in pl or "windowsapps\\bash.exe" in pl
+
+
+def git_bash_path(path: str | Path) -> str:
+    """Convert a path to POSIX style suitable for Git Bash on Windows.
+
+    Transforms drive letters (e.g., 'C:\\path') to POSIX '/c/path',
+    and uses forward slashes.
+    """
+    p = Path(path)
+    p_str = p.as_posix()
+    if IS_WINDOWS and len(p_str) >= 2 and p_str[1] == ":":
+        drive = p_str[0].lower()
+        return f"/{drive}{p_str[2:]}"
+    return p_str
+
+
 def find_bash() -> Optional[str]:
     """Locate a real ``bash`` interpreter, or None.
 
@@ -184,6 +204,8 @@ def find_bash() -> Optional[str]:
         return _BASH_CACHE
     _BASH_PROBED = True
     found = which_tool("bash")
+    if found and is_wsl_or_stub_bash(found):
+        found = None
     if not found and IS_WINDOWS:
         for cand in _windows_bash_fallbacks():
             if os.path.exists(cand):

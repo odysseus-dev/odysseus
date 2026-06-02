@@ -1,8 +1,10 @@
 import sys
 # conftest.py stubs src.database with a fake module; webhook_manager imports
 # from it, so drop the stub here to load the real module under test.
-if "src.database" in sys.modules:
-    del sys.modules["src.database"]
+for mod_name in ["src.database", "core.database"]:
+    _mod = sys.modules.get(mod_name)
+    if _mod is not None and not getattr(_mod, "__file__", None):
+        sys.modules.pop(mod_name, None)
 
 import pytest
 from src.webhook_manager import validate_webhook_url
