@@ -168,9 +168,86 @@ services:
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
 
+  nexus-gateway:
+    build: /home/donn/nexus-gateway
+    ports:
+      - "127.0.0.1:8082:8080"
+    volumes:
+      - nexus-gateway-data:/data
+    environment:
+      - NEXUS_GATEWAY_CONFIG=/data/config.yaml
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  nexus-memory:
+    build: /home/donn/nexus-memory
+    ports:
+      - "127.0.0.1:8010:8010"
+    volumes:
+      - nexus-memory-data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  nexus-workflows:
+    build: /home/donn/nexus-workflows
+    ports:
+      - "127.0.0.1:7800:7800"
+    volumes:
+      - nexus-workflows-data:/data
+    environment:
+      - NEXUS_WORKFLOWS_DB=/data/workflows.db
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7800/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  nexus-weather:
+    build: /home/donn/nexus-weather
+    ports:
+      - "127.0.0.1:8085:8080"
+    volumes:
+      - ./nexus-weather/config.yaml:/app/config.yaml:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  nexus-automation:
+    build: /home/donn/nexus-automation
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - nexus-automation-data:/app/data
+      - ./nexus-automation/config.json:/app/config.json:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - ntfy
+    restart: unless-stopped
+
 volumes:
   searxng-data:
   chromadb-data:
   ntfy-cache:
   nexus-cost-data:
   nexus-news-data:
+  nexus-gateway-data:
+  nexus-memory-data:
+  nexus-workflows-data:
+  nexus-automation-data:

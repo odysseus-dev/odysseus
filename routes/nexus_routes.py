@@ -18,6 +18,11 @@ logger = logging.getLogger(__name__)
 NEXUS_COST_URL = os.getenv("NEXUS_COST_URL", "http://nexus-cost:8199")
 NEXUS_METRICS_URL = os.getenv("NEXUS_METRICS_URL", "http://localhost:9100")
 NEXUS_NEWS_URL = os.getenv("NEXUS_NEWS_URL", "http://nexus-news:8100")
+NEXUS_GATEWAY_URL = os.getenv("NEXUS_GATEWAY_URL", "http://nexus-gateway:8080")
+NEXUS_MEMORY_URL = os.getenv("NEXUS_MEMORY_URL", "http://nexus-memory:8010")
+NEXUS_WORKFLOWS_URL = os.getenv("NEXUS_WORKFLOWS_URL", "http://nexus-workflows:7800")
+NEXUS_WEATHER_URL = os.getenv("NEXUS_WEATHER_URL", "http://nexus-weather:8080")
+NEXUS_AUTOMATION_URL = os.getenv("NEXUS_AUTOMATION_URL", "http://nexus-automation:8090")
 
 
 def setup_nexus_routes() -> APIRouter:
@@ -141,6 +146,111 @@ def setup_nexus_routes() -> APIRouter:
     async def nexus_news_stats() -> Dict[str, Any]:
         """Proxy: aggregator statistics."""
         return await _proxy_get(f"{NEXUS_NEWS_URL}/stats")
+
+    # ── Nexus Gateway ─────────────────────────────────────────────────────
+
+    @router.get("/api/nexus/gateway/health")
+    async def nexus_gateway_health() -> Dict[str, Any]:
+        """Proxy: nexus-gateway health check."""
+        return await _proxy_get(f"{NEXUS_GATEWAY_URL}/health")
+
+    @router.get("/api/nexus/gateway/metrics")
+    async def nexus_gateway_metrics() -> Dict[str, Any]:
+        """Proxy: gateway Prometheus metrics."""
+        return await _proxy_get(f"{NEXUS_GATEWAY_URL}/metrics")
+
+    @router.get("/api/nexus/gateway/routes")
+    async def nexus_gateway_routes() -> Dict[str, Any]:
+        """Proxy: gateway active routes."""
+        return await _proxy_get(f"{NEXUS_GATEWAY_URL}/routes")
+
+    # ── Nexus Memory ──────────────────────────────────────────────────────
+
+    @router.get("/api/nexus/memory/health")
+    async def nexus_memory_health() -> Dict[str, Any]:
+        """Proxy: nexus-memory health check."""
+        return await _proxy_get(f"{NEXUS_MEMORY_URL}/health")
+
+    @router.get("/api/nexus/memory/memories")
+    async def nexus_memory_list() -> Dict[str, Any]:
+        """Proxy: list all memories."""
+        return await _proxy_get(f"{NEXUS_MEMORY_URL}/memories")
+
+    @router.get("/api/nexus/memory/search")
+    async def nexus_memory_search(q: str = Query(...)) -> Dict[str, Any]:
+        """Proxy: search memories."""
+        return await _proxy_get(f"{NEXUS_MEMORY_URL}/search", {"q": q})
+
+    @router.get("/api/nexus/memory/stats")
+    async def nexus_memory_stats() -> Dict[str, Any]:
+        """Proxy: memory statistics."""
+        return await _proxy_get(f"{NEXUS_MEMORY_URL}/stats")
+
+    # ── Nexus Workflows ───────────────────────────────────────────────────
+
+    @router.get("/api/nexus/workflows/health")
+    async def nexus_workflows_health() -> Dict[str, Any]:
+        """Proxy: nexus-workflows health check."""
+        return await _proxy_get(f"{NEXUS_WORKFLOWS_URL}/health")
+
+    @router.get("/api/nexus/workflows/list")
+    async def nexus_workflows_list() -> Dict[str, Any]:
+        """Proxy: list all workflows."""
+        return await _proxy_get(f"{NEXUS_WORKFLOWS_URL}/workflows")
+
+    @router.get("/api/nexus/workflows/status")
+    async def nexus_workflows_status() -> Dict[str, Any]:
+        """Proxy: workflow run status."""
+        return await _proxy_get(f"{NEXUS_WORKFLOWS_URL}/status")
+
+    # ── Nexus Weather ─────────────────────────────────────────────────────
+
+    @router.get("/api/nexus/weather/health")
+    async def nexus_weather_health() -> Dict[str, Any]:
+        """Proxy: nexus-weather health check."""
+        return await _proxy_get(f"{NEXUS_WEATHER_URL}/health")
+
+    @router.get("/api/nexus/weather/current")
+    async def nexus_weather_current() -> Dict[str, Any]:
+        """Proxy: current weather."""
+        return await _proxy_get(f"{NEXUS_WEATHER_URL}/current")
+
+    @router.get("/api/nexus/weather/forecast")
+    async def nexus_weather_forecast() -> Dict[str, Any]:
+        """Proxy: weather forecast."""
+        return await _proxy_get(f"{NEXUS_WEATHER_URL}/forecast")
+
+    @router.get("/api/nexus/weather/air-quality")
+    async def nexus_weather_air_quality() -> Dict[str, Any]:
+        """Proxy: air quality data."""
+        return await _proxy_get(f"{NEXUS_WEATHER_URL}/air-quality")
+
+    @router.get("/api/nexus/weather/sun")
+    async def nexus_weather_sun() -> Dict[str, Any]:
+        """Proxy: sun times."""
+        return await _proxy_get(f"{NEXUS_WEATHER_URL}/sun")
+
+    # ── Nexus Automation ──────────────────────────────────────────────────
+
+    @router.get("/api/nexus/automation/health")
+    async def nexus_automation_health() -> Dict[str, Any]:
+        """Proxy: nexus-automation health check."""
+        return await _proxy_get(f"{NEXUS_AUTOMATION_URL}/health")
+
+    @router.get("/api/nexus/automation/rules")
+    async def nexus_automation_rules() -> Dict[str, Any]:
+        """Proxy: list automation rules."""
+        return await _proxy_get(f"{NEXUS_AUTOMATION_URL}/rules")
+
+    @router.get("/api/nexus/automation/sensors")
+    async def nexus_automation_sensors() -> Dict[str, Any]:
+        """Proxy: list sensor states."""
+        return await _proxy_get(f"{NEXUS_AUTOMATION_URL}/sensors")
+
+    @router.get("/api/nexus/automation/history")
+    async def nexus_automation_history() -> Dict[str, Any]:
+        """Proxy: action history."""
+        return await _proxy_get(f"{NEXUS_AUTOMATION_URL}/history")
 
     return router
 
