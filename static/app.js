@@ -24,6 +24,7 @@ import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
+import swarmModule from './js/swarm.js';
 import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
 import './js/modalManager.js';
@@ -49,6 +50,7 @@ window.themeModule = themeModule;
 window.sessionModule = sessionModule;
 window.uiModule = uiModule;
 window.adminModule = adminModule;
+window.swarmModule = swarmModule;
 window.cookbookModule = cookbookModule;
 
 // Redirect to login on 401 from any fetch
@@ -839,6 +841,14 @@ function initializeEventListeners() {
     });
   }
 
+  // Swarm manager button
+  const toolSwarmBtn = el('tool-swarm-btn');
+  if (toolSwarmBtn) {
+    toolSwarmBtn.addEventListener('click', () => {
+      if (swarmModule) swarmModule.open();
+    });
+  }
+
   // Calendar tool button
   const toolCalendarBtn = el('tool-calendar-btn');
   if (toolCalendarBtn) {
@@ -991,6 +1001,7 @@ function initializeEventListeners() {
     '/memory':   () => document.getElementById('tool-memory-btn')?.click(),
     '/gallery':  () => document.getElementById('tool-gallery-btn')?.click(),
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
+    '/swarm':    () => swarmModule.open(),
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
   };
   const _opener = _routeOpen[urlPath];

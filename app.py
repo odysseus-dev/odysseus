@@ -663,6 +663,10 @@ app.include_router(setup_contacts_routes())
 from routes.nexus_routes import setup_nexus_routes
 app.include_router(setup_nexus_routes())
 
+# Tech Duinn swarm orchestrator (tasks, agents, logs, events, memory)
+from routes.swarm_routes import setup_swarm_routes
+app.include_router(setup_swarm_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
