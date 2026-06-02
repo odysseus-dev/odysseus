@@ -111,7 +111,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "create_document",
-            "description": "Create a new document in the editor panel. ALWAYS use this when the user asks to write, create, build, or generate code, scripts, programs, games, apps, or any substantial content (>15 lines). NEVER put large code blocks directly in chat — use this tool instead.",
+            "description": "Create a new document in the editor panel. Use this when the user asks to write, create, build, or generate code, scripts, programs, games, apps, or any substantial content (>15 lines) AND there is no already-open document/email draft that the request refers to. If an email compose draft is open, edit that draft instead of creating another document. NEVER put large code blocks directly in chat — use this tool instead.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1074,6 +1074,7 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         return None
 
     tool_type = _TOOL_NAME_MAP.get(name, name)
+
     # Allow MCP tools through (namespaced as mcp__serverid__toolname)
     if tool_type.startswith("mcp__"):
         content = json.dumps(args) if args else "{}"
@@ -1093,7 +1094,13 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
     elif tool_type == "python":
         content = args.get("code", "")
     elif tool_type == "web_search":
-        content = args.get("query", "")
+        queries = args.get("queries")
+        if isinstance(queries, list) and queries:
+            content = str(queries[0])
+        elif queries:
+            content = str(queries)
+        else:
+            content = args.get("query", "")
     elif tool_type == "read_file":
         content = args.get("path", "")
     elif tool_type == "write_file":

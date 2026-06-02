@@ -125,6 +125,18 @@ def test_readme_native_quickstart_uses_loopback():
     assert "Use `--host 0.0.0.0` only when you intentionally want" in readme
 
 
+def test_ollama_cookbook_runner_does_not_force_public_bind():
+    route = Path("routes/cookbook_routes.py").read_text(encoding="utf-8")
+    cookbook_js = Path("static/js/cookbook.js").read_text(encoding="utf-8")
+    assert 'OLLAMA_HOST="0.0.0.0:${ODYSSEUS_OLLAMA_PORT}" ollama serve' not in route
+    assert 'OLLAMA_HOST="${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}" ollama serve' in route
+    assert '_ollama_default_host = "0.0.0.0" if remote else "127.0.0.1"' in route
+    assert "WARNING: remote Ollama will bind" in route
+    assert "OLLAMA_HOST=0.0.0.0:${ollamaPort}" not in cookbook_js
+    assert "const bindHost = _envState.remoteHost ? '0.0.0.0' : '127.0.0.1';" in cookbook_js
+    assert "OLLAMA_HOST=${bindHost}:${ollamaPort}" in cookbook_js
+
+
 def _import_integrations(tmp_path, monkeypatch):
     """Import src.integrations with data + encryption key redirected to tmp."""
     _import_secret_storage(tmp_path, monkeypatch)
@@ -931,18 +943,101 @@ def test_mcp_oauth_page_escapes_reflected_values():
         assert f"{var} = html.escape({var}" in body, var
 
 
+
+# -- export/gallery filename hardening ----------------------------------------
+
+def _install_route_import_stubs(monkeypatch):
+    core_mod = types.ModuleType("core")
+    core_mod.__path__ = []
+
+    db_mod = types.ModuleType("core.database")
+    db_mod.SessionLocal = lambda: None
+    for name in (
+        "Session",
+        "Document",
+        "GalleryImage",
+        "GalleryAlbum",
+        "ModelEndpoint",
+    ):
+        setattr(db_mod, name, type(name, (), {}))
+
+    session_manager_mod = types.ModuleType("core.session_manager")
+    session_manager_mod.SessionManager = type("SessionManager", (), {})
+
+    models_mod = types.ModuleType("core.models")
+    models_mod.ChatMessage = type("ChatMessage", (), {})
+
+    monkeypatch.setitem(sys.modules, "core", core_mod)
+    monkeypatch.setitem(sys.modules, "core.database", db_mod)
+    monkeypatch.setitem(sys.modules, "core.session_manager", session_manager_mod)
+    monkeypatch.setitem(sys.modules, "core.models", models_mod)
+
+
+def _import_session_routes_for_filename(monkeypatch):
+    _install_route_import_stubs(monkeypatch)
+    monkeypatch.delitem(sys.modules, "routes.session_routes", raising=False)
+    from routes import session_routes
+    return session_routes
+
+
+def _import_gallery_routes_for_filename(monkeypatch):
+    _install_route_import_stubs(monkeypatch)
+    monkeypatch.delitem(sys.modules, "routes.gallery_helpers", raising=False)
+    monkeypatch.delitem(sys.modules, "routes.gallery_routes", raising=False)
+    from routes import gallery_routes
+    return gallery_routes
+
+
+def test_export_filename_sanitizer_blocks_header_and_path_chars(monkeypatch):
+    mod = _import_session_routes_for_filename(monkeypatch)
+
+    out = mod._sanitize_export_filename('chat.md\r\nX-Test: yes/..\\evil;quote".txt\x00')
+
+    assert out
+    assert len(out) <= 128
+    for ch in '\r\n/\\:\x00;" ':
+        assert ch not in out
+
+
+def test_export_filename_sanitizer_preserves_safe_names(monkeypatch):
+    mod = _import_session_routes_for_filename(monkeypatch)
+
+    assert mod._sanitize_export_filename("conversation_20260602.md") == "conversation_20260602.md"
+    assert mod._sanitize_export_filename("") == ""
+
+
+def test_gallery_replace_filename_sanitizer_uses_basename(monkeypatch):
+    mod = _import_gallery_routes_for_filename(monkeypatch)
+
+    out = mod._sanitize_gallery_filename("../../etc/cron.d/evil image.png")
+
+    assert out == "evil_image.png"
+    assert "/" not in out
+    assert "\\" not in out
+
+
+def test_gallery_replace_filename_sanitizer_falls_back_when_empty(monkeypatch):
+    mod = _import_gallery_routes_for_filename(monkeypatch)
+    monkeypatch.setattr(mod.uuid, "uuid4", lambda: types.SimpleNamespace(hex="abcdef1234567890"))
+
+    assert mod._sanitize_gallery_filename("../") == "abcdef123456"
+
 def test_chat_active_document_lookup_is_owner_scoped():
     """The explicit `active_doc_id` path in /api/chat_stream must scope the
     document lookup to the caller. Resolving by id alone let any user inject
     another user's document into their own chat context (the session and
-    in-memory fallbacks were already owner/session-bound; this branch wasn't)."""
+    in-memory fallbacks also need the same owner gate because active document
+    state is process-global)."""
     import re
 
     src = Path(__file__).resolve().parents[1] / "routes" / "chat_routes.py"
     text = src.read_text()
     # The frontend-supplied id is resolved through the shared owner filter.
     assert "_owner_session_filter(_doc_q, ctx.user)" in text
+    assert "_owner_session_filter(_session_doc_q, ctx.user)" in text
+    assert "_owner_session_filter(_mem_q, ctx.user)" in text
     # And never by id alone (the previous IDOR shape, whitespace-insensitive).
     flat = re.sub(r"\s+", " ", text)
     assert "filter( DBDocument.id == active_doc_id, ).first()" not in flat
     assert "filter(DBDocument.id == active_doc_id).first()" not in flat
+    assert "filter(DBDocument.id == _mem_id).first()" not in flat

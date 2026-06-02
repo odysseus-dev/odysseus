@@ -61,7 +61,8 @@ def _find_bw() -> str:
 def _load_config() -> dict:
     if VAULT_FILE.exists():
         try:
-            return json.loads(VAULT_FILE.read_text(encoding="utf-8"))
+            data = json.loads(VAULT_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
         except Exception:
             pass
     return {}
@@ -75,11 +76,18 @@ def _save_config(cfg: dict):
     safe_chmod(str(VAULT_FILE), 0o600)
 
 
-async def _run_bw(args: list, session: str = None, input_text: str = None) -> tuple:
+async def _run_bw(args: list, session: str = None, input_text: str = None,
+                  bw_password: str = None) -> tuple:
     env = {}
     env.update(os.environ)
     if session:
         env["BW_SESSION"] = session
+    # Secrets must never be passed as argv — process arguments are world-readable
+    # via `ps` / `/proc/<pid>/cmdline` to any local user. Keep --passwordenv
+    # support for bw commands that need it; unlock/login callers should prefer
+    # stdin so the master password is not left in the child environment either.
+    if bw_password is not None:
+        env["BW_PASSWORD"] = bw_password
     bw_path = _find_bw()
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -175,8 +183,12 @@ def setup_vault_routes():
     async def unlock(req: VaultUnlockRequest, request: Request):
         """Unlock the vault and save the session key."""
         require_admin(request)
+        # Pass the master password on stdin, not argv. argv is visible through
+        # `ps` / /proc/<pid>/cmdline; stdin also avoids leaving the secret in
+        # the child process environment.
         stdout, stderr, rc = await _run_bw(
-            ["unlock", req.master_password, "--raw"],
+            ["unlock", "--raw"],
+            input_text=req.master_password + "\n",
         )
         if rc != 0:
             return {"ok": False, "error": f"Unlock failed: {stderr[:300]}"}

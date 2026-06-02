@@ -63,6 +63,7 @@ export function makeWindowDraggable(modal, options = {}) {
   const onExitFullscreen = options.onExitFullscreen || null;
   const enableFullscreen = options.enableFullscreen !== false && !!onEnterFullscreen;
   const onDragEnd = options.onDragEnd || null;
+  const onDragStart = options.onDragStart || null;
   const skipSelector = options.skipSelector || 'button, input, select';
   const mobileSkip = (typeof options.mobileSkip === 'number') ? options.mobileSkip : 768;
   const enableTouch = options.enableTouch !== false;
@@ -147,7 +148,11 @@ export function makeWindowDraggable(modal, options = {}) {
 
   const _startDrag = (cx, cy) => {
     dragging = true;
+    if (modal) modal.classList.add('modal-dragging');
     const rect = content.getBoundingClientRect();
+    if (onDragStart) {
+      try { onDragStart({ rect, cx, cy }); } catch (_) {}
+    }
     startX = cx; startY = cy;
     startLeft = rect.left; startTop = rect.top;
     // Pin position so the drag follows the cursor instead of fighting a
@@ -237,6 +242,7 @@ export function makeWindowDraggable(modal, options = {}) {
   const _onEnd = (cx, cy) => {
     if (!dragging) return;
     dragging = false;
+    if (modal) modal.classList.remove('modal-dragging');
     _showSnapHint(false);
     // Top edge wins over side edges — fullscreen is the more common gesture.
     if (enableFullscreen && typeof cy === 'number' && cy <= SNAP_PX) {

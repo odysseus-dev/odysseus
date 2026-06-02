@@ -16,8 +16,24 @@ set -e
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
-PORT="${ODYSSEUS_PORT:-7860}"   # 7860, not 7000 — macOS AirPlay Receiver holds 7000.
-HOST="${ODYSSEUS_HOST:-127.0.0.1}" # Set ODYSSEUS_HOST=0.0.0.0 for LAN/Tailscale access.
+# Load .env so APP_PORT and APP_BIND are available without re-typing them on
+# the command line every run — consistent with how app.py reads them via
+# python-dotenv. Variables already set in the shell take priority over .env.
+if [ -f .env ]; then
+  while IFS='=' read -r key value; do
+    [[ "$key" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "${key// }" ]] && continue
+    value="${value%%#*}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    [ -n "$key" ] && [ -z "${!key+x}" ] && export "$key=$value"
+  done < .env
+fi
+
+# Shell overrides (ODYSSEUS_PORT / ODYSSEUS_HOST) take top priority, then .env
+# values (APP_PORT / APP_BIND), then built-in defaults.
+PORT="${ODYSSEUS_PORT:-${APP_PORT:-7860}}"   # 7860, not 7000 — macOS AirPlay Receiver holds 7000.
+HOST="${ODYSSEUS_HOST:-${APP_BIND:-127.0.0.1}}" # Set APP_BIND=0.0.0.0 in .env for LAN/Tailscale access.
 PROBE_HOST="$HOST"
 if [ "$PROBE_HOST" = "0.0.0.0" ] || [ "$PROBE_HOST" = "::" ]; then
   PROBE_HOST="127.0.0.1"
@@ -67,19 +83,42 @@ for cand in $cands; do
   fi
 done
 
-# System dependencies:
+# System dependencies (each installed only if missing, so re-runs stay fast and
+# don't re-hit Homebrew over the network):
 #    - tmux      : Cookbook runs model downloads/serves in the background
 #    - llama.cpp : a prebuilt, Metal-enabled llama-server so Cookbook can serve
 #                  GGUF models on the GPU with no compile step
 #    - python@3.11 : installed only if no suitable (arm64) Python was found above
-echo "▶ Installing dependencies (Homebrew)…"
+#
+# tmux and llama.cpp are needed only by Cookbook (local model serving), not to
+# boot the core app. So if Homebrew can't install one right now we warn and keep
+# going instead of aborting the whole launch. Python is required to build the
+# venv, so that one stays fatal (handled by the PY check just below).
+
+# Install a Homebrew formula only if its command isn't already present. A failed
+# install warns but does not abort — Cookbook can be set up later.
+brew_ensure() {
+  if command -v "$1" >/dev/null 2>&1; then
+    echo "  ✓ $2 already installed"
+    return 0
+  fi
+  echo "  installing $2…"
+  if ! brew install "$2"; then
+    echo "  ⚠ Couldn't install $2 right now — Cookbook (local model serving) may be limited."
+    echo "    You can install it later with:  brew install $2"
+  fi
+}
+
+echo "▶ Checking dependencies (Homebrew)…"
 if [ -n "$PY" ]; then
   echo "  (using $("$PY" --version 2>&1) at $PY)"
-  brew install tmux llama.cpp
 else
-  brew install python@3.11 tmux llama.cpp
+  echo "  installing python@3.11…"
+  brew install python@3.11 || true
   PY="$(command -v /opt/homebrew/bin/python3.11 || command -v python3.11 || true)"
 fi
+brew_ensure tmux tmux
+brew_ensure llama-server llama.cpp
 
 if [ -z "$PY" ] || [ ! -x "$PY" ]; then
   echo "✗ Couldn't find a Python 3.11+ to build the environment with."
@@ -94,10 +133,11 @@ if [ ! -d venv ]; then
   echo "▶ Creating Python environment…"
   "$PY" -m venv venv
 fi
+VENV_PY="./venv/bin/python3"
 echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
-"$PY" -m pip install --quiet --upgrade pip
+"$VENV_PY" -m pip install --quiet --upgrade pip
 # Not --quiet: this is the slow step, so show progress (and any real errors).
-"$PY" -m pip install -r requirements.txt
+"$VENV_PY" -m pip install -r requirements.txt
 
 # 4. First-run setup: creates data dirs and prints an initial admin password
 #    the first time (idempotent — does nothing if already set up). Suppress its
@@ -156,4 +196,4 @@ if [ -n "$TAILSCALE_URL" ]; then
 fi
 echo "  (this takes a few seconds; press Ctrl+C here to stop)"
 echo
-"$PY" -m uvicorn app:app --host "$HOST" --port "$PORT"
+"$VENV_PY" -m uvicorn app:app --host "$HOST" --port "$PORT"

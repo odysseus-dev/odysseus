@@ -65,7 +65,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "web_fetch": "Fetch and read the text content of a specific URL/website the user names (e.g. 'check example.com', 'open this link'). Use when you have a concrete URL; for open-ended lookups use web_search instead.",
     "read_file": "Read a file from disk and return its contents. View source code, config files, logs.",
     "write_file": "Write content to a file on disk. Create new files, save output, update configs.",
-    "create_document": "Create a new document in the editor panel. For code, articles, text content longer than 15 lines. Specify title, language, and content.",
+    "create_document": "Create a new document in the editor panel. For code, articles, text content longer than 15 lines, unless an already-open document/email draft is the obvious target. If an email compose draft is open, edit that draft instead of creating another document.",
     "edit_document": "Preferred tool for editing an existing document — targeted find-and-replace. Use for any small change: add a function, fix a bug, tweak a section, rename things.",
     "update_document": "Replace the entire active document content. ONLY for full rewrites (>50% changed). Do not use for small edits — use edit_document instead.",
     "suggest_document": "Suggest changes to the active document with explanations. For code review, proofreading, feedback requests.",
@@ -431,10 +431,14 @@ class ToolIndex:
         base = set(always_include or ALWAYS_AVAILABLE)
         retrieved = self.retrieve(query, k=k)
         base.update(retrieved)
-        # Keyword-based force-include for common intents
+        # Keyword-based force-include for common intents. Match on word
+        # boundaries, not raw substrings, so short hints like "fix", "line",
+        # "serve", "reply" or "unread" don't fire inside unrelated words
+        # ("prefix", "deadline"/"online", "observe"/"reserve", "replying",
+        # "unreadable"). Same word-boundary matching used in topic_analyzer.
         ql = query.lower()
         for keywords, tools in self._KEYWORD_HINTS.items():
-            if any(kw in ql for kw in keywords):
+            if any(re.search(rf"\b{re.escape(kw)}\b", ql) for kw in keywords):
                 base.update(tools)
         # Structural scheduling-intent detection — typo-resilient (the literal
         # keyword "every day" misses "every dya"). Catches "every <word>",
