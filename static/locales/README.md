@@ -4,6 +4,12 @@ Odysseus localizes the UI by **matching rendered English text** against
 source-keyed catalogs — no per-element annotation, no build step. Adding a
 language or a string is editing JSON.
 
+> **Translators:** the recommended workflow is the gettext **PO** files in
+> [`locales/`](../../locales/README.md) (Poedit/Weblate/Crowdin, with Translation
+> Memory, glossaries and MT), which compile to the `*.json` catalogs described
+> here. Editing these JSON files directly still works and is fine for a quick
+> one-off change.
+
 ## Quick reference
 
 | I want to… | Do this |

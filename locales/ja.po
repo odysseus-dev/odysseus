@@ -1,0 +1,3247 @@
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: Odysseus\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: ja\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"X-Language-Name: Japanese\n"
+"X-Native-Name: 日本語\n"
+"X-Direction: ltr\n"
+
+#, python-brace-format
+msgid " (AI: \"{text}...\")"
+msgstr "（AI：「{text}...」）"
+
+msgid " (API)"
+msgstr "（API）"
+
+msgid " (default)"
+msgstr "（既定）"
+
+msgid " (key set)"
+msgstr "（キー設定済み）"
+
+msgid " (no key)"
+msgstr "（キーなし）"
+
+msgid " (not detected)"
+msgstr "（未検出）"
+
+msgid " (offline)"
+msgstr "（オフライン）"
+
+#, python-brace-format
+msgid " ({failed} failed)"
+msgstr "（{failed}件失敗）"
+
+msgid " · SMTP ok"
+msgstr " · SMTP正常"
+
+#, python-brace-format
+msgid " · SMTP: {error}"
+msgstr " · SMTP：{error}"
+
+msgid " — email sent"
+msgstr " — メールを送信しました"
+
+msgid " — ntfy sent"
+msgstr " — ntfyを送信しました"
+
+#, python-brace-format
+msgid " — {remaining} unfiled left, hit Tidy again"
+msgstr " — 未分類が{remaining}件残っています。もう一度「整理」を実行してください"
+
+msgid "\"AHHHHHHHHHHHHHHHHHHHHHHHHHHHHH\""
+msgstr "「アアアアアアアアアアアアアアアアアアアアアアアアアアアアア」"
+
+msgid "\"Anyway, as I was saying — best-in-class.\""
+msgstr "「ともかく、さっき言ったように — 業界最高です。」"
+
+msgid "\"I'm a real person. This is a real testimonial. By a real woman.\""
+msgstr "「私は本物の人間です。これは本物のお客様の声です。本物の女性による。」"
+
+msgid "\"Odysseus helped us ship more ships while shipping ships. Truly best-in-class shipping.\""
+msgstr "「Odysseusのおかげで、船を出荷しながらもっと多くの船を出荷できました。まさに業界最高の出荷です。」"
+
+msgid "&mdash; e.g. 'I prefer concise replies'"
+msgstr "&mdash; 例: 「簡潔な返信を希望」"
+
+msgid "(Endpoints)"
+msgstr "（エンドポイント）"
+
+msgid "(Experimental)"
+msgstr "（実験的）"
+
+msgid "(No folder)"
+msgstr "(フォルダなし)"
+
+msgid "(OPENAI_API_KEY not set on server)"
+msgstr "(サーバーに OPENAI_API_KEY が設定されていません)"
+
+msgid "(Recommended: Local Endpoint)"
+msgstr "（推奨：ローカルエンドポイント）"
+
+msgid "(if you want to add an API that's cool too — I'm not here to tell you how to live your life…)"
+msgstr "(APIを追加したいならそれもいいよ — 君の人生をどう生きるか指図するつもりはないから…)"
+
+msgid "(leave blank to keep current)"
+msgstr "（空欄のままにすると現在の値を維持）"
+
+msgid "(no name)"
+msgstr "（名前なし）"
+
+msgid "(offline)"
+msgstr "(オフライン)"
+
+msgid "(optional — leave blank to use email)"
+msgstr "（任意 — 空欄でメールアドレスを使用）"
+
+#, python-brace-format
+msgid "(render failed: {error})"
+msgstr "(描画失敗: {error})"
+
+msgid "(scan failed)"
+msgstr "(スキャン失敗)"
+
+msgid "(unchanged)"
+msgstr "（変更なし）"
+
+msgid "(untitled)"
+msgstr "(無題)"
+
+msgid "+ Add"
+msgstr "+ 追加"
+
+msgid "+ Add Account"
+msgstr "+ アカウントを追加"
+
+msgid "+ Add Integration"
+msgstr "+ 連携を追加"
+
+msgid "+ Add fallback"
+msgstr "+ フォールバックを追加"
+
+msgid "+ Add participant"
+msgstr "+ 参加者を追加"
+
+msgid "+ Chat"
+msgstr "+ チャット"
+
+msgid "+ Image"
+msgstr "+ 画像"
+
+msgid "+ New"
+msgstr "+ 新規"
+
+msgid "+ New Folder"
+msgstr "+ 新規フォルダ"
+
+msgid "0 = unlimited"
+msgstr "0 = 無制限"
+
+msgid "1x (normal)"
+msgstr "1倍（通常）"
+
+msgid "2FA Enabled!"
+msgstr "2FAを有効にしました！"
+
+msgid "465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs."
+msgstr "SSL/SMTPSは465、STARTTLSは587。25は通常ISPによってブロックされます。"
+
+msgid "8192 (default)"
+msgstr "8192（既定）"
+
+msgid "993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143."
+msgstr "IMAPS（ほとんどのプロバイダー）は993、平文またはSTARTTLSは143。ローカルサーバーは31143などの独自ポートを使うことがよくあります。"
+
+msgid "<no IMAP>"
+msgstr "<IMAPなし>"
+
+msgid "<strong>Login</strong> registers this device with your Vaultwarden account (once per account)."
+msgstr "<strong>ログイン</strong>はこのデバイスをVaultwardenアカウントに登録します（アカウントごとに1回）。"
+
+msgid "<strong>Unlock</strong> decrypts the vault — required after restart or Lock. Session is saved so the assistant can read passwords."
+msgstr "<strong>ロック解除</strong>はVaultを復号します — 再起動またはロック後に必要です。セッションは保存され、アシスタントがパスワードを読み取れます。"
+
+msgid "A real woman"
+msgstr "本物の女性"
+
+msgid "A-Z"
+msgstr "A-Z"
+
+msgid "AI"
+msgstr "AI"
+
+msgid "AI Chat Bubble"
+msgstr "AIチャットバブル"
+
+msgid "AI Defaults"
+msgstr "AI既定"
+
+msgid "AI Synthesis"
+msgstr "AI合成"
+
+msgid "AI expand — turn your notes into a full character prompt"
+msgstr "AI展開 — メモを完全なキャラクタープロンプトに変換"
+
+msgid "AI is processing"
+msgstr "AIが処理中"
+
+#, python-brace-format
+msgid "AI renamed to {name}"
+msgstr "AIの名前を{name}に変更しました"
+
+msgid "AI summaries, style-matched draft replies, auto-tagging and spam triage over IMAP/SMTP."
+msgstr "IMAP/SMTP上でのAI要約、文体に合わせた返信下書き、自動タグ付け、スパム振り分け。"
+
+msgid "AI tidy: deduplicate and clean up memories"
+msgstr "AI 整理: 記憶を重複排除してクリーンアップ"
+
+msgid "AI-extracted from your sent emails. Used when AI drafts replies."
+msgstr "送信済みメールからAIが抽出します。AIが返信を作成する際に使用されます。"
+
+msgid "AI-optimized search. 1,000 free credits/month at tavily.com"
+msgstr "AI最適化検索。tavily.com で月1,000クレジット無料"
+
+msgid "API"
+msgstr "API"
+
+msgid "API Key"
+msgstr "APIキー"
+
+msgid "API Service"
+msgstr "APIサービス"
+
+msgid "API key"
+msgstr "APIキー"
+
+msgid "API key or token"
+msgstr "APIキーまたはトークン"
+
+msgid "Accent"
+msgstr "アクセント"
+
+msgid "Accent Color"
+msgstr "アクセントカラー"
+
+msgid "Account"
+msgstr "アカウント"
+
+msgid "Actions"
+msgstr "操作"
+
+msgid "Active"
+msgstr "有効"
+
+#, python-brace-format
+msgid "Active: {label}{extra} · {count} results"
+msgstr "有効：{label}{extra} · {count}件の結果"
+
+msgid "Add"
+msgstr "追加"
+
+msgid "Add API Integration"
+msgstr "API連携を追加"
+
+msgid "Add Email Account"
+msgstr "メールアカウントを追加"
+
+msgid "Add Integration"
+msgstr "連携を追加"
+
+msgid "Add MCP Server"
+msgstr "MCPサーバーを追加"
+
+msgid "Add Memory"
+msgstr "記憶を追加"
+
+msgid "Add Models"
+msgstr "モデルを追加"
+
+msgid "Add Skill"
+msgstr "スキルを追加"
+
+msgid "Add User"
+msgstr "ユーザーを追加"
+
+msgid "Add a memory"
+msgstr "記憶を追加"
+
+msgid "Add a model to try if the one above fails"
+msgstr "上記が失敗した場合に試すモデルを追加"
+
+msgid "Add a model to try if the utility model fails"
+msgstr "ユーティリティモデルが失敗した場合に試すモデルを追加"
+
+msgid "Add a vision model to try if the one above fails"
+msgstr "上記が失敗した場合に試すビジョンモデルを追加"
+
+msgid "Add an AI endpoint from Settings in the sidebar, or paste an endpoint/API key into the chat."
+msgstr "サイドバーの設定からAIエンドポイントを追加するか、エンドポイントまたはAPIキーをチャットに貼り付けてください。"
+
+msgid "Add an extra layer of security with an authenticator app (Aegis, Google Authenticator, etc.)"
+msgstr "認証アプリ（Aegis、Google Authenticatorなど）でセキュリティを強化"
+
+msgid "Add model chat"
+msgstr "モデルチャットを追加"
+
+msgid "Added Models"
+msgstr "追加済みモデル"
+
+msgid "Added after your message"
+msgstr "メッセージの後に追加"
+
+msgid "Added before your message"
+msgstr "メッセージの前に追加"
+
+#, python-brace-format
+msgid "Added {n} files to chat"
+msgstr "{n}件のファイルをチャットに追加しました"
+
+msgid "Admin"
+msgstr "管理"
+
+msgid "Admin access required"
+msgstr "管理者権限が必要です"
+
+msgid "Agent"
+msgstr "エージェント"
+
+msgid "Agent / Chat"
+msgstr "エージェント / チャット"
+
+msgid "Agent Tools"
+msgstr "エージェントツール"
+
+msgid "All"
+msgstr "すべて"
+
+msgid "All external service connections in one place."
+msgstr "すべての外部サービス接続を一元管理。"
+
+msgid "All models"
+msgstr "すべてのモデル"
+
+msgid "All skills"
+msgstr "すべてのスキル"
+
+msgid "All sorted"
+msgstr "すべて振り分け済みです"
+
+msgid "Allow anyone to create an account from the login page"
+msgstr "ログインページから誰でもアカウントを作成できるようにします"
+
+msgid "Already clean"
+msgstr "すでに整理済みです"
+
+msgid "Already logged in — use Unlock"
+msgstr "すでにログイン済み — ロック解除を使用してください"
+
+msgid "Analogous"
+msgstr "類似色"
+
+msgid "Analyze images with a vision-capable model."
+msgstr "ビジョン対応モデルで画像を解析します。"
+
+msgid "Analyzing your sent emails…"
+msgstr "送信済みメールを分析中…"
+
+msgid "Appearance"
+msgstr "外観"
+
+msgid "Apply"
+msgstr "適用"
+
+msgid "Approve"
+msgstr "承認"
+
+msgid "Archive"
+msgstr "アーカイブ"
+
+msgid "Archive selected"
+msgstr "選択項目をアーカイブ"
+
+#, python-brace-format
+msgid "Archive {count} session(s)?"
+msgstr "{count}件のセッションをアーカイブしますか?"
+
+msgid "Archived"
+msgstr "アーカイブ済み"
+
+#, python-brace-format
+msgid "Archived {count} sessions"
+msgstr "{count}件のセッションをアーカイブしました"
+
+msgid "Args"
+msgstr "引数"
+
+msgid "Ask an admin to configure model endpoints"
+msgstr "管理者にモデルエンドポイントの設定を依頼してください"
+
+msgid "Attach Files"
+msgstr "ファイルを添付"
+
+msgid "Attach files"
+msgstr "ファイルを添付"
+
+msgid "Audit"
+msgstr "監査"
+
+msgid "Audit all"
+msgstr "すべて監査"
+
+msgid "Audit all publishes passing, necessary skills at or above this confidence. Off = keep audit results as drafts unless manually approved."
+msgstr "この信頼度以上で合格・必要なスキルの公開をすべて監査します。オフ = 手動で承認しない限り監査結果を下書きのまま保持します。"
+
+msgid "Audit selected draft skills"
+msgstr "選択した下書きスキルを監査"
+
+msgid "Auth"
+msgstr "認証"
+
+msgid "Authenticator app required on login"
+msgstr "ログイン時に認証アプリが必要です"
+
+msgid "Authorize"
+msgstr "認証"
+
+msgid "Auto-approve skills"
+msgstr "スキルを自動承認"
+
+msgid "Auto-detect"
+msgstr "自動検出"
+
+msgid "Auto-extract memories"
+msgstr "記憶を自動抽出"
+
+msgid "Auto-extract skills"
+msgstr "スキルを自動抽出"
+
+msgid "Auto-saved"
+msgstr "自動保存しました"
+
+msgid "Auto-sort failed"
+msgstr "自動並べ替えに失敗しました"
+
+#, python-brace-format
+msgid "Auto-sort: {message}"
+msgstr "自動並べ替え: {message}"
+
+msgid "Automatically draft reusable skills from your workflows. Audit all can publish passing skills using the threshold below."
+msgstr "ワークフローから再利用可能なスキルを自動的に下書きします。「すべて監査」では以下のしきい値を使って合格したスキルを公開できます。"
+
+msgid "Automatically extract memories from conversations."
+msgstr "会話から記憶を自動的に抽出します。"
+
+msgid "Avatar & name"
+msgstr "アバターと名前"
+
+msgid "A–Z"
+msgstr "A–Z"
+
+msgid "Background"
+msgstr "背景"
+
+msgid "Background / Effect"
+msgstr "背景 / エフェクト"
+
+#, python-brace-format
+msgid "Bad hex for {key}"
+msgstr "{key}のHEX値が不正です"
+
+msgid "Balanced"
+msgstr "バランス"
+
+msgid "Base URL"
+msgstr "ベースURL"
+
+msgid "Base URL (e.g. https://api.example.com/v1)"
+msgstr "ベースURL（例：https://api.example.com/v1）"
+
+msgid "Basic"
+msgstr "Basic"
+
+msgid "Bearer (most common)"
+msgstr "Bearer（最も一般的）"
+
+msgid "Blur emails, tokens, and secrets in AI output"
+msgstr "AI出力内のメール、トークン、シークレットをぼかします"
+
+msgid "Border"
+msgstr "境界線"
+
+msgid "Border Chat Bubble"
+msgstr "バブルの境界線"
+
+msgid "Brain"
+msgstr "ブレイン"
+
+msgid "Brand name"
+msgstr "ブランド名"
+
+msgid "Brave API key"
+msgstr "Brave APIキー"
+
+msgid "Bring your own models"
+msgstr "自分のモデルを持ち込む"
+
+msgid "Browser (built-in)"
+msgstr "ブラウザ（内蔵）"
+
+msgid "Browser notification (default)"
+msgstr "ブラウザ通知（既定）"
+
+msgid "Built-in Tools"
+msgstr "内蔵ツール"
+
+msgid "Built-in tools (bash, files, web, memory) plus any MCP server you connect. Toggle per tool."
+msgstr "組み込みツール（bash、ファイル、ウェブ、メモリ）に加え、接続した任意のMCPサーバー。ツールごとに切り替え可能。"
+
+msgid "By Folder"
+msgstr "フォルダ別"
+
+msgid "CX ID"
+msgstr "CX ID"
+
+msgid "CalDAV"
+msgstr "CalDAV"
+
+msgid "CalDAV Calendar"
+msgstr "CalDAVカレンダー"
+
+msgid "Calendar"
+msgstr "カレンダー"
+
+msgid "Calendar (CalDAV)"
+msgstr "カレンダー（CalDAV）"
+
+msgid "Cancel"
+msgstr "キャンセル"
+
+msgid "Cancel (Esc)"
+msgstr "キャンセル (Esc)"
+
+msgid "Cancel / close"
+msgstr "キャンセル／閉じる"
+
+msgid "Cannot overwrite a built-in theme."
+msgstr "組み込みテーマは上書きできません。"
+
+msgid "Chad Corporate"
+msgstr "Chad Corporate"
+
+msgid "Change Password"
+msgstr "パスワード変更"
+
+msgid "Change the session name"
+msgstr "セッション名を変更します"
+
+msgid "Changes the language of the Odysseus interface. Untranslated text falls back to English."
+msgstr "Odysseusインターフェースの言語を変更します。未翻訳のテキストは英語で表示されます。"
+
+msgid "Channel"
+msgstr "チャンネル"
+
+msgid "Character"
+msgstr "キャラクター"
+
+msgid "Character active — click to deactivate"
+msgstr "キャラクター有効 — クリックで無効化"
+
+msgid "Characters"
+msgstr "キャラクター"
+
+msgid "Chat"
+msgstr "チャット"
+
+msgid "Chat & Agents"
+msgstr "チャットとエージェント"
+
+msgid "Chat Area"
+msgstr "チャットエリア"
+
+msgid "Chat Bar"
+msgstr "チャットバー"
+
+msgid "Chat Bubbles"
+msgstr "チャットバブル"
+
+msgid "Chat Input / Prompt Area"
+msgstr "チャット入力 / プロンプト欄"
+
+msgid "Chat area"
+msgstr "チャットエリア"
+
+msgid "Chat copied to clipboard"
+msgstr "チャットをクリップボードにコピーしました"
+
+msgid "Chat history list"
+msgstr "チャット履歴リスト"
+
+msgid "Chat ready"
+msgstr "チャット準備完了"
+
+msgid "Chats"
+msgstr "チャット"
+
+msgid "Chief Executive Officer"
+msgstr "最高経営責任者"
+
+#, python-brace-format
+msgid "Cleaned {count} empty/throwaway chats"
+msgstr "空の/一時チャットを{count}件整理しました"
+
+msgid "Cleaning..."
+msgstr "クリーニング中…"
+
+msgid "Clear Advanced Overrides"
+msgstr "詳細オーバーライドをクリア"
+
+msgid "Cleared (deep-links disabled)"
+msgstr "クリアしました（ディープリンクを無効化）"
+
+msgid "Clears `memory.json`, the Memory table, and the vector store. Skills not affected."
+msgstr "`memory.json`、メモリテーブル、ベクトルストアをクリアします。スキルには影響しません。"
+
+msgid "Click a shortcut to rebind. Press Escape to cancel."
+msgstr "ショートカットをクリックして再割り当て。Escで取り消し。"
+
+msgid "Click to edit"
+msgstr "クリックして編集"
+
+msgid "Click to rebind"
+msgstr "クリックして再割り当て"
+
+msgid "Clone it and run"
+msgstr "クローンして実行"
+
+msgid "Close"
+msgstr "閉じる"
+
+msgid "Close memory modal"
+msgstr "記憶モーダルを閉じる"
+
+msgid "Close rename session modal"
+msgstr "セッション名変更モーダルを閉じる"
+
+msgid "Code Bg"
+msgstr "コード背景"
+
+msgid "Code Blocks"
+msgstr "コードブロック"
+
+msgid "Code Text"
+msgstr "コード文字"
+
+msgid "Cog next to user — re-open with <code>/settings</code>"
+msgstr "ユーザー横の歯車 — <code>/settings</code> で再表示"
+
+msgid "Collapse section"
+msgstr "セクションを折りたたむ"
+
+msgid "Color Harmony"
+msgstr "カラーハーモニー"
+
+msgid "Colors"
+msgstr "カラー"
+
+msgid "Comfortable"
+msgstr "快適"
+
+msgid "Command"
+msgstr "コマンド"
+
+msgid "Compact"
+msgstr "コンパクト"
+
+msgid "Compare"
+msgstr "比較"
+
+msgid "Compare active — click to deactivate"
+msgstr "比較有効 — クリックで無効化"
+
+msgid "Complementary"
+msgstr "補色"
+
+msgid "Compose email"
+msgstr "メールを作成"
+
+msgid "Confidence"
+msgstr "信頼度"
+
+msgid "Configure TTS provider for assistant message read-aloud."
+msgstr "アシスタントメッセージの読み上げに使うTTSプロバイダーを設定します。"
+
+msgid "Configure one or more IMAP/SMTP accounts. The default account is used when nothing else is selected."
+msgstr "1つ以上のIMAP/SMTPアカウントを設定します。他に選択がない場合は既定のアカウントが使用されます。"
+
+msgid "Configure which model to use for image generation."
+msgstr "画像生成に使用するモデルを設定します。"
+
+msgid "Confirm"
+msgstr "確認"
+
+msgid "Confirm Password"
+msgstr "パスワードの確認"
+
+msgid "Confirm new password"
+msgstr "新しいパスワードを再入力"
+
+msgid "Connect to a cloud API or scan your network for a local model server."
+msgstr "クラウドAPIに接続するか、ネットワークをスキャンしてローカルモデルサーバーを探します。"
+
+msgid "Connected"
+msgstr "接続済み"
+
+#, python-brace-format
+msgid "Connected ({count} tools)"
+msgstr "接続済み（{count}ツール）"
+
+#, python-brace-format
+msgid "Connected ({info})"
+msgstr "接続済み（{info}）"
+
+msgid "Connection failed"
+msgstr "接続に失敗しました"
+
+msgid "Connection failed — not saved"
+msgstr "接続に失敗しました — 保存されていません"
+
+msgid "Connections"
+msgstr "接続"
+
+msgid "Constellations"
+msgstr "星座"
+
+msgid "Contacts"
+msgstr "連絡先"
+
+msgid "Contacts (CardDAV)"
+msgstr "連絡先（CardDAV）"
+
+msgid "Controls"
+msgstr "コントロール"
+
+msgid "Controls for the agent tool loop."
+msgstr "エージェントツールループの制御。"
+
+msgid "Controls how fired note reminders are delivered."
+msgstr "発火したメモリマインダーの配信方法を制御します。"
+
+msgid "Controls how many relevant published or approved skills are added to each agent request."
+msgstr "各エージェントリクエストに追加する、関連する公開済みまたは承認済みスキルの数を制御します。"
+
+msgid "Controls randomness. Lower values give focused, deterministic answers (good for code). Higher values give more creative, varied responses."
+msgstr "ランダム性を制御します。値が低いほど焦点が定まった決定論的な回答になります（コード向き）。値が高いほどよりクリエイティブで多様な応答になります。"
+
+msgid "Cookbook"
+msgstr "クックブック"
+
+msgid "Copied"
+msgstr "コピーしました"
+
+msgid "Copy Chat"
+msgstr "チャットをコピー"
+
+msgid "Copy failed"
+msgstr "コピーに失敗しました"
+
+msgid "Copy link"
+msgstr "リンクをコピー"
+
+msgid "Could not create document"
+msgstr "ドキュメントを作成できませんでした"
+
+msgid "Could not load 2FA status"
+msgstr "2FAの状態を読み込めませんでした"
+
+msgid "Create"
+msgstr "作成"
+
+msgid "Create a new character"
+msgstr "新しいキャラクターを作成"
+
+msgid "Create a skill by hand — title, what it solves, and an approach."
+msgstr "手動でスキルを作成 — タイトル、解決する課題、アプローチ。"
+
+msgid "Create custom mini-apps and tools the AI can use. Describe what you need and the AI will build a tool you can reuse across conversations."
+msgstr "AIが使用できるカスタムのミニアプリやツールを作成します。必要なものを伝えると、AIが会話をまたいで再利用できるツールを構築します。"
+
+msgid "Creative"
+msgstr "クリエイティブ"
+
+msgid "Current password"
+msgstr "現在のパスワード"
+
+msgid "Custom (no preset)"
+msgstr "カスタム（プリセットなし）"
+
+msgid "Custom Fonts"
+msgstr "カスタムフォント"
+
+msgid "Custom URL"
+msgstr "カスタムURL"
+
+msgid "Customize"
+msgstr "カスタマイズ"
+
+msgid "Custom…"
+msgstr "カスタム…"
+
+msgid "Cyclops, Cave Solutions (on leave)"
+msgstr "サイクロプス、Cave Solutions（休職中）"
+
+msgid "Danger Zone"
+msgstr "危険ゾーン"
+
+msgid "Dark"
+msgstr "ダーク"
+
+msgid "Data Backup"
+msgstr "データバックアップ"
+
+msgid "Deep Research"
+msgstr "ディープリサーチ"
+
+msgid "Deep Research active — click to deactivate"
+msgstr "ディープリサーチ有効 — クリックで無効化"
+
+msgid "Deep multi-step research with source gathering and synthesis."
+msgstr "情報源の収集と統合による、多段階のディープリサーチ。"
+
+msgid "Default"
+msgstr "既定"
+
+msgid "Default Chat Model"
+msgstr "既定のチャットモデル"
+
+msgid "Default Themes"
+msgstr "デフォルトテーマ"
+
+msgid "Del"
+msgstr "削除"
+
+msgid "Delete"
+msgstr "削除"
+
+#, python-brace-format
+msgid "Delete account \"{name}\"?"
+msgstr "アカウント「{name}」を削除しますか？"
+
+msgid "Delete all unsorted sessions"
+msgstr "未分類のセッションをすべて削除"
+
+#, python-brace-format
+msgid "Delete all {count} unsorted session(s)?"
+msgstr "未分類の{count}件のセッションをすべて削除しますか?"
+
+#, python-brace-format
+msgid "Delete folder \"{folder}\" and all {count} session(s) inside it?"
+msgstr "フォルダ「{folder}」と内包する{count}件のセッションをすべて削除しますか?"
+
+msgid "Delete folder and all sessions"
+msgstr "フォルダと内包セッションをすべて削除"
+
+msgid "Delete non passing"
+msgstr "不合格を削除"
+
+msgid "Delete selected"
+msgstr "選択項目を削除"
+
+msgid "Delete selected duplicates, generic/irrelevant skills, failed audits, and skills below threshold"
+msgstr "選択した重複、汎用的／無関係なスキル、監査失敗、しきい値未満のスキルを削除"
+
+msgid "Delete session"
+msgstr "セッションを削除"
+
+msgid "Delete theme"
+msgstr "テーマを削除"
+
+#, python-brace-format
+msgid "Delete theme \"{name}\"?"
+msgstr "テーマ「{name}」を削除しますか？"
+
+msgid "Delete this character and its memories"
+msgstr "このキャラクターとその記憶を削除"
+
+msgid "Delete this contact?"
+msgstr "この連絡先を削除しますか？"
+
+msgid "Delete this integration?"
+msgstr "この連携を削除しますか？"
+
+msgid "Delete this research?"
+msgstr "このリサーチを削除しますか?"
+
+msgid "Delete this session permanently?"
+msgstr "このセッションを完全に削除しますか?"
+
+msgid "Delete this session?"
+msgstr "このセッションを削除しますか?"
+
+#, python-brace-format
+msgid "Delete {count} items?"
+msgstr "{count}件の項目を削除しますか?"
+
+#, python-brace-format
+msgid "Delete {count} session(s)? This cannot be undone."
+msgstr "{count}件のセッションを削除しますか?この操作は取り消せません。"
+
+#, python-brace-format
+msgid "Delete {count} sessions permanently?"
+msgstr "{count}件のセッションを完全に削除しますか?"
+
+msgid "Delete?"
+msgstr "削除しますか?"
+
+#, python-brace-format
+msgid "Delivered via {channel}"
+msgstr "{channel}経由で配信"
+
+msgid "Density"
+msgstr "密度"
+
+msgid "Disable"
+msgstr "無効化"
+
+msgid "Disable 2FA"
+msgstr "2FAを無効化"
+
+msgid "Disable Nobody mode"
+msgstr "匿名モードを無効化"
+
+msgid "Disabled"
+msgstr "無効"
+
+msgid "Disconnected"
+msgstr "切断"
+
+msgid "Dismiss"
+msgstr "閉じる"
+
+msgid "Document"
+msgstr "ドキュメント"
+
+msgid "Document Editor"
+msgstr "ドキュメントエディター"
+
+msgid "Documents"
+msgstr "ドキュメント"
+
+msgid "Done"
+msgstr "完了"
+
+msgid "Dots"
+msgstr "ドット"
+
+msgid "Downloaded!"
+msgstr "ダウンロードしました！"
+
+msgid "Drafts only"
+msgstr "下書きのみ"
+
+msgid "Drag to reorder"
+msgstr "ドラッグして並べ替え"
+
+msgid "Drag to reorder folder"
+msgstr "ドラッグしてフォルダを並べ替え"
+
+msgid "Drop <code>.woff2</code>, <code>.ttf</code>, or <code>.otf</code> files into <code>static/fonts/custom/</code> and reload — they'll appear in the Font dropdown above."
+msgstr "<code>.woff2</code>、<code>.ttf</code>、<code>.otf</code> ファイルを <code>static/fonts/custom/</code> にドロップして再読み込みすると、上のフォントドロップダウンに表示されます。"
+
+msgid "Drops `data/skills/` (all SKILL.md files). Memory not affected."
+msgstr "`data/skills/`（すべてのSKILL.mdファイル）を削除します。メモリには影響しません。"
+
+msgid "Duplicate shortcut"
+msgstr "ショートカットが重複しています"
+
+msgid "Each panel expands and plays its preview when you hover it."
+msgstr "各パネルにホバーすると展開し、プレビューが再生されます。"
+
+msgid "Edit"
+msgstr "編集"
+
+msgid "Edit API Integration"
+msgstr "API連携を編集"
+
+msgid "Edit Account"
+msgstr "アカウントを編集"
+
+msgid "Edit Email Account"
+msgstr "メールアカウントを編集"
+
+msgid "Edit Integration"
+msgstr "連携を編集"
+
+msgid "Effect color"
+msgstr "エフェクトの色"
+
+msgid "Email"
+msgstr "メール"
+
+msgid "Email (IMAP/SMTP)"
+msgstr "メール（IMAP/SMTP）"
+
+msgid "Email (add an account in Integrations)"
+msgstr "メール（連携でアカウントを追加してください）"
+
+msgid "Email + master password required"
+msgstr "メールアドレスとマスターパスワードが必要です"
+
+msgid "Email Accounts"
+msgstr "メールアカウント"
+
+msgid "Email Assistant"
+msgstr "メールアシスタント"
+
+msgid "Email account saved. Go to Settings > Email for writing style, auto-tagging, spam triage, reminders, and reply settings."
+msgstr "メールアカウントを保存しました。文体、自動タグ付け、スパム振り分け、リマインダー、返信設定は「設定 > メール」で行えます。"
+
+msgid "Email reminder was not sent"
+msgstr "メールリマインダーは送信されませんでした"
+
+msgid "Email settings"
+msgstr "メール設定"
+
+msgid "Embers"
+msgstr "残り火"
+
+msgid "Enable"
+msgstr "有効化"
+
+msgid "Enable Nobody mode — no memory, no history saved"
+msgstr "匿名モードを有効化 — メモリも履歴も保存しません"
+
+msgid "Enable or disable tools available to the AI agent."
+msgstr "AIエージェントが利用できるツールを有効または無効にします。"
+
+msgid "Enabled"
+msgstr "有効"
+
+msgid "Endpoint"
+msgstr "エンドポイント"
+
+msgid "Enter 6-digit code to verify"
+msgstr "確認用に6桁のコードを入力"
+
+msgid "Enter a name."
+msgstr "名前を入力してください。"
+
+msgid "Enter password to disable"
+msgstr "無効化するにはパスワードを入力"
+
+msgid "Enter session name"
+msgstr "セッション名を入力"
+
+msgid "Enter the code"
+msgstr "コードを入力"
+
+msgid "Enter your password"
+msgstr "パスワードを入力"
+
+msgid "Env"
+msgstr "環境変数"
+
+msgid "Error saving"
+msgstr "保存エラー"
+
+#, python-brace-format
+msgid "Error: {error}"
+msgstr "エラー：{error}"
+
+msgid "Every document and version. Drafts, exports, library — all gone."
+msgstr "すべてのドキュメントとバージョン。下書き、エクスポート、ライブラリ — すべて削除されます。"
+
+msgid "Every event and every calendar (incl. CalDAV-synced ones; resync to restore)."
+msgstr "すべてのイベントとすべてのカレンダー（CalDAV同期分を含む。復元するには再同期）。"
+
+msgid "Every image record and the upload directory on disk."
+msgstr "すべての画像レコードとディスク上のアップロードディレクトリ。"
+
+msgid "Every note, todo, and checklist."
+msgstr "すべてのメモ、To Do、チェックリスト。"
+
+msgid "Every scheduled task and its run history (Tasks tool)."
+msgstr "すべてのスケジュール済みタスクとその実行履歴（タスクツール）。"
+
+msgid "Every session, message, and chat history. Documents/notes/etc. stay."
+msgstr "すべてのセッション、メッセージ、チャット履歴。ドキュメント/メモなどは残ります。"
+
+msgid "Everything, self-hosted"
+msgstr "すべて、セルフホスト"
+
+msgid "Expand"
+msgstr "展開"
+
+msgid "Export"
+msgstr "エクスポート"
+
+msgid "Export .csv"
+msgstr ".csvをエクスポート"
+
+msgid "Export .vcf"
+msgstr ".vcfをエクスポート"
+
+msgid "Export Data"
+msgstr "データをエクスポート"
+
+msgid "Export all memories as JSON"
+msgstr "すべての記憶を JSON でエクスポート"
+
+msgid "Export current colors as JSON"
+msgstr "現在のカラーをJSONとしてエクスポート"
+
+msgid "Export failed"
+msgstr "エクスポートに失敗しました"
+
+msgid "Export or import your user data (memories, presets, settings, skills, preferences) as a JSON file."
+msgstr "ユーザーデータ（メモリ、プリセット、設定、スキル、環境設定）をJSONファイルとしてエクスポートまたはインポートします。"
+
+msgid "Exporting..."
+msgstr "エクスポート中..."
+
+msgid "Extract from Sent (15 emails)"
+msgstr "送信済みから抽出（15件）"
+
+msgid "Extract memories from this session"
+msgstr "このセッションからメモリを抽出します"
+
+msgid "Fade this window to preview the page behind it"
+msgstr "このウィンドウをフェードして背後のページをプレビュー"
+
+msgid "Failed"
+msgstr "失敗"
+
+msgid "Failed to archive session"
+msgstr "セッションのアーカイブに失敗しました"
+
+msgid "Failed to copy chat"
+msgstr "チャットのコピーに失敗しました"
+
+msgid "Failed to delete session"
+msgstr "セッションの削除に失敗しました"
+
+#, python-brace-format
+msgid "Failed to delete session: {message}"
+msgstr "セッションの削除に失敗しました: {message}"
+
+msgid "Failed to extract"
+msgstr "抽出に失敗しました"
+
+msgid "Failed to load"
+msgstr "読み込みに失敗しました"
+
+msgid "Failed to load archive"
+msgstr "アーカイブの読み込みに失敗しました"
+
+msgid "Failed to load contacts (check CardDAV config above)."
+msgstr "連絡先の読み込みに失敗しました（上記のCardDAV設定を確認してください）。"
+
+msgid "Failed to load documents"
+msgstr "ドキュメントの読み込みに失敗しました"
+
+msgid "Failed to load research"
+msgstr "リサーチの読み込みに失敗しました"
+
+msgid "Failed to load server"
+msgstr "サーバーの読み込みに失敗しました"
+
+#, python-brace-format
+msgid "Failed to load session: {message}"
+msgstr "セッションの読み込みに失敗しました: {message}"
+
+#, python-brace-format
+msgid "Failed to load sessions: {message}"
+msgstr "セッションの読み込みに失敗しました: {message}"
+
+msgid "Failed to load tools"
+msgstr "ツールの読み込みに失敗しました"
+
+msgid "Failed to load vault status"
+msgstr "Vaultの状態の読み込みに失敗しました"
+
+msgid "Failed to open archived session"
+msgstr "アーカイブ済みセッションを開けませんでした"
+
+#, python-brace-format
+msgid "Failed to reach backend: {error}"
+msgstr "バックエンドに接続できませんでした: {error}"
+
+#, python-brace-format
+msgid "Failed to rename AI: {message}"
+msgstr "AIの名前変更に失敗しました: {message}"
+
+msgid "Failed to rename session"
+msgstr "セッション名の変更に失敗しました"
+
+#, python-brace-format
+msgid "Failed to rename session: {message}"
+msgstr "セッション名の変更に失敗しました: {message}"
+
+msgid "Failed to restore session"
+msgstr "セッションの復元に失敗しました"
+
+msgid "Failed to save"
+msgstr "保存に失敗しました"
+
+msgid "Failed to save to documents"
+msgstr "ドキュメントへの保存に失敗しました"
+
+msgid "Failed to set model"
+msgstr "モデルの設定に失敗しました"
+
+#, python-brace-format
+msgid "Failed to set model: {error}"
+msgstr "モデルの設定に失敗しました: {error}"
+
+#, python-brace-format
+msgid "Failed: {error}"
+msgstr "失敗：{error}"
+
+msgid "Fallbacks"
+msgstr "フォールバック"
+
+msgid "Favorite"
+msgstr "お気に入り"
+
+msgid "Favorite session"
+msgstr "セッションをお気に入り"
+
+msgid "Favorited"
+msgstr "お気に入りに追加しました"
+
+msgid "Favorites"
+msgstr "お気に入り"
+
+msgid "Features"
+msgstr "機能"
+
+msgid "Fill in all fields"
+msgstr "すべての項目を入力してください"
+
+msgid "Filter"
+msgstr "フィルター"
+
+msgid "Filter…"
+msgstr "フィルター…"
+
+msgid "Fire a test reminder using your current settings to verify everything works."
+msgstr "現在の設定でテストリマインダーを発火し、すべて正常に動作することを確認します。"
+
+msgid "Focus chat input"
+msgstr "チャット入力にフォーカス"
+
+msgid "Font"
+msgstr "フォント"
+
+msgid "Font & Layout"
+msgstr "フォントとレイアウト"
+
+msgid "For Gmail, iCloud, and Yahoo: paste your App Password (NOT your normal account password — those are blocked for IMAP). For Migadu, Fastmail, Outlook, etc.: your regular mailbox password works."
+msgstr "Gmail、iCloud、Yahooの場合：アプリパスワードを貼り付けてください（通常のアカウントパスワードはIMAPでブロックされます）。Migadu、Fastmail、Outlookなどの場合：通常のメールボックスパスワードが使えます。"
+
+msgid "Free search — no API key required. Works out of the box."
+msgstr "無料検索 — APIキー不要。そのまま使えます。"
+
+msgid "Frosted"
+msgstr "すりガラス"
+
+msgid "Gallery"
+msgstr "ギャラリー"
+
+msgid "Generate"
+msgstr "生成"
+
+msgid "Generate App Password"
+msgstr "アプリパスワードを生成"
+
+msgid "Generate an App Password from Yahoo Account Security (requires 2-Step Verification enabled) and paste it as the Password."
+msgstr "Yahooアカウントセキュリティからアプリパスワードを生成し（2段階認証の有効化が必要）、パスワードとして貼り付けてください。"
+
+msgid "Generic Coder Guy"
+msgstr "Generic Coder Guy"
+
+msgid "Generic Corporate Woman"
+msgstr "Generic Corporate Woman"
+
+msgid "Get started"
+msgstr "始める"
+
+msgid "Get your API key from brave.com/search/api"
+msgstr "brave.com/search/api でAPIキーを取得してください"
+
+msgid "GitHub"
+msgstr "GitHub"
+
+msgid "Give your character a name..."
+msgstr "キャラクターに名前を付けてください..."
+
+msgid "Gives the AI access to a sandboxed shell for running commands, installing packages, and executing scripts. Use with caution."
+msgstr "コマンドの実行、パッケージのインストール、スクリプトの実行のために、AIにサンドボックス化されたシェルへのアクセスを許可します。慎重にご利用ください。"
+
+msgid "Gmail needs an App Password"
+msgstr "Gmailにはアプリパスワードが必要です"
+
+msgid "Google API key"
+msgstr "Google APIキー"
+
+msgid "Google PSE engine ID"
+msgstr "Google PSEエンジンID"
+
+msgid "Google results via API. 2,500 free queries at serper.dev"
+msgstr "API経由のGoogle検索結果。serper.dev で2,500クエリ無料"
+
+msgid "Grant full admin access"
+msgstr "完全な管理者アクセスを付与"
+
+msgid "Group"
+msgstr "グループ"
+
+msgid "Group Chat active — click to deactivate"
+msgstr "グループチャット有効 — クリックで無効化"
+
+#, python-brace-format
+msgid "Group chat ready — {n} models"
+msgstr "グループチャットの準備完了 — {n} モデル"
+
+msgid "Hamburger menu"
+msgstr "ハンバーガーメニュー"
+
+msgid "Hardware-aware model recommendations and one-click serving across 270+ catalogued models."
+msgstr "ハードウェアに応じたモデル推奨と、270以上のカタログ化されたモデルをワンクリックで起動。"
+
+msgid "Harmony"
+msgstr "ハーモニー"
+
+msgid "Header"
+msgstr "ヘッダー"
+
+msgid "Hello, this is a test of text to speech."
+msgstr "こんにちは、これは音声合成のテストです。"
+
+msgid "Hide"
+msgstr "非表示"
+
+msgid ""
+"Hide the Settings cog?\n"
+"\n"
+"You can re-open this panel any time by typing /settings in the chat input."
+msgstr ""
+"設定アイコンを非表示にしますか？\n"
+"\n"
+"チャット入力欄で /settings と入力すれば、いつでもこのパネルを再表示できます。"
+
+msgid "High (best quality)"
+msgstr "高（最高品質）"
+
+msgid "Host"
+msgstr "ホスト"
+
+msgid "Hover to take a closer look"
+msgstr "ホバーして詳しく見る"
+
+msgid "How"
+msgstr "方法"
+
+msgid "How it actually started"
+msgstr "実際の始まり"
+
+msgid "How it started"
+msgstr "始まり"
+
+msgid "How this service expects the credential to be sent. <b>Bearer</b> = sends \"Authorization: Bearer YOUR_KEY\" (most modern APIs, ntfy, OpenAI-style). <b>Header</b> = sends YOUR_KEY verbatim under a header name you choose (Miniflux uses X-Auth-Token). <b>Basic</b> = HTTP basic auth (user:pass). <b>None</b> = the API is open / no auth."
+msgstr "このサービスが認証情報の送信方法をどう想定しているか。<b>Bearer</b> ＝「Authorization: Bearer YOUR_KEY」を送信（最新のAPI、ntfy、OpenAI形式の多く）。<b>Header</b> ＝選択したヘッダー名でYOUR_KEYをそのまま送信（MinifluxはX-Auth-Tokenを使用）。<b>Basic</b> ＝HTTP Basic認証（user:pass）。<b>None</b> ＝APIが公開／認証なし。"
+
+msgid "How you're reminded"
+msgstr "通知方法"
+
+msgid "I started working on the Odysseus project because running local AI felt fun — a step into the future. But the options to actually engage with LLMs felt like taking steps back. Where were features like Memory, Deep Research, Agents, and just basic integrations?!"
+msgstr "ローカルAIを動かすのが楽しそうに感じて、Odysseusプロジェクトを始めました。未来への一歩です。でも実際にLLMと向き合うための選択肢は、後退しているように感じました。メモリ、ディープリサーチ、エージェント、そして基本的な連携機能はどこに?!"
+
+msgid "IMAP (Receiving)"
+msgstr "IMAP（受信）"
+
+msgid "IMAP ok"
+msgstr "IMAP正常"
+
+#, python-brace-format
+msgid "IMAP: {error}"
+msgstr "IMAP：{error}"
+
+msgid "IMG"
+msgstr "画像"
+
+msgid "Image"
+msgstr "画像"
+
+msgid "Image Generation"
+msgstr "画像生成"
+
+msgid "Image generation model"
+msgstr "画像生成モデル"
+
+msgid "Import"
+msgstr "インポート"
+
+msgid "Import Data"
+msgstr "データをインポート"
+
+msgid "Import a <code>.txt</code>, <code>.md</code>, <code>.pdf</code>, <code>.csv</code>, <code>.log</code>, <code>.json</code>, <code>.py</code>, <code>.js</code>, or <code>.html</code> file &mdash; the AI reads it and suggests candidate memories you can approve. Needs an open chat session (it uses that session's model)."
+msgstr "<code>.txt</code>、<code>.md</code>、<code>.pdf</code>、<code>.csv</code>、<code>.log</code>、<code>.json</code>、<code>.py</code>、<code>.js</code>、<code>.html</code> ファイルをインポート &mdash; AI が内容を読み取り、承認できる記憶の候補を提案します。チャットセッションを開いておく必要があります（そのセッションのモデルを使用します）。"
+
+msgid "Import a theme from JSON"
+msgstr "JSONからテーマをインポート"
+
+msgid "Import failed"
+msgstr "インポートに失敗しました"
+
+msgid "Import memories from a file"
+msgstr "ファイルから記憶をインポート"
+
+#, python-brace-format
+msgid "Imported {imported}/{total}"
+msgstr "{imported}/{total}件をインポートしました"
+
+msgid "Importing…"
+msgstr "インポート中…"
+
+msgid "Include memories in chat context"
+msgstr "チャットのコンテキストに記憶を含める"
+
+msgid "Incognito Mode"
+msgstr "シークレットモード"
+
+msgid "Inject"
+msgstr "インジェクト"
+
+msgid "Inject Skills"
+msgstr "スキルを注入"
+
+msgid "Inject relevant skills into chat context"
+msgstr "関連するスキルをチャットのコンテキストに注入"
+
+msgid "Input Bg"
+msgstr "入力背景"
+
+msgid "Input Border"
+msgstr "入力境界線"
+
+msgid "Integrations"
+msgstr "連携"
+
+msgid "Intensity"
+msgstr "強度"
+
+msgid "Interface language"
+msgstr "インターフェース言語"
+
+msgid "Invalid JSON."
+msgstr "無効なJSONです。"
+
+msgid "Invalid code"
+msgstr "コードが無効です"
+
+msgid "Invalid name."
+msgstr "無効な名前です。"
+
+msgid "Irreversible. Each wipe targets one category — pick exactly what you want gone."
+msgstr "取り消し不可。各消去は1つのカテゴリーを対象とします — 削除したいものだけを選んでください。"
+
+msgid "It's open source and free. No sales team, no demo request — just clone the repo."
+msgstr "オープンソースで無料です。営業担当もデモ申請も不要 — リポジトリをクローンするだけ。"
+
+msgid "Keyboard Shortcuts"
+msgstr "キーボードショートカット"
+
+msgid "Language"
+msgstr "言語"
+
+msgid "Last Active"
+msgstr "最終アクティブ"
+
+#, python-brace-format
+msgid "Last unlock: {time}"
+msgstr "前回のロック解除：{time}"
+
+msgid "Last used"
+msgstr "最終使用"
+
+msgid "Leave blank to keep current"
+msgstr "空欄のままにすると現在の値を維持"
+
+msgid "Library"
+msgstr "ライブラリ"
+
+msgid "Light"
+msgstr "ライト"
+
+#, python-brace-format
+msgid "Limit: {n} tool calls per message"
+msgstr "上限：メッセージあたり{n}回のツール呼び出し"
+
+msgid "Load more"
+msgstr "さらに読み込む"
+
+msgid "Loading providers…"
+msgstr "プロバイダーを読み込み中…"
+
+msgid "Loading research…"
+msgstr "リサーチを読み込み中…"
+
+msgid "Loading..."
+msgstr "読み込み中..."
+
+msgid "Loading…"
+msgstr "読み込み中…"
+
+msgid "Local"
+msgstr "ローカル"
+
+msgid "Local (Kokoro-82M)"
+msgstr "ローカル（Kokoro-82M）"
+
+#, python-brace-format
+msgid "Local server appears offline: {reason}. Click to try anyway, or relaunch in Cookbook."
+msgstr "ローカルサーバーがオフラインのようです: {reason}。クリックして続行するか、Cookbookで再起動してください。"
+
+msgid "Local-first"
+msgstr "ローカルファースト"
+
+msgid "Lock"
+msgstr "ロック"
+
+msgid "Locked"
+msgstr "ロック中"
+
+msgid "Locking..."
+msgstr "ロック中..."
+
+msgid "Log out"
+msgstr "ログアウト"
+
+msgid "Log out of Bitwarden CLI? You'll need to re-enter your master password to log back in."
+msgstr "Bitwarden CLIからログアウトしますか？再度ログインするにはマスターパスワードの再入力が必要です。"
+
+msgid "Logged in"
+msgstr "ログイン済み"
+
+msgid "Logged out"
+msgstr "ログアウト済み"
+
+msgid "Logging in..."
+msgstr "ログイン中..."
+
+msgid "Logging out..."
+msgstr "ログアウト中..."
+
+msgid "Login"
+msgstr "ログイン"
+
+msgid "Login failed"
+msgstr "ログインに失敗しました"
+
+msgid "Logo & tips on empty chat"
+msgstr "空のチャットにロゴとヒントを表示"
+
+msgid "Logout"
+msgstr "ログアウト"
+
+msgid "Long-term facts the AI remembers across chats — recall, edit, or curate."
+msgstr "AI がチャット間で覚えている長期的な事実 — 呼び出し、編集、整理できます。"
+
+msgid "Loved by enterprises"
+msgstr "企業に愛されています"
+
+msgid "Low (fastest, cheapest)"
+msgstr "低（最速・最安）"
+
+msgid "MCP"
+msgstr "MCP"
+
+msgid "MCP Server"
+msgstr "MCPサーバー"
+
+msgid "MCP Tool Server"
+msgstr "MCPツールサーバー"
+
+msgid "MCP-ready"
+msgstr "MCP対応"
+
+msgid "Make Default"
+msgstr "既定に設定"
+
+msgid "Manage the endpoints you've added."
+msgstr "追加したエンドポイントを管理します。"
+
+msgid "Manual order"
+msgstr "手動で並べ替え"
+
+msgid "Master Password"
+msgstr "マスターパスワード"
+
+msgid "Master password required"
+msgstr "マスターパスワードが必要です"
+
+msgid "Max Tokens"
+msgstr "最大トークン数"
+
+msgid "Max skills per request"
+msgstr "リクエストごとの最大スキル数"
+
+#, python-brace-format
+msgid "Max tokens: {n}"
+msgstr "最大トークン数：{n}"
+
+#, python-brace-format
+msgid "Max {max} custom themes. Delete one first."
+msgstr "カスタムテーマは最大{max}個です。先に1つ削除してください。"
+
+msgid "Maximum length of the AI response. 'No limit' lets the model decide when to stop."
+msgstr "AI応答の最大の長さ。「制限なし」にすると、モデルが停止のタイミングを決定します。"
+
+msgid "Medium (default)"
+msgstr "中（既定）"
+
+msgid "Memories"
+msgstr "記憶"
+
+msgid "Memory"
+msgstr "メモリ"
+
+msgid "Message Odysseus..."
+msgstr "Odysseusにメッセージを送信..."
+
+msgid "Message input"
+msgstr "メッセージ入力"
+
+msgid "Messages will be routed through your OpenClaw agent. The agent has access to tools, memory, and skills configured in your OpenClaw workspace."
+msgstr "メッセージは OpenClaw エージェント経由でルーティングされます。エージェントは OpenClaw ワークスペースで設定されたツール、メモリ、スキルにアクセスできます。"
+
+msgid "Min 8 characters"
+msgstr "8文字以上"
+
+msgid "Minimize"
+msgstr "最小化"
+
+msgid "Minimum confidence"
+msgstr "最小信頼度"
+
+#, python-brace-format
+msgid "Missing: {keys}"
+msgstr "不足: {keys}"
+
+msgid "Mode"
+msgstr "モード"
+
+msgid "Mode switcher"
+msgstr "モード切り替え"
+
+msgid "Model"
+msgstr "モデル"
+
+msgid "Model name & export above chat"
+msgstr "チャット上部のモデル名とエクスポート"
+
+msgid "Model selector & quick-chat"
+msgstr "モデル選択とクイックチャット"
+
+msgid "Model used for Deep Research. Falls back to the default chat model if not set."
+msgstr "ディープリサーチに使用するモデル。未設定の場合は既定のチャットモデルを使用します。"
+
+msgid "Models"
+msgstr "モデル"
+
+#, python-brace-format
+msgid "Models sorted: {name}"
+msgstr "モデルを並べ替えました: {name}"
+
+msgid "Monochromatic"
+msgstr "モノクロ"
+
+msgid "Monospace"
+msgstr "等幅"
+
+msgid "More"
+msgstr "その他"
+
+msgid "More Colors"
+msgstr "その他のカラー"
+
+msgid "More Tools"
+msgstr "その他のツール"
+
+msgid "More tools"
+msgstr "その他のツール"
+
+msgid "Most messages"
+msgstr "メッセージ数順"
+
+msgid "Most used"
+msgstr "使用頻度順"
+
+msgid "Move to folder"
+msgstr "フォルダへ移動"
+
+msgid "Multi-round web search with source analysis. Takes longer but produces comprehensive, well-sourced answers. Your next message will trigger a deep research cycle."
+msgstr "ソース分析を伴う複数回のウェブ検索です。時間はかかりますが、根拠が豊富で包括的な回答が得られます。次のメッセージでディープリサーチが実行されます。"
+
+msgid "Multi-step research runs that gather, read, and synthesize sources into a written report."
+msgstr "情報源を収集・読解・統合し、文書化されたレポートにまとめる多段階のリサーチ実行。"
+
+msgid "Multi-turn chat plus autonomous agents that plan, call tools, and work through tasks."
+msgstr "マルチターンチャットに加え、計画を立て、ツールを呼び出し、タスクを遂行する自律エージェント。"
+
+msgid "My Service"
+msgstr "マイサービス"
+
+msgid "Name"
+msgstr "名前"
+
+msgid "Name required"
+msgstr "名前は必須です"
+
+msgid "Name this folder:"
+msgstr "フォルダ名を入力:"
+
+msgid "Navigation"
+msgstr "ナビゲーション"
+
+msgid "Need at least a Name or Email"
+msgstr "名前またはメールアドレスが少なくとも1つ必要です"
+
+msgid "Needs authorization"
+msgstr "認証が必要"
+
+#, python-brace-format
+msgid "Network error: {error}"
+msgstr "ネットワークエラー：{error}"
+
+msgid "New"
+msgstr "新規"
+
+msgid "New Account"
+msgstr "新規アカウント"
+
+msgid "New Chat"
+msgstr "新規チャット"
+
+msgid "New chat"
+msgstr "新規チャット"
+
+msgid "New document"
+msgstr "新規ドキュメント"
+
+msgid "New folder"
+msgstr "新規フォルダ"
+
+msgid "New password (min 8)"
+msgstr "新しいパスワード（8文字以上）"
+
+msgid "New session"
+msgstr "新規セッション"
+
+msgid "Newest"
+msgstr "新しい順"
+
+msgid "Newest First"
+msgstr "新しい順"
+
+msgid "Next testimonial"
+msgstr "次のお客様の声"
+
+msgid "No archived sessions"
+msgstr "アーカイブ済みセッションはありません"
+
+msgid "No chats found"
+msgstr "チャットが見つかりません"
+
+msgid "No contact data found"
+msgstr "連絡先データが見つかりません"
+
+msgid "No contacts yet."
+msgstr "連絡先がまだありません。"
+
+msgid "No cyclopes were harmed in production."
+msgstr "制作中にサイクロプスは傷つけられていません。"
+
+msgid "No documents found"
+msgstr "ドキュメントが見つかりません"
+
+msgid "No email accounts configured"
+msgstr "メールアカウントが設定されていません"
+
+msgid "No integrations configured"
+msgstr "連携が設定されていません"
+
+msgid "No limit"
+msgstr "制限なし"
+
+msgid "No matching models"
+msgstr "一致するモデルがありません"
+
+msgid "No memory, no history saved"
+msgstr "メモリなし、履歴を保存しない"
+
+msgid "No messages to copy"
+msgstr "コピーするメッセージがありません"
+
+msgid "No models available"
+msgstr "利用可能なモデルがありません"
+
+msgid "No models found"
+msgstr "モデルが見つかりません"
+
+#, python-brace-format
+msgid "No models match \"{query}\""
+msgstr "「{query}」に一致するモデルがありません"
+
+msgid "No research found"
+msgstr "リサーチが見つかりません"
+
+msgid "No results found"
+msgstr "結果が見つかりません"
+
+msgid "No sessions loaded"
+msgstr "読み込まれたセッションはありません"
+
+msgid "No telemetry"
+msgstr "テレメトリなし"
+
+msgid "Nobody"
+msgstr "匿名"
+
+msgid "Nobody mode active — click to deactivate"
+msgstr "匿名モードが有効です — クリックして無効化"
+
+msgid "None"
+msgstr "なし"
+
+msgid "Notes"
+msgstr "ノート"
+
+msgid "Nothing to copy yet"
+msgstr "コピーする内容がありません"
+
+msgid "Nothing to sort"
+msgstr "並べ替える項目はありません"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "OS default voice"
+msgstr "OSの既定の音声"
+
+msgid "Odysseus Chat"
+msgstr "Odysseus チャット"
+
+msgid "Odysseus Logo"
+msgstr "Odysseusロゴ"
+
+msgid "Odysseus is a self-hosted interface for talking to language models — chat, autonomous agents, tools, model serving, email, research, and more. Local-first, privacy-first, and no telemetry. Just you and your models."
+msgstr "Odysseusは、言語モデルと対話するためのセルフホスト型インターフェースです。チャット、自律エージェント、ツール、モデル起動、メール、リサーチなど。ローカルファースト、プライバシーファースト、テレメトリなし。あなたとあなたのモデルだけ。"
+
+msgid "Odysseus is everything I hate, just making it tolerable."
+msgstr "Odysseusは、私が嫌いなものすべて。それをただ我慢できるものにしただけ。"
+
+msgid "Odysseus was created by a carefully crafted one-shot AI prompt:"
+msgstr "Odysseusは、入念に作り込まれた1回限りのAIプロンプトによって生み出されました："
+
+msgid "Odysseus — A Self-Hosted AI Workspace"
+msgstr "Odysseus — セルフホスト型AIワークスペース"
+
+msgid "Odysseus — a self-hosted AI workspace: chat, agents, tools, model serving, email, research, and more. Your models, your hardware, your data."
+msgstr "Odysseus — セルフホスト型AIワークスペース：チャット、エージェント、ツール、モデル起動、メール、リサーチなど。あなたのモデル、あなたのハードウェア、あなたのデータ。"
+
+msgid "Oldest"
+msgstr "古い順"
+
+msgid "One app, a lot of capabilities"
+msgstr "1つのアプリに、多彩な機能"
+
+msgid "Only admins can hide Settings."
+msgstr "設定を非表示にできるのは管理者のみです。"
+
+msgid "Only required for Login / Unlock"
+msgstr "ログイン／ロック解除時のみ必要"
+
+msgid "Open"
+msgstr "開く"
+
+msgid "Open Admin to add endpoints"
+msgstr "管理画面を開いてエンドポイントを追加"
+
+msgid "Open Calendar"
+msgstr "カレンダーを開く"
+
+msgid "Open Compare"
+msgstr "比較を開く"
+
+msgid "Open Cookbook"
+msgstr "クックブックを開く"
+
+msgid "Open Deep Research"
+msgstr "ディープリサーチを開く"
+
+msgid "Open Gallery"
+msgstr "ギャラリーを開く"
+
+msgid "Open Library"
+msgstr "ライブラリを開く"
+
+msgid "Open Memory"
+msgstr "メモリを開く"
+
+msgid "Open Notes"
+msgstr "ノートを開く"
+
+msgid "Open Report"
+msgstr "レポートを開く"
+
+msgid "Open Tasks"
+msgstr "タスクを開く"
+
+msgid "Open Theme"
+msgstr "テーマを開く"
+
+msgid "Open Tools"
+msgstr "ツールを開く"
+
+msgid "Open email inbox"
+msgstr "受信トレイを開く"
+
+msgid "Open signup"
+msgstr "サインアップを開放"
+
+msgid "OpenClaw Agent Connected"
+msgstr "OpenClaw エージェント接続済み"
+
+msgid "Optional label for this account (e.g. “Work” or “Personal”). Leave blank to use the email address."
+msgstr "このアカウントの任意のラベル（例：「仕事」や「個人」）。空欄にするとメールアドレスを使用します。"
+
+msgid "Overflow menu"
+msgstr "オーバーフローメニュー"
+
+msgid "PDF"
+msgstr "PDF"
+
+msgid "Panel"
+msgstr "パネル"
+
+msgid "Password"
+msgstr "パスワード"
+
+msgid "Password (min 8)"
+msgstr "パスワード（8文字以上）"
+
+msgid "Password updated"
+msgstr "パスワードを更新しました"
+
+msgid "Passwords don't match"
+msgstr "パスワードが一致しません"
+
+msgid "Paste an endpoint URL, e.g. http://localhost:8000/v1"
+msgstr "エンドポイントURLを貼り付け（例：http://localhost:8000/v1）"
+
+msgid "Paste theme JSON here..."
+msgstr "テーマJSONをここに貼り付け..."
+
+msgid "Peek"
+msgstr "のぞき見"
+
+msgid "Perlin Flow"
+msgstr "パーリンフロー"
+
+msgid "Persistent memory the assistant builds up and recalls across all your conversations."
+msgstr "アシスタントが蓄積し、すべての会話を通じて呼び出す永続的なメモリ。"
+
+msgid "Persona picker & system prompt"
+msgstr "ペルソナ選択とシステムプロンプト"
+
+msgid "Petals"
+msgstr "花びら"
+
+msgid "Pick a known provider to auto-fill the IMAP and SMTP host/port. Choose Custom to type your own."
+msgstr "既知のプロバイダーを選択すると、IMAPとSMTPのホスト/ポートが自動入力されます。独自に入力するにはカスタムを選択してください。"
+
+msgid "Pick a provider first"
+msgstr "先にプロバイダーを選択してください"
+
+msgid "Pick an endpoint + model"
+msgstr "エンドポイントとモデルを選択"
+
+msgid "Play/stop TTS"
+msgstr "TTSを再生／停止"
+
+msgid "Please enter a name for the AI"
+msgstr "AIの名前を入力してください"
+
+msgid "Please enter a name for the session"
+msgstr "セッション名を入力してください"
+
+msgid "Polyphemus"
+msgstr "Polyphemus"
+
+msgid "Port"
+msgstr "ポート"
+
+msgid "Precise / Code"
+msgstr "精密／コード"
+
+msgid "Prefix"
+msgstr "接頭辞"
+
+msgid "Preset"
+msgstr "プリセット"
+
+msgid "Press keys..."
+msgstr "キーを押してください..."
+
+msgid "Preview"
+msgstr "プレビュー"
+
+#, python-brace-format
+msgid "Preview failed: {error}"
+msgstr "プレビューに失敗しました：{error}"
+
+msgid "Previous testimonial"
+msgstr "前のお客様の声"
+
+msgid "Private by default"
+msgstr "デフォルトでプライベート"
+
+msgid "Prompt"
+msgstr "プロンプト"
+
+msgid "Provider"
+msgstr "プロバイダー"
+
+msgid "Providers tried in order when the primary fails or hits a rate limit"
+msgstr "プライマリが失敗またはレート制限に達した際に順に試すプロバイダー"
+
+msgid "Public App URL"
+msgstr "公開アプリURL"
+
+msgid "Publish selected drafts"
+msgstr "選択した下書きを公開"
+
+msgid "Published only"
+msgstr "公開済みのみ"
+
+msgid "QR Code"
+msgstr "QRコード"
+
+msgid "Quality"
+msgstr "品質"
+
+msgid "RAG"
+msgstr "RAG"
+
+msgid "RAG active — click to deactivate"
+msgstr "RAG有効 — クリックで無効化"
+
+msgid "Rain"
+msgstr "雨"
+
+msgid "Re-run"
+msgstr "再実行"
+
+msgid "Rearrange"
+msgstr "並べ替え"
+
+msgid "Rearrange disabled"
+msgstr "並べ替え無効"
+
+msgid "Rearrange enabled"
+msgstr "並べ替え有効"
+
+msgid "Recent"
+msgstr "最近"
+
+msgid "Reconnect"
+msgstr "再接続"
+
+msgid "Reconnecting..."
+msgstr "再接続中..."
+
+msgid "Record voice"
+msgstr "音声を録音"
+
+msgid "Registration"
+msgstr "登録"
+
+msgid "Remember me"
+msgstr "ログイン状態を保持"
+
+msgid "Reminders"
+msgstr "リマインダー"
+
+msgid "Reminders appear as browser notifications inside Odysseus."
+msgstr "リマインダーはOdysseus内のブラウザ通知として表示されます。"
+
+msgid "Reminders are emailed AND shown as a browser notification."
+msgstr "リマインダーはメールで送信され、ブラウザ通知としても表示されます。"
+
+msgid "Reminders are pushed via ntfy AND shown as a browser notification."
+msgstr "リマインダーはntfyでプッシュ配信され、ブラウザ通知としても表示されます。"
+
+msgid "Remove"
+msgstr "削除"
+
+msgid "Remove fallback"
+msgstr "フォールバックを削除"
+
+msgid "Remove this integration?"
+msgstr "この連携を削除しますか？"
+
+msgid "Remove this session permanently"
+msgstr "このセッションを完全に削除します"
+
+msgid "Rename"
+msgstr "名前を変更"
+
+msgid "Rename Session"
+msgstr "セッション名を変更"
+
+msgid "Rename folder"
+msgstr "フォルダ名の変更"
+
+msgid "Rename folder:"
+msgstr "フォルダ名を変更:"
+
+msgid "Renamed"
+msgstr "名前を変更しました"
+
+msgid "Requires a Google API key and a Programmable Search Engine ID (CX). Create one at programmablesearchengine.google.com"
+msgstr "Google APIキーとプログラム可能な検索エンジンID（CX）が必要です。programmablesearchengine.google.com で作成してください"
+
+msgid "Research"
+msgstr "リサーチ"
+
+msgid "Research Model"
+msgstr "リサーチモデル"
+
+msgid "Reset"
+msgstr "リセット"
+
+msgid "Reset All"
+msgstr "すべてリセット"
+
+msgid "Reset Shortcuts"
+msgstr "ショートカットをリセット"
+
+msgid "Reset this color"
+msgstr "このカラーをリセット"
+
+msgid "Reset to Default"
+msgstr "デフォルトにリセット"
+
+msgid "Reset to default"
+msgstr "デフォルトにリセット"
+
+msgid "Reset to text color"
+msgstr "文字色にリセット"
+
+msgid "Restore"
+msgstr "復元"
+
+#, python-brace-format
+msgid "Restore {label}"
+msgstr "{label}を元に戻す"
+
+#, python-brace-format
+msgid "Restore {title}"
+msgstr "{title}を元に戻す"
+
+#, python-brace-format
+msgid "Restored {count} sessions"
+msgstr "{count}件のセッションを復元しました"
+
+msgid "Results"
+msgstr "結果"
+
+msgid "Reusable procedures the AI can call via /skill — sort by confidence to surface the proven ones."
+msgstr "AI が /skill で呼び出せる再利用可能な手順 — 信頼度で並べ替えて実証済みのものを表示。"
+
+msgid "Run a test query against the configured provider"
+msgstr "設定済みプロバイダーに対してテストクエリを実行"
+
+msgid "Runs background tasks (compaction, cleanup, auto-naming) on a small/local model instead of your chat model. Leave blank to use the chat model."
+msgstr "バックグラウンドタスク（圧縮、クリーンアップ、自動命名）をチャットモデルではなく小型/ローカルモデルで実行します。空欄の場合はチャットモデルを使用します。"
+
+msgid "Runs on your machine against your own endpoints. No telemetry, with optional external integrations when you choose them."
+msgstr "あなたのマシン上で、あなた自身のエンドポイントに対して動作。テレメトリなし、必要に応じて外部連携も選択可能。"
+
+msgid "SMTP (Sending)"
+msgstr "SMTP（送信）"
+
+msgid "STARTTLS"
+msgstr "STARTTLS"
+
+msgid "Same as IMAP"
+msgstr "IMAPと同じ"
+
+msgid "Same as chat"
+msgstr "チャットと同じ"
+
+msgid "Same as web search"
+msgstr "Web検索と同じ"
+
+msgid "Sans-serif"
+msgstr "ゴシック体"
+
+msgid "Save"
+msgstr "保存"
+
+msgid "Save / Share"
+msgstr "保存 / 共有"
+
+msgid "Save Config"
+msgstr "設定を保存"
+
+msgid "Save failed"
+msgstr "保存に失敗"
+
+msgid "Save first"
+msgstr "先に保存してください"
+
+msgid "Save first, then test"
+msgstr "先に保存してからテストしてください"
+
+msgid "Save these backup codes somewhere safe. Each can be used once if you lose your authenticator:"
+msgstr "これらのバックアップコードを安全な場所に保管してください。認証アプリを紛失した場合、各コードは1回のみ使用できます："
+
+msgid "Save to Documents"
+msgstr "ドキュメントに保存"
+
+msgid "Saved"
+msgstr "保存しました"
+
+msgid "Saved to documents"
+msgstr "ドキュメントに保存しました"
+
+msgid "Saving..."
+msgstr "保存中..."
+
+msgid "Saving…"
+msgstr "保存中…"
+
+msgid "Scan for Servers"
+msgstr "サーバーをスキャン"
+
+msgid "Scan with your authenticator app, or enter manually:"
+msgstr "認証アプリでスキャンするか、手動で入力してください："
+
+msgid "Scan your network for running model servers"
+msgstr "ネットワークをスキャンして稼働中のモデルサーバーを探します"
+
+msgid "Scroll to bottom"
+msgstr "最下部へスクロール"
+
+msgid "Search"
+msgstr "検索"
+
+msgid "Search API used for web search and deep research."
+msgstr "Web検索とディープリサーチに使用する検索API。"
+
+msgid "Search conversations"
+msgstr "会話を検索"
+
+msgid "Search conversations (Ctrl+K)"
+msgstr "会話を検索 (Ctrl+K)"
+
+msgid "Search conversations..."
+msgstr "会話を検索…"
+
+msgid "Search memories…"
+msgstr "記憶を検索…"
+
+msgid "Search models..."
+msgstr "モデルを検索..."
+
+msgid "Search skills…"
+msgstr "スキルを検索…"
+
+msgid "Searches the web for relevant information to include in the response. Results are fetched and summarized before the AI answers."
+msgstr "応答に役立つ関連情報をウェブで検索します。AIが回答する前に結果を取得して要約します。"
+
+msgid "See it in action"
+msgstr "実際の動作を見る"
+
+msgid "Select"
+msgstr "選択"
+
+msgid "Select a provider first"
+msgstr "先にプロバイダーを選択してください"
+
+msgid "Select character..."
+msgstr "キャラクターを選択..."
+
+msgid "Select model"
+msgstr "モデルを選択"
+
+msgid "Select multiple memories"
+msgstr "複数の記憶を選択"
+
+msgid "Select multiple skills"
+msgstr "複数のスキルを選択"
+
+msgid "Select sessions"
+msgstr "セッションを選択"
+
+msgid "Select..."
+msgstr "選択..."
+
+msgid "Self-hosted"
+msgstr "セルフホスト"
+
+msgid "Self-hosted SearXNG instance. Leave URL empty to use the SEARXNG_INSTANCE env var."
+msgstr "セルフホストのSearXNGインスタンス。URLを空欄にすると環境変数SEARXNG_INSTANCEを使用します。"
+
+msgid "Send Btn"
+msgstr "送信ボタン"
+
+msgid "Send Hover"
+msgstr "送信ホバー"
+
+msgid "Send Test Reminder"
+msgstr "テストリマインダーを送信"
+
+msgid "Send from"
+msgstr "送信元"
+
+msgid "Send message"
+msgstr "メッセージを送信"
+
+msgid "Send one prompt to several models at once and compare their answers side-by-side."
+msgstr "1つのプロンプトを複数のモデルに同時に送信し、回答を並べて比較。"
+
+msgid "Send to"
+msgstr "送信先"
+
+msgid "Send to group"
+msgstr "グループに送信"
+
+msgid "Sending…"
+msgstr "送信中…"
+
+msgid "Sensitive Blur"
+msgstr "機密情報をぼかす"
+
+msgid "Sequential"
+msgstr "順次"
+
+msgid "Serif"
+msgstr "セリフ"
+
+msgid "Serper API key"
+msgstr "Serper APIキー"
+
+msgid "Server URL"
+msgstr "サーバーURL"
+
+msgid "Server error"
+msgstr "サーバーエラー"
+
+msgid "Server name"
+msgstr "サーバー名"
+
+msgid "Server not found"
+msgstr "サーバーが見つかりません"
+
+msgid "Session Header"
+msgstr "セッションヘッダー"
+
+msgid "Session Name"
+msgstr "セッション名"
+
+msgid "Session actions"
+msgstr "セッション操作"
+
+msgid "Session archived"
+msgstr "セッションをアーカイブしました"
+
+#, python-brace-format
+msgid "Session create failed ({status}) {detail}"
+msgstr "セッションの作成に失敗しました ({status}) {detail}"
+
+msgid "Session deleted"
+msgstr "セッションを削除しました"
+
+msgid "Session favorited"
+msgstr "お気に入りに追加しました"
+
+msgid "Session module not loaded"
+msgstr "セッションモジュールが読み込まれていません"
+
+#, python-brace-format
+msgid "Session renamed to {name}"
+msgstr "セッション名を「{name}」に変更しました"
+
+msgid "Session restored"
+msgstr "セッションを復元しました"
+
+msgid "Session unfavorited"
+msgstr "お気に入りを解除しました"
+
+msgid "Session: "
+msgstr "セッション: "
+
+msgid "Sessions"
+msgstr "セッション"
+
+msgid "Set"
+msgstr "設定"
+
+msgid "Set Up 2FA"
+msgstr "2FAを設定"
+
+msgid "Set to 0 to disable skill injection."
+msgstr "0 に設定するとスキルの注入を無効にします。"
+
+msgid "Settings"
+msgstr "設定"
+
+msgid "Settings Button"
+msgstr "設定ボタン"
+
+msgid "Settings cog hidden — type /settings to bring it back."
+msgstr "設定アイコンを非表示にしました — /settings と入力すると再表示されます。"
+
+msgid "Shell"
+msgstr "シェル"
+
+msgid "Shell Access"
+msgstr "シェルアクセス"
+
+msgid "Shortcut saved"
+msgstr "ショートカットを保存しました"
+
+msgid "Shortcuts"
+msgstr "ショートカット"
+
+msgid "Shortcuts reset to defaults"
+msgstr "ショートカットを既定にリセットしました"
+
+msgid "Show &lt;think&gt; collapsible bars"
+msgstr "&lt;think&gt; 折りたたみバーを表示"
+
+msgid "Show less"
+msgstr "折りたたむ"
+
+msgid "Show password"
+msgstr "パスワードを表示"
+
+msgid "Show sidebar"
+msgstr "サイドバーを表示"
+
+#, python-brace-format
+msgid "Show {count} more"
+msgstr "さらに{count}件を表示"
+
+#, python-brace-format
+msgid "Show {count} more models"
+msgstr "他 {count} 件のモデルを表示"
+
+msgid "Sidebar"
+msgstr "サイドバー"
+
+msgid "Sign in to your Apple ID, go to Sign-In and Security → App-Specific Passwords, and generate one (requires 2FA on your Apple ID)."
+msgstr "Apple IDにサインインし、「サインインとセキュリティ」→「アプリ用パスワード」に進んで生成してください（Apple IDで2FAが必要）。"
+
+msgid "Size"
+msgstr "サイズ"
+
+msgid "Skills"
+msgstr "スキル"
+
+msgid "So I started building my own, for fun — and eventually figured it might be fun to share what I built for myself with others. Doesn't work for you? Well… it runs great on my hardware."
+msgstr "そこで自分用に、楽しみのために自分で作り始めました。そして最終的に、自分のために作ったものを他の人と共有するのも楽しいかもと思ったのです。うまく動かない? まあ… 私のハードウェアでは快調に動いています。"
+
+msgid "Solid"
+msgstr "単色"
+
+msgid "Sort"
+msgstr "並べ替え"
+
+msgid "Sort models"
+msgstr "モデルを並べ替え"
+
+msgid "Sort sessions"
+msgstr "セッションを並べ替え"
+
+#, python-brace-format
+msgid "Sorted {updated} into {folders} folders"
+msgstr "{updated}件を{folders}個のフォルダに振り分けました"
+
+#, python-brace-format
+msgid "Sorted: {name}"
+msgstr "並べ替え: {name}"
+
+msgid "Sorting..."
+msgstr "並べ替え中…"
+
+msgid "Spacious"
+msgstr "ゆったり"
+
+msgid "Sparkles"
+msgstr "きらめき"
+
+msgid "Speed"
+msgstr "速度"
+
+msgid "Sr. Engineer, ShipShip Inc."
+msgstr "シニアエンジニア、ShipShip Inc."
+
+msgid "Start"
+msgstr "開始"
+
+msgid "Started as an AI chat. Became a workspace. Each piece runs locally against whatever endpoints you point it at."
+msgstr "AIチャットとして始まり、ワークスペースになりました。各機能は、指定したエンドポイントに対してローカルで動作します。"
+
+msgid "Status: UNLOCKED"
+msgstr "状態：ロック解除済み"
+
+msgid "Status: locked"
+msgstr "状態：ロック中"
+
+msgid "Stop"
+msgstr "停止"
+
+msgid "Stop recording"
+msgstr "録音を停止"
+
+msgid "Strip emojis from AI replies"
+msgstr "AIの返信から絵文字を除去します"
+
+msgid "Style of response"
+msgstr "応答のスタイル"
+
+msgid "Suffix"
+msgstr "接尾辞"
+
+msgid "Switch model"
+msgstr "モデルを切り替え"
+
+msgid "Synapse"
+msgstr "シナプス"
+
+msgid "System"
+msgstr "システム"
+
+msgid "TTS Mode"
+msgstr "TTSモード"
+
+msgid "Tags"
+msgstr "タグ"
+
+msgid "Tasks"
+msgstr "タスク"
+
+msgid "Tavily API key"
+msgstr "Tavily APIキー"
+
+msgid "Teacher Model"
+msgstr "教師モデル"
+
+msgid "Temperature"
+msgstr "温度"
+
+msgid "Temporary session — won't be saved and no memory activation."
+msgstr "一時的なセッション — 保存されず、メモリも有効化されません。"
+
+msgid "Test"
+msgstr "テスト"
+
+msgid "Test Reminder"
+msgstr "テストリマインダー"
+
+#, python-brace-format
+msgid "Test error: {error}"
+msgstr "テストエラー：{error}"
+
+msgid "Test every skill, auto-fix the weak ones, flag what still fails"
+msgstr "すべてのスキルをテストし、弱いものを自動修正し、まだ失敗するものにフラグを立てます"
+
+msgid "Testimonials"
+msgstr "お客様の声"
+
+msgid "Testing..."
+msgstr "テスト中..."
+
+msgid "Testing…"
+msgstr "テスト中…"
+
+msgid "Text"
+msgstr "文字"
+
+msgid "Text to Speech"
+msgstr "テキスト読み上げ"
+
+msgid "Text-only Emojis"
+msgstr "テキストのみの絵文字"
+
+msgid "The HTTP header name the key goes under (Miniflux: X-Auth-Token; most others: Authorization). Only used when Auth = Header."
+msgstr "キーを設定するHTTPヘッダー名（Miniflux：X-Auth-Token、その他の多く：Authorization）。認証 ＝ ヘッダーの場合のみ使用されます。"
+
+msgid "The assistant writes, refines, and reuses its own skills — getting more capable over time."
+msgstr "アシスタントが自らのスキルを記述・改善・再利用し、時間とともに能力を高めていく。"
+
+msgid "The library can grow; cleanup retires weak/duplicate skills only after review."
+msgstr "ライブラリは拡張できます。クリーンアップはレビュー後にのみ、弱い／重複したスキルを廃止します。"
+
+msgid "The model used when creating a new chat session."
+msgstr "新しいチャットセッション作成時に使用されるモデル。"
+
+msgid "The secret token the service issued you (generated in its admin panel / settings). Used to prove your identity on each request. Required for any Auth mode except None."
+msgstr "サービスが発行した秘密トークン（その管理パネル/設定で生成）。各リクエストで身元を証明するために使用します。認証モードが「なし」以外の場合は必須です。"
+
+msgid "Theme"
+msgstr "テーマ"
+
+msgid "Theme name..."
+msgstr "テーマ名..."
+
+msgid "Theme saved"
+msgstr "テーマを保存しました"
+
+msgid "Themes"
+msgstr "テーマ"
+
+msgid "Thinking Process"
+msgstr "思考プロセス"
+
+msgid "This is a test reminder to verify your settings are working."
+msgstr "これは設定が正しく機能しているか確認するためのテストリマインダーです。"
+
+msgid "This is a test reminder."
+msgstr "これはテストリマインダーです。"
+
+msgid "Tidy"
+msgstr "整理"
+
+msgid "Tidy options"
+msgstr "整理オプション"
+
+msgid "Tip: Attach images or files using the + button next to the input."
+msgstr "ヒント: 入力欄の横にある + ボタンで画像やファイルを添付できます。"
+
+msgid "Tip: Drag and drop files onto the chat to attach them."
+msgstr "ヒント: ファイルをチャットにドラッグ&ドロップして添付できます。"
+
+msgid "Tip: Long-press a session for rename, delete, and memory options."
+msgstr "ヒント: セッションを長押しすると、名前変更、削除、メモリのオプションを表示できます。"
+
+msgid "Tip: Press Ctrl+B to quickly toggle the sidebar."
+msgstr "ヒント: Ctrl+B を押すとサイドバーを素早く切り替えられます。"
+
+msgid "Tip: Press Ctrl+K to search across all your conversations."
+msgstr "ヒント: Ctrl+K を押すと、すべての会話を横断して検索できます。"
+
+msgid "Tip: Right-click a session for rename, delete, and memory options."
+msgstr "ヒント: セッションを右クリックすると、名前変更、削除、メモリのオプションを表示できます。"
+
+msgid "Tip: Shift-click the sidebar toggle to swap it to the other side."
+msgstr "ヒント: サイドバー切り替えを Shift+クリックすると反対側に移動できます。"
+
+msgid "Tip: Switch to Agent mode when you want tools."
+msgstr "ヒント: ツールを使いたいときはエージェントモードに切り替えてください。"
+
+msgid "Tip: Tap the eye icon for Nobody mode - no history saved."
+msgstr "ヒント: 目のアイコンをタップするとNobodyモードになり、履歴は保存されません。"
+
+msgid "Title"
+msgstr "タイトル"
+
+msgid "Toggle On"
+msgstr "トグルオン"
+
+msgid "Toggle Research and send to re-run"
+msgstr "リサーチをオンにして送信すると再実行されます"
+
+msgid "Toggle Window"
+msgstr "ウィンドウを切り替え"
+
+msgid "Toggle favorite"
+msgstr "お気に入りを切り替え"
+
+msgid "Toggle incognito"
+msgstr "シークレットを切り替え"
+
+msgid "Toggle on/off visibility of tools and modules across the interface."
+msgstr "インターフェース全体でツールとモジュールの表示/非表示を切り替えます。"
+
+msgid "Toggle sidebar"
+msgstr "サイドバーを切り替え"
+
+msgid "Token/key"
+msgstr "トークン/キー"
+
+msgid "Tool Builder"
+msgstr "ツールビルダー"
+
+msgid "Tool call limit"
+msgstr "ツール呼び出し上限"
+
+msgid "Tools"
+msgstr "ツール"
+
+msgid "Tools & MCP"
+msgstr "ツールとMCP"
+
+msgid "Transport"
+msgstr "トランスポート"
+
+msgid "Triadic"
+msgstr "トライアド"
+
+msgid "Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured."
+msgstr "ポート143/587で平文をTLSにアップグレードするにはオンにします。ポート993（IMAPS — すでに暗号化済み）またはTLS未設定のローカルサーバーの場合はオフにします。"
+
+msgid "Two-Factor Authentication"
+msgstr "2段階認証"
+
+msgid "Type"
+msgstr "種類"
+
+msgid "Type /setup for Local models or API setup."
+msgstr "ローカルモデルまたはAPI設定は /setup と入力してください。"
+
+msgid "Type /setup, then choose Local models or API."
+msgstr "/setup と入力し、ローカルモデルまたはAPIを選択してください。"
+
+msgid "Type <span style=\"color:var(--accent,var(--red));font-weight:600\">/setup</span> to get started."
+msgstr "<span style=\"color:var(--accent,var(--red));font-weight:600\">/setup</span> と入力して始めましょう。"
+
+msgid "URL"
+msgstr "URL"
+
+msgid "URL required"
+msgstr "URLは必須です"
+
+msgid "Unfavorite"
+msgstr "お気に入りを解除"
+
+msgid "Unfavorite before deleting"
+msgstr "削除する前にお気に入りを解除してください"
+
+msgid "Unfavorited"
+msgstr "お気に入りから削除しました"
+
+msgid "Unknown"
+msgstr "不明"
+
+msgid "Unlimited"
+msgstr "無制限"
+
+msgid "Unlock"
+msgstr "ロック解除"
+
+msgid "Unlock failed"
+msgstr "ロック解除に失敗しました"
+
+msgid "Unlocking..."
+msgstr "ロック解除中..."
+
+msgid "Unnamed"
+msgstr "名称未設定"
+
+msgid "Unsorted"
+msgstr "未分類"
+
+msgid "Unstar before deleting"
+msgstr "削除する前にスターを解除してください"
+
+msgid "Untitled"
+msgstr "無題"
+
+msgid "Update Password"
+msgstr "パスワードを更新"
+
+msgid "Use the IMAP username and password for SMTP too (right for almost every provider). Turn off to enter separate SMTP credentials."
+msgstr "SMTPにもIMAPのユーザー名とパスワードを使用します（ほぼすべてのプロバイダーで正しい）。別のSMTP認証情報を入力するにはオフにしてください。"
+
+msgid "Use the IMAP username and password for SMTP too (this is right for almost every provider). Turn off to enter separate SMTP credentials."
+msgstr "SMTPにもIMAPのユーザー名とパスワードを使用します（ほぼすべてのプロバイダーで正しい設定です）。別のSMTP認証情報を入力するにはオフにしてください。"
+
+msgid "Use the utility model to write reminder messages"
+msgstr "ユーティリティモデルでリマインダーメッセージを作成"
+
+msgid "Use this account whenever no specific account is chosen."
+msgstr "特定のアカウントが選択されていない場合に、このアカウントを使用します。"
+
+msgid "Used to build clickable links back to Odysseus inside outgoing reminder / urgent-email emails (e.g. <code>https://chat.yourdomain.com</code>). Leave blank to omit links."
+msgstr "送信されるリマインダー / 緊急メール内にOdysseusへのクリック可能なリンクを作成するために使用します（例：<code>https://chat.yourdomain.com</code>）。空欄の場合はリンクを省略します。"
+
+msgid "Used when nothing else is selected"
+msgstr "他に何も選択されていないときに使用されます"
+
+msgid "User"
+msgstr "ユーザー"
+
+msgid "User Chat Bubble"
+msgstr "ユーザーチャットバブル"
+
+msgid "Username"
+msgstr "ユーザー名"
+
+msgid "Username (email)"
+msgstr "ユーザー名（メール）"
+
+msgid "Users"
+msgstr "ユーザー"
+
+msgid "Using chat defaults"
+msgstr "チャットの既定値を使用"
+
+#, python-brace-format
+msgid "Using {model}"
+msgstr "{model} を使用中"
+
+msgid "Usually the same as your IMAP username (your email address)."
+msgstr "通常はIMAPユーザー名（メールアドレス）と同じです。"
+
+msgid "Usually your full email address."
+msgstr "通常は完全なメールアドレスです。"
+
+msgid "Utility Model"
+msgstr "ユーティリティモデル"
+
+msgid "VP of Verticals, Things LLC"
+msgstr "バーティカル担当VP、Things LLC"
+
+msgid "Vault"
+msgstr "Vault"
+
+msgid "Vault unlocked"
+msgstr "Vaultをロック解除しました"
+
+msgid "Vaultwarden (Password Vault)"
+msgstr "Vaultwarden（パスワードVault）"
+
+msgid "Verify & Enable"
+msgstr "確認して有効化"
+
+msgid "View on GitHub"
+msgstr "GitHubで見る"
+
+msgid "Vision"
+msgstr "ビジョン"
+
+msgid "Voice"
+msgstr "音声"
+
+msgid "Web Search"
+msgstr "Web検索"
+
+msgid "Web search"
+msgstr "Web検索"
+
+msgid "Web search and deep research tools will be unavailable."
+msgstr "Web検索とディープリサーチのツールは利用できなくなります。"
+
+msgid "Welcome Message"
+msgstr "ウェルカムメッセージ"
+
+msgid "Welcome, type /setup to get started."
+msgstr "ようこそ。開始するには /setup と入力してください。"
+
+msgid "What our customers are saying"
+msgstr "お客様の声"
+
+msgid "When a self-hosted student fails an agent-mode task, escalate to a SOTA teacher that writes a SKILL.md procedure so the student can do it next time. Off by default."
+msgstr "セルフホストの生徒モデルがエージェントモードのタスクに失敗した場合、SOTAの教師モデルにエスカレーションし、次回から生徒が実行できるようSKILL.md手順を作成します。既定ではオフ。"
+
+msgid "When on, the utility model writes a short, warm one-line reminder for browser, email, AND ntfy reminders instead of just the raw note content."
+msgstr "オンの場合、ユーティリティモデルがブラウザ、メール、ntfyのリマインダーに対して、生のメモ内容ではなく短く温かみのある1行のリマインダーを作成します。"
+
+msgid "When to use"
+msgstr "使用するタイミング"
+
+msgid "Who am I? I'm nobody."
+msgstr "私は誰? 名無しです。"
+
+msgid "Whole section (header + all tools)"
+msgstr "セクション全体（ヘッダー + 全ツール）"
+
+msgid "Window"
+msgstr "ウィンドウ"
+
+msgid "Wipe"
+msgstr "消去"
+
+msgid "Wipe all calendar"
+msgstr "すべてのカレンダーを消去"
+
+msgid "Wipe all chats"
+msgstr "すべてのチャットを消去"
+
+msgid "Wipe all documents"
+msgstr "すべてのドキュメントを消去"
+
+msgid "Wipe all gallery"
+msgstr "すべてのギャラリーを消去"
+
+msgid "Wipe all memory"
+msgstr "すべてのメモリを消去"
+
+msgid "Wipe all notes"
+msgstr "すべてのメモを消去"
+
+msgid "Wipe all skills"
+msgstr "すべてのスキルを消去"
+
+msgid "Wipe all tasks"
+msgstr "すべてのタスクを消去"
+
+msgid "Write rough notes and click Expand, or leave empty"
+msgstr "大まかなメモを書いて「展開」をクリック、または空欄のままに"
+
+msgid "Writing Style"
+msgstr "文体"
+
+msgid "Yahoo needs an App Password"
+msgstr "Yahooにはアプリパスワードが必要です"
+
+msgid "Yes — your full email address goes here too (e.g. you@gmail.com). Same as the Email field above for almost every provider."
+msgstr "はい — ここにも完全なメールアドレスを入力します（例：you@gmail.com）。ほぼすべてのプロバイダーで上記のメールアドレス欄と同じです。"
+
+msgid "You"
+msgstr "あなた"
+
+msgid "Your IMAP login password. Use an app-specific password if your provider requires 2FA (Gmail, iCloud, etc.)."
+msgstr "IMAPログイン用パスワード。プロバイダーが2FAを要求する場合（Gmail、iCloudなど）はアプリ固有のパスワードを使用してください。"
+
+msgid "Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot."
+msgstr "IMAPサーバー（例：imap.gmail.com、imap.migadu.com、LANホスト、DovecotのTailscale IPなど）。"
+
+msgid "Your SMTP password — often the same as your IMAP password."
+msgstr "SMTPパスワード — 多くの場合IMAPパスワードと同じです。"
+
+msgid "Your Themes"
+msgstr "マイテーマ"
+
+msgid "Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank."
+msgstr "あなたのメールアドレス。送信メールのFrom:ヘッダーとして使用され、名前が空欄の場合は表示名としても使われます。"
+
+msgid "Your outgoing-mail server, e.g. smtp.gmail.com, smtp.migadu.com. Leave blank to make this account read-only."
+msgstr "送信メールサーバー（例：smtp.gmail.com、smtp.migadu.com）。空欄にするとこのアカウントは読み取り専用になります。"
+
+msgid "Your outgoing-mail server, e.g. smtp.gmail.com. Leave blank to make this account read-only."
+msgstr "送信メールサーバー（例：smtp.gmail.com）。空欄にするとこのアカウントは読み取り専用になります。"
+
+msgid "Your own <span class=\"grad\">AI workspace</span>,<br>running on your hardware."
+msgstr "あなた自身の<span class=\"grad\">AIワークスペース</span>を、<br>あなたのハードウェアで。"
+
+msgid "Your regular Google password won't work for IMAP. Generate a 16-character App Password (requires 2-Step Verification enabled) and paste it as the Password."
+msgstr "通常のGoogleパスワードはIMAPでは使えません。16文字のアプリパスワードを生成し（2段階認証の有効化が必要）、パスワードとして貼り付けてください。"
+
+msgid "Yours for the voyage."
+msgstr "あなたの航海のために。"
+
+msgid "[ Chat & Agents ]"
+msgstr "[ チャットとエージェント ]"
+
+msgid "[ Cookbook ]"
+msgstr "[ クックブック ]"
+
+msgid "[ Email Assistant ]"
+msgstr "[ メールアシスタント ]"
+
+#, python-brace-format
+msgid "[Doc edit: {lines}] {instruction}"
+msgstr "[ドキュメント編集: {lines}] {instruction}"
+
+msgid "[archived]"
+msgstr "[アーカイブ済み]"
+
+msgid "auto"
+msgstr "自動"
+
+msgid "bw CLI: NOT installed (install nodejs-bitwarden-cli)"
+msgstr "bw CLI：未インストール（nodejs-bitwarden-cliをインストールしてください）"
+
+msgid "bw CLI: installed"
+msgstr "bw CLI：インストール済み"
+
+msgid "disconnected"
+msgstr "切断"
+
+msgid "e.g. I write emails in this style. I don't use exclamation marks. I sign emails with: ..."
+msgstr "例：私はこの文体でメールを書きます。感嘆符は使いません。署名は次のようにします：..."
+
+msgid "e.g. Work, Research, Drafts"
+msgstr "例: 仕事、リサーチ、下書き"
+
+msgid "email1, email2"
+msgstr "email1, email2"
+
+msgid "error"
+msgstr "エラー"
+
+msgid "fail"
+msgstr "失敗"
+
+msgid "iCloud needs an App-Specific Password"
+msgstr "iCloudにはアプリ用パスワードが必要です"
+
+msgid "model name"
+msgstr "モデル名"
+
+msgid "needs auth"
+msgstr "認証が必要"
+
+msgid "new"
+msgstr "新規"
+
+msgid "no model"
+msgstr "モデルなし"
+
+msgid "not responding"
+msgstr "応答なし"
+
+msgid "ntfy"
+msgstr "ntfy"
+
+msgid "ntfy (add in Integrations first)"
+msgstr "ntfy（先に連携で追加してください）"
+
+msgid "ntfy reminder was not sent"
+msgstr "ntfyリマインダーは送信されませんでした"
+
+msgid "ntfy topic"
+msgstr "ntfyトピック"
+
+msgid "off"
+msgstr "オフ"
+
+msgid "offline"
+msgstr "オフライン"
+
+msgid "on"
+msgstr "オン"
+
+msgid "original"
+msgstr "オリジナル"
+
+msgid "phone1, phone2"
+msgstr "phone1, phone2"
+
+msgid "press a key"
+msgstr "キーを押してください"
+
+msgid "reopen terminal"
+msgstr "ターミナルを再度開く"
+
+msgid "search (disabled)"
+msgstr "search (無効)"
+
+msgid "self-evolving"
+msgstr "自己進化"
+
+msgid "swipe to delete"
+msgstr "スワイプして削除"
+
+msgid "this session"
+msgstr "このセッション"
+
+msgid "unknown"
+msgstr "不明"
+
+#, python-brace-format
+msgid "{count} contact"
+msgstr "連絡先{count}件"
+
+#, python-brace-format
+msgid "{count} msgs"
+msgstr "{count}件のメッセージ"
+
+#, python-brace-format
+msgid "{count} research"
+msgstr "{count}件のリサーチ"
+
+#, python-brace-format
+msgid "{count} rounds"
+msgstr "{count}ラウンド"
+
+#, python-brace-format
+msgid "{count} selected"
+msgstr "{count}件選択中"
+
+#, python-brace-format
+msgid "{count} session(s) archived"
+msgstr "{count}件のセッションをアーカイブしました"
+
+#, python-brace-format
+msgid "{count} session(s) deleted"
+msgstr "{count}件のセッションを削除しました"
+
+#, python-brace-format
+msgid "{count} sessions restored"
+msgstr "{count}件のセッションを復元しました"
+
+#, python-brace-format
+msgid "{count} sources"
+msgstr "{count}件のソース"
+
+#, python-brace-format
+msgid "{enabled}/{total} enabled"
+msgstr "{enabled}/{total}有効"
+
+#, python-brace-format
+msgid "{enabled}/{total} tools"
+msgstr "{enabled}/{total}ツール"
+
+#, python-brace-format
+msgid "{label} {state}"
+msgstr "{label} {state}"
+
+#, python-brace-format
+msgid "{name} (archived)"
+msgstr "{name}(アーカイブ済み)"
+
+#, python-brace-format
+msgid "{n}d ago"
+msgstr "{n}日前"
+
+#, python-brace-format
+msgid "{n}h ago"
+msgstr "{n}時間前"
+
+#, python-brace-format
+msgid "{n}m ago"
+msgstr "{n}分前"
+
+#, python-brace-format
+msgid "{remaining} unfiled chats — hit Tidy again"
+msgstr "未分類のチャットが{remaining}件あります。もう一度「整理」を実行してください"
+
+msgid "© 2026 Odysseus · Built from one prompt that refused to stop."
+msgstr "© 2026 Odysseus · 止まることを拒んだ1つのプロンプトから生まれた。"
+
+#, python-brace-format
+msgid "· {n} msgs"
+msgstr "· {n} 件"
+
+msgid "— comma-separated, e.g. python, build, vllm"
+msgstr "— カンマ区切り、例: python, build, vllm"
+
+msgid "— optional, leave blank for read-only"
+msgstr "— 任意、空欄で読み取り専用"
+
+msgid "— short name, e.g. “build-vllm-wheel”"
+msgstr "— 短い名前、例: “build-vllm-wheel”"
+
+msgid "— the approach, steps, commands, or rules to follow"
+msgstr "— 従うべきアプローチ、手順、コマンド、ルール"
+
+msgid "— what problem does this skill solve?"
+msgstr "— このスキルはどんな問題を解決しますか？"
+
+msgid "↵ Enter to save"
+msgstr "↵ Enterで保存"
+
+#, python-brace-format
+msgid "⚠ No results returned ({ms}ms)"
+msgstr "⚠ 結果が返されませんでした（{ms}ms）"
+
+msgid "✓ Saved"
+msgstr "✓ 保存しました"
+
+msgid "✓ Style extracted"
+msgstr "✓ 文体を抽出しました"
+
+#, python-brace-format
+msgid "✓ {count} results · {ms}ms · top: {top}"
+msgstr "✓ {count}件の結果 · {ms}ms · 上位：{top}"
+
+#, python-brace-format
+msgid "✗ Test failed: {error}"
+msgstr "✗ テスト失敗：{error}"
+
+#, python-brace-format
+msgid "✗ {error} ({ms}ms)"
+msgstr "✗ {error}（{ms}ms）"
+
+msgctxt "common.search"
+msgid "Search"
+msgstr ""
+
+msgctxt "composer.web_search"
+msgid "Web Search"
+msgstr "ウェブ検索"
+
+msgctxt "settings.account.role_admin"
+msgid "Admin"
+msgstr "管理者"
+
+msgctxt "settings.email_form.email"
+msgid "Email"
+msgstr "メールアドレス"
+
+msgctxt "settings.reminders.channel_email"
+msgid "Email"
+msgstr ""
+
+msgctxt "settings.search.drag_to_reorder"
+msgid "Drag to reorder"
+msgstr "ドラッグで並べ替え"
+
+msgctxt "settings.shortcuts.reset_to_default"
+msgid "Reset to default"
+msgstr "既定にリセット"
+
+msgctxt "sidebar.aria_label"
+msgid "Sidebar"
+msgstr ""
+
+msgctxt "sidebar.chats"
+msgid "Chats"
+msgstr ""
+
+msgctxt "sidebar.plus_chat"
+msgid "+ Chat"
+msgstr ""
+
+msgctxt "theme.densities.comfortable"
+msgid "Comfortable"
+msgstr ""
+
+msgctxt "theme.densities.compact"
+msgid "Compact"
+msgstr ""
+
+msgctxt "theme.density.comfortable"
+msgid "Comfortable"
+msgstr "標準"
+
+msgctxt "theme.density.spacious"
+msgid "Spacious"
+msgstr ""
+
+msgctxt "theme.font.monospace"
+msgid "Monospace"
+msgstr ""
+
+msgctxt "theme.font.serif"
+msgid "Serif"
+msgstr "明朝体"
+
+msgctxt "theme.fonts.sans"
+msgid "Sans-serif"
+msgstr "サンセリフ"
+
+msgctxt "theme.saved_btn"
+msgid "Saved"
+msgstr "保存済み"
+
+msgctxt "tools.cookbook"
+msgid "Cookbook"
+msgstr ""

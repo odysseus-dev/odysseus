@@ -1,0 +1,3245 @@
+# Odysseus UI strings — translation template.
+# Generated from static/locales/en.json. Do not edit by hand.
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: Odysseus\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"X-Language-Name: \n"
+"X-Native-Name: English\n"
+"X-Direction: ltr\n"
+
+#, python-brace-format
+msgid " (AI: \"{text}...\")"
+msgstr ""
+
+msgid " (API)"
+msgstr ""
+
+msgid " (default)"
+msgstr ""
+
+msgid " (key set)"
+msgstr ""
+
+msgid " (no key)"
+msgstr ""
+
+msgid " (not detected)"
+msgstr ""
+
+msgid " (offline)"
+msgstr ""
+
+#, python-brace-format
+msgid " ({failed} failed)"
+msgstr ""
+
+msgid " · SMTP ok"
+msgstr ""
+
+#, python-brace-format
+msgid " · SMTP: {error}"
+msgstr ""
+
+msgid " — email sent"
+msgstr ""
+
+msgid " — ntfy sent"
+msgstr ""
+
+#, python-brace-format
+msgid " — {remaining} unfiled left, hit Tidy again"
+msgstr ""
+
+msgid "\"AHHHHHHHHHHHHHHHHHHHHHHHHHHHHH\""
+msgstr ""
+
+msgid "\"Anyway, as I was saying — best-in-class.\""
+msgstr ""
+
+msgid "\"I'm a real person. This is a real testimonial. By a real woman.\""
+msgstr ""
+
+msgid "\"Odysseus helped us ship more ships while shipping ships. Truly best-in-class shipping.\""
+msgstr ""
+
+msgid "&mdash; e.g. 'I prefer concise replies'"
+msgstr ""
+
+msgid "(Endpoints)"
+msgstr ""
+
+msgid "(Experimental)"
+msgstr ""
+
+msgid "(No folder)"
+msgstr ""
+
+msgid "(OPENAI_API_KEY not set on server)"
+msgstr ""
+
+msgid "(Recommended: Local Endpoint)"
+msgstr ""
+
+msgid "(if you want to add an API that's cool too — I'm not here to tell you how to live your life…)"
+msgstr ""
+
+msgid "(leave blank to keep current)"
+msgstr ""
+
+msgid "(no name)"
+msgstr ""
+
+msgid "(offline)"
+msgstr ""
+
+msgid "(optional — leave blank to use email)"
+msgstr ""
+
+#, python-brace-format
+msgid "(render failed: {error})"
+msgstr ""
+
+msgid "(scan failed)"
+msgstr ""
+
+msgid "(unchanged)"
+msgstr ""
+
+msgid "(untitled)"
+msgstr ""
+
+msgid "+ Add"
+msgstr ""
+
+msgid "+ Add Account"
+msgstr ""
+
+msgid "+ Add Integration"
+msgstr ""
+
+msgid "+ Add fallback"
+msgstr ""
+
+msgid "+ Add participant"
+msgstr ""
+
+msgid "+ Chat"
+msgstr ""
+
+msgid "+ Image"
+msgstr ""
+
+msgid "+ New"
+msgstr ""
+
+msgid "+ New Folder"
+msgstr ""
+
+msgid "0 = unlimited"
+msgstr ""
+
+msgid "1x (normal)"
+msgstr ""
+
+msgid "2FA Enabled!"
+msgstr ""
+
+msgid "465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs."
+msgstr ""
+
+msgid "8192 (default)"
+msgstr ""
+
+msgid "993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143."
+msgstr ""
+
+msgid "<no IMAP>"
+msgstr ""
+
+msgid "<strong>Login</strong> registers this device with your Vaultwarden account (once per account)."
+msgstr ""
+
+msgid "<strong>Unlock</strong> decrypts the vault — required after restart or Lock. Session is saved so the assistant can read passwords."
+msgstr ""
+
+msgid "A real woman"
+msgstr ""
+
+msgid "A-Z"
+msgstr ""
+
+msgid "AI"
+msgstr ""
+
+msgid "AI Chat Bubble"
+msgstr ""
+
+msgid "AI Defaults"
+msgstr ""
+
+msgid "AI Synthesis"
+msgstr ""
+
+msgid "AI expand — turn your notes into a full character prompt"
+msgstr ""
+
+msgid "AI is processing"
+msgstr ""
+
+#, python-brace-format
+msgid "AI renamed to {name}"
+msgstr ""
+
+msgid "AI summaries, style-matched draft replies, auto-tagging and spam triage over IMAP/SMTP."
+msgstr ""
+
+msgid "AI tidy: deduplicate and clean up memories"
+msgstr ""
+
+msgid "AI-extracted from your sent emails. Used when AI drafts replies."
+msgstr ""
+
+msgid "AI-optimized search. 1,000 free credits/month at tavily.com"
+msgstr ""
+
+msgid "API"
+msgstr ""
+
+msgid "API Key"
+msgstr ""
+
+msgid "API Service"
+msgstr ""
+
+msgid "API key"
+msgstr ""
+
+msgid "API key or token"
+msgstr ""
+
+msgid "Accent"
+msgstr ""
+
+msgid "Accent Color"
+msgstr ""
+
+msgid "Account"
+msgstr ""
+
+msgid "Actions"
+msgstr ""
+
+msgid "Active"
+msgstr ""
+
+#, python-brace-format
+msgid "Active: {label}{extra} · {count} results"
+msgstr ""
+
+msgid "Add"
+msgstr ""
+
+msgid "Add API Integration"
+msgstr ""
+
+msgid "Add Email Account"
+msgstr ""
+
+msgid "Add Integration"
+msgstr ""
+
+msgid "Add MCP Server"
+msgstr ""
+
+msgid "Add Memory"
+msgstr ""
+
+msgid "Add Models"
+msgstr ""
+
+msgid "Add Skill"
+msgstr ""
+
+msgid "Add User"
+msgstr ""
+
+msgid "Add a memory"
+msgstr ""
+
+msgid "Add a model to try if the one above fails"
+msgstr ""
+
+msgid "Add a model to try if the utility model fails"
+msgstr ""
+
+msgid "Add a vision model to try if the one above fails"
+msgstr ""
+
+msgid "Add an AI endpoint from Settings in the sidebar, or paste an endpoint/API key into the chat."
+msgstr ""
+
+msgid "Add an extra layer of security with an authenticator app (Aegis, Google Authenticator, etc.)"
+msgstr ""
+
+msgid "Add model chat"
+msgstr ""
+
+msgid "Added Models"
+msgstr ""
+
+msgid "Added after your message"
+msgstr ""
+
+msgid "Added before your message"
+msgstr ""
+
+#, python-brace-format
+msgid "Added {n} files to chat"
+msgstr ""
+
+msgid "Admin"
+msgstr ""
+
+msgid "Admin access required"
+msgstr ""
+
+msgid "Agent"
+msgstr ""
+
+msgid "Agent / Chat"
+msgstr ""
+
+msgid "Agent Tools"
+msgstr ""
+
+msgid "All"
+msgstr ""
+
+msgid "All external service connections in one place."
+msgstr ""
+
+msgid "All models"
+msgstr ""
+
+msgid "All skills"
+msgstr ""
+
+msgid "All sorted"
+msgstr ""
+
+msgid "Allow anyone to create an account from the login page"
+msgstr ""
+
+msgid "Already clean"
+msgstr ""
+
+msgid "Already logged in — use Unlock"
+msgstr ""
+
+msgid "Analogous"
+msgstr ""
+
+msgid "Analyze images with a vision-capable model."
+msgstr ""
+
+msgid "Analyzing your sent emails…"
+msgstr ""
+
+msgid "Appearance"
+msgstr ""
+
+msgid "Apply"
+msgstr ""
+
+msgid "Approve"
+msgstr ""
+
+msgid "Archive"
+msgstr ""
+
+msgid "Archive selected"
+msgstr ""
+
+#, python-brace-format
+msgid "Archive {count} session(s)?"
+msgstr ""
+
+msgid "Archived"
+msgstr ""
+
+#, python-brace-format
+msgid "Archived {count} sessions"
+msgstr ""
+
+msgid "Args"
+msgstr ""
+
+msgid "Ask an admin to configure model endpoints"
+msgstr ""
+
+msgid "Attach Files"
+msgstr ""
+
+msgid "Attach files"
+msgstr ""
+
+msgid "Audit"
+msgstr ""
+
+msgid "Audit all"
+msgstr ""
+
+msgid "Audit all publishes passing, necessary skills at or above this confidence. Off = keep audit results as drafts unless manually approved."
+msgstr ""
+
+msgid "Audit selected draft skills"
+msgstr ""
+
+msgid "Auth"
+msgstr ""
+
+msgid "Authenticator app required on login"
+msgstr ""
+
+msgid "Authorize"
+msgstr ""
+
+msgid "Auto-approve skills"
+msgstr ""
+
+msgid "Auto-detect"
+msgstr ""
+
+msgid "Auto-extract memories"
+msgstr ""
+
+msgid "Auto-extract skills"
+msgstr ""
+
+msgid "Auto-saved"
+msgstr ""
+
+msgid "Auto-sort failed"
+msgstr ""
+
+#, python-brace-format
+msgid "Auto-sort: {message}"
+msgstr ""
+
+msgid "Automatically draft reusable skills from your workflows. Audit all can publish passing skills using the threshold below."
+msgstr ""
+
+msgid "Automatically extract memories from conversations."
+msgstr ""
+
+msgid "Avatar & name"
+msgstr ""
+
+msgid "A–Z"
+msgstr ""
+
+msgid "Background"
+msgstr ""
+
+msgid "Background / Effect"
+msgstr ""
+
+#, python-brace-format
+msgid "Bad hex for {key}"
+msgstr ""
+
+msgid "Balanced"
+msgstr ""
+
+msgid "Base URL"
+msgstr ""
+
+msgid "Base URL (e.g. https://api.example.com/v1)"
+msgstr ""
+
+msgid "Basic"
+msgstr ""
+
+msgid "Bearer (most common)"
+msgstr ""
+
+msgid "Blur emails, tokens, and secrets in AI output"
+msgstr ""
+
+msgid "Border"
+msgstr ""
+
+msgid "Border Chat Bubble"
+msgstr ""
+
+msgid "Brain"
+msgstr ""
+
+msgid "Brand name"
+msgstr ""
+
+msgid "Brave API key"
+msgstr ""
+
+msgid "Bring your own models"
+msgstr ""
+
+msgid "Browser (built-in)"
+msgstr ""
+
+msgid "Browser notification (default)"
+msgstr ""
+
+msgid "Built-in Tools"
+msgstr ""
+
+msgid "Built-in tools (bash, files, web, memory) plus any MCP server you connect. Toggle per tool."
+msgstr ""
+
+msgid "By Folder"
+msgstr ""
+
+msgid "CX ID"
+msgstr ""
+
+msgid "CalDAV"
+msgstr ""
+
+msgid "CalDAV Calendar"
+msgstr ""
+
+msgid "Calendar"
+msgstr ""
+
+msgid "Calendar (CalDAV)"
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "Cancel (Esc)"
+msgstr ""
+
+msgid "Cancel / close"
+msgstr ""
+
+msgid "Cannot overwrite a built-in theme."
+msgstr ""
+
+msgid "Chad Corporate"
+msgstr ""
+
+msgid "Change Password"
+msgstr ""
+
+msgid "Change the session name"
+msgstr ""
+
+msgid "Changes the language of the Odysseus interface. Untranslated text falls back to English."
+msgstr ""
+
+msgid "Channel"
+msgstr ""
+
+msgid "Character"
+msgstr ""
+
+msgid "Character active — click to deactivate"
+msgstr ""
+
+msgid "Characters"
+msgstr ""
+
+msgid "Chat"
+msgstr ""
+
+msgid "Chat & Agents"
+msgstr ""
+
+msgid "Chat Area"
+msgstr ""
+
+msgid "Chat Bar"
+msgstr ""
+
+msgid "Chat Bubbles"
+msgstr ""
+
+msgid "Chat Input / Prompt Area"
+msgstr ""
+
+msgid "Chat area"
+msgstr ""
+
+msgid "Chat copied to clipboard"
+msgstr ""
+
+msgid "Chat history list"
+msgstr ""
+
+msgid "Chat ready"
+msgstr ""
+
+msgid "Chats"
+msgstr ""
+
+msgid "Chief Executive Officer"
+msgstr ""
+
+#, python-brace-format
+msgid "Cleaned {count} empty/throwaway chats"
+msgstr ""
+
+msgid "Cleaning..."
+msgstr ""
+
+msgid "Clear Advanced Overrides"
+msgstr ""
+
+msgid "Cleared (deep-links disabled)"
+msgstr ""
+
+msgid "Clears `memory.json`, the Memory table, and the vector store. Skills not affected."
+msgstr ""
+
+msgid "Click a shortcut to rebind. Press Escape to cancel."
+msgstr ""
+
+msgid "Click to edit"
+msgstr ""
+
+msgid "Click to rebind"
+msgstr ""
+
+msgid "Clone it and run"
+msgstr ""
+
+msgid "Close"
+msgstr ""
+
+msgid "Close memory modal"
+msgstr ""
+
+msgid "Close rename session modal"
+msgstr ""
+
+msgid "Code Bg"
+msgstr ""
+
+msgid "Code Blocks"
+msgstr ""
+
+msgid "Code Text"
+msgstr ""
+
+msgid "Cog next to user — re-open with <code>/settings</code>"
+msgstr ""
+
+msgid "Collapse section"
+msgstr ""
+
+msgid "Color Harmony"
+msgstr ""
+
+msgid "Colors"
+msgstr ""
+
+msgid "Comfortable"
+msgstr ""
+
+msgid "Command"
+msgstr ""
+
+msgid "Compact"
+msgstr ""
+
+msgid "Compare"
+msgstr ""
+
+msgid "Compare active — click to deactivate"
+msgstr ""
+
+msgid "Complementary"
+msgstr ""
+
+msgid "Compose email"
+msgstr ""
+
+msgid "Confidence"
+msgstr ""
+
+msgid "Configure TTS provider for assistant message read-aloud."
+msgstr ""
+
+msgid "Configure one or more IMAP/SMTP accounts. The default account is used when nothing else is selected."
+msgstr ""
+
+msgid "Configure which model to use for image generation."
+msgstr ""
+
+msgid "Confirm"
+msgstr ""
+
+msgid "Confirm Password"
+msgstr ""
+
+msgid "Confirm new password"
+msgstr ""
+
+msgid "Connect to a cloud API or scan your network for a local model server."
+msgstr ""
+
+msgid "Connected"
+msgstr ""
+
+#, python-brace-format
+msgid "Connected ({count} tools)"
+msgstr ""
+
+#, python-brace-format
+msgid "Connected ({info})"
+msgstr ""
+
+msgid "Connection failed"
+msgstr ""
+
+msgid "Connection failed — not saved"
+msgstr ""
+
+msgid "Connections"
+msgstr ""
+
+msgid "Constellations"
+msgstr ""
+
+msgid "Contacts"
+msgstr ""
+
+msgid "Contacts (CardDAV)"
+msgstr ""
+
+msgid "Controls"
+msgstr ""
+
+msgid "Controls for the agent tool loop."
+msgstr ""
+
+msgid "Controls how fired note reminders are delivered."
+msgstr ""
+
+msgid "Controls how many relevant published or approved skills are added to each agent request."
+msgstr ""
+
+msgid "Controls randomness. Lower values give focused, deterministic answers (good for code). Higher values give more creative, varied responses."
+msgstr ""
+
+msgid "Cookbook"
+msgstr ""
+
+msgid "Copied"
+msgstr ""
+
+msgid "Copy Chat"
+msgstr ""
+
+msgid "Copy failed"
+msgstr ""
+
+msgid "Copy link"
+msgstr ""
+
+msgid "Could not create document"
+msgstr ""
+
+msgid "Could not load 2FA status"
+msgstr ""
+
+msgid "Create"
+msgstr ""
+
+msgid "Create a new character"
+msgstr ""
+
+msgid "Create a skill by hand — title, what it solves, and an approach."
+msgstr ""
+
+msgid "Create custom mini-apps and tools the AI can use. Describe what you need and the AI will build a tool you can reuse across conversations."
+msgstr ""
+
+msgid "Creative"
+msgstr ""
+
+msgid "Current password"
+msgstr ""
+
+msgid "Custom (no preset)"
+msgstr ""
+
+msgid "Custom Fonts"
+msgstr ""
+
+msgid "Custom URL"
+msgstr ""
+
+msgid "Customize"
+msgstr ""
+
+msgid "Custom…"
+msgstr ""
+
+msgid "Cyclops, Cave Solutions (on leave)"
+msgstr ""
+
+msgid "Danger Zone"
+msgstr ""
+
+msgid "Dark"
+msgstr ""
+
+msgid "Data Backup"
+msgstr ""
+
+msgid "Deep Research"
+msgstr ""
+
+msgid "Deep Research active — click to deactivate"
+msgstr ""
+
+msgid "Deep multi-step research with source gathering and synthesis."
+msgstr ""
+
+msgid "Default"
+msgstr ""
+
+msgid "Default Chat Model"
+msgstr ""
+
+msgid "Default Themes"
+msgstr ""
+
+msgid "Del"
+msgstr ""
+
+msgid "Delete"
+msgstr ""
+
+#, python-brace-format
+msgid "Delete account \"{name}\"?"
+msgstr ""
+
+msgid "Delete all unsorted sessions"
+msgstr ""
+
+#, python-brace-format
+msgid "Delete all {count} unsorted session(s)?"
+msgstr ""
+
+#, python-brace-format
+msgid "Delete folder \"{folder}\" and all {count} session(s) inside it?"
+msgstr ""
+
+msgid "Delete folder and all sessions"
+msgstr ""
+
+msgid "Delete non passing"
+msgstr ""
+
+msgid "Delete selected"
+msgstr ""
+
+msgid "Delete selected duplicates, generic/irrelevant skills, failed audits, and skills below threshold"
+msgstr ""
+
+msgid "Delete session"
+msgstr ""
+
+msgid "Delete theme"
+msgstr ""
+
+#, python-brace-format
+msgid "Delete theme \"{name}\"?"
+msgstr ""
+
+msgid "Delete this character and its memories"
+msgstr ""
+
+msgid "Delete this contact?"
+msgstr ""
+
+msgid "Delete this integration?"
+msgstr ""
+
+msgid "Delete this research?"
+msgstr ""
+
+msgid "Delete this session permanently?"
+msgstr ""
+
+msgid "Delete this session?"
+msgstr ""
+
+#, python-brace-format
+msgid "Delete {count} items?"
+msgstr ""
+
+#, python-brace-format
+msgid "Delete {count} session(s)? This cannot be undone."
+msgstr ""
+
+#, python-brace-format
+msgid "Delete {count} sessions permanently?"
+msgstr ""
+
+msgid "Delete?"
+msgstr ""
+
+#, python-brace-format
+msgid "Delivered via {channel}"
+msgstr ""
+
+msgid "Density"
+msgstr ""
+
+msgid "Disable"
+msgstr ""
+
+msgid "Disable 2FA"
+msgstr ""
+
+msgid "Disable Nobody mode"
+msgstr ""
+
+msgid "Disabled"
+msgstr ""
+
+msgid "Disconnected"
+msgstr ""
+
+msgid "Dismiss"
+msgstr ""
+
+msgid "Document"
+msgstr ""
+
+msgid "Document Editor"
+msgstr ""
+
+msgid "Documents"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Dots"
+msgstr ""
+
+msgid "Downloaded!"
+msgstr ""
+
+msgid "Drafts only"
+msgstr ""
+
+msgid "Drag to reorder"
+msgstr ""
+
+msgid "Drag to reorder folder"
+msgstr ""
+
+msgid "Drop <code>.woff2</code>, <code>.ttf</code>, or <code>.otf</code> files into <code>static/fonts/custom/</code> and reload — they'll appear in the Font dropdown above."
+msgstr ""
+
+msgid "Drops `data/skills/` (all SKILL.md files). Memory not affected."
+msgstr ""
+
+msgid "Duplicate shortcut"
+msgstr ""
+
+msgid "Each panel expands and plays its preview when you hover it."
+msgstr ""
+
+msgid "Edit"
+msgstr ""
+
+msgid "Edit API Integration"
+msgstr ""
+
+msgid "Edit Account"
+msgstr ""
+
+msgid "Edit Email Account"
+msgstr ""
+
+msgid "Edit Integration"
+msgstr ""
+
+msgid "Effect color"
+msgstr ""
+
+msgid "Email"
+msgstr ""
+
+msgid "Email (IMAP/SMTP)"
+msgstr ""
+
+msgid "Email (add an account in Integrations)"
+msgstr ""
+
+msgid "Email + master password required"
+msgstr ""
+
+msgid "Email Accounts"
+msgstr ""
+
+msgid "Email Assistant"
+msgstr ""
+
+msgid "Email account saved. Go to Settings > Email for writing style, auto-tagging, spam triage, reminders, and reply settings."
+msgstr ""
+
+msgid "Email reminder was not sent"
+msgstr ""
+
+msgid "Email settings"
+msgstr ""
+
+msgid "Embers"
+msgstr ""
+
+msgid "Enable"
+msgstr ""
+
+msgid "Enable Nobody mode — no memory, no history saved"
+msgstr ""
+
+msgid "Enable or disable tools available to the AI agent."
+msgstr ""
+
+msgid "Enabled"
+msgstr ""
+
+msgid "Endpoint"
+msgstr ""
+
+msgid "Enter 6-digit code to verify"
+msgstr ""
+
+msgid "Enter a name."
+msgstr ""
+
+msgid "Enter password to disable"
+msgstr ""
+
+msgid "Enter session name"
+msgstr ""
+
+msgid "Enter the code"
+msgstr ""
+
+msgid "Enter your password"
+msgstr ""
+
+msgid "Env"
+msgstr ""
+
+msgid "Error saving"
+msgstr ""
+
+#, python-brace-format
+msgid "Error: {error}"
+msgstr ""
+
+msgid "Every document and version. Drafts, exports, library — all gone."
+msgstr ""
+
+msgid "Every event and every calendar (incl. CalDAV-synced ones; resync to restore)."
+msgstr ""
+
+msgid "Every image record and the upload directory on disk."
+msgstr ""
+
+msgid "Every note, todo, and checklist."
+msgstr ""
+
+msgid "Every scheduled task and its run history (Tasks tool)."
+msgstr ""
+
+msgid "Every session, message, and chat history. Documents/notes/etc. stay."
+msgstr ""
+
+msgid "Everything, self-hosted"
+msgstr ""
+
+msgid "Expand"
+msgstr ""
+
+msgid "Export"
+msgstr ""
+
+msgid "Export .csv"
+msgstr ""
+
+msgid "Export .vcf"
+msgstr ""
+
+msgid "Export Data"
+msgstr ""
+
+msgid "Export all memories as JSON"
+msgstr ""
+
+msgid "Export current colors as JSON"
+msgstr ""
+
+msgid "Export failed"
+msgstr ""
+
+msgid "Export or import your user data (memories, presets, settings, skills, preferences) as a JSON file."
+msgstr ""
+
+msgid "Exporting..."
+msgstr ""
+
+msgid "Extract from Sent (15 emails)"
+msgstr ""
+
+msgid "Extract memories from this session"
+msgstr ""
+
+msgid "Fade this window to preview the page behind it"
+msgstr ""
+
+msgid "Failed"
+msgstr ""
+
+msgid "Failed to archive session"
+msgstr ""
+
+msgid "Failed to copy chat"
+msgstr ""
+
+msgid "Failed to delete session"
+msgstr ""
+
+#, python-brace-format
+msgid "Failed to delete session: {message}"
+msgstr ""
+
+msgid "Failed to extract"
+msgstr ""
+
+msgid "Failed to load"
+msgstr ""
+
+msgid "Failed to load archive"
+msgstr ""
+
+msgid "Failed to load contacts (check CardDAV config above)."
+msgstr ""
+
+msgid "Failed to load documents"
+msgstr ""
+
+msgid "Failed to load research"
+msgstr ""
+
+msgid "Failed to load server"
+msgstr ""
+
+#, python-brace-format
+msgid "Failed to load session: {message}"
+msgstr ""
+
+#, python-brace-format
+msgid "Failed to load sessions: {message}"
+msgstr ""
+
+msgid "Failed to load tools"
+msgstr ""
+
+msgid "Failed to load vault status"
+msgstr ""
+
+msgid "Failed to open archived session"
+msgstr ""
+
+#, python-brace-format
+msgid "Failed to reach backend: {error}"
+msgstr ""
+
+#, python-brace-format
+msgid "Failed to rename AI: {message}"
+msgstr ""
+
+msgid "Failed to rename session"
+msgstr ""
+
+#, python-brace-format
+msgid "Failed to rename session: {message}"
+msgstr ""
+
+msgid "Failed to restore session"
+msgstr ""
+
+msgid "Failed to save"
+msgstr ""
+
+msgid "Failed to save to documents"
+msgstr ""
+
+msgid "Failed to set model"
+msgstr ""
+
+#, python-brace-format
+msgid "Failed to set model: {error}"
+msgstr ""
+
+#, python-brace-format
+msgid "Failed: {error}"
+msgstr ""
+
+msgid "Fallbacks"
+msgstr ""
+
+msgid "Favorite"
+msgstr ""
+
+msgid "Favorite session"
+msgstr ""
+
+msgid "Favorited"
+msgstr ""
+
+msgid "Favorites"
+msgstr ""
+
+msgid "Features"
+msgstr ""
+
+msgid "Fill in all fields"
+msgstr ""
+
+msgid "Filter"
+msgstr ""
+
+msgid "Filter…"
+msgstr ""
+
+msgid "Fire a test reminder using your current settings to verify everything works."
+msgstr ""
+
+msgid "Focus chat input"
+msgstr ""
+
+msgid "Font"
+msgstr ""
+
+msgid "Font & Layout"
+msgstr ""
+
+msgid "For Gmail, iCloud, and Yahoo: paste your App Password (NOT your normal account password — those are blocked for IMAP). For Migadu, Fastmail, Outlook, etc.: your regular mailbox password works."
+msgstr ""
+
+msgid "Free search — no API key required. Works out of the box."
+msgstr ""
+
+msgid "Frosted"
+msgstr ""
+
+msgid "Gallery"
+msgstr ""
+
+msgid "Generate"
+msgstr ""
+
+msgid "Generate App Password"
+msgstr ""
+
+msgid "Generate an App Password from Yahoo Account Security (requires 2-Step Verification enabled) and paste it as the Password."
+msgstr ""
+
+msgid "Generic Coder Guy"
+msgstr ""
+
+msgid "Generic Corporate Woman"
+msgstr ""
+
+msgid "Get started"
+msgstr ""
+
+msgid "Get your API key from brave.com/search/api"
+msgstr ""
+
+msgid "GitHub"
+msgstr ""
+
+msgid "Give your character a name..."
+msgstr ""
+
+msgid "Gives the AI access to a sandboxed shell for running commands, installing packages, and executing scripts. Use with caution."
+msgstr ""
+
+msgid "Gmail needs an App Password"
+msgstr ""
+
+msgid "Google API key"
+msgstr ""
+
+msgid "Google PSE engine ID"
+msgstr ""
+
+msgid "Google results via API. 2,500 free queries at serper.dev"
+msgstr ""
+
+msgid "Grant full admin access"
+msgstr ""
+
+msgid "Group"
+msgstr ""
+
+msgid "Group Chat active — click to deactivate"
+msgstr ""
+
+#, python-brace-format
+msgid "Group chat ready — {n} models"
+msgstr ""
+
+msgid "Hamburger menu"
+msgstr ""
+
+msgid "Hardware-aware model recommendations and one-click serving across 270+ catalogued models."
+msgstr ""
+
+msgid "Harmony"
+msgstr ""
+
+msgid "Header"
+msgstr ""
+
+msgid "Hello, this is a test of text to speech."
+msgstr ""
+
+msgid "Hide"
+msgstr ""
+
+msgid ""
+"Hide the Settings cog?\n"
+"\n"
+"You can re-open this panel any time by typing /settings in the chat input."
+msgstr ""
+
+msgid "High (best quality)"
+msgstr ""
+
+msgid "Host"
+msgstr ""
+
+msgid "Hover to take a closer look"
+msgstr ""
+
+msgid "How"
+msgstr ""
+
+msgid "How it actually started"
+msgstr ""
+
+msgid "How it started"
+msgstr ""
+
+msgid "How this service expects the credential to be sent. <b>Bearer</b> = sends \"Authorization: Bearer YOUR_KEY\" (most modern APIs, ntfy, OpenAI-style). <b>Header</b> = sends YOUR_KEY verbatim under a header name you choose (Miniflux uses X-Auth-Token). <b>Basic</b> = HTTP basic auth (user:pass). <b>None</b> = the API is open / no auth."
+msgstr ""
+
+msgid "How you're reminded"
+msgstr ""
+
+msgid "I started working on the Odysseus project because running local AI felt fun — a step into the future. But the options to actually engage with LLMs felt like taking steps back. Where were features like Memory, Deep Research, Agents, and just basic integrations?!"
+msgstr ""
+
+msgid "IMAP (Receiving)"
+msgstr ""
+
+msgid "IMAP ok"
+msgstr ""
+
+#, python-brace-format
+msgid "IMAP: {error}"
+msgstr ""
+
+msgid "IMG"
+msgstr ""
+
+msgid "Image"
+msgstr ""
+
+msgid "Image Generation"
+msgstr ""
+
+msgid "Image generation model"
+msgstr ""
+
+msgid "Import"
+msgstr ""
+
+msgid "Import Data"
+msgstr ""
+
+msgid "Import a <code>.txt</code>, <code>.md</code>, <code>.pdf</code>, <code>.csv</code>, <code>.log</code>, <code>.json</code>, <code>.py</code>, <code>.js</code>, or <code>.html</code> file &mdash; the AI reads it and suggests candidate memories you can approve. Needs an open chat session (it uses that session's model)."
+msgstr ""
+
+msgid "Import a theme from JSON"
+msgstr ""
+
+msgid "Import failed"
+msgstr ""
+
+msgid "Import memories from a file"
+msgstr ""
+
+#, python-brace-format
+msgid "Imported {imported}/{total}"
+msgstr ""
+
+msgid "Importing…"
+msgstr ""
+
+msgid "Include memories in chat context"
+msgstr ""
+
+msgid "Incognito Mode"
+msgstr ""
+
+msgid "Inject"
+msgstr ""
+
+msgid "Inject Skills"
+msgstr ""
+
+msgid "Inject relevant skills into chat context"
+msgstr ""
+
+msgid "Input Bg"
+msgstr ""
+
+msgid "Input Border"
+msgstr ""
+
+msgid "Integrations"
+msgstr ""
+
+msgid "Intensity"
+msgstr ""
+
+msgid "Interface language"
+msgstr ""
+
+msgid "Invalid JSON."
+msgstr ""
+
+msgid "Invalid code"
+msgstr ""
+
+msgid "Invalid name."
+msgstr ""
+
+msgid "Irreversible. Each wipe targets one category — pick exactly what you want gone."
+msgstr ""
+
+msgid "It's open source and free. No sales team, no demo request — just clone the repo."
+msgstr ""
+
+msgid "Keyboard Shortcuts"
+msgstr ""
+
+msgid "Language"
+msgstr ""
+
+msgid "Last Active"
+msgstr ""
+
+#, python-brace-format
+msgid "Last unlock: {time}"
+msgstr ""
+
+msgid "Last used"
+msgstr ""
+
+msgid "Leave blank to keep current"
+msgstr ""
+
+msgid "Library"
+msgstr ""
+
+msgid "Light"
+msgstr ""
+
+#, python-brace-format
+msgid "Limit: {n} tool calls per message"
+msgstr ""
+
+msgid "Load more"
+msgstr ""
+
+msgid "Loading providers…"
+msgstr ""
+
+msgid "Loading research…"
+msgstr ""
+
+msgid "Loading..."
+msgstr ""
+
+msgid "Loading…"
+msgstr ""
+
+msgid "Local"
+msgstr ""
+
+msgid "Local (Kokoro-82M)"
+msgstr ""
+
+#, python-brace-format
+msgid "Local server appears offline: {reason}. Click to try anyway, or relaunch in Cookbook."
+msgstr ""
+
+msgid "Local-first"
+msgstr ""
+
+msgid "Lock"
+msgstr ""
+
+msgid "Locked"
+msgstr ""
+
+msgid "Locking..."
+msgstr ""
+
+msgid "Log out"
+msgstr ""
+
+msgid "Log out of Bitwarden CLI? You'll need to re-enter your master password to log back in."
+msgstr ""
+
+msgid "Logged in"
+msgstr ""
+
+msgid "Logged out"
+msgstr ""
+
+msgid "Logging in..."
+msgstr ""
+
+msgid "Logging out..."
+msgstr ""
+
+msgid "Login"
+msgstr ""
+
+msgid "Login failed"
+msgstr ""
+
+msgid "Logo & tips on empty chat"
+msgstr ""
+
+msgid "Logout"
+msgstr ""
+
+msgid "Long-term facts the AI remembers across chats — recall, edit, or curate."
+msgstr ""
+
+msgid "Loved by enterprises"
+msgstr ""
+
+msgid "Low (fastest, cheapest)"
+msgstr ""
+
+msgid "MCP"
+msgstr ""
+
+msgid "MCP Server"
+msgstr ""
+
+msgid "MCP Tool Server"
+msgstr ""
+
+msgid "MCP-ready"
+msgstr ""
+
+msgid "Make Default"
+msgstr ""
+
+msgid "Manage the endpoints you've added."
+msgstr ""
+
+msgid "Manual order"
+msgstr ""
+
+msgid "Master Password"
+msgstr ""
+
+msgid "Master password required"
+msgstr ""
+
+msgid "Max Tokens"
+msgstr ""
+
+msgid "Max skills per request"
+msgstr ""
+
+#, python-brace-format
+msgid "Max tokens: {n}"
+msgstr ""
+
+#, python-brace-format
+msgid "Max {max} custom themes. Delete one first."
+msgstr ""
+
+msgid "Maximum length of the AI response. 'No limit' lets the model decide when to stop."
+msgstr ""
+
+msgid "Medium (default)"
+msgstr ""
+
+msgid "Memories"
+msgstr ""
+
+msgid "Memory"
+msgstr ""
+
+msgid "Message Odysseus..."
+msgstr ""
+
+msgid "Message input"
+msgstr ""
+
+msgid "Messages will be routed through your OpenClaw agent. The agent has access to tools, memory, and skills configured in your OpenClaw workspace."
+msgstr ""
+
+msgid "Min 8 characters"
+msgstr ""
+
+msgid "Minimize"
+msgstr ""
+
+msgid "Minimum confidence"
+msgstr ""
+
+#, python-brace-format
+msgid "Missing: {keys}"
+msgstr ""
+
+msgid "Mode"
+msgstr ""
+
+msgid "Mode switcher"
+msgstr ""
+
+msgid "Model"
+msgstr ""
+
+msgid "Model name & export above chat"
+msgstr ""
+
+msgid "Model selector & quick-chat"
+msgstr ""
+
+msgid "Model used for Deep Research. Falls back to the default chat model if not set."
+msgstr ""
+
+msgid "Models"
+msgstr ""
+
+#, python-brace-format
+msgid "Models sorted: {name}"
+msgstr ""
+
+msgid "Monochromatic"
+msgstr ""
+
+msgid "Monospace"
+msgstr ""
+
+msgid "More"
+msgstr ""
+
+msgid "More Colors"
+msgstr ""
+
+msgid "More Tools"
+msgstr ""
+
+msgid "More tools"
+msgstr ""
+
+msgid "Most messages"
+msgstr ""
+
+msgid "Most used"
+msgstr ""
+
+msgid "Move to folder"
+msgstr ""
+
+msgid "Multi-round web search with source analysis. Takes longer but produces comprehensive, well-sourced answers. Your next message will trigger a deep research cycle."
+msgstr ""
+
+msgid "Multi-step research runs that gather, read, and synthesize sources into a written report."
+msgstr ""
+
+msgid "Multi-turn chat plus autonomous agents that plan, call tools, and work through tasks."
+msgstr ""
+
+msgid "My Service"
+msgstr ""
+
+msgid "Name"
+msgstr ""
+
+msgid "Name required"
+msgstr ""
+
+msgid "Name this folder:"
+msgstr ""
+
+msgid "Navigation"
+msgstr ""
+
+msgid "Need at least a Name or Email"
+msgstr ""
+
+msgid "Needs authorization"
+msgstr ""
+
+#, python-brace-format
+msgid "Network error: {error}"
+msgstr ""
+
+msgid "New"
+msgstr ""
+
+msgid "New Account"
+msgstr ""
+
+msgid "New Chat"
+msgstr ""
+
+msgid "New chat"
+msgstr ""
+
+msgid "New document"
+msgstr ""
+
+msgid "New folder"
+msgstr ""
+
+msgid "New password (min 8)"
+msgstr ""
+
+msgid "New session"
+msgstr ""
+
+msgid "Newest"
+msgstr ""
+
+msgid "Newest First"
+msgstr ""
+
+msgid "Next testimonial"
+msgstr ""
+
+msgid "No archived sessions"
+msgstr ""
+
+msgid "No chats found"
+msgstr ""
+
+msgid "No contact data found"
+msgstr ""
+
+msgid "No contacts yet."
+msgstr ""
+
+msgid "No cyclopes were harmed in production."
+msgstr ""
+
+msgid "No documents found"
+msgstr ""
+
+msgid "No email accounts configured"
+msgstr ""
+
+msgid "No integrations configured"
+msgstr ""
+
+msgid "No limit"
+msgstr ""
+
+msgid "No matching models"
+msgstr ""
+
+msgid "No memory, no history saved"
+msgstr ""
+
+msgid "No messages to copy"
+msgstr ""
+
+msgid "No models available"
+msgstr ""
+
+msgid "No models found"
+msgstr ""
+
+#, python-brace-format
+msgid "No models match \"{query}\""
+msgstr ""
+
+msgid "No research found"
+msgstr ""
+
+msgid "No results found"
+msgstr ""
+
+msgid "No sessions loaded"
+msgstr ""
+
+msgid "No telemetry"
+msgstr ""
+
+msgid "Nobody"
+msgstr ""
+
+msgid "Nobody mode active — click to deactivate"
+msgstr ""
+
+msgid "None"
+msgstr ""
+
+msgid "Notes"
+msgstr ""
+
+msgid "Nothing to copy yet"
+msgstr ""
+
+msgid "Nothing to sort"
+msgstr ""
+
+msgid "OK"
+msgstr ""
+
+msgid "OS default voice"
+msgstr ""
+
+msgid "Odysseus Chat"
+msgstr ""
+
+msgid "Odysseus Logo"
+msgstr ""
+
+msgid "Odysseus is a self-hosted interface for talking to language models — chat, autonomous agents, tools, model serving, email, research, and more. Local-first, privacy-first, and no telemetry. Just you and your models."
+msgstr ""
+
+msgid "Odysseus is everything I hate, just making it tolerable."
+msgstr ""
+
+msgid "Odysseus was created by a carefully crafted one-shot AI prompt:"
+msgstr ""
+
+msgid "Odysseus — A Self-Hosted AI Workspace"
+msgstr ""
+
+msgid "Odysseus — a self-hosted AI workspace: chat, agents, tools, model serving, email, research, and more. Your models, your hardware, your data."
+msgstr ""
+
+msgid "Oldest"
+msgstr ""
+
+msgid "One app, a lot of capabilities"
+msgstr ""
+
+msgid "Only admins can hide Settings."
+msgstr ""
+
+msgid "Only required for Login / Unlock"
+msgstr ""
+
+msgid "Open"
+msgstr ""
+
+msgid "Open Admin to add endpoints"
+msgstr ""
+
+msgid "Open Calendar"
+msgstr ""
+
+msgid "Open Compare"
+msgstr ""
+
+msgid "Open Cookbook"
+msgstr ""
+
+msgid "Open Deep Research"
+msgstr ""
+
+msgid "Open Gallery"
+msgstr ""
+
+msgid "Open Library"
+msgstr ""
+
+msgid "Open Memory"
+msgstr ""
+
+msgid "Open Notes"
+msgstr ""
+
+msgid "Open Report"
+msgstr ""
+
+msgid "Open Tasks"
+msgstr ""
+
+msgid "Open Theme"
+msgstr ""
+
+msgid "Open Tools"
+msgstr ""
+
+msgid "Open email inbox"
+msgstr ""
+
+msgid "Open signup"
+msgstr ""
+
+msgid "OpenClaw Agent Connected"
+msgstr ""
+
+msgid "Optional label for this account (e.g. “Work” or “Personal”). Leave blank to use the email address."
+msgstr ""
+
+msgid "Overflow menu"
+msgstr ""
+
+msgid "PDF"
+msgstr ""
+
+msgid "Panel"
+msgstr ""
+
+msgid "Password"
+msgstr ""
+
+msgid "Password (min 8)"
+msgstr ""
+
+msgid "Password updated"
+msgstr ""
+
+msgid "Passwords don't match"
+msgstr ""
+
+msgid "Paste an endpoint URL, e.g. http://localhost:8000/v1"
+msgstr ""
+
+msgid "Paste theme JSON here..."
+msgstr ""
+
+msgid "Peek"
+msgstr ""
+
+msgid "Perlin Flow"
+msgstr ""
+
+msgid "Persistent memory the assistant builds up and recalls across all your conversations."
+msgstr ""
+
+msgid "Persona picker & system prompt"
+msgstr ""
+
+msgid "Petals"
+msgstr ""
+
+msgid "Pick a known provider to auto-fill the IMAP and SMTP host/port. Choose Custom to type your own."
+msgstr ""
+
+msgid "Pick a provider first"
+msgstr ""
+
+msgid "Pick an endpoint + model"
+msgstr ""
+
+msgid "Play/stop TTS"
+msgstr ""
+
+msgid "Please enter a name for the AI"
+msgstr ""
+
+msgid "Please enter a name for the session"
+msgstr ""
+
+msgid "Polyphemus"
+msgstr ""
+
+msgid "Port"
+msgstr ""
+
+msgid "Precise / Code"
+msgstr ""
+
+msgid "Prefix"
+msgstr ""
+
+msgid "Preset"
+msgstr ""
+
+msgid "Press keys..."
+msgstr ""
+
+msgid "Preview"
+msgstr ""
+
+#, python-brace-format
+msgid "Preview failed: {error}"
+msgstr ""
+
+msgid "Previous testimonial"
+msgstr ""
+
+msgid "Private by default"
+msgstr ""
+
+msgid "Prompt"
+msgstr ""
+
+msgid "Provider"
+msgstr ""
+
+msgid "Providers tried in order when the primary fails or hits a rate limit"
+msgstr ""
+
+msgid "Public App URL"
+msgstr ""
+
+msgid "Publish selected drafts"
+msgstr ""
+
+msgid "Published only"
+msgstr ""
+
+msgid "QR Code"
+msgstr ""
+
+msgid "Quality"
+msgstr ""
+
+msgid "RAG"
+msgstr ""
+
+msgid "RAG active — click to deactivate"
+msgstr ""
+
+msgid "Rain"
+msgstr ""
+
+msgid "Re-run"
+msgstr ""
+
+msgid "Rearrange"
+msgstr ""
+
+msgid "Rearrange disabled"
+msgstr ""
+
+msgid "Rearrange enabled"
+msgstr ""
+
+msgid "Recent"
+msgstr ""
+
+msgid "Reconnect"
+msgstr ""
+
+msgid "Reconnecting..."
+msgstr ""
+
+msgid "Record voice"
+msgstr ""
+
+msgid "Registration"
+msgstr ""
+
+msgid "Remember me"
+msgstr ""
+
+msgid "Reminders"
+msgstr ""
+
+msgid "Reminders appear as browser notifications inside Odysseus."
+msgstr ""
+
+msgid "Reminders are emailed AND shown as a browser notification."
+msgstr ""
+
+msgid "Reminders are pushed via ntfy AND shown as a browser notification."
+msgstr ""
+
+msgid "Remove"
+msgstr ""
+
+msgid "Remove fallback"
+msgstr ""
+
+msgid "Remove this integration?"
+msgstr ""
+
+msgid "Remove this session permanently"
+msgstr ""
+
+msgid "Rename"
+msgstr ""
+
+msgid "Rename Session"
+msgstr ""
+
+msgid "Rename folder"
+msgstr ""
+
+msgid "Rename folder:"
+msgstr ""
+
+msgid "Renamed"
+msgstr ""
+
+msgid "Requires a Google API key and a Programmable Search Engine ID (CX). Create one at programmablesearchengine.google.com"
+msgstr ""
+
+msgid "Research"
+msgstr ""
+
+msgid "Research Model"
+msgstr ""
+
+msgid "Reset"
+msgstr ""
+
+msgid "Reset All"
+msgstr ""
+
+msgid "Reset Shortcuts"
+msgstr ""
+
+msgid "Reset this color"
+msgstr ""
+
+msgid "Reset to Default"
+msgstr ""
+
+msgid "Reset to default"
+msgstr ""
+
+msgid "Reset to text color"
+msgstr ""
+
+msgid "Restore"
+msgstr ""
+
+#, python-brace-format
+msgid "Restore {label}"
+msgstr ""
+
+#, python-brace-format
+msgid "Restore {title}"
+msgstr ""
+
+#, python-brace-format
+msgid "Restored {count} sessions"
+msgstr ""
+
+msgid "Results"
+msgstr ""
+
+msgid "Reusable procedures the AI can call via /skill — sort by confidence to surface the proven ones."
+msgstr ""
+
+msgid "Run a test query against the configured provider"
+msgstr ""
+
+msgid "Runs background tasks (compaction, cleanup, auto-naming) on a small/local model instead of your chat model. Leave blank to use the chat model."
+msgstr ""
+
+msgid "Runs on your machine against your own endpoints. No telemetry, with optional external integrations when you choose them."
+msgstr ""
+
+msgid "SMTP (Sending)"
+msgstr ""
+
+msgid "STARTTLS"
+msgstr ""
+
+msgid "Same as IMAP"
+msgstr ""
+
+msgid "Same as chat"
+msgstr ""
+
+msgid "Same as web search"
+msgstr ""
+
+msgid "Sans-serif"
+msgstr ""
+
+msgid "Save"
+msgstr ""
+
+msgid "Save / Share"
+msgstr ""
+
+msgid "Save Config"
+msgstr ""
+
+msgid "Save failed"
+msgstr ""
+
+msgid "Save first"
+msgstr ""
+
+msgid "Save first, then test"
+msgstr ""
+
+msgid "Save these backup codes somewhere safe. Each can be used once if you lose your authenticator:"
+msgstr ""
+
+msgid "Save to Documents"
+msgstr ""
+
+msgid "Saved"
+msgstr ""
+
+msgid "Saved to documents"
+msgstr ""
+
+msgid "Saving..."
+msgstr ""
+
+msgid "Saving…"
+msgstr ""
+
+msgid "Scan for Servers"
+msgstr ""
+
+msgid "Scan with your authenticator app, or enter manually:"
+msgstr ""
+
+msgid "Scan your network for running model servers"
+msgstr ""
+
+msgid "Scroll to bottom"
+msgstr ""
+
+msgid "Search"
+msgstr ""
+
+msgid "Search API used for web search and deep research."
+msgstr ""
+
+msgid "Search conversations"
+msgstr ""
+
+msgid "Search conversations (Ctrl+K)"
+msgstr ""
+
+msgid "Search conversations..."
+msgstr ""
+
+msgid "Search memories…"
+msgstr ""
+
+msgid "Search models..."
+msgstr ""
+
+msgid "Search skills…"
+msgstr ""
+
+msgid "Searches the web for relevant information to include in the response. Results are fetched and summarized before the AI answers."
+msgstr ""
+
+msgid "See it in action"
+msgstr ""
+
+msgid "Select"
+msgstr ""
+
+msgid "Select a provider first"
+msgstr ""
+
+msgid "Select character..."
+msgstr ""
+
+msgid "Select model"
+msgstr ""
+
+msgid "Select multiple memories"
+msgstr ""
+
+msgid "Select multiple skills"
+msgstr ""
+
+msgid "Select sessions"
+msgstr ""
+
+msgid "Select..."
+msgstr ""
+
+msgid "Self-hosted"
+msgstr ""
+
+msgid "Self-hosted SearXNG instance. Leave URL empty to use the SEARXNG_INSTANCE env var."
+msgstr ""
+
+msgid "Send Btn"
+msgstr ""
+
+msgid "Send Hover"
+msgstr ""
+
+msgid "Send Test Reminder"
+msgstr ""
+
+msgid "Send from"
+msgstr ""
+
+msgid "Send message"
+msgstr ""
+
+msgid "Send one prompt to several models at once and compare their answers side-by-side."
+msgstr ""
+
+msgid "Send to"
+msgstr ""
+
+msgid "Send to group"
+msgstr ""
+
+msgid "Sending…"
+msgstr ""
+
+msgid "Sensitive Blur"
+msgstr ""
+
+msgid "Sequential"
+msgstr ""
+
+msgid "Serif"
+msgstr ""
+
+msgid "Serper API key"
+msgstr ""
+
+msgid "Server URL"
+msgstr ""
+
+msgid "Server error"
+msgstr ""
+
+msgid "Server name"
+msgstr ""
+
+msgid "Server not found"
+msgstr ""
+
+msgid "Session Header"
+msgstr ""
+
+msgid "Session Name"
+msgstr ""
+
+msgid "Session actions"
+msgstr ""
+
+msgid "Session archived"
+msgstr ""
+
+#, python-brace-format
+msgid "Session create failed ({status}) {detail}"
+msgstr ""
+
+msgid "Session deleted"
+msgstr ""
+
+msgid "Session favorited"
+msgstr ""
+
+msgid "Session module not loaded"
+msgstr ""
+
+#, python-brace-format
+msgid "Session renamed to {name}"
+msgstr ""
+
+msgid "Session restored"
+msgstr ""
+
+msgid "Session unfavorited"
+msgstr ""
+
+msgid "Session: "
+msgstr ""
+
+msgid "Sessions"
+msgstr ""
+
+msgid "Set"
+msgstr ""
+
+msgid "Set Up 2FA"
+msgstr ""
+
+msgid "Set to 0 to disable skill injection."
+msgstr ""
+
+msgid "Settings"
+msgstr ""
+
+msgid "Settings Button"
+msgstr ""
+
+msgid "Settings cog hidden — type /settings to bring it back."
+msgstr ""
+
+msgid "Shell"
+msgstr ""
+
+msgid "Shell Access"
+msgstr ""
+
+msgid "Shortcut saved"
+msgstr ""
+
+msgid "Shortcuts"
+msgstr ""
+
+msgid "Shortcuts reset to defaults"
+msgstr ""
+
+msgid "Show &lt;think&gt; collapsible bars"
+msgstr ""
+
+msgid "Show less"
+msgstr ""
+
+msgid "Show password"
+msgstr ""
+
+msgid "Show sidebar"
+msgstr ""
+
+#, python-brace-format
+msgid "Show {count} more"
+msgstr ""
+
+#, python-brace-format
+msgid "Show {count} more models"
+msgstr ""
+
+msgid "Sidebar"
+msgstr ""
+
+msgid "Sign in to your Apple ID, go to Sign-In and Security → App-Specific Passwords, and generate one (requires 2FA on your Apple ID)."
+msgstr ""
+
+msgid "Size"
+msgstr ""
+
+msgid "Skills"
+msgstr ""
+
+msgid "So I started building my own, for fun — and eventually figured it might be fun to share what I built for myself with others. Doesn't work for you? Well… it runs great on my hardware."
+msgstr ""
+
+msgid "Solid"
+msgstr ""
+
+msgid "Sort"
+msgstr ""
+
+msgid "Sort models"
+msgstr ""
+
+msgid "Sort sessions"
+msgstr ""
+
+#, python-brace-format
+msgid "Sorted {updated} into {folders} folders"
+msgstr ""
+
+#, python-brace-format
+msgid "Sorted: {name}"
+msgstr ""
+
+msgid "Sorting..."
+msgstr ""
+
+msgid "Spacious"
+msgstr ""
+
+msgid "Sparkles"
+msgstr ""
+
+msgid "Speed"
+msgstr ""
+
+msgid "Sr. Engineer, ShipShip Inc."
+msgstr ""
+
+msgid "Start"
+msgstr ""
+
+msgid "Started as an AI chat. Became a workspace. Each piece runs locally against whatever endpoints you point it at."
+msgstr ""
+
+msgid "Status: UNLOCKED"
+msgstr ""
+
+msgid "Status: locked"
+msgstr ""
+
+msgid "Stop"
+msgstr ""
+
+msgid "Stop recording"
+msgstr ""
+
+msgid "Strip emojis from AI replies"
+msgstr ""
+
+msgid "Style of response"
+msgstr ""
+
+msgid "Suffix"
+msgstr ""
+
+msgid "Switch model"
+msgstr ""
+
+msgid "Synapse"
+msgstr ""
+
+msgid "System"
+msgstr ""
+
+msgid "TTS Mode"
+msgstr ""
+
+msgid "Tags"
+msgstr ""
+
+msgid "Tasks"
+msgstr ""
+
+msgid "Tavily API key"
+msgstr ""
+
+msgid "Teacher Model"
+msgstr ""
+
+msgid "Temperature"
+msgstr ""
+
+msgid "Temporary session — won't be saved and no memory activation."
+msgstr ""
+
+msgid "Test"
+msgstr ""
+
+msgid "Test Reminder"
+msgstr ""
+
+#, python-brace-format
+msgid "Test error: {error}"
+msgstr ""
+
+msgid "Test every skill, auto-fix the weak ones, flag what still fails"
+msgstr ""
+
+msgid "Testimonials"
+msgstr ""
+
+msgid "Testing..."
+msgstr ""
+
+msgid "Testing…"
+msgstr ""
+
+msgid "Text"
+msgstr ""
+
+msgid "Text to Speech"
+msgstr ""
+
+msgid "Text-only Emojis"
+msgstr ""
+
+msgid "The HTTP header name the key goes under (Miniflux: X-Auth-Token; most others: Authorization). Only used when Auth = Header."
+msgstr ""
+
+msgid "The assistant writes, refines, and reuses its own skills — getting more capable over time."
+msgstr ""
+
+msgid "The library can grow; cleanup retires weak/duplicate skills only after review."
+msgstr ""
+
+msgid "The model used when creating a new chat session."
+msgstr ""
+
+msgid "The secret token the service issued you (generated in its admin panel / settings). Used to prove your identity on each request. Required for any Auth mode except None."
+msgstr ""
+
+msgid "Theme"
+msgstr ""
+
+msgid "Theme name..."
+msgstr ""
+
+msgid "Theme saved"
+msgstr ""
+
+msgid "Themes"
+msgstr ""
+
+msgid "Thinking Process"
+msgstr ""
+
+msgid "This is a test reminder to verify your settings are working."
+msgstr ""
+
+msgid "This is a test reminder."
+msgstr ""
+
+msgid "Tidy"
+msgstr ""
+
+msgid "Tidy options"
+msgstr ""
+
+msgid "Tip: Attach images or files using the + button next to the input."
+msgstr ""
+
+msgid "Tip: Drag and drop files onto the chat to attach them."
+msgstr ""
+
+msgid "Tip: Long-press a session for rename, delete, and memory options."
+msgstr ""
+
+msgid "Tip: Press Ctrl+B to quickly toggle the sidebar."
+msgstr ""
+
+msgid "Tip: Press Ctrl+K to search across all your conversations."
+msgstr ""
+
+msgid "Tip: Right-click a session for rename, delete, and memory options."
+msgstr ""
+
+msgid "Tip: Shift-click the sidebar toggle to swap it to the other side."
+msgstr ""
+
+msgid "Tip: Switch to Agent mode when you want tools."
+msgstr ""
+
+msgid "Tip: Tap the eye icon for Nobody mode - no history saved."
+msgstr ""
+
+msgid "Title"
+msgstr ""
+
+msgid "Toggle On"
+msgstr ""
+
+msgid "Toggle Research and send to re-run"
+msgstr ""
+
+msgid "Toggle Window"
+msgstr ""
+
+msgid "Toggle favorite"
+msgstr ""
+
+msgid "Toggle incognito"
+msgstr ""
+
+msgid "Toggle on/off visibility of tools and modules across the interface."
+msgstr ""
+
+msgid "Toggle sidebar"
+msgstr ""
+
+msgid "Token/key"
+msgstr ""
+
+msgid "Tool Builder"
+msgstr ""
+
+msgid "Tool call limit"
+msgstr ""
+
+msgid "Tools"
+msgstr ""
+
+msgid "Tools & MCP"
+msgstr ""
+
+msgid "Transport"
+msgstr ""
+
+msgid "Triadic"
+msgstr ""
+
+msgid "Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured."
+msgstr ""
+
+msgid "Two-Factor Authentication"
+msgstr ""
+
+msgid "Type"
+msgstr ""
+
+msgid "Type /setup for Local models or API setup."
+msgstr ""
+
+msgid "Type /setup, then choose Local models or API."
+msgstr ""
+
+msgid "Type <span style=\"color:var(--accent,var(--red));font-weight:600\">/setup</span> to get started."
+msgstr ""
+
+msgid "URL"
+msgstr ""
+
+msgid "URL required"
+msgstr ""
+
+msgid "Unfavorite"
+msgstr ""
+
+msgid "Unfavorite before deleting"
+msgstr ""
+
+msgid "Unfavorited"
+msgstr ""
+
+msgid "Unknown"
+msgstr ""
+
+msgid "Unlimited"
+msgstr ""
+
+msgid "Unlock"
+msgstr ""
+
+msgid "Unlock failed"
+msgstr ""
+
+msgid "Unlocking..."
+msgstr ""
+
+msgid "Unnamed"
+msgstr ""
+
+msgid "Unsorted"
+msgstr ""
+
+msgid "Unstar before deleting"
+msgstr ""
+
+msgid "Untitled"
+msgstr ""
+
+msgid "Update Password"
+msgstr ""
+
+msgid "Use the IMAP username and password for SMTP too (right for almost every provider). Turn off to enter separate SMTP credentials."
+msgstr ""
+
+msgid "Use the IMAP username and password for SMTP too (this is right for almost every provider). Turn off to enter separate SMTP credentials."
+msgstr ""
+
+msgid "Use the utility model to write reminder messages"
+msgstr ""
+
+msgid "Use this account whenever no specific account is chosen."
+msgstr ""
+
+msgid "Used to build clickable links back to Odysseus inside outgoing reminder / urgent-email emails (e.g. <code>https://chat.yourdomain.com</code>). Leave blank to omit links."
+msgstr ""
+
+msgid "Used when nothing else is selected"
+msgstr ""
+
+msgid "User"
+msgstr ""
+
+msgid "User Chat Bubble"
+msgstr ""
+
+msgid "Username"
+msgstr ""
+
+msgid "Username (email)"
+msgstr ""
+
+msgid "Users"
+msgstr ""
+
+msgid "Using chat defaults"
+msgstr ""
+
+#, python-brace-format
+msgid "Using {model}"
+msgstr ""
+
+msgid "Usually the same as your IMAP username (your email address)."
+msgstr ""
+
+msgid "Usually your full email address."
+msgstr ""
+
+msgid "Utility Model"
+msgstr ""
+
+msgid "VP of Verticals, Things LLC"
+msgstr ""
+
+msgid "Vault"
+msgstr ""
+
+msgid "Vault unlocked"
+msgstr ""
+
+msgid "Vaultwarden (Password Vault)"
+msgstr ""
+
+msgid "Verify & Enable"
+msgstr ""
+
+msgid "View on GitHub"
+msgstr ""
+
+msgid "Vision"
+msgstr ""
+
+msgid "Voice"
+msgstr ""
+
+msgid "Web Search"
+msgstr ""
+
+msgid "Web search"
+msgstr ""
+
+msgid "Web search and deep research tools will be unavailable."
+msgstr ""
+
+msgid "Welcome Message"
+msgstr ""
+
+msgid "Welcome, type /setup to get started."
+msgstr ""
+
+msgid "What our customers are saying"
+msgstr ""
+
+msgid "When a self-hosted student fails an agent-mode task, escalate to a SOTA teacher that writes a SKILL.md procedure so the student can do it next time. Off by default."
+msgstr ""
+
+msgid "When on, the utility model writes a short, warm one-line reminder for browser, email, AND ntfy reminders instead of just the raw note content."
+msgstr ""
+
+msgid "When to use"
+msgstr ""
+
+msgid "Who am I? I'm nobody."
+msgstr ""
+
+msgid "Whole section (header + all tools)"
+msgstr ""
+
+msgid "Window"
+msgstr ""
+
+msgid "Wipe"
+msgstr ""
+
+msgid "Wipe all calendar"
+msgstr ""
+
+msgid "Wipe all chats"
+msgstr ""
+
+msgid "Wipe all documents"
+msgstr ""
+
+msgid "Wipe all gallery"
+msgstr ""
+
+msgid "Wipe all memory"
+msgstr ""
+
+msgid "Wipe all notes"
+msgstr ""
+
+msgid "Wipe all skills"
+msgstr ""
+
+msgid "Wipe all tasks"
+msgstr ""
+
+msgid "Write rough notes and click Expand, or leave empty"
+msgstr ""
+
+msgid "Writing Style"
+msgstr ""
+
+msgid "Yahoo needs an App Password"
+msgstr ""
+
+msgid "Yes — your full email address goes here too (e.g. you@gmail.com). Same as the Email field above for almost every provider."
+msgstr ""
+
+msgid "You"
+msgstr ""
+
+msgid "Your IMAP login password. Use an app-specific password if your provider requires 2FA (Gmail, iCloud, etc.)."
+msgstr ""
+
+msgid "Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot."
+msgstr ""
+
+msgid "Your SMTP password — often the same as your IMAP password."
+msgstr ""
+
+msgid "Your Themes"
+msgstr ""
+
+msgid "Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank."
+msgstr ""
+
+msgid "Your outgoing-mail server, e.g. smtp.gmail.com, smtp.migadu.com. Leave blank to make this account read-only."
+msgstr ""
+
+msgid "Your outgoing-mail server, e.g. smtp.gmail.com. Leave blank to make this account read-only."
+msgstr ""
+
+msgid "Your own <span class=\"grad\">AI workspace</span>,<br>running on your hardware."
+msgstr ""
+
+msgid "Your regular Google password won't work for IMAP. Generate a 16-character App Password (requires 2-Step Verification enabled) and paste it as the Password."
+msgstr ""
+
+msgid "Yours for the voyage."
+msgstr ""
+
+msgid "[ Chat & Agents ]"
+msgstr ""
+
+msgid "[ Cookbook ]"
+msgstr ""
+
+msgid "[ Email Assistant ]"
+msgstr ""
+
+#, python-brace-format
+msgid "[Doc edit: {lines}] {instruction}"
+msgstr ""
+
+msgid "[archived]"
+msgstr ""
+
+msgid "auto"
+msgstr ""
+
+msgid "bw CLI: NOT installed (install nodejs-bitwarden-cli)"
+msgstr ""
+
+msgid "bw CLI: installed"
+msgstr ""
+
+msgid "disconnected"
+msgstr ""
+
+msgid "e.g. I write emails in this style. I don't use exclamation marks. I sign emails with: ..."
+msgstr ""
+
+msgid "e.g. Work, Research, Drafts"
+msgstr ""
+
+msgid "email1, email2"
+msgstr ""
+
+msgid "error"
+msgstr ""
+
+msgid "fail"
+msgstr ""
+
+msgid "iCloud needs an App-Specific Password"
+msgstr ""
+
+msgid "model name"
+msgstr ""
+
+msgid "needs auth"
+msgstr ""
+
+msgid "new"
+msgstr ""
+
+msgid "no model"
+msgstr ""
+
+msgid "not responding"
+msgstr ""
+
+msgid "ntfy"
+msgstr ""
+
+msgid "ntfy (add in Integrations first)"
+msgstr ""
+
+msgid "ntfy reminder was not sent"
+msgstr ""
+
+msgid "ntfy topic"
+msgstr ""
+
+msgid "off"
+msgstr ""
+
+msgid "offline"
+msgstr ""
+
+msgid "on"
+msgstr ""
+
+msgid "original"
+msgstr ""
+
+msgid "phone1, phone2"
+msgstr ""
+
+msgid "press a key"
+msgstr ""
+
+msgid "reopen terminal"
+msgstr ""
+
+msgid "search (disabled)"
+msgstr ""
+
+msgid "self-evolving"
+msgstr ""
+
+msgid "swipe to delete"
+msgstr ""
+
+msgid "this session"
+msgstr ""
+
+msgid "unknown"
+msgstr ""
+
+#, python-brace-format
+msgid "{count} contact"
+msgstr ""
+
+#, python-brace-format
+msgid "{count} msgs"
+msgstr ""
+
+#, python-brace-format
+msgid "{count} research"
+msgstr ""
+
+#, python-brace-format
+msgid "{count} rounds"
+msgstr ""
+
+#, python-brace-format
+msgid "{count} selected"
+msgstr ""
+
+#, python-brace-format
+msgid "{count} session(s) archived"
+msgstr ""
+
+#, python-brace-format
+msgid "{count} session(s) deleted"
+msgstr ""
+
+#, python-brace-format
+msgid "{count} sessions restored"
+msgstr ""
+
+#, python-brace-format
+msgid "{count} sources"
+msgstr ""
+
+#, python-brace-format
+msgid "{enabled}/{total} enabled"
+msgstr ""
+
+#, python-brace-format
+msgid "{enabled}/{total} tools"
+msgstr ""
+
+#, python-brace-format
+msgid "{label} {state}"
+msgstr ""
+
+#, python-brace-format
+msgid "{name} (archived)"
+msgstr ""
+
+#, python-brace-format
+msgid "{n}d ago"
+msgstr ""
+
+#, python-brace-format
+msgid "{n}h ago"
+msgstr ""
+
+#, python-brace-format
+msgid "{n}m ago"
+msgstr ""
+
+#, python-brace-format
+msgid "{remaining} unfiled chats — hit Tidy again"
+msgstr ""
+
+msgid "© 2026 Odysseus · Built from one prompt that refused to stop."
+msgstr ""
+
+#, python-brace-format
+msgid "· {n} msgs"
+msgstr ""
+
+msgid "— comma-separated, e.g. python, build, vllm"
+msgstr ""
+
+msgid "— optional, leave blank for read-only"
+msgstr ""
+
+msgid "— short name, e.g. “build-vllm-wheel”"
+msgstr ""
+
+msgid "— the approach, steps, commands, or rules to follow"
+msgstr ""
+
+msgid "— what problem does this skill solve?"
+msgstr ""
+
+msgid "↵ Enter to save"
+msgstr ""
+
+#, python-brace-format
+msgid "⚠ No results returned ({ms}ms)"
+msgstr ""
+
+msgid "✓ Saved"
+msgstr ""
+
+msgid "✓ Style extracted"
+msgstr ""
+
+#, python-brace-format
+msgid "✓ {count} results · {ms}ms · top: {top}"
+msgstr ""
+
+#, python-brace-format
+msgid "✗ Test failed: {error}"
+msgstr ""
+
+#, python-brace-format
+msgid "✗ {error} ({ms}ms)"
+msgstr ""
+
+msgctxt "common.search"
+msgid "Search"
+msgstr ""
+
+msgctxt "composer.web_search"
+msgid "Web Search"
+msgstr ""
+
+msgctxt "settings.account.role_admin"
+msgid "Admin"
+msgstr ""
+
+msgctxt "settings.email_form.email"
+msgid "Email"
+msgstr ""
+
+msgctxt "settings.reminders.channel_email"
+msgid "Email"
+msgstr ""
+
+msgctxt "settings.search.drag_to_reorder"
+msgid "Drag to reorder"
+msgstr ""
+
+msgctxt "settings.shortcuts.reset_to_default"
+msgid "Reset to default"
+msgstr ""
+
+msgctxt "sidebar.aria_label"
+msgid "Sidebar"
+msgstr ""
+
+msgctxt "sidebar.chats"
+msgid "Chats"
+msgstr ""
+
+msgctxt "sidebar.plus_chat"
+msgid "+ Chat"
+msgstr ""
+
+msgctxt "theme.densities.comfortable"
+msgid "Comfortable"
+msgstr ""
+
+msgctxt "theme.densities.compact"
+msgid "Compact"
+msgstr ""
+
+msgctxt "theme.density.comfortable"
+msgid "Comfortable"
+msgstr ""
+
+msgctxt "theme.density.spacious"
+msgid "Spacious"
+msgstr ""
+
+msgctxt "theme.font.monospace"
+msgid "Monospace"
+msgstr ""
+
+msgctxt "theme.font.serif"
+msgid "Serif"
+msgstr ""
+
+msgctxt "theme.fonts.sans"
+msgid "Sans-serif"
+msgstr ""
+
+msgctxt "theme.saved_btn"
+msgid "Saved"
+msgstr ""
+
+msgctxt "tools.cookbook"
+msgid "Cookbook"
+msgstr ""
