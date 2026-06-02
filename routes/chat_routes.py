@@ -708,8 +708,13 @@ def setup_chat_routes(
                             try:
                                 data = json.loads(chunk[6:])
                                 if "delta" in data:
-                                    full_response += data["delta"]
-                                    _stream_set(session, partial=full_response)
+                                    # Reasoning tokens arrive flagged thinking:true.
+                                    # Forward them so the client can show a thinking
+                                    # indicator, but don't fold them into the saved
+                                    # reply (mirrors the rewrite path below).
+                                    if not data.get("thinking"):
+                                        full_response += data["delta"]
+                                        _stream_set(session, partial=full_response)
                                     yield chunk
                                 elif data.get("type") == "usage":
                                     last_metrics = data.get("data", {})
@@ -805,8 +810,12 @@ def setup_chat_routes(
                             try:
                                 data = json.loads(chunk[6:])
                                 if "delta" in data:
-                                    full_response += data["delta"]
-                                    _stream_set(session, partial=full_response)
+                                    # Reasoning tokens arrive flagged thinking:true.
+                                    # Forward them for the live indicator, but keep
+                                    # them out of the saved reply (same as chat mode).
+                                    if not data.get("thinking"):
+                                        full_response += data["delta"]
+                                        _stream_set(session, partial=full_response)
                                     yield chunk
                                 elif data.get("type") == "web_sources":
                                     web_sources = data.get("data", [])
