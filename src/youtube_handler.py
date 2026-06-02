@@ -198,15 +198,24 @@ async def fetch_youtube_comments(
             f"https://www.youtube.com/watch?v={video_id}",
         ]
 
-        proc = await asyncio.wait_for(
-            asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            ),
-            timeout=timeout,
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
+        # Bound the wait on the process actually finishing, not on spawning it.
+        # create_subprocess_exec returns as soon as the child starts, so wrapping
+        # it in wait_for never enforces the timeout — proc.communicate() is the
+        # blocking step. Kill and reap the child if it overruns so it does not
+        # linger after we return.
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise
 
         if proc.returncode != 0:
             return {"success": False, "error": f"yt-dlp failed: {stderr.decode()[:200]}", "comments": []}
