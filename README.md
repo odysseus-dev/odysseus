@@ -117,11 +117,11 @@ Odysseus SSH key and add the public key to the remote server's
 ssh-copy-id -i data/ssh/id_ed25519.pub user@server
 ```
 
-**NVIDIA Docker GPU overlay.** `scripts/check-docker-gpu.sh` diagnoses GPU
-passthrough and can optionally install the host runtime or update `.env`.
-Cookbook can only detect GPUs that Docker exposes to the container — if the
-host runtime is not configured, Cookbook sees the iGPU, another card, or CPU
-instead of your NVIDIA GPU.
+**NVIDIA Docker GPU overlay.** CPU-only users can skip this section.
+`scripts/check-docker-gpu.sh` diagnoses GPU passthrough and can optionally
+install the host runtime or update `.env`. Cookbook can only detect GPUs that
+Docker exposes to the container — if the host runtime is not configured,
+Cookbook sees the iGPU, another card, or CPU instead of your NVIDIA GPU.
 
 ```bash
 # Read-only diagnostic (default — installs nothing, never edits .env):
@@ -167,6 +167,14 @@ Verify after enabling either overlay:
 docker compose exec odysseus nvidia-smi -L   # NVIDIA
 docker compose exec odysseus rocm-smi        # AMD
 ```
+
+> **GPU passthrough ≠ llama.cpp CUDA.** `nvidia-smi` passing inside the
+> container confirms Docker GPU access, but llama.cpp also needs `cudart` and
+> the CUDA Toolkit at runtime. If Cookbook logs show `Unable to find cudart
+> library`, `Could NOT find CUDAToolkit`, `CUDA Toolkit not found`, or
+> tensors/layers assigned to CPU, that is a Cookbook/llama.cpp build issue —
+> not a Docker passthrough failure. Re-install the serve engine via
+> **Cookbook → Dependencies** to get a CUDA-enabled build.
 
 **Ollama with Docker.** If Ollama runs on the host, add this endpoint in
 Settings:

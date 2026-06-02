@@ -209,6 +209,7 @@ _check_nvidia_smi() {
         fi
     else
         _fail "nvidia-smi not found — install the NVIDIA driver for your distribution."
+        _info "No NVIDIA GPU? Skip this script — the NVIDIA overlay is not needed for CPU-only use."
     fi
     echo
 }
@@ -241,6 +242,14 @@ _check_gpu_passthrough() {
         echo
         _GPU_PASSTHROUGH_OK=1
         _pass "GPU passthrough is working — the NVIDIA compose overlay should work."
+        _info "Passthrough means Docker can see your GPU. It does NOT guarantee"
+        _info "llama.cpp will use CUDA. If Cookbook logs show:"
+        _info "  'Unable to find cudart library'"
+        _info "  'Could NOT find CUDAToolkit' / 'CUDA Toolkit not found'"
+        _info "  tensors or layers assigned to CPU"
+        _info "that is a Cookbook/llama.cpp CUDA build or runtime issue, not a"
+        _info "passthrough failure. Re-install the serve engine via"
+        _info "Cookbook -> Dependencies to get a CUDA-enabled build."
         if [ "${OPT_ENABLE_OVERLAY}" -eq 0 ]; then
             _info "Enable the overlay in .env with:"
             _info "  scripts/check-docker-gpu.sh --enable-nvidia-overlay"
