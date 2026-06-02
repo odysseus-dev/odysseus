@@ -3533,9 +3533,22 @@ body.bg-pattern-sparkles {
        ::before content while still inheriting the green flash + pulse. */
     pre.pre-compact .copy-code.copied::before { content: '✓ Copied'; }
 
-    /* Edit code button — positioned left of copy button */
-    pre .edit-code {
+    /* Download code button — positioned left of copy button */
+    pre .download-code {
       position:absolute; right:42px; top:6px;
+      background:var(--bg); color:var(--fg);
+      border:1px solid var(--border); border-radius:6px;
+      width:28px; height:28px; padding:0; cursor:pointer;
+      opacity:0; transition: opacity .15s, color .15s, border-color .15s;
+      display:flex; align-items:center; justify-content:center;
+    }
+    pre .download-code.bottom { top:auto; bottom:6px; }
+    pre:hover .download-code { opacity:0.7; }
+    pre .download-code:hover { opacity:1; }
+
+    /* Edit code button — positioned left of download button */
+    pre .edit-code {
+      position:absolute; right:78px; top:6px;
       background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius:6px;
       width:28px; height:28px; padding:0; cursor:pointer;
@@ -3628,8 +3641,9 @@ body.bg-pattern-sparkles {
        double the height of a 1-line bash. Copy is text ("Copy" → "✓ Copied"),
        Run and Edit keep their icons but at smaller sizes. Edit swaps to
        a "Save" text label when its .active state is on. */
-    pre.pre-compact { padding-right: 200px; min-height: 0; }
+    pre.pre-compact { padding-right: 240px; min-height: 0; }
     pre.pre-compact .copy-code,
+    pre.pre-compact .download-code,
     pre.pre-compact .edit-code,
     pre.pre-compact .run-code {
       height: 20px;
@@ -3649,12 +3663,18 @@ body.bg-pattern-sparkles {
     pre.pre-compact .copy-code svg { display: none; }
     pre.pre-compact .copy-code::before { content: 'Copy'; }
     pre.pre-compact .copy-code.copied::before { content: '✓ Copied'; }
+    /* Download: icon only */
+    pre.pre-compact .download-code {
+      width: 28px;
+      right: 64px;
+    }
+    pre.pre-compact .download-code svg { width: 12px; height: 12px; }
     /* Edit: icon + "Edit" label, swap to "Save" when editing */
     pre.pre-compact .edit-code {
       width: auto;
       padding: 0 8px 0 6px;
       gap: 3px;
-      right: 64px;
+      right: 100px;
     }
     pre.pre-compact .edit-code svg { width: 12px; height: 12px; }
     pre.pre-compact .edit-code::after { content: 'Edit'; }
@@ -3664,19 +3684,21 @@ body.bg-pattern-sparkles {
       width: auto;
       padding: 0 8px 0 6px;
       gap: 3px;
-      right: 126px;
+      right: 162px;
     }
     pre.pre-compact .run-code svg { width: 12px; height: 12px; }
     pre.pre-compact .run-code::after { content: 'Run'; }
     /* Bottom-positioned slim buttons (when pre is near the top of the
        viewport, the existing JS toggles .bottom to flip them down). */
     pre.pre-compact .copy-code.bottom,
+    pre.pre-compact .download-code.bottom,
     pre.pre-compact .edit-code.bottom,
     pre.pre-compact .run-code.bottom { top: auto; bottom: 3px; }
 
     /* Touch devices: no hover, so always show copy/run/edit buttons */
     @media (hover: none) {
       pre .copy-code { opacity:0.7; }
+      pre .download-code { opacity:0.7; }
       pre .edit-code { opacity:0.7; }
       pre .run-code { opacity:0.7; }
     }
@@ -4137,6 +4159,7 @@ body.bg-pattern-sparkles {
       }
       /* Code block buttons — slightly bigger touch targets */
       pre .copy-code,
+      pre .download-code,
       pre .edit-code,
       pre .run-code {
         width: 44px;
@@ -4156,11 +4179,14 @@ body.bg-pattern-sparkles {
       }
       /* 44×44 touch buttons starting from right:6 ends at 50. ~8px gap is
          enough to be distinguishable without spreading them too far apart. */
-      pre .edit-code {
+      pre .download-code {
         right: 58px;
       }
-      pre .run-code {
+      pre .edit-code {
         right: 110px;
+      }
+      pre .run-code {
+        right: 162px;
       }
       /* Dropdowns — bigger touch targets on mobile */
       .dropdown-item-compact {
