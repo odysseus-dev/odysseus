@@ -409,7 +409,7 @@ def _detect_windows():
         "    $gpus = @(); "
         "    foreach ($line in $nv -split \"`n\") { "
         "      $p = $line -split ','; "
-        "      if ($p.Count -ge 2) { $gpus += @{name=$p[1].Trim(); vram_mb=[double]$p[0].Trim()} } "
+        "      if ($p.Count -ge 2) { $gpus += [pscustomobject]@{name=$p[1].Trim(); vram_mb=[double]$p[0].Trim()} } "
         "    }; "
         "    $r.gpu_name = $gpus[0].name; "
         "    $r.gpu_vram_gb = [math]::Round(($gpus | Measure-Object -Property vram_mb -Sum).Sum / 1024, 1); "
