@@ -337,3 +337,82 @@ class TestAppendToolResultsThoughtSignature:
         )
         # No empty/None extra_content leaks onto non-Gemini tool calls.
         assert "extra_content" not in messages[0]["tool_calls"][0]
+
+
+# ---------------------------------------------------------------------------
+# web_search sources extraction — key lookup regression (#443)
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+
+class TestWebSearchSourcesKeyLookup:
+    """The web_search tool returns {"output": ..., "exit_code": 0}.
+    The sources-extraction block in stream_agent_loop must read from the
+    "output" key, not only from "results"/"stdout" (which web_search never
+    sets).  Without the fix the SOURCES marker is never found, no
+    web_sources SSE event is emitted, and the raw JSON blob leaks into the
+    LLM's round-2 context."""
+
+    _SOURCES = [{"title": "Example", "url": "https://example.com", "snippet": "test"}]
+
+    def _make_result(self, key: str = "output") -> dict:
+        sources_json = _json.dumps(self._SOURCES)
+        text = f"Search results here.\n\n<!-- SOURCES:{sources_json} -->"
+        return {key: text, "exit_code": 0}
+
+    # ── Regression: the old lookup missed "output" ──────────────────────
+
+    def test_old_lookup_missed_output_key(self):
+        """Documents the bug: result.get('results') and result.get('stdout')
+        are both absent when web_search returns its canonical {"output": ...}
+        shape, so _src_text was always '' and the if-block never ran."""
+        result = self._make_result("output")
+        old_src_text = result.get("results") or result.get("stdout") or ""
+        assert old_src_text == "", "confirms the pre-fix behaviour"
+
+    def test_fixed_lookup_finds_output_key(self):
+        """After the fix, "output" is checked first so _src_text is non-empty."""
+        result = self._make_result("output")
+        src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+        assert src_text != ""
+        assert "SOURCES" in src_text
+
+    # ── Marker extraction works once _src_text is non-empty ─────────────
+
+    def test_sources_extracted_from_output(self):
+        result = self._make_result("output")
+        src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+        marker = "<!-- SOURCES:"
+        idx = src_text.find(marker)
+        end = src_text.find(" -->", idx)
+        extracted = _json.loads(src_text[idx + len(marker):end])
+        assert extracted == self._SOURCES
+
+    def test_marker_stripped_from_output_key(self):
+        """After extraction the "output" value is cleaned so the LLM never
+        sees the raw JSON blob in its round-2 context."""
+        result = self._make_result("output")
+        src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+        marker = "<!-- SOURCES:"
+        idx = src_text.find(marker)
+        clean = src_text[:idx].rstrip()
+        # Apply to the correct key (was the bug: only "results"/"stdout" were updated)
+        if "output" in result:
+            result["output"] = clean
+        assert "SOURCES" not in result["output"]
+        assert result["output"] == "Search results here."
+
+    # ── Backward compat: "results"/"stdout" keys still work ─────────────
+
+    def test_results_key_still_works(self):
+        result = self._make_result("results")
+        src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+        assert src_text != ""
+        assert "SOURCES" in src_text
+
+    def test_stdout_key_still_works(self):
+        result = self._make_result("stdout")
+        src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+        assert src_text != ""
+        assert "SOURCES" in src_text
