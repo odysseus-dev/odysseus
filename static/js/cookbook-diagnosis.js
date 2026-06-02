@@ -167,6 +167,18 @@ export const ERROR_PATTERNS = [
     ],
   },
   {
+    pattern: /There is no module or parameter named ['"]lm_head\.input_scale['"]|lm_head\.input_scale|weight_scale_2/i,
+    message: 'vLLM cannot load this ModelOpt LM-head quantized checkpoint with the current runtime.',
+    suggestion: 'Suggested action: upgrade vLLM through the environment that provides this CLI (package manager, venv, Docker image, or source checkout), or choose a compatible checkpoint.',
+    fixes: [
+      { label: 'Open Dependencies', action: () => _openCookbookDependencies('vllm') },
+      {
+        label: 'Copy upgrade hint',
+        action: () => _copyText('Upgrade the vLLM environment that provides the selected vllm CLI, or use a compatible checkpoint. Do not assume Odysseus owns PATH/system/source/Docker installs.'),
+      },
+    ],
+  },
+  {
     pattern: /not divisib|must be divisible|attention heads.*divisible/i,
     message: 'Tensor parallel size incompatible with model dimensions.',
     fixes: [

@@ -559,6 +559,21 @@ def _append_serve_preflight_exit_lines(runner_lines: list[str], *, keep_shell_op
     runner_lines.append('fi')
 
 
+def _append_vllm_linux_preflight_lines(runner_lines: list[str]) -> None:
+    """Append Linux vLLM readiness lines that identify the runtime being used."""
+    # Keep the user install bin visible for Odysseus-managed `pip install --user`
+    # installs, but then report the actual CLI path so external runtimes are clear.
+    runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
+    runner_lines.append('ODYSSEUS_VLLM_BIN="$(command -v vllm 2>/dev/null || true)"')
+    runner_lines.append('if [ -z "$ODYSSEUS_VLLM_BIN" ]; then')
+    runner_lines.append('  echo "ERROR: vLLM is not installed."')
+    runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+    runner_lines.append('else')
+    runner_lines.append('  echo "[odysseus] vLLM CLI: $ODYSSEUS_VLLM_BIN"')
+    runner_lines.append('  ODYSSEUS_VLLM_VERSION="$("$ODYSSEUS_VLLM_BIN" --version 2>&1 | head -n 1 || true)"')
+    runner_lines.append('  if [ -n "$ODYSSEUS_VLLM_VERSION" ]; then echo "[odysseus] vLLM version: $ODYSSEUS_VLLM_VERSION"; fi')
+    runner_lines.append('fi')
+
 def _append_serve_exit_code_lines(
     runner_lines: list[str],
     *,
@@ -859,6 +874,16 @@ def _diagnose_serve_output(text: str) -> dict | None:
             r"Please pass.*trust.remote.code=True|contains custom code which must be executed to correctly load|does not recognize this architecture|model type.*but Transformers does not",
             "Model requires custom code or newer model support.",
             [{"label": "retry with --trust-remote-code", "op": "append", "arg": "--trust-remote-code"}],
+        ),
+        (
+            r"There is no module or parameter named ['\"]lm_head\.input_scale['\"]|lm_head\.input_scale|weight_scale_2",
+            "vLLM cannot load this ModelOpt LM-head quantized checkpoint with the current runtime.",
+            [
+                {
+                    "label": "upgrade vLLM through the environment that provides this CLI, or use a compatible checkpoint",
+                    "op": "manual",
+                }
+            ],
         ),
         (
             r"Either a revision or a version must be specified|transformers\.integrations\.hub_kernels|kernels/layer",
