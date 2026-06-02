@@ -40,6 +40,8 @@ class STTService:
     @property
     def available(self) -> bool:
         settings = self._load_settings()
+        if settings.get("stt_enabled") is False:
+            return False
         provider = settings["stt_provider"]
         if provider == "disabled":
             return False
@@ -140,6 +142,8 @@ class STTService:
 
     def transcribe(self, audio_bytes: bytes) -> Optional[str]:
         settings = self._load_settings()
+        if settings.get("stt_enabled") is False:
+            return None
         provider = settings["stt_provider"]
         model = settings["stt_model"]
         language = settings.get("stt_language", "")
