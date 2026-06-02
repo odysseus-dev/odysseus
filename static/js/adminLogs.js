@@ -1,4 +1,3 @@
-// Admin App Logs viewer — list/tail logs under logs/ (issue #981)
 import * as Modals from './modalManager.js';
 import { el, esc } from './ui.js';
 
