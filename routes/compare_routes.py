@@ -48,11 +48,14 @@ def setup_compare_routes(session_manager: SessionManager):
         sid_b = str(uuid.uuid4())
 
         # Create ephemeral sessions (prefixed [CMP])
-        for sid, model, endpoint in [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]:
+        blind = str(is_blind).lower() == "true"
+        slot_labels = ["Model A", "Model B"]
+        for idx, (sid, model, endpoint) in enumerate([(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]):
             user = getattr(request.state, 'current_user', None)
+            session_name = f"[CMP] {slot_labels[idx]}" if blind else f"[CMP] {model.split('/')[-1]}"
             session_manager.create_session(
                 session_id=sid,
-                name=f"[CMP] {model.split('/')[-1]}",
+                name=session_name,
                 endpoint_url=endpoint,
                 model=model,
                 rag=False,
@@ -76,7 +79,6 @@ def setup_compare_routes(session_manager: SessionManager):
                 db.close()
 
         # Blind mapping: randomly assign left/right
-        blind = str(is_blind).lower() == "true"
         if blind:
             mapping = {"left": "a", "right": "b"}
             if random.random() > 0.5:
@@ -107,15 +109,17 @@ def setup_compare_routes(session_manager: SessionManager):
         session_left = sid_a if mapping["left"] == "a" else sid_b
         session_right = sid_a if mapping["right"] == "a" else sid_b
 
-        return {
+        resp = {
             "id": comp_id,
             "session_left": session_left,
             "session_right": session_right,
-            "model_left": model_a if mapping["left"] == "a" else model_b,
-            "model_right": model_a if mapping["right"] == "a" else model_b,
             "is_blind": blind,
             "mapping": mapping,
         }
+        if not blind:
+            resp["model_left"] = model_a if mapping["left"] == "a" else model_b
+            resp["model_right"] = model_a if mapping["right"] == "a" else model_b
+        return resp
 
     @router.post("/{comp_id}/vote")
     def vote_comparison(
