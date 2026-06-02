@@ -88,20 +88,25 @@ jobs:
 
             // ── Build comment body ────────────────────────────────────────────────
             const commentBody = issues.length === 0
-              ? `${COMMENT_MARKER}\n✅ **Issue template check passed.** Thanks for the well-structured report — it helps us triage faster.`
-              : `${COMMENT_MARKER}
-⚠️ **Issue template check — action needed**
-
-Thanks for taking the time to open this — we really appreciate it.
-To keep the issue tracker useful for the maintainer and for other users, we need a few things filled in:
-
-${issues.map(i => `- ${i}`).join('\n')}
-
-Please edit this issue to address the points above.
-If this is a **security vulnerability**, please [close this issue](https://github.com/${context.repo.owner}/${context.repo.repo}/issues/${issueNumber}) and report it privately via [GitHub Security Advisories](https://github.com/${context.repo.owner}/${context.repo.repo}/security/advisories/new) — see [SECURITY.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${context.payload.repository.default_branch}/SECURITY.md).
-
----
-*This comment updates automatically when you edit the issue.*`;
+              ? [
+                  `${COMMENT_MARKER}`,
+                  '✅ **Issue template check passed.** Thanks for the well-structured report — it helps us triage faster.',
+                ].join('\n')
+              : [
+                  `${COMMENT_MARKER}`,
+                  '⚠️ **Issue template check — action needed**',
+                  '',
+                  'Thanks for taking the time to open this — we really appreciate it.',
+                  'To keep the issue tracker useful for the maintainer and for other users, we need a few things filled in:',
+                  '',
+                  `${issues.map(i => `- ${i}`).join('\n')}`,
+                  '',
+                  'Please edit this issue to address the points above.',
+                  `If this is a **security vulnerability**, please [close this issue](https://github.com/${context.repo.owner}/${context.repo.repo}/issues/${issueNumber}) and report it privately via [GitHub Security Advisories](https://github.com/${context.repo.owner}/${context.repo.repo}/security/advisories/new) — see [SECURITY.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${context.payload.repository.default_branch}/SECURITY.md).`,
+                  '',
+                  '---',
+                  '*This comment updates automatically when you edit the issue.*',
+                ].join('\n');
 
             // Find and update or create the bot comment
             const comments = await github.paginate(github.rest.issues.listComments, {

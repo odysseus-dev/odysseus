@@ -75,16 +75,21 @@ jobs:
             const COMMENT_MARKER = '<!-- pr-template-check-bot -->';
 
             const commentBody = issues.length === 0
-              ? `${COMMENT_MARKER}\n✅ **PR template check passed.** All required sections are filled in.`
-              : `${COMMENT_MARKER}
-            ⚠️ **PR template check — action required**
-
-            This PR is missing or has incomplete required sections. Please update the PR description to address the following:
-
-            ${issues.map(i => `- ${i}`).join('\n')}
-
-            ---
-            *This comment updates automatically when you edit the PR description.*`;
+              ? [
+                  `${COMMENT_MARKER}`,
+                  '✅ **PR template check passed.** All required sections are filled in.',
+                ].join('\n')
+              : [
+                  `${COMMENT_MARKER}`,
+                  '⚠️ **PR template check — action required**',
+                  '',
+                  'This PR is missing or has incomplete required sections. Please update the PR description to address the following:',
+                  '',
+                  `${issues.map(i => `- ${i}`).join('\n')}`,
+                  '',
+                  '---',
+                  '*This comment updates automatically when you edit the PR description.*',
+                ].join('\n');
 
             // Find an existing bot comment to update rather than posting a new one each time
             const comments = await github.paginate(github.rest.issues.listComments, {

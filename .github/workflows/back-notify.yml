@@ -85,38 +85,42 @@ jobs:
             }
 
             // ── Messages ─────────────────────────────────────────────────────────
-            const issueMessage = `${BACKFILL_MARKER}
-👋 **A quick note from the Odysseus team — and a big thank you**
+            const issueMessage = [
+              `${BACKFILL_MARKER}`,
+              '👋 **A quick note from the Odysseus team — and a big thank you**',
+              '',
+              'We are genuinely blown away by the response to Odysseus. The volume of issues, pull requests, and ideas from the community has been incredible and we are grateful for every one of them.',
+              '',
+              'To make it easier for the maintainers to work through everything, we have introduced structured issue templates that make reports and proposals much faster to triage. Going forward, all new issues must use a template.',
+              '',
+              '**Would you mind re-opening this as a new issue using the correct template?**',
+              `- 🐛 [Bug Report](https://github.com/${owner}/${repo}/issues/new?template=bug_report.yml)`,
+              `- 💡 [Feature Request](https://github.com/${owner}/${repo}/issues/new?template=feature_request.yml)`,
+              `- ❓ [Question / Setup Help](https://github.com/${owner}/${repo}/discussions/categories/q-a) ← use Discussions, not Issues`,
+              `- 🔒 Security vulnerability → [GitHub Security Advisories](https://github.com/${owner}/${repo}/security/advisories/new) (private — please do not post vulnerabilities as public issues)`,
+              '',
+              'Feel free to close this issue once you have re-opened it with the template. **Thank you again** — every report and idea genuinely helps.',
+            ].join('\n');
 
-We are genuinely blown away by the response to Odysseus. The volume of issues, pull requests, and ideas from the community has been incredible and we are grateful for every one of them.
-
-To make it easier for the maintainers to work through everything, we have introduced structured issue templates that make reports and proposals much faster to triage. Going forward, all new issues must use a template.
-
-**Would you mind re-opening this as a new issue using the correct template?**
-- 🐛 [Bug Report](https://github.com/${owner}/${repo}/issues/new?template=bug_report.yml)
-- 💡 [Feature Request](https://github.com/${owner}/${repo}/issues/new?template=feature_request.yml)
-- ❓ [Question / Setup Help](https://github.com/${owner}/${repo}/discussions/categories/q-a) ← use Discussions, not Issues
-- 🔒 Security vulnerability → [GitHub Security Advisories](https://github.com/${owner}/${repo}/security/advisories/new) (private — please do not post vulnerabilities as public issues)
-
-Feel free to close this issue once you have re-opened it with the template. **Thank you again** — every report and idea genuinely helps.`;
-
-            const prMessage = `${BACKFILL_MARKER}
-👋 **A quick note from the Odysseus team — and a big thank you**
-
-We are genuinely blown away by the number of contributors jumping in. Thank you for the time you have put into this.
-
-To help the maintainers review pull requests consistently and efficiently, we have introduced a [PR template](https://github.com/${owner}/${repo}/blob/main/.github/PULL_REQUEST_TEMPLATE.md) with required sections. Going forward, all PRs need to follow this structure.
-
-**Could you update this PR's description to match the template?** Key things we need:
-- A clear **summary** of what changed and why
-- A linked issue number (\`Fixes #NNN\` or \`Part of #NNN\`)
-- Confirmation you searched for duplicates
-- Test coverage info (what tests you added, or why they don't apply)
-- Step-by-step **how to test** instructions for the reviewer
-
-You can copy the template from [PULL_REQUEST_TEMPLATE.md](https://github.com/${owner}/${repo}/blob/main/.github/PULL_REQUEST_TEMPLATE.md) and paste it into the PR description, then fill in your details.
-
-**Thank you again** — we want to make sure your work gets the attention it deserves.`;
+            const prMessage = [
+              `${BACKFILL_MARKER}`,
+              '👋 **A quick note from the Odysseus team — and a big thank you**',
+              '',
+              'We are genuinely blown away by the number of contributors jumping in. Thank you for the time you have put into this.',
+              '',
+              `To help the maintainers review pull requests consistently and efficiently, we have introduced a [PR template](https://github.com/${owner}/${repo}/blob/main/.github/PULL_REQUEST_TEMPLATE.md) with required sections. Going forward, all PRs need to follow this structure.`,
+              '',
+              "**Could you update this PR's description to match the template?** Key things we need:",
+              '- A clear **summary** of what changed and why',
+              '- A linked issue number (`Fixes #NNN` or `Part of #NNN`)',
+              '- Confirmation you searched for duplicates',
+              "- Test coverage info (what tests you added, or why they don't apply)",
+              '- Step-by-step **how to test** instructions for the reviewer',
+              '',
+              `You can copy the template from [PULL_REQUEST_TEMPLATE.md](https://github.com/${owner}/${repo}/blob/main/.github/PULL_REQUEST_TEMPLATE.md) and paste it into the PR description, then fill in your details.`,
+              '',
+              '**Thank you again** — we want to make sure your work gets the attention it deserves.',
+            ].join('\n');
 
             // ── Precompute open items already notified by backfill marker ─────────
             core.info('Precomputing already-notified open issues and PRs...');

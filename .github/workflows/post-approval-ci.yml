@@ -245,25 +245,29 @@ jobs:
             const MARKER = '<!-- post-approval-ci-summary -->';
 
             const body = allPassed
-              ? `${MARKER}
-            ## ✅ Post-Approval CI — all checks passed
-
-            Approved by @${approver} · commit \`${sha}\` · [Full run](${runUrl})
-
-            | | Check | Result |
-            |---|---|---|
-            ${rows}`
-              : `${MARKER}
-            ## ❌ Post-Approval CI — one or more checks failed
-
-            Approved by @${approver} · commit \`${sha}\` · [Full run](${runUrl})
-
-            | | Check | Result |
-            |---|---|---|
-            ${rows}
-
-            > **This PR should not be merged until all checks pass.**
-            > Fix the failures above and request a re-review.`;
+              ? [
+                  `${MARKER}`,
+                  '## ✅ Post-Approval CI — all checks passed',
+                  '',
+                  `Approved by @${approver} · commit \`${sha}\` · [Full run](${runUrl})`,
+                  '',
+                  '| | Check | Result |',
+                  '|---|---|---|',
+                  `${rows}`,
+                ].join('\n')
+              : [
+                  `${MARKER}`,
+                  '## ❌ Post-Approval CI — one or more checks failed',
+                  '',
+                  `Approved by @${approver} · commit \`${sha}\` · [Full run](${runUrl})`,
+                  '',
+                  '| | Check | Result |',
+                  '|---|---|---|',
+                  `${rows}`,
+                  '',
+                  '> **This PR should not be merged until all checks pass.**',
+                  '> Fix the failures above and request a re-review.',
+                ].join('\n');
 
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
