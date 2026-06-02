@@ -184,16 +184,6 @@ COMPOSE_FILE=docker-compose.yml:docker/gpu.amd.yml
 RENDER_GID=989
 ```
 
-On **Windows** (Docker Desktop on WSL2, PowerShell, cmd) `COMPOSE_FILE` uses
-`;` instead of `:` as the separator — using `:` silently loads only the first
-file and Cookbook will keep reporting "No GPU":
-
-```powershell
-COMPOSE_FILE=docker-compose.yml;docker/gpu.nvidia.yml
-COMPOSE_FILE=docker-compose.yml;docker/gpu.amd.yml
-```
-
-Verify with:
 For NVIDIA/AMD GPU support, also read the comments in the selected overlay file: docker/gpu.nvidia.yml or docker/gpu.amd.yml.
 
 Verify after enabling either overlay:
