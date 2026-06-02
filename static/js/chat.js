@@ -1837,7 +1837,7 @@ import createResearchSynapse from './researchSynapse.js';
                         _iw.style.cursor = 'pointer';
                         _iw.onclick = () => window.open(API_BASE + '/api/upload/' + _att.id, '_blank');
                         const _im = document.createElement('img');
-                        _im.src = API_BASE + '/api/upload/' + _att.id;
+                        _im.src = API_BASE + '/api/upload/' + _att.id + '?thumb=1';
                         _im.alt = _att.name || 'Image';
                         _im.style.cssText = 'max-width:300px;max-height:200px;border-radius:6px;display:block;';
                         _iw.appendChild(_im);

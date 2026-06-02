@@ -105,7 +105,7 @@ function buildAttachCards(attachments) {
         // Small cached thumbnail — the preview is tiny, no need to pull the
         // full-resolution photo. Click still opens the full image.
         img.alt = att.name || 'Image';
-        img.loading = 'lazy';
+        img.decoding = 'async';
         img.style.cssText = 'max-width:300px;max-height:200px;border-radius:6px;display:' + (att.previewUrl ? 'block' : 'none') + ';';
         let _revealed = false;
         let _revealTimer = null;
