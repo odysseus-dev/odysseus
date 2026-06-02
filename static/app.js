@@ -3856,7 +3856,75 @@ function startOdysseusApp() {
     e.preventDefault();
     attachStrip.style.backgroundColor = '';
   });
-  
+
+  // ── Compare-mode file drop shield ──────────────────────────────────────────
+  // Compare reuses #chat-container, but each pane renders into a sandboxed
+  // <iframe>. Iframes swallow drag-and-drop events: a file dropped on a pane is
+  // handled by the iframe, not the parent, so the browser loads the file *inside
+  // the pane* ("behind" the app) instead of attaching it. The chatContainer drop
+  // handler above never sees it because the event doesn't bubble out of the frame.
+  //
+  // Fix: while a file drag is active in Compare, raise a single full-window shield
+  // that sits above every pane/iframe and becomes the drop target. The drop then
+  // lands on the parent document and we route the files into the shared composer
+  // (the same pending-files pipeline the picker and paste use). Scoped to Compare
+  // via the .compare-active class, so normal chat and the tool dropzones (gallery,
+  // RAG, document editor, …) are unaffected.
+  let _cmpDropShield = null;
+  const _isFileDrag = (e) => {
+    const types = e.dataTransfer && e.dataTransfer.types;
+    return !!types && Array.prototype.indexOf.call(types, 'Files') !== -1;
+  };
+  const _compareActive = () => {
+    const c = el('chat-container');
+    return !!c && c.classList.contains('compare-active');
+  };
+  const _showCmpShield = () => {
+    if (!_cmpDropShield) {
+      _cmpDropShield = document.createElement('div');
+      _cmpDropShield.id = 'compare-drop-shield';
+      _cmpDropShield.setAttribute('aria-hidden', 'true');
+      _cmpDropShield.style.cssText = 'position:fixed;inset:0;z-index:2147483646;' +
+        'display:none;align-items:center;justify-content:center;' +
+        'background:color-mix(in srgb, var(--accent, #0af) 16%, rgba(0,0,0,0.5));' +
+        'backdrop-filter:blur(2px);';
+      const _box = document.createElement('div');
+      _box.style.cssText = 'pointer-events:none;border:2px dashed rgba(255,255,255,0.9);' +
+        'border-radius:14px;padding:20px 28px;background:rgba(0,0,0,0.4);' +
+        'font:600 16px/1.4 system-ui,sans-serif;color:#fff;';
+      _box.textContent = 'Drop files to attach';
+      _cmpDropShield.appendChild(_box);
+      document.body.appendChild(_cmpDropShield);
+    }
+    _cmpDropShield.style.display = 'flex';
+  };
+  const _hideCmpShield = () => { if (_cmpDropShield) _cmpDropShield.style.display = 'none'; };
+  // Capture phase so we raise the shield before the pointer reaches an iframe.
+  window.addEventListener('dragenter', (e) => {
+    if (_isFileDrag(e) && _compareActive()) _showCmpShield();
+  }, true);
+  window.addEventListener('dragover', (e) => {
+    if (!_isFileDrag(e) || !_compareActive()) return;
+    e.preventDefault();                       // mark as a valid drop target
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    _showCmpShield();
+  }, true);
+  window.addEventListener('dragleave', (e) => {
+    // Hide only when the drag actually leaves the window (no relatedTarget).
+    if (_compareActive() && !e.relatedTarget) _hideCmpShield();
+  }, true);
+  window.addEventListener('dragend', _hideCmpShield, true);
+  window.addEventListener('drop', (e) => {
+    if (!_isFileDrag(e) || !_compareActive()) return;
+    e.preventDefault();
+    _hideCmpShield();
+    const files = Array.from(e.dataTransfer.files || []);
+    if (!files.length) return;
+    fileHandlerModule.addFiles(files);
+    fileHandlerModule.renderAttachStrip();
+    uiModule.showToast(`Added ${files.length} file${files.length > 1 ? 's' : ''} to attach`);
+  }, true);
+
   // Load initial data
   presetsModule.loadPresets(uiModule.showError);
 
