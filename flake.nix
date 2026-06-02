@@ -189,6 +189,10 @@
                 --set PYTHONPATH "$out/share/odysseus" \
                 --set-default ODYSSEUS_DATA_DIR "$out/share/odysseus/data" \
                 --add-flags "$out/share/odysseus/setup.py"
+
+              # ChromaDB server CLI (from chromadb in pythonEnv) so the service
+              # modules can run the vector DB the app connects to over HTTP.
+              makeWrapper ${pythonEnv}/bin/chroma $out/bin/odysseus-chroma
             '';
           };
 
@@ -267,6 +271,15 @@
               description = "Interface to bind.";
             };
 
+            chromaPort = mkOption {
+              type = types.port;
+              default = 8100;
+              description = ''
+                Port for the bundled ChromaDB vector database server. Bound to
+                loopback only; the app connects to it over HTTP.
+              '';
+            };
+
             dataDir = mkOption {
               type = types.path;
               default = "/var/lib/odysseus";
@@ -306,9 +319,49 @@
             };
             users.groups.${cfg.group} = { };
 
+            # ChromaDB vector database server. The app talks to it over HTTP, so
+            # it must be running for RAG / vector memory to work.
+            systemd.services.odysseus-chroma = {
+              description = "Odysseus ChromaDB vector database";
+              after = [ "network.target" ];
+              wantedBy = [ "multi-user.target" ];
+
+              path = with pkgs; [ bash ] ++ runtimeLibs;
+
+              environment = {
+                PYTHONUNBUFFERED = "1";
+                LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
+              };
+
+              preStart = ''
+                mkdir -p "${cfg.dataDir}/data/chroma"
+              '';
+
+              serviceConfig = {
+                Type = "simple";
+                User = cfg.user;
+                Group = cfg.group;
+                WorkingDirectory = cfg.dataDir;
+                ExecStart = ''
+                  ${cfg.package}/bin/odysseus-chroma run \
+                    --path ${cfg.dataDir}/data/chroma \
+                    --host 127.0.0.1 \
+                    --port ${toString cfg.chromaPort}
+                '';
+                StateDirectory = "odysseus";
+                StateDirectoryMode = "0750";
+                Restart = "on-failure";
+                RestartSec = "3s";
+              };
+            };
+
             systemd.services.odysseus = {
               description = "Odysseus AI assistant";
-              after = [ "network.target" ];
+              after = [
+                "network.target"
+                "odysseus-chroma.service"
+              ];
+              wants = [ "odysseus-chroma.service" ];
               wantedBy = [ "multi-user.target" ];
 
               # Tools the app shells out to at runtime
@@ -329,6 +382,9 @@
                 # Route constants.py's DATA_DIR to the mutable state directory.
                 ODYSSEUS_DATA_DIR = "${cfg.dataDir}/data";
                 LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
+                # Connect to the bundled ChromaDB server (odysseus-chroma.service).
+                CHROMADB_HOST = "127.0.0.1";
+                CHROMADB_PORT = toString cfg.chromaPort;
               };
 
               preStart =
@@ -429,6 +485,15 @@
               description = "Interface to bind.";
             };
 
+            chromaPort = mkOption {
+              type = types.port;
+              default = 8100;
+              description = ''
+                Port for the bundled ChromaDB vector database server. Bound to
+                loopback only; the app connects to it over HTTP.
+              '';
+            };
+
             dataDir = mkOption {
               type = types.path;
               default = "/var/lib/odysseus";
@@ -466,6 +531,35 @@
               description = "Odysseus service user";
             };
             users.groups.${cfg.group} = { };
+
+            # ChromaDB vector database server. The app talks to it over HTTP, so
+            # it must be running for RAG / vector memory to work. launchd has no
+            # ordering between daemons, but the app retries the connection lazily.
+            launchd.daemons.odysseus-chroma = {
+              command =
+                let
+                  data = "${cfg.dataDir}/data";
+                in
+                ''
+                  #!/bin/sh
+                  mkdir -p "${data}/chroma" "${cfg.dataDir}/logs"
+                  exec ${cfg.package}/bin/odysseus-chroma run \
+                    --path "${data}/chroma" \
+                    --host 127.0.0.1 \
+                    --port ${toString cfg.chromaPort}
+                '';
+
+              serviceConfig = {
+                KeepAlive = true;
+                RunAtLoad = true;
+                StandardOutPath = "${cfg.dataDir}/logs/chroma.out.log";
+                StandardErrorPath = "${cfg.dataDir}/logs/chroma.err.log";
+                EnvironmentVariables = {
+                  PYTHONUNBUFFERED = "1";
+                  LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
+                };
+              };
+            };
 
             launchd.daemons.odysseus = {
               command =
@@ -508,6 +602,9 @@
                   PYTHONUNBUFFERED = "1";
                   ODYSSEUS_DATA_DIR = "${cfg.dataDir}/data";
                   LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
+                  # Connect to the bundled ChromaDB server (odysseus-chroma daemon).
+                  CHROMADB_HOST = "127.0.0.1";
+                  CHROMADB_PORT = toString cfg.chromaPort;
                 };
               };
             };
