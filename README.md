@@ -97,7 +97,11 @@ ODYSSEUS_HOST=0.0.0.0 ./start-macos.sh
 # then open http://<tailscale-ip>:7860
 ```
 
-Keep auth enabled when binding outside loopback, and do not expose this port directly to the public internet. To build a clickable app wrapper:
+The script also reads `.env` at startup, so `APP_BIND=0.0.0.0` and `APP_PORT`
+set there are picked up automatically without a command-line override each run.
+
+Keep `AUTH_ENABLED=true` (the default) before binding outside loopback. Do not
+expose this port directly to the public internet. To build a clickable app wrapper:
 
 ```bash
 ./build-macos-app.sh
