@@ -862,7 +862,7 @@ def _build_system_prompt(
                 # matter how often it's been matched and applied.
                 for _sk in relevant_skills:
                     try:
-                        sm.record_use(_sk.get('name', ''))
+                        sm.record_use(_sk.get('name', ''), owner=owner)
                     except Exception:
                         pass
                 lines.append("## Relevant skills for this request")
