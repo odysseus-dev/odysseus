@@ -1,16 +1,14 @@
 // Admin App Logs viewer — list/tail logs under logs/ (issue #981)
 import * as Modals from './modalManager.js';
+import { el, esc } from './ui.js';
 
-const API = window.location.origin;
 const POLL_MS = 3000;
 const TAIL_LINES = 200;
 
 let _pollTimer = null;
 let _registered = false;
-
-function el(id) {
-  return document.getElementById(id);
-}
+let _tailInFlight = false;
+let _tailSnapshot = '';
 
 function _levelClass(line) {
   if (/\s-\sERROR\s+-/.test(line)) return 'app-logs-line-error';
@@ -19,25 +17,25 @@ function _levelClass(line) {
   return '';
 }
 
+function _scrollToEnd() {
+  if (!el('app-logs-autoscroll')?.checked) return;
+  const body = el('app-logs-output')?.closest('.app-logs-body');
+  if (body) body.scrollTop = body.scrollHeight;
+}
+
 function _renderLines(lines) {
   const out = el('app-logs-output');
   if (!out) return;
-  if (!lines || !lines.length) {
+  if (!lines?.length) {
     out.textContent = '(no log lines yet)';
     return;
   }
   out.innerHTML = lines.map((ln) => {
     const cls = _levelClass(ln);
-    const esc = ln
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-    return cls ? `<span class="${cls}">${esc}\n</span>` : `${esc}\n`;
+    const safe = esc(ln);
+    return cls ? `<span class="${cls}">${safe}\n</span>` : `${safe}\n`;
   }).join('');
-  if (el('app-logs-autoscroll')?.checked) {
-    const body = out.closest('.app-logs-body');
-    if (body) body.scrollTop = body.scrollHeight;
-  }
+  _scrollToEnd();
 }
 
 function _setMeta(data) {
@@ -51,14 +49,14 @@ function _setMeta(data) {
 }
 
 async function _fetchList() {
-  const res = await fetch(`${API}/api/admin/logs`, { credentials: 'same-origin' });
+  const res = await fetch('/api/admin/logs', { credentials: 'same-origin' });
   if (!res.ok) throw new Error(`list failed: ${res.status}`);
   return res.json();
 }
 
 async function _fetchTail(name) {
   const res = await fetch(
-    `${API}/api/admin/logs/${encodeURIComponent(name)}?tail=${TAIL_LINES}`,
+    `/api/admin/logs/${encodeURIComponent(name)}?tail=${TAIL_LINES}`,
     { credentials: 'same-origin' },
   );
   if (!res.ok) throw new Error(`tail failed: ${res.status}`);
@@ -91,21 +89,33 @@ async function _populateSelect(preferred) {
   return pick;
 }
 
-export async function loadTail() {
+export async function loadTail(force = false) {
   const sel = el('app-logs-select');
   const name = sel?.value;
   if (!name) {
+    _tailSnapshot = '';
     _renderLines([]);
     _setMeta({ lines: [] });
     return;
   }
+  if (_tailInFlight) return;
+  _tailInFlight = true;
   try {
     const data = await _fetchTail(name);
+    const snapshot = `${name}:${data.bytes}:${data.modified}`;
+    if (!force && snapshot === _tailSnapshot) {
+      _scrollToEnd();
+      return;
+    }
+    _tailSnapshot = snapshot;
     _renderLines(data.lines || []);
     _setMeta(data);
   } catch (e) {
+    _tailSnapshot = '';
     _renderLines([`Error loading log: ${e.message}`]);
     _setMeta({ lines: [] });
+  } finally {
+    _tailInFlight = false;
   }
 }
 
@@ -129,16 +139,17 @@ function _startPoll() {
 }
 
 function _wireControls() {
-  el('app-logs-refresh')?.addEventListener('click', () => loadTail());
-  el('app-logs-select')?.addEventListener('change', () => loadTail());
-  el('app-logs-autoscroll')?.addEventListener('change', () => loadTail());
+  el('app-logs-refresh')?.addEventListener('click', () => loadTail(true));
+  el('app-logs-select')?.addEventListener('change', () => {
+    _tailSnapshot = '';
+    loadTail(true);
+  });
+  el('app-logs-autoscroll')?.addEventListener('change', () => _scrollToEnd());
   el('app-logs-copy')?.addEventListener('click', async () => {
     const text = el('app-logs-output')?.innerText || '';
     try {
       await navigator.clipboard.writeText(text);
-    } catch (_) {
-      /* ignore */
-    }
+    } catch (_) { /* ignore */ }
   });
   el('close-app-logs-modal')?.addEventListener('click', () => close());
 }
@@ -150,11 +161,15 @@ function _ensureRegistered() {
     railBtnId: null,
     sidebarBtnId: 'tool-app-logs-btn',
     closeFn: () => close(),
+    restoreFn: () => {
+      _startPoll();
+      loadTail(true);
+    },
   });
   _wireControls();
 }
 
-export function isOpen() {
+function isOpen() {
   const modal = el('app-logs-modal');
   return modal && !modal.classList.contains('hidden');
 }
@@ -165,44 +180,33 @@ export async function open() {
   _ensureRegistered();
   if (Modals.isMinimized('app-logs-modal')) {
     Modals.restore('app-logs-modal');
-    _startPoll();
-    await loadTail();
     return;
   }
   if (!modal.classList.contains('hidden')) return;
   modal.classList.remove('hidden');
   modal.style.display = '';
+  _tailSnapshot = '';
   await _populateSelect('odysseus.log');
-  await loadTail();
+  await loadTail(true);
   _startPoll();
 }
 
 export function close() {
   _stopPoll();
-  const modal = el('app-logs-modal');
-  if (!modal) return;
-  if (Modals.isRegistered('app-logs-modal')) {
-    Modals.close('app-logs-modal');
-    return;
-  }
-  modal.classList.add('hidden');
+  _tailSnapshot = '';
+  Modals.close('app-logs-modal');
 }
 
 export async function toggle() {
+  _ensureRegistered();
   if (Modals.isRegistered('app-logs-modal') && Modals.toggle('app-logs-modal')) {
     if (isOpen()) _startPoll();
     else _stopPoll();
-    return true;
+    return;
   }
   if (isOpen()) {
     close();
-    return true;
+    return;
   }
   await open();
-  return true;
-}
-
-export function showAdminSection(visible) {
-  const section = el('admin-section');
-  if (section) section.style.display = visible ? '' : 'none';
 }

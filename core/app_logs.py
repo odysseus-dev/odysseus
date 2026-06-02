@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -19,17 +18,15 @@ _SCRUB_PATTERNS = (
     (re.compile(r"(password\s*[=:]\s*)\S+", re.I), r"\1***"),
     (re.compile(r"(Authorization:\s*Bearer\s+)\S+", re.I), r"\1***"),
     (re.compile(r"(Authorization:\s*)\S+", re.I), r"\1***"),
-    (re.compile(r"(Bearer\s+)\S+", re.I), r"\1***"),
 )
 
-
-def _logs_path() -> Path:
+def _logs_root() -> Path:
     return Path(LOGS_DIR)
 
 
 def _under_logs_dir(path: Path) -> bool:
     try:
-        path.resolve().relative_to(_logs_path().resolve())
+        path.resolve().relative_to(_logs_root().resolve())
     except ValueError:
         return False
     return True
@@ -37,18 +34,16 @@ def _under_logs_dir(path: Path) -> bool:
 
 def enumerate_logs() -> list[dict[str, Any]]:
     """Return every app log under logs/ as {name, bytes, modified}."""
-    base = _logs_path()
-    if not base.is_dir():
+    root = _logs_root()
+    if not root.is_dir():
         return []
     out: list[dict[str, Any]] = []
-    for p in sorted(base.glob("*.log")):
-        if not p.is_file():
+    for p in root.glob("*.log"):
+        if not p.is_file() or not _under_logs_dir(p):
             continue
         try:
             st = p.stat()
         except OSError:
-            continue
-        if not _under_logs_dir(p):
             continue
         out.append({
             "name": p.name,
@@ -63,28 +58,43 @@ def resolve_log(name: str) -> Path | None:
     """Resolve a log filename under logs/; reject path traversal."""
     if not name or "/" in name or "\\" in name or name in (".", ".."):
         return None
-    base = name if name.endswith(".log") else f"{name}.log"
-    if base != os.path.basename(base):
+    filename = name if name.endswith(".log") else f"{name}.log"
+    if filename != os.path.basename(filename):
         return None
-    candidates: list[Path] = []
-    logs = _logs_path()
-    if not logs.is_dir():
+    root = _logs_root()
+    if not root.is_dir():
         return None
-    for p in logs.glob("*.log"):
+    for p in root.glob("*.log"):
         if not p.is_file() or not _under_logs_dir(p):
             continue
-        if p.name == base or p.stem == name or name in p.name:
-            candidates.append(p)
-    if not candidates:
-        return None
-    candidates.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-    return candidates[0]
+        if p.name == filename or (not name.endswith(".log") and p.stem == name):
+            return p
+    return None
 
 
 def scrub_line(line: str) -> str:
     for pattern, repl in _SCRUB_PATTERNS:
         line = pattern.sub(repl, line)
     return line
+
+
+def _read_tail_lines(path: Path, n: int) -> tuple[list[str], bool]:
+    """Read last n lines from EOF without scanning the whole file."""
+    block = 8192
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        pos = f.tell()
+        if pos == 0:
+            return [], False
+        buf = b""
+        while pos > 0 and buf.count(b"\n") <= n:
+            step = min(block, pos)
+            pos -= step
+            f.seek(pos)
+            buf = f.read(step) + buf
+        lines = buf.decode("utf-8", errors="replace").splitlines()
+        truncated = pos > 0 and len(lines) > n
+        return lines[-n:], truncated
 
 
 def tail_log(name: str, lines: int = DEFAULT_TAIL_LINES) -> dict[str, Any] | None:
@@ -97,19 +107,8 @@ def tail_log(name: str, lines: int = DEFAULT_TAIL_LINES) -> dict[str, Any] | Non
         st = path.stat()
     except OSError:
         return None
-    raw_lines: list[str] = []
-    truncated = False
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            dq: deque[str] = deque(maxlen=n)
-            for line in f:
-                dq.append(line.rstrip("\n\r"))
-            raw_lines = list(dq)
-            if st.st_size > 0 and len(raw_lines) == n:
-                # Heuristic: file may have more lines than we kept
-                f.seek(0)
-                total = sum(1 for _ in f)
-                truncated = total > n
+        raw_lines, truncated = _read_tail_lines(path, n)
     except OSError:
         return None
     return {

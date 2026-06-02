@@ -794,12 +794,7 @@ function initializeEventListeners() {
   // ── Admin App Logs ──
   const toolAppLogsBtn = el('tool-app-logs-btn');
   if (toolAppLogsBtn) {
-    toolAppLogsBtn.addEventListener('click', async () => {
-      const Modals = await import('./js/modalManager.js');
-      if (!Modals.toggle('app-logs-modal')) {
-        await adminLogsModule.open();
-      }
-    });
+    toolAppLogsBtn.addEventListener('click', () => adminLogsModule.toggle());
   }
 
   // ── Cookbook modal toggle ──
@@ -1102,7 +1097,8 @@ function initializeEventListeners() {
     .then(d => {
       window._isAdmin = !!d.is_admin;
       if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
-      adminLogsModule.showAdminSection(!!d.is_admin);
+      const adminSection = el('admin-section');
+      if (adminSection) adminSection.style.display = d.is_admin ? '' : 'none';
       const userBarName = el('user-bar-name');
       const userBarAvatar = el('user-bar-avatar');
       if (userBarName && d.username) {
