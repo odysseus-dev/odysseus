@@ -130,11 +130,13 @@ Odysseus SSH key and add the public key to the remote server's
 ssh-copy-id -i data/ssh/id_ed25519.pub user@server
 ```
 
-**NVIDIA Docker GPU overlay.** CPU-only users can skip this section.
-`scripts/check-docker-gpu.sh` diagnoses GPU passthrough and can optionally
-install the host runtime or update `.env`. Cookbook can only detect GPUs that
-Docker exposes to the container — if the host runtime is not configured,
-Cookbook sees the iGPU, another card, or CPU instead of your NVIDIA GPU.
+**Docker GPU overlays.** CPU-only users can skip this section. Cookbook can
+only detect GPUs that Docker exposes to the container — if the host runtime or
+device passthrough is not configured, Cookbook sees the iGPU, another card, or
+CPU instead of your intended GPU.
+
+For NVIDIA, `scripts/check-docker-gpu.sh` diagnoses GPU passthrough and can
+optionally install the host runtime or update `.env`.
 
 ```bash
 # Read-only diagnostic (default — installs nothing, never edits .env):
@@ -168,10 +170,18 @@ To enable manually without the script, add this to `.env`:
 COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml
 ```
 
-**AMD / ROCm.** AMD GPU passthrough is not automated. Add manually:
+**AMD / ROCm.** AMD setup is read-only diagnostic plus manual `.env` edit. Run:
+
+```bash
+scripts/check-docker-amd-gpu.sh
+```
+
+Then add the reported values to `.env`, replacing `RENDER_GID` with your host's
+numeric render group id:
 
 ```bash
 COMPOSE_FILE=docker-compose.yml:docker/gpu.amd.yml
+RENDER_GID=989
 ```
 
 For NVIDIA/AMD GPU support, also read the comments in the selected overlay file: docker/gpu.nvidia.yml or docker/gpu.amd.yml.
@@ -180,7 +190,7 @@ Verify after enabling either overlay:
 
 ```bash
 docker compose exec odysseus nvidia-smi -L   # NVIDIA
-docker compose exec odysseus rocm-smi        # AMD
+docker compose exec odysseus sh -lc 'test -e /dev/kfd && test -d /dev/dri && ls -l /dev/kfd /dev/dri/renderD*'  # AMD
 ```
 
 > **GPU passthrough ≠ llama.cpp CUDA.** `nvidia-smi` passing inside the
@@ -190,6 +200,11 @@ docker compose exec odysseus rocm-smi        # AMD
 > tensors/layers assigned to CPU, that is a Cookbook/llama.cpp build issue —
 > not a Docker passthrough failure. Re-install the serve engine via
 > **Cookbook → Dependencies** to get a CUDA-enabled build.
+>
+> The same split applies to AMD/ROCm: seeing `/dev/kfd` and `/dev/dri` inside
+> the container confirms device passthrough, not ROCm userspace or a
+> ROCm-enabled vLLM/llama.cpp build. `rocm-smi` and `rocminfo` are not expected
+> inside the slim Odysseus image.
 
 **Ollama with Docker.** If Ollama runs on the host, add this endpoint in
 Settings:

@@ -1051,7 +1051,7 @@ def setup_calendar_routes() -> APIRouter:
                 "BEGIN:VCALENDAR",
                 "VERSION:2.0",
                 "PRODID:-//Odysseus//Calendar//EN",
-                f"X-WR-CALNAME:{cal.name}",
+                f"X-WR-CALNAME:{_ics_escape(cal.name)}",
             ]
             for ev in events:
                 lines.append("BEGIN:VEVENT")
@@ -1061,8 +1061,9 @@ def setup_calendar_routes() -> APIRouter:
                     lines.append(f"DTSTART;VALUE=DATE:{ev.dtstart.strftime('%Y%m%d')}")
                     lines.append(f"DTEND;VALUE=DATE:{ev.dtend.strftime('%Y%m%d')}")
                 else:
-                    lines.append(f"DTSTART:{ev.dtstart.strftime('%Y%m%dT%H%M%S')}")
-                    lines.append(f"DTEND:{ev.dtend.strftime('%Y%m%dT%H%M%S')}")
+                    _dt_suffix = "Z" if getattr(ev, "is_utc", False) else ""
+                    lines.append(f"DTSTART:{ev.dtstart.strftime('%Y%m%dT%H%M%S')}{_dt_suffix}")
+                    lines.append(f"DTEND:{ev.dtend.strftime('%Y%m%dT%H%M%S')}{_dt_suffix}")
                 if ev.description:
                     lines.append(f"DESCRIPTION:{_ics_escape(ev.description)}")
                 if ev.location:

@@ -58,6 +58,11 @@
   --color-save-green: var(--color-success);
   --color-link-hover: #66c7ff;
   --color-subheader: #6b8a94;
+  --select-bg: var(--bg);
+  --select-fg: var(--fg);
+  --select-option-bg: color-mix(in srgb, var(--panel) 74%, var(--bg));
+  --select-option-fg: var(--fg);
+  --select-option-active-bg: color-mix(in srgb, var(--accent, var(--red)) 24%, var(--panel));
   /* Warm accent — used by the Goals/Today UI in Notes. Lives as a token so
      themes can override without touching the goal CSS. */
   --accent-warm: #d19a66;
@@ -78,6 +83,11 @@
   --hl-builtin: #0070a0;
   --hl-variable: #383a42;
   --hl-params: #4a4f5c;
+  --select-bg: #eaeaea;
+  --select-fg: var(--fg);
+  --select-option-bg: var(--panel);
+  --select-option-fg: var(--fg);
+  --select-option-active-bg: color-mix(in srgb, var(--red) 16%, var(--panel));
 }
 
 /* ── Reset & Base ── */
@@ -1723,7 +1733,22 @@ body.bg-pattern-sparkles {
     textarea { width:100%; min-height:32px; height:auto; max-height:30lh; overflow-y:auto; resize:none; }
     button { height:32px; padding:0 10px; }
     #chat-form button[type="submit"] { height:38px; }
-    select { height:32px; color-scheme: dark; }
+    select {
+      height:32px;
+      color-scheme: dark;
+      background-color: var(--select-bg);
+      color: var(--select-fg);
+    }
+    select option,
+    select optgroup {
+      background-color: var(--select-option-bg);
+      color: var(--select-option-fg);
+    }
+    select option:checked {
+      background-color: var(--select-option-active-bg);
+      color: var(--select-option-fg);
+    }
+    :root.light select { color-scheme: light; }
     .chat-container {
       flex:1;
       display:flex;
