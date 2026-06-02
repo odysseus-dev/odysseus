@@ -45,17 +45,22 @@ class RateLimitError(SearchEngineError):
 # ----------------------------------------------------------------------
 # Analytics helpers
 # ----------------------------------------------------------------------
+def _default_analytics() -> Dict[str, Any]:
+    """A fresh analytics document with every counter present."""
+    return {
+        "total_queries": 0,
+        "successful_queries": 0,
+        "failed_queries": 0,
+        "cache_hits": 0,
+        "cache_misses": 0,
+        "query_patterns": {},
+    }
+
+
 def _load_analytics() -> Dict[str, Any]:
     """Load analytics data from the JSON file, creating defaults if missing."""
     if not ANALYTICS_FILE.exists():
-        default = {
-            "total_queries": 0,
-            "successful_queries": 0,
-            "failed_queries": 0,
-            "cache_hits": 0,
-            "cache_misses": 0,
-            "query_patterns": {},
-        }
+        default = _default_analytics()
         _save_analytics(default)
         return default
     try:
@@ -63,14 +68,7 @@ def _load_analytics() -> Dict[str, Any]:
             return json.load(f)
     except Exception as e:
         logger.warning(f"Failed to load analytics file: {e}")
-        return {
-            "total_queries": 0,
-            "successful_queries": 0,
-            "failed_queries": 0,
-            "cache_hits": 0,
-            "cache_misses": 0,
-            "query_patterns": {},
-        }
+        return _default_analytics()
 
 
 def _save_analytics(data: Dict[str, Any]) -> None:
