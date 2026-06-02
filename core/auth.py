@@ -266,7 +266,8 @@ class AuthManager:
         renamed_sessions = 0
         with self._sessions_lock:
             for sess in self._sessions.values():
-                if (sess or {}).get("username") == old_username:
+                sess_user = str((sess or {}).get("username") or "").strip().lower()
+                if sess_user == old_username:
                     sess["username"] = new_username
                     renamed_sessions += 1
         if renamed_sessions:
