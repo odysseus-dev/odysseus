@@ -177,6 +177,35 @@ def test_research_delete_rejects_anonymous():
     assert exc.value.status_code == 401
 
 
+def test_research_spinoff_rejects_anonymous():
+    """spinoff must 401 before reading any research data."""
+    from routes.research_routes import setup_research_routes
+    rh = MagicMock()
+    router = setup_research_routes(rh, session_manager=MagicMock())
+    target = next(r.endpoint for r in router.routes if getattr(r, "path", "") == "/api/research/spinoff/{session_id}")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(target(session_id="x", request=_fake_request(user=None)))
+    assert exc.value.status_code == 401
+
+
+def test_research_spinoff_rejects_wrong_owner():
+    """A user must not be able to spin off (and thereby read) another user's
+    research report. The ownership gate must 404 before any data is read or a
+    new session is created. Regression for the cross-user disclosure IDOR."""
+    from routes.research_routes import setup_research_routes
+    sm = MagicMock()
+    rh = MagicMock()
+    rh._active_tasks = {"x": {"owner": "alice"}}
+    rh.get_result.return_value = "TOP SECRET REPORT"
+    router = setup_research_routes(rh, session_manager=sm)
+    target = next(r.endpoint for r in router.routes if getattr(r, "path", "") == "/api/research/spinoff/{session_id}")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(target(session_id="x", request=_fake_request(user="bob")))
+    assert exc.value.status_code == 404
+    # The attacker must never get a session created on their behalf.
+    sm.create_session.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # pop_notifications owner filter
 # ---------------------------------------------------------------------------

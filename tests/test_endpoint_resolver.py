@@ -1,10 +1,50 @@
 """Tests for endpoint_resolver — pure functions tested directly to avoid import pollution."""
+import json
 import re
 from urllib.parse import urlparse
 
 
 # Copy the pure functions to test them without importing the full module.
 # This avoids module cache conflicts with other test files that mock dependencies.
+
+_NON_CHAT_MODEL = (
+    "text-embedding", "embedding", "tts-", "whisper", "dall-e",
+    "moderation", "rerank", "reranker", "clip", "stable-diffusion",
+)
+
+
+def _first_chat_model(models):
+    for m in (models or []):
+        if not any(p in str(m).lower() for p in _NON_CHAT_MODEL):
+            return m
+    return (models[0] if models else None)
+
+
+def _endpoint_cached_models(ep) -> list:
+    raw = getattr(ep, "cached_models", None) or getattr(ep, "models", None)
+    if not raw:
+        return []
+    try:
+        models = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return []
+    return models if isinstance(models, list) else []
+
+
+def _endpoint_hidden_models(ep) -> set:
+    raw = getattr(ep, "hidden_models", None)
+    if not raw:
+        return set()
+    try:
+        hidden = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return set()
+    return set(hidden) if isinstance(hidden, list) else set()
+
+
+def _endpoint_enabled_models(ep) -> list:
+    hidden = _endpoint_hidden_models(ep)
+    return [m for m in _endpoint_cached_models(ep) if m not in hidden]
 
 def normalize_base(url: str) -> str:
     url = (url or "").strip().rstrip("/")
@@ -137,3 +177,62 @@ class TestBuildHeaders:
 
     def test_empty_key(self):
         assert build_headers("", "https://api.openai.com/v1") == {}
+
+
+class _Ep:
+    """Minimal ModelEndpoint stand-in for the model-picking helpers."""
+    def __init__(self, cached=None, hidden=None):
+        self.cached_models = json.dumps(cached) if cached is not None else None
+        self.hidden_models = json.dumps(hidden) if hidden is not None else None
+
+
+class TestFirstChatModel:
+    def test_skips_embedding_and_tts(self):
+        models = ["text-embedding-ada-002", "whisper-large-v3", "gpt-4o"]
+        assert _first_chat_model(models) == "gpt-4o"
+
+    def test_falls_back_to_first_when_all_non_chat(self):
+        assert _first_chat_model(["whisper-large-v3"]) == "whisper-large-v3"
+
+    def test_empty(self):
+        assert _first_chat_model([]) is None
+
+
+class TestEnabledModels:
+    def test_excludes_hidden(self):
+        # The Groq repro: 16 models, only gpt-oss-120b enabled.
+        cached = [
+            "openai/gpt-oss-safeguard-20b", "canopylabs/orpheus-arabic-saudi",
+            "whisper-large-v3", "openai/gpt-oss-120b",
+        ]
+        hidden = [
+            "openai/gpt-oss-safeguard-20b", "canopylabs/orpheus-arabic-saudi",
+            "whisper-large-v3",
+        ]
+        ep = _Ep(cached=cached, hidden=hidden)
+        assert _endpoint_enabled_models(ep) == ["openai/gpt-oss-120b"]
+
+    def test_no_hidden_returns_all(self):
+        ep = _Ep(cached=["a", "b"], hidden=None)
+        assert _endpoint_enabled_models(ep) == ["a", "b"]
+
+    def test_picker_never_selects_disabled_model(self):
+        # Regression: a disabled model listed first must not be auto-picked.
+        cached = ["canopylabs/orpheus-arabic-saudi", "openai/gpt-oss-120b"]
+        hidden = ["canopylabs/orpheus-arabic-saudi"]
+        ep = _Ep(cached=cached, hidden=hidden)
+        assert _first_chat_model(_endpoint_enabled_models(ep)) == "openai/gpt-oss-120b"
+
+    def test_stale_configured_model_is_discarded(self):
+        # A configured model that's been disabled is dropped, falling through
+        # to the first enabled chat model.
+        ep = _Ep(
+            cached=["canopylabs/orpheus-arabic-saudi", "openai/gpt-oss-120b"],
+            hidden=["canopylabs/orpheus-arabic-saudi"],
+        )
+        configured = "canopylabs/orpheus-arabic-saudi"
+        if configured in _endpoint_hidden_models(ep):
+            configured = ""
+        if not configured:
+            configured = _first_chat_model(_endpoint_enabled_models(ep))
+        assert configured == "openai/gpt-oss-120b"

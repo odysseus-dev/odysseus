@@ -97,6 +97,42 @@ def _install_core_auth_stub(monkeypatch):
     return auth_mod
 
 
+def test_providers_requires_admin_before_discovery_and_cache(monkeypatch):
+    _install_model_route_import_stubs(monkeypatch)
+    import routes.model_routes as model_routes
+
+    class _Discovery:
+        def __init__(self):
+            self.calls = 0
+
+        def get_providers(self):
+            self.calls += 1
+            return {"providers": [{"host": "internal.example"}]}
+
+    discovery = _Discovery()
+    router = model_routes.setup_model_routes(discovery)
+    endpoint = next(
+        route.endpoint
+        for route in router.routes
+        if getattr(route, "path", "") == "/api/providers"
+    )
+    request = SimpleNamespace()
+
+    assert endpoint(request, refresh=True) == {"providers": [{"host": "internal.example"}]}
+    assert discovery.calls == 1
+
+    def deny_admin(_request):
+        raise PermissionError("admin required")
+
+    monkeypatch.setattr(model_routes, "require_admin", deny_admin)
+
+    with pytest.raises(PermissionError):
+        endpoint(request, refresh=True)
+    with pytest.raises(PermissionError):
+        endpoint(request, refresh=False)
+    assert discovery.calls == 1
+
+
 def test_default_chat_does_not_auto_pick_shared_endpoint_for_fresh_user(monkeypatch):
     _install_model_route_import_stubs(monkeypatch)
     import routes.model_routes as model_routes

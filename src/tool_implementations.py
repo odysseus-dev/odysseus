@@ -88,6 +88,28 @@ def get_active_document():
     return _active_document_id
 
 
+def _owned_document_query(query, Document, owner: Optional[str]):
+    if owner is None:
+        return query.filter(False)
+    return query.filter(Document.owner == owner)
+
+
+def _get_owned_document(db, Document, doc_id: str, owner: Optional[str], active_only: bool = False):
+    q = db.query(Document).filter(Document.id == doc_id)
+    if active_only:
+        q = q.filter(Document.is_active == True)
+    q = _owned_document_query(q, Document, owner)
+    return q.first()
+
+
+def _most_recent_owned_document(db, Document, owner: Optional[str], active_only: bool = False):
+    q = db.query(Document)
+    if active_only:
+        q = q.filter(Document.is_active == True)
+    q = _owned_document_query(q, Document, owner)
+    return q.order_by(Document.updated_at.desc()).first()
+
+
 # ---------------------------------------------------------------------------
 # Document tools — create/update/edit/suggest living documents
 # ---------------------------------------------------------------------------
@@ -171,7 +193,7 @@ def _coerce_email_document_content(existing: str, incoming: str) -> str:
     return header.rstrip() + "\n---\n" + body
 
 
-async def do_create_document(content_block: str, session_id: Optional[str] = None) -> Dict:
+async def do_create_document(content_block: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """Create a new document. Supports two formats:
       1) Line-based: line 1 = title, line 2 (optional) = language, rest = content
       2) XML-like tags: <title>...</title><language>...</language><content>...</content>
@@ -240,6 +262,8 @@ async def do_create_document(content_block: str, session_id: Optional[str] = Non
         # Inherit ownership from the chat session so the doc survives that
         # session later being deleted (session_id → NULL).
         _sess = db.query(DbSession).filter(DbSession.id == session_id).first()
+        if owner is not None and (not _sess or _sess.owner != owner):
+            return {"error": "Cannot create document in another user's session"}
         _owner = _sess.owner if _sess else None
 
         doc = Document(
@@ -286,7 +310,7 @@ async def do_create_document(content_block: str, session_id: Optional[str] = Non
         db.close()
 
 
-async def do_update_document(content: str, doc_id: Optional[str] = None) -> Dict:
+async def do_update_document(content: str, doc_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """Update an existing document. Content = full new document text."""
     import uuid
     from src.database import SessionLocal, Document, DocumentVersion
@@ -297,9 +321,9 @@ async def do_update_document(content: str, doc_id: Optional[str] = None) -> Dict
     try:
         doc = None
         if target_id:
-            doc = db.query(Document).filter(Document.id == target_id).first()
+            doc = _get_owned_document(db, Document, target_id, owner)
         if not doc:
-            doc = db.query(Document).order_by(Document.updated_at.desc()).first()
+            doc = _most_recent_owned_document(db, Document, owner)
             if doc:
                 target_id = doc.id
                 set_active_document(target_id)
@@ -350,7 +374,7 @@ def parse_edit_blocks(content: str) -> list:
     return edits
 
 
-async def do_edit_document(content: str, doc_id: Optional[str] = None) -> Dict:
+async def do_edit_document(content: str, doc_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """Apply targeted FIND/REPLACE edits to an existing document."""
     import uuid
     from src.database import SessionLocal, Document, DocumentVersion
@@ -365,11 +389,11 @@ async def do_edit_document(content: str, doc_id: Optional[str] = None) -> Dict:
     try:
         doc = None
         if target_id:
-            doc = db.query(Document).filter(Document.id == target_id).first()
+            doc = _get_owned_document(db, Document, target_id, owner)
         if not doc:
             # Fallback: most recently updated document. Avoids "no active doc" errors
             # after server restart or when the agent loses track of which doc to edit.
-            doc = db.query(Document).order_by(Document.updated_at.desc()).first()
+            doc = _most_recent_owned_document(db, Document, owner)
             if doc:
                 target_id = doc.id
                 set_active_document(target_id)
@@ -458,7 +482,7 @@ def parse_suggest_blocks(content: str) -> list:
     return suggestions
 
 
-async def do_suggest_document(content: str, doc_id: str = None) -> Dict:
+async def do_suggest_document(content: str, doc_id: str = None, owner: Optional[str] = None) -> Dict:
     """Create inline suggestions for the active document WITHOUT modifying it."""
     from src.database import SessionLocal, Document
 
@@ -472,7 +496,7 @@ async def do_suggest_document(content: str, doc_id: str = None) -> Dict:
 
     db = SessionLocal()
     try:
-        doc = db.query(Document).filter(Document.id == target_id).first()
+        doc = _get_owned_document(db, Document, target_id, owner)
         if not doc:
             return {"error": f"Document {target_id} not found"}
 
@@ -627,7 +651,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
     if action == "view":
         if not name:
             return {"error": "name is required for view", "exit_code": 1}
-        md = sm.read_skill_md(name)
+        md = sm.read_skill_md(name, owner=owner)
         if md is None:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
         return {"results": md}
@@ -638,7 +662,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         ref = (args.get("path") or "").strip()
         if not ref:
             return {"error": "path is required for view_ref", "exit_code": 1}
-        text = sm.read_skill_reference(name, ref)
+        text = sm.read_skill_reference(name, ref, owner=owner)
         if text is None:
             return {"error": f"Reference {ref!r} not found under {name!r}", "exit_code": 1}
         return {"results": text}
@@ -713,7 +737,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
         if not sk_new.owner:
             sk_new.owner = match.get("owner") or owner
-        ok = sm.update_skill(name, _skill_dump(sk_new))
+        ok = sm.update_skill(name, _skill_dump(sk_new), owner=owner)
         return {"results": f"Edited skill `{sk_new.name}`."} if ok else {"error": "Update failed", "exit_code": 1}
 
     if action == "patch":
@@ -723,7 +747,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         new_str = args.get("new_string", "")
         if not isinstance(old, str) or not old:
             return {"error": "old_string is required and must be non-empty", "exit_code": 1}
-        md = sm.read_skill_md(name)
+        md = sm.read_skill_md(name, owner=owner)
         if md is None:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
         count = md.count(old)
@@ -737,7 +761,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         except Exception as e:
             return {"error": f"Patched content is not valid SKILL.md: {e}", "exit_code": 1}
         sk_new.name = slugify(sk_new.name or name)
-        ok = sm.update_skill(name, _skill_dump(sk_new))
+        ok = sm.update_skill(name, _skill_dump(sk_new), owner=owner)
         return {"results": f"Patched skill `{sk_new.name}`."} if ok else {"error": "Patch update failed", "exit_code": 1}
 
     if action == "publish":
@@ -750,13 +774,13 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         updates = {"status": "published"}
         if args.get("confidence") is not None:
             updates["confidence"] = max(0.0, min(1.0, float(args["confidence"])))
-        sm.update_skill(name, updates)
+        sm.update_skill(name, updates, owner=owner)
         return {"results": f"✅ Published `{name}`. It now appears in the skills index for future turns."}
 
     if action == "delete":
         if not name:
             return {"error": "name is required for delete", "exit_code": 1}
-        ok = sm.delete_skill(name)
+        ok = sm.delete_skill(name, owner=owner)
         return {"results": f"Deleted skill `{name}`."} if ok else {"error": f"Skill {name!r} not found", "exit_code": 1}
 
     if action == "search":
@@ -1368,6 +1392,7 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
     try:
         if action == "list":
             q = db.query(Document).filter(Document.is_active == True)
+            q = _owned_document_query(q, Document, owner)
             if args.get("search"):
                 q = q.filter(Document.title.ilike(f"%{args['search']}%"))
             if args.get("language"):
@@ -1398,7 +1423,7 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
             doc_id = args.get("document_id") or args.get("id") or args.get("uid")
             if not doc_id:
                 return {"error": "Need document_id (use action=list to find one)", "exit_code": 1}
-            doc = db.query(Document).filter(Document.id == doc_id, Document.is_active == True).first()
+            doc = _get_owned_document(db, Document, doc_id, owner, active_only=True)
             if not doc:
                 return {"error": f"Document '{doc_id}' not found", "exit_code": 1}
             body = doc.current_content or ""
@@ -1423,10 +1448,10 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
             doc_id = args.get("document_id") or args.get("id") or args.get("uid") or _active_document_id
             doc = None
             if doc_id:
-                doc = db.query(Document).filter(Document.id == doc_id).first()
+                doc = _get_owned_document(db, Document, doc_id, owner)
             if not doc:
                 # Fallback: most recently updated doc (likely what the user means)
-                doc = db.query(Document).filter(Document.is_active == True).order_by(Document.updated_at.desc()).first()
+                doc = _most_recent_owned_document(db, Document, owner, active_only=True)
             if not doc:
                 return {"error": "No document to delete", "exit_code": 1}
             title = doc.title
@@ -1828,7 +1853,13 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 title = text_raw.strip()
             elif not content_raw and text_raw:
                 content_raw = text_raw
-            items_raw = args.get("items")
+            # Accept both `items` (legacy/internal field) and `checklist_items`
+            # (the schema-exposed name used by native function calls). Models
+            # following the schema emit `checklist_items`; older code paths
+            # and direct API callers still use `items`.
+            items_raw = args.get("checklist_items")
+            if items_raw is None:
+                items_raw = args.get("items")
             items_json = json.dumps(items_raw) if items_raw is not None else None
             note_type = args.get("note_type", "checklist" if items_raw else "note")
             # Accept natural-language due_date ("tomorrow at 1pm") in
@@ -1893,8 +1924,11 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             for field in ("title", "content", "note_type", "color", "label", "due_date"):
                 if field in args and args[field] is not None:
                     setattr(note, field, args[field])
-            if "items" in args and args["items"] is not None:
-                note.items = json.dumps(args["items"])
+            new_items = args.get("checklist_items")
+            if new_items is None:
+                new_items = args.get("items")
+            if new_items is not None:
+                note.items = json.dumps(new_items)
                 flag_modified(note, "items")
             if "pinned" in args:
                 note.pinned = args["pinned"]

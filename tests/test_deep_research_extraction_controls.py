@@ -86,3 +86,13 @@ async def test_fetch_and_extract_uses_configured_timeout(monkeypatch):
 
     assert result["summary"] == "useful page content"
     assert captured["timeout"] == 123
+
+
+def test_extraction_timeout_allows_long_local_model_runs():
+    researcher = DeepResearcher(
+        llm_endpoint="http://local.test/v1/chat/completions",
+        llm_model="local-model",
+        extraction_timeout=1800,
+    )
+
+    assert researcher.extraction_timeout == 1800

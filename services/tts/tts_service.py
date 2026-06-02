@@ -34,6 +34,7 @@ class TTSService:
         from src.settings import load_settings
         saved = load_settings()
         return {
+            "tts_enabled": saved.get("tts_enabled", True),
             "tts_provider": saved.get("tts_provider", "disabled"),
             "tts_model": saved.get("tts_model", "tts-1"),
             "tts_voice": saved.get("tts_voice", "alloy"),
@@ -43,6 +44,8 @@ class TTSService:
     @property
     def available(self) -> bool:
         settings = self._load_settings()
+        if settings.get("tts_enabled") is False:
+            return False
         provider = settings["tts_provider"]
         if provider == "disabled":
             return False
@@ -128,6 +131,8 @@ class TTSService:
 
     def synthesize(self, text: str, use_cache: bool = True) -> Optional[bytes]:
         settings = self._load_settings()
+        if settings.get("tts_enabled") is False:
+            return None
         provider = settings["tts_provider"]
         model = settings["tts_model"]
         voice = settings["tts_voice"]
