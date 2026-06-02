@@ -5,6 +5,7 @@
  */
 
 import uiModule from './ui.js';
+import { splitTableRow } from './markdown/tableRow.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -535,7 +536,7 @@ export function mdToHtml(src) {
     let html = '<table style="border-collapse: collapse; width: 100%; margin: 10px 0;">';
 
     rows.forEach((row, idx) => {
-      const cells = row.split('|').filter(cell => cell.trim() !== '');
+      const cells = splitTableRow(row);
       if (cells.length === 0) return;
 
       html += idx === 1 ? '<tbody>' : '';
@@ -580,8 +581,9 @@ export function mdToHtml(src) {
   s = s.replace(/(?:^|\n)(<oli>[\s\S]*?)(?=\n(?!<oli>)|$)/g, m => `<ol>${m.trim().replace(/<\/?oli>/g, (t) => t === '<oli>' ? '<li>' : '</li>')}</ol>`);
 
   // Unordered lists
-  s = s.replace(/^(?:- |\* )(.*)$/gm, '<li>$1</li>');
-  s = s.replace(/(?:^|\n)(<li>[\s\S]*?)(?=\n(?!<li>)|$)/g, m => `<ul>${m.trim()}</ul>`);
+  s = s.replace(/^(?:- |\* )(.*)$/gm, '<uli>$1</uli>');
+  s = s.replace(/(^|\n)((?:<uli>[^\n]*<\/uli>(?:\n|$))+)/g, (_, prefix, block) =>
+    `${prefix}<ul>${block.trim().replace(/<\/?uli>/g, (t) => t === '<uli>' ? '<li>' : '</li>')}</ul>`);
 
   // Blockquotes
   s = s.replace(/^&gt; (.*)$/gm, '<bq>$1</bq>');

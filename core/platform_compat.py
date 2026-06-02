@@ -14,6 +14,7 @@ Design rules:
 from __future__ import annotations
 
 import os
+import ntpath
 import shutil
 import subprocess
 from pathlib import Path
@@ -134,11 +135,40 @@ _BASH_CACHE: Optional[str] = None
 _BASH_PROBED = False
 
 # Common Git-for-Windows install locations to probe when bash isn't on PATH.
-_WINDOWS_BASH_FALLBACKS = (
-    r"C:\Program Files\Git\bin\bash.exe",
-    r"C:\Program Files\Git\usr\bin\bash.exe",
-    r"C:\Program Files (x86)\Git\bin\bash.exe",
+_WINDOWS_BASH_ROOT_ENV_VARS = (
+    "ProgramFiles",
+    "ProgramW6432",
+    "ProgramFiles(x86)",
+    "LocalAppData",
 )
+_WINDOWS_BASH_DEFAULT_ROOTS = (
+    r"C:\Program Files\Git",
+    r"C:\Program Files (x86)\Git",
+)
+_WINDOWS_BASH_RELATIVE_PATHS = (
+    ("bin", "bash.exe"),
+    ("usr", "bin", "bash.exe"),
+)
+
+
+def _windows_bash_fallbacks() -> List[str]:
+    roots: List[str] = []
+    for env_name in _WINDOWS_BASH_ROOT_ENV_VARS:
+        base = os.environ.get(env_name)
+        if base:
+            roots.append(ntpath.join(base, "Git"))
+    roots.extend(_WINDOWS_BASH_DEFAULT_ROOTS)
+
+    paths: List[str] = []
+    seen = set()
+    for root in roots:
+        for rel in _WINDOWS_BASH_RELATIVE_PATHS:
+            path = ntpath.join(root, *rel)
+            key = path.lower()
+            if key not in seen:
+                seen.add(key)
+                paths.append(path)
+    return paths
 
 
 def find_bash() -> Optional[str]:
@@ -153,9 +183,9 @@ def find_bash() -> Optional[str]:
     if _BASH_PROBED:
         return _BASH_CACHE
     _BASH_PROBED = True
-    found = shutil.which("bash")
+    found = which_tool("bash")
     if not found and IS_WINDOWS:
-        for cand in _WINDOWS_BASH_FALLBACKS:
+        for cand in _windows_bash_fallbacks():
             if os.path.exists(cand):
                 found = cand
                 break

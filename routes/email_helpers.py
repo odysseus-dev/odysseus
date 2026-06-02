@@ -15,7 +15,6 @@ and `email_pollers.py` (the background loops):
 import os
 import imaplib
 import smtplib
-import ssl
 import email as email_mod
 import email.header
 import email.utils
@@ -33,47 +32,43 @@ from fastapi import Query, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List
 
-from src.auth_helpers import get_current_user
+from src.auth_helpers import _auth_disabled, get_current_user
 from src.secret_storage import decrypt as _decrypt
 
 logger = logging.getLogger(__name__)
 
 
-def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message: str | bytes, timeout: int = 30) -> None:
-    """Send through SMTP using the conventional TLS mode for the configured port.
+def _smtp_security_mode(cfg: dict) -> str:
+    raw = str(cfg.get("smtp_security") or "").strip().lower()
+    if raw in {"ssl", "starttls", "none"}:
+        return raw
+    port = int(cfg.get("smtp_port") or 465)
+    if port == 587:
+        return "starttls"
+    return "ssl"
 
-    Account settings only store host/port today. Port 465 is implicit TLS
-    (SMTP_SSL); port 587 is plain SMTP upgraded with STARTTLS. Using SSL
-    directly against 587 raises the classic "[SSL: WRONG_VERSION_NUMBER]"
-    error even when credentials are correct.
-    """
+
+def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message: str | bytes, timeout: int = 30) -> None:
+    """Send through SMTP using the configured transport security mode."""
     host = cfg["smtp_host"]
     port = int(cfg.get("smtp_port") or 465)
     user = cfg.get("smtp_user") or ""
     password = cfg.get("smtp_password") or ""
-    def _send_starttls(starttls_port: int = 587) -> None:
-        with smtplib.SMTP(host, starttls_port, timeout=timeout) as smtp:
-            smtp.starttls()
-            if user and password:
-                smtp.login(user, password)
-            smtp.sendmail(from_addr, recipients, message)
+    security = _smtp_security_mode(cfg)
 
-    if port == 587:
-        _send_starttls(587)
-        return
-
-    try:
+    if security == "ssl":
         with smtplib.SMTP_SSL(host, port, timeout=timeout) as smtp:
             if user and password:
                 smtp.login(user, password)
             smtp.sendmail(from_addr, recipients, message)
         return
-    except (TimeoutError, ssl.SSLError) as e:
-        if port == 465:
-            logger.warning("SMTP implicit TLS on %s:465 failed (%s); retrying STARTTLS on 587", host, e)
-            _send_starttls(587)
-            return
-        raise
+
+    with smtplib.SMTP(host, port, timeout=timeout) as smtp:
+        if security == "starttls":
+            smtp.starttls()
+        if user and password:
+            smtp.login(user, password)
+        smtp.sendmail(from_addr, recipients, message)
 
 
 def _strip_think(text: str) -> str:
@@ -152,6 +147,8 @@ def _require_auth(request: Request) -> str:
     u = get_current_user(request)
     if u:
         return u
+    if _auth_disabled():
+        return ""
     auth_mgr = getattr(request.app.state, "auth_manager", None)
     if auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
         raise HTTPException(401, "Not authenticated")
@@ -541,6 +538,7 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
                     "account_name": row.name,
                     "smtp_host": row.smtp_host or "",
                     "smtp_port": int(row.smtp_port or 465),
+                    "smtp_security": _smtp_security_mode({"smtp_security": getattr(row, "smtp_security", ""), "smtp_port": row.smtp_port}),
                     "smtp_user": row.smtp_user or "",
                     "smtp_password": _decrypt(row.smtp_password or ""),
                     "imap_host": row.imap_host or "",
@@ -567,6 +565,10 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
         "account_name": "legacy",
         "smtp_host": settings.get("smtp_host", os.environ.get("SMTP_HOST", "")),
         "smtp_port": int(settings.get("smtp_port", os.environ.get("SMTP_PORT", "465")) or 465),
+        "smtp_security": _smtp_security_mode({
+            "smtp_security": settings.get("smtp_security", os.environ.get("SMTP_SECURITY", "")),
+            "smtp_port": settings.get("smtp_port", os.environ.get("SMTP_PORT", "465")),
+        }),
         "smtp_user": settings.get("smtp_user", os.environ.get("SMTP_USER", "")),
         "smtp_password": settings.get("smtp_password", os.environ.get("SMTP_PASSWORD", "")),
         "imap_host": settings.get("imap_host", os.environ.get("IMAP_HOST", "")),
@@ -606,7 +608,32 @@ def _list_email_accounts() -> list[dict]:
 
 # ── IMAP helpers ──
 
-_IMAP_TIMEOUT_SECONDS = 15
+def _coerce_imap_timeout_seconds(raw: str | None) -> int:
+    try:
+        value = int(raw or "30")
+    except (TypeError, ValueError):
+        value = 30
+    return max(5, min(value, 300))
+
+
+_IMAP_TIMEOUT_SECONDS = _coerce_imap_timeout_seconds(os.environ.get("ODYSSEUS_IMAP_TIMEOUT_SECONDS"))
+
+
+def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int = _IMAP_TIMEOUT_SECONDS):
+    """Open an IMAP connection using the configured security mode."""
+    port = int(port or 993)
+    if starttls:
+        conn = imaplib.IMAP4(host, port, timeout=timeout)
+        conn.starttls()
+    elif port == 993:
+        conn = imaplib.IMAP4_SSL(host, port, timeout=timeout)
+    else:
+        conn = imaplib.IMAP4(host, port, timeout=timeout)
+    try:
+        conn.sock.settimeout(timeout)
+    except Exception:
+        pass
+    return conn
 
 def _imap_connect(account_id: str | None = None, owner: str = ""):
     # SECURITY: passing `owner` scopes the fallback config lookup so a brand
@@ -620,17 +647,12 @@ def _imap_connect(account_id: str | None = None, owner: str = ""):
     # The last branch is critical: previously this fell into IMAP4_SSL
     # for any non-STARTTLS port, which would fail the TLS handshake on
     # plain local servers (Dovecot on 31143, etc.).
-    if cfg.get("imap_starttls"):
-        conn = imaplib.IMAP4(cfg["imap_host"], cfg["imap_port"], timeout=_IMAP_TIMEOUT_SECONDS)
-        conn.starttls()
-    elif int(cfg.get("imap_port") or 993) == 993:
-        conn = imaplib.IMAP4_SSL(cfg["imap_host"], cfg["imap_port"], timeout=_IMAP_TIMEOUT_SECONDS)
-    else:
-        conn = imaplib.IMAP4(cfg["imap_host"], cfg["imap_port"], timeout=_IMAP_TIMEOUT_SECONDS)
-    try:
-        conn.sock.settimeout(_IMAP_TIMEOUT_SECONDS)
-    except Exception:
-        pass
+    conn = _open_imap_connection(
+        cfg["imap_host"],
+        cfg["imap_port"],
+        starttls=bool(cfg.get("imap_starttls")),
+        timeout=_IMAP_TIMEOUT_SECONDS,
+    )
     conn.login(cfg["imap_user"], cfg["imap_password"])
     return conn
 

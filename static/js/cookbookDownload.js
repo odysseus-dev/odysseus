@@ -86,6 +86,9 @@ function _ggufIncludePattern(model, source) {
 
 function _missingGgufMessage(model) {
   const name = model?.name || 'this model';
+  if (/\bnvfp4\b/i.test(name)) {
+    return `${name} is an NVIDIA NVFP4 checkpoint, not a GGUF download. Pick the base model row with an Unsloth GGUF source, or paste the GGUF repo directly.`;
+  }
   return `No GGUF source is configured for ${name}. Pick a model with a GGUF source, or paste the GGUF repo in Download.`;
 }
 
@@ -492,6 +495,10 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
 
   const payload = { repo_id: repo };
   if (include) payload.include = include;
+  // Large downloads are where hf_transfer most often dies near the end. Use the
+  // plain HuggingFace downloader up front for big model files; it is slower, but
+  // resumes cached partials more reliably.
+  if ((model.required_gb || 0) >= 10 || backend === 'llamacpp') payload.disable_hf_transfer = true;
   if (_envState.hfToken) payload.hf_token = _envState.hfToken;
   if (host) { payload.remote_host = host; const _sp = _getPort(host); if (_sp) payload.ssh_port = _sp; }
   if (platform) payload.platform = platform;
@@ -516,6 +523,18 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   const targetHost = host || 'local';
 
   const tasks = _loadTasks();
+  const sameDownload = (t) => {
+    if (!t || t.type !== 'download') return false;
+    const tRepo = t?.payload?.repo_id || t?.repo_id || t?.repo || t?.name || '';
+    const tHost = t?.remoteHost || t?.payload?.remote_host || 'local';
+    return String(tRepo) === String(payload.repo_id) && String(tHost || 'local') === String(targetHost);
+  };
+  const duplicate = tasks.find(t => sameDownload(t) && (t.status === 'running' || t.status === 'queued'));
+  if (duplicate) {
+    _renderRunningTab();
+    uiModule.showToast(`${shortName} is already ${duplicate.status === 'queued' ? 'queued' : 'downloading'}`);
+    return;
+  }
   const activeOnHost = tasks.find(t => t.type === 'download' && (t.status === 'running' || t.status === 'queued') && (t.remoteHost || 'local') === targetHost);
 
   if (activeOnHost) {
