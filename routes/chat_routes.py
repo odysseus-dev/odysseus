@@ -28,6 +28,7 @@ from core.database import SessionLocal, get_session_mode, set_session_mode
 from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
 from routes.research_routes import _resolve_research_endpoint
+from routes.model_routes import _visible_models
 from routes.chat_helpers import (
     resolve_session_auth,
     build_chat_context,
@@ -130,7 +131,13 @@ def _recover_empty_session_model(sess, session_id: str) -> bool:
             cached = []
         if not cached:
             return False
-        model = cached[0]
+        try:
+            visible = _visible_models(cached, getattr(ep, "hidden_models", None))
+        except Exception:
+            visible = cached
+        if not visible:
+            return False
+        model = visible[0]
         if not isinstance(model, str) or not model.strip():
             return False
         model = model.strip()
