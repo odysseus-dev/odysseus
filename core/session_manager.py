@@ -466,11 +466,17 @@ class SessionManager:
             db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
             if db_session:
                 db.delete(db_session)
+
+            # Drop the in-memory copy even when there is no DB row. A "ghost"
+            # session lives only here (never persisted, or its row was removed
+            # out-of-band); without this it can never be cleared and keeps
+            # 404ing on every operation (issue #1044).
+            removed_in_memory = self.sessions.pop(session_id, None) is not None
+
+            if db_session or removed_in_memory:
+                # Commit the document-detach / message-delete above (a no-op when
+                # the ghost had no rows) together with the session delete.
                 db.commit()
-
-                if session_id in self.sessions:
-                    del self.sessions[session_id]
-
                 logger.info(f"Deleted session {session_id}")
                 return True
             return False

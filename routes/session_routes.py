@@ -21,20 +21,38 @@ def _sanitize_export_filename(name: str) -> str:
     return name[:128]
 
 
-def _verify_session_owner(request: Request, session_id: str):
-    """Verify the current user owns the session. Raises 404 if not."""
+def _verify_session_owner(request: Request, session_id: str, session_manager=None):
+    """Verify the current user owns the session. Raises 404 if not.
+
+    Ownership is checked against the DB row when one exists (unchanged). If
+    there is no DB row but the caller owns an in-memory "ghost" session — one
+    that lives only in ``session_manager`` because it was never persisted, or
+    its DB row was removed out-of-band — fall back to the in-memory owner so the
+    user can still manage and delete it. Without this fallback such sessions are
+    listed by ``/api/sessions`` (they come from the in-memory manager) yet every
+    per-session operation 404s, making them impossible to delete (issue #1044).
+
+    ``session_manager`` is optional and defaults to ``None`` so existing callers
+    that only care about persisted sessions keep their exact prior behavior.
+    """
     user = effective_user(request)
     if not user:
         raise HTTPException(403, "Authentication required")
     db = SessionLocal()
     try:
         row = db.query(DbSession.owner).filter(DbSession.id == session_id).first()
-        if not row:
-            raise HTTPException(404, f"Session {session_id} not found")
-        if row.owner != user:
-            raise HTTPException(404, f"Session {session_id} not found")
     finally:
         db.close()
+    if row is not None:
+        if row.owner != user:
+            raise HTTPException(404, f"Session {session_id} not found")
+        return
+    # No DB row — allow the caller to act on an in-memory ghost they own.
+    if session_manager is not None:
+        ghost = getattr(session_manager, "sessions", {}).get(session_id)
+        if ghost is not None and getattr(ghost, "owner", None) == user:
+            return
+    raise HTTPException(404, f"Session {session_id} not found")
 
 logger = logging.getLogger(__name__)
 
@@ -363,7 +381,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             ids = []
         for sid in ids:
             try:
-                _verify_session_owner(request, sid)
+                _verify_session_owner(request, sid, session_manager)
                 session_manager.delete_session(sid)
                 db = SessionLocal()
                 try:
@@ -381,7 +399,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     @router.delete("/session/{sid}")
     def delete_session(request: Request, sid: str):
         """Permanently delete a session and all its messages."""
-        _verify_session_owner(request, sid)
+        _verify_session_owner(request, sid, session_manager)
         try:
             # Block deletion of starred/favorited sessions
             db = SessionLocal()
