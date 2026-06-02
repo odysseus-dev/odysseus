@@ -8,6 +8,7 @@ APP_VERSION = "0.9.1"
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/"
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 DATA_DIR = os.path.join(BASE_DIR, "data")
+LOGS_DIR = os.path.join(BASE_DIR, "logs")
 
 # Data file paths
 SESSIONS_FILE = os.path.join(DATA_DIR, "sessions.json")

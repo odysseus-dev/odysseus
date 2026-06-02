@@ -24,6 +24,7 @@ import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
+import * as adminLogsModule from './js/adminLogs.js';
 import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
 import './js/modalManager.js';
@@ -790,6 +791,17 @@ function initializeEventListeners() {
     });
   }
 
+  // ── Admin App Logs ──
+  const toolAppLogsBtn = el('tool-app-logs-btn');
+  if (toolAppLogsBtn) {
+    toolAppLogsBtn.addEventListener('click', async () => {
+      const Modals = await import('./js/modalManager.js');
+      if (!Modals.toggle('app-logs-modal')) {
+        await adminLogsModule.open();
+      }
+    });
+  }
+
   // ── Cookbook modal toggle ──
   const toolCookbookBtn = el('tool-cookbook-btn');
   if (toolCookbookBtn) {
@@ -1090,6 +1102,7 @@ function initializeEventListeners() {
     .then(d => {
       window._isAdmin = !!d.is_admin;
       if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
+      adminLogsModule.showAdminSection(!!d.is_admin);
       const userBarName = el('user-bar-name');
       const userBarAvatar = el('user-bar-avatar');
       if (userBarName && d.username) {

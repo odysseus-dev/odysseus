@@ -38,6 +38,7 @@ import uuid
 
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 import secrets
 from datetime import datetime
 from typing import Dict
@@ -50,7 +51,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 # Core imports
 from core.constants import (
-    BASE_DIR, STATIC_DIR, SESSIONS_FILE,
+    BASE_DIR, STATIC_DIR, SESSIONS_FILE, LOGS_DIR,
     REQUEST_TIMEOUT, OPENAI_API_KEY,
 )
 from core.database import SessionLocal, ApiToken
@@ -67,10 +68,20 @@ from src.app_helpers import abs_join
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
+_LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format=_LOG_FORMAT,
 )
+os.makedirs(LOGS_DIR, exist_ok=True)
+_file_handler = RotatingFileHandler(
+    os.path.join(LOGS_DIR, "odysseus.log"),
+    maxBytes=10 * 1024 * 1024,
+    backupCount=3,
+    encoding="utf-8",
+)
+_file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+logging.getLogger().addHandler(_file_handler)
 logger = logging.getLogger(__name__)
 
 # ========= APP =========
@@ -530,6 +541,9 @@ app.include_router(setup_session_routes(session_manager, session_config, webhook
 # Admin Danger Zone wipes (Settings → System → Danger Zone)
 from routes.admin_wipe_routes import setup_admin_wipe_routes
 app.include_router(setup_admin_wipe_routes(session_manager))
+
+from routes.admin_logs_routes import setup_admin_logs_routes
+app.include_router(setup_admin_logs_routes())
 
 # Memory
 from routes.memory_routes import setup_memory_routes

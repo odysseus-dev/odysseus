@@ -2,7 +2,7 @@
 """odysseus-logs — unified view of log files across the app.
 
 Right now logs live in two places:
-  - logs/                       app-level (compound.log, future runtime)
+  - logs/                       app-level (odysseus.log, compound.log, etc.)
   - /tmp/odysseus-tmux/*.log    per-tmux-session model download/serve logs
 
 This CLI surfaces them so you don't have to remember which directory
@@ -19,27 +19,39 @@ from __future__ import annotations
 import os
 import sys
 
+# Repo root on path for core.app_logs
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO not in sys.path:
+    sys.path.insert(0, _REPO)
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "_lib"))
 from cli import quiet_logs, emit, fail, common_parser, run, REPO_ROOT as _REPO_ROOT
 
 quiet_logs()
 
-import argparse, json, subprocess, time
+import argparse
+import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 
+from core.app_logs import enumerate_logs, resolve_log, tail_log
 
-_APP_LOGS = _REPO_ROOT / "logs"
 _TMUX_LOGS = Path("/tmp/odysseus-tmux")
 
 
 def _enumerate() -> list[dict]:
     """Return every known log file as {name, path, bytes, modified}."""
     out = []
-    for base in (_APP_LOGS, _TMUX_LOGS):
-        if not base.is_dir():
-            continue
-        for p in sorted(base.glob("*.log")):
+    for row in enumerate_logs():
+        out.append({
+            "name": row["name"],
+            "path": str(_REPO_ROOT / "logs" / row["name"]),
+            "bytes": row["bytes"],
+            "modified": row["modified"],
+        })
+    if _TMUX_LOGS.is_dir():
+        for p in sorted(_TMUX_LOGS.glob("*.log")):
             try:
                 st = p.stat()
             except OSError:
@@ -55,19 +67,18 @@ def _enumerate() -> list[dict]:
 
 
 def _resolve(name: str) -> Path | None:
-    """Match a log by exact filename, basename-without-extension, or
-    substring. Returns the most-recently-modified match if there are
-    ties."""
+    """Match app logs via core.app_logs, then tmux logs."""
+    p = resolve_log(name)
+    if p is not None:
+        return p
     candidates = []
-    for base in (_APP_LOGS, _TMUX_LOGS):
-        if not base.is_dir():
-            continue
-        for p in base.glob("*.log"):
+    if _TMUX_LOGS.is_dir():
+        for p in _TMUX_LOGS.glob("*.log"):
             if p.name == name or p.stem == name or name in p.name:
                 candidates.append(p)
     if not candidates:
         return None
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    candidates.sort(key=lambda x: x.stat().st_mtime, reverse=True)
     return candidates[0]
 
 
@@ -80,11 +91,19 @@ def cmd_tail(args):
     if p is None:
         fail(f"no log matching {args.name!r}; run `odysseus-logs list`")
     if args.follow:
-        # Exec tail -f so signals + buffering are native.
         os.execvp("tail", ["tail", "-n", str(args.lines), "-f", str(p)])
-    # Non-follow: print last N lines + exit.
-    proc = subprocess.run(["tail", "-n", str(args.lines), str(p)],
-                          capture_output=True, text=True)
+    # App logs under logs/: use core tail when not following
+    app_path = resolve_log(args.name)
+    if app_path is not None and app_path == p:
+        result = tail_log(args.name, lines=args.lines)
+        if result:
+            sys.stdout.write("\n".join(result["lines"]) + ("\n" if result["lines"] else ""))
+            sys.exit(0)
+    proc = subprocess.run(
+        ["tail", "-n", str(args.lines), str(p)],
+        capture_output=True,
+        text=True,
+    )
     sys.stdout.write(proc.stdout)
     sys.exit(proc.returncode)
 

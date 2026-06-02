@@ -907,6 +907,21 @@
           <span class="grow">Theme</span>
         </div>
       </div>
+
+      <div class="section admin-only" id="admin-section" style="display:none">
+        <div class="section-header-flex">
+          <span class="section-title"><svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Admin</span>
+        </div>
+        <div class="list-item" id="tool-app-logs-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5;">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+          </svg>
+          <span class="grow">App Logs</span>
+        </div>
+      </div>
     </div>
     <div class="sidebar-user-bar" id="sidebar-user-bar">
       <div class="user-bar-left" id="user-bar-profile">
@@ -1294,6 +1309,30 @@
         <button class="close-btn" id="close-cookbook-modal" aria-label="Close cookbook">✖</button>
       </div>
       <div class="modal-body cookbook-body"></div>
+    </div>
+  </div>
+
+  <!-- Admin App Logs Modal -->
+  <div id="app-logs-modal" class="modal hidden">
+    <div class="modal-content app-logs-modal-content" role="dialog" aria-label="App Logs" style="width:min(900px,94vw);height:min(70vh,94vh);max-height:94vh;background:var(--bg);display:flex;flex-direction:column;">
+      <div class="modal-header">
+        <h4 style="margin:0;margin-right:auto">App Logs</h4>
+        <button class="close-btn" id="close-app-logs-modal" aria-label="Close app logs">✖</button>
+      </div>
+      <div class="app-logs-toolbar" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);">
+        <label style="font-size:12px;opacity:0.7;">File</label>
+        <select id="app-logs-select" aria-label="Log file" style="flex:1;min-width:140px;max-width:280px;padding:4px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--fg);"></select>
+        <button type="button" class="btn-secondary" id="app-logs-refresh" style="font-size:12px;">Refresh</button>
+        <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;">
+          <input type="checkbox" id="app-logs-autoscroll" checked />
+          Auto-scroll
+        </label>
+        <button type="button" class="btn-secondary" id="app-logs-copy" style="font-size:12px;">Copy all</button>
+      </div>
+      <div class="modal-body app-logs-body" style="flex:1;overflow:auto;padding:0;">
+        <pre id="app-logs-output" class="app-logs-pre" aria-live="polite"></pre>
+      </div>
+      <div id="app-logs-meta" class="app-logs-meta" style="padding:6px 12px;font-size:11px;opacity:0.6;border-top:1px solid var(--border);"></div>
     </div>
   </div>
 
@@ -2260,6 +2299,7 @@
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js"></script>
 <script type="module" src="/static/js/admin.js"></script>
+<script type="module" src="/static/js/adminLogs.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>

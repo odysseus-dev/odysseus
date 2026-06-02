@@ -35017,3 +35017,19 @@ body.theme-frosted .modal {
   font-family: 'Fira Code', ui-monospace, monospace;
   color: var(--accent, var(--red));
 }
+
+/* Admin App Logs viewer (#981) */
+.app-logs-pre {
+  margin: 0;
+  padding: 12px;
+  font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg);
+  min-height: 120px;
+}
+.app-logs-line-info { color: var(--fg); opacity: 0.9; }
+.app-logs-line-warn { color: #c9a227; }
+.app-logs-line-error { color: var(--red, #e55); }
