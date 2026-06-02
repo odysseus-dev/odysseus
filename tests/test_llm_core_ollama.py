@@ -2,6 +2,7 @@
 import httpx
 
 from src import llm_core
+from src.model_context import DEFAULT_CONTEXT
 
 
 def test_detects_ollama_cloud_native_provider():
@@ -25,6 +26,7 @@ def test_llm_call_posts_native_ollama_payload(monkeypatch):
         )
 
     monkeypatch.setattr(llm_core.httpx, "post", fake_post)
+    monkeypatch.setattr(llm_core, "get_context_length", lambda url, model: 32768)
 
     result = llm_core.llm_call(
         "https://ollama.com/api",
@@ -40,7 +42,7 @@ def test_llm_call_posts_native_ollama_payload(monkeypatch):
     assert seen["url"] == "https://ollama.com/api/chat"
     assert seen["headers"]["Authorization"] == "Bearer ollama-key"
     assert seen["json"]["stream"] is False
-    assert seen["json"]["options"] == {"temperature": 0.2, "num_predict": 7}
+    assert seen["json"]["options"] == {"temperature": 0.2, "num_predict": 7, "num_ctx": 32768}
 
 
 # ---------------------------------------------------------------------------
@@ -113,3 +115,34 @@ def test_ollama_payload_tolerates_malformed_arguments():
     payload = llm_core._build_ollama_payload("m", msgs, temperature=0.0, max_tokens=0)
     # Falls back to an empty object rather than raising.
     assert payload["messages"][0]["tool_calls"][0]["function"]["arguments"] == {}
+
+
+# ---------------------------------------------------------------------------
+# num_ctx — Ollama silently truncates at 2048 when num_ctx is omitted
+# ---------------------------------------------------------------------------
+
+def test_ollama_payload_emits_num_ctx_when_context_length_supplied():
+    """num_ctx must appear in options when a context_length > 2048 is given."""
+    msgs = [{"role": "user", "content": "hi"}]
+    payload = llm_core._build_ollama_payload(
+        "llama3.2", msgs, temperature=0.7, max_tokens=512, context_length=32768,
+    )
+    assert payload["options"]["num_ctx"] == 32768
+
+
+def test_ollama_payload_omits_num_ctx_when_context_length_is_none():
+    """Callers that don't pass context_length must not get a spurious num_ctx key."""
+    msgs = [{"role": "user", "content": "hi"}]
+    payload = llm_core._build_ollama_payload(
+        "llama3.2", msgs, temperature=0.7, max_tokens=512,
+    )
+    assert "num_ctx" not in payload.get("options", {})
+
+
+def test_ollama_payload_omits_num_ctx_at_default_2048():
+    """context_length=2048 is Ollama's built-in default — no need to echo it back."""
+    msgs = [{"role": "user", "content": "hi"}]
+    payload = llm_core._build_ollama_payload(
+        "llama3.2", msgs, temperature=0.7, max_tokens=512, context_length=2048,
+    )
+    assert "num_ctx" not in payload.get("options", {})
