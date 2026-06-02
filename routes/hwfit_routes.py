@@ -1,7 +1,9 @@
 import re
 from copy import deepcopy
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from core.middleware import require_admin
 
 
 # Backends the manual hardware simulator accepts. Must stay a subset of what
@@ -98,7 +100,12 @@ def _apply_manual_hardware(system, manual_mode="", manual_gpu_count="", manual_v
 
 
 def setup_hwfit_routes():
-    router = APIRouter(prefix="/api/hwfit", tags=["hwfit"])
+    # SECURITY: hwfit is part of the admin-only Cookbook feature (model serving
+    # / remote-host hardware probing over SSH). These routes accept a `host`
+    # param that drives an outbound `ssh` from the server, so they must not be
+    # reachable by non-admins. Gate the whole router with require_admin — this
+    # matches the documented trust model ("Model serving | Admin only").
+    router = APIRouter(prefix="/api/hwfit", tags=["hwfit"], dependencies=[Depends(require_admin)])
 
     @router.get("/system")
     def get_system(host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False):

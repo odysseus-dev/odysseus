@@ -486,12 +486,19 @@ def _validate_serve_cmd(v: str | None) -> str | None:
     if m:
         rest = v[m.end():]
         # rest is `[ENV=…] python3 -m llama_cpp.server … || [ENV=…] llama-server …`
+        # Only the `||` fallback between two serve binaries is legitimate here —
+        # reject any other command-chaining/redirection metachar so a valid
+        # serve binary can't be followed by `; curl …|sh` etc.
         for part in rest.split("||"):
+            if any(c in part for c in (";", "|", "&", ">", "<", "$(")):
+                raise HTTPException(400, "Invalid characters in cmd")
             _check_serve_binary(part.strip())
         return v
-    # Otherwise: a single invocation — no shell metacharacters allowed.
-    # (`$(` was the original intent; bare `$` is fine for shell-safe paths.)
-    if any(c in v for c in (";", "&&", "||", "$(")):
+    # Otherwise: a single invocation — no shell metacharacters allowed. Block
+    # command separators, pipes, background, and redirection (not just `;`/`&&`/
+    # `||`/`$(`) so a valid leading binary can't be chained into a second
+    # command. Bare `$`/`${VAR}` path expansion stays allowed.
+    if any(c in v for c in (";", "|", "&", ">", "<", "$(")):
         raise HTTPException(400, "Invalid characters in cmd")
     _check_serve_binary(v)
     return v

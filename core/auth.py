@@ -65,6 +65,12 @@ def _verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
 
 
+# Pre-computed bcrypt hash of a random value. Used only to equalize response
+# time for a login attempt against a NON-existent username with one against a
+# real account, so an attacker can't enumerate valid usernames via timing.
+_DUMMY_PASSWORD_HASH = bcrypt.hashpw(secrets.token_bytes(16), bcrypt.gensalt()).decode("utf-8")
+
+
 class AuthManager:
     """Manages multi-user password + session-token auth system."""
 
@@ -361,8 +367,8 @@ class AuthManager:
         self._config["users"][username]["totp_secret"] = secret
         self._config["users"][username]["totp_enabled"] = True
         self._config["users"][username].pop("totp_secret_pending", None)
-        # Generate backup codes
-        backup = [secrets.token_hex(4) for _ in range(8)]
+        # Generate backup codes (64-bit each; single-use)
+        backup = [secrets.token_hex(8) for _ in range(8)]
         self._config["users"][username]["totp_backup_codes"] = backup
         self._save()
         logger.info(f"2FA enabled for '{username}'")
@@ -377,10 +383,16 @@ class AuthManager:
         secret = user.get("totp_secret")
         if not secret:
             return True
-        # Check backup codes first
-        backup = user.get("totp_backup_codes", [])
-        if code in backup:
-            backup.remove(code)
+        # Check backup codes first (constant-time scan so a valid prefix can't
+        # be distinguished by timing; codes are single-use).
+        backup = list(user.get("totp_backup_codes", []))
+        code_str = str(code or "")
+        matched_idx = None
+        for i, bc in enumerate(backup):
+            if secrets.compare_digest(str(bc), code_str):
+                matched_idx = i
+        if matched_idx is not None:
+            backup.pop(matched_idx)
             self._config["users"][username]["totp_backup_codes"] = backup
             self._save()
             logger.info(f"Backup code used for '{username}' ({len(backup)} remaining)")
@@ -407,9 +419,13 @@ class AuthManager:
 
     def verify_password(self, username: str, password: str) -> bool:
         username = username.strip().lower()
-        if username not in self.users:
+        user = self.users.get(username)
+        if not user:
+            # Dummy comparison so an unknown username takes the same time as a
+            # known one (anti username-enumeration). Result is discarded.
+            _verify_password(password, _DUMMY_PASSWORD_HASH)
             return False
-        return _verify_password(password, self.users[username]["password_hash"])
+        return _verify_password(password, user["password_hash"])
 
     def create_session(self, username: str, password: str) -> Optional[str]:
         """Verify credentials and return a session token, or None."""

@@ -45,8 +45,55 @@ def _autolink_urls(md_text: str) -> str:
     )
 
 
+# --- HTML sanitization for the research report body -------------------------
+# SECURITY: the report body is synthesized from UNTRUSTED external content
+# (scraped web pages; model output that may echo attacker-supplied HTML) and is
+# served on /api/research/report/* under a CSP that intentionally relaxes
+# script-src to 'unsafe-inline' (the report ships its own inline scripts).
+# Python-Markdown passes raw HTML through verbatim, so without sanitization an
+# attacker page could inject <script>/<img onerror=...> that executes in the
+# app's own origin (stored XSS → session/data theft). We run the rendered HTML
+# through an allowlist sanitizer so only safe formatting survives. Trusted,
+# server-generated HTML (figures, heading ids, quick-links) is added by callers
+# AFTER this function returns, so it is unaffected.
+try:  # nh3 (ammonia) is the allowlist sanitizer; see requirements.txt
+    import nh3 as _nh3
+
+    _REPORT_TAGS = set(_nh3.ALLOWED_TAGS) | {
+        "figure", "figcaption", "details", "summary", "span", "div",
+        "h1", "h2", "h3", "h4", "h5", "h6", "pre", "code",
+        "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption",
+        "colgroup", "col", "sup", "sub", "del", "ins", "mark", "kbd", "samp",
+        "var", "wbr", "hr",
+    }
+    _REPORT_ATTRS = {k: set(v) for k, v in _nh3.ALLOWED_ATTRIBUTES.items()}
+    # class/id are safe (no script execution) and needed for codehilite syntax
+    # colors and TOC/heading anchors.
+    _REPORT_ATTRS["*"] = {"class", "id"}
+    _REPORT_ATTRS.setdefault("a", set()).update({"href", "hreflang", "title", "target"})
+    _REPORT_ATTRS.setdefault("img", set()).update({"src", "alt", "title", "width", "height"})
+    _REPORT_ATTRS.setdefault("ol", set()).update({"start"})
+except Exception:  # pragma: no cover
+    _nh3 = None
+
+
+def _sanitize_html(html_str: str) -> str:
+    """Allowlist-sanitize rendered report HTML. Fails CLOSED: if the sanitizer
+    is unavailable, escape the whole fragment rather than emit raw HTML."""
+    if _nh3 is None:
+        import html as _html
+        return _html.escape(html_str)
+    return _nh3.clean(
+        html_str,
+        tags=_REPORT_TAGS,
+        attributes=_REPORT_ATTRS,
+        clean_content_tags={"script", "style"},
+        link_rel="noopener noreferrer",
+    )
+
+
 def _md_to_html(md_text: str) -> str:
-    """Convert markdown to HTML with common extensions."""
+    """Convert markdown to HTML with common extensions, then sanitize."""
     md_text = _autolink_urls(md_text)
     result = markdown.markdown(
         md_text,
@@ -62,7 +109,8 @@ def _md_to_html(md_text: str) -> str:
         r'<a target="_blank" rel="noopener noreferrer" href="\1',
         result,
     )
-    return result
+    # SECURITY: strip any injected scripts/handlers from untrusted report content.
+    return _sanitize_html(result)
 
 
 def _extract_headings(md_text: str) -> List[Dict[str, str]]:

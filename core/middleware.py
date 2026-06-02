@@ -22,14 +22,19 @@ def require_admin(request: Request):
     Allows access when auth is explicitly disabled, or when the request carries
     the in-process internal-tool token used by loopback agent tools.
     """
-    # In-process bypass for tool-layer loopback calls. Two paths:
-    # (a) header-direct (caller set X-Odysseus-Internal-Token), or
-    # (b) the auth middleware already validated the token and stamped
-    #     request.state.current_user = "internal-tool".
+    # In-process bypass for tool-layer loopback calls. We recognise the
+    # internal tool ONLY via the identity the auth middleware already stamped
+    # (request.state.current_user == "internal-tool"), which it sets *after*
+    # validating BOTH the per-process token AND that the request is a direct
+    # loopback connection carrying no proxy/tunnel forwarding headers
+    # (app.py: AuthMiddleware / _is_trusted_loopback).
+    #
+    # SECURITY: we deliberately do NOT also honor the raw X-Odysseus-Internal-
+    # Token header here. Doing so bypassed the loopback check, so if the token
+    # ever leaked a caller from any network location could reach admin — a
+    # weaker path than the middleware enforces. Keeping a single, loopback-gated
+    # entry point removes that inconsistency.
     try:
-        hdr = request.headers.get(INTERNAL_TOOL_HEADER)
-        if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
-            return
         if getattr(request.state, "current_user", None) == "internal-tool":
             return
     except Exception:

@@ -240,9 +240,11 @@ def setup_webhook_routes(
             raise HTTPException(403, "API token is not scoped for chat")
         token_owner = getattr(request.state, "api_token_owner", None)
 
+        import os
         from core.models import ChatMessage
         from src.llm_core import llm_call_async
         from src.endpoint_resolver import build_chat_url, build_headers, build_models_url, normalize_base
+        from src.url_safety import check_outbound_url
 
         message = body.message.strip()
         if not message:
@@ -289,6 +291,19 @@ def setup_webhook_routes(
 
             base_url = normalize_base(base_url)
             endpoint_url = build_chat_url(base_url)
+
+            # SECURITY (SSRF): base_url here is supplied by the caller, and this
+            # endpoint is reachable with a low-trust `chat`-scoped API token
+            # (paired phones, n8n/Make/Zapier integrations). Without this guard a
+            # token holder could point the server at cloud-metadata
+            # (169.254.169.254), loopback, or LAN-only internal services and read
+            # the reflected response. Validate the *resolved* target URL and block
+            # private/loopback by default. Operators who intentionally proxy a
+            # token caller to a local model server can opt back in.
+            _allow_priv = os.getenv("CHAT_API_ALLOW_PRIVATE_BASE_URL", "false").lower() == "true"
+            _ok, _why = check_outbound_url(endpoint_url, block_private=not _allow_priv)
+            if not _ok:
+                raise HTTPException(400, f"base_url rejected for safety: {_why}")
 
             if not session_manager:
                 raise HTTPException(500, "Session manager not available")

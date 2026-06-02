@@ -1591,6 +1591,21 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             filename = _slug(doc.title or "signed") + "_signed.pdf"
             token = f"{_uuid.uuid4().hex}_{filename}"
             dest = _COMPOSE_DIR / token
+            # SECURITY: cap the staged attachment to the same 25 MB limit as
+            # /api/email/compose-upload so a large doc can't grow the compose dir
+            # unbounded.
+            _MAX_SIGNED_PDF_BYTES = 25 * 1024 * 1024
+            try:
+                _staged_size = os.path.getsize(out_path)
+            except OSError:
+                _staged_size = 0
+            if _staged_size > _MAX_SIGNED_PDF_BYTES:
+                for _p in _to_unlink:
+                    try:
+                        os.unlink(_p)
+                    except Exception:
+                        pass
+                raise HTTPException(413, "Signed PDF exceeds the 25 MB attachment limit")
             shutil.copyfile(out_path, str(dest))
             # Unlink the intermediate temp PDFs now that they've been
             # copied into COMPOSE_UPLOADS_DIR.

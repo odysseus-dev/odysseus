@@ -17,15 +17,27 @@ _last_gpu_error = None  # set by _detect_nvidia() when nvidia-smi errors (driver
 def _run(cmd):
     try:
         if _remote_host:
-            # Run command on remote host via SSH
+            # Run command on remote host via SSH.
+            # SECURITY: _remote_host / _remote_port come from request params.
+            # An attacker-shaped host like "-oProxyCommand=<cmd>" is parsed by
+            # OpenSSH as an OPTION (not a hostname) and would execute the
+            # ProxyCommand locally — argv placement alone does not prevent this.
+            # Reject any host that could be read as a flag or contains
+            # whitespace, require a numeric port, and pass "--" so ssh stops
+            # option parsing before the destination.
+            if (not isinstance(_remote_host, str) or not _remote_host
+                    or _remote_host[0] == "-" or any(c.isspace() for c in _remote_host)):
+                return None
             if isinstance(cmd, list):
                 cmd_str = " ".join(cmd)
             else:
                 cmd_str = cmd
             ssh_cmd = ["ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no"]
             if _remote_port and _remote_port != "22":
-                ssh_cmd += ["-p", _remote_port]
-            ssh_cmd += [_remote_host, cmd_str]
+                if not str(_remote_port).isdigit():
+                    return None
+                ssh_cmd += ["-p", str(_remote_port)]
+            ssh_cmd += ["--", _remote_host, cmd_str]
             r = subprocess.run(
                 ssh_cmd,
                 capture_output=True, text=True, timeout=15,

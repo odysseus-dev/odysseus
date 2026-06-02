@@ -31,6 +31,18 @@ def _personal_upload_dir_for_owner(owner: str | None) -> str:
     return upload_dir
 
 
+# Executable / script extensions we refuse to persist via the personal-RAG
+# upload path. This directory is never served or executed, so this is
+# defense-in-depth — it keeps the path consistent with the main upload handler
+# (src/upload_handler.py:is_safe_file_type) rather than silently storing an
+# executable under an attacker-chosen name. Text/markdown/html/csv/code docs
+# (the legitimate RAG inputs) are unaffected.
+_PERSONAL_BLOCKED_EXTS = {
+    ".exe", ".dll", ".bat", ".cmd", ".vbs", ".ps1", ".jsp", ".asp", ".aspx",
+    ".com", ".scr", ".msi", ".sh", ".so", ".dylib", ".app",
+}
+
+
 def _unique_personal_upload_path(upload_dir: str, original_name: str | None) -> Tuple[str, str, str]:
     """Build a collision-resistant upload path while preserving a display name."""
     safe_name = secure_filename(os.path.basename(original_name or "upload"))
@@ -205,6 +217,10 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
         for upload in files:
             try:
                 file_path, stored_name, safe_name = _unique_personal_upload_path(upload_dir, upload.filename)
+                if os.path.splitext(safe_name)[1].lower() in _PERSONAL_BLOCKED_EXTS:
+                    logger.warning(f"Rejected disallowed personal upload type: {upload.filename!r}")
+                    total_failed += 1
+                    continue
                 content_bytes = await upload.read(MAX_PERSONAL_UPLOAD_BYTES + 1)
                 if len(content_bytes) > MAX_PERSONAL_UPLOAD_BYTES:
                     logger.warning(f"Rejected oversized personal upload: {upload.filename!r}")

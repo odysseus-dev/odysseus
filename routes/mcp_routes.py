@@ -101,6 +101,16 @@ def setup_mcp_routes(mcp_manager: McpManager):
             raise HTTPException(400, "command is required for stdio transport")
         if transport == "sse" and not url:
             raise HTTPException(400, "url is required for SSE transport")
+        if transport == "sse" and url:
+            # SSRF hardening for the outbound SSE connection. An MCP SSE URL
+            # legitimately targets a local or remote MCP server (loopback/LAN is
+            # a normal local-first setup, so block_private stays False), but must
+            # never reach the cloud-metadata / link-local range. Admin-only route,
+            # so this is defense-in-depth for admin-initiated egress.
+            from src.url_safety import check_outbound_url
+            _ok, _why = check_outbound_url(url, block_private=False)
+            if not _ok:
+                raise HTTPException(400, f"SSE url rejected for safety: {_why}")
 
         # Parse JSON fields
         try:

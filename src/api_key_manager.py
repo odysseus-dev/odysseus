@@ -21,6 +21,15 @@ class APIKeyManager:
             key = Fernet.generate_key()
             with open(self.key_file, 'wb') as f:
                 f.write(key)
+            # SECURITY: restrict the encryption key to owner-only, matching
+            # src/secret_storage.py. No-op on Windows (profile dir is
+            # ACL-restricted); meaningful on POSIX where umask might leave it
+            # group/world-readable.
+            try:
+                from core.platform_compat import safe_chmod
+                safe_chmod(self.key_file, 0o600)
+            except Exception:
+                pass
             return key
     
     def encrypt_api_key(self, api_key: str) -> str:
