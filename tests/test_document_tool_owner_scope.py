@@ -5,6 +5,24 @@ import types
 from src import tool_implementations as tools
 
 
+def test_clear_active_document_only_clears_matching_doc():
+    tools._closed_document_ids.clear()
+    tools.set_active_document("doc-a")
+    try:
+        assert tools.clear_active_document("doc-b") is False
+        assert tools.get_active_document() == "doc-a"
+
+        assert tools.clear_active_document("doc-a") is True
+        assert tools.get_active_document() is None
+        assert "doc-a" in tools.get_closed_documents()
+
+        tools.set_active_document("doc-a")
+        assert "doc-a" not in tools.get_closed_documents()
+    finally:
+        tools.set_active_document(None)
+        tools._closed_document_ids.clear()
+
+
 class _Column:
     def __init__(self, name):
         self.name = name

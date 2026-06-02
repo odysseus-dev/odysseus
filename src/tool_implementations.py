@@ -69,6 +69,7 @@ def _parse_tool_args(content):
 # ---------------------------------------------------------------------------
 
 _active_document_id: Optional[str] = None
+_closed_document_ids: set[str] = set()
 _active_model: Optional[str] = None
 
 
@@ -76,6 +77,28 @@ def set_active_document(doc_id: Optional[str]):
     """Set the active document ID for document tool execution."""
     global _active_document_id
     _active_document_id = doc_id
+    if doc_id:
+        _closed_document_ids.discard(doc_id)
+
+
+def clear_active_document(doc_id: Optional[str] = None) -> bool:
+    """Clear the active document pointer.
+
+    When ``doc_id`` is supplied, only clear if that document is currently
+    active. This lets UI close/delete routes invalidate stale agent context
+    without racing a different document that was opened meanwhile.
+    """
+    global _active_document_id
+    if doc_id:
+        _closed_document_ids.add(doc_id)
+    if doc_id is None or _active_document_id == doc_id:
+        _active_document_id = None
+        return True
+    return False
+
+
+def get_closed_documents() -> set[str]:
+    return set(_closed_document_ids)
 
 
 def set_active_model(model: Optional[str]):
@@ -1457,8 +1480,7 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
             title = doc.title
             doc.is_active = False
             db.commit()
-            if _active_document_id == doc.id:
-                set_active_document(None)
+            clear_active_document(doc.id)
             return {"response": f"Deleted document '{title}'", "exit_code": 0}
 
         elif action == "tidy":

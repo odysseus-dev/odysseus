@@ -593,6 +593,12 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if req.session_id is not None:
                 # Empty string = unlink from session
                 doc.session_id = req.session_id if req.session_id else None
+                if not doc.session_id:
+                    try:
+                        from src.tool_implementations import clear_active_document
+                        clear_active_document(doc_id)
+                    except Exception:
+                        logger.debug("active document clear failed during unlink", exc_info=True)
             db.commit()
             db.refresh(doc)
             return _doc_to_dict(doc)
@@ -601,6 +607,22 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         except Exception as e:
             db.rollback()
             raise HTTPException(500, str(e))
+        finally:
+            db.close()
+
+    # ---- POST /api/document/{doc_id}/close — clear editor-active context ----
+    @router.post("/api/document/{doc_id}/close")
+    async def close_document(request: Request, doc_id: str) -> Dict[str, Any]:
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if not doc:
+                raise HTTPException(404, "Document not found")
+            _verify_doc_owner(db, doc, user)
+            from src.tool_implementations import clear_active_document
+            cleared = clear_active_document(doc_id)
+            return {"status": "closed", "id": doc_id, "cleared": cleared}
         finally:
             db.close()
 
@@ -616,6 +638,11 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             _verify_doc_owner(db, doc, user)
             doc.is_active = False
             db.commit()
+            try:
+                from src.tool_implementations import clear_active_document
+                clear_active_document(doc_id)
+            except Exception:
+                logger.debug("active document clear failed during delete", exc_info=True)
             return {"status": "deleted", "id": doc_id}
         except HTTPException:
             raise

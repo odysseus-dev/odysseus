@@ -739,6 +739,9 @@ import createResearchSynapse from './researchSynapse.js';
       if (documentModule && documentModule.isPanelOpen() && documentModule.getCurrentDocId()) {
         try { await documentModule.saveDocument({ silent: true }); } catch (_e) { /* best-effort */ }
         fd.append('active_doc_id', documentModule.getCurrentDocId());
+        fd.append('active_doc_state', 'open');
+      } else {
+        fd.append('active_doc_state', 'closed');
       }
       // Web toggle: pre-search in Chat mode, tool permission in Agent mode
       const toggleState = Storage.loadToggleState();

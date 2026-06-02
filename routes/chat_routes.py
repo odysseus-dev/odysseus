@@ -385,7 +385,9 @@ def setup_chat_routes(
             auto_escalated = True
             logger.info("chat→agent auto-escalation: message matched tool-intent pattern")
         active_doc_id = form_data.get("active_doc_id", "").strip()
-        logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
+        active_doc_state = form_data.get("active_doc_state", "").strip().lower()
+        active_doc_closed = active_doc_state == "closed"
+        logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}, active_doc_state={active_doc_state!r}")
 
         try:
             # Attachment-only sends: skip the message-required check when the
@@ -484,6 +486,10 @@ def setup_chat_routes(
         active_doc = None
         _doc_db = SessionLocal()
         try:
+            from src.tool_implementations import get_closed_documents, set_active_document
+            _closed_doc_ids = get_closed_documents()
+            if active_doc_closed and not active_doc_id:
+                set_active_document(None)
             if active_doc_id:
                 logger.info(f"[doc-inject] active_doc_id from frontend: {active_doc_id}")
                 # Scope to the caller's documents. The session and in-memory
@@ -493,14 +499,17 @@ def setup_chat_routes(
                 _doc_q = _doc_db.query(DBDocument).filter(DBDocument.id == active_doc_id)
                 active_doc = _owner_session_filter(_doc_q, ctx.user).first()
                 if active_doc:
+                    set_active_document(active_doc.id)
                     logger.info(f"[doc-inject] found by ID: title={active_doc.title!r}, lang={active_doc.language!r}, is_active={active_doc.is_active}, content_len={len(active_doc.current_content or '')}")
                 else:
                     logger.warning(f"[doc-inject] NOT FOUND by ID {active_doc_id}")
-            if not active_doc:
+            if not active_doc and not active_doc_closed:
                 _session_doc_q = _doc_db.query(DBDocument).filter(
                     DBDocument.session_id == session,
                     DBDocument.is_active == True
                 )
+                if _closed_doc_ids:
+                    _session_doc_q = _session_doc_q.filter(~DBDocument.id.in_(_closed_doc_ids))
                 active_doc = _owner_session_filter(_session_doc_q, ctx.user).order_by(DBDocument.updated_at.desc()).first()
                 if active_doc:
                     logger.info(f"[doc-inject] found by session fallback: title={active_doc.title!r}")
@@ -510,11 +519,11 @@ def setup_chat_routes(
             # neither lookup above can associate them with this conversation,
             # so the agent never sees what it just wrote. Guarded so we never
             # leak a doc that belongs to a DIFFERENT session.
-            if not active_doc:
+            if not active_doc and not active_doc_closed:
                 try:
                     from src.tool_implementations import get_active_document
                     _mem_id = get_active_document()
-                    if _mem_id:
+                    if _mem_id and _mem_id not in _closed_doc_ids:
                         _mem_q = _doc_db.query(DBDocument).filter(DBDocument.id == _mem_id)
                         cand = _owner_session_filter(_mem_q, ctx.user).first()
                         if cand and (not cand.session_id or cand.session_id == session):

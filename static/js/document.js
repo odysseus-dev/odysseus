@@ -129,6 +129,14 @@ import * as Modals from './modalManager.js';
     }
   }
 
+  function _clearServerActiveDocument(docId) {
+    if (!docId) return Promise.resolve(false);
+    return fetch(`${API_BASE}/api/document/${encodeURIComponent(docId)}/close`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    }).catch(() => {});
+  }
+
   /** Switch chat to agent mode if not already */
   function _ensureAgentMode() {
     const ab = document.getElementById('mode-agent-btn');
@@ -3492,6 +3500,7 @@ import * as Modals from './modalManager.js';
   function _detachDocFromSession(docId, { toast = false } = {}) {
     const doc = docs.get(docId);
     const hasContent = doc && doc.content && doc.content.trim().length > 0;
+    _clearServerActiveDocument(docId);
     if (hasContent) {
       fetch(`${API_BASE}/api/document/${docId}`, {
         method: 'PATCH',
@@ -5558,12 +5567,14 @@ import * as Modals from './modalManager.js';
   export function closePanel(direction) {
     if (!isOpen) {
       if (direction !== 'down' && Modals.isRegistered('doc-panel')) {
+        _clearServerActiveDocument(_minimizedDocId);
         _minimizedDocId = null;
         _markDocVisibleState(_lastSessionId, 'closed');
         Modals.unregister('doc-panel');
       }
       return;
     }
+    const closingDocId = activeDocId;
     isOpen = false;
     // On touch, closing the doc should leave the keyboard DOWN. The tap blurs
     // the textarea (keyboard starts down), but a stray refocus during teardown
@@ -5580,6 +5591,7 @@ import * as Modals from './modalManager.js';
     }
     // Save current state
     saveCurrentToMap();
+    if (direction !== 'down') _clearServerActiveDocument(closingDocId);
 
     // A "down" close means minimize, not close. Register the chip and flip
     // the dock state to minimized so a chip appears at the bottom. Any
