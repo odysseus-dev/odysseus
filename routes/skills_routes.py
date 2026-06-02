@@ -1511,7 +1511,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         if not match:
             raise HTTPException(404, "Skill not found")
         _verify_owner(match, user)
-        ok = skills_manager.delete_skill(match.get("name"))
+        ok = skills_manager.delete_skill(match.get("name"), owner=user)
         if not ok:
             raise HTTPException(404, "Skill not found")
         return {"ok": True}
