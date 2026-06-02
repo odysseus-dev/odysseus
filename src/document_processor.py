@@ -304,6 +304,15 @@ def analyze_image_with_vl(image_path: str) -> str:
     return analyze_image_with_vl_result(image_path).get("text", "")
 
 
+# Total budget for inlined attachment TEXT across all files in one message.
+# Each file is already capped per-file (~15k), but nothing bounded the SUM, so a
+# handful of files could blow the model's context and later files were silently
+# lost (issue #1492 — "more than ~5 files not recognized"). Beyond this budget,
+# remaining attachments are listed with a "ask me to read it" marker instead of
+# inlined in full. Generous enough that normal multi-file use is unaffected.
+_MAX_TOTAL_INLINE_CHARS = 48000
+
+
 def build_user_content(
     text: str,
     attachment_ids: list[str] | None,
@@ -323,6 +332,9 @@ def build_user_content(
     frontend can switch to the new doc immediately.
     """
     content = [{"type": "text", "text": text}]
+    # Running total of inlined attachment text, enforced against
+    # _MAX_TOTAL_INLINE_CHARS so many files can't overflow the context (#1492).
+    inlined_chars = 0
 
     for fid in attachment_ids or []:
         upload_info = (resolved_uploads or {}).get(fid)
@@ -485,6 +497,23 @@ def build_user_content(
             else:
                 extracted_text = _process_office_document(path, display_name)
 
+            # Enforce the TOTAL inline budget across all attachments (#1492):
+            # per-file caps already bound each file (~15k); this bounds the sum so
+            # a handful of files can't blow the model's context and drop later ones.
+            extracted_text = extracted_text or ""
+            remaining = _MAX_TOTAL_INLINE_CHARS - inlined_chars
+            if remaining <= 0:
+                extracted_text = (
+                    f"\n\n[Attachment '{display_name}' not inlined — the message's "
+                    "attachment-context budget is full. Ask me to read this file and "
+                    "I'll fetch it.]"
+                )
+            elif len(extracted_text) > remaining:
+                extracted_text = extracted_text[:remaining] + (
+                    f"\n[…'{display_name}' truncated — attachment-context budget "
+                    "reached; ask me to read more of it.]"
+                )
+            inlined_chars += len(extracted_text)
             if content and content[0]["type"] == "text":
                 content[0]["text"] += extracted_text
             else:
