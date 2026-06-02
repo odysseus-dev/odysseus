@@ -1,34 +1,50 @@
 """Issue #1160 — route-level regression for clearing the active-document pointer.
 
-Drives the REAL `PATCH /api/document/{id}` (session_id="") and
-`DELETE /api/document/{id}` handlers through TestClient against a temporary
-SQLite DB, proving that closing a document's tab (detach or delete) clears the
-in-memory active-document pointer under the actual owner/session routing — not
-just the helper in isolation.
+Drives the REAL ``PATCH /api/document/{id}`` (session_id="") and
+``DELETE /api/document/{id}`` handlers via TestClient, proving that closing a
+document's tab (detach or delete) clears the in-memory active-document pointer
+under the actual owner/session routing — not just the helper in isolation.
+
+Binds a DEDICATED temporary SQLite engine and patches the route module's
+``SessionLocal`` to it (rather than setting ``DATABASE_URL`` at import time), so
+the test never touches the real dev DB, is independent of import order, and does
+not contend for the dev DB's locks (which could hang).
 """
 
-import os
 import tempfile
 import uuid
 
-# Point the DB at a throwaway file BEFORE importing core.database (engine is
-# created at import from DATABASE_URL).
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
+from unittest.mock import MagicMock
+
+import core.database as cdb
+import routes.document_routes as droutes
+from core.database import Document
+from core.database import Session as DbSession
+from src.tool_implementations import set_active_document, get_active_document
+
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-os.environ["DATABASE_URL"] = f"sqlite:///{_TMPDB.name}"
-
-from fastapi import FastAPI, Request  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-from unittest.mock import MagicMock  # noqa: E402
-
-from core.database import Base, engine, SessionLocal, Document  # noqa: E402
-from core.database import Session as DbSession  # noqa: E402
-from routes.document_routes import setup_document_routes  # noqa: E402
-from src.tool_implementations import set_active_document, get_active_document  # noqa: E402
-
-Base.metadata.create_all(engine)
+_ENGINE = create_engine(
+    f"sqlite:///{_TMPDB.name}",
+    connect_args={"check_same_thread": False},
+    poolclass=NullPool,
+)
+cdb.Base.metadata.create_all(_ENGINE)
+_TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
 
 
-def _app():
+@pytest.fixture(autouse=True)
+def _bind_db(monkeypatch):
+    monkeypatch.setattr(droutes, "SessionLocal", _TS)
+    yield
+
+
+def _client():
     app = FastAPI()
 
     @app.middleware("http")
@@ -36,14 +52,14 @@ def _app():
         request.state.current_user = "tester"
         return await call_next(request)
 
-    app.include_router(setup_document_routes(MagicMock(), None))
+    app.include_router(droutes.setup_document_routes(MagicMock(), None))
     return TestClient(app)
 
 
 def _make_doc():
     """Create a real session + an active document linked to it (owner 'tester')."""
     sid = "s-" + uuid.uuid4().hex[:8]
-    db = SessionLocal()
+    db = _TS()
     try:
         db.add(DbSession(id=sid, owner="tester", name="s", model="m", endpoint_url="http://x"))
         doc = Document(
@@ -59,7 +75,7 @@ def _make_doc():
 
 
 def test_patch_unlink_clears_active_document():
-    client = _app()
+    client = _client()
     doc_id = _make_doc()
     set_active_document(doc_id)
     r = client.patch(f"/api/document/{doc_id}", json={"session_id": ""})
@@ -68,7 +84,7 @@ def test_patch_unlink_clears_active_document():
 
 
 def test_delete_clears_active_document():
-    client = _app()
+    client = _client()
     doc_id = _make_doc()
     set_active_document(doc_id)
     r = client.delete(f"/api/document/{doc_id}")
@@ -77,7 +93,7 @@ def test_delete_clears_active_document():
 
 
 def test_unlinking_a_different_doc_leaves_pointer():
-    client = _app()
+    client = _client()
     active_id = _make_doc()
     other_id = _make_doc()
     set_active_document(active_id)
