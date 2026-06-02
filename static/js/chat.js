@@ -10,6 +10,7 @@ import uiModule from './ui.js';
 import sessionModule from './sessions.js';
 import chatRenderer from './chatRenderer.js';
 import chatStream from './chatStream.js';
+import { clearComposer } from './composerClear.js';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
 import spinnerModule from './spinner.js';
@@ -177,11 +178,7 @@ import createResearchSynapse from './researchSynapse.js';
   // a normal send and on the early-return paths that consume the message without
   // streaming (e.g. no model/session selected — issue #1475).
   function _clearComposer() {
-    const mi = el('message');
-    if (!mi) return;
-    mi.value = '';
-    mi.style.height = '';
-    mi.dispatchEvent(new Event('input'));
+    clearComposer(uiModule.el);
   }
 
   /**
