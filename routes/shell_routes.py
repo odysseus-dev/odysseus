@@ -127,6 +127,24 @@ def _docker_row_status(*, on_remote, in_container, installed, default_hint):
     return DockerRowStatus(applicable=True, install_hint=default_hint)
 
 
+def _pip_dist_name(pkg: dict) -> str:
+    """Distribution name for importlib.metadata lookups.
+
+    The Cookbook package catalog carries both the import name (``name``, e.g.
+    ``llama_cpp``) and the pip spec (``pip``, e.g. ``llama-cpp-python[server]``).
+    The distribution is NOT always the import name with underscores swapped for
+    dashes — ``llama_cpp`` ships in the ``llama-cpp-python`` distribution — so
+    derive it from the pip spec (stripping any ``[extras]`` and version markers)
+    and fall back to the munged import name only when no pip spec is declared.
+    """
+    pip = (pkg.get("pip") or "").strip()
+    if pip:
+        base = re.split(r"[\[<>=!~;\s]", pip, maxsplit=1)[0].strip()
+        if base:
+            return base
+    return (pkg.get("name") or "").replace("_", "-")
+
+
 def _package_installed_from_probe(name: str, probe: dict) -> bool:
     """Return whether an optional dependency is usable by Cookbook.
 
@@ -945,7 +963,7 @@ def setup_shell_routes() -> APIRouter:
                     if pkg["name"] == "vllm":
                         pkg["installed"] = shutil.which("vllm") is not None
                     else:
-                        importlib_metadata.version(pkg["name"].replace("_", "-"))
+                        importlib_metadata.version(_pip_dist_name(pkg))
                         pkg["installed"] = True
                 except ImportError:
                     pkg["installed"] = False
