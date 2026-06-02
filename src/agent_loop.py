@@ -1501,6 +1501,7 @@ async def stream_agent_loop(
                 soft_budget,
                 context_length,
                 is_setting_overridden("agent_input_token_budget"),
+                hard_max=int(get_setting("agent_input_token_hard_max", 200000) or 200000),
             )
             trimmed_messages = trim_for_context(
                 messages,

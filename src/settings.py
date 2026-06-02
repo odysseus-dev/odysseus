@@ -96,6 +96,12 @@ DEFAULT_SETTINGS = {
     "research_run_timeout_seconds": 1800,
     "agent_max_tool_calls": 0,
     "agent_input_token_budget": 6000,
+    # Hard ceiling for the auto-derived input budget on long-context models
+    # (#1272). The adaptive path scales to ~85% of the model's context window
+    # but caps here so a 1M-context model doesn't send a pathologically large
+    # prompt every turn. Only applies on the auto path (no explicit
+    # agent_input_token_budget); matches the old DEFAULT_HARD_MAX constant.
+    "agent_input_token_hard_max": 200000,
     "agent_stream_timeout_seconds": 300,
     # Extra directory roots that read_file / write_file may access, in
     # addition to the built-in project data/ and system temp dirs. Each

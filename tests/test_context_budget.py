@@ -33,6 +33,27 @@ def test_unknown_window_falls_back_to_configured():
     assert compute_input_token_budget(0, 0, explicit=False) == 6000  # default
 
 
+def test_hard_max_default_setting_matches_constant():
+    # #1272 — the ceiling is now a named setting; its default must match the
+    # historical module constant so behaviour is unchanged out of the box.
+    from src.settings import DEFAULT_SETTINGS
+    assert DEFAULT_SETTINGS["agent_input_token_hard_max"] == DEFAULT_HARD_MAX == 200000
+
+
+def test_configurable_hard_max_raises_ceiling():
+    # An admin lifting the cap lets a 1M-context model use more of its window.
+    assert compute_input_token_budget(6000, 1_000_000, explicit=False, hard_max=500_000) == 500_000
+
+
+def test_configurable_hard_max_lowers_ceiling():
+    assert compute_input_token_budget(6000, 1_000_000, explicit=False, hard_max=50_000) == 50_000
+
+
+def test_hard_max_ignored_when_explicit_budget_set():
+    # The explicit branch ignores hard_max entirely (#1272 no-op note).
+    assert compute_input_token_budget(6000, 1_000_000, explicit=True, hard_max=50_000) == 6000
+
+
 def test_is_setting_overridden_reads_raw_saved_file(tmp_path, monkeypatch):
     import src.settings as settings
 
