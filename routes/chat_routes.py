@@ -436,10 +436,11 @@ def setup_chat_routes(
                 else:
                     logger.warning(f"[doc-inject] NOT FOUND by ID {active_doc_id}")
             if not active_doc:
-                active_doc = _doc_db.query(DBDocument).filter(
+                _session_doc_q = _doc_db.query(DBDocument).filter(
                     DBDocument.session_id == session,
                     DBDocument.is_active == True
-                ).order_by(DBDocument.updated_at.desc()).first()
+                )
+                active_doc = _owner_session_filter(_session_doc_q, ctx.user).order_by(DBDocument.updated_at.desc()).first()
                 if active_doc:
                     logger.info(f"[doc-inject] found by session fallback: title={active_doc.title!r}")
             # Last resort: the document the agent itself just created/edited
@@ -453,7 +454,8 @@ def setup_chat_routes(
                     from src.tool_implementations import get_active_document
                     _mem_id = get_active_document()
                     if _mem_id:
-                        cand = _doc_db.query(DBDocument).filter(DBDocument.id == _mem_id).first()
+                        _mem_q = _doc_db.query(DBDocument).filter(DBDocument.id == _mem_id)
+                        cand = _owner_session_filter(_mem_q, ctx.user).first()
                         if cand and (not cand.session_id or cand.session_id == session):
                             active_doc = cand
                             logger.info(f"[doc-inject] found by in-memory active id: title={active_doc.title!r} (session_id={cand.session_id!r})")

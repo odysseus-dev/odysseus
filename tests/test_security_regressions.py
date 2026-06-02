@@ -947,14 +947,18 @@ def test_chat_active_document_lookup_is_owner_scoped():
     """The explicit `active_doc_id` path in /api/chat_stream must scope the
     document lookup to the caller. Resolving by id alone let any user inject
     another user's document into their own chat context (the session and
-    in-memory fallbacks were already owner/session-bound; this branch wasn't)."""
+    in-memory fallbacks also need the same owner gate because active document
+    state is process-global)."""
     import re
 
     src = Path(__file__).resolve().parents[1] / "routes" / "chat_routes.py"
     text = src.read_text()
     # The frontend-supplied id is resolved through the shared owner filter.
     assert "_owner_session_filter(_doc_q, ctx.user)" in text
+    assert "_owner_session_filter(_session_doc_q, ctx.user)" in text
+    assert "_owner_session_filter(_mem_q, ctx.user)" in text
     # And never by id alone (the previous IDOR shape, whitespace-insensitive).
     flat = re.sub(r"\s+", " ", text)
     assert "filter( DBDocument.id == active_doc_id, ).first()" not in flat
     assert "filter(DBDocument.id == active_doc_id).first()" not in flat
+    assert "filter(DBDocument.id == _mem_id).first()" not in flat
