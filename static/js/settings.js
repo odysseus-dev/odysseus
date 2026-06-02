@@ -2173,6 +2173,7 @@ function initAll() {
   initEmailAccountsSettings();
   initReminderSettings();
   initUnifiedIntegrations();
+  initGitHubIntegration();
 }
 
 function notifyIntegrationsChanged() {
@@ -4383,6 +4384,296 @@ export function close() {
   } else {
     modalEl.classList.add('hidden');
   }
+}
+
+// ── GitHub integration settings ──
+// Wires the #gh-intg-card connection markup (Integrations tab) + the dedicated
+// GitHub tab to the /api/github/integration endpoints: save/rotate PAT, master
+// enable, write toggle, notify toggle, briefing editor, disconnect. Each change
+// calls back into the chat-input toggle (window.githubToggle) so it stays in
+// sync without a page reload.
+let _ghInitDone = false;
+async function initGitHubIntegration() {
+  if (_ghInitDone) return;
+  const card = el('gh-intg-card');
+  if (!card) return;
+  _ghInitDone = true;
+
+  const patIn = el('gh-intg-pat');
+  const patBtn = el('gh-intg-save');
+  const patMsg = el('gh-intg-pat-msg');
+  const generateLink = el('gh-intg-generate-link');
+  const generateLinkRotate = el('gh-intg-generate-link-rotate');
+  const patInRotate = el('gh-intg-pat-rotate');
+  const patBtnRotate = el('gh-intg-save-rotate');
+  const patMsgRotate = el('gh-intg-pat-rotate-msg');
+  const setupBlock = el('gh-intg-setup');
+  const connectedBlock = el('gh-intg-connected-block');
+  const connectedUsername = el('gh-intg-connected-username');
+  const masterRow = el('gh-intg-master-row');
+  const enabledSw = el('gh-intg-enabled');
+  const masterStateText = el('gh-intg-master-state-text');
+  // Pre-fill GitHub's classic-token creation page with the scopes Odysseus
+  // needs (repo for the user's own PRs/issues/diffs; notifications for the
+  // notification surface). The user just clicks "Generate token" — no scope
+  // hunting. Classic over fine-grained because classic accepts scopes via URL.
+  const _ghTokenUrl = (() => {
+    const _params = new URLSearchParams({
+      description: 'Odysseus (https://github.com/pewdiepie-archdaemon/odysseus)',
+      scopes: 'repo,notifications',
+    });
+    return `https://github.com/settings/tokens/new?${_params.toString()}`;
+  })();
+  if (generateLink) generateLink.href = _ghTokenUrl;
+  if (generateLinkRotate) generateLinkRotate.href = _ghTokenUrl;
+  const writeSw = el('gh-intg-write');
+  const notifySw = el('gh-intg-notify');
+  const briefingTa = el('gh-intg-briefing');
+  const briefingSave = el('gh-intg-briefing-save');
+  const briefingReset = el('gh-intg-briefing-reset');
+  const briefingMsg = el('gh-intg-briefing-msg');
+  const disconnectBtn = el('gh-intg-disconnect');
+  const statusEl = el('gh-intg-status');
+
+  let _defaultBriefing = '';  // captured from a fresh-state GET; used by "Reset to default"
+
+  function _flash(msgEl, text, kind) {
+    if (!msgEl) return;
+    msgEl.textContent = text;
+    msgEl.classList.remove('ok', 'err');
+    if (kind) msgEl.classList.add(kind);
+    if (kind === 'ok') setTimeout(() => { msgEl.textContent = ''; msgEl.classList.remove('ok'); }, 2200);
+  }
+
+  function _render(info) {
+    if (!info) return;
+    const tabBtn = el('gh-settings-tab-btn');
+    const tabStatus = el('gh-tab-status');
+    if (info.configured) {
+      const _isPaused = info.enabled === false;
+      statusEl.textContent = _isPaused ? 'Paused' : '';
+      if (tabStatus) tabStatus.textContent = `Connected as ${info.github_username || '?'}`;
+      if (connectedUsername) connectedUsername.textContent = `@${info.github_username || '?'}`;
+      if (masterStateText) masterStateText.textContent = _isPaused ? 'paused' : 'connected';
+      if (enabledSw) { enabledSw.checked = !_isPaused; enabledSw.disabled = false; }
+      if (masterRow) masterRow.classList.toggle('is-paused', _isPaused);
+      if (setupBlock) setupBlock.style.display = 'none';
+      if (connectedBlock) connectedBlock.style.display = '';
+      if (patIn) { patIn.value = ''; patIn.placeholder = 'github_pat_...'; }
+      writeSw.checked = !!info.write_enabled;
+      writeSw.disabled = _isPaused;
+      if (notifySw) { notifySw.checked = !!info.notify_enabled; notifySw.disabled = _isPaused; }
+      const _nHint = el('gh-intg-notify-hint');
+      if (_nHint) _nHint.style.display = (!!info.notify_enabled && !_isPaused) ? '' : 'none';
+      // GitHub tab only exists when configured (even if paused).
+      if (tabBtn) tabBtn.style.display = '';
+    } else {
+      statusEl.textContent = 'Not connected';
+      if (tabStatus) tabStatus.textContent = '';
+      if (setupBlock) setupBlock.style.display = '';
+      if (connectedBlock) connectedBlock.style.display = 'none';
+      if (connectedUsername) connectedUsername.textContent = '';
+      if (enabledSw) { enabledSw.checked = false; enabledSw.disabled = true; }
+      if (masterRow) masterRow.classList.remove('is-paused');
+      if (patIn) patIn.placeholder = 'github_pat_...';
+      writeSw.checked = false;
+      writeSw.disabled = true;
+      if (notifySw) { notifySw.checked = false; notifySw.disabled = true; }
+      if (tabBtn) tabBtn.style.display = 'none';
+      const rotate = el('gh-intg-rotate');
+      if (rotate) rotate.open = false;
+      if (patInRotate) patInRotate.value = '';
+    }
+    // Briefing is RAW text (with editing-prompt comments); the server strips
+    // them before injecting into the agent.
+    if (typeof info.briefing === 'string') briefingTa.value = info.briefing;
+  }
+
+  // Master enable/disable — pauses/resumes the integration without wiping the
+  // PAT. Optimistic flip, reconciled from the server response.
+  if (enabledSw) {
+    enabledSw.addEventListener('change', async () => {
+      const turningOn = enabledSw.checked;
+      if (masterRow) masterRow.classList.toggle('is-paused', !turningOn);
+      if (masterStateText) masterStateText.textContent = turningOn ? 'connected' : 'paused';
+      try {
+        const r = await fetch('/api/github/integration/flags', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: turningOn }),
+        });
+        if (!r.ok) {
+          enabledSw.checked = !turningOn;
+          if (masterRow) masterRow.classList.toggle('is-paused', turningOn);
+          if (masterStateText) masterStateText.textContent = turningOn ? 'paused' : 'connected';
+          return;
+        }
+        const data = await r.json();
+        _render(data);
+        try { window.githubToggle && window.githubToggle.refresh && window.githubToggle.refresh(); } catch {}
+      } catch {
+        enabledSw.checked = !turningOn;
+        if (masterRow) masterRow.classList.toggle('is-paused', turningOn);
+      }
+    });
+  }
+
+  // Cross-links between the connection card (Integrations) and the GitHub tab.
+  const goToTab = el('gh-intg-go-to-tab');
+  if (goToTab) goToTab.addEventListener('click', (e) => { e.preventDefault(); open('github'); });
+  const goToIntg = el('gh-tab-back-to-intg');
+  if (goToIntg) goToIntg.addEventListener('click', (e) => { e.preventDefault(); open('integrations'); });
+
+  async function _fetchState() {
+    try {
+      const r = await fetch('/api/github/integration', { credentials: 'same-origin' });
+      if (!r.ok) return null;
+      const data = await r.json();
+      if (!_defaultBriefing && data && data.briefing) _defaultBriefing = data.briefing;
+      return data;
+    } catch { return null; }
+  }
+
+  async function _refresh() {
+    const info = await _fetchState();
+    _render(info);
+    try { if (window.githubToggle && window.githubToggle.refresh) window.githubToggle.refresh(); } catch {}
+  }
+
+  // Shared save logic for initial-connect and rotate-token. Returns true on success.
+  async function _savePat(pat, inputEl, btnEl, msgEl) {
+    if (!pat) { _flash(msgEl, 'Paste a PAT first.', 'err'); return false; }
+    btnEl.disabled = true;
+    _flash(msgEl, 'Validating with GitHub…', null);
+    try {
+      const r = await fetch('/api/github/integration', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pat }),
+      });
+      const data = await r.json();
+      if (!r.ok) { _flash(msgEl, data.detail || 'Save failed', 'err'); return false; }
+      _flash(msgEl, `Connected as @${data.github_username}`, 'ok');
+      if (inputEl) inputEl.value = '';
+      _render(data);
+      try { if (window.githubToggle && window.githubToggle.refresh) window.githubToggle.refresh(); } catch {}
+      return true;
+    } catch (e) {
+      _flash(msgEl, `Save failed: ${e.message || e}`, 'err');
+      return false;
+    } finally {
+      btnEl.disabled = false;
+    }
+  }
+
+  patBtn.addEventListener('click', () => { _savePat((patIn.value || '').trim(), patIn, patBtn, patMsg); });
+
+  if (patBtnRotate) {
+    patBtnRotate.addEventListener('click', async () => {
+      const ok = await _savePat((patInRotate.value || '').trim(), patInRotate, patBtnRotate, patMsgRotate);
+      if (ok) { const rotate = el('gh-intg-rotate'); if (rotate) rotate.open = false; }
+    });
+  }
+
+  writeSw.addEventListener('change', async () => {
+    const turningOn = writeSw.checked;
+    // First-time enable: hard WARNING confirm, acked once per browser.
+    const _WARN_KEY = 'odysseus-gh-write-warn-acked';
+    if (turningOn && !localStorage.getItem(_WARN_KEY)) {
+      const msg =
+        'WARNING: enabling write actions lets the agent comment on PRs, open PRs, ' +
+        'and push to branches as you. These actions are public, visible to ' +
+        'maintainers, and hard to undo. Whatever model you use will be able to take ' +
+        'them when you toggle GitHub on in the chat.\n\nContinue?';
+      const ok = window.styledConfirm
+        ? await window.styledConfirm(msg, { confirmText: 'Enable write', danger: true })
+        : confirm(msg);
+      if (!ok) { writeSw.checked = false; return; }
+      try { localStorage.setItem(_WARN_KEY, '1'); } catch {}
+    }
+    try {
+      await fetch('/api/github/integration/flags', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ write_enabled: writeSw.checked }),
+      });
+      // Refresh the chat-input toggle so its write_enabled mirror updates.
+      try { window.githubToggle && window.githubToggle.refresh && window.githubToggle.refresh(); } catch {}
+    } catch {}
+  });
+
+  // Notify toggle — simple POST to /flags. No poller; the count is fetched
+  // inline at message time (cached 60s). Show/hide the GitHub settings hint
+  // on toggle so the user sees it once when they first enable.
+  if (notifySw) {
+    notifySw.addEventListener('change', async () => {
+      const hint = el('gh-intg-notify-hint');
+      if (hint) hint.style.display = notifySw.checked ? '' : 'none';
+      try {
+        await fetch('/api/github/integration/flags', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notify_enabled: notifySw.checked }),
+        });
+      } catch {}
+    });
+  }
+
+  briefingSave.addEventListener('click', async () => {
+    briefingSave.disabled = true;
+    try {
+      const r = await fetch('/api/github/integration/briefing', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ briefing: briefingTa.value }),
+      });
+      if (!r.ok) { _flash(briefingMsg, 'Save failed', 'err'); return; }
+      _flash(briefingMsg, 'Saved', 'ok');
+      // Re-fetch so an empty save (which resets to default server-side) shows
+      // the restored default in the textarea.
+      const fresh = await _fetchState();
+      if (fresh) _render(fresh);
+    } catch (e) {
+      _flash(briefingMsg, `Save failed: ${e.message || e}`, 'err');
+    } finally {
+      briefingSave.disabled = false;
+    }
+  });
+
+  briefingReset.addEventListener('click', async () => {
+    try {
+      const r = await fetch('/api/github/integration/briefing', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ briefing: '' }),
+      });
+      if (!r.ok) { _flash(briefingMsg, 'Reset failed', 'err'); return; }
+      const data = await r.json();
+      briefingTa.value = data.briefing || _defaultBriefing || '';
+      _flash(briefingMsg, 'Reset to default', 'ok');
+    } catch (e) {
+      _flash(briefingMsg, `Reset failed: ${e.message || e}`, 'err');
+    }
+  });
+
+  disconnectBtn.addEventListener('click', async () => {
+    if (!confirm('Disconnect GitHub? Your briefing is preserved; only the PAT is removed.')) return;
+    try {
+      await fetch('/api/github/integration', { method: 'DELETE', credentials: 'same-origin' });
+      _flash(patMsg, 'Disconnected', 'ok');
+      await _refresh();
+    } catch (e) {
+      _flash(patMsg, `Disconnect failed: ${e.message || e}`, 'err');
+    }
+  });
+
+  await _refresh();
 }
 
 const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints };

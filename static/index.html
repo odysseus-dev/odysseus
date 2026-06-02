@@ -1062,6 +1062,15 @@
               <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
             </svg>
           </button>
+          <!-- GitHub integration toggle — same shape as web / bash: a single
+               icon button that flips a hidden checkbox. Hidden until the user
+               has saved a PAT in Settings; githubToggle.js shows it after the
+               initial /api/github/integration fetch. -->
+          <button type="button" class="input-icon-btn" title="GitHub access (PR-aware chat)" id="gh-toggle-btn" data-mode-tool="true" style="display:none;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
+            </svg>
+          </button>
           <!-- RAG toolbar indicator (hidden until active) -->
           <button type="button" class="input-icon-btn tool-indicator" title="RAG active — click to deactivate" id="rag-indicator-btn" style="display:none;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1110,6 +1119,11 @@
       <!-- Hidden checkboxes for state -->
       <input type="checkbox" id="web-toggle" style="display:none;">
       <input type="checkbox" id="bash-toggle" style="display:none;">
+      <!-- GitHub integration state. `gh-toggle` is the read-tools switch;
+           `gh-toggle-write` additionally enables write tools (only set when
+           the server-side write_enabled is on). Managed by githubToggle.js. -->
+      <input type="checkbox" id="gh-toggle" style="display:none;">
+      <input type="checkbox" id="gh-toggle-write" style="display:none;">
     </div>
     <form id="chat-form" autocomplete="off" action="javascript:void(0);" style="display:none;"></form>
 
@@ -1331,6 +1345,15 @@
           <button class="settings-nav-item" data-settings-tab="integrations">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
             <span>Integrations</span>
+          </button>
+          <!-- GitHub tab — hidden until a PAT is saved. The connection form
+               stays in the Integrations card; once configured, the
+               per-integration knobs (write, notifications, briefing) live
+               here. settings.js shows/hides this based on the integration's
+               `configured` flag. -->
+          <button class="settings-nav-item" data-settings-tab="github" id="gh-settings-tab-btn" style="display:none">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+            <span>GitHub</span>
           </button>
           <button class="settings-nav-item" data-settings-tab="email">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
@@ -2123,6 +2146,147 @@
               <button type="button" class="admin-btn-sm" id="unified-intg-add-btn">+ Add Integration</button>
             </div>
           </div>
+
+          <!-- GitHub connection card. PAT setup + status only; the
+               per-integration knobs (write, notifications, briefing) live on
+               the dedicated GitHub tab that appears once configured. -->
+          <div class="admin-card" id="gh-intg-card" style="margin-top:12px;">
+            <h2>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6">
+                <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
+              </svg>
+              GitHub
+              <span id="gh-intg-status" style="font-size:11px;font-weight:400;opacity:0.55;margin-left:8px"></span>
+            </h2>
+
+            <!-- SETUP VIEW — guided PAT creation, hidden once connected. -->
+            <div class="gh-intg-setup" id="gh-intg-setup">
+              <div class="admin-toggle-sub" style="margin-bottom:10px">
+                Lets the agent read your PRs, search issues, and review diffs when you toggle the GitHub icon on in the chat input.
+              </div>
+              <ol class="gh-intg-steps">
+                <li>
+                  <span class="gh-intg-step-num">1</span>
+                  <div class="gh-intg-step-body">
+                    <div class="gh-intg-step-head">Generate a token on GitHub</div>
+                    <div class="gh-intg-step-desc">Opens GitHub with the right permissions pre-filled. Click <b>Generate token</b> at the bottom of the page, then copy the token it shows you.</div>
+                    <a class="gh-intg-cta" id="gh-intg-generate-link" href="#" target="_blank" rel="noopener">Open GitHub →</a>
+                  </div>
+                </li>
+                <li>
+                  <span class="gh-intg-step-num">2</span>
+                  <div class="gh-intg-step-body">
+                    <div class="gh-intg-step-head">Paste it here</div>
+                    <div class="gh-intg-step-desc">The token starts with <code>github_pat_</code> (fine-grained) or <code>ghp_</code> (classic). Both work.</div>
+                    <div class="gh-intg-pat-row">
+                      <input type="password" id="gh-intg-pat" placeholder="github_pat_..." autocomplete="off">
+                      <button type="button" class="admin-btn-sm" id="gh-intg-save">Save</button>
+                    </div>
+                    <div class="gh-intg-msg" id="gh-intg-pat-msg"></div>
+                  </div>
+                </li>
+              </ol>
+              <details class="gh-intg-faq">
+                <summary>What's a Personal Access Token?</summary>
+                <p>A PAT is a long password GitHub generates that lets other apps act as you. Unlike your real password, you can give it limited permissions (read-only, specific repos) and revoke it any time from github.com without changing your real password.</p>
+              </details>
+            </div>
+
+            <!-- CONNECTED VIEW — single toggle pauses/resumes; rotate + disconnect below. -->
+            <div class="gh-intg-connected" id="gh-intg-connected-block" style="display:none">
+              <label class="gh-intg-master-row" id="gh-intg-master-row">
+                <input type="checkbox" class="gh-toggle-switch" id="gh-intg-enabled">
+                <span class="gh-intg-master-label">
+                  <span class="gh-intg-master-user" id="gh-intg-connected-username">@…</span>
+                  <span class="gh-intg-master-state" id="gh-intg-master-state-text">connected</span>
+                </span>
+              </label>
+              <div class="gh-intg-hint" style="margin-top:6px">
+                Briefing, write permissions, and notification preferences are on the <a href="#" id="gh-intg-go-to-tab">GitHub tab →</a>
+              </div>
+
+              <details class="gh-intg-faq gh-intg-rotate" id="gh-intg-rotate">
+                <summary>Manage token</summary>
+                <div class="gh-intg-step-desc" style="margin-top:6px">
+                  Rotate to a fresh PAT (the old one stops working once GitHub revokes it; until then both work).
+                </div>
+                <a class="gh-intg-cta" id="gh-intg-generate-link-rotate" href="#" target="_blank" rel="noopener" style="margin:8px 0">Generate a new token →</a>
+                <div class="gh-intg-pat-row">
+                  <input type="password" id="gh-intg-pat-rotate" placeholder="github_pat_..." autocomplete="off">
+                  <button type="button" class="admin-btn-sm" id="gh-intg-save-rotate">Replace</button>
+                </div>
+                <div class="gh-intg-msg" id="gh-intg-pat-rotate-msg"></div>
+              </details>
+
+              <div class="gh-intg-section">
+                <button type="button" class="admin-btn-sm" id="gh-intg-disconnect" style="color:var(--red,#ff4d4f);border-color:var(--red,#ff4d4f);">Disconnect GitHub</button>
+                <span class="gh-intg-hint" style="margin-left:8px">Removes the PAT. Briefing is preserved.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══ GITHUB TAB ═══
+             Per-integration config (write, notifications, briefing). Appears
+             in the tab list only after a PAT is saved. -->
+        <div data-settings-panel="github" class="hidden">
+          <div class="admin-card">
+            <h2>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+              GitHub
+              <span id="gh-tab-status" style="font-size:11px;font-weight:400;opacity:0.55;margin-left:8px"></span>
+            </h2>
+            <div class="admin-toggle-sub" style="margin-bottom:10px">
+              How the agent behaves when you flip the GitHub toggle on in chat.
+              <a href="#" id="gh-tab-back-to-intg">Connection settings live in Integrations →</a>
+            </div>
+
+            <!-- Write actions grant. When ON, the agent can comment on PRs,
+                 open PRs, push to branches whenever the chat GitHub toggle is on. -->
+            <div class="gh-intg-section">
+              <label class="gh-intg-row">
+                <span>
+                  Allow write actions
+                  <span class="gh-intg-row-hint">comments, open PRs, push to branches</span>
+                </span>
+                <input type="checkbox" class="gh-toggle-switch" id="gh-intg-write">
+              </label>
+            </div>
+
+            <!-- Notification opt-in. When ON, the agent gets your unread count
+                 (fetched on message-send, cached 60s) and offers to sift. -->
+            <div class="gh-intg-section">
+              <label class="gh-intg-row">
+                <span>
+                  Surface unread notifications to the agent
+                  <span class="gh-intg-row-hint">checked once per message (cached 60s); agent mentions the count and offers to sift</span>
+                </span>
+                <input type="checkbox" class="gh-toggle-switch" id="gh-intg-notify">
+              </label>
+              <div class="gh-intg-hint" id="gh-intg-notify-hint" style="margin-top:8px;display:none">
+                Heads up: GitHub's <a href="https://github.com/settings/notifications" target="_blank" rel="noopener">notification settings</a>
+                default "Participating, @mentions and custom" to <strong>Email only</strong>. Flip that and "Watching" to
+                <strong>on GitHub, Email</strong> — otherwise events never reach the feed we read and the count stays at 0
+                even when PRs merge or issues mention you.
+              </div>
+            </div>
+
+            <!-- Briefing — the system-prompt addendum the agent gets when GitHub is on. -->
+            <div class="gh-intg-section">
+              <label class="gh-intg-label">Agent briefing</label>
+              <div class="gh-intg-hint" style="margin-bottom:6px">
+                Appended to the agent's system prompt for any chat where the GitHub toggle is on. Lines wrapped in
+                <code>&lt;!-- --&gt;</code> are editing notes that guide you here; they're stripped before the briefing is
+                sent to the agent. Fill in the bottom sections to set your own commit style and PR voice.
+              </div>
+              <textarea id="gh-intg-briefing" rows="12" spellcheck="false"></textarea>
+              <div class="gh-intg-briefing-actions">
+                <button type="button" class="admin-btn-sm" id="gh-intg-briefing-save">Save briefing</button>
+                <button type="button" class="admin-btn-sm" id="gh-intg-briefing-reset">Reset to default</button>
+                <span class="gh-intg-msg" id="gh-intg-briefing-msg"></span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- ═══ TOOLS TAB ═══ -->
@@ -2266,6 +2430,7 @@
 <script type="module" src="/static/js/compare/index.js"></script>
 <script type="module" src="/static/js/theme.js"></script>
 <script type="module" src="/static/js/censor.js"></script>
+<script type="module" src="/static/js/githubToggle.js"></script>
 <script type="module" src="/static/js/settings.js"></script>
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>

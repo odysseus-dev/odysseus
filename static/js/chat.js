@@ -764,6 +764,14 @@ import createResearchSynapse from './researchSynapse.js';
       if (el('bash-toggle').checked) {
         fd.append('allow_bash', 'true');
       }
+      // GitHub: the read-tools toggle + (when the server-side write_enabled is
+      // on) the write flag, mirrored into gh-toggle-write by githubToggle.js.
+      if (el('gh-toggle') && el('gh-toggle').checked) {
+        fd.append('allow_github', 'true');
+        if (el('gh-toggle-write') && el('gh-toggle-write').checked) {
+          fd.append('allow_github_write', 'true');
+        }
+      }
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');

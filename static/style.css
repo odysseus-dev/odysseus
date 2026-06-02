@@ -35410,3 +35410,180 @@ body.theme-frosted .modal {
      is already ≥16px and never zoomed — leave it so we don't shrink it. */
   .doc-email-richbody.doc-font-m { font-size: 16px !important; }
 }
+
+    /* ── GitHub integration ── */
+    /* Chat-input toggle shares .input-icon-btn styling with web/bash; this is
+       just the active state. */
+    #gh-toggle-btn.active {
+      color: var(--accent, var(--red));
+      background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+    }
+    /* Slim switch used by the Settings toggles (enable / write / notify). */
+    .gh-toggle-switch {
+      appearance: none;
+      width: 30px;
+      height: 16px;
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--fg) 18%, transparent);
+      position: relative;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.12s;
+      margin: 0;
+    }
+    .gh-toggle-switch::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--bg);
+      transition: transform 0.12s;
+    }
+    .gh-toggle-switch:checked { background: var(--accent, var(--red)); }
+    .gh-toggle-switch:checked::after { transform: translateX(14px); }
+    .gh-toggle-switch:disabled { cursor: not-allowed; }
+
+    /* Cross-tab pointer links (e.g. "Connection settings live in Integrations →")
+       live in .admin-toggle-sub; give them the accent treatment so they don't
+       fall back to default-blue on the dark theme. */
+    .admin-toggle-sub a { color: var(--accent, var(--red)); text-decoration: none; }
+    .admin-toggle-sub a:hover { text-decoration: underline; }
+
+    /* ── Settings card / GitHub tab ── */
+    #gh-intg-card .gh-intg-section { margin-top: 12px; }
+    #gh-intg-card .gh-intg-section:first-of-type { margin-top: 8px; }
+    .gh-intg-section { margin-top: 12px; }
+    .gh-intg-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      opacity: 0.65;
+      margin-bottom: 5px;
+    }
+    .gh-intg-pat-row { display: flex; gap: 6px; align-items: stretch; }
+    .gh-intg-pat-row input {
+      flex: 1;
+      padding: 6px 10px;
+      font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+      font-size: 12px;
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+    }
+    .gh-intg-hint { font-size: 11px; opacity: 0.55; margin-top: 5px; line-height: 1.4; }
+    .gh-intg-hint a { color: var(--accent, var(--red)); text-decoration: none; }
+    .gh-intg-hint a:hover { text-decoration: underline; }
+    .gh-intg-connected { margin-top: 4px; }
+    .gh-intg-master-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      cursor: pointer;
+      user-select: none;
+    }
+    .gh-intg-master-label { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+    .gh-intg-master-user { font-weight: 600; }
+    .gh-intg-master-state {
+      font-size: 11px;
+      opacity: 0.55;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .gh-intg-master-row.is-paused .gh-intg-master-user,
+    .gh-intg-master-row.is-paused .gh-intg-master-label { opacity: 0.55; }
+    .gh-intg-rotate { margin-top: 10px; }
+    .gh-intg-rotate[open] summary { opacity: 1; }
+    .gh-intg-msg { font-size: 11px; min-height: 14px; margin-top: 4px; }
+    .gh-intg-msg.ok { color: var(--green, #50fa7b); }
+    .gh-intg-msg.err { color: var(--red, #ff4d4f); }
+    .gh-intg-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 6px 0;
+      cursor: pointer;
+    }
+    .gh-intg-row-hint {
+      display: block;
+      font-size: 10.5px;
+      opacity: 0.55;
+      font-weight: 400;
+      margin-top: 1px;
+    }
+    #gh-intg-briefing {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+      font-size: 11.5px;
+      line-height: 1.45;
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      resize: vertical;
+      min-height: 180px;
+    }
+    .gh-intg-briefing-actions { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+    .gh-intg-steps {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .gh-intg-steps > li { display: flex; gap: 12px; align-items: flex-start; }
+    .gh-intg-step-num {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+      color: var(--accent, var(--red));
+      font-size: 11px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 1px;
+    }
+    .gh-intg-step-body { flex: 1; min-width: 0; }
+    .gh-intg-step-head { font-size: 12.5px; font-weight: 600; margin-bottom: 3px; }
+    .gh-intg-step-desc { font-size: 11.5px; opacity: 0.7; line-height: 1.45; margin-bottom: 7px; }
+    .gh-intg-step-desc code {
+      font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+      font-size: 10.5px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+    }
+    .gh-intg-cta {
+      display: inline-block;
+      padding: 6px 12px;
+      border-radius: 5px;
+      background: var(--accent, var(--red));
+      color: white;
+      font-size: 11.5px;
+      font-weight: 500;
+      text-decoration: none;
+      transition: opacity 0.12s;
+    }
+    .gh-intg-cta:hover { opacity: 0.9; text-decoration: none; }
+    .gh-intg-faq {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
+      font-size: 11.5px;
+    }
+    .gh-intg-faq summary { cursor: pointer; opacity: 0.7; user-select: none; }
+    .gh-intg-faq summary:hover { opacity: 1; }
+    .gh-intg-faq p { margin: 8px 0 0; opacity: 0.7; line-height: 1.5; }
