@@ -3424,7 +3424,7 @@ import createResearchSynapse from './researchSynapse.js';
 
     // Also submit on Enter (without shift)
     editor.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         saveBtn.click();
       }

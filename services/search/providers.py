@@ -64,7 +64,17 @@ def _get_provider_key(provider: str) -> str:
         if val:
             return val
     # Legacy fallback: old shared search_api_key field
-    return (settings.get("search_api_key") or "").strip()
+    legacy = (settings.get("search_api_key") or "").strip()
+    if legacy:
+        return legacy
+    env_map = {
+        "brave": "DATA_BRAVE_API_KEY",
+        "google_pse": "GOOGLE_API_KEY",
+        "tavily": "TAVILY_API_KEY",
+        "serper": "SERPER_API_KEY",
+    }
+    env_name = env_map.get(provider, "")
+    return (os.environ.get(env_name) or "").strip() if env_name else ""
 
 
 def _get_result_count() -> int:

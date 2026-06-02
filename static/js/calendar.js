@@ -13,6 +13,7 @@ import {
   CAL_PALETTE, CAL_COLORS, _CAL_CUSTOM_GRADIENT, _TYPE_PALETTE,
   _trashIcon, _moreIcon, _bellIcon,
   _isCalBgImage, _calBgImageUrl, _calBgCss,
+  _calReadableTextColor,
   _ds, _addDays, _shiftDT, _tzOffset, _localDateOf,
 } from './calendar/utils.js';
 
@@ -369,6 +370,10 @@ function _calColor(ev) {
   if (ev.color && !ev.color.startsWith('<')) return ev.color;
   const c = _calendars.find(c => c.href === ev.calendar_href);
   return c?.color || 'var(--accent)';
+}
+
+function _calEventFg(ev) {
+  return _calReadableTextColor(_calColor(ev));
 }
 
 // Extra inline style for an event row when the event has a custom BG image.
@@ -975,7 +980,7 @@ async function _renderMonth() {
       const startColInt = Math.round(startCol);
       const endColInt = Math.round(endCol);
       const span = endColInt - startColInt + 1;
-      h += `<div class="cal-multiday" style="--col:${startColInt};--span:${span};--slot:${barSlot};background:${_calColor(md)}" draggable="true" data-uid="${_e(md.uid)}" title="${_e(md.summary)}">${_e(md.summary)}</div>`;
+      h += `<div class="cal-multiday" style="--col:${startColInt};--span:${span};--slot:${barSlot};background:${_calColor(md)};--cal-event-fg:${_calEventFg(md)}" draggable="true" data-uid="${_e(md.uid)}" title="${_e(md.summary)}">${_e(md.summary)}</div>`;
       barSlot++;
     }
     h += '</div>';
@@ -1141,7 +1146,7 @@ async function _renderWeek() {
     // All-day strip
     colsHtml += `<div class="cal-wk-allday">`;
     for (const ev of allDayEvents) {
-      colsHtml += `<div class="cal-wk-allday-event" data-uid="${_e(ev.uid)}" style="background:${_calColor(ev)};" title="${_e(ev.summary)}">${_e(ev.summary)}</div>`;
+      colsHtml += `<div class="cal-wk-allday-event" data-uid="${_e(ev.uid)}" style="background:${_calColor(ev)};--cal-event-fg:${_calEventFg(ev)};" title="${_e(ev.summary)}">${_e(ev.summary)}</div>`;
     }
     colsHtml += `</div>`;
     // Hour-grid body

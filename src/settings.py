@@ -97,6 +97,11 @@ DEFAULT_SETTINGS = {
     "agent_max_tool_calls": 0,
     "agent_input_token_budget": 6000,
     "agent_stream_timeout_seconds": 300,
+    # Extra directory roots that read_file / write_file may access, in
+    # addition to the built-in project data/ and system temp dirs. Each
+    # entry is an absolute path. Sensitive subpaths (.ssh, .gnupg, shell
+    # rc files, SSH key files) are always blocked regardless of roots.
+    "tool_path_extra_roots": [],
     "task_endpoint_id": "",
     "task_model": "",
     "default_endpoint_id": "",

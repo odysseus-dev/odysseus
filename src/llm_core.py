@@ -603,43 +603,97 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
         elif "content" in item:
             cleaned.append(item)
 
-    # Merge consecutive user messages to satisfy strict role alternation requirements.
-    merged = []
-    for item in cleaned:
+    # Repair tool-call adjacency before sending to any OpenAI-compatible
+    # provider. Trimming/compaction/retries can leave `role:"tool"` messages
+    # without their immediately-preceding assistant `tool_calls` parent, which
+    # DeepSeek rejects with:
+    # "Messages with role 'tool' must be a response to a preceding message with
+    # 'tool_calls'". Also strip unanswered assistant tool_calls; some providers
+    # reject those as incomplete conversations.
+    repaired: List[Dict] = []
+    i = 0
+    while i < len(cleaned):
+        msg = cleaned[i]
+        role = msg.get("role")
+
+        if role == "tool":
+            # Orphan tool result. There is no valid assistant tool_calls parent
+            # immediately before this batch, so it cannot be sent.
+            logger.debug("Dropping orphan tool message before provider request")
+            i += 1
+            continue
+
+        tool_calls = msg.get("tool_calls") if role == "assistant" else None
+        if not tool_calls:
+            repaired.append(msg)
+            i += 1
+            continue
+
+        call_ids = [
+            str(tc.get("id"))
+            for tc in tool_calls
+            if isinstance(tc, dict) and tc.get("id")
+        ]
+        expected = set(call_ids)
+        answered_ids = []
+        tool_batch = []
+        j = i + 1
+        while j < len(cleaned) and cleaned[j].get("role") == "tool":
+            tid = str(cleaned[j].get("tool_call_id") or "")
+            if tid in expected and tid not in answered_ids:
+                answered_ids.append(tid)
+                tool_batch.append(cleaned[j])
+            else:
+                logger.debug("Dropping unmatched/duplicate tool message before provider request")
+            j += 1
+
+        if not tool_batch:
+            plain = {k: v for k, v in msg.items() if k != "tool_calls"}
+            if (plain.get("content") or "").strip():
+                repaired.append(plain)
+            else:
+                logger.debug("Dropping unanswered assistant tool_calls before provider request")
+            i = j
+            continue
+
+        answered = set(answered_ids)
+        pruned_calls = [
+            tc for tc in tool_calls
+            if isinstance(tc, dict) and str(tc.get("id")) in answered
+        ]
+        fixed = dict(msg)
+        fixed["tool_calls"] = pruned_calls
+        if "content" not in fixed:
+            fixed["content"] = None
+        repaired.append(fixed)
+        repaired.extend(tool_batch)
+        if len(pruned_calls) != len(tool_calls):
+            logger.debug("Pruned unanswered assistant tool_calls before provider request")
+        i = j
+
+    # Merge consecutive user messages to satisfy strict role alternation
+    # requirements after invalid tool-call fragments have been removed.
+    merged: List[Dict] = []
+    for item in repaired:
         if not merged:
             merged.append(item)
             continue
 
         last = merged[-1]
-        if last["role"] == "user" and item["role"] == "user":
+        if last.get("role") == "user" and item.get("role") == "user":
             last_copy = dict(last)
-
-            # Content:
-            last_content = last_copy.get("content")
-            item_content = item.get("content")
-
-            # Convert contents to string if they exist, or keep None/empty
-            last_str = str(last_content) if last_content is not None else ""
-            item_str = str(item_content) if item_content is not None else ""
-
-            if last_str and item_str:
-                new_content = f"{last_str}\n\n{item_str}"
-            elif last_str:
-                new_content = last_str
-            else:
-                new_content = item_str if item_str else None
-
-            if new_content is not None:
+            last_str = str(last_copy.get("content")) if last_copy.get("content") is not None else ""
+            item_str = str(item.get("content")) if item.get("content") is not None else ""
+            new_content = "\n\n".join(part for part in (last_str, item_str) if part)
+            if new_content:
                 last_copy["content"] = new_content
-            elif "content" in last_copy:
-                del last_copy["content"]
-
+            else:
+                last_copy.pop("content", None)
             merged[-1] = last_copy
         else:
             merged.append(item)
 
     return merged
-
 
 def _normalize_anthropic_url(url: str) -> str:
     """Ensure Anthropic URL points to /v1/messages."""
