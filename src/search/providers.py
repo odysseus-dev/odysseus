@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from typing import List, Optional
+from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -15,6 +16,30 @@ from .query import build_enhanced_query
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 20
+
+
+def _unwrap_ddg_redirect(url: str) -> str:
+    """Resolve a DuckDuckGo result link to its real target.
+
+    DDG's HTML endpoint returns links as the scheme-less redirect
+    `//duckduckgo.com/l/?uddg=<percent-encoded-target>&rut=...`. Fetching that
+    verbatim fails the downstream SSRF guard (no http/https scheme → "Blocked
+    non-public URL"), so every search result was being dropped. Pull the real
+    URL out of the `uddg` param; also upgrade any other scheme-less `//host`
+    link to https so it can be fetched.
+    """
+    if not url:
+        return url
+    parse_target = "https:" + url if url.startswith("//") else url
+    try:
+        p = urlparse(parse_target)
+        if p.netloc.endswith("duckduckgo.com") and p.path.startswith("/l/"):
+            uddg = parse_qs(p.query).get("uddg", [None])[0]
+            if uddg:
+                return unquote(uddg)
+    except Exception:
+        pass
+    return parse_target if url.startswith("//") else url
 
 # Provider registry — maps setting value to (label, needs_key, needs_url)
 PROVIDER_INFO = {
@@ -315,7 +340,7 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
                 link = result.select_one(".result__a")
                 if not link:
                     continue
-                url = link.get("href", "")
+                url = _unwrap_ddg_redirect(link.get("href", ""))
                 if not url:
                     continue
                 snippet_el = result.select_one(".result__snippet")
@@ -346,7 +371,7 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
         raw = ddgs.text(query, max_results=count, timelimit=timelimit)
         results = []
         for item in raw:
-            url = item.get("href", "")
+            url = _unwrap_ddg_redirect(item.get("href", ""))
             if not url:
                 continue
             results.append({
