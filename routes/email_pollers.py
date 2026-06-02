@@ -166,6 +166,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
     account_owner = _owner_for_email_account(account_id)
     _acct_owner = account_owner or None
 
+    conn = None
     try:
         await _emit_progress(progress_cb, "Connecting to mail…")
         conn = _imap_connect(account_id, owner=account_owner)
@@ -212,7 +213,6 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         # Re-select INBOX as default for downstream code
         conn.select("INBOX", readonly=True)
         if not uid_list:
-            conn.logout()
             return "No recent emails"
         await _emit_progress(progress_cb, f"Found {len(uid_list)} recent email(s); checking cache…")
 
@@ -250,7 +250,6 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         if not url:
             url, model, headers = resolve_endpoint("default", owner=account_owner)
         if not url or not model:
-            conn.logout()
             return "No model configured"
 
         writing_style = settings.get("email_writing_style", "")
@@ -884,7 +883,6 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                 logger.warning(f"Auto-process {uid} failed: {e}")
                 continue
 
-        conn.logout()
         await _emit_progress(progress_cb, "Finishing…")
         if processed > 0:
             logger.info(f"Auto-processed {processed} new email(s) for summary/reply/classify")
@@ -921,6 +919,12 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
     except Exception as e:
         logger.warning(f"Auto-summarize pass error: {e}")
         return f"Error: {e}"
+    finally:
+        if conn:
+            try:
+                conn.logout()
+            except Exception:
+                pass
 
 
 async def _auto_summarize_poller():
