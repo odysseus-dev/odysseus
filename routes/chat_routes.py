@@ -576,6 +576,7 @@ def setup_chat_routes(
         # append trusted text here; build_chat_context layers it onto the
         # preface. Empty in the base path.
         _extra_prompts: list[str] = []
+        _gh_briefing_text: str | None = None  # saved for late re-injection
 
         # GitHub: one DB query for all GitHub state (active, briefing, confirm,
         # notifications). Only runs when the toggle is on for the turn.
@@ -584,6 +585,7 @@ def setup_chat_routes(
             _gh = _GitHubState(getattr(sess, "owner", None) or "")
             if _gh.briefing:
                 _extra_prompts.append(_gh.briefing)
+                _gh_briefing_text = _gh.briefing
             if _gh.confirm_instruction:
                 _extra_prompts.append(_gh.confirm_instruction)
             _gh_notif = await _fetch_github_notif_hint(_gh)
@@ -1109,6 +1111,7 @@ def setup_chat_routes(
                         disabled_tools=disabled_tools if disabled_tools else None,
                         owner=_user,
                         fallbacks=_fallback_candidates,
+                        github_briefing=_gh_briefing_text,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
