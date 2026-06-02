@@ -6,6 +6,22 @@ from datetime import datetime
 # from it, so drop the stub here to load the real module under test.
 if "src.database" in sys.modules:
     del sys.modules["src.database"]
+_core_database = sys.modules.get("core.database")
+_core_database_all = getattr(_core_database, "__all__", None) if _core_database is not None else None
+if (
+    _core_database is not None
+    and (
+        not getattr(_core_database, "__file__", None)
+        or (
+            _core_database_all is not None
+            and (
+                not isinstance(_core_database_all, (list, tuple, set))
+                or not all(isinstance(name, str) for name in _core_database_all)
+            )
+        )
+    )
+):
+    del sys.modules["core.database"]
 
 import pytest
 from src.webhook_manager import validate_webhook_url

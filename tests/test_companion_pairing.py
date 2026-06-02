@@ -78,7 +78,12 @@ from core.middleware import require_admin  # noqa: E402
 
 # --- token minting: shown once, hashed at rest -----------------------------
 
-def test_mint_token_returns_raw_once_and_stores_only_a_hash():
+def test_mint_token_returns_raw_once_and_stores_only_a_hash(monkeypatch):
+    monkeypatch.setitem(sys.modules, "core.database", _db)
+    parent = sys.modules.get("core")
+    if parent is not None:
+        monkeypatch.setattr(parent, "database", _db, raising=False)
+
     token_id, raw = P.mint_token("alice")
     assert raw.startswith("ody_")
     # The persisted row stores a bcrypt hash + prefix, never the plaintext.
