@@ -19,6 +19,39 @@ COMPACT_THRESHOLD = 0.85  # Trigger compaction at 85% of context window
 SUMMARY_MAX_TOKENS = 1024
 SMALL_CONTEXT_LIMIT = 8192  # Models with context <= this get aggressive trimming
 
+# `agent_input_token_budget` setting semantics (resolved by
+# resolve_input_budget so the agent loop and tests share one definition):
+#   < 0  -> auto: scale the soft-trim budget to the model's context window,
+#           leaving headroom for the response. Shipped default, so long-context
+#           models aren't silently capped at a flat AUTO_BUDGET_FLOOR.
+#   == 0 -> unlimited: no soft trim at all (caller skips trimming).
+#   > 0  -> explicit hard cap, still bounded by the model's context window.
+AUTO_BUDGET_FLOOR = 6000      # never auto-trim below this (the legacy default)
+AUTO_BUDGET_FRACTION = 0.75   # fraction of the context window used in auto mode
+
+
+def resolve_input_budget(soft_budget: int, context_length: int,
+                         reserve_tokens: int = 512,
+                         floor: int = AUTO_BUDGET_FLOOR,
+                         fraction: float = AUTO_BUDGET_FRACTION) -> int:
+    """Resolve the effective soft input-token budget for context trimming.
+
+    See the `agent_input_token_budget` semantics above. Callers should skip
+    trimming entirely when ``soft_budget == 0`` (unlimited) before calling
+    this. In auto mode the budget scales with the model's context window but
+    never drops below ``floor``; when the window is unknown it falls back to
+    ``floor`` (the historical behavior).
+    """
+    if soft_budget > 0:
+        # Explicit hard cap, still bounded by the model's context window.
+        return min(context_length or soft_budget, soft_budget)
+    # Auto (soft_budget < 0): scale to the model's context window.
+    if context_length and context_length > 0:
+        scaled = int(context_length * fraction)
+        headroom = max(context_length - reserve_tokens, floor)
+        return max(floor, min(scaled, headroom))
+    return floor
+
 # Cursor-style self-summarization prompt — produces structured, dense summaries
 SELF_SUMMARY_SYSTEM_PROMPT = """You are summarizing a conversation to preserve context after compaction. Produce a structured summary that lets the conversation continue seamlessly.
 

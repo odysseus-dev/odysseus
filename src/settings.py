@@ -95,7 +95,14 @@ DEFAULT_SETTINGS = {
     # Tune via Settings or by editing data/settings.json.
     "research_run_timeout_seconds": 1800,
     "agent_max_tool_calls": 0,
-    "agent_input_token_budget": 6000,
+    # Soft input-token budget the agent trims history toward before each turn.
+    #   -1 (auto, default) — scale to the model's context window, reserving
+    #        room for the response. A flat cap silently throttled long-context
+    #        models, trimming a 200k-window model's input down to 6000 tokens.
+    #    0 — unlimited (no soft trim).
+    #   >0 — explicit hard cap, still bounded by the model's context window.
+    # Resolved in src/context_compactor.py:resolve_input_budget.
+    "agent_input_token_budget": -1,
     "agent_stream_timeout_seconds": 300,
     "task_endpoint_id": "",
     "task_model": "",

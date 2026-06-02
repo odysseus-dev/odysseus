@@ -15,9 +15,11 @@ for mod in [
         sys.modules[mod] = MagicMock()
 
 from src.context_compactor import (
+    AUTO_BUDGET_FLOOR,
     COMPACT_THRESHOLD,
     SELF_SUMMARY_SYSTEM_PROMPT,
     SUMMARY_MAX_TOKENS,
+    resolve_input_budget,
     trim_for_context,
 )
 
@@ -28,6 +30,44 @@ class TestCompactThreshold:
 
     def test_summary_max_tokens(self):
         assert SUMMARY_MAX_TOKENS == 1024
+
+
+class TestResolveInputBudget:
+    """`agent_input_token_budget` semantics: <0 auto, 0 unlimited (handled by
+    the caller), >0 explicit hard cap. Regression cover for #1170 — a flat
+    default must not silently cap long-context models."""
+
+    def test_explicit_cap_is_honored(self):
+        # An explicit positive budget is a hard cap regardless of window size.
+        assert resolve_input_budget(6000, context_length=200000) == 6000
+
+    def test_explicit_cap_bounded_by_small_window(self):
+        # A cap larger than the model window collapses to the window.
+        assert resolve_input_budget(50000, context_length=8000) == 8000
+
+    def test_explicit_cap_with_unknown_window(self):
+        # Unknown window (0) leaves the explicit cap untouched.
+        assert resolve_input_budget(6000, context_length=0) == 6000
+
+    def test_auto_scales_with_large_window(self):
+        # The bug in #1170: a 200k model used to be trimmed to 6000. Auto mode
+        # now scales to a generous fraction of the window instead.
+        budget = resolve_input_budget(-1, context_length=200000)
+        assert budget == int(200000 * 0.75)
+        assert budget > AUTO_BUDGET_FLOOR
+
+    def test_auto_never_below_floor(self):
+        # Small-context models keep at least the historical floor.
+        assert resolve_input_budget(-1, context_length=4096) == AUTO_BUDGET_FLOOR
+
+    def test_auto_unknown_window_falls_back_to_floor(self):
+        assert resolve_input_budget(-1, context_length=0) == AUTO_BUDGET_FLOOR
+
+    def test_auto_leaves_response_headroom(self):
+        # Auto must never claim the entire window — reserve_tokens stays free.
+        budget = resolve_input_budget(-1, context_length=8192, reserve_tokens=2048)
+        assert budget <= 8192 - 2048 or budget == AUTO_BUDGET_FLOOR
+        assert budget < 8192
 
 
 class TestSelfSummaryPrompt:
