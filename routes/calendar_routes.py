@@ -758,6 +758,16 @@ def setup_calendar_routes() -> APIRouter:
             )
             db.add(ev)
             db.commit()
+            if cal.source == "caldav":
+                # Push the new event to the remote so it appears on the user's
+                # other devices — the sync is otherwise pull-only (#800).
+                from src.caldav_writeback import writeback_event
+                await writeback_event(owner, cal.source, cal.id, {
+                    "uid": uid, "summary": data.summary, "description": data.description,
+                    "location": data.location, "dtstart": dtstart, "dtend": dtend,
+                    "all_day": data.all_day, "is_utc": _is_utc and not data.all_day,
+                    "rrule": data.rrule or "",
+                })
             return {"ok": True, "uid": uid}
         except HTTPException:
             raise
@@ -804,6 +814,14 @@ def setup_calendar_routes() -> APIRouter:
             if data.color is not None:
                 ev.color = data.color if data.color else None
             db.commit()
+            cal = db.query(CalendarCal).filter(CalendarCal.id == ev.calendar_id).first()
+            if cal and cal.source == "caldav":
+                from src.caldav_writeback import writeback_event
+                await writeback_event(owner, cal.source, cal.id, {
+                    "uid": ev.uid, "summary": ev.summary, "description": ev.description,
+                    "location": ev.location, "dtstart": ev.dtstart, "dtend": ev.dtend,
+                    "all_day": ev.all_day, "is_utc": ev.is_utc, "rrule": ev.rrule or "",
+                })
             return {"ok": True}
         except HTTPException:
             raise
@@ -824,8 +842,15 @@ def setup_calendar_routes() -> APIRouter:
         db = SessionLocal()
         try:
             ev = _get_or_404_event(db, base_uid, owner)
+            # Capture what the remote push needs BEFORE the row is gone.
+            _cal = db.query(CalendarCal).filter(CalendarCal.id == ev.calendar_id).first()
+            _is_caldav = bool(_cal and _cal.source == "caldav")
+            _cal_id, _ev_uid = ev.calendar_id, ev.uid
             db.delete(ev)
             db.commit()
+            if _is_caldav:
+                from src.caldav_writeback import writeback_event
+                await writeback_event(owner, "caldav", _cal_id, {"uid": _ev_uid}, delete=True)
             return {"ok": True}
         except HTTPException:
             raise
