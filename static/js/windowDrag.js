@@ -35,6 +35,9 @@
 //                        Default true.
 //     enableFullscreen: bool — enable top-edge fullscreen snap.
 //                        Default true when onEnterFullscreen is supplied.
+//     persistPosition: bool — persist normal windowed drag positions by modal id.
+//                        Default true for .modal elements except settings-modal.
+//     positionStorageKey: optional localStorage key override for persisted position.
 
 import { makeEdgeDockController } from './modalSnap.js';
 import { makeWindowResizable } from './windowResize.js';
@@ -43,6 +46,9 @@ const SNAP_PX = 6;        // cursor distance from top edge for fullscreen snap
 const UNSNAP_PX = 24;     // cursor distance from top before fullscreen exits
 const DOCK_EDGE_PX = 60;  // cursor distance from L/R edge to trigger dock
                           // exit while still in fullscreen state
+const POSITION_STORAGE_PREFIX = 'odysseus-modal-position-v1:';
+const POSITION_MIN_VISIBLE_X = 96;
+const POSITION_MIN_VISIBLE_Y = 56;
 
 // CSS-var lookup for the rail+sidebar width — used to decide where the
 // "left edge" effectively is during a fullscreen drag-out (the cursor
@@ -67,6 +73,14 @@ export function makeWindowDraggable(modal, options = {}) {
   const mobileSkip = (typeof options.mobileSkip === 'number') ? options.mobileSkip : 768;
   const enableTouch = options.enableTouch !== false;
   const enableDock = options.enableDock !== false && !!modal;
+  const positionStorageKey = options.positionStorageKey
+    || (modal && modal.id ? POSITION_STORAGE_PREFIX + modal.id : null);
+  const persistPosition = options.persistPosition !== false
+    && !!positionStorageKey
+    && modal
+    && modal.classList
+    && modal.classList.contains('modal')
+    && modal.id !== 'settings-modal';
 
   header.style.cursor = 'move';
   header.style.userSelect = 'none';
@@ -97,6 +111,88 @@ export function makeWindowDraggable(modal, options = {}) {
   // window enables it so you can park the message on the left and read it
   // while replying in the document on the right.
   const leftDock = (enableDock && options.enableLeftDock) ? makeEdgeDockController(modal, 'left') : null;
+
+  const _isDocked = () => !!(modal && (
+    modal.classList.contains('modal-right-docked') ||
+    modal.classList.contains('modal-left-docked')
+  ));
+  const _isMobilePosition = () => mobileSkip > 0 && window.innerWidth <= mobileSkip;
+  const _isPositionManaged = () => persistPosition
+    && !_isMobilePosition()
+    && !_isDocked()
+    && !_isFullscreen()
+    && !content.dataset._tileZone;
+  const _resetPosition = () => {
+    content.style.position = '';
+    content.style.left = '';
+    content.style.top = '';
+    content.style.right = '';
+    content.style.bottom = '';
+    content.style.margin = '';
+    content.style.transform = '';
+  };
+  const _clampPosition = (left, top) => {
+    const rect = content.getBoundingClientRect();
+    const width = rect.width || content.offsetWidth || POSITION_MIN_VISIBLE_X;
+    const height = rect.height || content.offsetHeight || POSITION_MIN_VISIBLE_Y;
+    const maxLeft = Math.max(8, window.innerWidth - Math.min(width, POSITION_MIN_VISIBLE_X));
+    const maxTop = Math.max(8, window.innerHeight - Math.min(height, POSITION_MIN_VISIBLE_Y));
+    return {
+      left: Math.max(8, Math.min(maxLeft, left)),
+      top: Math.max(8, Math.min(maxTop, top)),
+    };
+  };
+  const _applyPosition = (position) => {
+    content.style.position = 'fixed';
+    content.style.left = position.left + 'px';
+    content.style.top = position.top + 'px';
+    content.style.right = '';
+    content.style.bottom = '';
+    content.style.margin = '0';
+  };
+  const _savePosition = () => {
+    if (!_isPositionManaged()) return;
+    try {
+      const rect = content.getBoundingClientRect();
+      localStorage.setItem(positionStorageKey, JSON.stringify(_clampPosition(rect.left, rect.top)));
+    } catch (_) {}
+  };
+  const _restorePosition = () => {
+    if (!_isPositionManaged()) {
+      _resetPosition();
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(positionStorageKey);
+      if (!raw) {
+        _resetPosition();
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      const left = Number(parsed && parsed.left);
+      const top = Number(parsed && parsed.top);
+      if (!Number.isFinite(left) || !Number.isFinite(top)) {
+        _resetPosition();
+        localStorage.removeItem(positionStorageKey);
+        return;
+      }
+      _applyPosition(_clampPosition(left, top));
+    } catch (_) {
+      _resetPosition();
+    }
+  };
+
+  if (persistPosition) {
+    requestAnimationFrame(() => {
+      if (!modal.classList.contains('hidden')) _restorePosition();
+    });
+    new MutationObserver(() => {
+      if (!modal.classList.contains('hidden')) _restorePosition();
+    }).observe(modal, { attributes: true, attributeFilter: ['class'] });
+    window.addEventListener('resize', () => {
+      if (!modal.classList.contains('hidden')) _restorePosition();
+    });
+  }
 
   // Per-drag state, reset on mousedown.
   let dragging = false;
@@ -249,12 +345,14 @@ export function makeWindowDraggable(modal, options = {}) {
       if (leftDock) leftDock.release();
       if (fsClass && modal) modal.classList.remove(fsClass);  // dock takes over from fullscreen
       rightDock.commit();
+      _resetPosition();
       return;
     }
     if (leftDock && leftDock.hovering()) {
       if (rightDock) rightDock.release();
       if (fsClass && modal) modal.classList.remove(fsClass);
       leftDock.commit();
+      _resetPosition();
       return;
     }
     if (rightDock) rightDock.release();
@@ -263,6 +361,7 @@ export function makeWindowDraggable(modal, options = {}) {
       const r = content.getBoundingClientRect();
       try { onDragEnd({ rect: r }); } catch (_) {}
     }
+    _savePosition();
   };
 
   header.addEventListener('mousedown', (e) => {
