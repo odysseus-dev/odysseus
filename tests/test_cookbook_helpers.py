@@ -302,6 +302,17 @@ def test_serve_runner_preserves_command_exit_code():
     assert 'echo "=== Process exited with code $? ==="' not in script
 
 
+def test_pip_serve_runner_emits_download_ok_before_exit_marker():
+    """Dependency installs run through the serve wrapper need the download marker."""
+    runner_lines = ["python3 -m pip install llama-cpp-python"]
+    _append_serve_exit_code_lines(runner_lines, keep_shell_open=False, is_pip_install=True)
+    script = "\n".join(runner_lines)
+
+    assert 'echo "DOWNLOAD_OK"' in script
+    assert script.index('echo "DOWNLOAD_OK"') < script.index("=== Process exited with code")
+    assert 'exit "$ODYSSEUS_CMD_EXIT"' in script
+
+
 def test_validate_serve_cmd_accepts_vllm_kv_cache_dtype():
     cmd = (
         "CUDA_VISIBLE_DEVICES=0,1 vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 "
@@ -420,6 +431,13 @@ def test_llama_cpp_linux_bootstrap_nvcc_without_cudart_warns_and_falls_back():
     no_toolchain_warn = 'WARNING: no HIP/CUDA toolchain found'
     assert cpu_cmake in script
     assert script.index(cpu_cmake) < script.index(no_toolchain_warn)
+
+
+def test_llama_cpp_linux_bootstrap_uses_single_shell_continuations():
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+
+    assert not any(line.endswith("\\\\") for line in runner_lines)
 
 
 def test_llama_cpp_linux_bootstrap_keeps_cpu_fallback_when_no_gpu_toolchain():

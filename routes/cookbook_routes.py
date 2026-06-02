@@ -974,6 +974,8 @@ def setup_cookbook_routes() -> APIRouter:
                 ps_lines.append('Write-Host "ERROR: vLLM is not supported on Windows. Use Ollama or llama.cpp instead."')
                 ps_lines.append('exit 1')
             ps_lines.append(req.cmd)
+            if is_pip_install:
+                ps_lines.append('if ($LASTEXITCODE -eq 0) { Write-Host ""; Write-Host "DOWNLOAD_OK" }')
             ps_lines.append('Write-Host ""')
             ps_lines.append('Write-Host "=== Process exited with code $LASTEXITCODE ==="')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
@@ -1159,10 +1161,18 @@ def setup_cookbook_routes() -> APIRouter:
                 if local_windows:
                     # Detached background process — no interactive shell to keep open.
                     # Print the exit marker the status poller looks for, then stop.
-                    _append_serve_exit_code_lines(runner_lines, keep_shell_open=False)
+                    _append_serve_exit_code_lines(
+                        runner_lines,
+                        keep_shell_open=False,
+                        is_pip_install=is_pip_install,
+                    )
                 else:
                     # Keep shell open after exit so user can see errors
-                    _append_serve_exit_code_lines(runner_lines, keep_shell_open=True)
+                    _append_serve_exit_code_lines(
+                        runner_lines,
+                        keep_shell_open=True,
+                        is_pip_install=is_pip_install,
+                    )
 
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
             runner_path.write_text("\n".join(runner_lines) + "\n", encoding="utf-8")

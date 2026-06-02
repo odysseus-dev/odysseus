@@ -552,9 +552,16 @@ def _append_serve_preflight_exit_lines(runner_lines: list[str], *, keep_shell_op
     runner_lines.append('fi')
 
 
-def _append_serve_exit_code_lines(runner_lines: list[str], *, keep_shell_open: bool) -> None:
+def _append_serve_exit_code_lines(
+    runner_lines: list[str],
+    *,
+    keep_shell_open: bool,
+    is_pip_install: bool = False,
+) -> None:
     """Append serve-runner lines that preserve and report the command exit code."""
     runner_lines.append('ODYSSEUS_CMD_EXIT=$?')
+    if is_pip_install:
+        runner_lines.append('if [ $ODYSSEUS_CMD_EXIT -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; fi')
     if keep_shell_open:
         runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="; exec "${SHELL:-/bin/bash}"')
     else:
