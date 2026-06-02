@@ -2673,7 +2673,7 @@ async def _cookbook_register_task(session_id: str, model: str, host: str,
 _APP_API_BLOCKLIST_PREFIXES = (
     "/api/auth/",          # login/logout/password
     "/api/users/",         # user CRUD
-    "/api/tokens/",        # api token mgmt
+    "/api/tokens",         # api token mgmt (collection + /{id}; no trailing slash so GET/POST /api/tokens are covered too)
     "/api/admin/",         # admin one-shots (wipe etc.)
     "/api/backup/restore", # destructive restore
 )
