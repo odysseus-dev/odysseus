@@ -5,14 +5,22 @@ MCP server exposing GitHub tools (read + gated write). Authenticated with a
 per-user Personal Access Token stored encrypted in
 `github_integrations.pat_encrypted` and decrypted at request time.
 
-Routing: a request comes in with no per-user context (MCP is process-wide).
-We resolve which user's PAT to use via the `ODYSSEUS_GH_OWNER` env var if a
-spawner injects it; otherwise we infer the owner from the DB, but ONLY when
-that inference is unambiguous (exactly one enabled integration — the solo
-self-host case). If two or more users have enabled the integration without an
-injected owner, `_resolve_owner` raises `AmbiguousOwnerError` and every tool
-call fails closed, rather than silently acting with an arbitrary user's token.
-True multi-tenant routing (per-call owner) is a documented follow-up.
+Routing (per-call, multi-tenant): the server is a single process-wide stdio
+instance shared by all Odysseus users, so each tool call must say whose PAT to
+use. The trusted dispatch layer (src/tool_execution.execute_tool_block) stamps
+the authenticated session owner onto every github call as `_owner`; call_tool
+pops it and threads it explicitly through `_dispatch` → `_gh_request` /
+`_git_push_subprocess`. Identity is therefore per-call and passed by argument
+(never module/global state), so concurrent calls from different users can't
+cross PATs.
+
+If a caller doesn't stamp `_owner` (any non-agent path), we fall back to
+inferring the owner from the DB — but ONLY when unambiguous (exactly one
+enabled integration, the solo self-host case). With two or more enabled
+integrations and no `_owner`, `_resolve_owner` raises `AmbiguousOwnerError` and
+the call fails CLOSED rather than acting with an arbitrary user's token. The
+`ODYSSEUS_GH_OWNER` env var still overrides DB inference if a future spawner
+sets it.
 
 Tool gating happens upstream in routes/chat_routes.py: the gh_* read tools are
 gated by `allow_github`, and the write tools additionally require
@@ -93,6 +101,11 @@ class AmbiguousOwnerError(RuntimeError):
     """Raised when this process-wide server cannot tell whose PAT to use."""
 
 
+# Sentinel: distinguishes "_owner key absent" (non-agent caller → fall back to
+# DB resolution) from "_owner present and empty" (the solo-install owner "").
+_OWNER_UNSET = object()
+
+
 def _resolve_owner() -> str | None:
     """Owner whose PAT this server acts with.
 
@@ -138,17 +151,19 @@ async def _gh_request(
     method: str,
     path: str,
     *,
+    owner: str | None,
     params: dict | None = None,
     json_body: dict | None = None,
 ) -> dict | list | None:
-    """Hit the GitHub REST API with the current owner's PAT.
+    """Hit the GitHub REST API with `owner`'s PAT.
 
-    Returns parsed JSON. On HTTP errors raises with the upstream message so
-    the agent can surface useful failure context. Network errors are also
-    raised; callers in the tool layer should catch and return error
-    TextContent so the agent doesn't crash."""
-    owner = _resolve_owner()
-    if not owner:
+    `owner` is resolved per-call by the dispatcher (the authenticated Odysseus
+    user, or DB fallback for non-agent callers) — never inferred here, so
+    concurrent calls from different users can't cross PATs. `owner=""` is a
+    valid lookup key (the solo-install owner); only `owner is None` is "no
+    owner". Returns parsed JSON. On HTTP errors raises with the upstream
+    message so the agent can surface useful failure context."""
+    if owner is None:
         raise RuntimeError("No GitHub integration owner found — set one up in Settings → Integrations.")
     pat = _load_pat(owner)
     if not pat:
@@ -526,8 +541,19 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    args = dict(arguments or {})
+    # Per-call identity. The trusted dispatch layer
+    # (src/tool_execution.execute_tool_block) stamps the authenticated Odysseus
+    # owner onto every github tool call as `_owner`. Pop it BEFORE dispatch so
+    # (a) it can never leak into a GitHub API request and (b) this call's PAT
+    # is looked up by it. If `_owner` is absent — a non-agent caller that
+    # didn't stamp it — fall back to single-owner DB resolution, which fails
+    # CLOSED on ambiguity (raises AmbiguousOwnerError) rather than guessing.
+    owner = args.pop("_owner", _OWNER_UNSET)
     try:
-        result = await _dispatch(name, arguments or {})
+        if owner is _OWNER_UNSET:
+            owner = _resolve_owner()  # may raise AmbiguousOwnerError
+        result = await _dispatch(name, args, owner)
     except Exception as e:
         return [TextContent(type="text", text=f"Error: {e}")]
     if isinstance(result, str):
@@ -535,9 +561,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
 
 
-async def _dispatch(name: str, args: dict) -> Any:
+async def _dispatch(name: str, args: dict, acting_owner: str | None) -> Any:
+    # `acting_owner` is the Odysseus identity for this call. It is deliberately
+    # NOT named `owner`: several branches below rebind a local `owner` to the
+    # GitHub *repo* owner from args, and the `gh` closure must keep routing the
+    # PAT by the Odysseus user, not whatever repo is being addressed.
+    async def gh(method, path, **kw):
+        return await _gh_request(method, path, owner=acting_owner, **kw)
+
     if name == "gh_me":
-        me = await _gh_request("GET", "/user")
+        me = await gh("GET", "/user")
         if not me:
             return {"error": "no response"}
         return {
@@ -551,20 +584,20 @@ async def _dispatch(name: str, args: dict) -> Any:
     if name == "gh_list_my_prs":
         state = args.get("state", "open")
         involves = args.get("involves_me", "involves")
-        me = await _gh_request("GET", "/user")
+        me = await gh("GET", "/user")
         login = (me or {}).get("login") if me else None
         if not login:
             return {"error": "could not resolve current user"}
         # GitHub search supports state:open is:pr involves:LOGIN
         state_part = "" if state == "all" else f"state:{state}"
         query = f"is:pr {state_part} {involves}:{login}".strip()
-        out = await _gh_request("GET", "/search/issues", params={"q": query, "per_page": 30, "sort": "updated"})
+        out = await gh("GET", "/search/issues", params={"q": query, "per_page": 30, "sort": "updated"})
         items = (out or {}).get("items", [])
         return {"count": (out or {}).get("total_count", 0), "items": [_trim_issue(i) for i in items]}
 
     if name == "gh_get_pr":
         owner, repo, number = args["owner"], args["repo"], args["number"]
-        pr = await _gh_request("GET", f"/repos/{owner}/{repo}/pulls/{number}")
+        pr = await gh("GET", f"/repos/{owner}/{repo}/pulls/{number}")
         return _trim_pr(pr or {})
 
     if name == "gh_get_pr_diff":
@@ -572,10 +605,13 @@ async def _dispatch(name: str, args: dict) -> Any:
         max_chars = int(args.get("max_chars") or 30000)
         # Request the diff representation directly via the Accept header trick.
         # Our _gh_request hardcodes a JSON Accept header; for the diff we hit
-        # httpx directly with an override.
-        pat = _load_pat(_resolve_owner() or "")
+        # httpx directly with an override — but route the PAT by THIS call's
+        # owner, same as every other request.
+        if acting_owner is None:
+            raise RuntimeError("No GitHub integration owner found — set one up in Settings → Integrations.")
+        pat = _load_pat(acting_owner)
         if not pat:
-            raise RuntimeError("No GitHub PAT configured.")
+            raise RuntimeError(f"No GitHub PAT found for user '{acting_owner}' (integration disabled or missing).")
         url = f"{GH_API}/repos/{owner}/{repo}/pulls/{number}"
         headers = {
             "Authorization": f"Bearer {pat}",
@@ -596,8 +632,8 @@ async def _dispatch(name: str, args: dict) -> Any:
         owner, repo, number = args["owner"], args["repo"], args["number"]
         # PRs have two comment streams: issue comments on the PR itself,
         # and review/inline comments on the diff. Merge into one timeline.
-        issue_comments = await _gh_request("GET", f"/repos/{owner}/{repo}/issues/{number}/comments", params={"per_page": 50})
-        review_comments = await _gh_request("GET", f"/repos/{owner}/{repo}/pulls/{number}/comments", params={"per_page": 50})
+        issue_comments = await gh("GET", f"/repos/{owner}/{repo}/issues/{number}/comments", params={"per_page": 50})
+        review_comments = await gh("GET", f"/repos/{owner}/{repo}/pulls/{number}/comments", params={"per_page": 50})
         merged: list = []
         for c in (issue_comments or []):
             merged.append({**_trim_comment(c), "_stream": "issue"})
@@ -609,7 +645,7 @@ async def _dispatch(name: str, args: dict) -> Any:
     if name == "gh_search_issues":
         query = args["query"]
         per_page = min(int(args.get("per_page") or 10), 30)
-        out = await _gh_request("GET", "/search/issues", params={"q": query, "per_page": per_page, "sort": "updated"})
+        out = await gh("GET", "/search/issues", params={"q": query, "per_page": per_page, "sort": "updated"})
         items = (out or {}).get("items", [])
         return {"total": (out or {}).get("total_count", 0), "items": [_trim_issue(i) for i in items]}
 
@@ -618,7 +654,7 @@ async def _dispatch(name: str, args: dict) -> Any:
             "all": "true" if args.get("all") else "false",
             "per_page": min(int(args.get("per_page") or 20), 50),
         }
-        out = await _gh_request("GET", "/notifications", params=params)
+        out = await gh("GET", "/notifications", params=params)
         return {"count": len(out or []), "notifications": [_trim_notification(n) for n in (out or [])]}
 
     # ── WRITE TOOLS ──
@@ -628,7 +664,7 @@ async def _dispatch(name: str, args: dict) -> Any:
         # general comment thread. The split tool names are purely for clarity.
         owner, repo, number = args["owner"], args["repo"], args["number"]
         body = args["body"]
-        out = await _gh_request(
+        out = await gh(
             "POST",
             f"/repos/{owner}/{repo}/issues/{number}/comments",
             json_body={"body": body},
@@ -652,7 +688,7 @@ async def _dispatch(name: str, args: dict) -> Any:
             body["body"] = args["body"]
         if args.get("draft"):
             body["draft"] = True
-        out = await _gh_request("POST", f"/repos/{owner}/{repo}/pulls", json_body=body)
+        out = await gh("POST", f"/repos/{owner}/{repo}/pulls", json_body=body)
         return _trim_pr(out or {})
 
     if name == "gh_edit_pr":
@@ -664,13 +700,13 @@ async def _dispatch(name: str, args: dict) -> Any:
                 body[f] = args[f]
         if not body:
             return {"error": "Nothing to update — pass at least one of: title, body, state, base."}
-        out = await _gh_request("PATCH", f"/repos/{owner}/{repo}/pulls/{number}", json_body=body)
+        out = await gh("PATCH", f"/repos/{owner}/{repo}/pulls/{number}", json_body=body)
         return _trim_pr(out or {})
 
     if name == "gh_close_issue":
         owner, repo, number = args["owner"], args["repo"], args["number"]
         reason = args.get("state_reason") or "completed"
-        out = await _gh_request(
+        out = await gh(
             "PATCH",
             f"/repos/{owner}/{repo}/issues/{number}",
             json_body={"state": "closed", "state_reason": reason},
@@ -685,16 +721,16 @@ async def _dispatch(name: str, args: dict) -> Any:
     if name == "gh_mark_notification_read":
         thread_id = args.get("thread_id")
         if thread_id:
-            await _gh_request("PATCH", f"/notifications/threads/{thread_id}")
+            await gh("PATCH", f"/notifications/threads/{thread_id}")
             return {"marked": "one", "thread_id": thread_id}
         if args.get("all"):
             # Bulk mark-all-read: PUT /notifications (last_read_at defaults to now).
-            await _gh_request("PUT", "/notifications", json_body={})
+            await gh("PUT", "/notifications", json_body={})
             return {"marked": "all"}
         return {"error": "Pass thread_id (single) or all=true (bulk)."}
 
     if name == "gh_push_commits":
-        return await _git_push_subprocess(args)
+        return await _git_push_subprocess(args, acting_owner)
 
     raise RuntimeError(f"Unknown tool: {name}")
 
@@ -839,13 +875,14 @@ async def _pre_push_secret_scan(
         return []  # fail-open
 
 
-async def _git_push_subprocess(args: dict) -> dict:
-    """Push a local branch using the user's PAT as the HTTPS credential.
+async def _git_push_subprocess(args: dict, owner: str | None) -> dict:
+    """Push a local branch using `owner`'s PAT as the HTTPS credential.
 
-    GH_TOKEN/GITHUB_TOKEN are injected into the subprocess env so a git
-    credential helper can authenticate HTTPS remotes; SSH remotes ignore the
-    token and use the agent (orthogonal). Returns a structured result so the
-    agent can confirm success and surface failure output verbatim."""
+    The PAT (when present) is injected into the subprocess env and consumed by
+    a one-shot credential helper below; SSH remotes ignore it and use the agent
+    (orthogonal). `owner` is the per-call identity resolved by the dispatcher.
+    Returns a structured result so the agent can confirm success and surface
+    failure output verbatim."""
     repo_path = args.get("repo_path") or ""
     if not repo_path:
         return {"error": "repo_path is required."}
@@ -855,8 +892,8 @@ async def _git_push_subprocess(args: dict) -> dict:
     if not (repo_dir / ".git").exists():
         return {"error": f"Not a git working tree (no .git): {repo_dir}"}
 
-    owner = _resolve_owner()
-    pat = _load_pat(owner or "") if owner else None
+    # owner == "" is a valid lookup key (solo install); only None means "none".
+    pat = _load_pat(owner) if owner is not None else None
     # PAT not hard-required — SSH remotes work without one. Inject if present.
     env = os.environ.copy()
     if pat:

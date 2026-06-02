@@ -923,6 +923,15 @@ async def execute_tool_block(
                 args = json.loads(content) if content.strip().startswith("{") else {}
             except (json.JSONDecodeError, TypeError):
                 args = {}
+            # Per-call identity for the GitHub MCP server: it's a single shared
+            # process with no per-user context of its own, so we stamp the
+            # authenticated session owner onto every github call here — the one
+            # trusted dispatch point that knows `owner`. OVERWRITE, never merge:
+            # the model must not be able to spoof identity by emitting its own
+            # `_owner`. `owner or ""` maps the solo-install None to the ""-keyed
+            # integration row. Other MCP servers don't read this key.
+            if tool.startswith("mcp__github__"):
+                args["_owner"] = owner or ""
             desc = f"mcp: {tool}"
             result = await mcp.call_tool(tool, args)
         else:
