@@ -120,8 +120,18 @@ function _show(modal) {
     _markSeen();
   };
   pop.querySelector('.tour-hint-dismiss').addEventListener('click', dismiss);
+  // Esc to dismiss
+  const _onEsc = (e) => {
+    if (e.key === 'Escape' && pop.isConnected) {
+      e.preventDefault();
+      e.stopPropagation();
+      dismiss();
+      document.removeEventListener('keydown', _onEsc, true);
+    }
+  };
+  document.addEventListener('keydown', _onEsc, true);
   // Auto-dismiss after 14s so it doesn't linger forever.
-  setTimeout(() => { if (pop.isConnected) dismiss(); }, 14000);
+  setTimeout(() => { if (pop.isConnected) { dismiss(); document.removeEventListener('keydown', _onEsc, true); } }, 14000);
 }
 
 function _watchModals() {

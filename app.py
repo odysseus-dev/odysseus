@@ -730,8 +730,52 @@ async def get_version():
     return {"version": APP_VERSION}
 
 @app.get("/api/health")
-async def health_check() -> Dict[str, str]:
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+async def health_check() -> Dict[str, object]:
+    import httpx
+    checks = {}
+    all_ok = True
+
+    # Database
+    try:
+        from core.database import engine
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {e}"
+        all_ok = False
+
+    # ChromaDB
+    chroma_host = os.getenv("CHROMADB_HOST", "127.0.0.1")
+    chroma_port = os.getenv("CHROMADB_PORT", "8100")
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"http://{chroma_host}:{chroma_port}/api/v1/heartbeat")
+            checks["chromadb"] = "ok" if r.status_code == 200 else f"status {r.status_code}"
+            if r.status_code != 200:
+                all_ok = False
+    except Exception as e:
+        checks["chromadb"] = f"error: {e}"
+        all_ok = False
+
+    # SearXNG
+    searxng_url = os.getenv("SEARXNG_INSTANCE", "http://127.0.0.1:8080")
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{searxng_url}/")
+            checks["searxng"] = "ok" if r.status_code == 200 else f"status {r.status_code}"
+            if r.status_code != 200:
+                all_ok = False
+    except Exception as e:
+        checks["searxng"] = f"error: {e}"
+        all_ok = False
+
+    return {
+        "status": "healthy" if all_ok else "degraded",
+        "timestamp": datetime.utcnow().isoformat(),
+        "checks": checks,
+    }
 
 @app.get("/api/runtime")
 async def runtime_info() -> Dict[str, object]:

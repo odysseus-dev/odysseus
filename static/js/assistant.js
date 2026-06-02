@@ -108,6 +108,14 @@ function _ensureModalEl() {
   modal.addEventListener('click', (e) => {
     if (e.target === modal) _closeModal();
   });
+  // Esc to close
+  modal.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      _closeModal();
+    }
+  });
   _modalEl = modal;
   return modal;
 }
