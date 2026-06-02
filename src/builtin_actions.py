@@ -359,7 +359,7 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
         last_watermark = None
         try:
             if STATE_FILE.exists():
-                saved = json.loads(STATE_FILE.read_text())
+                saved = json.loads(STATE_FILE.read_text(encoding="utf-8"))
                 if saved.get("last_created_at"):
                     last_watermark = datetime.fromisoformat(saved["last_created_at"])
         except Exception:
@@ -420,7 +420,7 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
                         "last_run_at": datetime.utcnow().isoformat(),
                         "scanned": len(events),
                         "removed": len(removed),
-                    }, indent=2))
+                    }, indent=2), encoding="utf-8")
             except Exception as se:
                 logger.warning(f"tidy_calendar watermark save failed: {se}")
 
@@ -1469,7 +1469,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
         _legacy = _P("data/note_pings.json")
         if _legacy.exists() and not STATE.exists():
             try:
-                STATE.write_text(_legacy.read_text())
+                STATE.write_text(_legacy.read_text(encoding="utf-8"), encoding="utf-8")
             except Exception:
                 pass
         # Scanner ticks every 60s in _note_pings_loop. 90s window guarantees
@@ -1494,7 +1494,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                 return None
 
         try:
-            cache = _json.loads(STATE.read_text()) if STATE.exists() else {}
+            cache = _json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {}
         except Exception:
             cache = {}
 
@@ -1571,7 +1571,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                 cache.pop(stale, None)
 
             try:
-                STATE.write_text(_json.dumps(cache))
+                STATE.write_text(_json.dumps(cache), encoding="utf-8")
             except Exception as e:
                 logger.warning(f"ping_notes: cache write failed: {e}")
 
@@ -1676,7 +1676,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         for acc in accounts:
             cache_file = CACHE_DIR / f"{acc.id}.json"
             try:
-                cache = _json.loads(cache_file.read_text()) if cache_file.exists() else {"uids": {}}
+                cache = _json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {"uids": {}}
             except Exception:
                 cache = {"uids": {}}
 
@@ -1918,7 +1918,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 cache_uids.pop(stale, None)
 
             try:
-                cache_file.write_text(_json.dumps(cache))
+                cache_file.write_text(_json.dumps(cache), encoding="utf-8")
             except Exception as e:
                 logger.warning(f"urgency: cache write failed for {acc.id}: {e}")
 
@@ -2003,7 +2003,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
 
         # Load prior state to know which urgent UIDs we've already notified.
         try:
-            prior = _json.loads(STATE_PATH.read_text()) if STATE_PATH.exists() else {}
+            prior = _json.loads(STATE_PATH.read_text(encoding="utf-8")) if STATE_PATH.exists() else {}
         except Exception:
             prior = {}
         notified_uids = set(prior.get("notified_uids", []))
@@ -2087,7 +2087,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             "notified_uids": sorted(notified_uids),
         }
         try:
-            STATE_PATH.write_text(_json.dumps(state))
+            STATE_PATH.write_text(_json.dumps(state), encoding="utf-8")
         except Exception as e:
             logger.warning(f"urgency: state write failed: {e}")
 
