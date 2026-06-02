@@ -2091,6 +2091,7 @@ async function _reconnectTask(el, task) {
   const controller = new AbortController();
   el._abort = controller;
   let failCount = 0;
+  const isLocalWindowsTask = !task.remoteHost && /Win/i.test(navigator.platform || navigator.userAgent || '');
 
   while (!controller.signal.aborted) {
     if (!el.isConnected) {
@@ -2098,6 +2099,50 @@ async function _reconnectTask(el, task) {
       break;
     }
     try {
+      if (isLocalWindowsTask) {
+        const res = await fetch('/api/cookbook/tasks/status', { credentials: 'same-origin' });
+        if (!res.ok) {
+          await new Promise(r => setTimeout(r, 5000));
+          continue;
+        }
+        const data = await res.json().catch(() => ({}));
+        const live = (data.tasks || []).find(t => t.session_id === task.sessionId);
+        if (!live) {
+          await new Promise(r => setTimeout(r, 5000));
+          continue;
+        }
+        const snapshot = (live.output_tail || '').trim();
+        if (snapshot) {
+          output.textContent = snapshot;
+          output.scrollTop = output.scrollHeight;
+          _updateTask(task.sessionId, { output: snapshot, progress: live.progress || task.progress || '' });
+        }
+        const badge = el.querySelector('.cookbook-task-status');
+        const mapped = live.status === 'completed' ? 'done'
+          : live.status === 'ready' ? 'running'
+          : live.status === 'running' ? 'running'
+          : live.status === 'error' ? 'error'
+          : live.status === 'stopped' ? 'stopped'
+          : null;
+        if (mapped) {
+          _updateTask(task.sessionId, { status: mapped });
+          task.status = mapped;
+          el.dataset.status = mapped;
+          if (badge) {
+            badge.textContent = mapped === 'running' && live.progress ? live.progress : _statusLabel(mapped, task.type);
+            badge.className = `cookbook-task-status cookbook-task-${mapped}`;
+          }
+        }
+        if (mapped && mapped !== 'running') {
+          _showCookbookNotif(mapped === 'error');
+          _renderRunningTab();
+          _processQueue();
+          break;
+        }
+        await new Promise(r => setTimeout(r, TASK_POLL_INTERVAL_MS));
+        continue;
+      }
+
       const res = await fetch('/api/shell/exec', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -2804,7 +2849,13 @@ async function _pollBackgroundStatus() {
         const updates = {};
         const nextStatus = live.status === 'completed'
           ? 'done'
-          : (live.status === 'error' ? 'error' : null);
+          : live.status === 'ready'
+          ? 'running'
+          : live.status === 'running'
+          ? 'running'
+          : live.status === 'error'
+          ? 'error'
+          : null;
         if (nextStatus && task.status !== nextStatus) {
           updates.status = nextStatus;
           if (nextStatus === 'done' && task.payload?._dep) completedDeps.push(task);

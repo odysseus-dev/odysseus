@@ -439,7 +439,11 @@ def setup_cookbook_routes() -> APIRouter:
         # When Odysseus runs from a venv (e.g. native macOS install), put its bin
         # on PATH so the tmux shell finds the bundled `hf`/`python3` without an
         # activated venv. Local bash runs only — meaningless over SSH/Windows.
-        if not req.remote_host and req.platform != "windows":
+        if IS_WINDOWS and not req.remote_host:
+            venv_bin = Path(sys.executable).parent
+            lines.append(f'export PATH="$(cygpath -u "{venv_bin}"):$PATH"')
+            lines.append('python3() { python "$@"; }')
+        elif not req.remote_host and req.platform != "windows":
             lines.append(_local_tooling_path_export(sys.executable))
         # Best-effort install hf CLI (always). hf_transfer (Rust parallel downloader)
         # is fast but flaky on large files — it tends to crash near the end at high
@@ -911,7 +915,12 @@ def setup_cookbook_routes() -> APIRouter:
             # Put Odysseus's own venv bin on PATH (local runs only) so the serve
             # shell resolves the bundled python3/hf, mirroring the download flow.
             if not remote:
-                runner_lines.append(_local_tooling_path_export(sys.executable))
+                if IS_WINDOWS:
+                    venv_bin = Path(sys.executable).parent
+                    runner_lines.append(f'export PATH="$(cygpath -u "{venv_bin}"):$PATH"')
+                    runner_lines.append('python3() { python "$@"; }')
+                else:
+                    runner_lines.append(_local_tooling_path_export(sys.executable))
             runner_lines.append("export FLASHINFER_DISABLE_VERSION_CHECK=1")
             if req.hf_token:
                 runner_lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
@@ -1997,7 +2006,13 @@ def setup_cookbook_routes() -> APIRouter:
                 has_exit = exit_match is not None
                 exit_code = int(exit_match.group(1)) if exit_match else None
                 has_error = "error" in lower or "failed" in lower or "traceback" in lower
-                if has_exit and task_type == "serve":
+                if task_type == "download" and ("100%" in full_snapshot or "DOWNLOAD_OK" in full_snapshot):
+                    if re.search(r"Fetching\s+0\s+files", full_snapshot, re.IGNORECASE):
+                        status = "error"
+                        download_zero_files = True
+                    else:
+                        status = "completed"
+                elif has_exit and task_type == "serve":
                     # Serve tasks that exit are always errors — they should run indefinitely
                     status = "error"
                 elif has_exit and task_type == "download":
@@ -2006,7 +2021,7 @@ def setup_cookbook_routes() -> APIRouter:
                     status = "completed" if exit_code == 0 else "error"
                 elif has_exit and "unrecognized arguments" in lower:
                     status = "error"
-                elif has_error and not ("application startup complete" in lower):
+                elif has_error and not ("application startup complete" in lower) and not (task_type == "download" and is_alive):
                     status = "error"
                 elif task_type == "download" and ("100%" in full_snapshot or "DOWNLOAD_OK" in full_snapshot):
                     # Only download tasks treat 100% as "completed".
