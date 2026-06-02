@@ -633,13 +633,68 @@ def _model_endpoint_error_message(base_url: str, ping: Dict[str, Any] = None) ->
     return "No models found for that provider/key."
 
 
-def _visible_models(cached_models, hidden_models):
-    """Filter cached model IDs by hidden_models. Returns list of visible IDs."""
-    all_models = json.loads(cached_models) if isinstance(cached_models, str) else (cached_models or [])
+def _normalize_model_ids(value):
+    """Coerce a model-ID input into a clean, ordered list of strings.
+
+    Accepts a list, a JSON-encoded list string, or a comma/newline separated
+    string (handy for form or backend API input). Trims whitespace, drops
+    empty and non-string values, and de-duplicates preserving first-seen order.
+    """
+    if value is None:
+        return []
+    items = value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            parsed = None
+        items = parsed if isinstance(parsed, list) else re.split(r"[,\n]", text)
+    if not isinstance(items, list):
+        return []
+    out, seen = [], set()
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        s = item.strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def _merge_model_ids(*lists):
+    """Concatenate model-ID lists, de-duplicating and preserving order."""
+    out, seen = [], set()
+    for ids in lists:
+        for m in (ids or []):
+            if not isinstance(m, str) or m in seen:
+                continue
+            seen.add(m)
+            out.append(m)
+    return out
+
+
+def _visible_models(cached_models, hidden_models, pinned_models=None):
+    """Merge cached + pinned model IDs, then filter out hidden ones.
+
+    Pinned IDs are admin-entered and may not appear in cached_models (e.g.
+    cloud deployment IDs the provider does not list in /v1/models). Returns an
+    ordered, de-duplicated list of visible IDs.
+    """
+    # Normalize each input so JSON strings, lists, comma/newline strings, and
+    # malformed strings are all handled without raising.
+    merged = _merge_model_ids(
+        _normalize_model_ids(cached_models),
+        _normalize_model_ids(pinned_models),
+    )
     if not hidden_models:
-        return all_models
-    hidden = set(json.loads(hidden_models) if isinstance(hidden_models, str) else (hidden_models or []))
-    return [m for m in all_models if m not in hidden]
+        return merged
+    hidden = set(_normalize_model_ids(hidden_models))
+    return [m for m in merged if m not in hidden]
 
 
 def setup_model_routes(model_discovery):
@@ -1123,10 +1178,13 @@ def setup_model_routes(model_discovery):
                         hidden = set(json.loads(r.hidden_models))
                     except Exception:
                         pass
-                visible = [m for m in all_models if m not in hidden]
-                status = "online" if all_models else "offline"
+                pinned = _normalize_model_ids(getattr(r, "pinned_models", None))
+                visible = _visible_models(all_models, r.hidden_models, pinned)
+                # Endpoint counts as reachable if it has any model — including
+                # admin-pinned IDs that a probe would never surface.
+                status = "online" if (all_models or pinned) else "offline"
                 ping = None
-                if not all_models and r.is_enabled:
+                if not all_models and not pinned and r.is_enabled:
                     ping = _ping_endpoint(r.base_url, r.api_key, timeout=1.0)
                     if ping.get("reachable"):
                         status = "empty"
@@ -1137,6 +1195,7 @@ def setup_model_routes(model_discovery):
                     "has_key": bool(r.api_key),
                     "is_enabled": r.is_enabled,
                     "models": visible,
+                    "pinned_models": pinned,
                     "hidden_count": len(hidden),
                     "online": status != "offline",
                     "status": status,
@@ -1158,6 +1217,7 @@ def setup_model_routes(model_discovery):
         require_models: str = Form("false"),
         model_type: str = Form("llm"),
         supports_tools: str = Form(""),  # "true"/"false"/"" (unknown)
+        pinned_models: str = Form(""),  # admin-pinned IDs: list/JSON/comma/newline
         container_local: str = Form("false"),
         # Default `shared=true` → endpoints are visible to all users (the
         # app's historical behaviour). Admins can pass `shared=false` to
@@ -1199,11 +1259,28 @@ def setup_model_routes(model_discovery):
                 .first()
             )
             if existing:
+                # Persist any incoming pinned IDs onto the existing row. An
+                # empty/omitted form field must not wipe previously pinned IDs.
+                _incoming_pinned = _normalize_model_ids(pinned_models)
+                if _incoming_pinned:
+                    _merged_pinned = _merge_model_ids(
+                        _normalize_model_ids(getattr(existing, "pinned_models", None)),
+                        _incoming_pinned,
+                    )
+                    existing.pinned_models = json.dumps(_merged_pinned) if _merged_pinned else None
+                    _db_dedup.commit()
+                    _invalidate_models_cache()
+                _existing_pinned = _normalize_model_ids(getattr(existing, "pinned_models", None))
                 return {
                     "id": existing.id,
                     "name": existing.name,
                     "base_url": existing.base_url,
-                    "models": json.loads(existing.cached_models) if existing.cached_models else [],
+                    "models": _visible_models(
+                        getattr(existing, "cached_models", None),
+                        getattr(existing, "hidden_models", None),
+                        existing.pinned_models,
+                    ),
+                    "pinned_models": _existing_pinned,
                     "online": True,
                     "status": "online",
                     "existing": True,
@@ -1225,6 +1302,7 @@ def setup_model_routes(model_discovery):
         try:
             _st_raw = (supports_tools or "").strip().lower()
             _st = True if _st_raw in ("true", "1", "yes") else (False if _st_raw in ("false", "0", "no") else None)
+            _pinned = _normalize_model_ids(pinned_models)
             # Stamp owner so the picker only shows this endpoint to the admin
             # who added it. Pass `shared=true` to mark it null-owner (visible
             # to all users), preserving the pre-fix "everyone sees everything"
@@ -1240,6 +1318,7 @@ def setup_model_routes(model_discovery):
                 is_enabled=True,
                 model_type=model_type.strip() if model_type else "llm",
                 cached_models=json.dumps(model_ids) if model_ids else None,
+                pinned_models=json.dumps(_pinned) if _pinned else None,
                 supports_tools=_st,
                 owner=_owner_val,
             )
@@ -1265,9 +1344,10 @@ def setup_model_routes(model_discovery):
             "id": ep_id,
             "name": name.strip(),
             "base_url": base_url,
-            "models": model_ids,
-            "online": bool(model_ids) or bool(ping.get("reachable")),
-            "status": "online" if model_ids else ("empty" if ping.get("reachable") else "offline"),
+            "models": _merge_model_ids(model_ids, _pinned),
+            "pinned_models": _pinned,
+            "online": bool(model_ids) or bool(_pinned) or bool(ping.get("reachable")),
+            "status": "online" if (model_ids or _pinned) else ("empty" if ping.get("reachable") else "offline"),
             "ping_error": ping.get("error") if ping else None,
         }
 
@@ -1360,7 +1440,8 @@ def setup_model_routes(model_discovery):
                     hidden = set(json.loads(ep.hidden_models))
                 except Exception:
                     pass
-            # Try live probe, fall back to cached
+            # Try live probe, fall back to cached. Pinned IDs are admin-entered
+            # and persist regardless of probe results — never overwritten here.
             all_models = _probe_endpoint(ep.base_url, ep.api_key, timeout=3)
             if all_models:
                 ep.cached_models = json.dumps(all_models)
@@ -1370,18 +1451,28 @@ def setup_model_routes(model_discovery):
                     all_models = json.loads(ep.cached_models)
                 except Exception:
                     pass
+            pinned = _normalize_model_ids(getattr(ep, "pinned_models", None))
+            pinned_set = set(pinned)
             return [
-                {"id": m, "display": m.split("/")[-1], "is_hidden": m in hidden}
-                for m in all_models
+                {
+                    "id": m,
+                    "display": m.split("/")[-1],
+                    "is_hidden": m in hidden,
+                    "is_pinned": m in pinned_set,
+                }
+                for m in _merge_model_ids(all_models, pinned)
             ]
         finally:
             db.close()
 
     @router.patch("/model-endpoints/{ep_id}/models")
     async def update_hidden_models(ep_id: str, request: Request):
-        """Bulk update hidden models list for an endpoint.
+        """Bulk update hidden and/or pinned model lists for an endpoint.
 
-        Expects JSON body: {"hidden": ["model-id-1", "model-id-2"]}
+        Expects JSON body with optional keys:
+          {"hidden": ["model-id-1", ...], "pinned_models": ["deploy-id", ...]}
+        Each key is updated only when present, so callers can patch one list
+        without clobbering the other.
         """
         require_admin(request)
         db = SessionLocal()
@@ -1390,13 +1481,22 @@ def setup_model_routes(model_discovery):
             if not ep:
                 raise HTTPException(404, "Endpoint not found")
             body = await request.json()
-            hidden = body.get("hidden", [])
-            if not isinstance(hidden, list):
-                raise HTTPException(400, "hidden must be a list of model IDs")
-            ep.hidden_models = json.dumps(hidden) if hidden else None
+            if not isinstance(body, dict):
+                raise HTTPException(400, "Body must be a JSON object")
+            if "hidden" in body:
+                hidden = body.get("hidden")
+                if not isinstance(hidden, list):
+                    raise HTTPException(400, "hidden must be a list of model IDs")
+                ep.hidden_models = json.dumps(hidden) if hidden else None
+            # Accept either "pinned" or "pinned_models" for the manual IDs list.
+            if "pinned_models" in body or "pinned" in body:
+                pinned = _normalize_model_ids(body.get("pinned_models", body.get("pinned")))
+                ep.pinned_models = json.dumps(pinned) if pinned else None
             db.commit()
             _invalidate_models_cache()
-            return {"id": ep_id, "hidden_count": len(hidden)}
+            hidden_count = len(json.loads(ep.hidden_models)) if ep.hidden_models else 0
+            pinned_count = len(json.loads(ep.pinned_models)) if ep.pinned_models else 0
+            return {"id": ep_id, "hidden_count": hidden_count, "pinned_count": pinned_count}
         finally:
             db.close()
 
@@ -1494,9 +1594,9 @@ def setup_model_routes(model_discovery):
                 return {"endpoint_id": "", "endpoint_url": "", "model": ""}
             base = _normalize_base(ep.base_url)
             chat_url = build_chat_url(base)
-            if not model and getattr(ep, "cached_models", None):
+            if not model and (getattr(ep, "cached_models", None) or getattr(ep, "pinned_models", None)):
                 try:
-                    visible = _visible_models(ep.cached_models, getattr(ep, "hidden_models", None))
+                    visible = _visible_models(ep.cached_models, getattr(ep, "hidden_models", None), getattr(ep, "pinned_models", None))
                     if visible:
                         model = visible[0]
                 except Exception:
@@ -1532,6 +1632,9 @@ def setup_model_routes(model_discovery):
                     ep.name = body["name"].strip() or ep.name
                 if "model_type" in body and isinstance(body["model_type"], str):
                     ep.model_type = body["model_type"].strip() or ep.model_type
+                if "pinned_models" in body:
+                    _pinned = _normalize_model_ids(body["pinned_models"])
+                    ep.pinned_models = json.dumps(_pinned) if _pinned else None
                 # Rotating an API key used to require DELETE+POST, which wiped
                 # endpoint_url/model from every session referencing the old base
                 # URL. Allow in-place updates so the admin can change the key
@@ -1560,6 +1663,7 @@ def setup_model_routes(model_discovery):
                 "name": ep.name,
                 "model_type": ep.model_type,
                 "base_url": ep.base_url,
+                "pinned_models": _normalize_model_ids(getattr(ep, "pinned_models", None)),
             }
         finally:
             db.close()
