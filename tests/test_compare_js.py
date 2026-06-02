@@ -59,6 +59,7 @@ def test_state_reset_preserves_config(node_available):
         state.API_BASE = 'http://x';
         state._blindMode = true;
         state._parallel = false;
+        state._openingSelector = true;
         state._streaming = true;
         state._finishOrder = 7;
         state._paneSessionIds = ['a','b'];
@@ -71,6 +72,7 @@ def test_state_reset_preserves_config(node_available):
           api_base_sticky: state.API_BASE,
           blind_sticky: state._blindMode,
           parallel_sticky: state._parallel,
+          opening_cleared: state._openingSelector,
           streaming_cleared: state._streaming,
           finish_order_cleared: state._finishOrder,
           session_ids_cleared: state._paneSessionIds.length,
@@ -85,6 +87,7 @@ def test_state_reset_preserves_config(node_available):
         "api_base_sticky": "http://x",
         "blind_sticky": True,
         "parallel_sticky": False,
+        "opening_cleared": False,
         "streaming_cleared": False,
         "finish_order_cleared": 0,
         "session_ids_cleared": 0,

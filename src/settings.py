@@ -55,6 +55,26 @@ DEFAULT_SETTINGS = {
     "search_fallback_chain": ["duckduckgo"],
     "search_url": "",
     "search_result_count": 5,
+    # SafeSearch level applied to every provider that exposes one.
+    # "strict"   — block adult / explicit results (default; matches what users
+    #              expect from a research tool and avoids unrelated NSFW URLs
+    #              bleeding in via provider "related" / spam recommendations)
+    # "moderate" — provider-default behavior (filter explicit but allow
+    #              suggestive content)
+    # "off"      — disable filtering entirely (advanced users only)
+    #
+    # Providers that honor this setting (translated to each provider's native
+    # param in src/search/providers.py:_safesearch_for):
+    #     SearXNG       safesearch=0/1/2 (JSON API, HTML scrape, news fallback)
+    #     Brave Search  safesearch=off/moderate/strict
+    #     DuckDuckGo    safesearch=off/moderate/on (library + HTML kp param)
+    #     Google PSE    safe=active (omitted for "off"; PSE has no middle tier)
+    #     Serper.dev    safe=active (omitted for "off"; proxies Google's `safe`)
+    # Providers NOT touched: Tavily (no SafeSearch knob; filters at index time)
+    # and any custom backend reached via search_url — they keep whatever the
+    # backend itself decides, so operators stay in control of self-hosted /
+    # niche search instances.
+    "search_safesearch": "strict",
     "brave_api_key": "",
     "google_pse_key": "",
     "google_pse_cx": "",
@@ -66,9 +86,22 @@ DEFAULT_SETTINGS = {
     "research_max_tokens": 16384,
     "research_extraction_timeout_seconds": 90,
     "research_extraction_concurrency": 3,
+    # Hard wall-clock cap on a single deep-research run. The previous 600s
+    # (10 min) default cut off slow local / edge LLMs mid-synthesis; 1800s
+    # (30 min) is comfortable for most local setups while still bounding
+    # runaway jobs. Set to 0 to disable the cap entirely (unlimited) — only
+    # for very long deep-research runs, since a stalled job then runs an
+    # unbounded model/API bill. Other values are bounded to [60, 86400].
+    # Tune via Settings or by editing data/settings.json.
+    "research_run_timeout_seconds": 1800,
     "agent_max_tool_calls": 0,
     "agent_input_token_budget": 6000,
     "agent_stream_timeout_seconds": 300,
+    # Extra directory roots that read_file / write_file may access, in
+    # addition to the built-in project data/ and system temp dirs. Each
+    # entry is an absolute path. Sensitive subpaths (.ssh, .gnupg, shell
+    # rc files, SSH key files) are always blocked regardless of roots.
+    "tool_path_extra_roots": [],
     "task_endpoint_id": "",
     "task_model": "",
     "default_endpoint_id": "",
@@ -122,6 +155,7 @@ DEFAULT_SETTINGS = {
 
 DEFAULT_FEATURES = {
     "web_search": True,
+    "web_fetch": True,
     "deep_research": False,
     "memory": True,
     "document_editor": True,
@@ -159,6 +193,21 @@ def save_settings(settings: dict):
 def get_setting(key: str, default: Any = None) -> Any:
     """Read a single setting value."""
     return load_settings().get(key, default)
+
+
+def is_setting_overridden(key: str) -> bool:
+    """True if ``key`` is explicitly present in the saved settings file.
+
+    ``load_settings`` merges DEFAULT_SETTINGS with the saved file, so a value
+    equal to its default is indistinguishable from "never set" via get_setting.
+    Callers that need to treat an explicit user choice differently from the
+    default (e.g. adaptive budgets) use this to read the raw saved file.
+    """
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            return key in json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False
 
 
 # Per-user settings (user prefs override the global admin default). Used for

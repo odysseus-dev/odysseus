@@ -6,9 +6,11 @@ import uuid
 import time
 import hashlib
 import mimetypes
+import shutil
+import tempfile
 import threading
 from datetime import datetime, timedelta
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from fastapi import HTTPException, UploadFile
 def secure_filename(filename: str) -> str:
     """Sanitize a filename (replaces werkzeug.utils.secure_filename)."""
@@ -29,6 +31,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+UPLOAD_ID_RE = re.compile(r"^[0-9a-fA-F]{32}\.[A-Za-z0-9]+$")
+
+
+def is_valid_upload_id(upload_id: str) -> bool:
+    """Return True when *upload_id* matches the canonical uploads.json id format."""
+    return UPLOAD_ID_RE.fullmatch(upload_id or "") is not None
+
+
 class UploadHandler:
     def __init__(self, base_dir: str, upload_dir: str):
         self.base_dir = base_dir
@@ -44,6 +54,13 @@ class UploadHandler:
         self._upload_rate_lock = threading.Lock()
         self._upload_rate_counter = 0
         self._upload_rate_max_entries = 1000
+        # Serialise the read-modify-write of uploads.json within one
+        # Python process. Scope: single FastAPI worker (the default
+        # uvicorn deployment). Cross-process / multi-worker deployments
+        # need an additional file-level lock (flock) or a database;
+        # the atomic-rename write below keeps on-disk state consistent
+        # on its own but does not serialise writers across processes.
+        self._index_lock = threading.Lock()
         
         # Create upload directory
         os.makedirs(self.upload_dir, exist_ok=True)
@@ -120,7 +137,8 @@ class UploadHandler:
     def is_document_file(self, filename: str, content_type: str = None) -> bool:
         """Check if a file is a document based on extension or content type."""
         document_extensions = {
-            '.pdf', '.docx', '.txt', '.py', '.js', '.html', '.htm', 
+            '.pdf', '.docx', '.xlsx', '.pptx', '.xls', '.epub',
+            '.txt', '.py', '.js', '.html', '.htm',
             '.css', '.json', '.md', '.csv', '.log', '.xml', '.yml', 
             '.yaml', '.sql', '.sh', '.bash', '.c', '.cpp', '.h', 
             '.java', '.go', '.rs', '.php', '.rb', '.ts', '.jsx', '.tsx'
@@ -128,6 +146,10 @@ class UploadHandler:
         document_mime_types = {
             'application/pdf', 
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/vnd.ms-excel',
+            'application/epub+zip',
             'text/plain'
         }
         
@@ -223,8 +245,142 @@ class UploadHandler:
     
     def validate_upload_id(self, upload_id: str) -> bool:
         """Validate that the upload ID matches the expected pattern."""
-        pattern = r'^[0-9a-fA-F]{32}\.[A-Za-z0-9]+$'
-        return re.fullmatch(pattern, upload_id) is not None
+        return is_valid_upload_id(upload_id)
+
+    def _inside_upload_dir(self, path: str) -> bool:
+        """Check if path is inside the upload directory."""
+        base = os.path.realpath(self.upload_dir)
+        p = os.path.realpath(path)
+        try:
+            return os.path.commonpath([base, p]) == base
+        except Exception:
+            return False
+
+    def _atomic_write_json(self, path: str, data: dict) -> None:
+        """Write `data` to `path` atomically: write to a temp file in the
+        same directory, then `os.replace` onto the target. The kernel
+        guarantees `os.replace` is atomic on POSIX, so a reader either
+        sees the old contents or the new contents, never a half-written
+        file. Also keeps a `.bak` sibling of the previous good state.
+        """
+        directory = os.path.dirname(path) or "."
+        fd, tmp = tempfile.mkstemp(prefix=".uploads-", suffix=".tmp", dir=directory)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            if os.path.exists(path):
+                bak = path + ".bak"
+                try:
+                    shutil.copy2(path, bak)
+                except OSError:
+                    pass
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+    def _load_upload_index(self) -> Dict[str, Any]:
+        uploads_db_path = os.path.join(self.upload_dir, "uploads.json")
+        if not os.path.exists(uploads_db_path):
+            return {}
+        # Try the live file first, fall back to the .bak sibling if the
+        # live file is truncated/corrupted (e.g. a previous writer was
+        # SIGKILL'd mid-rename before the new code path was deployed).
+        for candidate in (uploads_db_path, uploads_db_path + ".bak"):
+            if not os.path.exists(candidate):
+                continue
+            try:
+                with open(candidate, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return data if isinstance(data, dict) else {}
+            except Exception as e:
+                logger.warning(f"Failed to read uploads database ({candidate}): {e}")
+                continue
+        return {}
+
+    def get_upload_info(self, upload_id: str) -> Optional[Dict[str, Any]]:
+        """Return the uploads.json metadata row for an upload ID, if present."""
+        if not self.validate_upload_id(upload_id):
+            return None
+        for info in self._load_upload_index().values():
+            if isinstance(info, dict) and info.get("id") == upload_id:
+                return dict(info)
+        return None
+
+    def _find_upload_path(self, upload_id: str) -> Optional[str]:
+        """Find an upload file by ID while staying inside upload_dir."""
+        if not self.validate_upload_id(upload_id):
+            return None
+
+        direct = os.path.join(self.upload_dir, upload_id)
+        if os.path.exists(direct) and self._inside_upload_dir(direct):
+            return direct
+
+        for root, _dirs, files in os.walk(self.upload_dir, followlinks=False):
+            if upload_id in files:
+                path = os.path.join(root, upload_id)
+                if self._inside_upload_dir(path):
+                    return path
+        return None
+
+    def resolve_upload(
+        self,
+        upload_id: str,
+        owner: Optional[str] = None,
+        auth_manager: Any = None,
+        allow_admin: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        """Resolve an upload ID to metadata only if the caller may read it.
+
+        This is the owner-aware lookup used by internal processors. Public
+        download routes already perform owner checks; chat/document paths must
+        do the same before reading file bytes server-side.
+        """
+        if not self.validate_upload_id(upload_id):
+            logger.warning(f"Invalid upload ID format: {upload_id}")
+            return None
+
+        auth_configured = bool(auth_manager and getattr(auth_manager, "is_configured", False))
+        if auth_configured and not owner:
+            return None
+
+        info = self.get_upload_info(upload_id) or {}
+        is_admin = False
+        if allow_admin and owner and auth_manager and hasattr(auth_manager, "is_admin"):
+            try:
+                is_admin = bool(auth_manager.is_admin(owner))
+            except Exception:
+                is_admin = False
+
+        if owner and not is_admin:
+            if info.get("owner") != owner:
+                logger.warning("Upload %s denied for owner %s", upload_id, owner)
+                return None
+        if not owner and info.get("owner") is not None:
+            logger.warning("Upload %s denied without an authenticated owner", upload_id)
+            return None
+
+        path = info.get("path")
+        if not path or not os.path.exists(path) or not self._inside_upload_dir(path):
+            path = self._find_upload_path(upload_id)
+        if not path:
+            return None
+        if not self._inside_upload_dir(path):
+            logger.warning(f"Upload path outside upload directory: {path}")
+            return None
+
+        resolved = dict(info)
+        resolved.setdefault("id", upload_id)
+        resolved["path"] = path
+        resolved.setdefault("name", os.path.basename(path))
+        resolved.setdefault("original_name", resolved["name"])
+        resolved.setdefault("mime", mimetypes.guess_type(path)[0] or "application/octet-stream")
+        return resolved
     
     def cleanup_rate_limits(self):
         """Remove stale entries from upload_rate_log."""
@@ -346,52 +502,76 @@ class UploadHandler:
         # Calculate file hash for deduplication
         file_hash = self.calculate_file_hash(file_obj)
         
-        # Check for duplicate files
+        # Check for duplicate files.
+        # The duplicate-detection lookup AND the write must both happen
+        # under _index_lock: a duplicate upload racing with a new-entry
+        # insert must not overwrite a newer snapshot of the index with
+        # the stale one read before the insert.
         uploads_db_path = os.path.join(self.upload_dir, "uploads.json")
-        existing_files = {}
-        
-        if os.path.exists(uploads_db_path):
-            try:
-                with open(uploads_db_path, "r", encoding="utf-8") as f:
-                    existing_files = json.load(f)
-            except Exception as e:
-                logger.warning(f"Failed to read uploads database: {e}")
-        
-        # Check if this hash already exists for the same owner. Uploads are
-        # access-controlled by owner, so cross-user dedupe must not return a
-        # shared file ID.
-        existing_key = None
         existing_file = None
-        for key, info in existing_files.items():
-            if info.get("hash") == file_hash and info.get("owner") == owner:
-                existing_key = key
-                existing_file = info
-                break
+        existing_key = None
+        with self._index_lock:
+            existing_files = self._load_upload_index()
+            stale_keys = []
+            for key, info in existing_files.items():
+                if info.get("hash") == file_hash and info.get("owner") == owner:
+                    stored_path = info.get("path")
+                    if stored_path and os.path.exists(stored_path) and self._inside_upload_dir(stored_path):
+                        existing_key = key
+                        existing_file = info
+                        break
+                    stale_keys.append(key)
+            if stale_keys:
+                for key in stale_keys:
+                    existing_files.pop(key, None)
+                try:
+                    self._atomic_write_json(uploads_db_path, existing_files)
+                    logger.info("Removed %d stale upload index entries for missing duplicates", len(stale_keys))
+                except Exception as e:
+                    logger.warning(f"Failed to remove stale upload index entries: {e}")
         if existing_file:
             logger.info(f"Duplicate file upload detected: {original_filename} -> {existing_file['id']}")
-            
+
             existing_file["last_accessed"] = datetime.now().isoformat()
-            existing_files[existing_key] = existing_file
-            
-            try:
-                with open(uploads_db_path, "w", encoding="utf-8") as f:
-                    json.dump(existing_files, f, indent=2)
-            except Exception as e:
-                logger.warning(f"Failed to update uploads database: {e}")
-            
-            return {
-                "id": existing_file["id"],
-                "path": existing_file["path"],
-                "mime": existing_file["mime"],
-                "size": existing_file["size"],
-                "name": existing_file["original_name"],
-                "hash": file_hash,
-                "uploaded_at": existing_file["uploaded_at"],
-                "owner": existing_file.get("owner"),
-                "width": existing_file.get("width"),
-                "height": existing_file.get("height"),
-                "is_duplicate": True
-            }
+            with self._index_lock:
+                try:
+                    current = self._load_upload_index()
+                    # Re-resolve the key inside the lock: a concurrent
+                    # insert can have changed the dict's keys.
+                    live_key = existing_key
+                    if live_key not in current:
+                        for k, v in current.items():
+                            if v.get("hash") == file_hash and v.get("owner") == owner:
+                                live_key = k
+                                existing_file = v
+                                break
+                    if live_key is None:
+                        # No matching entry anymore (e.g. cleaned up between
+                        # the outer read and the write). Fall through to the
+                        # fresh-insert path below; release the lock first.
+                        raise LookupError("upload entry vanished mid-dedupe")
+                    existing_file["last_accessed"] = datetime.now().isoformat()
+                    current[live_key] = existing_file
+                    self._atomic_write_json(uploads_db_path, current)
+                except LookupError:
+                    existing_file = None
+                except Exception as e:
+                    logger.warning(f"Failed to update uploads database: {e}")
+
+            if existing_file:
+                return {
+                    "id": existing_file["id"],
+                    "path": existing_file["path"],
+                    "mime": existing_file["mime"],
+                    "size": existing_file["size"],
+                    "name": existing_file["original_name"],
+                    "hash": file_hash,
+                    "uploaded_at": existing_file["uploaded_at"],
+                    "owner": existing_file.get("owner"),
+                    "width": existing_file.get("width"),
+                    "height": existing_file.get("height"),
+                    "is_duplicate": True
+                }
         
         # Generate unique ID and determine save location
         _, ext = os.path.splitext(safe_filename)
@@ -436,24 +616,14 @@ class UploadHandler:
                 logger.warning(f"Failed to read image dimensions for {file_id}: {e}")
         
         # Update uploads database
-        try:
-            if os.path.exists(uploads_db_path):
-                try:
-                    with open(uploads_db_path, "r", encoding="utf-8") as f:
-                        all_files = json.load(f)
-                except Exception:
-                    all_files = {}
-            else:
-                all_files = {}
-            
-            storage_key = f"{owner}:{file_hash}" if owner else file_hash
-            all_files[storage_key] = file_metadata
-            
-            with open(uploads_db_path, "w", encoding="utf-8") as f:
-                json.dump(all_files, f, indent=2)
-                
-        except Exception as e:
-            logger.warning(f"Failed to update uploads database: {e}")
+        with self._index_lock:
+            try:
+                current = self._load_upload_index() if os.path.exists(uploads_db_path) else {}
+                storage_key = f"{owner}:{file_hash}" if owner else file_hash
+                current[storage_key] = file_metadata
+                self._atomic_write_json(uploads_db_path, current)
+            except Exception as e:
+                logger.warning(f"Failed to update uploads database: {e}")
         
         logger.info(f"File uploaded successfully: {original_filename} ({file_size} bytes)")
         return file_metadata

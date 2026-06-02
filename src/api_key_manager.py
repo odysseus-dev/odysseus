@@ -1,7 +1,10 @@
 import os
 import json
+import logging
 from typing import Dict
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
+
+logger = logging.getLogger(__name__)
 
 class APIKeyManager:
     def __init__(self, data_dir: str):
@@ -47,8 +50,12 @@ class APIKeyManager:
             return {}
         with open(self.api_keys_file, 'r', encoding="utf-8") as f:
             encrypted_keys = json.load(f)
-        return {
-            provider: self.decrypt_api_key(key)
-            for provider, key in encrypted_keys.items()
-        }
+
+        decrypted = {}
+        for provider, key in encrypted_keys.items():
+            try:
+                decrypted[provider] = self.decrypt_api_key(key)
+            except (InvalidToken, ValueError) as e:
+                logger.warning("Failed to decrypt API key for %s: %s", provider, e)
+        return decrypted
 

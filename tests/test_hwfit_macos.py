@@ -70,6 +70,21 @@ def test_only_gguf_models_recommended_on_metal():
     assert unservable == [], f"{len(unservable)} non-GGUF models on Metal, e.g. {unservable[:3]}"
 
 
+def test_qwen_catalog_entries_point_at_verified_gguf_repos():
+    """Qwen GGUF-looking Cookbook rows must download GGUF repos, not the base
+    safetensors repositories."""
+    catalog = {m["name"]: m for m in get_models()}
+    expected = {
+        "Qwen/Qwen3.5-9B": ("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q4_K_M.gguf"),
+        "Qwen/Qwen3.6-27B": ("unsloth/Qwen3.6-27B-GGUF", "Qwen3.6-27B-Q4_K_M.gguf"),
+        "Qwen/Qwen3.6-35B-A3B": ("unsloth/Qwen3.6-35B-A3B-GGUF", "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"),
+    }
+
+    for model_name, (repo, filename) in expected.items():
+        sources = catalog[model_name].get("gguf_sources") or []
+        assert any(src.get("repo") == repo and src.get("file") == filename for src in sources)
+
+
 def test_safetensors_models_still_recommended_on_cuda():
     """Regression guard: vLLM serves safetensors on CUDA, so non-GGUF repos must
     NOT be filtered there — the GGUF-only rule is Metal-specific."""

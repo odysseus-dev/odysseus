@@ -17,7 +17,6 @@ import sqlite3 as _sql3
 import email as email_mod
 import email.header
 import email.utils
-import imaplib
 import smtplib
 import json
 import re
@@ -40,7 +39,8 @@ from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
     _q, _attach_compose_uploads, _cleanup_compose_uploads,
     _load_settings, _save_settings, _get_email_config,
-    _send_smtp_message,
+    _send_smtp_message, _smtp_security_mode,
+    _IMAP_TIMEOUT_SECONDS, _open_imap_connection,
     _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
     _extract_attachment_text, _list_attachments_from_msg,
     _extract_attachment_to_disk, _extract_html, _extract_text,
@@ -48,6 +48,7 @@ from routes.email_helpers import (
     _EMAIL_REPLY_SYS_PROMPT_BASE, _POOL_HOOKS,
     SendEmailRequest, ExtractStyleRequest,
     ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
+    attachment_extract_dir,
 )
 from routes.email_pollers import _start_poller
 
@@ -456,7 +457,7 @@ def setup_email_routes():
     _IMAP_POOL = {}   # account_id → (conn, last_used_at)
     _IMAP_IDLE_MAX = 60.0
     _WARMING_READS = set()
-    _WARM_READ_LIMIT = 3
+    _WARM_READ_LIMIT = 1
     _WARM_MAX_BYTES = 128 * 1024
     _WARM_RECENT_SECONDS = 7 * 24 * 60 * 60
     _pool_lock = _threading.Lock()
@@ -1045,7 +1046,7 @@ def setup_email_routes():
 
                 # Escape backslash and quote for the IMAP-SEARCH quoted-string.
                 q_escaped = q.replace('\\', '\\\\').replace('"', '\\"')
-                search_cmd = f'(OR FROM "{q_escaped}" TEXT "{q_escaped}")'
+                search_cmd = f'(OR OR FROM "{q_escaped}" SUBJECT "{q_escaped}" TEXT "{q_escaped}")'
 
                 status, data = _imap_uid_search(conn, search_cmd)
                 if status != "OK" or not data[0]:
@@ -1198,7 +1199,7 @@ def setup_email_routes():
                     (message_id.strip(),),
                 ).fetchone()
                 if _row2:
-                    cached_ai_reply = _row2[0]
+                    cached_ai_reply = _apply_email_style_mechanics(_extract_reply(_row2[0] or ""))
                 _row3 = _c.execute(
                     "SELECT sig_start, quote_start, turns_json FROM email_boundaries WHERE message_id = ?",
                     (message_id.strip(),),
@@ -1254,6 +1255,7 @@ def setup_email_routes():
 
             return {
                 "uid": uid,
+                "folder": folder,
                 "message_id": message_id.strip(),
                 "subject": subject,
                 "from_name": sender_name or sender_addr,
@@ -1389,7 +1391,7 @@ def setup_email_routes():
             msg = email_mod.message_from_bytes(raw)
 
             # Extract to a per-email folder
-            target_dir = ATTACHMENTS_DIR / f"{folder}_{uid}"
+            target_dir = attachment_extract_dir(folder, uid)
             filepath = _extract_attachment_to_disk(msg, index, target_dir)
             if not filepath:
                 return {"error": f"Attachment index {index} not found"}
@@ -1424,7 +1426,7 @@ def setup_email_routes():
             raw = msg_data[0][1]
             msg = email_mod.message_from_bytes(raw)
 
-            target_dir = ATTACHMENTS_DIR / f"{folder}_{uid}"
+            target_dir = attachment_extract_dir(folder, uid)
             filepath = _extract_attachment_to_disk(msg, index, target_dir)
             if not filepath:
                 return {"error": f"Attachment index {index} not found"}
@@ -1632,7 +1634,7 @@ def setup_email_routes():
             raw = msg_data[0][1]
             msg = email_mod.message_from_bytes(raw)
 
-            target_dir = ATTACHMENTS_DIR / f"{folder}_{uid}"
+            target_dir = attachment_extract_dir(folder, uid)
             filepath = _extract_attachment_to_disk(msg, index, target_dir)
             if not filepath:
                 return {"error": f"Attachment index {index} not found"}
@@ -2144,6 +2146,7 @@ def setup_email_routes():
         _from = cfg["from_address"]
         _smtp_host = cfg["smtp_host"]
         _smtp_port = cfg["smtp_port"]
+        _smtp_security = cfg.get("smtp_security")
         _smtp_user = cfg["smtp_user"]
         _smtp_pw = cfg["smtp_password"]
         _recipients = list(recipients)
@@ -2161,6 +2164,7 @@ def setup_email_routes():
                     {
                         "smtp_host": _smtp_host,
                         "smtp_port": _smtp_port,
+                        "smtp_security": _smtp_security,
                         "smtp_user": _smtp_user,
                         "smtp_password": _smtp_pw,
                     },
@@ -2415,7 +2419,7 @@ def setup_email_routes():
         """Generate a quick AI summary of an email body."""
         try:
             from src.endpoint_resolver import resolve_endpoint
-            from src.llm_core import _uses_max_completion_tokens
+            from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
             import requests as _req
 
             body = data.get("body", "")
@@ -2472,6 +2476,9 @@ def setup_email_routes():
                 "temperature": 0.3,
                 "stream": False,
             }
+            # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
+            if _restricts_temperature(model):
+                payload.pop("temperature", None)
             resp = await asyncio.to_thread(
                 _req.post, url, json=payload, headers=req_headers, timeout=180
             )
@@ -2539,9 +2546,30 @@ def setup_email_routes():
             message_id = (data.get("message_id") or "").strip()
             source_uid = (data.get("uid") or "").strip()
             source_folder = (data.get("folder") or "INBOX").strip()
+            fast_reply = bool(data.get("fast", False))
 
             if not original_body:
                 return {"success": False, "error": "No email body provided"}
+
+            if message_id:
+                try:
+                    _c = _sql3.connect(SCHEDULED_DB)
+                    _row = _c.execute(
+                        "SELECT reply, model_used FROM email_ai_replies WHERE message_id = ?",
+                        (message_id,),
+                    ).fetchone()
+                    _c.close()
+                    if _row and _row[0]:
+                        cached_reply = _apply_email_style_mechanics(_extract_reply(_row[0] or ""))
+                        if cached_reply:
+                            return {
+                                "success": True,
+                                "reply": cached_reply,
+                                "model_used": _row[1] or "cached",
+                                "cached": True,
+                            }
+                except Exception as e:
+                    logger.warning(f"AI reply cache lookup failed: {e}")
 
             settings = _load_settings()
             style = settings.get("email_writing_style", "")
@@ -2618,8 +2646,12 @@ def setup_email_routes():
 
             logger.info(f"AI reply using model={model} url={url}")
 
-            # Pre-retrieval: mine names/topics from the original email, search past mail + contacts
-            context_snippets, _terms = _pre_retrieve_context(original_body, to)
+            # Manual AI Reply should feel immediate. The heavier context mining
+            # can involve multiple IMAP folder searches and attachment parsing;
+            # reserve that for callers that explicitly opt out of fast mode.
+            context_snippets, _terms = ([], [])
+            if not fast_reply:
+                context_snippets, _terms = _pre_retrieve_context(original_body, to)
 
             # NEW: also pull the last few emails from the original sender +
             # their attachments. The "to" field on this endpoint is the
@@ -2627,16 +2659,17 @@ def setup_email_routes():
             # sender we're answering. So `to` doubles as the address we want
             # the thread context for.
             referenced = ""
-            try:
-                from_addr_for_ctx = email.utils.parseaddr(to or "")[1]
-                referenced = _fetch_sender_thread_context(
-                    sender_addr=from_addr_for_ctx,
-                    exclude_uid=source_uid,
-                    exclude_folder=source_folder,
-                    limit=3,
-                )
-            except Exception as _e:
-                logger.warning(f"sender-thread-context failed: {_e}")
+            if not fast_reply:
+                try:
+                    from_addr_for_ctx = email.utils.parseaddr(to or "")[1]
+                    referenced = _fetch_sender_thread_context(
+                        sender_addr=from_addr_for_ctx,
+                        exclude_uid=source_uid,
+                        exclude_folder=source_folder,
+                        limit=3,
+                    )
+                except Exception as _e:
+                    logger.warning(f"sender-thread-context failed: {_e}")
 
             system_prompt = _EMAIL_REPLY_SYS_PROMPT_BASE
             if style:
@@ -2705,12 +2738,8 @@ def setup_email_routes():
                         {"role": "user", "content": user_msg},
                     ],
                     temperature=0.7,
-                    # Match the background poller's reply budget (16384). The old
-                    # 4096 cap let a local reasoning model (Qwen3 / R1) spend the
-                    # whole budget inside <think>, so _strip_think left nothing —
-                    # surfacing as "LLM returned empty response".
-                    max_tokens=16384,
-                    timeout=300,
+                    max_tokens=1024 if fast_reply else 6144,
+                    timeout=60 if fast_reply else 180,
                 )
             except Exception as e:
                 detail = getattr(e, "detail", None) or str(e)
@@ -2724,7 +2753,6 @@ def setup_email_routes():
             # Cache so next click is instant
             if message_id:
                 try:
-                    import sqlite3 as _sql3
                     _c = _sql3.connect(SCHEDULED_DB)
                     _c.execute("""
                         INSERT OR REPLACE INTO email_ai_replies
@@ -2797,7 +2825,7 @@ def setup_email_routes():
                 db.add(row)
             field_map = {
                 "smtp_host": "smtp_host", "smtp_port": "smtp_port", "smtp_user": "smtp_user",
-                "imap_host": "imap_host", "imap_port": "imap_port", "imap_user": "imap_user",
+                "smtp_security": "smtp_security", "imap_host": "imap_host", "imap_port": "imap_port", "imap_user": "imap_user",
                 "imap_starttls": "imap_starttls", "email_from": "from_address",
             }
             for in_key, col_name in field_map.items():
@@ -2879,6 +2907,7 @@ def setup_email_routes():
                     "imap_starttls": bool(r.imap_starttls),
                     "smtp_host": r.smtp_host or "",
                     "smtp_port": int(r.smtp_port or 465),
+                    "smtp_security": _smtp_security_mode({"smtp_security": getattr(r, "smtp_security", ""), "smtp_port": r.smtp_port}),
                     "smtp_user": r.smtp_user or "",
                     "from_address": r.from_address or "",
                     "has_imap_password": bool(r.imap_password),
@@ -2911,6 +2940,7 @@ def setup_email_routes():
                 imap_starttls=bool(data.get("imap_starttls", True)),
                 smtp_host=(data.get("smtp_host") or "").strip(),
                 smtp_port=int(data.get("smtp_port") or 465),
+                smtp_security=_smtp_security_mode({"smtp_security": data.get("smtp_security"), "smtp_port": data.get("smtp_port") or 465}),
                 smtp_user=(data.get("smtp_user") or "").strip(),
                 smtp_password=_enc(data.get("smtp_password") or ""),
                 from_address=(data.get("from_address") or "").strip(),
@@ -2954,6 +2984,8 @@ def setup_email_routes():
             for key in ("imap_port", "smtp_port"):
                 if data.get(key) not in (None, ""):
                     setattr(row, key, int(data[key]))
+            if "smtp_security" in data:
+                row.smtp_security = _smtp_security_mode({"smtp_security": data.get("smtp_security"), "smtp_port": data.get("smtp_port") or row.smtp_port})
             for key in ("imap_starttls", "enabled"):
                 if key in data:
                     setattr(row, key, bool(data[key]))
@@ -3038,6 +3070,7 @@ def setup_email_routes():
                     "imap_starttls": bool(row.imap_starttls),
                     "smtp_host": row.smtp_host or "",
                     "smtp_port": row.smtp_port or 465,
+                    "smtp_security": _smtp_security_mode({"smtp_security": getattr(row, "smtp_security", ""), "smtp_port": row.smtp_port}),
                     "smtp_user": row.smtp_user or "",
                     "smtp_password": _decrypt(row.smtp_password or ""),
                 }
@@ -3070,13 +3103,12 @@ def setup_email_routes():
             # port (Dovecot on 31143, etc.) would always fail the SSL
             # handshake because they're not actually wrapped in TLS.
             try:
-                if imap_starttls:
-                    conn = imaplib.IMAP4(imap_host, imap_port, timeout=10)
-                    conn.starttls()
-                elif imap_port == 993:
-                    conn = imaplib.IMAP4_SSL(imap_host, imap_port, timeout=10)
-                else:
-                    conn = imaplib.IMAP4(imap_host, imap_port, timeout=10)
+                conn = _open_imap_connection(
+                    imap_host,
+                    imap_port,
+                    starttls=imap_starttls,
+                    timeout=_IMAP_TIMEOUT_SECONDS,
+                )
                 try:
                     conn.login(imap_user, imap_pass)
                     imap_result = {"ok": True}
@@ -3089,14 +3121,16 @@ def setup_email_routes():
         smtp_host = (body.get("smtp_host") or "").strip()
         if smtp_host:
             smtp_port = int(body.get("smtp_port") or 465)
+            smtp_security = _smtp_security_mode({"smtp_security": body.get("smtp_security"), "smtp_port": smtp_port})
             smtp_user = (body.get("smtp_user") or imap_user).strip()
             smtp_pass = body.get("smtp_password") or imap_pass
             try:
-                if smtp_port == 587:
-                    smtp = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
-                    smtp.starttls()
-                else:
+                if smtp_security == "ssl":
                     smtp = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10)
+                else:
+                    smtp = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
+                    if smtp_security == "starttls":
+                        smtp.starttls()
                 try:
                     smtp.login(smtp_user, smtp_pass)
                     smtp_result = {"ok": True}

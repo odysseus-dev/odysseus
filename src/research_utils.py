@@ -39,9 +39,16 @@ LOW_QUALITY_MARKERS = [
     "unable to extract",
     "completely unrelated",
     "boilerplate",
-    "cookie",
     "footer text",
-    "copyright",
+    # Phrases (not bare "cookie"/"copyright") so we still catch boilerplate
+    # like consent banners and footers without discarding legitimate findings
+    # that merely discuss cookies or copyright as their subject.
+    "cookie consent",
+    "cookie banner",
+    "cookie notice",
+    "copyright notice",
+    "copyright footer",
+    "all rights reserved",
 ]
 
 

@@ -43,19 +43,60 @@ def init_database():
     print("  [ok] Database initialized")
 
 
+def _prompt_admin_credentials():
+    """Interactively ask for admin username and password when running in a terminal."""
+    import getpass
+
+    print()
+    print("  Set up your admin account:")
+    print("  (Press Enter to accept defaults)")
+    print()
+
+    username = input("  Username [admin]: ").strip().lower()
+    if not username:
+        username = "admin"
+
+    while True:
+        password = getpass.getpass("  Password: ")
+        if not password:
+            print("  Password cannot be empty.")
+            continue
+        confirm = getpass.getpass("  Confirm password: ")
+        if password != confirm:
+            print("  Passwords don't match. Try again.")
+            continue
+        break
+
+    return username, password
+
+
 def create_default_admin():
     """Create an initial admin user if none exists."""
     auth_path = os.path.join(DATA_DIR, "auth.json")
     if os.path.exists(auth_path):
         print("  [skip] auth.json already exists")
-        return
+        return "exists"
 
     try:
         import bcrypt
         import json
 
-        username = os.getenv("ODYSSEUS_ADMIN_USER", "admin").strip() or "admin"
-        password = os.getenv("ODYSSEUS_ADMIN_PASSWORD") or __import__("secrets").token_urlsafe(18)
+        # Priority: env vars > interactive prompt > random password
+        username = os.getenv("ODYSSEUS_ADMIN_USER", "").strip().lower()
+        password = os.getenv("ODYSSEUS_ADMIN_PASSWORD", "").strip()
+
+        if username and password:
+            # Both provided via env — use them directly
+            pass
+        elif sys.stdin.isatty() and not os.getenv("ODYSSEUS_SKIP_ADMIN_PROMPT"):
+            # Interactive terminal — ask the user
+            username, password = _prompt_admin_credentials()
+        else:
+            # Non-interactive (Docker, CI) — fall back to generated password
+            username = username or "admin"
+            password = password or __import__("secrets").token_urlsafe(18)
+
+        username = username or "admin"
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         auth_data = {
             "users": {
@@ -67,12 +108,19 @@ def create_default_admin():
         }
         with open(auth_path, "w", encoding="utf-8") as f:
             json.dump(auth_data, f, indent=2)
-        print(f"  [ok] Initial admin user created ({username})")
-        print(f"        Temporary password: {password}")
-        print(f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
+
+        if sys.stdin.isatty() and not os.getenv("ODYSSEUS_ADMIN_PASSWORD"):
+            print(f"  [ok] Admin account created ({username})")
+        else:
+            print(f"  [ok] Initial admin user created ({username})")
+            if not os.getenv("ODYSSEUS_ADMIN_PASSWORD"):
+                print(f"        Temporary password: {password}")
+                print(f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
+        return "created"
     except ImportError:
         print("  [warn] bcrypt not installed — skipping admin user creation")
         print("         Run: pip install bcrypt")
+        return "skipped"
 
 
 def create_env():
@@ -139,10 +187,14 @@ def main():
         print("         This is OK if dependencies aren't installed yet.")
 
     print("\n5. Creating initial admin...")
+
+    admin_status = "failed"
+
     try:
-        create_default_admin()
+        admin_status = create_default_admin()
     except Exception as e:
         print(f"  [warn] Admin creation failed: {e}")
+        admin_status = "failed"
 
     print("\n=== Setup complete ===")
     # start-macos.sh launches the server itself (on its own port) right after
@@ -151,7 +203,18 @@ def main():
         print(f"\nStart the server with:")
         print(f"  python -m uvicorn app:app --host 127.0.0.1 --port 7000")
         print(f"\nThen open http://localhost:7000")
-    print(f"Login with the admin username and temporary password printed above.\n")
+
+    # Cleaned, action-focused final instruction strings
+    if admin_status == "created":
+        print("Login with your admin credentials.\n")
+    elif admin_status == "exists":
+        print("Login with your existing admin credentials.\n")
+    elif admin_status == "skipped":
+        print("Admin creation did not happen: dependencies are missing.\nRun 'pip install bcrypt' and rerun setup.\n")
+    elif admin_status == "failed":
+        print("Admin creation did not happen: a system or file error occurred.\nCheck write permissions for the 'data' directory and rerun setup.\n")
+    else:  # handling "failed" or any unhandled edge case
+        print("Admin creation did not happen: a system or file error occurred.\nCheck write permissions for the 'data' directory and rerun setup.\n")
 
 
 if __name__ == "__main__":
