@@ -122,9 +122,18 @@ def compute_next_run(schedule: str, scheduled_time: str,
     if not scheduled_time:
         return None
 
-    # Parse HH:MM
+    # Parse HH:MM — fail closed on malformed input (no colon, non-numeric,
+    # out-of-range) the same way an invalid cron expression does above, so a
+    # bad value like "9" or "9am" returns None instead of raising IndexError/
+    # ValueError out of the create route (a 500) or the scheduler loop.
     parts = scheduled_time.split(":")
-    hour, minute = int(parts[0]), int(parts[1])
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError("hour/minute out of range")
+    except (ValueError, IndexError):
+        logger.warning(f"Invalid scheduled_time '{scheduled_time}'")
+        return None
 
     if schedule == "daily":
         candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
