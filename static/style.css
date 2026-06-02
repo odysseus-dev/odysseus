@@ -1141,7 +1141,10 @@ body.bg-pattern-sparkles {
       display: flex; align-items: center; gap: 6px;
       margin: 0; padding: 0; border: none;
       font-size: 10px; font-weight: 400; font-family: inherit;
-      line-height: 1; letter-spacing: 0; text-transform: none;
+      /* 1.3 (not 1) so Fira Code's tall glyph box isn't vertically clipped in
+         Chromium/Edge — mirrors the .list-item fix. The title is flex-centred
+         in a fixed-height (29px) header, so this adds headroom without reflow. */
+      line-height: 1.3; letter-spacing: 0; text-transform: none;
       color: var(--fg);
     }
     .section-icon,
