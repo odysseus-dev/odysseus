@@ -374,6 +374,11 @@ def _parse_dt(s: str) -> datetime:
         raise ValueError(f"could not parse datetime: {s!r}")
 
 
+def _ics_escape(s: str) -> str:
+    """Escape special characters per RFC 5545 section 3.3.11."""
+    return s.replace('\\', '\\\\').replace(';', '\\;').replace(',', '\\,')
+
+
 def _event_to_dict(ev: CalendarEvent) -> dict:
     """Convert a CalendarEvent model to the API dict format.
 
@@ -1038,7 +1043,7 @@ def setup_calendar_routes() -> APIRouter:
             for ev in events:
                 lines.append("BEGIN:VEVENT")
                 lines.append(f"UID:{ev.uid}")
-                lines.append(f"SUMMARY:{ev.summary or ''}")
+                lines.append(f"SUMMARY:{_ics_escape(ev.summary or '')}")
                 if ev.all_day:
                     lines.append(f"DTSTART;VALUE=DATE:{ev.dtstart.strftime('%Y%m%d')}")
                     lines.append(f"DTEND;VALUE=DATE:{ev.dtend.strftime('%Y%m%d')}")
@@ -1046,10 +1051,10 @@ def setup_calendar_routes() -> APIRouter:
                     lines.append(f"DTSTART:{ev.dtstart.strftime('%Y%m%dT%H%M%S')}")
                     lines.append(f"DTEND:{ev.dtend.strftime('%Y%m%dT%H%M%S')}")
                 if ev.description:
-                    desc = ev.description.replace(chr(10), '\\n')
+                    desc = _ics_escape(ev.description).replace(chr(10), '\\n')
                     lines.append(f"DESCRIPTION:{desc}")
                 if ev.location:
-                    lines.append(f"LOCATION:{ev.location}")
+                    lines.append(f"LOCATION:{_ics_escape(ev.location)}")
                 if ev.rrule:
                     lines.append(f"RRULE:{ev.rrule}")
                 lines.append("END:VEVENT")
