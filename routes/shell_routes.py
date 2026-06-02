@@ -183,13 +183,41 @@ def _package_status_note(name: str, probe: dict) -> str:
     return ""
 
 
+def _prepend_user_install_bins_to_path() -> None:
+    """Make pip --user console scripts visible to dependency probes.
+
+    Docker Cookbook installs vLLM with `python -m pip install --user`, which
+    drops the `vllm` CLI in /app/.local/bin. The running app process does not
+    inherit that PATH update, so `shutil.which("vllm")` can report missing even
+    after a successful install.
+    """
+    try:
+        import site
+
+        candidates = [os.path.join(site.USER_BASE, "bin")]
+    except Exception:
+        candidates = []
+    candidates.append(os.path.expanduser("~/.local/bin"))
+
+    parts = os.environ.get("PATH", "").split(os.pathsep) if os.environ.get("PATH") else []
+    changed = False
+    for path in reversed([p for p in candidates if p]):
+        if path not in parts:
+            parts.insert(0, path)
+            changed = True
+    if changed:
+        os.environ["PATH"] = os.pathsep.join(parts)
+
+
 def _package_probe_script(names: list[str]) -> str:
     names_lit = ",".join(repr(n) for n in names)
     return f"""
 import importlib.util
 import importlib.metadata as md
 import json
+import os
 import shutil
+import site
 
 names=[{names_lit}]
 dist_names={{
@@ -203,6 +231,24 @@ bin_names={{
     'vllm':['vllm'],
     'llama_cpp':['llama-server'],
 }}
+
+def add_user_install_bins_to_path():
+    candidates = []
+    try:
+        candidates.append(os.path.join(site.USER_BASE, 'bin'))
+    except Exception:
+        pass
+    candidates.append(os.path.expanduser('~/.local/bin'))
+    parts = os.environ.get('PATH', '').split(os.pathsep) if os.environ.get('PATH') else []
+    changed = False
+    for path in reversed([p for p in candidates if p]):
+        if path not in parts:
+            parts.insert(0, path)
+            changed = True
+    if changed:
+        os.environ['PATH'] = os.pathsep.join(parts)
+
+add_user_install_bins_to_path()
 
 def mod_status(n):
     spec = importlib.util.find_spec(n)
@@ -317,7 +363,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
         yield f"data: {json.dumps({'exit_code': -1, 'error': PTY_UNSUPPORTED_ERROR})}\n\n"
         return
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     master_fd, slave_fd = pty.openpty()
 
     # Set master to non-blocking
@@ -736,10 +782,11 @@ def setup_shell_routes() -> APIRouter:
                 ]
 
                 finished = 0
-                deadline = (asyncio.get_event_loop().time() + timeout) if timeout else None
+                loop = asyncio.get_running_loop()
+                deadline = (loop.time() + timeout) if timeout else None
                 while finished < 2:
                     if deadline:
-                        remaining = deadline - asyncio.get_event_loop().time()
+                        remaining = deadline - loop.time()
                         if remaining <= 0:
                             raise asyncio.TimeoutError()
                         wait = min(remaining, 2.0)
@@ -793,6 +840,7 @@ def setup_shell_routes() -> APIRouter:
         _require_admin(request)
         _reject_cross_site(request)
         import importlib, importlib.metadata as importlib_metadata, shlex, json as _json
+        _prepend_user_install_bins_to_path()
         if ssh_port and str(ssh_port).strip() not in ("", "22"):
             _port = str(ssh_port).strip()
             if not _SSH_PORT_RE.match(_port) or not (1 <= int(_port) <= 65535):

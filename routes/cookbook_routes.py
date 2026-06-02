@@ -37,7 +37,7 @@ from routes.cookbook_helpers import (
     _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
-    _append_serve_exit_code_lines, _cached_model_scan_script,
+    _append_serve_exit_code_lines, _cached_model_scan_script, _ollama_bind_from_cmd,
     _pip_install_fallback_chain, ModelDownloadRequest, ServeRequest,
 )
 
@@ -147,6 +147,15 @@ def setup_cookbook_routes() -> APIRouter:
                 r"No CUDA GPUs are available|no GPU.*found|CUDA_VISIBLE_DEVICES.*invalid",
                 "No GPUs are visible to the serve process.",
                 [{"label": "clear Cookbook GPU selection or choose available GPUs", "op": "settings", "field": "gpus", "value": ""}],
+            ),
+            (
+                r"Failed to infer device type|NVML Shared Library Not Found|No module named 'amdsmi'|platform is not available",
+                "vLLM could not find a supported GPU (CUDA or ROCm). "
+                "This machine may have integrated or unsupported graphics only.",
+                [
+                    {"label": "switch to llama.cpp (CPU/Metal, works without a discrete GPU)", "op": "manual"},
+                    {"label": "switch to Ollama (CPU/Metal, works without a discrete GPU)", "op": "manual"},
+                ],
             ),
             (
                 r"vllm.*command not found|No module named vllm|ERROR: vLLM is not installed",
@@ -677,11 +686,14 @@ def setup_cookbook_routes() -> APIRouter:
                 cwd=str(Path.home()),
             )
         else:
-            # LOCAL scan: run the interpreter directly. `python3` isn't a thing on
-            # Windows (it's `python`/`py`), and shell single-quoting of the path
-            # doesn't survive cmd.exe — so resolve the interpreter and exec it
-            # with the script path as an argv element (no shell quoting needed).
-            local_py = (
+            # LOCAL scan: use sys.executable (the venv Python Odysseus is already
+            # running under) — it's guaranteed real Python on all platforms.
+            # Falling back to which_tool on Windows risks hitting the Microsoft
+            # Store stub alias for "python3"/"python", which prints
+            # "Python was not found; run without arguments to install from the
+            # Microsoft Store" and exits 9009, producing empty stdout and a
+            # JSON parse error. sys.executable bypasses PATH entirely.
+            local_py = sys.executable or (
                 which_tool("python3") or which_tool("python")
                 or which_tool("py") or "python"
             )
@@ -719,6 +731,8 @@ def setup_cookbook_routes() -> APIRouter:
                     entry["backend"] = m.get("backend")
                 if m.get("is_ollama"):
                     entry["is_ollama"] = True
+                if isinstance(m.get("gguf_files"), list):
+                    entry["gguf_files"] = m["gguf_files"]
                 models.append(entry)
         except Exception as e:
             logger.warning(f"Failed to parse cached models: {e}")
@@ -962,13 +976,23 @@ def setup_cookbook_routes() -> APIRouter:
                 # failed CUDA attempt) doesn't cause the next configure to reuse
                 # stale settings and silently produce a CPU-only binary.
                 runner_lines.append('    cd ~/llama.cpp && rm -rf build')
+                runner_lines.append('    _ody_has_cuda_runtime=0')
                 runner_lines.append('    if command -v nvcc &>/dev/null; then')
+                runner_lines.append('      for _cudalib in "${CUDA_HOME:-}/lib64"/libcudart.so* "${CUDA_HOME:-}/lib"/libcudart.so* /usr/local/cuda/lib64/libcudart.so* /usr/lib*/libcudart.so*; do')
+                runner_lines.append('        [ -e "$_cudalib" ] && _ody_has_cuda_runtime=1 && break')
+                runner_lines.append('      done')
+                runner_lines.append('    fi')
+                runner_lines.append('    if command -v nvcc &>/dev/null && [ "$_ody_has_cuda_runtime" = "1" ]; then')
                 runner_lines.append('      echo "[odysseus] CUDA nvcc found — building llama-server with CUDA (GPU) support..."')
                 runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON \\')
                 runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\')
                 runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
                 runner_lines.append('    else')
-                runner_lines.append('      echo "[odysseus] WARNING: nvcc not found — building llama-server for CPU only."')
+                runner_lines.append('      if command -v nvcc &>/dev/null; then')
+                runner_lines.append('        echo "[odysseus] WARNING: nvcc found but CUDA runtime library was not found — building llama-server for CPU only."')
+                runner_lines.append('      else')
+                runner_lines.append('        echo "[odysseus] WARNING: nvcc not found — building llama-server for CPU only."')
+                runner_lines.append('      fi')
                 runner_lines.append('      echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
                 runner_lines.append('      echo "[odysseus]   To get a GPU build, first install vLLM via Cookbook -> Dependencies"')
                 runner_lines.append('      echo "[odysseus]   (its CUDA wheels include nvcc), then re-launch this serve task."')
@@ -982,16 +1006,22 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('    echo "llama-server build failed — installing Python bindings as fallback..."')
                 runner_lines.append(f"    {_pip_install_fallback_chain('llama-cpp-python', python_cmd='pip')} || true")
                 runner_lines.append('  fi')
+                runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
+                runner_lines.append('    echo "ERROR: llama.cpp serving is not available after install/build attempts."')
+                runner_lines.append('    ODYSSEUS_PREFLIGHT_EXIT=127')
+                runner_lines.append('  fi')
                 runner_lines.append('fi')
             elif "ollama" in req.cmd:
                 handled_ollama_serve = True
-                _ollama_port = "11434"
-                _ollama_match = re.search(r"OLLAMA_HOST=[^\s:]+:(\d+)", req.cmd)
-                if _ollama_match:
-                    _ollama_port = _ollama_match.group(1)
+                _ollama_default_host = "0.0.0.0" if remote else "127.0.0.1"
+                _ollama_host, _ollama_port = _ollama_bind_from_cmd(
+                    req.cmd,
+                    default_host=_ollama_default_host,
+                )
                 # Ollama can be a host binary, a system service, or a Docker
                 # container. If the HTTP API is already reachable, the model is
                 # already served and we should not require a host `ollama` CLI.
+                runner_lines.append(f'ODYSSEUS_OLLAMA_HOST={_bash_squote(_ollama_host)}')
                 runner_lines.append(f'ODYSSEUS_OLLAMA_PORT="{_ollama_port}"')
                 runner_lines.append('ODYSSEUS_OLLAMA_URL=""')
                 runner_lines.append('for _ody_ollama_port in "$ODYSSEUS_OLLAMA_PORT" 11434; do')
@@ -1020,8 +1050,12 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  echo "=== Process exited with code 127 ==="')
                 runner_lines.append('  exec bash -i')
                 runner_lines.append('fi')
-                runner_lines.append('echo "Starting ollama server on 0.0.0.0:${ODYSSEUS_OLLAMA_PORT}..."')
-                runner_lines.append('OLLAMA_HOST="0.0.0.0:${ODYSSEUS_OLLAMA_PORT}" ollama serve')
+                runner_lines.append('ODYSSEUS_OLLAMA_URL="http://${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}"')
+                if remote and _ollama_host in ("0.0.0.0", "::"):
+                    runner_lines.append('echo "[odysseus] WARNING: remote Ollama will bind to ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT} so Odysseus can reach it from this host."')
+                    runner_lines.append('echo "[odysseus] Ollama has no built-in authentication; expose this only on a trusted LAN/VPN or provide an explicit OLLAMA_HOST with your own access controls."')
+                runner_lines.append('echo "Starting ollama server on ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}..."')
+                runner_lines.append('OLLAMA_HOST="${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}" ollama serve')
                 runner_lines.append('_ody_exit=$?')
                 runner_lines.append('echo')
                 runner_lines.append('echo "=== Process exited with code ${_ody_exit} ==="')
@@ -1037,19 +1071,24 @@ def setup_cookbook_routes() -> APIRouter:
                 # find the `vllm` CLI ("command not found"). Mirrors llama.cpp above.
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! command -v vllm &>/dev/null; then')
-                runner_lines.append('  echo "ERROR: vLLM is not installed. Open Cookbook -> Dependencies and install vllm on this server, then launch again."')
+                runner_lines.append('  echo "ERROR: vLLM is not installed."')
                 runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
             elif "sglang.launch_server" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
-                runner_lines.append('if ! python3 -c "import sglang" 2>/dev/null; then')
-                runner_lines.append('  echo "ERROR: SGLang is not installed. Open Cookbook -> Dependencies and install sglang on this server, then launch again."')
+                runner_lines.append('if ! command -v sglang &>/dev/null; then')
+                runner_lines.append('  echo "ERROR: SGLang is not installed."')
+                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+                runner_lines.append('elif ! ODYSSEUS_SGLANG_IMPORT_ERROR="$(python3 -c "import sglang" 2>&1)"; then')
+                runner_lines.append('  echo "ERROR: SGLang is installed but failed to import."')
+                runner_lines.append('  printf "%s\\n" "$ODYSSEUS_SGLANG_IMPORT_ERROR"')
                 runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
             elif "scripts/diffusion_server.py" in req.cmd or ".diffusion_server.py" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
-                runner_lines.append('if ! python3 -c "import torch, diffusers" 2>/dev/null; then')
-                runner_lines.append('  echo "ERROR: Diffusion serving requires PyTorch + diffusers. Open Cookbook -> Dependencies and install diffusers on this server, then launch again."')
+                runner_lines.append('if ! ODYSSEUS_DIFFUSION_IMPORT_ERROR="$(python3 -c "import torch, diffusers" 2>&1)"; then')
+                runner_lines.append('  echo "ERROR: Diffusion serving requires PyTorch + diffusers."')
+                runner_lines.append('  printf "%s\\n" "$ODYSSEUS_DIFFUSION_IMPORT_ERROR"')
                 runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
 
@@ -1362,9 +1401,16 @@ def setup_cookbook_routes() -> APIRouter:
             total_mb = max(0, int(total_bytes / (1024 * 1024)))
             used_mb = max(0, min(total_mb, int(used_bytes / (1024 * 1024))))
             free_mb = max(0, total_mb - used_mb)
+            # GTT = the system-RAM pool the GPU pages into when VRAM is full.
+            # On a discrete card a large gtt_used means the model spilled past
+            # VRAM into RAM over PCIe — much slower. Surface it so the UI can
+            # warn "spilling to RAM" instead of the user wondering why it's slow.
+            gtt_used_raw = await _gpu_read_file(f"{base}/mem_info_gtt_used", host, ssh_port)
+            gtt_used_mb = max(0, int(int(gtt_used_raw) / (1024 * 1024))) if (gtt_used_raw and gtt_used_raw.isdigit()) else 0
             gpus.append({
                 "index": len(gpus), "name": name, "uuid": entry,
                 "free_mb": free_mb, "total_mb": total_mb, "used_mb": used_mb,
+                "gtt_used_mb": gtt_used_mb,
                 "util_pct": 0, "busy": bool(total_mb and (free_mb / total_mb) < 0.85),
                 "processes": [], "backend": "rocm", "source": "amd-sysfs",
                 "unified_memory": unified,

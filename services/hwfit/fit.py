@@ -99,6 +99,27 @@ def _estimate_speed(model, quant, run_mode, system):
     return k / pb * sm
 
 
+def _architecture_bonus(model):
+    name = (model.get("name") or "").lower()
+    arch = (model.get("architecture") or "").lower()
+    text = f"{name} {arch}"
+
+    # Keep this intentionally small: hardware fit and speed still matter, but
+    # current model families should not be scored the same as older Qwen2/LLama
+    # era entries just because the parameter count is similar.
+    if "qwen3.6" in text or "qwen3_6" in text:
+        return 9
+    if "qwen3.5" in text or "qwen3_5" in text:
+        return 8
+    if "qwen3-next" in text or "qwen3_next" in text:
+        return 6
+    if "qwen3" in text or arch.startswith("qwen3"):
+        return 4
+    if "qwen2.5" in text or "qwen2_5" in text:
+        return 2
+    return 0
+
+
 def _quality_score(model, quant, use_case):
     pb = params_b(model)
     if pb < 1:
@@ -128,6 +149,7 @@ def _quality_score(model, quant, use_case):
     if "gemma" in name_lower:
         base += 1
 
+    base += _architecture_bonus(model)
     base += QUANT_QUALITY_PENALTY.get(quant, 0)
 
     model_uc = infer_use_case(model)
@@ -220,12 +242,13 @@ def _quant_bits(q):
     return 0
 
 
-def analyze_model(model, system, target_quant=None):
+def analyze_model(model, system, target_quant=None, scoring_use_case=None):
     pb = params_b(model)
     if pb <= 0:
         return None
 
-    use_case = infer_use_case(model)
+    model_use_case = infer_use_case(model)
+    score_use_case = scoring_use_case or "general"
     has_gpu = system.get("has_gpu", False)
     gpu_vram = (system.get("gpu_vram_gb") or 0) if has_gpu else 0
     gpu_count = system.get("gpu_count", 1) or 1
@@ -242,6 +265,8 @@ def analyze_model(model, system, target_quant=None):
     ctx = model.get("context_length", 4096) or 4096
 
     native_quant = model.get("quantization", "Q4_K_M")
+    if "nvfp4" in (model.get("name") or "").lower():
+        native_quant = "NVFP4"
     preq = is_prequantized(model)
 
     # GGUF models can't be sharded across GPUs — use single GPU VRAM
@@ -260,10 +285,13 @@ def analyze_model(model, system, target_quant=None):
     # Determine which quant to evaluate at
     if preq:
         # AWQ/GPTQ/FP8/MLX come at a fixed bit-width. If the user picked a
-        # specific quant tier (e.g. Q8 → 8-bit), only keep prequant models whose
-        # native bit-width matches — otherwise selecting Q8 would still surface
-        # AWQ-4bit models, mixing 4- and 8-bit in one view.
+        # GGUF quant tier (Q4/Q8/etc.), do not treat a same-bit AWQ/GPTQ build
+        # as equivalent. "Q4" means llama.cpp/Ollama-style GGUF in this UI;
+        # AWQ/GPTQ/FP8 are separate GPU-serving formats and must only appear
+        # when explicitly selected or when no quant filter is applied.
         if target_quant:
+            if not any(target_quant.startswith(p) for p in ("AWQ-", "GPTQ-", "FP8", "NVFP4")):
+                return None
             _tb, _nb = _quant_bits(target_quant), _quant_bits(native_quant)
             if _tb and _nb and _tb != _nb:
                 return None
@@ -300,7 +328,7 @@ def analyze_model(model, system, target_quant=None):
             "parameter_count": model.get("parameter_count"),
             "params_b": round(pb, 1),
             "is_moe": is_moe,
-            "use_case": use_case,
+            "use_case": model_use_case,
             "fit_level": "too_tight",
             "run_mode": "no_fit",
             "quant": quant_to_try,
@@ -334,12 +362,12 @@ def analyze_model(model, system, target_quant=None):
 
     tps = _estimate_speed(model, quant, run_mode, system)
 
-    q_score = _quality_score(model, quant, use_case)
-    s_score = _speed_score(tps, use_case)
+    q_score = _quality_score(model, quant, score_use_case)
+    s_score = _speed_score(tps, score_use_case)
     f_score = _fit_score(required_gb, budget)
-    c_score = _context_score(fit_ctx, use_case)
+    c_score = _context_score(fit_ctx, score_use_case)
 
-    wq, ws, wf, wc = USE_CASE_WEIGHTS.get(use_case, (0.45, 0.30, 0.15, 0.10))
+    wq, ws, wf, wc = USE_CASE_WEIGHTS.get(score_use_case, (0.45, 0.30, 0.15, 0.10))
     composite = q_score * wq + s_score * ws + f_score * wf + c_score * wc
 
     return {
@@ -348,7 +376,7 @@ def analyze_model(model, system, target_quant=None):
         "parameter_count": model.get("parameter_count"),
         "params_b": round(pb, 1),
         "is_moe": is_moe,
-        "use_case": use_case,
+        "use_case": model_use_case,
         "fit_level": fit_level,
         "run_mode": run_mode,
         "quant": quant,
@@ -419,21 +447,29 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
             results.sort(key=sort_fn, reverse=(sort != "vram"))
             return results[:limit]
 
-    # If user picked a prequantized format (AWQ/FP8/GPTQ), filter to only those models
-    filter_native = quant and any(quant.startswith(p) for p in ("AWQ-", "GPTQ-", "FP8"))
+    # If user picked a prequantized format (AWQ/FP8/GPTQ/NVFP4), filter to only those models
+    filter_native = quant and any(quant.startswith(p) for p in ("AWQ-", "GPTQ-", "FP8", "NVFP4"))
 
     system_backend = (system.get("backend") or "").lower()
     apple_silicon = system_backend in ("mps", "metal", "apple")
+    rocm = system_backend == "rocm"
 
     for m in models:
         native_q = m.get("quantization", "")
+        if "nvfp4" in (m.get("name") or "").lower():
+            native_q = "NVFP4"
 
-        # MLX-quantized models need the MLX runtime (mlx_lm), which Odysseus
-        # doesn't generate serve commands for — only llama.cpp/Ollama (Metal)
-        # and vLLM/SGLang (CUDA). MLX repos ship no GGUF alternative, so they're
-        # unrunnable on every backend we support. Always drop them, on Apple
-        # Silicon too, so the Cookbook never recommends a model it can't serve.
-        if native_q.startswith("mlx-"):
+        # MLX is Apple Silicon only. Hide MLX rows on non-Mac hardware scans,
+        # but leave them visible on Metal/MPS so Mac support is not broken.
+        if not apple_silicon and (native_q.startswith("mlx-") or "mlx" in (m.get("name") or "").lower()):
+            continue
+
+        # ROCm support for vLLM/SGLang quantized safetensors is too brittle to
+        # recommend blindly in the default scan. Keep AWQ/GPTQ/FP8 discoverable
+        # only when the user explicitly picks that format from the quant filter;
+        # otherwise prefer GGUF/Q* entries that Odysseus can route through
+        # llama.cpp/Ollama without pretending "fits VRAM" means "servable".
+        if rocm and is_prequantized(m) and not filter_native:
             continue
 
         # On Apple Silicon the only serving engines are llama.cpp and Ollama,
@@ -443,7 +479,8 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         # default GGUF quant) and vLLM-only AWQ/GPTQ/FP8 builds alike. Without
         # this the Cookbook recommends models the Mac can't run; on CUDA these
         # stay visible because vLLM serves safetensors directly.
-        if apple_silicon and not (m.get("is_gguf") or m.get("gguf_sources")):
+        is_mlx = native_q.startswith("mlx-") or "mlx" in (m.get("name") or "").lower()
+        if apple_silicon and not (m.get("is_gguf") or m.get("gguf_sources") or is_mlx):
             continue
 
         # Format filter: AWQ tab → only AWQ models, FP8 tab → only FP8 models
@@ -454,6 +491,8 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
                 continue
             if quant.startswith("GPTQ") and not native_q.startswith("GPTQ"):
                 continue
+            if quant.startswith("NVFP4") and not native_q.startswith("NVFP4"):
+                continue
 
         if search:
             name = m.get("name", "").lower()
@@ -461,7 +500,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
             if search.lower() not in name and search.lower() not in provider:
                 continue
 
-        result = analyze_model(m, system, target_quant=quant)
+        result = analyze_model(m, system, target_quant=quant, scoring_use_case=(use_case or "general"))
         if result is None:
             continue
 

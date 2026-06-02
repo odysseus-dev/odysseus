@@ -352,29 +352,37 @@ def _brave_search_impl(query: str, count: int, time_filter: Optional[str] = None
 
 # ── DuckDuckGo (free, no key) ──
 
+def _is_duckduckgo_host(host: str) -> bool:
+    """True only for duckduckgo.com and its subdomains — not substring look-alikes
+    such as ``duckduckgo.com.evil.com`` or ``notduckduckgo.com``."""
+    host = (host or "").lower()
+    return host == "duckduckgo.com" or host.endswith(".duckduckgo.com")
+
+
+def _resolve_ddg_redirect(raw: str) -> str:
+    """Resolve a DuckDuckGo /l/?uddg= redirect URL to its destination."""
+    if not raw:
+        return raw
+    # Handle protocol-relative URLs
+    resolved = raw
+    if resolved.startswith("//"):
+        resolved = "https:" + resolved
+    elif resolved.startswith("/"):
+        resolved = urljoin("https://html.duckduckgo.com", resolved)
+    # Extract the actual URL from DuckDuckGo's /l/?uddg= redirect
+    try:
+        parsed = urlparse(resolved)
+        if _is_duckduckgo_host(parsed.hostname) and parsed.path.rstrip("/") == "/l":
+            qs = parse_qs(parsed.query)
+            if "uddg" in qs:
+                return qs["uddg"][0]
+    except Exception:
+        pass
+    return resolved
+
+
 def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
     """Search using DuckDuckGo via the duckduckgo-search library. No API key needed."""
-    def _resolve_url(raw: str) -> str:
-        """Resolve DuckDuckGo redirect URL to the actual destination URL."""
-        if not raw:
-            return raw
-        # Handle protocol-relative URLs
-        resolved = raw
-        if resolved.startswith("//"):
-            resolved = "https:" + resolved
-        elif resolved.startswith("/"):
-            resolved = urljoin("https://html.duckduckgo.com", resolved)
-        # Extract the actual URL from DuckDuckGo's /l/?uddg= redirect
-        try:
-            parsed = urlparse(resolved)
-            if "duckduckgo.com" in (parsed.hostname or "") and parsed.path.rstrip("/") == "/l":
-                qs = parse_qs(parsed.query)
-                if "uddg" in qs:
-                    return qs["uddg"][0]
-        except Exception:
-            pass
-        return resolved
-
     def _html_fallback() -> List[dict]:
         try:
             response = httpx.get(
@@ -390,7 +398,7 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
                 link = result.select_one(".result__a")
                 if not link:
                     continue
-                url = _resolve_url(link.get("href", ""))
+                url = _resolve_ddg_redirect(link.get("href", ""))
                 if not url:
                     continue
                 snippet_el = result.select_one(".result__snippet")

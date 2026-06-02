@@ -88,6 +88,8 @@ def _quant_from_name(name):
         if "6bit" in n:
             return "mlx-6bit"
         return "mlx-8bit" if is8 else "mlx-4bit"
+    if "nvfp4" in n:
+        return "NVFP4"
     if "fp8" in n:
         return "FP8"
     if "int4" in n or "4bit" in n or "4-bit" in n:
@@ -136,7 +138,7 @@ def _entry_from_modelinfo(mi, overrides):
                 params_by_dtype = getattr(st, "parameters", None) or {}
                 if quant.endswith("4bit") or quant.endswith("Int4"):
                     pack_factor = 8
-                elif quant.endswith("8bit") or quant.endswith("Int8") or quant == "FP8":
+                elif quant.endswith("8bit") or quant.endswith("Int8") or quant in ("FP8", "NVFP4"):
                     pack_factor = 4
                 else:
                     pack_factor = 1
@@ -158,7 +160,7 @@ def _entry_from_modelinfo(mi, overrides):
     rel = created.strftime("%Y-%m-%d") if created else datetime.utcnow().strftime("%Y-%m-%d")
     # Rough RAM/VRAM hints (fit.py recomputes the real requirement from params+quant).
     _BPP = {"AWQ-4bit": 0.58, "GPTQ-Int4": 0.58, "mlx-4bit": 0.55, "mlx-6bit": 0.85,
-            "AWQ-8bit": 1.1, "GPTQ-Int8": 1.1, "mlx-8bit": 1.1, "FP8": 1.1, "Q4_K_M": 0.6}
+            "AWQ-8bit": 1.1, "GPTQ-Int8": 1.1, "mlx-8bit": 1.1, "FP8": 1.1, "NVFP4": 0.6, "Q4_K_M": 0.6}
     bpp = _BPP.get(quant, 0.6)
     vram = round(pb * bpp + 0.5, 1)
     entry = {

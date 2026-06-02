@@ -34,10 +34,104 @@ function _taskBadge(task) {
   return { text: _statusLabel(task.status, task.type), cls: 'cookbook-task-' + task.status };
 }
 
+function _canClearTask(task) {
+  if (!task || task.status === 'running') return false;
+  if (task.type === 'serve' && (task.status === 'ready' || task._serveReady)) return false;
+  if (task.type === 'download' && task.status === 'done' && !task.payload?._dep) return false;
+  return ['done', 'stopped', 'error', 'crashed', 'failed'].includes(task.status);
+}
+
+function _clearPillLabel(task) {
+  return 'clear';
+}
+
 function _shouldOfferCrashReport(task) {
   if (!task) return false;
   if (task._unreachable && task.type === 'serve') return true;
   return ['error', 'crashed', 'failed'].includes(task.status);
+}
+
+function _serveTaskLooksAwqOnLocalBackend(task, outputText = '') {
+  const repo = `${task?.payload?.repo_id || ''} ${task?.name || ''}`.toLowerCase();
+  const cmd = `${task?.payload?._cmd || ''} ${outputText || ''}`.toLowerCase();
+  return /\b(awq|gptq|fp8)\b/.test(repo) && /(llama-server|llama_cpp\.server|ollama|ggml_cuda_enable_unified_memory)/.test(cmd);
+}
+
+function _serveTaskLooksAwqWithoutUsableAccelerator(task, outputText = '') {
+  const repo = `${task?.payload?.repo_id || ''} ${task?.name || ''}`.toLowerCase();
+  const out = String(outputText || '').toLowerCase();
+  return /\b(awq|gptq|fp8)\b/.test(repo)
+    && /(no accelerator|no cuda runtime|failed to infer device type|triton is not supported|0 active driver)/i.test(out);
+}
+
+async function _openDownloadForGgufTask(task) {
+  const raw = task?.payload?.repo_id || task?.name || '';
+  const modelName = String(raw)
+    .split('/').pop()
+    .replace(/[-_](?:AWQ|GPTQ|FP8|4bit|8bit|Int4|Int8).*$/i, '')
+    .replace(/[-_]+$/g, '')
+    || String(raw).split('/').pop()
+    || raw;
+  const cookbook = window.cookbookModule;
+  if (cookbook && typeof cookbook.open === 'function') {
+    cookbook.open({ tab: 'Search' });
+  } else {
+    document.getElementById('tool-cookbook-btn')?.click();
+  }
+  setTimeout(async () => {
+    const modal = document.getElementById('cookbook-modal');
+    const tab = modal?.querySelector('.cookbook-tab[data-backend="Search"]');
+    if (tab && !tab.classList.contains('active')) tab.click();
+    const search = document.getElementById('hwfit-search');
+    if (search) {
+      search.value = modelName;
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      search.focus();
+    }
+    const quant = document.getElementById('hwfit-quant');
+    if (quant) {
+      quant.value = 'Q4_K_M';
+      quant.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    try {
+      const hwfit = await import('./cookbook-hwfit.js');
+      if (typeof hwfit._hwfitFetch === 'function') hwfit._hwfitFetch(true);
+    } catch {}
+  }, 80);
+}
+
+function _terminalServeDiagnosis(task, outputText) {
+  const out = String(outputText || task?.output || '');
+  if (!task || task.type !== 'serve' || !['stopped', 'error', 'crashed', 'failed'].includes(task.status) || !out.trim()) return null;
+  if (_serveTaskLooksAwqOnLocalBackend(task, out)) {
+    return {
+      message: 'AWQ/GPTQ/FP8 cannot be served through llama.cpp/Ollama unified-memory mode.',
+      suggestion: 'Suggested action: use vLLM/SGLang on a compatible CUDA/ROCm GPU server, or download a GGUF version for llama.cpp/Ollama/unified-memory serving.',
+      fixes: [
+        { label: 'Find GGUF download', action: () => _openDownloadForGgufTask(task) },
+        { label: 'Edit serve', action: (panel) => _openServeEditForTask(task) },
+      ],
+    };
+  }
+  if (_serveTaskLooksAwqWithoutUsableAccelerator(task, out)) {
+    return {
+      message: 'AWQ/GPTQ/FP8 needs a working vLLM/SGLang accelerator path; this server did not expose one.',
+      suggestion: 'Suggested action: choose a CUDA/ROCm server where vLLM/SGLang can see the GPU, or download a GGUF version and serve it with llama.cpp/Ollama.',
+      fixes: [
+        { label: 'Find GGUF download', action: () => _openDownloadForGgufTask(task) },
+        { label: 'Edit serve', action: (panel) => _openServeEditForTask(task) },
+      ],
+    };
+  }
+  return _diagnose(out) || {
+    message: /Native llama-server not found|building llama-server|llama\.cpp/i.test(out)
+      ? 'llama.cpp build stopped before the server became reachable.'
+      : 'Serve stopped before the model became reachable.',
+    suggestion: /Native llama-server not found|building llama-server|llama\.cpp/i.test(out)
+      ? 'Suggested action: copy the troubleshooting bundle, then edit serve settings. For the quickest local/CPU path, use Ollama or a prebuilt llama-server; source builds can take several minutes and fail if build dependencies are incomplete.'
+      : 'Suggested action: copy the troubleshooting bundle, then edit serve settings or relaunch with a CPU/backend fallback.',
+    fixes: [{ label: 'Edit serve', action: (panel) => _openServeEditForTask(task) }],
+  };
 }
 
 function _redactCrashReportText(text) {
@@ -172,6 +266,23 @@ export function _parseServePhase(snapshot) {
   }
   if (/Ollama API ready on port\s+\d+/i.test(flat)) {
     return { phase: 'ready', status: 'ready' };
+  }
+  const llamaBuildMatches = [...flat.matchAll(/\[\s*(\d{1,3})%\]\s*(?:Building|Linking)/gi)];
+  if (llamaBuildMatches.length) {
+    const pct = Math.min(100, parseInt(llamaBuildMatches[llamaBuildMatches.length - 1][1], 10));
+    return { phase: `building llama.cpp ${pct}%`, status: 'running', pct };
+  }
+  if (/Native llama-server not found|building from source/i.test(flat)) {
+    if (/Cloning into ['"]?llama\.cpp/i.test(flat) && !/Receiving objects:\s*100%/i.test(flat)) {
+      return { phase: 'cloning llama.cpp', status: 'running' };
+    }
+    if (/Configuring incomplete|CMake Error/i.test(flat)) {
+      return {};
+    }
+    if (/CMAKE_BUILD_TYPE|Detecting CXX|Found Threads|Including CPU backend|CUDA nvcc found|building llama-server/i.test(flat)) {
+      return { phase: 'configuring llama.cpp', status: 'running' };
+    }
+    return { phase: 'building llama.cpp', status: 'running' };
   }
   // HTTP access logs (e.g. GET /v1/models 200 OK) mean the server is up
   if (/(?:GET|POST)\s+\/[^\s]*\s+HTTP\/[\d.]+"\s*\d{3}/.test(flat)) {
@@ -341,8 +452,24 @@ async function _startQueuedDownload(task) {
 
 // ── Task CRUD ──
 
+function _serveOutputLooksReady(task) {
+  const out = String(task?.output || '');
+  return !!task?._serveReady
+    || /Application startup complete/i.test(out)
+    || /Ollama API ready on port\s+\d+/i.test(out)
+    || /(?:GET|POST)\s+\/[^\s]*\s+HTTP\/[\d.]+"\s*2\d\d/i.test(out);
+}
+
+function _normalizeTaskForDisplay(task) {
+  if (!task || typeof task !== 'object') return task;
+  if (task.type === 'serve' && task.status === 'done' && !_serveOutputLooksReady(task)) {
+    return { ...task, status: 'error' };
+  }
+  return task;
+}
+
 export function _loadTasks() {
-  try { return JSON.parse(localStorage.getItem(TASKS_KEY)) || []; }
+  try { return (JSON.parse(localStorage.getItem(TASKS_KEY)) || []).map(_normalizeTaskForDisplay); }
   catch { return []; }
 }
 
@@ -876,7 +1003,7 @@ export async function _serveAutoFix(panel, envVar) {
 // Edit button, but optionally with a modified command (used by the diagnosis
 // "Retry with X" buttons so a retry lands in the editable Serve panel with the
 // adjusted setting, instead of blindly relaunching).
-async function _openServeEditForTask(task, cmdOverride) {
+async function _openServeEditForTask(task, cmdOverride, fieldOverrides = null) {
   const repo = task.payload?.repo_id;
   if (!repo) { uiModule.showToast('No model info on this task'); return; }
   const cmd = cmdOverride || task.payload?._cmd;
@@ -884,6 +1011,9 @@ async function _openServeEditForTask(task, cmdOverride) {
   let fields = cmdOverride
     ? _parseServeCmdToFields(cmd)
     : (task.payload?._fields || (cmd ? _parseServeCmdToFields(cmd) : null));
+  if (fieldOverrides && typeof fieldOverrides === 'object') {
+    fields = { ...(fields || {}), ...fieldOverrides };
+  }
   // Switch the active server to the one this serve ran on (mirrors _openEdit).
   const _tHost = task.remoteHost || '';
   _envState.remoteHost = _tHost;
@@ -1352,8 +1482,8 @@ export function _renderRunningTab() {
       const host = btn.dataset.clearServer;
       if (!await window.styledConfirm(`Clear finished tasks on ${_serverName(host)}?`, { confirmText: 'Clear' })) return;
       const allTasks = _loadTasks();
-      const toRemove = allTasks.filter(t => (t.remoteHost || '') === host && t.status !== 'running');
-      const remaining = allTasks.filter(t => (t.remoteHost || '') !== host || t.status === 'running');
+      const toRemove = allTasks.filter(t => (t.remoteHost || '') === host && _canClearTask(t));
+      const remaining = allTasks.filter(t => (t.remoteHost || '') !== host || !_canClearTask(t));
       _saveTasks(remaining);
       // Fade/slide each finished card out (same exit as the per-card clear)
       // instead of yanking them instantly.
@@ -1443,16 +1573,19 @@ export function _renderRunningTab() {
         const _bdg = _taskBadge(task);
         badge.textContent = _bdg.text;
         badge.className = 'cookbook-task-status' + (_bdg.cls ? ' ' + _bdg.cls : '');
-        badge.style.display = isDone ? 'none' : '';   // hidden — type chip carries it
+        badge.style.display = '';
       }
       // Indicator: spinning wave while running, green check when finished.
       const wave = el.querySelector('.cookbook-task-wave');
       if (wave) wave.style.display = task.status === 'running' ? '' : 'none';
-      // Model downloads (which have a Serve → button) don't get a clear pill —
-      // pressing Serve clears them. Dep installs / serve tasks keep it.
       const check = el.querySelector('.cookbook-task-check');
-      const _showClear = isDone && !(task.type === 'download' && !task.payload?._dep);
-      if (check) check.style.display = _showClear ? '' : 'none';
+      if (check) {
+        check.style.display = _canClearTask(task) ? '' : 'none';
+        const label = check.querySelector('.cookbook-task-done-label');
+        if (label) label.textContent = _clearPillLabel(task);
+      }
+      const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+      if (terminalDiag) _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
     }
     if (!task) {
       if (el._uptimeInterval) { clearInterval(el._uptimeInterval); el._uptimeInterval = null; }
@@ -1476,11 +1609,8 @@ export function _renderRunningTab() {
       <div class="cookbook-task-header">
         <span class="cookbook-task-type${(task.status === 'done' && task.type === 'download') ? ' cookbook-task-type-done' : ''}" data-type="${esc(task.type)}">${esc((task.status === 'done' && task.type === 'download') ? 'finished' : task.type)}</span>
         <span class="cookbook-task-name">${modelLogo(task.name)}${esc(task.name)}</span>
-        <span class="cookbook-task-status ${_bdg.cls}" style="display:${task.status === 'done' ? 'none' : ''}"${_bdgTitle}>${esc(_bdg.text)}</span>
-        ${task.type === 'serve' && task.payload?._cmd ? '<button class="cookbook-task-edit-btn" title="Edit settings &amp; relaunch"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>' : ''}
-        ${task.type === 'serve' && task.payload?._cmd ? '<button class="cookbook-task-save-btn" title="Save preset"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></button>' : ''}
-        <span class="cookbook-task-indicator"><span class="cookbook-task-wave" style="display:${task.status === 'running' ? '' : 'none'}"></span><span class="cookbook-task-check" title="Clear" style="display:${(task.status === 'done' && !(task.type === 'download' && !task.payload?._dep)) ? '' : 'none'}"><svg class="cookbook-task-check-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#50fa7b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cookbook-task-clear-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span class="cookbook-task-done-label">done</span><span class="cookbook-task-clear-label">clear</span></span></span>
-        ${task.type === 'download' && !task.payload?._dep && task.status === 'done' ? `<span class="cookbook-task-status cookbook-task-done">finished</span>` : ''}
+        <span class="cookbook-task-indicator"><span class="cookbook-task-wave" style="display:${task.status === 'running' ? '' : 'none'}"></span><span class="cookbook-task-check" title="Clear" style="display:${_canClearTask(task) ? '' : 'none'}"><svg class="cookbook-task-check-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#50fa7b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cookbook-task-clear-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span class="cookbook-task-done-label">${esc(_clearPillLabel(task))}</span><span class="cookbook-task-clear-label">clear</span></span></span>
+        <span class="cookbook-task-status ${_bdg.cls}"${_bdgTitle}>${esc(_bdg.text)}</span>
         <button class="cookbook-task-menu-btn" title="Actions">&#8942;</button>
       </div>
       <div class="cookbook-task-sub"><span class="cookbook-task-session">${esc(task.sessionId)}</span><span class="cookbook-task-uptime" style="display:${((task.type === 'serve' || task.type === 'download') && task.status === 'running') ? '' : 'none'}"></span></div>
@@ -1489,6 +1619,9 @@ export function _renderRunningTab() {
 
     const _waveEl = el.querySelector('.cookbook-task-wave');
     if (_waveEl && task.status === 'running') _registerWaveEl(_waveEl);
+
+    const terminalDiag = _terminalServeDiagnosis(task, task.output || '');
+    if (terminalDiag) _showDiagnosis(el, terminalDiag, task.output || '');
 
     const _uptimeEl = el.querySelector('.cookbook-task-uptime');
     if (_uptimeEl && (task.type === 'serve' || task.type === 'download') && task.status === 'running') {
@@ -1506,35 +1639,12 @@ export function _renderRunningTab() {
     }
 
     // Re-open the Serve panel for this model, pre-filled with the EXACT
-    // settings this instance launched with, and on the SERVER it runs on —
-    // shared by the edit icon button and the ⋮ "Edit settings" menu item.
+    // settings this instance launched with, and on the SERVER it runs on.
     const _openEdit = () => _openServeEditForTask(task);
-    const editBtn = el.querySelector('.cookbook-task-edit-btn');
-    if (editBtn) {
-      editBtn.addEventListener('click', (e) => { e.stopPropagation(); _openEdit(); });
-    }
-
-    // Wire save icon button
-    const saveBtn = el.querySelector('.cookbook-task-save-btn');
-    if (saveBtn) {
-      saveBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        // Tell them it's already saved up front (often true now that working
-        // configs auto-save) instead of after they've typed a name.
-        if (_loadPresets().some(p => p.cmd === task.payload?._cmd)) {
-          uiModule.showToast('Already saved');
-          return;
-        }
-        const label = (await uiModule.styledPrompt('Name this config so you can recall it later.', {
-          title: 'Save Config', defaultValue: task.name, placeholder: 'e.g. 8-bit, fast', confirmText: 'Save',
-        }) || '').trim();
-        if (!label) return;
-        if (!_saveTaskAsPreset(task, label)) { uiModule.showToast('Already saved'); return; }
-        saveBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#50fa7b" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>';
-        uiModule.showToast(`Saved "${label}"`);
-        setTimeout(() => { saveBtn.style.display = 'none'; }, 1500);
-      });
-    }
+    el.addEventListener('cookbook:edit-serve', (e) => {
+      e.stopPropagation();
+      _openServeEditForTask(task, null, e.detail?.fields || null);
+    });
 
     // Finished download → an explicit "Serve →" button jumps straight to the
     // Serve tab with this model pre-selected (on the server it downloaded to).
@@ -2018,12 +2128,31 @@ async function _reconnectTask(el, task) {
           if (badge) { badge.textContent = _statusLabel('error', task.type); badge.className = 'cookbook-task-status cookbook-task-error'; }
           _showCookbookNotif(true);
         } else {
-          const looksSuccessful = !lastOutput.includes('DOWNLOAD_FAILED') && (lastOutput.includes('DONE') || lastOutput.includes('100%') || lastOutput.includes('Application startup complete') || lastOutput.includes('/snapshots/') || lastOutput.includes('Download complete') || lastOutput.includes('DOWNLOAD_OK'));
-          if (!lastOutput.trim() || (task.type === 'download' && !looksSuccessful)) {
+          const downloadLooksSuccessful = !lastOutput.includes('DOWNLOAD_FAILED')
+            && (lastOutput.includes('DONE') || lastOutput.includes('100%') || lastOutput.includes('/snapshots/') || lastOutput.includes('Download complete') || lastOutput.includes('DOWNLOAD_OK'));
+          const serveLooksReady = task.type === 'serve' && _serveOutputLooksReady({ ...task, output: lastOutput });
+          const looksSuccessful = task.type === 'download' ? downloadLooksSuccessful : serveLooksReady;
+          if (!lastOutput.trim() || !looksSuccessful) {
             _updateTask(task.sessionId, { status: 'crashed' });
             el.dataset.status = 'crashed';
             const badge = el.querySelector('.cookbook-task-status');
             if (badge) { badge.textContent = _statusLabel('crashed', task.type); badge.className = 'cookbook-task-status cookbook-task-crashed'; }
+            if (task.type === 'serve') {
+              const diag = _diagnose(lastOutput) || {
+                message: _serveTaskLooksAwqOnLocalBackend(task, lastOutput)
+                  ? 'AWQ/GPTQ/FP8 cannot be served through llama.cpp/Ollama unified-memory mode.'
+                  : /Native llama-server not found|building llama-server|llama\.cpp/i.test(lastOutput)
+                  ? 'llama.cpp build stopped before the server became reachable.'
+                  : 'Serve stopped before the model became reachable.',
+                suggestion: _serveTaskLooksAwqOnLocalBackend(task, lastOutput)
+                  ? 'Suggested action: use vLLM/SGLang on a compatible CUDA/ROCm GPU server, or download a GGUF version for llama.cpp/Ollama/unified-memory serving.'
+                  : /Native llama-server not found|building llama-server|llama\.cpp/i.test(lastOutput)
+                  ? 'Suggested action: copy the troubleshooting bundle, then edit serve settings. For the quickest local/CPU path, use Ollama or a prebuilt llama-server; source builds can take several minutes and fail if build dependencies are incomplete.'
+                  : 'Suggested action: copy the troubleshooting bundle, then edit serve settings or relaunch with a CPU/backend fallback.',
+                fixes: [{ label: 'Edit serve', action: (panel) => _openServeEditForTask(task) }],
+              };
+              _showDiagnosis(el, diag, lastOutput);
+            }
             _showCookbookNotif(true);
           } else {
             _updateTask(task.sessionId, { status: 'done' });

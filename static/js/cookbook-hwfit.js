@@ -193,6 +193,8 @@ export function _renderGpuToggles(system) {
         if (quantSel) {
           if (count <= 1) {
             quantSel.value = 'Q4_K_M'; // RAM or 1 GPU -> Q4 sweet spot
+          } else if (String(system?.backend || '').toLowerCase() === 'rocm') {
+            quantSel.value = 'Q4_K_M'; // ROCm default stays GGUF/local-safe; AWQ is explicit only
           } else {
             quantSel.value = 'AWQ-4bit'; // Multi-GPU -> AWQ for vLLM
           }
@@ -363,6 +365,17 @@ function _hwfitShowError(list, host, detail) {
   if (rb) rb.addEventListener('click', () => { _resetGpuToggleState(); _hwfitFetch(true); });
 }
 
+// Client-side "Engine" filter (llama.cpp / vLLM / SGLang). Empty = show all.
+// Uses the same _detectBackend() the serve commands use, so what you filter to
+// is exactly what would be launched. Pure view filter — no refetch needed.
+function _applyEngineFilter(models) {
+  const want = document.getElementById('hwfit-engine')?.value || '';
+  if (!want || !Array.isArray(models)) return models || [];
+  return models.filter(m => {
+    try { return _detectBackend(m).backend === want; } catch { return true; }
+  });
+}
+
 export async function _hwfitFetch(fresh = false) {
   const _tk = ++_hwfitFetchToken;
   const useCase = document.getElementById('hwfit-usecase')?.value || '';
@@ -382,7 +395,7 @@ export async function _hwfitFetch(fresh = false) {
   if (_cached) {
     _hwfitCache = _cached;
     _hwfitRenderHw(hw, _cached.system);
-    _hwfitRenderList(list, _cached.models);
+    _hwfitRenderList(list, _applyEngineFilter(_cached.models));
   } else {
     // Show spinner while scanning — stack the spinner above a text label
     // (the .hwfit-loading class is a centered flex ROW, so force column here).
@@ -528,7 +541,7 @@ export async function _hwfitFetch(fresh = false) {
         return asc ? av - bv : bv - av;
       });
     }
-    _hwfitRenderList(list, data.models);
+    _hwfitRenderList(list, _applyEngineFilter(data.models));
     // Persist this result so the next page load can paint it instantly.
     _writeScanCache(_sig, data);
     // Render GPU toggles — only on first scan (no override active)
@@ -574,8 +587,36 @@ export function _hwfitRenderHw(el, sys) {
   };
   let gpuChip;
   if (sys.gpu_name) {
-    const label = gpuCount > 1 ? `${gpuCount}x ${esc(sys.gpu_name)}` : esc(sys.gpu_name);
-    gpuChip = chip('gpu', label);
+    // Mixed-GPU boxes (#711): `${gpuCount}x ${gpu_name}` uses gpus[0].name for
+    // every card, so a 4090+3060 reads as "2x RTX 4090". Use gpu_groups (the
+    // backend already groups identical cards) to render each pool separately
+    // and put the per-card index+VRAM into the tooltip so it's actually
+    // useful for picking CUDA_VISIBLE_DEVICES.
+    const groups = Array.isArray(sys.gpu_groups) ? sys.gpu_groups : [];
+    // Shorten vendor prefixes so a mixed-GPU label fits in the chip row
+    // without overflowing. Single-GPU label still shows the full name
+    // (that's what users are used to seeing). Tooltip carries the full
+    // unmodified names regardless, so no information is lost.
+    const _shortGpuName = (n) => String(n || '')
+      .replace(/^NVIDIA\s+GeForce\s+/i, '')
+      .replace(/^NVIDIA\s+/i, '')
+      .replace(/^AMD\s+Radeon\s+/i, '')
+      .replace(/^AMD\s+/i, '')
+      .replace(/^Intel\s+/i, '');
+    let label;
+    if (groups.length > 1) {
+      // Heterogeneous: "1× RTX 4090 + 1× RTX 3060"
+      label = groups.map(g => `${g.count}× ${esc(_shortGpuName(g.name))}`).join(' + ');
+    } else if (gpuCount > 1) {
+      label = `${gpuCount}× ${esc(sys.gpu_name)}`;
+    } else {
+      label = esc(sys.gpu_name);
+    }
+    const gpus = Array.isArray(sys.gpus) ? sys.gpus : [];
+    const tip = gpus.length
+      ? gpus.map(g => `GPU ${g.index}: ${g.name} · ${(+g.vram_gb).toFixed(1)} GB`).join('\n')
+      : 'Click to toggle off (X to hide)';
+    gpuChip = chip('gpu', label, tip);
   } else if (sys.gpu_error) {
     gpuChip = _removedHwChips.has('gpu')
       ? ''
@@ -743,9 +784,10 @@ export function _hwfitRenderList(el, models) {
     const hasHw = sys && ((sys.gpu_vram_gb || 0) > 0 || (sys.total_ram_gb || 0) > 8);
     const hasFilters = !!(document.getElementById('hwfit-search')?.value?.trim()
       || document.getElementById('hwfit-usecase')?.value
-      || document.getElementById('hwfit-quant')?.value);
+      || document.getElementById('hwfit-quant')?.value
+      || document.getElementById('hwfit-engine')?.value);
     let msg;
-    if (hasFilters) msg = 'No models match these filters — try clearing the search, use-case, or quant.';
+    if (hasFilters) msg = 'No models match these filters — try clearing the search, use-case, quant, or engine.';
     else if (hasHw) msg = 'No models fit — the hardware probe may have under-reported. Try Rescan.';
     else msg = 'No models fit your hardware';
     el.innerHTML = `<div class="hwfit-loading">${msg}</div>`;
@@ -1092,6 +1134,17 @@ export function _hwfitInit() {
   if (uc) uc.addEventListener('change', () => _hwfitFetch());
   if (sort) sort.addEventListener('change', () => _hwfitFetch());
   if (qpref) qpref.addEventListener('change', () => _hwfitFetch());
+  // Engine filter is a pure client-side view filter over the already-fetched
+  // list, so just re-render from cache instead of re-probing hardware.
+  const engine = document.getElementById('hwfit-engine');
+  if (engine) engine.addEventListener('change', () => {
+    const list = document.getElementById('hwfit-list');
+    if (list && _hwfitCache && Array.isArray(_hwfitCache.models)) {
+      _hwfitRenderList(list, _applyEngineFilter(_hwfitCache.models));
+    } else {
+      _hwfitFetch();
+    }
+  });
   // Rescan — force a fresh hardware probe (bypasses the per-host cache).
   const rescan = document.getElementById('hwfit-rescan');
   if (rescan && !rescan.dataset.bound) {

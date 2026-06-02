@@ -502,6 +502,11 @@ async def _direct_fallback(
                 )
             except asyncio.TimeoutError:
                 return {"error": f"web_fetch: timed out fetching {url}", "exit_code": 1}
+            except Exception as e:
+                # Direct URL fetches can hit bot protection / auth walls
+                # (e.g. eBay 403). Treat that as a tool failure the model can
+                # reason around, not an uncaught chat-stream 500.
+                return {"error": f"web_fetch: {url}: {e}", "exit_code": 1}
             err = result.get("error")
             text = (result.get("content") or "").strip()
             title = result.get("title") or ""
