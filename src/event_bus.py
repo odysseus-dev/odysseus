@@ -17,12 +17,55 @@ from src.constants import AUTH_FILE
 logger = logging.getLogger(__name__)
 
 _task_scheduler = None
+_webhook_manager = None
+
+# Internal event-bus names → public outbound-webhook event names. Only events
+# that are NOT already emitted as webhooks at their own rich-data call sites
+# belong here: ``session_created`` / ``message_sent`` are deliberately absent
+# because session_routes.py and chat_helpers.py already fire ``session.created``
+# and ``chat.message`` directly — bridging them here too would double-deliver.
+_WEBHOOK_EVENT_NAMES = {
+    "research_completed": "research.completed",
+    "document_created": "document.created",
+    "memory_added": "memory.added",
+    "email_received": "email.received",
+    "skill_added": "skill.added",
+}
 
 
 def set_task_scheduler(scheduler):
     """Wire up the scheduler reference (called from app.py on startup)."""
     global _task_scheduler
     _task_scheduler = scheduler
+
+
+def set_webhook_manager(manager):
+    """Wire up the outbound webhook manager (called from app.py on startup).
+
+    Lets the event bus mirror lifecycle events to subscribed webhooks without
+    threading ``webhook_manager`` through the many scattered routes/handlers
+    that emit them — they all already funnel through ``fire_event``.
+    """
+    global _webhook_manager
+    _webhook_manager = manager
+
+
+def _dispatch_webhook(event_name: str, owner: Optional[str]) -> None:
+    """Mirror an internal event to any matching outbound webhooks.
+
+    Best-effort and non-blocking: ``fire_and_forget`` schedules delivery, and a
+    failure here must never break the event's primary task-trigger path below.
+    """
+    manager = _webhook_manager
+    if manager is None:
+        return
+    webhook_event = _WEBHOOK_EVENT_NAMES.get(event_name)
+    if webhook_event is None:
+        return
+    try:
+        manager.fire_and_forget(webhook_event, {"owner": (owner or "").strip() or None})
+    except Exception:
+        logger.debug("Webhook dispatch failed for event '%s'", event_name, exc_info=True)
 
 
 def get_task_scheduler():
@@ -35,6 +78,7 @@ def fire_event(event_name: str, owner: Optional[str] = None):
 
     Safe to call from both sync and async contexts.
     """
+    _dispatch_webhook(event_name, owner)
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(_handle_event(event_name, owner))

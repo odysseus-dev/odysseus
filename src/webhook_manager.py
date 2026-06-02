@@ -23,6 +23,11 @@ ALLOWED_EVENTS = frozenset({
     "session.created",
     "chat.completed",
     "chat.message",
+    "research.completed",
+    "document.created",
+    "memory.added",
+    "email.received",
+    "skill.added",
     "webhook.test",
 })
 

@@ -758,8 +758,9 @@ app.include_router(setup_editor_draft_routes())
 # Scheduled tasks + event bus
 from src.task_scheduler import TaskScheduler
 task_scheduler = TaskScheduler(session_manager)
-from src.event_bus import set_task_scheduler
+from src.event_bus import set_task_scheduler, set_webhook_manager
 set_task_scheduler(task_scheduler)
+set_webhook_manager(webhook_manager)
 from routes.task_routes import setup_task_routes
 app.include_router(setup_task_routes(task_scheduler))
 
