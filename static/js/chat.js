@@ -173,6 +173,17 @@ import createResearchSynapse from './researchSynapse.js';
   var hideWelcomeScreen = chatRenderer.hideWelcomeScreen;
   var showWelcomeScreen = chatRenderer.showWelcomeScreen;
 
+  // Empty the composer (value + autosized height) and notify listeners. Used on
+  // a normal send and on the early-return paths that consume the message without
+  // streaming (e.g. no model/session selected — issue #1475).
+  function _clearComposer() {
+    const mi = el('message');
+    if (!mi) return;
+    mi.value = '';
+    mi.style.height = '';
+    mi.dispatchEvent(new Event('input'));
+  }
+
   /**
    * Update submit button state
    */
@@ -464,6 +475,7 @@ import createResearchSynapse from './researchSynapse.js';
             '- Open the model picker in the chat box and pick a model\n' +
             '- Use the `+` button in the model picker to add a model endpoint\n' +
             '- Use `/help` to see all available commands');
+          _clearComposer();  // the message was consumed (guidance shown) — don't leave it in the box (#1475)
           _releaseSendFlag();
           return;
         }
@@ -475,6 +487,7 @@ import createResearchSynapse from './researchSynapse.js';
           '- Open the model picker in the chat box and pick a model\n' +
           '- Use the `+` button in the model picker to add a model endpoint\n' +
           '- Use `/help` to see all available commands');
+        _clearComposer();  // (#1475)
         _releaseSendFlag();
         return;
       }
