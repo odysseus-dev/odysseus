@@ -892,7 +892,9 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
                 )
 
             task_id = str(_uuid.uuid4())
-            name = args.get("name") or args.get("prompt", args.get("action_name", "Task"))[:50]
+            # Guard each fallback with `or`: args.get("prompt", default) returns
+            # None when the key is present but null, and None[:50] raises.
+            name = args.get("name") or (args.get("prompt") or args.get("action_name") or "Task")[:50]
 
             task = ScheduledTask(
                 id=task_id,
