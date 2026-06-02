@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tech Duinn — Home</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#e6edf3;--dim:#8b949e;--red:#e06c75;--green:#61afef;--purple:#c678dd;--cyan:#56b6c2;--orange:#d19a66;--yellow:#e5c07b}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:40px 20px}
+.header{text-align:center;margin-bottom:48px}
+.header h1{font-size:42px;font-weight:700;background:linear-gradient(135deg,var(--red),var(--purple),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px}
+.header p{color:var(--dim);font-size:16px}
+.stats{display:flex;justify-content:center;gap:32px;margin-bottom:48px;flex-wrap:wrap}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px 28px;text-align:center;min-width:140px}
+.stat .num{font-size:32px;font-weight:700;color:var(--green)}
+.stat .label{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-top:4px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;max-width:1400px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;transition:all .2s;cursor:pointer;text-decoration:none;color:var(--text);display:block;position:relative;overflow:hidden}
+.card:hover{border-color:var(--green);transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.card .icon{font-size:28px;margin-bottom:12px}
+.card h3{font-size:16px;font-weight:600;margin-bottom:6px}
+.card p{font-size:13px;color:var(--dim);line-height:1.5}
+.card .port{position:absolute;top:12px;right:12px;font-size:11px;color:var(--dim);background:var(--bg);padding:2px 8px;border-radius:6px;font-family:monospace}
+.card .status{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.card .status.ok{background:var(--green)}
+.card .status.err{background:var(--red)}
+.card .status.warn{background:var(--yellow)}
+.section-title{font-size:20px;font-weight:600;margin:48px 0 16px;max-width:1400px;margin-left:auto;margin-right:auto;color:var(--dim);text-transform:uppercase;letter-spacing:2px;font-size:13px}
+.search{max-width:500px;margin:0 auto 32px;position:relative}
+.search input{width:100%;padding:12px 16px 12px 40px;background:var(--card);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;outline:none}
+.search input:focus{border-color:var(--green)}
+.search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--dim)}
+.time{text-align:center;color:var(--dim);font-size:13px;margin-top:48px}
+a.card:focus{outline:2px solid var(--green);outline-offset:2px}
+</style>
+</head>
+<body>
+<div class="header">
+<h1>⚡ Tech Duinn</h1>
+<p>Self-hosted AI workspace — all services, one dashboard</p>
+</div>
+
+<div class="search">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+<input type="text" id="search" placeholder="Search services..." autofocus>
+</div>
+
+<div class="stats" id="stats"></div>
+
+<div class="section-title">Core Services</div>
+<div class="grid" id="core"></div>
+
+<div class="section-title">Nexus Sidecars</div>
+<div class="grid" id="nexus"></div>
+
+<div class="section-title">Infrastructure</div>
+<div class="grid" id="infra"></div>
+
+<div class="time" id="clock"></div>
+
+<script>
+const SERVICES = [
+{group:"core",name:"Odysseus",desc:"AI workspace — chat, agents, research, docs, email, notes, calendar",port:7000,icon:"🧠",path:"/"},
+{group:"core",name:"Swarm Manager",desc:"Task queue, agent registry, logs, events, shared memory",port:7000,icon:"🐝",path:"/#/swarm"},
+{group:"core",name:"Cookbook",desc:"Model serving — Ollama, vLLM, llama.cpp, SGLang",port:7000,icon:"🍳",path:"/#/cookbook"},
+{group:"core",name:"MCP Bridge",desc:"Shared MCP server for Claude Code, OpenCode, OpenClaw",port:8378,icon:"🌉",path:"/health"},
+
+{group:"nexus",name:"Nexus Cost",desc:"LLM API cost tracking, budgets, usage analytics",port:8199,icon:"💰"},
+{group:"nexus",name:"Nexus Metrics",desc:"CPU, GPU, RAM, disk, network monitoring",port:9100,icon:"📊"},
+{group:"nexus",name:"Nexus News",desc:"RSS feeds with AI-powered digests",port:8100,icon:"📰"},
+{group:"nexus",name:"Nexus Gateway",desc:"AI middleware — auth, rate limiting, model routing",port:8082,icon:"🚪"},
+{group:"nexus",name:"Nexus Memory",desc:"Agent vector memory — embeddings, learning cycles",port:8010,icon:"🧬"},
+{group:"nexus",name:"Nexus Workflows",desc:"YAML workflow engine — triggers, scheduling",port:7800,icon:"⚙️"},
+{group:"nexus",name:"Nexus Weather",desc:"Weather, air quality, sun times, energy pricing",port:8085,icon:"🌤️"},
+{group:"nexus",name:"Nexus Automation",desc:"IoT rules engine — sensors, actions, AI advisor",port:8090,icon:"🤖"},
+{group:"nexus",name:"Nexus Security",desc:"Threat monitoring, firewall, SSH alerts",port:8443,icon:"🛡️"},
+{group:"nexus",name:"Nexus Monitor",desc:"Cluster health, node stats, alerts",port:8099,icon:"📡"},
+{group:"nexus",name:"Nexus Secrets",desc:"Encrypted secrets vault",port:7438,icon:"🔐"},
+{group:"nexus",name:"Duinn Media",desc:"Media server — streaming, downloads, IPTV",port:8096,icon:"🎬"},
+
+{group:"infra",name:"ChromaDB",desc:"Vector store for embeddings and RAG",port:8100,icon:"🔮"},
+{group:"infra",name:"SearXNG",desc:"Privacy-respecting web search engine",port:8080,icon:"🔍"},
+{group:"infra",name:"ntfy",desc:"Push notifications for mobile and desktop",port:8091,icon:"🔔"},
+{group:"infra",name:"Ollama",desc:"Local LLM serving — llama, qwen, mistral",port:11434,icon:"🦙"},
+];
+
+const grid = {core:document.getElementById("core"),nexus:document.getElementById("nexus"),infra:document.getElementById("infra")};
+
+function render(filter=""){
+const f = filter.toLowerCase();
+Object.values(grid).forEach(g=>g.innerHTML="");
+let counts={core:0,nexus:0,infra:0};
+SERVICES.forEach(s=>{
+if(f && !s.name.toLowerCase().includes(f) && !s.desc.toLowerCase().includes(f)) return;
+const a=document.createElement("a");
+a.className="card";
+a.href=`http://localhost:${s.port}${s.path||""}`;
+a.target="_blank";
+a.innerHTML=`<span class="port">:${s.port}</span><div class="icon">${s.icon}</div><h3>${s.name}</h3><p>${s.desc}</p>`;
+grid[s.group].appendChild(a);
+counts[s.group]++;
+});
+document.querySelectorAll(".section-title").forEach((el,i)=>{
+const g=["core","nexus","infra"][i];
+el.style.display=counts[g]?"":"none";
+});
+}
+
+document.getElementById("search").addEventListener("input",e=>render(e.target.value));
+render();
+
+// Stats
+fetch("http://localhost:8378/api/stats",{headers:{"Authorization":"Bearer "+localStorage.getItem("bridge_token")||""}}).then(r=>r.json()).then(d=>{
+document.getElementById("stats").innerHTML=`
+<div class="stat"><div class="num">${(d.tasks?.done||0)+(d.tasks?.in_progress||0)+(d.tasks?.pending||0)}</div><div class="label">Tasks</div></div>
+<div class="stat"><div class="num">${Object.values(d.agents||{}).reduce((a,b)=>a+b,0)}</div><div class="label">Agents</div></div>
+<div class="stat"><div class="num">${d.memory_count||0}</div><div class="label">Memories</div></div>
+<div class="stat"><div class="num">${d.event_count||0}</div><div class="label">Events</div></div>
+<div class="stat"><div class="num">${d.log_count||0}</div><div class="label">Logs</div></div>
+`;
+}).catch(()=>{
+document.getElementById("stats").innerHTML=`<div class="stat"><div class="num" style="color:var(--red)">offline</div><div class="label">Bridge</div></div>`;
+});
+
+// Clock
+setInterval(()=>{
+document.getElementById("clock").textContent=new Date().toLocaleString();
+},1000);
+</script>
+</body>
+</html>
