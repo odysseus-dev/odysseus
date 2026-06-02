@@ -89,7 +89,10 @@ DEFAULT_SETTINGS = {
     # Hard wall-clock cap on a single deep-research run. The previous 600s
     # (10 min) default cut off slow local / edge LLMs mid-synthesis; 1800s
     # (30 min) is comfortable for most local setups while still bounding
-    # runaway jobs. Tune via Settings or by editing data/settings.json.
+    # runaway jobs. Set to 0 to disable the cap entirely (unlimited) — only
+    # for very long deep-research runs, since a stalled job then runs an
+    # unbounded model/API bill. Other values are bounded to [60, 86400].
+    # Tune via Settings or by editing data/settings.json.
     "research_run_timeout_seconds": 1800,
     "agent_max_tool_calls": 0,
     "agent_input_token_budget": 6000,
