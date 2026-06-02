@@ -996,9 +996,18 @@ def setup_email_routes():
         won't appear yet."""
         ql = (q or "").strip().lower()
         try:
+            # SECURITY: scope to the caller's own tag rows (+ legacy null-owner),
+            # exactly like every other email_tags read in this file. Without this
+            # owner filter the query returned senders harvested from EVERY user's
+            # classified inbox, leaking one user's email correspondents to any
+            # authenticated user on a multi-user deploy.
+            _owner_aliases = _email_tag_owner_aliases(None, owner)
+            _owner_ph = ",".join("?" * len(_owner_aliases))
             conn = _sql3.connect(SCHEDULED_DB)
             rows = conn.execute(
-                "SELECT sender FROM email_tags WHERE sender IS NOT NULL AND sender != ''"
+                "SELECT sender FROM email_tags WHERE sender IS NOT NULL AND sender != '' "
+                f"AND (owner IN ({_owner_ph}) OR owner IS NULL)",
+                (*_owner_aliases,),
             ).fetchall()
             conn.close()
             seen = {}
