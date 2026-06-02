@@ -164,6 +164,11 @@ def setup_cookbook_routes() -> APIRouter:
                 [{"label": "install llama.cpp dependencies or llama-cpp-python[server]", "op": "dependency", "package": "llama-cpp-python[server]"}],
             ),
             (
+                r"No GGUF found on this host|no \.gguf file|No GGUF file found",
+                "No GGUF file found for this model on this host. The llama.cpp backend needs a .gguf file.",
+                [{"label": "download a GGUF build of this model (repo name usually ends in -GGUF, file like Q4_K_M.gguf)", "op": "manual"}],
+            ),
+            (
                 r"No module named 'torch'|No module named torch|No module named 'diffusers'|No module named diffusers",
                 "Diffusion serving requires PyTorch and diffusers.",
                 [{"label": "install diffusers[torch] in Cookbook Dependencies", "op": "dependency", "package": "diffusers[torch]"}],
