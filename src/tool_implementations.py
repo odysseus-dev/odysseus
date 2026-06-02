@@ -11,6 +11,11 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+# Module-level cache for Infinite Brain document listings.
+# Populated once per app session; only invalidated by an explicit scanner pass.
+_infinite_brain_doc_cache: List[Dict] = []
+_infinite_brain_doc_cache_valid = False
+
 MAX_OUTPUT_CHARS = 10_000
 MAX_READ_CHARS = 20_000
 
@@ -1339,6 +1344,8 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
     Output format mirrors `manage_session`: list rows include a
     clickable `[Title](#document-<id>)` anchor + relative timestamps
     so the user can click straight from chat to open the editor.
+    
+    Also includes Infinite Brain documents as read-only entries.
     """
     from core.database import SessionLocal, Document
     from datetime import datetime, timezone
@@ -1365,6 +1372,74 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
         if diff < 86400 * 7: return f'{int(diff / 86400)}d ago'
         return ts.strftime('%Y-%m-%d')
 
+    def _load_infinite_brain_documents() -> List[Dict]:
+        """Load Infinite Brain documents as read-only entries, with per-session cache."""
+        global _infinite_brain_doc_cache, _infinite_brain_doc_cache_valid
+        if _infinite_brain_doc_cache_valid:
+            return _infinite_brain_doc_cache
+
+        import json as _json
+        import os as _os
+
+        infinite_brain_docs: List[Dict] = []
+        infinite_brain_base = r"C:\Users\iamcy\CymaticsDev\06_INFINITE_BRAIN"
+
+        doc_dirs = [
+            r"01_CANON",
+            r"02_MEMORY_OBJECTS",
+            r"05_MEMORY_OBJECTS",
+            r"04_AGENT_EXPORTS",
+            r"06_AGENT_EXPORTS",
+        ]
+
+        try:
+            for dir_name in doc_dirs:
+                dir_path = _os.path.join(infinite_brain_base, dir_name)
+                if not _os.path.exists(dir_path):
+                    continue
+
+                for root, dirs, files in _os.walk(dir_path):
+                    for file_name in files:
+                        if not file_name.endswith((".md", ".txt", ".py", ".js", ".json")):
+                            continue
+                        file_path = _os.path.join(root, file_name)
+                        try:
+                            if _os.path.getsize(file_path) > 1024 * 1024:
+                                continue
+
+                            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                                content = f.read().strip()
+
+                            if not content:
+                                continue
+
+                            rel_path = _os.path.relpath(file_path, infinite_brain_base)
+                            doc_id = f"ib_{hash(rel_path) & 0x7FFFFFFF:08x}"
+
+                            doc = {
+                                "id": doc_id,
+                                "title": _os.path.basename(file_name)[:60],
+                                "language": "markdown"
+                                if file_name.endswith(".md")
+                                else (file_name.split(".")[-1] if "." in file_name else "text"),
+                                "current_content": content[:10000],
+                                "size": len(content),
+                                "_infinite_brain": True,
+                                "_source_file": rel_path,
+                            }
+
+                            infinite_brain_docs.append(doc)
+
+                        except Exception:
+                            continue
+
+        except Exception as e:
+            logger.error(f"Error loading Infinite Brain documents: {e}")
+
+        _infinite_brain_doc_cache = infinite_brain_docs
+        _infinite_brain_doc_cache_valid = True
+        return infinite_brain_docs
+
     try:
         if action == "list":
             q = db.query(Document).filter(Document.is_active == True)
@@ -1373,11 +1448,19 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
             if args.get("language"):
                 q = q.filter(Document.language == args["language"])
             docs = q.order_by(Document.updated_at.desc()).limit(args.get("limit", 50)).all()
-            if not docs:
+            
+            # Load Infinite Brain documents
+            infinite_brain_docs = _load_infinite_brain_documents()
+            docs = list(docs)  # Convert to list
+            
+            if not docs and not infinite_brain_docs:
                 msg = "No documents found" + (f" matching '{args['search']}'" if args.get("search") else "") + "."
                 return {"response": msg, "documents": [], "exit_code": 0}
+            
             lines = []
             items = []
+            
+            # Add regular documents
             for i, d in enumerate(docs):
                 size = len(d.current_content or "")
                 lang = d.language or "text"
@@ -1387,7 +1470,26 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
                     f"- [{d.title}](#document-{d.id}) — {lang}, {size} chars, updated {_rel(ts)}{marker}"
                 )
                 items.append({"id": d.id, "title": d.title, "language": lang, "size": size})
-            header = f"Found {len(docs)} document(s), sorted most-recent first. Click a title to open:"
+            
+            # Add Infinite Brain documents
+            for j, d in enumerate(infinite_brain_docs):
+                size = d.get("size", 0)
+                lang = d.get("language", "text")
+                marker = ""
+                if not docs:  # Only mark as most recent if no regular docs
+                    marker = " ← most recent" if j == 0 else ""
+                lines.append(
+                    f"- [{d['title']}](#document-{d['id']}) ∞ — {lang}, {size} chars{marker}"
+                )
+                items.append({
+                    "id": d["id"], 
+                    "title": f"{d['title']} ∞", 
+                    "language": lang, 
+                    "size": size,
+                    "_infinite_brain": True
+                })
+            
+            header = f"Found {len(docs) + len(infinite_brain_docs)} document(s), sorted most-recent first. Click a title to open:"
             return {
                 "response": header + "\n" + "\n".join(lines),
                 "documents": items,
@@ -1398,6 +1500,37 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
             doc_id = args.get("document_id") or args.get("id") or args.get("uid")
             if not doc_id:
                 return {"error": "Need document_id (use action=list to find one)", "exit_code": 1}
+            
+            doc = None
+            is_infinite_brain = False
+            
+            # Check if this is an Infinite Brain document (ID prefixed with "ib_")
+            if doc_id.startswith("ib_"):
+                is_infinite_brain = True
+                # Find the Infinite Brain document by iterating through all of them
+                infinite_brain_docs = _load_infinite_brain_documents()
+                doc = next((d for d in infinite_brain_docs if d.get("id") == doc_id), None)
+                if doc:
+                    body = doc.get("current_content", "")[:MAX_READ_CHARS]
+                    preview_limit = int(args.get("limit", MAX_READ_CHARS))
+                    truncated = len(body) > preview_limit
+                    preview = body[:preview_limit] + (f"\n... (truncated, {len(body)} chars total)" if truncated else "")
+                    anchor = f"[{doc['title']}](#document-{doc['id']}) ∞"
+                    return {
+                        "response": f"{anchor} — Infinite Brain document (read-only).\n\n```{doc.get('language', '')}\n{preview}\n```",
+                        "document": {
+                            "id": doc["id"],
+                            "title": doc["title"],
+                            "language": doc.get("language"),
+                            "size": len(body),
+                            "content": preview,
+                            "truncated": truncated,
+                            "_infinite_brain": True,
+                        },
+                        "exit_code": 0,
+                    }
+            
+            # Regular database document lookup
             doc = db.query(Document).filter(Document.id == doc_id, Document.is_active == True).first()
             if not doc:
                 return {"error": f"Document '{doc_id}' not found", "exit_code": 1}
@@ -1421,6 +1554,11 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
 
         elif action == "delete":
             doc_id = args.get("document_id") or args.get("id") or args.get("uid") or _active_document_id
+            
+            # Check if this is an Infinite Brain document (read-only)
+            if doc_id and doc_id.startswith("ib_"):
+                return {"error": "Infinite Brain documents are read-only and cannot be deleted", "exit_code": 1}
+            
             doc = None
             if doc_id:
                 doc = db.query(Document).filter(Document.id == doc_id).first()

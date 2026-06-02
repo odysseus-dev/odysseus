@@ -36,6 +36,8 @@ class MemoryManager:
     def __init__(self, data_dir: str):
         self.memory_file = os.path.join(data_dir, "memory.json")
         self.ensure_file_exists()
+        self._ib_cache: List[Dict] = []
+        self._ib_cache_valid = False
         
     def extract_memory_from_chat(self, chat_history: List[Dict], session_id: str = None) -> List[Dict]:
         """
@@ -265,6 +267,90 @@ class MemoryManager:
                     categories["facts"].append(mem)
         
         return categories
+
+    def get_memories(self, limit: int = None, owner: str = None) -> List[Dict]:
+        """Get memory entries, optionally filtered by owner and limited in count."""
+        entries = self.load_all()
+        if owner is not None:
+            entries = [e for e in entries if e.get("owner") == owner]
+        
+        # Load Infinite Brain memories and add them to the entries
+        infinite_brain_memories = self._load_infinite_brain_memories()
+        entries.extend(infinite_brain_memories)
+        
+        if limit is not None:
+            return entries[:limit]
+        return entries
+
+    def _load_infinite_brain_memories(self) -> List[Dict]:
+        if self._ib_cache_valid:
+            return self._ib_cache
+
+        import os
+        import json
+        from datetime import datetime
+
+        infinite_brain_memories = []
+        infinite_brain_base = r"C:\Users\iamcy\CymaticsDev\06_INFINITE_BRAIN"
+
+        memory_dirs = [
+            r"02_MEMORY_OBJECTS",
+            r"05_MEMORY_OBJECTS",
+            r"01_CANON",
+            r"04_AGENT_EXPORTS",
+            r"06_AGENT_EXPORTS",
+        ]
+
+        try:
+            for dir_name in memory_dirs:
+                dir_path = os.path.join(infinite_brain_base, dir_name)
+                if not os.path.exists(dir_path):
+                    continue
+
+                for root, dirs, files in os.walk(dir_path):
+                    for file_name in files:
+                        if not file_name.endswith((".md", ".txt", ".json")):
+                            continue
+                        file_path = os.path.join(root, file_name)
+                        try:
+                            if os.path.getsize(file_path) > 1024 * 1024:
+                                continue
+
+                            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                                content = f.read().strip()
+
+                            if not content:
+                                continue
+
+                            rel_path = os.path.relpath(file_path, infinite_brain_base)
+                            memory_id = f"ib_{hash(rel_path) & 0x7FFFFFFF:08x}"
+
+                            memory_entry = {
+                                "id": memory_id,
+                                "text": content[:2000],
+                                "timestamp": int(os.path.getmtime(file_path)),
+                                "source": "infinite_brain",
+                                "owner": "system",
+                                "category": "fact",
+                                "uses": 0,
+                                "_infinite_brain": True,
+                                "_source_file": rel_path,
+                            }
+
+                            infinite_brain_memories.append(memory_entry)
+
+                        except Exception:
+                            continue
+
+        except Exception as e:
+            logger.error(f"Error loading Infinite Brain memories: {e}")
+
+        self._ib_cache = infinite_brain_memories
+        self._ib_cache_valid = True
+        return infinite_brain_memories
+
+    def _invalidate_ib_cache(self) -> None:
+        self._ib_cache_valid = False
 
     def get_relevant_memories(self, query: str, memories: list, threshold: float = 0.05, max_items: int = 8):
         """Get memories that are relevant to the query based on text similarity and semantic keyword matching."""

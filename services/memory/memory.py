@@ -36,6 +36,8 @@ class MemoryManager:
     def __init__(self, data_dir: str):
         self.memory_file = os.path.join(data_dir, "memory.json")
         self.ensure_file_exists()
+        self._ib_cache: List[Dict] = []
+        self._ib_cache_valid = False
         
     def extract_memory_from_chat(self, chat_history: List[Dict], session_id: str = None) -> List[Dict]:
         """
@@ -151,6 +153,8 @@ class MemoryManager:
                 entry["source"] = "unknown"
             if "category" not in entry:
                 entry["category"] = "fact"
+            if "uses" not in entry:
+                entry["uses"] = 0
             validated.append(entry)
         return validated
     
@@ -174,7 +178,7 @@ class MemoryManager:
                     "source": "user",
                     "category": "fact"
                 })
-            
+
             self.save(entries)
             return entries
         except Exception as e:
@@ -193,13 +197,45 @@ class MemoryManager:
                 entry["source"] = "user"
             if "category" not in entry:
                 entry["category"] = "fact"
-        
+            if "uses" not in entry:
+                entry["uses"] = 0
+
         # Use atomic write
         tmp_file = self.memory_file + ".tmp"
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(entries, f, ensure_ascii=False, indent=2)
         os.replace(tmp_file, self.memory_file)
-    
+
+    def add_memory(self, entry: Dict) -> None:
+        """Add a memory entry to storage."""
+        all_mem = self.load_all()
+        all_mem.append(entry)
+        self.save(all_mem)
+
+    def search_memories(self, query: str, limit: int = 5) -> List[Dict]:
+        """Search memories by query using text similarity, including Infinite Brain entries."""
+        all_mem = self.get_memories()
+        relevant = []
+        for mem in all_mem:
+            score = get_text_similarity(query, mem.get("text", ""))
+            if score > 0:
+                relevant.append((score, mem))
+        relevant.sort(key=lambda x: x[0], reverse=True)
+        return [m for _, m in relevant[:limit]]
+
+    def delete_memory(self, memory_id: str) -> bool:
+        """Delete a memory by ID. Returns True if deleted, False if not found."""
+        all_mem = self.load_all()
+        for i, mem in enumerate(all_mem):
+            if mem.get("id") == memory_id:
+                # Block deletion of Infinite Brain memories
+                if mem.get("_infinite_brain"):
+                    return False
+                del all_mem[i]
+                self.save(all_mem)
+                return True
+        return False
+
     def add_entry(self, text: str, source: str = "user", category: str = "fact", owner: str = None) -> Dict:
         """Add a new memory entry."""
         if not text.strip():
@@ -210,20 +246,21 @@ class MemoryManager:
             "text": text.strip(),
             "timestamp": int(time.time()),
             "source": source,
-            "category": category
+            "category": category,
+            "uses": 0,
         }
         if owner:
             entry["owner"] = owner
         return entry
-    
+
     def find_duplicates(self, text: str, entries: List[Dict] = None) -> List[Dict]:
         """Find duplicate memory entries based on text content."""
         if entries is None:
             entries = self.load()
-            
+
         text_lower = text.strip().lower()
         return [entry for entry in entries if entry["text"].lower() == text_lower]
-            
+
     def categorize_memory_by_relevance(self, message: str, memories: list):
         """Categorize memories by type and relevance"""
         categories = {
@@ -259,6 +296,90 @@ class MemoryManager:
                     categories["facts"].append(mem)
         
         return categories
+
+    def get_memories(self, limit: int = None, owner: str = None) -> List[Dict]:
+        """Get memory entries, optionally filtered by owner and limited in count."""
+        entries = self.load_all()
+        if owner is not None:
+            entries = [e for e in entries if e.get("owner") == owner]
+        
+        # Load Infinite Brain memories and add them to the entries
+        infinite_brain_memories = self._load_infinite_brain_memories()
+        entries.extend(infinite_brain_memories)
+        
+        if limit is not None:
+            return entries[:limit]
+        return entries
+
+    def _load_infinite_brain_memories(self) -> List[Dict]:
+        """Load memories from Infinite Brain storage and mark them as read-only."""
+        if self._ib_cache_valid:
+            return self._ib_cache
+
+        import os
+        import json
+        from datetime import datetime
+
+        infinite_brain_memories = []
+        infinite_brain_base = r"C:\Users\iamcy\CymaticsDev\06_INFINITE_BRAIN"
+        memory_dirs = [
+            r"02_MEMORY_OBJECTS",
+            r"05_MEMORY_OBJECTS",
+            r"01_CANON",
+            r"04_AGENT_EXPORTS",
+            r"06_AGENT_EXPORTS",
+        ]
+
+        try:
+            for dir_name in memory_dirs:
+                dir_path = os.path.join(infinite_brain_base, dir_name)
+                if not os.path.exists(dir_path):
+                    continue
+
+                for root, dirs, files in os.walk(dir_path):
+                    for file_name in files:
+                        if not file_name.endswith((".md", ".txt", ".json")):
+                            continue
+                        file_path = os.path.join(root, file_name)
+                        try:
+                            if os.path.getsize(file_path) > 1024 * 1024:
+                                continue
+
+                            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                                content = f.read().strip()
+
+                            if not content:
+                                continue
+
+                            rel_path = os.path.relpath(file_path, infinite_brain_base)
+                            memory_id = f"ib_{hash(rel_path) & 0x7FFFFFFF:08x}"
+
+                            memory_entry = {
+                                "id": memory_id,
+                                "text": content[:2000],
+                                "timestamp": int(os.path.getmtime(file_path)),
+                                "source": "infinite_brain",
+                                "owner": "system",
+                                "category": "fact",
+                                "uses": 0,
+                                "_infinite_brain": True,
+                                "_source_file": rel_path,
+                            }
+
+                            infinite_brain_memories.append(memory_entry)
+
+                        except Exception:
+                            continue
+
+        except Exception as e:
+            logger.error(f"Error loading Infinite Brain memories: {e}")
+
+        self._ib_cache = infinite_brain_memories
+        self._ib_cache_valid = True
+        return infinite_brain_memories
+
+    def _invalidate_ib_cache(self) -> None:
+        self._ib_cache_valid = False
 
     def get_relevant_memories(self, query: str, memories: list, threshold: float = 0.05, max_items: int = 8):
         """Get memories that are relevant to the query based on text similarity and semantic keyword matching."""

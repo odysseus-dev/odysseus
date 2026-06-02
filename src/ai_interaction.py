@@ -945,7 +945,15 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
 
     if action == "list":
         category_filter = lines[1].strip().lower() if len(lines) > 1 and lines[1].strip() else None
-        memories = _memory_manager.load(owner=owner)
+        memories = _memory_manager.load_all()  # Load all memories including Infinite Brain
+        # Filter by owner for user memories, but include Infinite Brain memories (owner: system)
+        if owner is not None:
+            user_memories = [m for m in memories if m.get("owner") == owner]
+            infinite_brain_memories = [m for m in memories if m.get("_infinite_brain", False)]
+            memories = user_memories + infinite_brain_memories
+        else:
+            # If no owner specified, include all memories
+            pass
         if category_filter:
             memories = [m for m in memories if m.get("category", "").lower() == category_filter]
         if not memories:
@@ -955,6 +963,9 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             cat = m.get("category", "fact")
             mid = m.get("id", "?")[:8]
             text = m.get("text", "")
+            # Add indicator for Infinite Brain memories
+            if m.get("_infinite_brain", False):
+                cat = f"{cat} ∞"  # Add infinity symbol to indicate Infinite Brain
             if len(text) > 150:
                 text = text[:150] + "..."
             result_lines.append(f"- [{cat}] `{mid}` — {text}")
@@ -1002,7 +1013,10 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         found = False
         for m in memories:
             if m.get("id", "").startswith(memory_id):
-                # Verify ownership
+                # Check if this is an Infinite Brain memory (read-only)
+                if m.get("_infinite_brain", False):
+                    return {"error": "Infinite Brain memories are read-only and cannot be edited"}
+                # Verify ownership for user memories
                 if owner and m.get("owner") != owner:
                     return {"error": f"Memory '{memory_id}' not found"}
                 m["text"] = new_text
@@ -1035,6 +1049,9 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         delete_id = None
         for m in memories:
             if m.get("id", "").startswith(memory_id):
+                # Check if this is an Infinite Brain memory (read-only)
+                if m.get("_infinite_brain", False):
+                    return {"error": "Infinite Brain memories are read-only and cannot be deleted"}
                 # Verify ownership
                 if owner and m.get("owner") != owner:
                     return {"error": f"Memory '{memory_id}' not found"}
@@ -1060,7 +1077,15 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         if len(lines) < 2:
             return {"error": "Search needs line 2: query"}
         query = lines[1].strip()
-        memories = _memory_manager.load(owner=owner)
+        memories = _memory_manager.load_all()  # Load all memories including Infinite Brain
+        # Filter by owner for user memories, but include Infinite Brain memories (owner: system)
+        if owner is not None:
+            user_memories = [m for m in memories if m.get("owner") == owner]
+            infinite_brain_memories = [m for m in memories if m.get("_infinite_brain", False)]
+            memories = user_memories + infinite_brain_memories
+        else:
+            # If no owner specified, include all memories
+            pass
 
         if hasattr(_memory_manager, 'get_relevant_memories'):
             results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=20)
@@ -1076,6 +1101,9 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             cat = m.get("category", "fact")
             mid = m.get("id", "?")[:8]
             text = m.get("text", "")
+            # Add indicator for Infinite Brain memories
+            if m.get("_infinite_brain", False):
+                cat = f"{cat} ∞"  # Add infinity symbol to indicate Infinite Brain
             result_lines.append(f"- [{cat}] `{mid}` — {text}")
         return {"results": "\n".join(result_lines)}
 
