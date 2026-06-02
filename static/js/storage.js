@@ -23,7 +23,11 @@ export const KEYS = {
   MCP_ACTIVE: 'odysseus-mcp-active',
   SECTION_ORDER: 'sidebar-section-order',
   ADMIN_LAST_TAB: 'admin-last-tab',
-  DENSITY: 'odysseus-density'
+  DENSITY: 'odysseus-density',
+  // Whole-interface zoom factor (e.g. "1.25"). Stored separately from the
+  // theme object so the chosen scale survives theme switches — it's a display
+  // preference, not a per-theme attribute. Applied as CSS `zoom` on <html>.
+  UI_SCALE: 'odysseus-ui-scale'
 };
 
 /**

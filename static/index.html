@@ -84,6 +84,14 @@
       if (t && t.density && t.density !== 'comfortable') {
         document.documentElement.classList.add('density-' + t.density);
       }
+      // Apply saved UI scale (whole-interface zoom) before first paint so the
+      // chrome doesn't flash at 100% then jump. Stored on its own key, so it's
+      // read independently of the theme object above.
+      var uiScale = parseFloat(localStorage.getItem('odysseus-ui-scale'));
+      if (isFinite(uiScale)) {
+        uiScale = Math.min(2, Math.max(0.8, uiScale));
+        if (Math.abs(uiScale - 1) > 0.001) document.documentElement.style.zoom = String(uiScale);
+      }
       // Apply background pattern on body once available
       if (t && t.bgPattern && t.bgPattern !== 'none') {
         document.addEventListener('DOMContentLoaded', function() {
@@ -579,6 +587,23 @@
               <input type="checkbox" id="theme-frosted-toggle">
               <span class="admin-slider"></span>
             </label>
+          </div>
+        </div>
+        <div class="theme-fd-row">
+          <div class="theme-fd-group" style="flex:1 1 0;">
+            <label class="theme-fd-label">
+              UI Scale
+              <span id="theme-scale-value" class="theme-scale-value">100%</span>
+            </label>
+            <div class="theme-scale-row">
+              <button type="button" id="theme-scale-dec" class="theme-scale-btn" aria-label="Decrease UI scale" title="Smaller">&minus;</button>
+              <input type="range" id="theme-scale-range" class="theme-scale-range"
+                     min="80" max="200" step="5" value="100"
+                     aria-label="Interface scale" title="Interface scale">
+              <button type="button" id="theme-scale-inc" class="theme-scale-btn" aria-label="Increase UI scale" title="Larger">+</button>
+              <button type="button" id="theme-scale-reset" class="theme-scale-reset" title="Reset to 100%">Reset</button>
+            </div>
+            <div class="theme-scale-hint">Scales the whole interface — handy on large or high-resolution displays.</div>
           </div>
         </div>
         <div class="theme-fd-row">

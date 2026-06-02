@@ -44,6 +44,17 @@ const DEFAULT_FONT = 'mono';
 const DEFAULT_DENSITY = 'comfortable';
 const MAX_CUSTOM_THEMES = 8;
 
+// ── UI scale (whole-interface zoom) ──
+// The stylesheet is overwhelmingly px-based, so a root font-size tweak (what
+// `density` does) barely moves most of the chrome. To genuinely scale the
+// interface up on high-resolution / ultrawide monitors we apply CSS `zoom`
+// to <html>, which Chromium (Edge) and Firefox 126+ both honour and which
+// scales every px, rem and em uniformly — exactly like native browser zoom.
+const DEFAULT_UI_SCALE = 1;
+const MIN_UI_SCALE = 0.8;   //  80%
+const MAX_UI_SCALE = 2.0;   // 200%
+const UI_SCALE_STEP = 0.05; //   5% increments
+
 // Default background patterns for built-in themes
 const THEME_DEFAULT_PATTERN = {
   dark:       'none',
@@ -383,6 +394,42 @@ export function applyFontDensity(font, density) {
   document.documentElement.style.setProperty('--font-family', family);
   document.documentElement.classList.remove('density-compact', 'density-spacious');
   if (d !== 'comfortable') document.documentElement.classList.add('density-' + d);
+}
+
+// Clamp an arbitrary value to the supported scale range, falling back to the
+// default when it isn't a finite number.
+function _clampScale(v) {
+  const n = typeof v === 'number' ? v : parseFloat(v);
+  if (!isFinite(n)) return DEFAULT_UI_SCALE;
+  return Math.min(MAX_UI_SCALE, Math.max(MIN_UI_SCALE, n));
+}
+
+// Read the persisted UI scale (defaults to 1 / 100%).
+export function getUiScale() {
+  return _clampScale(Storage.get(Storage.KEYS.UI_SCALE, ''));
+}
+
+// Apply a scale to the live document without persisting it. Pass nothing to
+// re-apply the stored value. Returns the clamped scale actually applied.
+export function applyUiScale(scale) {
+  const s = _clampScale(scale === undefined ? getUiScale() : scale);
+  // Leave the property untouched at 100% so we don't establish a zoom
+  // containing block (and its fixed-position quirks) for the default case.
+  if (Math.abs(s - 1) < 0.001) document.documentElement.style.zoom = '';
+  else document.documentElement.style.zoom = String(s);
+  return s;
+}
+
+// Apply *and* persist a scale. Returns the clamped scale stored.
+export function setUiScale(scale) {
+  const s = applyUiScale(scale);
+  Storage.set(Storage.KEYS.UI_SCALE, String(s));
+  return s;
+}
+
+// Expose the bounds so UI code (sliders, buttons) stays in sync with the model.
+export function getUiScaleBounds() {
+  return { min: MIN_UI_SCALE, max: MAX_UI_SCALE, step: UI_SCALE_STEP, default: DEFAULT_UI_SCALE };
 }
 
 const _BG_CLASSES = ['bg-pattern-dots',
@@ -1138,6 +1185,42 @@ export function initThemeUI() {
       applyBgPattern(np.value);
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
     });
+  }
+
+  // ── UI scale slider (independent of the saved theme) ──
+  // The early head-script already applied the stored scale on first paint;
+  // here we just sync the controls to it and wire user interaction. Scale is
+  // persisted on its own key, so we never funnel it through _saveFull().
+  const scaleRange = document.getElementById('theme-scale-range');
+  if (scaleRange && !scaleRange.dataset.wired) {
+    const bounds = getUiScaleBounds();
+    const valueLabel = document.getElementById('theme-scale-value');
+    const decBtn = document.getElementById('theme-scale-dec');
+    const incBtn = document.getElementById('theme-scale-inc');
+    const resetBtn = document.getElementById('theme-scale-reset');
+    // Slider works in whole-percent units (80–200) for clean stepping.
+    scaleRange.min = String(Math.round(bounds.min * 100));
+    scaleRange.max = String(Math.round(bounds.max * 100));
+    scaleRange.step = String(Math.round(bounds.step * 100));
+    const render = (scale) => {
+      const pct = Math.round(scale * 100);
+      scaleRange.value = String(pct);
+      if (valueLabel) valueLabel.textContent = pct + '%';
+      if (decBtn) decBtn.disabled = scale <= bounds.min + 1e-6;
+      if (incBtn) incBtn.disabled = scale >= bounds.max - 1e-6;
+      if (resetBtn) resetBtn.disabled = Math.abs(scale - bounds.default) < 1e-6;
+    };
+    render(getUiScale());
+    // Live-apply while dragging; persistence on every input is cheap and keeps
+    // a refresh mid-drag consistent.
+    scaleRange.addEventListener('input', () => {
+      render(setUiScale(parseFloat(scaleRange.value) / 100));
+    });
+    const nudge = (dir) => render(setUiScale(getUiScale() + dir * bounds.step));
+    if (decBtn) decBtn.addEventListener('click', () => nudge(-1));
+    if (incBtn) incBtn.addEventListener('click', () => nudge(+1));
+    if (resetBtn) resetBtn.addEventListener('click', () => render(setUiScale(bounds.default)));
+    scaleRange.dataset.wired = '1';
   }
 
   const effectColorPicker = document.getElementById('theme-bg-effect-color');
@@ -2046,6 +2129,7 @@ const themeModule = { initThemeUI, togglePopup, closePopup, makeDraggable,
                        THEMES, applyColors, applyFontDensity, applyBgPattern,
                        applyBgEffectColor, applyBgEffectIntensity, applyBgEffectSize,
                        applyFrostedGlass,
+                       applyUiScale, setUiScale, getUiScale, getUiScaleBounds,
                        save, getSaved, saveCustomTheme, deleteCustomTheme,
                        getCustomThemes };
 

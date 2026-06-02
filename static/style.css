@@ -6251,6 +6251,59 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       background: var(--red); border: none; cursor: pointer;
     }
     .theme-fd-range:focus { outline: none; }
+    /* UI Scale control (whole-interface zoom) */
+    .theme-scale-value {
+      font-weight: 600; opacity: 1; margin-left: 6px;
+      color: var(--red); font-variant-numeric: tabular-nums;
+    }
+    .theme-scale-row { display: flex; align-items: center; gap: 8px; }
+    .theme-scale-range {
+      flex: 1 1 auto; min-width: 0;
+      box-sizing: border-box; margin: 0; padding: 0; height: 24px;
+      background: transparent; cursor: pointer;
+      -webkit-appearance: none; appearance: none; accent-color: var(--red);
+    }
+    .theme-scale-range::-webkit-slider-runnable-track {
+      height: 4px; background: var(--border); border-radius: 2px;
+    }
+    .theme-scale-range::-moz-range-track {
+      height: 4px; background: var(--border); border-radius: 2px;
+    }
+    .theme-scale-range::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: var(--red); border: none; margin-top: -5px; cursor: pointer;
+    }
+    .theme-scale-range::-moz-range-thumb {
+      width: 14px; height: 14px; border-radius: 50%;
+      background: var(--red); border: none; cursor: pointer;
+    }
+    .theme-scale-range:focus { outline: none; }
+    .theme-scale-btn {
+      flex: 0 0 auto;
+      width: 26px; height: 26px; line-height: 1;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border); border-radius: 6px;
+      background: var(--bg); color: var(--fg);
+      font-size: 16px; font-family: inherit; cursor: pointer;
+      transition: border-color 0.12s, background 0.12s, opacity 0.12s;
+    }
+    .theme-scale-btn:hover:not(:disabled) { border-color: var(--red); }
+    .theme-scale-reset {
+      flex: 0 0 auto;
+      padding: 0 10px; height: 26px; line-height: 1;
+      border: 1px solid var(--border); border-radius: 6px;
+      background: transparent; color: var(--fg); opacity: 0.85;
+      font-size: 11px; font-family: inherit; cursor: pointer;
+      transition: border-color 0.12s, opacity 0.12s;
+    }
+    .theme-scale-reset:hover:not(:disabled) { border-color: var(--red); opacity: 1; }
+    .theme-scale-btn:disabled, .theme-scale-reset:disabled {
+      opacity: 0.35; cursor: default;
+    }
+    .theme-scale-hint {
+      font-size: 10.5px; opacity: 0.5; margin-top: 4px; line-height: 1.35;
+    }
     /* Color Harmony Generator */
     .theme-harmony-row { display: flex; gap: 8px; align-items: flex-end; }
     .harmony-generate-btn {
