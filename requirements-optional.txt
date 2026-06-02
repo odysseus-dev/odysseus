@@ -34,3 +34,12 @@ PyMuPDF
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
 markitdown[docx,pptx,xlsx,xls]==0.1.5
+
+# AWS Bedrock provider (optional, lazy-imported via src/bedrock_adapter.py).
+# Enables the "AWS Bedrock" provider: model discovery (list_foundation_models)
+# and chat/streaming through the unified Converse API across model families
+# (Anthropic Claude, Amazon Nova/Titan, Meta Llama, Mistral, …). Auth is AWS
+# SigV4 — region + access/secret from Settings, or the default boto3 credential
+# chain (env / instance role / AWS_PROFILE). Without boto3 the provider simply
+# returns a clear "install boto3" message; the rest of the app is unaffected.
+boto3>=1.34
