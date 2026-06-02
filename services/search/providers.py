@@ -16,7 +16,6 @@ from .query import build_enhanced_query
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 20
-SERPAPI_ENGINES = ("google_light", "google", "bing", "yahoo", "duckduckgo", "naver", "baidu")
 
 # Provider registry — maps setting value to (label, needs_key, needs_url)
 PROVIDER_INFO = {
@@ -77,13 +76,6 @@ def _get_result_count() -> int:
         return int(settings.get("search_result_count", 5))
     except (ValueError, TypeError):
         return 5
-
-
-def _get_serpapi_engine() -> str:
-    """Return the configured SerpApi engine, defaulting to google_light."""
-    settings = _get_search_settings()
-    engine = (settings.get("serpapi_engine") or "google_light").strip().lower()
-    return engine if engine in SERPAPI_ENGINES else "google_light"
 
 
 # ── SearXNG ──
@@ -557,22 +549,20 @@ def serper_search(query: str, count: int = 10, time_filter: Optional[str] = None
     return results
 
 
-# ── SerpApi ──
+# ── SerpApi Google Light ──
 
 def serpapi_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
-    """Search using the configured SerpApi engine. Requires serpapi_api_key or SERPAPI_API_KEY."""
+    """Search using SerpApi's Google Light engine. Requires serpapi_api_key or SERPAPI_API_KEY."""
     api_key = _get_provider_key("serpapi") or os.environ.get("SERPAPI_API_KEY", "")
     if not api_key:
         logger.warning("SerpApi: no API key configured")
         return []
 
-    engine = _get_serpapi_engine()
     params = {
-        "engine": engine,
+        "engine": "google_light",
+        "q": query,
         "api_key": api_key,
     }
-    query_param = "p" if engine == "yahoo" else "query" if engine == "naver" else "q"
-    params[query_param] = query
 
     try:
         response = httpx.get(
@@ -592,8 +582,7 @@ def serpapi_search(query: str, count: int = 10, time_filter: Optional[str] = Non
         return []
 
     results = []
-    raw_results = data.get("organic_results") or data.get("web_results") or []
-    for item in raw_results[:count]:
+    for item in data.get("organic_results", [])[:count]:
         url = item.get("link", "")
         if not url:
             continue

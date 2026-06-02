@@ -1060,7 +1060,7 @@ var _searchProviderHints = {
   google_pse: 'Requires a Google API key and a Programmable Search Engine ID (CX). Create one at programmablesearchengine.google.com',
   tavily: 'AI-optimized search. 1,000 free credits/month at tavily.com',
   serper: 'Google results via API. 2,500 free queries at serper.dev',
-  serpapi: 'Search engine results via SerpApi. Requires only a SerpApi API key.',
+  serpapi: 'Google Light results via SerpApi. Requires only a SerpApi API key.',
   disabled: 'Web search and deep research tools will be unavailable.',
 };
 var _searchNeedsKey = { brave: 1, google_pse: 1, tavily: 1, serper: 1, serpapi: 1 };
@@ -1083,8 +1083,6 @@ async function initSearchSettings() {
   var keyRow = el('set-searchKeyRow');
   var cxInput = el('set-searchCx');
   var cxRow = el('set-searchCxRow');
-  var serpapiEngineSel = el('set-serpapiEngine');
-  var serpapiEngineRow = el('set-serpapiEngineRow');
   var hint = el('set-searchHint');
   var msg = el('set-searchMsg');
   var _settings = {};
@@ -1101,7 +1099,6 @@ async function initSearchSettings() {
     urlRow.style.display = prov === 'searxng' ? 'flex' : 'none';
     keyRow.style.display = _searchNeedsKey[prov] ? 'flex' : 'none';
     cxRow.style.display = prov === 'google_pse' ? 'flex' : 'none';
-    serpapiEngineRow.style.display = prov === 'serpapi' ? 'flex' : 'none';
     hint.textContent = _searchProviderHints[prov] || '';
     if (prov === 'brave') keyInput.placeholder = 'Brave API key';
     else if (prov === 'google_pse') keyInput.placeholder = 'Google API key';
@@ -1132,7 +1129,6 @@ async function initSearchSettings() {
     updateCountDisplay();
     if (_settings.search_url) urlInput.value = _settings.search_url;
     if (_settings.google_pse_cx) cxInput.value = _settings.google_pse_cx;
-    serpapiEngineSel.value = _settings.serpapi_engine || 'google_light';
   } catch (e) { console.warn('Failed to load search settings', e); }
 
   countSel.addEventListener('change', function() {
@@ -1158,7 +1154,6 @@ async function initSearchSettings() {
       var hasKey = kf ? ((s[kf] || '').trim() || (s.search_api_key || '').trim()) : false;
       if (_searchNeedsKey[active]) {
         extra = hasKey ? ' (key set)' : ' (no key)';
-        if (active === 'serpapi') extra += ' · ' + (serpapiEngineSel.value || s.serpapi_engine || 'google_light');
       } else if (active === 'searxng' && (s.search_url || '').trim()) {
         extra = ' (' + s.search_url + ')';
       }
@@ -1188,13 +1183,7 @@ async function initSearchSettings() {
         search_result_count: resultCount,
         search_url: urlInput.value.trim(),
         google_pse_cx: cxInput.value.trim(),
-        serpapi_engine: serpapiEngineSel.value || 'google_light',
       };
-      _settings.search_provider = payload.search_provider;
-      _settings.search_result_count = payload.search_result_count;
-      _settings.search_url = payload.search_url;
-      _settings.google_pse_cx = payload.google_pse_cx;
-      _settings.serpapi_engine = payload.serpapi_engine;
       var kf = keyFieldFor(prov);
       if (kf) {
         payload[kf] = keyInput.value.trim();
@@ -1205,14 +1194,7 @@ async function initSearchSettings() {
         body: JSON.stringify(payload)
       });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
-      if (prov === 'serpapi') {
-        var label = _searchLabels[prov] || prov;
-        var count = payload.search_result_count || 5;
-        var kf2 = keyFieldFor(prov);
-        var hasKey2 = kf2 ? ((payload[kf2] || _settings[kf2] || _settings.search_api_key || '').trim()) : false;
-        msg.textContent = 'Active: ' + label + (hasKey2 ? ' (key set)' : ' (no key)') + ' · ' + payload.serpapi_engine + ' \u00b7 ' + count + ' results';
-      }
-      setTimeout(refreshStatus, 500);
+      setTimeout(refreshStatus, 2000);
       if (searchModule && searchModule.refresh) searchModule.refresh();
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
@@ -1222,7 +1204,6 @@ async function initSearchSettings() {
   urlInput.addEventListener('change', saveSearch);
   keyInput.addEventListener('change', saveSearch);
   cxInput.addEventListener('change', saveSearch);
-  serpapiEngineSel.addEventListener('change', saveSearch);
 
   // ── Provider picker with logos (mirrors the hidden <select>) ──
   var picker = el('search-provider-picker');
