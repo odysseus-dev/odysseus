@@ -1,34 +1,47 @@
 """Issue #1186 — route-level regression for the mid-chat model switch.
 
-Drives the real ``PATCH /api/session/{sid}`` handler via TestClient against a
-temporary SQLite DB, proving:
+Drives the real ``PATCH /api/session/{sid}`` handler via TestClient, proving:
   - keyed -> keyed: the new endpoint's key replaces the old one, and persists;
   - keyed -> unknown URL: stale Authorization is cleared (not inferred);
   - the URL match is owner-scoped (never resolves another user's key).
 
-Mirrors tests/test_document_close_clears_active_route.py: point DATABASE_URL at a
-throwaway file BEFORE importing core.database so every path uses one consistent
-engine. Each test uses a UNIQUE endpoint URL so no cross-test collision.
+Binds a DEDICATED temporary SQLite engine and patches the route module's
+``SessionLocal`` to it (rather than ``DATABASE_URL`` at import), so the test never
+touches the real dev DB, is import-order independent, and won't contend for the
+dev DB's locks (which could hang). A fresh router is reset per app because
+session_routes uses a module-level router that setup_session_routes re-decorates.
 """
 
-import os
 import tempfile
 import uuid
+from types import SimpleNamespace
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
+from fastapi import APIRouter, FastAPI, Request
+from fastapi.testclient import TestClient
+
+import core.database as cdb
+import routes.session_routes as sroutes
+from core.database import ModelEndpoint
+from core.database import Session as DbSession
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-os.environ["DATABASE_URL"] = f"sqlite:///{_TMPDB.name}"
+_ENGINE = create_engine(
+    f"sqlite:///{_TMPDB.name}",
+    connect_args={"check_same_thread": False},
+    poolclass=NullPool,
+)
+cdb.Base.metadata.create_all(_ENGINE)
+_TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
 
-from types import SimpleNamespace  # noqa: E402
 
-from fastapi import APIRouter, FastAPI, Request  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-
-from core.database import Base, engine, SessionLocal, ModelEndpoint  # noqa: E402
-from core.database import Session as DbSession  # noqa: E402
-import routes.session_routes as sroutes  # noqa: E402
-from routes.session_routes import setup_session_routes  # noqa: E402
-
-Base.metadata.create_all(engine)
+@pytest.fixture(autouse=True)
+def _bind_db(monkeypatch):
+    monkeypatch.setattr(sroutes, "SessionLocal", _TS)
+    yield
 
 
 class FakeSessionManager:
@@ -45,10 +58,9 @@ class FakeSessionManager:
 
 
 def _client(sm):
-    # session_routes uses a MODULE-LEVEL router; setup_session_routes re-decorates
-    # it, so calling it per-test would accumulate duplicate routes (the first,
-    # bound to an earlier session_manager, would then handle every request). Reset
-    # to a fresh router so each app gets handlers bound to THIS test's manager.
+    # session_routes uses a MODULE-LEVEL router that setup_session_routes
+    # re-decorates; reset it so each app's handlers bind to THIS test's manager
+    # (otherwise repeated setup calls accumulate duplicate routes).
     sroutes.router = APIRouter(prefix="/api", tags=["sessions"])
     app = FastAPI()
 
@@ -57,12 +69,12 @@ def _client(sm):
         request.state.current_user = "tester"
         return await call_next(request)
 
-    app.include_router(setup_session_routes(sm, {"REQUEST_TIMEOUT": 5}))
+    app.include_router(sroutes.setup_session_routes(sm, {"REQUEST_TIMEOUT": 5}))
     return TestClient(app)
 
 
 def _seed_endpoint(owner, base, key):
-    db = SessionLocal()
+    db = _TS()
     try:
         db.add(ModelEndpoint(id="ep-" + uuid.uuid4().hex[:8], name="ep",
                              base_url=base, api_key=key, owner=owner, is_enabled=True))
@@ -73,7 +85,7 @@ def _seed_endpoint(owner, base, key):
 
 def _seed_session(sm, owner="tester"):
     sid = "sess-" + uuid.uuid4().hex[:8]
-    db = SessionLocal()
+    db = _TS()
     try:
         db.add(DbSession(id=sid, owner=owner, name="s", model="old-model",
                          endpoint_url="https://api.groq.com/openai/v1",
@@ -90,7 +102,7 @@ def _seed_session(sm, owner="tester"):
 
 
 def _db_headers(sid):
-    db = SessionLocal()
+    db = _TS()
     try:
         return db.query(DbSession).filter(DbSession.id == sid).first().headers
     finally:
