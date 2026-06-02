@@ -1125,7 +1125,7 @@ def setup_gallery_routes() -> APIRouter:
             db = SessionLocal()
             try:
                 for ep in db.query(ModelEndpoint).all():
-                    if ep.base_url.rstrip("/").rstrip("/v1") == base.rstrip("/v1"):
+                    if ep.base_url.rstrip("/").removesuffix("/v1").rstrip("/") == base.rstrip("/").removesuffix("/v1").rstrip("/"):
                         api_key = ep.api_key
                         break
             finally:
