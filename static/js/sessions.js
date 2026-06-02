@@ -1872,6 +1872,11 @@ export function setCurrentSessionId(id) {
 
 // Session list keyboard navigation: arrows to move, Delete to delete
 function _onSessionListKeydown(e) {
+  // Bail out when the user is typing inside a field (e.g. inline rename input)
+  // — otherwise Backspace bubbles up and deletes the whole chat. See #1007.
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+
   const item = e.target.closest('.list-item[data-session-id]');
   if (!item) return;
 

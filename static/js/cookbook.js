@@ -223,11 +223,20 @@ function _detectModelOptimizations(modelName) {
   return opts;
 }
 
-/** Detect the right vLLM tool-call-parser based on model name */
+/** Detect the right vLLM tool-call-parser based on model name.
+ *  Qwen tool-call formats split by generation:
+ *   - Qwen3-Coder           → qwen3_coder  (XML <tool_call> with named params)
+ *   - Qwen3 (non-coder)     → qwen3_xml    (reasoning/instruct, XML wrapper)
+ *   - Qwen2.5 / Qwen2 / 1.5 → hermes       (Qwen2.5 was trained on Hermes format)
+ *  Catching "qwen" first and labelling everything qwen3_xml breaks tool
+ *  calls on the Qwen2.5 line (the model emits hermes-style which the
+ *  qwen3_xml parser doesn't recognise, so the call leaks through as text).
+ */
 export function _detectToolParser(modelName) {
   const n = (modelName || '').toLowerCase();
   if (n.includes('qwen3') && n.includes('coder')) return 'qwen3_coder';
-  if (n.includes('qwen')) return 'qwen3_xml';
+  if (n.includes('qwen3')) return 'qwen3_xml';
+  if (n.includes('qwen')) return 'hermes';   // Qwen2.5 / Qwen2 / Qwen1.5
   if (n.includes('llama-4') || n.includes('llama4')) return 'llama4_json';
   if (n.includes('llama') || n.includes('nemotron')) return 'llama3_json';
   if (n.includes('mistral') || n.includes('mixtral')) return 'mistral';
@@ -245,13 +254,35 @@ export function _detectToolParser(modelName) {
 // ── Backend detection ──
 
 export function _detectBackend(model) {
+  if (model?.backend === 'ollama' || model?.is_ollama) {
+    return { backend: 'ollama', label: 'Ollama' };
+  }
   const q = (model.quant || '').toUpperCase();
   const sysBackend = String(_hwfitCache?.system?.backend || '').toLowerCase();
   const isRocm = sysBackend === 'rocm';
+  const isAppleSilicon = ['metal', 'mps', 'apple'].includes(sysBackend);
+  const _nm = `${model.repo_id || ''} ${model.path || ''} ${model.name || ''}`.toLowerCase();
+  if (/\bmlx\b|mlx-|_mlx/i.test(_nm) || q.startsWith('MLX')) {
+    return { backend: 'unsupported', label: 'Unsupported' };
+  }
+  const isAwqLike = /^AWQ|^GPTQ|^NVFP4/.test(q) || ['FP8', 'FP4', 'MXFP4', 'NF4', 'INT4', 'INT8', 'W4A16', 'W8A8', 'W8A16'].includes(q) || /\b(awq|gptq|fp8|fp4|nvfp4|mxfp4|nf4|int4|int8|w4a16|w8a8|w8a16)\b/i.test(_nm);
+  const isGgufLike = model.is_gguf || /^Q[2-8]/.test(q) || /^IQ/.test(q) || q === 'GGUF' || _nm.includes('gguf');
 
   // Image gen models → diffusers
   if (model.is_image_gen || model.is_diffusion || model._tag === 'image') {
     return { backend: 'diffusers', label: 'Diffusers' };
+  }
+
+  // AWQ / GPTQ / FP8 are safetensors GPU-serving formats. Never route them
+  // through llama.cpp/Ollama just because the host is Mac/Windows; those engines
+  // need GGUF. The UI will warn/block on Metal where vLLM/SGLang aren't viable.
+  if (isAwqLike) {
+    return { backend: 'vllm', label: 'vLLM' };
+  }
+
+  // GGUF → llama.cpp/Ollama-compatible.
+  if (isGgufLike) {
+    return { backend: 'llamacpp', label: 'llama.cpp' };
   }
 
   // Windows → default to llama.cpp (no vLLM support on Windows)
@@ -260,22 +291,9 @@ export function _detectBackend(model) {
   }
 
   // Apple Silicon (Metal) → llama.cpp (GGUF). vLLM/SGLang are CUDA/ROCm-only and
-  // don't run on macOS; AWQ/GPTQ/FP8 (vLLM-only) models are already filtered out
+  // don't run on macOS; vLLM-native quantized models are already filtered out
   // of metal Cookbook results, so llama.cpp is always the right engine here.
   if (['metal', 'mps', 'apple'].includes(sysBackend)) {
-    return { backend: 'llamacpp', label: 'llama.cpp' };
-  }
-
-  // AWQ / GPTQ / FP8 → vLLM
-  if (/^AWQ|^GPTQ/.test(q) || q === 'FP8') {
-    return { backend: 'vllm', label: 'vLLM' };
-  }
-
-  // GGUF → llama.cpp. Match the quant tag OR a gguf hint in the repo/path/name:
-  // a raw .gguf file often has no quant field, which made it fall through to the
-  // vLLM default below.
-  const _nm = `${model.repo_id || ''} ${model.path || ''} ${model.name || ''}`.toLowerCase();
-  if (model.is_gguf || /^Q[2-8]/.test(q) || /^IQ/.test(q) || q === 'GGUF' || _nm.includes('gguf')) {
     return { backend: 'llamacpp', label: 'llama.cpp' };
   }
 
@@ -399,19 +417,76 @@ export function _buildServeCmd(f, modelName, backend) {
     // renders modern GGUF chat templates that the Python bindings' Jinja2
     // rejects (do_tojson ensure_ascii). Fall back to llama_cpp.server.
     // Don't suppress stderr — surface real errors (missing file, lib, OOM).
-    const _lcpServer = `${lcPrefix}${py} -m llama_cpp.server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} --n_gpu_layers ${f.ngl || '99'} --n_ctx ${f.ctx || '8192'}`;
+    // Optional perf/fit flags from a hardware profile (see services/hwfit/
+    // profiles.py). n_cpu_moe offloads MoE expert layers to CPU when the model
+    // is bigger than VRAM; flash-attn + a quantized KV cache cut KV memory and
+    // speed things up. Only emitted when set, so manual/older flows are unchanged.
+    const _ncm = (f.n_cpu_moe ?? '').toString().trim();
+    const _kv = (f.cache_type ?? '').toString().trim();
+    const _llamaNum = (v) => {
+      const s = String(v || '').trim();
+      return /^\d+$/.test(s) ? s : '';
+    };
+    const _llamaCsv = (v) => {
+      const s = String(v || '').replace(/\s+/g, '');
+      return /^\d+(?:\.\d+)?(?:,\d+(?:\.\d+)?)*$/.test(s) ? s : '';
+    };
+    let _lcExtra = '';
+    let _lcpExtra = '';
+    if (_ncm !== '' && Number(_ncm) > 0) {
+      _lcExtra += ` --n-cpu-moe ${_ncm}`;
+      _lcpExtra += ` --n_cpu_moe ${_ncm}`;   // llama-cpp-python uses underscores
+    }
+    if (f.flash_attn) {
+      _lcExtra += ' --flash-attn on';
+      _lcpExtra += ' --flash_attn true';
+    }
+    if (_kv) {
+      _lcExtra += ` --cache-type-k ${_kv} --cache-type-v ${_kv}`;
+      // llama-cpp-python exposes these as type_k/type_v; pass through best-effort.
+      _lcpExtra += ` --type_k ${_kv} --type_v ${_kv}`;
+    }
+    const _llamaFit = String(f.llama_fit || '').trim();
+    if (['on', 'off'].includes(_llamaFit)) _lcExtra += ` --fit ${_llamaFit}`;
+    if (f.llama_no_mmap) _lcExtra += ' --no-mmap';
+    if (f.llama_no_warmup) _lcExtra += ' --no-warmup';
+    const _llamaSplitMode = String(f.llama_split_mode || '').trim();
+    if (['none', 'layer', 'row', 'tensor'].includes(_llamaSplitMode)) _lcExtra += ` --split-mode ${_llamaSplitMode}`;
+    const _llamaTensorSplit = _llamaCsv(f.llama_tensor_split);
+    if (_llamaTensorSplit) _lcExtra += ` --tensor-split ${_llamaTensorSplit}`;
+    const _llamaMainGpu = _llamaNum(f.llama_main_gpu);
+    if (_llamaMainGpu) _lcExtra += ` --main-gpu ${_llamaMainGpu}`;
+    const _llamaParallel = _llamaNum(f.llama_parallel);
+    if (_llamaParallel) _lcExtra += ` --parallel ${_llamaParallel}`;
+    const _llamaBatch = _llamaNum(f.llama_batch_size);
+    if (_llamaBatch) _lcExtra += ` --batch-size ${_llamaBatch}`;
+    const _llamaUBatch = _llamaNum(f.llama_ubatch_size);
+    if (_llamaUBatch) _lcExtra += ` --ubatch-size ${_llamaUBatch}`;
+    if (f.llama_speculative_mtp) {
+      const specTokens = parseInt(f.llama_spec_tokens, 10);
+      const specN = Number.isFinite(specTokens) && specTokens > 0 ? specTokens : 3;
+      _lcExtra += ` --spec-type draft-mtp --spec-draft-n-max ${specN}`;
+    }
+    // Vision: serve the multimodal projector so the model can read images. The
+    // mmproj path is resolved at runtime (find mmproj-*.gguf next to the model);
+    // only emitted when the Vision toggle is on AND a projector was found.
+    if (f.vision && f._mmproj_path) {
+      _lcExtra += ` --mmproj "${f._mmproj_path}" --image-max-tokens 1024`;
+      // llama-cpp-python takes the projector via --clip_model_path.
+      _lcpExtra += ` --clip_model_path "${f._mmproj_path}"`;
+    }
+    const _lcpServer = `${lcPrefix}${py} -m llama_cpp.server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} --n_gpu_layers ${f.ngl || '99'} --n_ctx ${f.ctx || '8192'}${_lcpExtra}`;
     if (_isWindows()) {
       cmd += _lcpServer;
     } else {
-      cmd += `${lcPrefix}llama-server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} -ngl ${f.ngl || '99'} -c ${f.ctx || '8192'}`;
+      cmd += `${lcPrefix}llama-server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} -ngl ${f.ngl || '99'} -c ${f.ctx || '8192'}${_lcExtra}`;
       cmd += ` || ${_lcpServer}`;
     }
   } else if (backend === 'ollama') {
-    const ollamaName = modelName.split('/').pop().toLowerCase().replace(/[-_]gguf$/i, '');
     const ollamaPort = f.port || '11434';
-    const hostEnv = ollamaPort !== '11434' ? `OLLAMA_HOST=0.0.0.0:${ollamaPort} ` : '';
-    // Start serve in background if not running, then pull model
-    cmd = `${hostEnv}ollama serve &>/dev/null & sleep 2 && ${hostEnv}ollama pull ${ollamaName} && wait`;
+    const bindHost = _envState.remoteHost ? '0.0.0.0' : '127.0.0.1';
+    const hostEnv = ollamaPort !== '11434' ? `OLLAMA_HOST=${bindHost}:${ollamaPort} ` : '';
+    cmd = `${hostEnv}ollama serve`;
   } else if (backend === 'diffusers') {
     const gpuStr = f.gpus?.trim();
     if (gpuStr) cmd += `CUDA_VISIBLE_DEVICES=${gpuStr} `;
@@ -641,7 +716,7 @@ async function _fetchDependencies() {
         }
         // _dep flags this as a pip dependency/driver install (not a servable
         // model) so the running-task card doesn't offer a "Serve →" button.
-        const payload = { repo_id: pipName, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true };
+        const payload = { repo_id: pipName, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true, env_path: _envState.envPath || '' };
         _addTask(data.session_id, 'pip ' + pkgName, 'download', payload);
         if (statusEl) { statusEl.textContent = upgrade ? 'Updating...' : 'Installing...'; statusEl.disabled = true; }
         uiModule.showToast(`${upgrade ? 'Updating' : 'Installing'} ${pkgName} on ${targetHost}...`);
@@ -1010,6 +1085,16 @@ function _wireTabEvents(body) {
   // Download input
   const dlBtn = document.getElementById('cookbook-dl-btn');
   const dlInput = document.getElementById('cookbook-dl-repo');
+  const dlCardToggle = document.getElementById('cookbook-download-card-toggle');
+  const dlCardBody = document.getElementById('cookbook-download-card-body');
+  const dlCardArrow = document.getElementById('cookbook-download-card-arrow');
+  if (dlCardToggle && dlCardBody) {
+    dlCardToggle.addEventListener('click', () => {
+      const isOpen = dlCardBody.style.display !== 'none';
+      dlCardBody.style.display = isOpen ? 'none' : 'block';
+      if (dlCardArrow) dlCardArrow.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(90deg)';
+    });
+  }
   if (dlBtn && dlInput) {
     function _stripHfUrl(input) {
       let repo = input.trim();
@@ -1089,8 +1174,12 @@ function _wireTabEvents(body) {
   if (hfToggle && hfList) {
     let _loaded = false;
     // Per-server VRAM cache so we don't re-probe on every expand
-    const _vramCache = {};
-    async function _getSelectedServerVram() {
+    const _hwCache = {};
+    function _hfModelLooksAwqLike(m) {
+      const text = `${m?.repo_id || ''} ${(m?.tags || []).join(' ')}`.toLowerCase();
+      return /\b(awq|gptq|fp8|4bit|int4)\b/.test(text);
+    }
+    async function _getSelectedServerHw() {
       // Prefer the "What Fits" dropdown (the main control that shows hardware);
       // fall back to the download dropdown. This is the server the list ranks for.
       const dlSrv = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
@@ -1107,7 +1196,7 @@ function _wireTabEvents(body) {
         }
       }
       const cacheKey = host || 'local';
-      if (_vramCache[cacheKey] !== undefined) return _vramCache[cacheKey];
+      if (_hwCache[cacheKey]) return _hwCache[cacheKey];
       // Fetch system info for this server from hwfit
       try {
         const qp = new URLSearchParams();
@@ -1117,13 +1206,13 @@ function _wireTabEvents(body) {
         const r = await fetch(`/api/hwfit/system?${qp}`);
         if (r.ok) {
           const sys = await r.json();
-          const v = sys?.gpu_vram_gb || 0;
-          _vramCache[cacheKey] = v;
-          return v;
+          const hw = { vram: sys?.gpu_vram_gb || 0, backend: String(sys?.backend || '').toLowerCase() };
+          _hwCache[cacheKey] = hw;
+          return hw;
         }
       } catch {}
-      _vramCache[cacheKey] = 0;
-      return 0;
+      _hwCache[cacheKey] = { vram: 0, backend: '' };
+      return _hwCache[cacheKey];
     }
     async function _loadLatest() {
       // Match the Dependencies loader: whirlpool spinner + text label so the
@@ -1142,7 +1231,8 @@ function _wireTabEvents(body) {
       } catch {
         hfList.innerHTML = '<div class="hwfit-loading">Scanning models…</div>';
       }
-      const vram = await _getSelectedServerVram();
+      const hwInfo = await _getSelectedServerHw();
+      const vram = hwInfo.vram || 0;
       try {
         let lastErr = '';
         const _fetchLatest = async (v) => {
@@ -1157,6 +1247,9 @@ function _wireTabEvents(body) {
         // fewer), fall back to the unfiltered trending list so something shows.
         if (!models.length && vram > 0) {
           models = await _fetchLatest(0);
+        }
+        if (['rocm', 'metal', 'mps', 'apple', 'generic', 'cpu'].includes(hwInfo.backend)) {
+          models = models.filter(m => !_hfModelLooksAwqLike(m));
         }
         if (!models.length) {
           // Distinguish "the HF API failed" from "nothing matched" so an outage
@@ -1341,10 +1434,12 @@ function _renderRecipes() {
   // Search group
   html += '<div class="cookbook-group" data-backend-group="Search" style="flex:0 0 auto;">';
   html += '<div class="admin-card" style="display:flex;flex-direction:column;overflow:hidden;">';
-  html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">';
+  html += '<button type="button" id="cookbook-download-card-toggle" style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;width:100%;background:transparent;border:0;padding:0;color:inherit;text-align:left;cursor:pointer;">';
   html += '<h2 style="margin:0;padding:0;line-height:1;">Download</h2>';
-  html += '</div>';
-  html += '<p class="memory-desc doclib-desc" style="margin-top:6px;">Download from <a href="https://huggingface.co/models" target="_blank" rel="noopener" style="color:var(--accent,var(--red));text-decoration:none;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:1px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>HuggingFace</a> by pasting model link, or download directly in the Scan section below.</p>';
+  html += '<span id="cookbook-download-card-arrow" style="margin-left:auto;display:inline-block;transition:transform 0.15s;font-size:13px;line-height:1;">\u25B8</span>';
+  html += '</button>';
+  html += '<div id="cookbook-download-card-body" style="display:none;">';
+  html += '<p class="memory-desc doclib-desc" style="margin-top:6px;">Download directly from Scan, or paste a HuggingFace model link.</p>';
   html += '<div class="hwfit-container" id="hwfit-container">';
 
   // Section 1: Settings
@@ -1373,7 +1468,7 @@ function _renderRecipes() {
   // silently sending downloads to the wrong server. An empty selection means Local; the user
   // chooses a remote server explicitly via the dropdown.
 
-  // Download input
+  // Manual download input
   html += `<div style="margin-top:7px;margin-bottom:2px;display:flex;gap:4px;align-items:center;">`;
   if (_es.servers.length > 1) {
     html += `<select class="cookbook-field-input hwfit-dl-server" id="hwfit-dl-server" style="height:28px;position:relative;top:0px;">`;
@@ -1389,7 +1484,7 @@ function _renderRecipes() {
   html += `<button class="cookbook-btn cookbook-dl-btn" id="cookbook-dl-btn">Download</button>`;
   html += `</div>`;
   // Latest HF models that fit — collapsible card list
-  html += `<div style="margin-top:2px;position:relative;top:-8px;">`;
+  html += `<div style="margin-top:5px;position:relative;top:-3px;">`;
   html += `<div style="display:flex;gap:4px;align-items:center;">`;
   html += `<button type="button" class="memory-toolbar-btn" id="cookbook-hf-latest-toggle" style="flex:1;text-align:left;height:26px;display:flex;align-items:center;gap:6px;border-radius:4px;">`;
   html += `<span id="cookbook-hf-latest-arrow" style="display:inline-block;transition:transform 0.15s;pointer-events:none;">\u25B8</span>`;
@@ -1401,7 +1496,7 @@ function _renderRecipes() {
   html += `</div>`;
 
   // Search section
-  html += '</div></div></div>';
+  html += '</div></div></div></div>';
   html += '<div class="cookbook-group" data-backend-group="Search">';
   html += '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">';
   html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">';
@@ -1421,8 +1516,18 @@ function _renderRecipes() {
   html += '<option value="Q4_K_M">Q4</option><option value="Q8_0">Q8</option>';
   html += '<option value="Q6_K">Q6</option><option value="Q5_K_M">Q5</option>';
   html += '<option value="Q3_K_M">Q3</option><option value="Q2_K">Q2</option>';
-  html += '<option value="AWQ-4bit">AWQ</option><option value="FP8">FP8</option>';
+  html += '<option value="AWQ-4bit">AWQ</option><option value="FP8">FP8</option><option value="FP4">FP4</option>';
   html += '<option value="">Native</option></select>';
+  // Engine filter: show only models whose serve engine matches. "llama.cpp"
+  // (GGUF) runs everywhere incl. consumer AMD/Apple; vLLM/SGLang are CUDA /
+  // datacenter-ROCm. Filtering is client-side via _detectBackend() in the
+  // hwfit renderer, so it composes with the quant/type/search filters.
+  html += '<select class="cookbook-field-input hwfit-engine" id="hwfit-engine" style="height:28px;" title="Filter by serving engine">';
+  html += '<option value="">Engine</option>';
+  html += '<option value="llamacpp">llama.cpp</option>';
+  html += '<option value="vllm">vLLM</option>';
+  html += '<option value="sglang">SGLang</option>';
+  html += '</select>';
   html += '</div>';
   html += '<div class="hwfit-toolbar" style="margin-top:7px;">';
   html += '<select class="cookbook-field-input hwfit-server-select" id="hwfit-server-select" style="height:28px;min-width:88px;position:relative;top:0px;">';
@@ -1432,8 +1537,10 @@ function _renderRecipes() {
   // Scan/refresh button (icon-only) where the quant dropdown used to sit.
   html += '<button type="button" class="hwfit-gpu-btn" id="hwfit-rescan" title="Re-scan hardware" style="flex-shrink:0;position:relative;top:-3px;left:-1px;">↻ RESCAN</button>';
   html += '<button type="button" class="hwfit-gpu-btn hwfit-hw-manual-btn" id="hwfit-hw-manual-btn" title="Set hardware manually" style="flex-shrink:0;position:relative;top:-3px;left:-1px;">EDIT</button>';
+  // Sort state — the clickable column headers read/write this (pewds' original
+  // sort paradigm). Newest is reachable by clicking the Model column header.
   html += '<select class="cookbook-field-input hwfit-sort" id="hwfit-sort" style="display:none">';
-  html += '<option value="score">Score</option><option value="vram">VRAM</option>';
+  html += '<option value="fit">Fit</option><option value="score">Score</option><option value="vram">VRAM</option>';
   html += '<option value="speed">Speed</option><option value="params">Params</option>';
   html += '<option value="context">Context</option></select>';
   html += '</div>';

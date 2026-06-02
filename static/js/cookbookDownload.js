@@ -86,6 +86,9 @@ function _ggufIncludePattern(model, source) {
 
 function _missingGgufMessage(model) {
   const name = model?.name || 'this model';
+  if (/\bnvfp4\b/i.test(name)) {
+    return `${name} is an NVIDIA NVFP4 checkpoint, not a GGUF download. Pick the base model row with an Unsloth GGUF source, or paste the GGUF repo directly.`;
+  }
   return `No GGUF source is configured for ${name}. Pick a model with a GGUF source, or paste the GGUF repo in Download.`;
 }
 

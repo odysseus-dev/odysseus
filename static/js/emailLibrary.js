@@ -532,6 +532,15 @@ function _publishActiveAccount() {
       || accts.find(a => a && a.is_default)
       || accts[0];
     window._myEmailAddress = (active && (active.from_address || active.imap_user)) || '';
+    // Also publish every configured address so reply-all can exclude all of
+    // the user's own mailboxes, not just the active one (multi-account users
+    // were getting their other addresses added to Cc).
+    const all = [];
+    for (const a of accts) {
+      if (a && a.from_address) all.push(a.from_address);
+      if (a && a.imap_user) all.push(a.imap_user);
+    }
+    window._myEmailAddresses = all;
   } catch (_) {}
 }
 
@@ -4631,6 +4640,7 @@ function _updateBulkBar() {
 async function _bulkAction(action) {
   const uids = Array.from(state._selectedUids);
   if (uids.length === 0) return;
+  let failedReadSync = 0;
   if (action === 'delete') {
     const ok = await styledConfirm(
       `Delete ${uids.length} selected email${uids.length === 1 ? '' : 's'}?`,
@@ -4646,11 +4656,19 @@ async function _bulkAction(action) {
       } else if (action === 'delete') {
         await fetch(`${API_BASE}/api/email/delete/${uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'DELETE' });
       } else if (action === 'read' || action === 'unread') {
-        // Local toggle for now (no backend endpoint yet)
-        const em = state._libEmails.find(e => e.uid === uid);
-        if (em) em.is_read = (action === 'read');
+        const endpoint = action === 'read' ? 'mark-read' : 'mark-unread';
+        const res = await fetch(`${API_BASE}/api/email/${endpoint}/${uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+        let data = null;
+        try { data = await res.json(); } catch (_) {}
+        if (!res.ok || data?.success === false) {
+          throw new Error(data?.error || `HTTP ${res.status}`);
+        }
+        _syncEmailReadState(uid, action === 'read');
       }
-    } catch (e) { console.error(`Failed to ${action} ${uid}:`, e); }
+    } catch (e) {
+      if (action === 'read' || action === 'unread') failedReadSync += 1;
+      console.error(`Failed to ${action} ${uid}:`, e);
+    }
   }
 
   if (action === 'archive' || action === 'delete') {
@@ -4662,8 +4680,10 @@ async function _bulkAction(action) {
   state._selectMode = false;
   _updateBulkBar();
   _renderGrid();
-  // Sync the local mutation (delete/archive, or in-place read/unread
-  // flag flips on email objects) into the SWR cache so reopen doesn't
+  if (failedReadSync > 0) {
+    showToast(`Failed to update ${failedReadSync} email${failedReadSync === 1 ? '' : 's'}`);
+  }
+  // Sync successful local mutations into the SWR cache so reopen doesn't
   // briefly show the pre-bulk state.
   _libCacheWriteBack();
 }

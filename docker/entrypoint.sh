@@ -76,6 +76,10 @@ done
 # nvcc" even when the GPU itself is fully visible to the container.
 export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
 
+# Make Cookbook-installed Python CLIs visible after `pip install --user`.
+# vLLM and helper scripts land here because /app is the non-root user's HOME.
+export PATH="/app/.local/bin:$PATH"
+
 # Drop root and run the actual app. `gosu` is preferred over `su` /
 # `sudo` because it cleans up the process tree (no extra shell layer)
 # so signals (SIGTERM from `docker stop`) reach uvicorn directly.

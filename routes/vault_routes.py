@@ -75,11 +75,19 @@ def _save_config(cfg: dict):
     safe_chmod(str(VAULT_FILE), 0o600)
 
 
-async def _run_bw(args: list, session: str = None, input_text: str = None) -> tuple:
+async def _run_bw(args: list, session: str = None, input_text: str = None,
+                  bw_password: str = None) -> tuple:
     env = {}
     env.update(os.environ)
     if session:
         env["BW_SESSION"] = session
+    # Secrets must never be passed as argv — process arguments are world-readable
+    # via `ps` / `/proc/<pid>/cmdline` to any local user. Hand the master password
+    # to `bw` through the environment instead (paired with `--passwordenv
+    # BW_PASSWORD` in args); /proc/<pid>/environ is readable only by the process
+    # owner. This mirrors how BW_SESSION is already passed above.
+    if bw_password is not None:
+        env["BW_PASSWORD"] = bw_password
     bw_path = _find_bw()
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -175,8 +183,13 @@ def setup_vault_routes():
     async def unlock(req: VaultUnlockRequest, request: Request):
         """Unlock the vault and save the session key."""
         require_admin(request)
+        # Pass the master password via the environment (--passwordenv), NOT as
+        # an argv element — argv is visible to every local user through `ps` /
+        # /proc/<pid>/cmdline. (The sibling /login handler already keeps the
+        # password off argv by feeding it on stdin.)
         stdout, stderr, rc = await _run_bw(
-            ["unlock", req.master_password, "--raw"],
+            ["unlock", "--passwordenv", "BW_PASSWORD", "--raw"],
+            bw_password=req.master_password,
         )
         if rc != 0:
             return {"ok": False, "error": f"Unlock failed: {stderr[:300]}"}

@@ -38,7 +38,7 @@ async def _cached(key: Tuple, ttl: float, fetch: Callable[[], Awaitable[Any]]) -
             pending = fut
             owner = False
         else:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             fut = loop.create_future()
             _shared_cache_pending[key] = fut
             pending = fut
@@ -311,6 +311,33 @@ class TaskScheduler:
                 db.close()
         except Exception as e:
             logger.warning(f"Could not clear stale task_runs on startup: {e}")
+
+        # Advance next_run for active tasks whose next_run is already in the
+        # past. Without this, a restart hits _check_due_tasks() with an empty
+        # in-process _executing set, and the same overdue task fires once per
+        # poll until it completes.
+        try:
+            from core.database import SessionLocal as _SL, ScheduledTask as _ST
+            db = _SL()
+            try:
+                now = datetime.utcnow()
+                overdue = db.query(_ST).filter(
+                    _ST.status == "active",
+                    _ST.next_run.isnot(None),
+                    _ST.next_run < now,
+                ).all()
+                if overdue:
+                    for t in overdue:
+                        t.next_run = now + timedelta(seconds=60)
+                    db.commit()
+                    logger.info(
+                        "Pushed next_run forward by 60s for %d overdue active tasks on startup",
+                        len(overdue),
+                    )
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning(f"Could not advance overdue next_run on startup: {e}")
 
         # Defense-in-depth dedupe sweep: for any owner with >1 rows where
         # is_default_assistant=True, keep the oldest and demote the rest +

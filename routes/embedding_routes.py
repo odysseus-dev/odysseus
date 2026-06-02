@@ -160,7 +160,7 @@ def setup_embedding_routes():
         _downloading[model_name] = True
         try:
             # Run in thread to not block the event loop
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             cache = _cache_dir()
             await loop.run_in_executor(
                 None,

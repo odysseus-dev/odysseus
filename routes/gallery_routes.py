@@ -3,6 +3,9 @@
 import os
 import hashlib
 import logging
+import re
+import uuid
+from pathlib import Path
 from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -16,6 +19,14 @@ from routes.gallery_helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_gallery_filename(filename: str) -> str:
+    """Return a local filename safe to join under generated_images."""
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(filename or "").name)[:128]
+    if not safe_name or safe_name in {".", ".."}:
+        safe_name = uuid.uuid4().hex[:12]
+    return safe_name
 
 def setup_gallery_routes() -> APIRouter:
     router = APIRouter(tags=["gallery"])
@@ -122,7 +133,7 @@ def setup_gallery_routes() -> APIRouter:
             content = await file.read()
             img_dir = Path("data/generated_images")
             img_dir.mkdir(parents=True, exist_ok=True)
-            img_path = img_dir / img.filename
+            img_path = img_dir / _sanitize_gallery_filename(img.filename)
             img_path.write_bytes(content)
 
             # Refresh dimensions in case the editor resized the canvas.

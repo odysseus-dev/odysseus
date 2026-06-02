@@ -21,6 +21,10 @@ _REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]
 # the real on-disk path separately; this identifier is only for UI/task
 # bookkeeping, so serving should accept the same safe glyph set as repo IDs.
 _LOCAL_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# Ollama model names include tags, e.g. `qwen2.5:0.5b` or `llama3.2:latest`.
+# Some registries also use a namespace path. Keep this shell-safe: no spaces,
+# quotes, `$`, `;`, `&`, pipes, or redirects.
+_OLLAMA_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,200}$")
 # Include pattern is a glob: allow typical safe glyphs only.
 _INCLUDE_RE = re.compile(r"^[A-Za-z0-9._\-*?/\[\]]+$")
 # Remote host: user@host (optionally with :port-free hostname parts).
@@ -48,9 +52,9 @@ def _validate_repo_id(v: str | None) -> str:
 def _validate_serve_model_id(v: str | None) -> str:
     if not v:
         raise HTTPException(400, "repo_id is required")
-    if _REPO_ID_RE.match(v) or _LOCAL_MODEL_ID_RE.match(v):
+    if _REPO_ID_RE.match(v) or _LOCAL_MODEL_ID_RE.match(v) or _OLLAMA_MODEL_ID_RE.match(v):
         return v
-    raise HTTPException(400, "Invalid repo_id — must be <org>/<name> or a cached local model id using [A-Za-z0-9._-]")
+    raise HTTPException(400, "Invalid repo_id — must be <org>/<name>, an Ollama name:tag, or a cached local model id")
 
 
 def _validate_include(v: str | None) -> str | None:
@@ -144,10 +148,35 @@ def _local_tooling_path_export(executable: str) -> str:
     return f'export PATH="{esc}:$PATH"'
 
 
+def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m pip", upgrade: bool = False) -> str:
+    """Build a bash pip install fallback chain.
+
+    Try the active interpreter/environment first. `--user` is invalid inside
+    many venvs, so only attempt the --user fallback when NOT inside a venv.
+    """
+    upgrade_flag = " -U" if upgrade else ""
+    base = f"{python_cmd} install -q{upgrade_flag} {package} 2>/dev/null"
+    user = f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {package} 2>/dev/null"
+    # Derive the python executable for the venv detection check.
+    # Must use the same interpreter that pip belongs to; hardcoding
+    # python3 breaks when pip lives in a venv that only has "python".
+    if " -m pip" in python_cmd:
+        python_exe = python_cmd.replace(" -m pip", "")
+    elif python_cmd.strip() == "pip":
+        python_exe = "python"
+    elif python_cmd.strip() == "pip3":
+        python_exe = "python3"
+    else:
+        python_exe = "python3"
+    venv_check = f'{python_exe} -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"'
+    # venv_check exits 0 (true) when IN a venv; --user is only valid outside one.
+    return f"{base} || {{ {venv_check} || {user}; }}"
+
+
 def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
     """Build the standalone Python scanner used by /api/model/cached."""
     lines = [
-        "import json, os",
+        "import json, os, re, shutil, subprocess, urllib.request",
         "models = []",
         "seen = set()",
         "BLOCKED_ROOTS = ('/sys', '/proc', '/dev', '/run', '/var/run')",
@@ -162,6 +191,38 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
         "    for root, dirs, fns in os.walk(top, followlinks=False):",
         "        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d)) and safe_path(os.path.join(root, d))]",
         "        yield root, dirs, fns",
+        "def gguf_role(name):",
+        "    n = name.lower()",
+        "    if n.startswith('mmproj') or 'mmproj' in n: return 'projector'",
+        "    return 'model'",
+        "def gguf_quant(name):",
+        "    m = re.search(r'(?i)(UD-)?(IQ[0-9]_[A-Z0-9_]+|Q[0-9](?:_[A-Z0-9]+)+|BF16|F16|FP16|F32|Q8_0)', name)",
+        "    return m.group(0).upper() if m else ''",
+        "def collect_ggufs(base):",
+        "    files = []",
+        "    split_groups = {}",
+        "    if not os.path.isdir(base) or not safe_path(base): return files",
+        "    for root, dirs, fns in safe_walk(base):",
+        "        for fn in sorted(fns):",
+        "            if not fn.lower().endswith('.gguf'): continue",
+        "            fp = os.path.join(root, fn)",
+        "            try: size = os.path.getsize(fp)",
+        "            except Exception: size = 0",
+        "            try: rel = os.path.relpath(fp, base).replace(os.sep, '/')",
+        "            except Exception: rel = fn",
+        "            sm = re.match(r'(?i)^(.+)-(\\d+)-of-(\\d+)\\.gguf$', fn)",
+        "            if sm:",
+        "                prefix, part_s, total_s = sm.group(1), sm.group(2), sm.group(3)",
+        "                key = (root, prefix, total_s)",
+        "                g = split_groups.setdefault(key, {'name':fn,'rel_path':rel,'size_bytes':0,'role':gguf_role(fn),'quant':gguf_quant(fn),'parts':int(total_s),'split':True})",
+        "                g['size_bytes'] += size",
+        "                if int(part_s) == 1:",
+        "                    g.update({'name':fn,'rel_path':rel,'role':gguf_role(fn),'quant':gguf_quant(fn)})",
+        "                continue",
+        "            files.append({'name':fn,'rel_path':rel,'size_bytes':size,'role':gguf_role(fn),'quant':gguf_quant(fn)})",
+        "    files.extend(split_groups.values())",
+        "    files.sort(key=lambda f: (f.get('role') != 'model', f.get('rel_path', '')))",
+        "    return files",
         "def scan_hf(cache):",
         "    if not os.path.isdir(cache): return",
         "    for d in sorted(os.listdir(cache)):",
@@ -176,16 +237,14 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
         "                if f.is_file(): nf += 1; sz += f.stat().st_size",
         "                if f.name.endswith('.incomplete'): ic = True",
         "        snap = os.path.join(cache, d, 'snapshots')",
-        "        is_diffusion = False; is_gguf = False",
+        "        is_diffusion = False; gguf_files = []",
         "        if os.path.isdir(snap):",
         "            for sd in os.listdir(snap):",
         "                sf = os.path.join(snap, sd)",
         "                if not os.path.isdir(sf): continue",
         "                if os.path.exists(os.path.join(sf, 'model_index.json')): is_diffusion = True",
-        "                try:",
-        "                    if any(x.endswith('.gguf') for x in os.listdir(sf)): is_gguf = True",
-        "                except Exception: pass",
-        "        models.append({'repo_id':rid,'size_bytes':sz,'nb_files':nf,'has_incomplete':ic,'path':cache,'is_diffusion':is_diffusion,'is_gguf':is_gguf})",
+        "                for f in collect_ggufs(sf): f['rel_path'] = sd + '/' + f['rel_path']; gguf_files.append(f)",
+        "        models.append({'repo_id':rid,'size_bytes':sz,'nb_files':nf,'has_incomplete':ic,'path':cache,'is_diffusion':is_diffusion,'is_gguf':bool(gguf_files),'gguf_files':gguf_files})",
         "def scan_dir(p):",
         "    if not os.path.isdir(p) or not safe_path(p): return",
         "    for d in sorted(os.listdir(p)):",
@@ -194,13 +253,14 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
         "        fp = os.path.join(p, d)",
         "        if not os.path.isdir(fp) or os.path.islink(fp) or not safe_path(fp): continue",
         "        if d in seen: continue",
-        "        is_model = False; is_gguf = False",
+        "        is_model = False; gguf_files = []",
         "        for root, dirs, fns in safe_walk(fp):",
         "            for fn in fns:",
-        "                if fn.endswith('.gguf'): is_gguf = True; is_model = True",
+        "                if fn.lower().endswith('.gguf'): is_model = True",
         "                elif fn == 'config.json' or fn.endswith('.safetensors') or fn.endswith('.bin'): is_model = True",
         "            if is_model: break",
         "        if not is_model: continue",
+        "        gguf_files = collect_ggufs(fp)",
         "        seen.add(d)",
         "        sz, nf = 0, 0",
         "        for dp, _, fns in safe_walk(fp):",
@@ -208,8 +268,49 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
         "                try: nf += 1; sz += os.path.getsize(os.path.join(dp, fn))",
         "                except Exception: pass",
         "        is_diff = os.path.exists(os.path.join(fp, 'model_index.json'))",
-        "        models.append({'repo_id':d,'size_bytes':sz,'nb_files':nf,'has_incomplete':False,'path':p,'is_local_dir':True,'is_diffusion':is_diff,'is_gguf':is_gguf})",
+        "        models.append({'repo_id':d,'size_bytes':sz,'nb_files':nf,'has_incomplete':False,'path':p,'is_local_dir':True,'is_diffusion':is_diff,'is_gguf':bool(gguf_files),'gguf_files':gguf_files})",
+        "def parse_size(num, unit):",
+        "    try: n = float(num)",
+        "    except Exception: return 0",
+        "    u = (unit or '').upper()",
+        "    if u.startswith('TB'): return int(n * 1024 ** 4)",
+        "    if u.startswith('GB'): return int(n * 1024 ** 3)",
+        "    if u.startswith('MB'): return int(n * 1024 ** 2)",
+        "    if u.startswith('KB'): return int(n * 1024)",
+        "    return int(n)",
+        "def scan_ollama():",
+        "    if not shutil.which('ollama'): return",
+        "    try:",
+        "        p = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=6)",
+        "    except Exception:",
+        "        return",
+        "    if p.returncode != 0: return",
+        "    for line in (p.stdout or '').splitlines()[1:]:",
+        "        parts = line.split()",
+        "        if len(parts) < 4: continue",
+        "        name = parts[0]",
+        "        if not name or name in seen: continue",
+        "        size_bytes = parse_size(parts[2], parts[3])",
+        "        seen.add(name)",
+        "        models.append({'repo_id':name,'size_bytes':size_bytes,'nb_files':1,'has_incomplete':False,'path':'ollama','backend':'ollama','is_ollama':True})",
+        "def scan_ollama_api():",
+        "    urls = ['http://127.0.0.1:11434/api/tags', 'http://localhost:11434/api/tags', 'http://host.docker.internal:11434/api/tags']",
+        "    for url in urls:",
+        "        try:",
+        "            with urllib.request.urlopen(url, timeout=2) as r:",
+        "                data = json.loads(r.read().decode('utf-8', 'replace'))",
+        "        except Exception:",
+        "            continue",
+        "        for item in data.get('models', []):",
+        "            name = item.get('name') or item.get('model')",
+        "            if not name or name in seen: continue",
+        "            size_bytes = int(item.get('size') or item.get('size_bytes') or 0)",
+        "            seen.add(name)",
+        "            models.append({'repo_id':name,'size_bytes':size_bytes,'nb_files':1,'has_incomplete':False,'path':'ollama','backend':'ollama','is_ollama':True})",
+        "        return",
         "scan_hf(os.path.expanduser('~/.cache/huggingface/hub'))",
+        "scan_ollama()",
+        "scan_ollama_api()",
     ]
     for model_dir in model_dirs or []:
         lines.append(f"scan_dir(os.path.expanduser({model_dir!r}))")
@@ -248,6 +349,38 @@ _SERVE_CMD_ALLOWLIST = {
 _GGUF_PRELUDE_RE = re.compile(
     r'^MODEL_FILE=\$\([^\n]*?\)\s*&&\s*\{[^{}]*\}\s*\|\|\s*\{[^{}]*\}\s*&&\s*'
 )
+_OLLAMA_HOST_ASSIGNMENT_RE = re.compile(r"(?:^|\s)OLLAMA_HOST=([^\s]+)")
+_OLLAMA_BIND_RE = re.compile(r"^\[([^\]]+)\]:(\d+)$|^([^:]+):(\d+)$")
+_OLLAMA_BIND_HOST_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
+
+
+def _ollama_bind_from_cmd(cmd: str | None, *, default_host: str = "127.0.0.1") -> tuple[str, str]:
+    """Return the Ollama bind host/port requested by a serve command.
+
+    Plain local `ollama serve` defaults to loopback. Remote callers can pass a
+    wider default host so the resulting API is reachable by Odysseus.
+    """
+    if not cmd:
+        return default_host, "11434"
+    match = _OLLAMA_HOST_ASSIGNMENT_RE.search(cmd)
+    if not match:
+        return default_host, "11434"
+    value = match.group(1).strip("'\"")
+    bind_match = _OLLAMA_BIND_RE.match(value)
+    if not bind_match:
+        return "127.0.0.1", "11434"
+    bracketed_host = bind_match.group(1)
+    host = bracketed_host or bind_match.group(3) or "127.0.0.1"
+    port = bind_match.group(2) or bind_match.group(4) or "11434"
+    if not _OLLAMA_BIND_HOST_RE.match(host):
+        return "127.0.0.1", "11434"
+    try:
+        port_num = int(port, 10)
+    except ValueError:
+        return "127.0.0.1", "11434"
+    if port_num < 1 or port_num > 65535:
+        return "127.0.0.1", "11434"
+    return f"[{host}]" if bracketed_host else host, port
 
 
 def _check_serve_binary(seg: str) -> None:
@@ -388,6 +521,8 @@ def _parse_serve_phase(snapshot: str, task_type: str = "serve") -> dict:
             "reqs": reqs,
         }
     if "Application startup complete" in flat:
+        return {"phase": "ready", "status": "ready"}
+    if re.search(r'Ollama API ready on port\s+\d+', flat, re.I):
         return {"phase": "ready", "status": "ready"}
     # HTTP access logs (e.g. GET /v1/models 200 OK) mean the server is up and serving
     if re.search(r'(?:GET|POST)\s+/[^\s]*\s+HTTP/[\d.]+"\s*\d{3}', flat):

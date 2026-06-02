@@ -6,6 +6,8 @@ import logging
 from typing import List, Dict, Set, Any, Tuple
 from dataclasses import dataclass
 
+from src.markitdown_runtime import MARKITDOWN_EXTS
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,12 +26,24 @@ def extract_pdf_text(file_path: str) -> str:
         return ""
 
 
+def extract_office_text(file_path: str) -> str:
+    """Extract text from an Office/EPUB doc via the optional markitdown dep.
+
+    Returns "" when markitdown is missing or extraction fails, mirroring
+    extract_pdf_text — the indexer then simply skips the file's content.
+    """
+    from src.markitdown_runtime import convert_to_markdown
+    return convert_to_markdown(file_path) or ""
+
+
 @dataclass
 class PersonalDocsConfig:
     """Configuration for personal documents management."""
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
-    DEFAULT_EXTENSIONS: Tuple[str, ...] = (".txt", ".md", ".json", ".pdf")
+    DEFAULT_EXTENSIONS: Tuple[str, ...] = (
+        ".txt", ".md", ".json", ".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".epub",
+    )
     DEFAULT_K: int = 5
     STOP_WORDS: Set[str] = None
     
@@ -86,7 +100,12 @@ def load_personal_index(
                 continue
             size = os.path.getsize(p)
             ext = os.path.splitext(name)[1].lower()
-            text = extract_pdf_text(p) if ext == ".pdf" else read_text_file(p)
+            if ext == ".pdf":
+                text = extract_pdf_text(p)
+            elif ext in MARKITDOWN_EXTS:
+                text = extract_office_text(p)
+            else:
+                text = read_text_file(p)
             chunks = split_chunks(text)
             display = os.path.relpath(p, personal_dir)
             files.append({"name": display, "path": p, "size": size, "chunks": chunks})

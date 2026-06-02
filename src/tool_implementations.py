@@ -651,7 +651,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
     if action == "view":
         if not name:
             return {"error": "name is required for view", "exit_code": 1}
-        md = sm.read_skill_md(name)
+        md = sm.read_skill_md(name, owner=owner)
         if md is None:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
         return {"results": md}
@@ -662,7 +662,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         ref = (args.get("path") or "").strip()
         if not ref:
             return {"error": "path is required for view_ref", "exit_code": 1}
-        text = sm.read_skill_reference(name, ref)
+        text = sm.read_skill_reference(name, ref, owner=owner)
         if text is None:
             return {"error": f"Reference {ref!r} not found under {name!r}", "exit_code": 1}
         return {"results": text}
@@ -747,7 +747,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         new_str = args.get("new_string", "")
         if not isinstance(old, str) or not old:
             return {"error": "old_string is required and must be non-empty", "exit_code": 1}
-        md = sm.read_skill_md(name)
+        md = sm.read_skill_md(name, owner=owner)
         if md is None:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
         count = md.count(old)
@@ -1853,7 +1853,13 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 title = text_raw.strip()
             elif not content_raw and text_raw:
                 content_raw = text_raw
-            items_raw = args.get("items")
+            # Accept both `items` (legacy/internal field) and `checklist_items`
+            # (the schema-exposed name used by native function calls). Models
+            # following the schema emit `checklist_items`; older code paths
+            # and direct API callers still use `items`.
+            items_raw = args.get("checklist_items")
+            if items_raw is None:
+                items_raw = args.get("items")
             items_json = json.dumps(items_raw) if items_raw is not None else None
             note_type = args.get("note_type", "checklist" if items_raw else "note")
             # Accept natural-language due_date ("tomorrow at 1pm") in
@@ -1918,8 +1924,11 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             for field in ("title", "content", "note_type", "color", "label", "due_date"):
                 if field in args and args[field] is not None:
                     setattr(note, field, args[field])
-            if "items" in args and args["items"] is not None:
-                note.items = json.dumps(args["items"])
+            new_items = args.get("checklist_items")
+            if new_items is None:
+                new_items = args.get("items")
+            if new_items is not None:
+                note.items = json.dumps(new_items)
                 flag_modified(note, "items")
             if "pinned" in args:
                 note.pinned = args["pinned"]
