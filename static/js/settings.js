@@ -4180,6 +4180,14 @@ async function initUnifiedIntegrations() {
 
   // ── MCP form — full management view ──
   async function showMcpForm(editId) {
+    // Toggle an in-flight loading state on a button (disabled + dimmed + label).
+    function _setBtnLoading(btn, loading, label) {
+      if (!btn) return;
+      btn.disabled = loading;
+      btn.style.opacity = loading ? '0.6' : '';
+      btn.style.cursor = loading ? 'progress' : '';
+      if (label != null) btn.textContent = label;
+    }
     function _showMcpPasteback(id) {
       const msg = el('uf-mcp-msg'); if (!msg) return;
       if (el('uf-mcp-pasteback')) return;  // already shown
@@ -4192,7 +4200,12 @@ async function initUnifiedIntegrations() {
         const cb = el('uf-mcp-pasteback').value.trim();
         if (!cb) return;
         const pf = new FormData(); pf.append('callback_url', cb);
-        await fetch(`/api/mcp/oauth/exchange/${id}`, { method: 'POST', credentials: 'same-origin', body: pf });
+        _setBtnLoading(pasteGo, true, 'Submitting…');
+        try {
+          await fetch(`/api/mcp/oauth/exchange/${id}`, { method: 'POST', credentials: 'same-origin', body: pf });
+        } finally {
+          _setBtnLoading(pasteGo, false, 'Submit');
+        }
       });
     }
 
@@ -4342,6 +4355,9 @@ async function initUnifiedIntegrations() {
         } else {
           fd.append('url', el('uf-mcp-url').value);
         }
+        const saveBtn = el('uf-mcp-save'), cancelBtn = el('uf-mcp-cancel');
+        const _origLabel = saveBtn.textContent;
+        _setBtnLoading(saveBtn, true, 'Saving…'); if (cancelBtn) cancelBtn.disabled = true;
         try {
           const r = await fetch('/api/mcp/servers', { method: 'POST', credentials: 'same-origin', body: fd });
           const data = await r.json().catch(() => ({}));
@@ -4357,6 +4373,7 @@ async function initUnifiedIntegrations() {
             el('uf-mcp-msg').textContent = `Failed (${r.status})`;
           }
         } catch (_) { el('uf-mcp-msg').textContent = 'Failed'; }
+        finally { _setBtnLoading(saveBtn, false, _origLabel); if (cancelBtn) cancelBtn.disabled = false; }
       });
     }
   }
