@@ -199,7 +199,10 @@ class PersonalDocsManager:
         try:
             if os.path.exists(self.directories_file):
                 with open(self.directories_file, 'r', encoding="utf-8") as f:
-                    self.indexed_directories = json.load(f)
+                    directories = json.load(f)
+                if not isinstance(directories, list):
+                    raise ValueError("indexed directories must be a list")
+                self.indexed_directories = [d for d in directories if isinstance(d, str)]
                 logger.info(f"Loaded {len(self.indexed_directories)} indexed directories")
             else:
                 self.indexed_directories = []
@@ -221,7 +224,10 @@ class PersonalDocsManager:
         try:
             if os.path.exists(self._excluded_file):
                 with open(self._excluded_file, 'r', encoding="utf-8") as f:
-                    self.excluded_files = set(json.load(f))
+                    excluded = json.load(f)
+                if not isinstance(excluded, list):
+                    raise ValueError("excluded files must be a list")
+                self.excluded_files = {p for p in excluded if isinstance(p, str)}
             else:
                 self.excluded_files = set()
         except Exception as e:
@@ -246,8 +252,15 @@ class PersonalDocsManager:
         # Normalize the path
         directory = os.path.abspath(directory)
 
-        # Clear any exclusions for files in this directory
-        self.excluded_files = {p for p in self.excluded_files if not p.startswith(directory)}
+        # Clear any exclusions for files in this directory. Match on a path
+        # boundary (the directory itself or paths under it) rather than a raw
+        # string prefix: a bare ``startswith(directory)`` also matches sibling
+        # directories that merely share a name prefix (e.g. adding ``/docs``
+        # would wrongly un-exclude files under ``/docs2``).
+        self.excluded_files = {
+            p for p in self.excluded_files
+            if not (p == directory or p.startswith(directory + os.sep))
+        }
         self._save_excluded()
 
         if directory not in self.indexed_directories:

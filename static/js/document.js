@@ -29,6 +29,7 @@ import * as Modals from './modalManager.js';
   let _htmlPreviewActive = false;   // true when inline HTML preview iframe is showing
   let _emailAccountsCache = null;
   let _emailAccountsCacheAt = 0;
+  let _emailHeaderManualExpandUntil = 0;
 
   // Diff mode state
   let _diffModeActive = false;
@@ -2308,6 +2309,53 @@ import * as Modals from './modalManager.js';
     return r && r.style.display !== 'none' ? r : null;
   }
 
+  function _captureEmailBodyFocusState() {
+    const rich = _emailRichbodyActive();
+    const ta = document.getElementById('doc-editor-textarea');
+    const active = document.activeElement;
+    if (rich && (active === rich || rich.contains(active))) {
+      const sel = window.getSelection();
+      const range = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+      return {
+        type: 'rich',
+        range: range && rich.contains(range.commonAncestorContainer) ? range.cloneRange() : null,
+      };
+    }
+    if (ta && active === ta) {
+      return {
+        type: 'textarea',
+        start: ta.selectionStart,
+        end: ta.selectionEnd,
+      };
+    }
+    return null;
+  }
+
+  function _restoreEmailBodyFocusState(state) {
+    if (!state) return;
+    requestAnimationFrame(() => {
+      if (state.type === 'rich') {
+        const rich = _emailRichbodyActive();
+        if (!rich) return;
+        rich.focus({ preventScroll: true });
+        if (state.range) {
+          const sel = window.getSelection();
+          if (sel) {
+            sel.removeAllRanges();
+            sel.addRange(state.range);
+          }
+        }
+      } else if (state.type === 'textarea') {
+        const ta = document.getElementById('doc-editor-textarea');
+        if (!ta) return;
+        ta.focus({ preventScroll: true });
+        if (Number.isFinite(state.start) && Number.isFinite(state.end)) {
+          try { ta.setSelectionRange(state.start, state.end); } catch (_) {}
+        }
+      }
+    });
+  }
+
   function _stripEmailReplyQuoteText(text) {
     const original = String(text || '');
     if (!original) return { body: '', stripped: false };
@@ -2369,6 +2417,48 @@ import * as Modals from './modalManager.js';
     }
   }
 
+  function _syncEmailHeaderSummary() {
+    const to = document.getElementById('doc-email-to')?.value?.trim() || 'No recipient';
+    const subject = document.getElementById('doc-email-subject')?.value?.trim() || 'No subject';
+    const cc = document.getElementById('doc-email-cc')?.value?.trim() || '';
+    const bcc = document.getElementById('doc-email-bcc')?.value?.trim() || '';
+    const summary = document.getElementById('doc-email-collapse-summary');
+    if (!summary) return;
+    const extras = [];
+    if (cc) extras.push('Cc');
+    if (bcc) extras.push('Bcc');
+    summary.textContent = `${to} · ${subject}${extras.length ? ` · ${extras.join('/')}` : ''}`;
+    summary.title = summary.textContent;
+  }
+
+  function _setEmailHeaderCollapsed(collapsed, { manual = true } = {}) {
+    const header = document.getElementById('doc-email-header');
+    const btn = document.getElementById('doc-email-collapse-btn');
+    if (!header) return;
+    if (window.innerWidth > 768) collapsed = false;
+    header.classList.toggle('doc-email-header-collapsed', !!collapsed);
+    if (btn) {
+      btn.setAttribute('aria-expanded', String(!collapsed));
+      btn.title = collapsed ? 'Show email fields' : 'Hide email fields';
+    }
+    const doc = activeDocId && docs.get(activeDocId);
+    if (doc && manual) doc._emailHeaderCollapsed = !!collapsed;
+    if (manual && !collapsed) _emailHeaderManualExpandUntil = Date.now() + 1400;
+    _syncEmailHeaderSummary();
+  }
+
+  function _shouldAutoCollapseEmailHeader() {
+    return window.innerWidth <= 768;
+  }
+
+  function _maybeAutoCollapseEmailHeader() {
+    const doc = activeDocId && docs.get(activeDocId);
+    if (!doc || doc.language !== 'email') return;
+    if (Date.now() < _emailHeaderManualExpandUntil) return;
+    if (document.activeElement?.closest?.('#doc-email-fields')) return;
+    if (_shouldAutoCollapseEmailHeader()) _setEmailHeaderCollapsed(true, { manual: false });
+  }
+
   function _showEmailFields(doc) {
     const emailHeader = document.getElementById('doc-email-header');
     const emailActions = document.getElementById('doc-email-actions');
@@ -2407,6 +2497,7 @@ import * as Modals from './modalManager.js';
     const textarea = document.getElementById('doc-editor-textarea');
     if (toInput) toInput.value = fields.to;
     if (subjectInput) subjectInput.value = fields.subject;
+    _setEmailHeaderCollapsed(!!(doc && doc._emailHeaderCollapsed), { manual: false });
     if (subjectInput && !subjectInput._emailTabBodyBound) {
       subjectInput._emailTabBodyBound = true;
       subjectInput.addEventListener('keydown', (e) => {
@@ -2548,6 +2639,7 @@ import * as Modals from './modalManager.js';
     if (ccRow) ccRow.style.display = hasCcBcc ? '' : 'none';
     if (bccRow) bccRow.style.display = hasCcBcc ? '' : 'none';
     if (ccToggle) ccToggle.style.display = hasCcBcc ? 'none' : '';
+    _syncEmailHeaderSummary();
   }
 
   async function _uploadComposeFiles(files) {
@@ -3062,19 +3154,22 @@ import * as Modals from './modalManager.js';
     saveCurrentToMap();
     const doc = docs.get(docId);
     const snapshot = { id: docId, doc: { ...doc } };
-    saveDocument({ silent: true }).catch(() => {});
+    const wasActive = activeDocId === docId;
+    if (wasActive) saveDocument({ silent: true }).catch(() => {});
 
     const visibleBefore = _visibleDocIdsForCurrentSession();
     const idx = visibleBefore.indexOf(docId);
     docs.delete(docId);
-    if (activeDocId === docId) activeDocId = null;
+    if (wasActive) activeDocId = null;
 
-    const remaining = visibleBefore.filter(id => id !== docId && docs.has(id));
-    const nextId = remaining[idx] || remaining[idx - 1] || remaining[0] || null;
-    if (nextId) {
-      switchToDoc(nextId);
-    } else {
-      closePanel();
+    if (wasActive) {
+      const remaining = visibleBefore.filter(id => id !== docId && docs.has(id));
+      const nextId = remaining[idx] || remaining[idx - 1] || remaining[0] || null;
+      if (nextId) {
+        switchToDoc(nextId);
+      } else {
+        closePanel();
+      }
     }
     renderTabs();
     _syncDocIndicator();
@@ -3748,25 +3843,31 @@ import * as Modals from './modalManager.js';
       </div>
       <div class="doc-tab-bar" id="doc-tab-bar"></div>
       <div id="doc-email-header" class="doc-email-header" style="display:none">
-        <div class="email-field" style="position:relative">
-          <label>To</label>
-          <input type="text" id="doc-email-to" placeholder="recipient@example.com" autocomplete="off" />
-          <div id="doc-email-to-suggestions" class="email-autocomplete" style="display:none"></div>
-          <button type="button" id="doc-email-show-cc" class="email-cc-toggle" title="Show Cc/Bcc">Cc</button>
+        <button type="button" id="doc-email-collapse-btn" class="doc-email-collapse-btn" title="Hide email fields" aria-expanded="true">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg>
+          <span id="doc-email-collapse-summary" class="doc-email-collapse-summary">No recipient · No subject</span>
+        </button>
+        <div id="doc-email-fields" class="doc-email-fields">
+          <div class="email-field" style="position:relative">
+            <label>To</label>
+            <input type="text" id="doc-email-to" placeholder="recipient@example.com" autocomplete="off" />
+            <div id="doc-email-to-suggestions" class="email-autocomplete" style="display:none"></div>
+            <button type="button" id="doc-email-show-cc" class="email-cc-toggle" title="Show Cc/Bcc">Cc</button>
+          </div>
+          <div class="email-field" id="doc-email-cc-row" style="display:none;position:relative">
+            <label>Cc</label>
+            <input type="text" id="doc-email-cc" placeholder="cc@example.com" autocomplete="off" />
+            <div id="doc-email-cc-suggestions" class="email-autocomplete" style="display:none"></div>
+          </div>
+          <div class="email-field" id="doc-email-bcc-row" style="display:none;position:relative">
+            <label>Bcc</label>
+            <input type="text" id="doc-email-bcc" placeholder="bcc@example.com" autocomplete="off" />
+            <div id="doc-email-bcc-suggestions" class="email-autocomplete" style="display:none"></div>
+          </div>
+          <div class="email-field"><label>Subject</label><input type="text" id="doc-email-subject" placeholder="Subject" /></div>
+          <div id="doc-email-attachments" class="email-attachments" style="display:none"></div>
+          <div id="doc-email-compose-atts" class="email-compose-atts" style="display:none"></div>
         </div>
-        <div class="email-field" id="doc-email-cc-row" style="display:none;position:relative">
-          <label>Cc</label>
-          <input type="text" id="doc-email-cc" placeholder="cc@example.com" autocomplete="off" />
-          <div id="doc-email-cc-suggestions" class="email-autocomplete" style="display:none"></div>
-        </div>
-        <div class="email-field" id="doc-email-bcc-row" style="display:none;position:relative">
-          <label>Bcc</label>
-          <input type="text" id="doc-email-bcc" placeholder="bcc@example.com" autocomplete="off" />
-          <div id="doc-email-bcc-suggestions" class="email-autocomplete" style="display:none"></div>
-        </div>
-        <div class="email-field"><label>Subject</label><input type="text" id="doc-email-subject" placeholder="Subject" /></div>
-        <div id="doc-email-attachments" class="email-attachments" style="display:none"></div>
-        <div id="doc-email-compose-atts" class="email-compose-atts" style="display:none"></div>
         <input type="hidden" id="doc-email-in-reply-to" />
         <input type="hidden" id="doc-email-references" />
         <input type="hidden" id="doc-email-source-uid" />
@@ -4308,6 +4409,33 @@ import * as Modals from './modalManager.js';
     });
     document.getElementById('doc-email-ai-reply-btn')?.addEventListener('click', _aiReply);
 
+    const collapseBtn = document.getElementById('doc-email-collapse-btn');
+    if (collapseBtn && !collapseBtn._emailCollapseWired) {
+      collapseBtn._emailCollapseWired = true;
+      collapseBtn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const focusState = _captureEmailBodyFocusState();
+        const header = document.getElementById('doc-email-header');
+        const nextCollapsed = !header?.classList.contains('doc-email-header-collapsed');
+        _setEmailHeaderCollapsed(nextCollapsed);
+        if (!nextCollapsed) _restoreEmailBodyFocusState(focusState);
+      });
+      collapseBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+    }
+    ['doc-email-to', 'doc-email-cc', 'doc-email-bcc', 'doc-email-subject'].forEach(id => {
+      document.getElementById(id)?.addEventListener('input', _syncEmailHeaderSummary);
+      document.getElementById(id)?.addEventListener('focus', () => _setEmailHeaderCollapsed(false, { manual: false }));
+    });
+    document.getElementById('doc-email-richbody')?.addEventListener('focus', _maybeAutoCollapseEmailHeader);
+    if (window.visualViewport && !window._docEmailViewportCollapseBound) {
+      window._docEmailViewportCollapseBound = true;
+      window.visualViewport.addEventListener('resize', _maybeAutoCollapseEmailHeader);
+    }
+
     // Split-button caret toggles the send-options menu (drops up).
     document.getElementById('doc-email-send-caret')?.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -4350,11 +4478,13 @@ import * as Modals from './modalManager.js';
 
     // Cc/Bcc toggle
     document.getElementById('doc-email-show-cc')?.addEventListener('click', () => {
+      _setEmailHeaderCollapsed(false, { manual: false });
       const ccRow = document.getElementById('doc-email-cc-row');
       const bccRow = document.getElementById('doc-email-bcc-row');
       if (ccRow) ccRow.style.display = '';
       if (bccRow) bccRow.style.display = '';
       document.getElementById('doc-email-show-cc').style.display = 'none';
+      _syncEmailHeaderSummary();
     });
 
     // Autocomplete for To / Cc / Bcc — typed fragment after the last

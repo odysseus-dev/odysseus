@@ -33,9 +33,109 @@ from routes.model_routes import (
     _classify_endpoint,
     _probe_endpoint,
     _truthy,
+    _speech_settings_using_endpoint,
+    _clear_speech_settings_for_endpoint,
+    _endpoint_settings_using_endpoint,
+    _clear_endpoint_settings_for_endpoint,
+    _clear_user_pref_endpoint_refs,
     _PROVIDER_CURATED,
 )
 from src.llm_core import ANTHROPIC_MODELS
+
+
+# ── speech endpoint settings ──
+
+def test_speech_endpoint_dependents_include_stt():
+    settings = {"stt_provider": "endpoint:voice"}
+    assert _speech_settings_using_endpoint(settings, "voice") == ["Speech to Text"]
+
+
+def test_clear_speech_endpoint_settings_resets_tts_and_stt():
+    settings = {
+        "tts_provider": "endpoint:voice",
+        "tts_model": "custom-tts",
+        "stt_provider": "endpoint:voice",
+        "stt_model": "custom-stt",
+    }
+
+    assert _clear_speech_settings_for_endpoint(settings, "voice") == [
+        "Text to Speech",
+        "Speech to Text",
+    ]
+    assert settings == {
+        "tts_provider": "disabled",
+        "tts_model": "tts-1",
+        "stt_provider": "disabled",
+        "stt_model": "base",
+    }
+
+
+def test_endpoint_cleanup_removes_primary_and_fallback_references():
+    settings = {
+        "default_endpoint_id": "dead",
+        "default_model": "primary",
+        "default_model_fallbacks": [
+            {"endpoint_id": "dead", "model": "fallback-a"},
+            {"endpoint_id": "keep", "model": "fallback-b"},
+        ],
+        "utility_model_fallbacks": [{"endpoint_id": "dead", "model": "utility"}],
+        "vision_model_fallbacks": [{"endpoint_id": "dead", "model": "vision"}],
+        "stt_provider": "endpoint:dead",
+        "stt_model": "whisper",
+    }
+
+    assert _endpoint_settings_using_endpoint(settings, "dead", include_speech=True) == [
+        "Default Model",
+        "Default Model Fallbacks",
+        "Utility Model Fallbacks",
+        "Vision Model Fallbacks",
+        "Speech to Text",
+    ]
+    assert _clear_endpoint_settings_for_endpoint(settings, "dead", include_speech=True) == [
+        "Default Model",
+        "Default Model Fallbacks",
+        "Utility Model Fallbacks",
+        "Vision Model Fallbacks",
+        "Speech to Text",
+    ]
+    assert settings["default_endpoint_id"] == ""
+    assert settings["default_model"] == ""
+    assert settings["default_model_fallbacks"] == [
+        {"endpoint_id": "keep", "model": "fallback-b"},
+    ]
+    assert settings["utility_model_fallbacks"] == []
+    assert settings["vision_model_fallbacks"] == []
+    assert settings["stt_provider"] == "disabled"
+    assert settings["stt_model"] == "base"
+
+
+def test_endpoint_cleanup_updates_scoped_and_legacy_user_prefs():
+    scoped = {
+        "_users": {
+            "alice": {
+                "utility_endpoint_id": "dead",
+                "utility_model": "utility",
+                "vision_model_fallbacks": [{"endpoint_id": "dead", "model": "vision"}],
+            },
+            "bob": {
+                "default_endpoint_id": "keep",
+                "default_model": "chat",
+            },
+        },
+    }
+    assert _clear_user_pref_endpoint_refs(scoped, "dead") == 1
+    assert scoped["_users"]["alice"] == {
+        "utility_endpoint_id": "",
+        "utility_model": "",
+        "vision_model_fallbacks": [],
+    }
+    assert scoped["_users"]["bob"]["default_endpoint_id"] == "keep"
+
+    legacy = {
+        "default_model_fallbacks": [{"endpoint_id": "dead", "model": "chat"}],
+    }
+    assert _clear_user_pref_endpoint_refs(legacy, "dead") == 1
+    assert legacy["default_model_fallbacks"] == []
 
 
 # ── _match_provider_curated ──
@@ -316,3 +416,57 @@ def test_generic_endpoint_error_message_preserves_probe_error():
     )
 
     assert msg == "No models found for that provider/key. Last probe error: HTTP 401."
+
+
+# ── _rewrite_loopback_for_docker (issue #25: LM Studio on host loopback) ──
+
+class TestDockerLoopbackRewrite:
+    def test_rewrites_loopback_when_in_docker(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: True)
+        assert (model_routes._rewrite_loopback_for_docker("http://localhost:1234/v1")
+                == "http://host.docker.internal:1234/v1")
+        assert (model_routes._rewrite_loopback_for_docker("http://127.0.0.1:1234/v1")
+                == "http://host.docker.internal:1234/v1")
+
+    def test_no_rewrite_when_not_in_docker(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: False)
+        assert (model_routes._rewrite_loopback_for_docker("http://localhost:1234/v1")
+                == "http://localhost:1234/v1")
+
+    def test_non_loopback_untouched_even_in_docker(self, monkeypatch):
+        # Cloud and LAN hosts must never be rewritten or they would break.
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: True)
+        assert (model_routes._rewrite_loopback_for_docker("https://api.openai.com/v1")
+                == "https://api.openai.com/v1")
+        assert (model_routes._rewrite_loopback_for_docker("http://192.168.1.50:1234/v1")
+                == "http://192.168.1.50:1234/v1")
+
+
+class TestDockerHostGatewayReachable:
+    def test_native_host_is_false_and_skips_dns(self, monkeypatch):
+        monkeypatch.setattr(model_routes.os.path, "exists", lambda p: False)
+
+        def _no_cgroup(*a, **k):
+            raise FileNotFoundError
+
+        monkeypatch.setattr("builtins.open", _no_cgroup)
+
+        def _must_not_run(*a, **k):
+            raise AssertionError("getaddrinfo must not run on native hosts")
+
+        monkeypatch.setattr(model_routes.socket, "getaddrinfo", _must_not_run)
+        assert model_routes._docker_host_gateway_reachable() is False
+
+    def test_container_with_host_gateway_is_true(self, monkeypatch):
+        monkeypatch.setattr(model_routes.os.path, "exists", lambda p: p == "/.dockerenv")
+        monkeypatch.setattr(model_routes.socket, "getaddrinfo", lambda *a, **k: [("ok",)])
+        assert model_routes._docker_host_gateway_reachable() is True
+
+    def test_container_without_host_gateway_is_false(self, monkeypatch):
+        monkeypatch.setattr(model_routes.os.path, "exists", lambda p: p == "/.dockerenv")
+
+        def _fail(*a, **k):
+            raise OSError("name or service not known")
+
+        monkeypatch.setattr(model_routes.socket, "getaddrinfo", _fail)
+        assert model_routes._docker_host_gateway_reachable() is False

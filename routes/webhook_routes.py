@@ -197,6 +197,7 @@ def setup_webhook_routes(
         "openrouter": "https://openrouter.ai/api/v1",
         "ollama": "https://ollama.com/api",
         "fireworks": "https://api.fireworks.ai/inference/v1",
+        "venice": "https://api.venice.ai/api/v1",
     }
 
     # Model prefix → provider mapping for auto-detection

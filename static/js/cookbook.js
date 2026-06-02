@@ -366,6 +366,8 @@ export function _buildServeCmd(f, modelName, backend) {
     cmd += ` --gpu-memory-utilization ${f.gpu_mem || '0.90'}`;
     if (f.swap && f.swap !== '0') cmd += ` --swap-space ${f.swap}`;
     cmd += ` --dtype ${f.dtype || 'auto'}`;
+    const _kv = (f.vllm_kv_cache_dtype ?? '').toString().trim();
+    if (_kv === 'fp8') cmd += ' --kv-cache-dtype fp8';
     if (f.max_seqs && f.max_seqs.toString().trim()) cmd += ` --max-num-seqs ${f.max_seqs.toString().trim()}`;
     if (f.enforce_eager) cmd += ' --enforce-eager';
     if (f.trust_remote) cmd += ' --trust-remote-code';
@@ -399,13 +401,17 @@ export function _buildServeCmd(f, modelName, backend) {
     const ggufPath = f._gguf_path || 'model.gguf';
     const gpuId = f.gpu_id?.trim() || '';
     const py = _isWindows() ? 'python' : 'python3';
+    // CPU-only serve (-ngl 0): drop the GPU-only flags, otherwise the command
+    // mixes "zero GPU layers" with CUDA unified-memory + flash-attn and fails to
+    // start (issue #1291). Only affects the ngl=0 path; GPU serving is unchanged.
+    const _cpuOnly = String(f.ngl).trim() === '0';
     const lcPrefix = (() => {
       let p = '';
-      if (f.unified_mem && !_isWindows()) p += `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 `;
+      if (f.unified_mem && !_cpuOnly && !_isWindows()) p += `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 `;
       if (gpuId && !_isWindows()) p += `CUDA_VISIBLE_DEVICES=${gpuId} `;
       return p;
     })();
-    if (f.unified_mem && _isWindows()) cmd += `$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; `;
+    if (f.unified_mem && !_cpuOnly && _isWindows()) cmd += `$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; `;
     if (gpuId && _isWindows()) cmd += `$env:CUDA_VISIBLE_DEVICES="${gpuId}"; `;
     if (!_isWindows()) {
       // Resolve GGUF path once, fail loudly if nothing matched (prevents
@@ -437,7 +443,7 @@ export function _buildServeCmd(f, modelName, backend) {
       _lcExtra += ` --n-cpu-moe ${_ncm}`;
       _lcpExtra += ` --n_cpu_moe ${_ncm}`;   // llama-cpp-python uses underscores
     }
-    if (f.flash_attn) {
+    if (f.flash_attn && !_cpuOnly) {
       _lcExtra += ' --flash-attn on';
       _lcpExtra += ' --flash_attn true';
     }
@@ -616,6 +622,10 @@ async function _fetchDependencies() {
     const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
       if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
+      if (pkg.installed && pkg.pip_update_available === false) {
+        const tip = esc(pkg.update_note || pkg.status_note || 'Found externally; update outside Odysseus.');
+        return `<span class="cookbook-dep-tag cookbook-dep-installed" title="${tip}">Installed</span>`;
+      }
       if (pkg.installed) return `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn" title="Installed — click for actions"><span class="cookbook-dep-installed-label">Installed</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
       if (isSystemDep) {
         const depTip = esc(pkg.install_hint || 'Install this OS package on the selected server.');
@@ -630,11 +640,13 @@ async function _fetchDependencies() {
       const isSystemDep = pkg.kind === 'system';
       const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
       const note = pkg.status_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.65;margin-top:3px;">${esc(pkg.status_note)}</div>` : '';
+      const updateNote = pkg.installed && pkg.pip_update_available === false && pkg.update_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.55;margin-top:3px;">${esc(pkg.update_note)}</div>` : '';
       return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
         + `<div class="cookbook-dep-info">`
         + `<div class="memory-item-title">${esc(pkg.name)}</div>`
         + `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`
         + note
+        + updateNote
         + `</div>`
         + `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`
         + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
@@ -1516,7 +1528,7 @@ function _renderRecipes() {
   html += '<option value="Q4_K_M">Q4</option><option value="Q8_0">Q8</option>';
   html += '<option value="Q6_K">Q6</option><option value="Q5_K_M">Q5</option>';
   html += '<option value="Q3_K_M">Q3</option><option value="Q2_K">Q2</option>';
-  html += '<option value="AWQ-4bit">AWQ</option><option value="FP8">FP8</option><option value="FP4">FP4</option>';
+  html += '<option value="AWQ-4bit">AWQ</option><option value="FP8">FP8</option><option value="FP4">FP4</option><option value="NVFP4">NVFP4</option>';
   html += '<option value="">Native</option></select>';
   // Engine filter: show only models whose serve engine matches. "llama.cpp"
   // (GGUF) runs everywhere incl. consumer AMD/Apple; vLLM/SGLang are CUDA /
@@ -1528,6 +1540,10 @@ function _renderRecipes() {
   html += '<option value="vllm">vLLM</option>';
   html += '<option value="sglang">SGLang</option>';
   html += '</select>';
+  html += '<span class="hwfit-help-chip" title="Higher numbers usually mean better quality, but they need more memory. Lower numbers fit on more hardware.">?</span>';
+  html += '<label class="hwfit-ctx-control" title="Context length for fit estimates. Lower it to find more models that could fit your hardware.">';
+  html += '<span>Ctx</span><span class="hwfit-help-chip hwfit-help-chip-inline" title="Context length. Lower it to find more models that could fit your hardware; raise it when you need longer chats or documents.">?</span><input type="range" id="hwfit-context" min="0" max="5" step="1" value="3" />';
+  html += '<output id="hwfit-context-label">50k</output></label>';
   html += '</div>';
   html += '<div class="hwfit-toolbar" style="margin-top:7px;">';
   html += '<select class="cookbook-field-input hwfit-server-select" id="hwfit-server-select" style="height:28px;min-width:88px;position:relative;top:0px;">';

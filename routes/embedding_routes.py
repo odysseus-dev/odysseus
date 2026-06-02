@@ -242,6 +242,18 @@ def setup_embedding_routes():
         if not url:
             raise HTTPException(400, "URL is required")
 
+        # SSRF hardening: validate the user-supplied URL before any outbound
+        # request. Local-first means loopback/LAN endpoints are allowed by
+        # default; non-HTTP(S) schemes and the cloud metadata range are always
+        # rejected. Set EMBEDDING_BLOCK_PRIVATE_IPS=true for full lockdown.
+        from src.url_safety import check_outbound_url
+        ok, reason = check_outbound_url(
+            url,
+            block_private=os.getenv("EMBEDDING_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+        )
+        if not ok:
+            raise HTTPException(400, f"Rejected endpoint URL: {reason}")
+
         # Quick health check
         try:
             import httpx
