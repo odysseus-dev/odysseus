@@ -39,3 +39,10 @@ def test_local_dependency_probe_refreshes_user_site_visibility():
     assert "importlib.invalidate_caches()" in source
     assert "user_site = site.getusersitepackages()" in source
     assert "if user_site and os.path.isdir(user_site) and user_site not in sys.path:" in source
+
+
+def test_windows_local_cookbook_runner_forces_utf8_python_output():
+    source = _read("routes/cookbook_routes.py")
+
+    assert 'child_env.update({"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})' in source
+    assert "env=child_env" in source

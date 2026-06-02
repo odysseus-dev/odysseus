@@ -383,11 +383,14 @@ def setup_cookbook_routes() -> APIRouter:
                 encoding="utf-8",
             )
             argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
+        child_env = os.environ.copy()
+        child_env.update({"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})
         proc = subprocess.Popen(
             argv,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
+            env=child_env,
             **detached_popen_kwargs(),
         )
         pid_path.write_text(str(proc.pid), encoding="utf-8")
