@@ -313,34 +313,36 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db.close()
         # Switch model/endpoint mid-session
         if model is not None and endpoint_url is not None:
-            if endpoint_id:
-                from core.database import ModelEndpoint
-                _db = SessionLocal()
-                try:
-                    ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
-                    if not ep:
-                        raise HTTPException(400, "Model endpoint no longer exists")
-                finally:
-                    _db.close()
+            from core.database import ModelEndpoint
+            from src.endpoint_resolver import build_headers
+            from src.session_switch import find_session_endpoint, build_switch_headers
+            # Resolve the endpoint that owns the NEW url (by id, else by url) so we
+            # can attach the RIGHT api key. Critically this runs even when
+            # endpoint_id is omitted — otherwise the previous endpoint's key stays
+            # on the session and is sent to the new url, causing a 401 (#1186).
+            _db = SessionLocal()
+            try:
+                rows = _db.query(ModelEndpoint).all()
+                ep = find_session_endpoint(rows, endpoint_id, endpoint_url)
+                if endpoint_id and ep is None:
+                    raise HTTPException(400, "Model endpoint no longer exists")
+                # Build headers while the row is still attached to the session.
+                new_headers = build_switch_headers(ep, endpoint_url, build_headers)
+            finally:
+                _db.close()
             session.model = model
             session.endpoint_url = endpoint_url
-            # Update auth headers from the endpoint's stored API key
-            if endpoint_id:
-                _db = SessionLocal()
-                try:
-                    ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
-                    if ep and ep.api_key:
-                        from src.endpoint_resolver import build_headers
-                        session.headers = build_headers(ep.api_key, ep.base_url)
-                finally:
-                    _db.close()
-            # Persist to DB
+            # Always replace headers for the new endpoint (never keep the old key).
+            session.headers = new_headers
+            # Persist to DB — including headers, which were previously dropped here
+            # and so were lost on restart (#1186).
             db = SessionLocal()
             try:
                 db_session = db.query(DbSession).filter(DbSession.id == sid).first()
                 if db_session:
                     db_session.model = model
                     db_session.endpoint_url = endpoint_url
+                    db_session.headers = new_headers
                     db_session.updated_at = datetime.utcnow()
                     db.commit()
             finally:
