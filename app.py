@@ -1,6 +1,7 @@
 # app.py — slim orchestrator
 import mimetypes
 import os
+from contextlib import asynccontextmanager
 
 
 def register_static_mime_types() -> None:
@@ -34,7 +35,6 @@ from dotenv import load_dotenv
 # is silently ignored and the user is unexpectedly forced to log in (issue #142).
 # utf-8-sig reads plain UTF-8 (no BOM) identically, so this is safe everywhere.
 load_dotenv(encoding="utf-8-sig")
-import uuid
 
 import asyncio
 import logging
@@ -73,11 +73,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+
+# =========== REGISTER LIFE_CYCLE_EVENTS =========
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await startup_event()
+    yield
+    await shutdown_event()
+
+
 # ========= APP =========
 app = FastAPI(
     title="AI Chat Application",
     description="Comprehensive AI chat with memory, research, and multi-modal capabilities",
     version="1.0.0",
+    lifespan=lifespan
 )
 
 # ========= CORS =========
@@ -794,7 +805,6 @@ async def runtime_info() -> Dict[str, object]:
 
 # ========= LIFECYCLE =========
 
-@app.on_event("startup")
 async def startup_event():
     global upload_cleanup_task
     logger.info("Application starting up...")
@@ -1019,7 +1029,6 @@ async def startup_event():
     _startup_tasks.append(asyncio.create_task(_skill_audit_nightly_loop()))
     logger.info("Application startup complete")
 
-@app.on_event("shutdown")
 async def shutdown_event():
     logger.info("Application shutting down...")
     if upload_cleanup_task:
