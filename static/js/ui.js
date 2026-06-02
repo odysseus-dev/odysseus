@@ -7,6 +7,7 @@
 import themeModule from './theme.js';
 import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
+import { registerMenuDismiss, dismissTopMenu, dismissOrRemove } from './escMenuStack.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -769,7 +770,7 @@ function _initScrollDismiss() {
   if (chatHistory) {
     chatHistory.addEventListener('scroll', () => {
       chatHistory.querySelectorAll('.dropdown.show').forEach(d => d.classList.remove('show'));
-      document.querySelectorAll('.ctx-popup').forEach(p => p.remove());
+      document.querySelectorAll('.ctx-popup').forEach(dismissOrRemove);
     }, { passive: true });
   } else {
     // Retry once if element doesn't exist yet
@@ -822,7 +823,8 @@ const uiModule = {
   el,
   esc,
   isTouchInsideModal,
-  emptyStateIcon
+  emptyStateIcon,
+  registerMenuDismiss
 };
 
 export default uiModule;
@@ -883,7 +885,9 @@ if ('ontouchstart' in window) {
       '.email-card-dropdown, .hwfit-cached-dropdown, .cookbook-saved-menu, .cookbook-dep-menu'
     ).forEach(d => {
       if (d._anchor) d._anchor.classList.remove('cookbook-menu-active', 'reader-more-active');
-      d.remove();
+      // Registered menus tear down through their own dismiss (releasing the
+      // Escape-stack entry); unregistered ones (email/dep) just get removed.
+      dismissOrRemove(d);
     });
   }
 
@@ -1197,6 +1201,15 @@ if (!window._odyEscExpandGuard) {
     // can briefly be absent). Toggling the `expanded` class directly is the
     // fallback so ESC never bypasses the thinking block to hit a modal.
     if (_closeHoveredWindow()) {
+      e.stopImmediatePropagation(); e.preventDefault();
+      return;
+    }
+    // Transient ad-hoc menus (dropdowns / context popups) live outside the
+    // .modal system and register a dismiss callback in escMenuStack. Close the
+    // most-recently-opened one first — so a menu opened over a modal dismisses
+    // before the modal — and do it BEFORE the text-input guard below, since a
+    // menu may own the focused input (e.g. a search dropdown).
+    if (dismissTopMenu()) {
       e.stopImmediatePropagation(); e.preventDefault();
       return;
     }

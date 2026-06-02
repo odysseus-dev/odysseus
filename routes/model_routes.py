@@ -1402,12 +1402,18 @@ def setup_model_routes(model_discovery):
         return sess in variants or sess.startswith(base + "/")
 
     def _clear_sessions_for_endpoint(db, base_url: str) -> int:
+        """Drop stored auth for sessions using an endpoint being deleted.
+
+        Keep the session's endpoint URL and model intact. If the admin is
+        replacing an endpoint with the same URL, clearing those fields leaves
+        the UI looking selected while chat requests arrive with an empty model.
+        The chat-time orphan guard still clears truly dead endpoints when no
+        matching enabled endpoint exists.
+        """
         cleared = 0
         rows = db.query(DbSession).filter(DbSession.endpoint_url.isnot(None)).all()
         for row in rows:
             if _session_uses_endpoint_url(row.endpoint_url or "", base_url):
-                row.endpoint_url = ""
-                row.model = ""
                 row.headers = {}
                 row.updated_at = datetime.utcnow()
                 cleared += 1
@@ -1425,8 +1431,6 @@ def setup_model_routes(model_discovery):
         try:
             for sess in list(getattr(manager, "sessions", {}).values()):
                 if _session_uses_endpoint_url(getattr(sess, "endpoint_url", "") or "", base_url):
-                    sess.endpoint_url = ""
-                    sess.model = ""
                     sess.headers = {}
                     cleared += 1
         except Exception:

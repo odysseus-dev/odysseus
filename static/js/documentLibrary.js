@@ -10,6 +10,7 @@ import spinnerModule from './spinner.js';
 import markdownModule from './markdown.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { langIcon } from './langIcons.js';
+import { registerMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 // ── Injected references from documentModule ──
 let API_BASE = '';
@@ -184,7 +185,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
   function _showLibDropdown(anchor, items, opts) {
     opts = opts || {};
-    document.querySelectorAll('._lib-dd').forEach(d => d.remove());
+    document.querySelectorAll('._lib-dd').forEach(dismissOrRemove);
     const dd = document.createElement('div');
     dd.className = 'dropdown session-dropdown-menu _lib-dd';
     for (const item of items) {
@@ -193,7 +194,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const iconKey = item.icon || item.label.toLowerCase();
       const iconSvg = _LIB_DD_ICONS[iconKey] || '';
       row.innerHTML = (iconSvg ? '<span class="dropdown-icon">' + iconSvg + '</span>' : '') + '<span>' + item.label + '</span>';
-      row.addEventListener('click', (e) => { e.stopPropagation(); dd.remove(); item.action(); });
+      row.addEventListener('click', (e) => { e.stopPropagation(); teardown(); item.action(); });
       dd.appendChild(row);
     }
     if (typeof opts.onSelect === 'function') {
@@ -202,7 +203,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       sel.innerHTML =
         '<span class="dropdown-icon"><span style="font-size:16px;line-height:1;position:relative;top:-2px;">●</span></span>'
         + '<span>Select</span>';
-      sel.addEventListener('click', (e) => { e.stopPropagation(); dd.remove(); opts.onSelect(); });
+      sel.addEventListener('click', (e) => { e.stopPropagation(); teardown(); opts.onSelect(); });
       dd.appendChild(sel);
     }
     const cancel = document.createElement('div');
@@ -210,7 +211,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     cancel.innerHTML =
       '<span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>'
       + '<span>Cancel</span>';
-    cancel.addEventListener('click', (e) => { e.stopPropagation(); dd.remove(); if (typeof opts.onCancel === 'function') opts.onCancel(); });
+    cancel.addEventListener('click', (e) => { e.stopPropagation(); teardown(); if (typeof opts.onCancel === 'function') opts.onCancel(); });
     dd.appendChild(cancel);
     document.body.appendChild(dd);
     const rect = anchor.getBoundingClientRect();
@@ -225,8 +226,18 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
       if (mr.left < 8) { dd.style.left = '8px'; dd.style.right = 'auto'; }
     });
-    const close = (e) => { if (!dd.contains(e.target)) { dd.remove(); document.removeEventListener('click', close); } };
+    // Single idempotent teardown shared by every dismissal path (item click,
+    // outside click, swipe, and the Escape arbiter via registerMenuDismiss).
+    let _unreg = () => {};
+    const teardown = () => {
+      _unreg(); _unreg = () => {};
+      document.removeEventListener('click', close);
+      dd.remove();
+    };
+    const close = (e) => { if (!dd.contains(e.target)) teardown(); };
     setTimeout(() => document.addEventListener('click', close), 0);
+    _unreg = registerMenuDismiss(teardown);
+    dd._dismiss = teardown;   // let bulk removers (reopen sweep) tear down cleanly
 
     // Swipe-down-to-dismiss (mobile). Mirrors the bottom-sheet feel — drag the
     // popup down and release past the threshold to close. Below threshold,
@@ -257,8 +268,11 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         dd.style.transition = 'transform 0.15s ease, opacity 0.15s ease';
         dd.style.transform = 'translateY(120px)';
         dd.style.opacity = '0';
-        setTimeout(() => dd.remove(), 160);
+        // Unregister + drop the outside-click listener now; defer the DOM
+        // removal so the slide-out animation can play.
+        _unreg(); _unreg = () => {};
         document.removeEventListener('click', close);
+        setTimeout(() => dd.remove(), 160);
       } else {
         dd.style.transition = 'transform 0.18s ease, opacity 0.18s ease';
         dd.style.transform = '';
@@ -380,6 +394,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
   function libraryRenderGrid() {
     const grid = document.getElementById('doclib-grid');
     if (!grid) return;
+    // An open card menu is mounted on <body> (to escape overflow clipping), so
+    // clearing the grid would orphan it; dismiss it first so its listener +
+    // Escape-stack entry go too.
+    document.querySelectorAll('.doclib-card-dropdown').forEach(dismissOrRemove);
     grid.innerHTML = '';
     // Drop any previous inline load-more — regenerated below alongside the list.
     if (grid.parentElement) grid.parentElement.querySelectorAll(':scope > .doclib-inline-load-more').forEach(b => b.remove());
@@ -576,8 +594,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (dropdown) {
         const isOpen = dropdown.style.display !== 'none' && dropdown.parentElement === document.body;
         if (isOpen) {
-          dropdown.style.display = 'none';
-          menuWrap.appendChild(dropdown);
+          hideCardDropdown();
         } else {
           // Position fixed on body to escape overflow clipping
           const rect = menuBtn.getBoundingClientRect();
@@ -593,15 +610,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             if (mr.bottom > window.innerHeight - 8) dropdown.style.top = (rect.top - mr.height - 4) + 'px';
             if (mr.left < 8) { dropdown.style.left = '8px'; dropdown.style.right = 'auto'; }
           });
-          // Close on outside click
-          const close = (ev) => {
-            if (!dropdown.contains(ev.target) && !menuWrap.contains(ev.target)) {
-              dropdown.style.display = 'none';
-              menuWrap.appendChild(dropdown);
-              document.removeEventListener('click', close, true);
-            }
+          // Close on outside click or Escape (the latter via the registry).
+          _cardDocClick = (ev) => {
+            if (!dropdown.contains(ev.target) && !menuWrap.contains(ev.target)) hideCardDropdown();
           };
-          setTimeout(() => document.addEventListener('click', close, true), 0);
+          setTimeout(() => document.addEventListener('click', _cardDocClick, true), 0);
+          _cardUnreg = registerMenuDismiss(hideCardDropdown);
         }
       }
     });
@@ -612,6 +626,21 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     dropdown.className = 'doclib-card-dropdown';
     dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;z-index:1000;min-width:0;width:max-content;padding:4px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);font-size:12px;';
 
+    // Single close path for the card action dropdown, shared by the toggle
+    // button, the outside-click listener, every menu item, and the Escape
+    // arbiter (via registerMenuDismiss). Hides the menu, returns it to its
+    // wrapper, drops the outside-click listener, and unregisters from the
+    // Escape stack. Idempotent — safe to call from whichever path fires first.
+    let _cardUnreg = () => {};
+    let _cardDocClick = null;
+    function hideCardDropdown() {
+      _cardUnreg(); _cardUnreg = () => {};
+      if (_cardDocClick) { document.removeEventListener('click', _cardDocClick, true); _cardDocClick = null; }
+      dropdown.style.display = 'none';
+      if (dropdown.parentElement === document.body) menuWrap.appendChild(dropdown);
+    }
+    dropdown._dismiss = hideCardDropdown;   // bulk removers tear down through this
+
     const _di = (svg) => `<span class="dropdown-icon">${svg}</span>`;
     const _openIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
 
@@ -621,7 +650,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     openItem.style.cssText = 'background:none;border:none;width:100%;';
     openItem.innerHTML = _di(_openIco) + '<span>Open</span>';
     if (doc.session_id) {
-      openItem.addEventListener('click', (e) => { e.stopPropagation(); dropdown.style.display = 'none'; libraryOpenInSession(doc); });
+      openItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); libraryOpenInSession(doc); });
     } else {
       openItem.disabled = true;
       openItem.style.opacity = '0.35';
@@ -636,7 +665,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     cloneItem.style.cssText = 'background:none;border:none;width:100%;';
     cloneItem.innerHTML = _di(_cloneIco) + '<span>Clone</span>';
     cloneItem.title = 'Clone to active session';
-    cloneItem.addEventListener('click', (e) => { e.stopPropagation(); dropdown.style.display = 'none'; libraryImportDocument(doc); });
+    cloneItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); libraryImportDocument(doc); });
     dropdown.appendChild(cloneItem);
 
     // Export
@@ -647,7 +676,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     exportItem.innerHTML = _di(_exportIco) + '<span>Export</span>';
     exportItem.addEventListener('click', async (e) => {
       e.stopPropagation();
-      dropdown.style.display = 'none';
+      hideCardDropdown();
       try {
         const res = await fetch(`${API_BASE}/api/document/${doc.id}`);
         if (!res.ok) throw new Error('Failed');
@@ -673,7 +702,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     archiveItem.title = _libraryArchivedView ? 'Restore to active documents' : 'Archive (hide from the main list)';
     archiveItem.addEventListener('click', async (e) => {
       e.stopPropagation();
-      dropdown.style.display = 'none';
+      hideCardDropdown();
       const toArchived = !_libraryArchivedView;
       try {
         const res = await fetch(`${API_BASE}/api/document/${doc.id}/archive?archived=${toArchived}`, { method: 'POST', credentials: 'same-origin' });
@@ -693,7 +722,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     deleteItem.className = 'dropdown-item-compact dropdown-item-danger';
     deleteItem.style.cssText = 'background:none;border:none;width:100%;';
     deleteItem.innerHTML = _di(_deleteIco) + '<span>Delete</span>';
-    deleteItem.addEventListener('click', (e) => { e.stopPropagation(); dropdown.style.display = 'none'; libraryDeleteSingle(doc.id, card); });
+    deleteItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); libraryDeleteSingle(doc.id, card); });
     dropdown.appendChild(deleteItem);
 
     menuWrap.appendChild(dropdown);

@@ -1054,7 +1054,14 @@ def _append_tool_results(
     """
     if used_native and native_tool_calls:
         assistant_msg = {"role": "assistant"}
-        assistant_msg["content"] = round_response if round_response.strip() else ""
+        # When the model emitted ONLY tool calls (no prose), content must be
+        # null, NOT an empty string. Google Gemini's OpenAI-compatible endpoint
+        # and Ollama both reject an assistant message that carries tool_calls
+        # alongside empty-string content with HTTP 400 ("contents is not
+        # specified" / a JSON parse error), which aborts every tool-using turn
+        # at the follow-up round. null (i.e. omitted text) is the spec-correct
+        # form the OpenAI SDK itself emits, and OpenAI/Anthropic accept it too.
+        assistant_msg["content"] = round_response if round_response.strip() else None
         if round_reasoning:
             assistant_msg["reasoning_content"] = round_reasoning
         assistant_msg["tool_calls"] = [

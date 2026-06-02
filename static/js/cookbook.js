@@ -245,6 +245,9 @@ export function _detectToolParser(modelName) {
 // ── Backend detection ──
 
 export function _detectBackend(model) {
+  if (model?.backend === 'ollama' || model?.is_ollama) {
+    return { backend: 'ollama', label: 'Ollama' };
+  }
   const q = (model.quant || '').toUpperCase();
   const sysBackend = String(_hwfitCache?.system?.backend || '').toLowerCase();
   const isRocm = sysBackend === 'rocm';
@@ -407,11 +410,9 @@ export function _buildServeCmd(f, modelName, backend) {
       cmd += ` || ${_lcpServer}`;
     }
   } else if (backend === 'ollama') {
-    const ollamaName = modelName.split('/').pop().toLowerCase().replace(/[-_]gguf$/i, '');
     const ollamaPort = f.port || '11434';
     const hostEnv = ollamaPort !== '11434' ? `OLLAMA_HOST=0.0.0.0:${ollamaPort} ` : '';
-    // Start serve in background if not running, then pull model
-    cmd = `${hostEnv}ollama serve &>/dev/null & sleep 2 && ${hostEnv}ollama pull ${ollamaName} && wait`;
+    cmd = `${hostEnv}ollama serve`;
   } else if (backend === 'diffusers') {
     const gpuStr = f.gpus?.trim();
     if (gpuStr) cmd += `CUDA_VISIBLE_DEVICES=${gpuStr} `;

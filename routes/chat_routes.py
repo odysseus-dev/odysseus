@@ -920,11 +920,15 @@ def setup_chat_routes(
         _verify_session_owner(request, session_id)
         # A detached run can still be going even if _active_streams was popped;
         # report it as active so the client knows to reconnect via /resume.
-        if session_id not in _active_streams:
+        # Read once via .get() to avoid a KeyError race between the membership
+        # check and the indexed read if a sibling stream's finally pops the
+        # entry in between (same pattern _stream_set already uses).
+        rec = _active_streams.get(session_id)
+        if rec is None:
             if agent_runs.is_active(session_id):
                 return {"status": "streaming", "detached": True}
             raise HTTPException(404, "No active stream for this session")
-        return _active_streams[session_id]
+        return rec
 
     # ------------------------------------------------------------------ #
     # POST /api/inject_context

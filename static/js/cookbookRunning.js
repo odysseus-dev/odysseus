@@ -6,6 +6,7 @@
 
 import uiModule from './ui.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
+import { registerMenuDismiss } from './escMenuStack.js';
 
 // Human-friendly badge label for a task's internal status. Avoids surfacing
 // the word "error" in the sidebar — a server the user stopped or one that
@@ -31,6 +32,74 @@ function _taskBadge(task) {
     return { text: task.progress, cls: 'cookbook-task-running' };
   }
   return { text: _statusLabel(task.status, task.type), cls: 'cookbook-task-' + task.status };
+}
+
+function _shouldOfferCrashReport(task) {
+  if (!task) return false;
+  if (task._unreachable && task.type === 'serve') return true;
+  return ['error', 'crashed', 'failed'].includes(task.status);
+}
+
+function _redactCrashReportText(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}/gi, '$1[redacted]')
+    .replace(/\b(hf_[A-Za-z0-9]{16,})\b/g, '[redacted-hf-token]')
+    .replace(/\b(sk-[A-Za-z0-9_-]{16,})\b/g, '[redacted-api-key]')
+    .replace(/\b(xox[baprs]-[A-Za-z0-9-]{16,})\b/g, '[redacted-slack-token]')
+    .replace(/\b(AIza[0-9A-Za-z_-]{20,})\b/g, '[redacted-google-key]')
+    .replace(/\b((?:HF_TOKEN|HUGGING_FACE_HUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|BRAVE_API_KEY|TAVILY_API_KEY|SERPER_API_KEY|GOOGLE_API_KEY|API_KEY|TOKEN|PASSWORD)\s*=\s*)(['"]?)[^\s'"\\]+/gi, '$1$2[redacted]')
+    .replace(/\b(--(?:api-key|token|hf-token|password)\s+)([^\s]+)/gi, '$1[redacted]');
+}
+
+function _lastLines(text, count = 160) {
+  const clean = _redactCrashReportText(text || '').trimEnd();
+  if (!clean) return '(no captured output)';
+  return clean.split('\n').slice(-count).join('\n');
+}
+
+function _codeFence(text) {
+  return String(text || '').replace(/```/g, '` ` `');
+}
+
+function _taskHostLabel(task) {
+  if (!task?.remoteHost) return 'local';
+  return task.remoteHost + (task.sshPort ? `:${task.sshPort}` : '');
+}
+
+function _taskPort(task) {
+  const cmd = task?.payload?._cmd || '';
+  const match = cmd.match(/--port\s+(\d+)/);
+  return match ? match[1] : '';
+}
+
+function _buildCrashReport(task, outputText) {
+  const capturedOutput = outputText || task?.output || '';
+  const cmd = _redactCrashReportText(task?.payload?._cmd || '');
+  const diag = _diagnose(capturedOutput);
+  const started = task?.ts ? new Date(task.ts).toISOString() : '';
+  const report = [
+    '## Odysseus Cookbook crash report',
+    '',
+    'Please review this report for secrets before posting it publicly.',
+    '',
+    '### Task',
+    `- ID: \`${task?.sessionId || task?.id || 'unknown'}\``,
+    `- Type: \`${task?.type || 'unknown'}\``,
+    `- Status: \`${task?._unreachable ? 'unreachable' : (task?.status || 'unknown')}\``,
+    `- Model/repo: \`${task?.payload?.repo_id || task?.name || 'unknown'}\``,
+    `- Host: \`${_taskHostLabel(task)}\``,
+  ];
+  if (task?.platform) report.push(`- Platform: \`${task.platform}\``);
+  if (started) report.push(`- Started: \`${started}\``);
+  const port = _taskPort(task);
+  if (port) report.push(`- Port: \`${port}\``);
+  if (diag?.message) report.push(`- Diagnosis: ${diag.message}`);
+  if (cmd) {
+    report.push('', '### Command', '```bash', _codeFence(cmd), '```');
+  }
+  report.push('', '### Last captured output', '```text', _codeFence(_lastLines(capturedOutput)), '```');
+  return report.join('\n');
 }
 
 // Shared state/functions injected by init()
@@ -98,6 +167,9 @@ export function _parseServePhase(snapshot) {
     };
   }
   if (flat.includes('Application startup complete')) {
+    return { phase: 'ready', status: 'ready' };
+  }
+  if (/Ollama API ready on port\s+\d+/i.test(flat)) {
     return { phase: 'ready', status: 'ready' };
   }
   // HTTP access logs (e.g. GET /v1/models 200 OK) mean the server is up
@@ -1546,7 +1618,7 @@ export function _renderRunningTab() {
       el.addEventListener('touchcancel', _lpCancel, { passive: true });
       menuBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        document.querySelectorAll('.cookbook-task-dropdown').forEach(d => d.remove());
+        document.querySelectorAll('.cookbook-task-dropdown').forEach(d => { if (typeof d._dismiss === 'function') d._dismiss(); else d.remove(); });
 
         const dropdown = document.createElement('div');
         dropdown.className = 'cookbook-task-dropdown';
@@ -1660,6 +1732,13 @@ export function _renderRunningTab() {
             _copyText(tmuxAttach);
           }});
         }
+        if (_shouldOfferCrashReport(task)) {
+          items.push({ label: 'Copy crash report', action: 'copy-crash-report', custom: () => {
+            const out = (el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+            _copyText(_buildCrashReport(task, out));
+            uiModule.showToast('Copied crash report');
+          }});
+        }
         // Copy the last 50 lines of the task's output/log.
         items.push({ label: 'Copy last 50 lines', action: 'copy-log', custom: () => {
           const out = (el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
@@ -1683,6 +1762,7 @@ export function _renderRunningTab() {
           'register-endpoint': '<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>',
           save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/>',
           'copy-tmux': '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+          'copy-crash-report': '<path d="M10.3 2.3 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.3a2 2 0 0 0-3.4 0z"/><path d="M12 8v5M12 17h.01"/>',
           'copy-log': '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
           kill: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
           cancel: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
@@ -1696,7 +1776,7 @@ export function _renderRunningTab() {
           const ic = _MENU_ICONS[item.action] || '';
           div.innerHTML = `<span style="display:inline-flex;flex-shrink:0;opacity:0.7;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ic}</svg></span><span>${item.label}</span>`;
           div.addEventListener('click', () => {
-            dropdown.remove();
+            _cleanup();
             if (item.custom) { item.custom(); return; }
             el.querySelector('.cookbook-task-action-' + item.action)?.click();
           });
@@ -1736,17 +1816,21 @@ export function _renderRunningTab() {
         // fixed position no longer matches the originating ⋮ button, so
         // it visually drifts. Matches the email kebab behaviour.
         const scrollClose = () => _cleanup();
+        let _unreg = () => {};
         const _cleanup = () => {
+          _unreg(); _unreg = () => {};
           dropdown.remove();
           document.removeEventListener('click', closeHandler);
           window.removeEventListener('scroll', scrollClose, true);
           window.visualViewport?.removeEventListener('scroll', scrollClose);
         };
+        dropdown._dismiss = _cleanup;
         setTimeout(() => {
           document.addEventListener('click', closeHandler);
           window.addEventListener('scroll', scrollClose, true);
           window.visualViewport?.addEventListener('scroll', scrollClose);
         }, 0);
+        _unreg = registerMenuDismiss(_cleanup);
       });
     }
 
@@ -2214,15 +2298,24 @@ async function _reconnectTask(el, task) {
         if (task.type === 'serve' && !task._endpointAdded && !task._endpointAddInFlight && task._serveReady) {
           task._endpointAddInFlight = true;
           const rawHost = task.remoteHost || 'localhost';
-          const host = rawHost.includes('@') ? rawHost.split('@').pop() : rawHost;
+          let host = rawHost.includes('@') ? rawHost.split('@').pop() : rawHost;
           const portMatch = task.payload?._cmd?.match(/--port[=\s]+(\d+)/)
             || task.payload?._cmd?.match(/(?:^|\s)-p[=\s]+(\d+)/)
             || snapshot.match(/Uvicorn running on\D*?:(\d+)/i)
             || snapshot.match(/running on\D*?:(\d+)/i)
             || snapshot.match(/listening on\D*?:(\d+)/i)
             || snapshot.match(/port[:=\s]+(\d+)/i);
-          const port = portMatch ? portMatch[1] : '8000';
-          const baseUrl = `http://${host}:${port}/v1`;
+          let port = portMatch ? portMatch[1] : '8000';
+          let baseUrl = `http://${host}:${port}/v1`;
+          const ollamaUrlMatch = snapshot.match(/Ollama API ready on port\s+\d+:\s*(http:\/\/[^\s]+)/i);
+          if (ollamaUrlMatch) {
+            try {
+              const u = new URL(ollamaUrlMatch[1]);
+              host = u.hostname || host;
+              port = u.port || '11434';
+              baseUrl = `${u.origin}/v1`;
+            } catch {}
+          }
           fetch('/api/model-endpoints', { credentials: 'same-origin' })
             .then(r => r.json())
             .then(async (eps) => {
@@ -2561,10 +2654,21 @@ async function _pollBackgroundStatus() {
       if (localTask && localTask._endpointAdded) continue;
 
       const rawHost = localTask?.remoteHost || t.remote || 'localhost';
-      const host = rawHost.includes('@') ? rawHost.split('@').pop() : (rawHost === 'local' ? 'localhost' : rawHost);
-      const portMatch = localTask?.payload?._cmd?.match(/--port\s+(\d+)/);
-      const port = portMatch ? portMatch[1] : '8000';
-      const baseUrl = `http://${host}:${port}/v1`;
+      let host = rawHost.includes('@') ? rawHost.split('@').pop() : (rawHost === 'local' ? 'localhost' : rawHost);
+      const portMatch = localTask?.payload?._cmd?.match(/--port\s+(\d+)/)
+        || localTask?.payload?._cmd?.match(/OLLAMA_HOST=[^\s:]+:(\d+)/);
+      let port = portMatch ? portMatch[1] : '8000';
+      let baseUrl = `http://${host}:${port}/v1`;
+      const snapshot = t.output || localTask?.output || '';
+      const ollamaUrlMatch = snapshot.match(/Ollama API ready on port\s+\d+:\s*(http:\/\/[^\s]+)/i);
+      if (ollamaUrlMatch) {
+        try {
+          const u = new URL(ollamaUrlMatch[1]);
+          host = u.hostname || host;
+          port = u.port || '11434';
+          baseUrl = `${u.origin}/v1`;
+        } catch {}
+      }
       const _isDiffusion = localTask?.payload?._cmd?.includes('diffusion_server');
 
       _updateTask(t.session_id, { _serveReady: true, _endpointAdded: true });
