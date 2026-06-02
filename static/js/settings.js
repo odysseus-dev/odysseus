@@ -4427,15 +4427,106 @@ async function initGitHubIntegration() {
   if (generateLink) generateLink.href = _ghTokenUrl;
   if (generateLinkRotate) generateLinkRotate.href = _ghTokenUrl;
   const writeSw = el('gh-intg-write');
+  const confirmSw = el('gh-intg-confirm');
+  const confirmSection = el('gh-intg-confirm-section');
   const notifySw = el('gh-intg-notify');
   const briefingTa = el('gh-intg-briefing');
+  const briefingEditor = el('gh-intg-briefing-editor');
   const briefingSave = el('gh-intg-briefing-save');
   const briefingReset = el('gh-intg-briefing-reset');
+  const briefingRaw = el('gh-intg-briefing-raw');
   const briefingMsg = el('gh-intg-briefing-msg');
   const disconnectBtn = el('gh-intg-disconnect');
   const statusEl = el('gh-intg-status');
 
   let _defaultBriefing = '';  // captured from a fresh-state GET; used by "Reset to default"
+  let _rawMode = false;       // when true, show the raw textarea instead of sections
+  let _introText = '';        // the intro paragraph before the first section header
+
+  // ── Structured briefing editor ──
+  // Parses the briefing text into sections by ALL-CAPS header lines and renders
+  // each as a collapsible <details>. The intro (text before the first header)
+  // is shown as a read-only description.
+
+  function _parseSections(text) {
+    const lines = (text || '').split('\n');
+    const sections = [];
+    let curHeader = null;
+    let curLines = [];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (/^[A-Z][A-Z \-]{2,}(\s*\(.*\))?\s*$/.test(trimmed) && trimmed.length > 3) {
+        sections.push({ header: curHeader, content: curLines.join('\n').trim() });
+        curHeader = trimmed;
+        curLines = [];
+      } else {
+        curLines.push(line);
+      }
+    }
+    sections.push({ header: curHeader, content: curLines.join('\n').trim() });
+    return sections.filter(s => s.header !== null || s.content);
+  }
+
+  function _formatHeader(h) {
+    // "QUALITY BAR" → "Quality bar", "AI-ATTRIBUTION" → "Ai-attribution"
+    return h.charAt(0) + h.slice(1).toLowerCase().replace(/-([a-z])/g, (_, c) => '-' + c);
+  }
+
+  function _renderSections(text) {
+    if (!briefingEditor) return;
+    briefingEditor.innerHTML = '';
+    const sections = _parseSections(text);
+    _introText = '';
+    for (const s of sections) {
+      if (s.header === null) {
+        _introText = s.content;
+        if (s.content) {
+          const intro = document.createElement('div');
+          intro.className = 'gh-briefing-intro';
+          intro.textContent = s.content;
+          briefingEditor.appendChild(intro);
+        }
+        continue;
+      }
+      const det = document.createElement('details');
+      det.className = 'gh-briefing-section';
+      const sum = document.createElement('summary');
+      sum.textContent = _formatHeader(s.header);
+      det.appendChild(sum);
+      const ta = document.createElement('textarea');
+      ta.className = 'gh-briefing-section-ta';
+      ta.value = s.content;
+      ta.spellcheck = false;
+      ta.rows = Math.max(2, Math.min(8, s.content.split('\n').length + 1));
+      ta.dataset.header = s.header;
+      det.appendChild(ta);
+      briefingEditor.appendChild(det);
+    }
+  }
+
+  function _collectBriefingText() {
+    if (_rawMode) return briefingTa.value;
+    const parts = [];
+    if (_introText) parts.push(_introText);
+    if (briefingEditor) {
+      briefingEditor.querySelectorAll('.gh-briefing-section-ta').forEach(ta => {
+        parts.push(ta.dataset.header + '\n' + ta.value.trim());
+      });
+    }
+    return parts.join('\n\n') + '\n';
+  }
+
+  function _setRawMode(on) {
+    _rawMode = on;
+    if (briefingEditor) briefingEditor.style.display = on ? 'none' : '';
+    if (briefingTa) briefingTa.style.display = on ? '' : 'none';
+    if (briefingRaw) briefingRaw.textContent = on ? 'Section edit' : 'Raw edit';
+    if (on) {
+      briefingTa.value = _collectBriefingText();
+    } else {
+      _renderSections(briefingTa.value);
+    }
+  }
 
   function _flash(msgEl, text, kind) {
     if (!msgEl) return;
@@ -4462,6 +4553,12 @@ async function initGitHubIntegration() {
       if (patIn) { patIn.value = ''; patIn.placeholder = 'github_pat_...'; }
       writeSw.checked = !!info.write_enabled;
       writeSw.disabled = _isPaused;
+      // Confirm toggle is only relevant when writes are enabled
+      if (confirmSw) {
+        confirmSw.checked = info.confirm_before_write !== false;
+        confirmSw.disabled = _isPaused || !info.write_enabled;
+      }
+      if (confirmSection) confirmSection.style.display = info.write_enabled ? '' : 'none';
       if (notifySw) { notifySw.checked = !!info.notify_enabled; notifySw.disabled = _isPaused; }
       const _nHint = el('gh-intg-notify-hint');
       if (_nHint) _nHint.style.display = (!!info.notify_enabled && !_isPaused) ? '' : 'none';
@@ -4478,15 +4575,22 @@ async function initGitHubIntegration() {
       if (patIn) patIn.placeholder = 'github_pat_...';
       writeSw.checked = false;
       writeSw.disabled = true;
+      if (confirmSw) { confirmSw.checked = true; confirmSw.disabled = true; }
+      if (confirmSection) confirmSection.style.display = 'none';
       if (notifySw) { notifySw.checked = false; notifySw.disabled = true; }
       if (tabBtn) tabBtn.style.display = 'none';
       const rotate = el('gh-intg-rotate');
       if (rotate) rotate.open = false;
       if (patInRotate) patInRotate.value = '';
     }
-    // Briefing is RAW text (with editing-prompt comments); the server strips
-    // them before injecting into the agent.
-    if (typeof info.briefing === 'string') briefingTa.value = info.briefing;
+    // Populate the structured briefing editor (or raw textarea if in raw mode)
+    if (typeof info.briefing === 'string') {
+      if (_rawMode) {
+        briefingTa.value = info.briefing;
+      } else {
+        _renderSections(info.briefing);
+      }
+    }
   }
 
   // Master enable/disable — pauses/resumes the integration without wiping the
@@ -4602,8 +4706,30 @@ async function initGitHubIntegration() {
       });
       // Refresh the chat-input toggle so its write_enabled mirror updates.
       try { window.githubToggle && window.githubToggle.refresh && window.githubToggle.refresh(); } catch {}
+      // Show/hide the confirm toggle based on write state
+      if (confirmSection) confirmSection.style.display = writeSw.checked ? '' : 'none';
+      if (confirmSw) confirmSw.disabled = !writeSw.checked;
     } catch {}
   });
+
+  // Confirm-before-write toggle
+  if (confirmSw) {
+    confirmSw.addEventListener('change', async () => {
+      try {
+        await fetch('/api/github/integration/flags', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm_before_write: confirmSw.checked }),
+        });
+      } catch {}
+    });
+  }
+
+  // Raw-edit toggle for the briefing
+  if (briefingRaw) {
+    briefingRaw.addEventListener('click', () => _setRawMode(!_rawMode));
+  }
 
   // Notify toggle — simple POST to /flags. No poller; the count is fetched
   // inline at message time (cached 60s). Show/hide the GitHub settings hint
@@ -4626,18 +4752,15 @@ async function initGitHubIntegration() {
   briefingSave.addEventListener('click', async () => {
     briefingSave.disabled = true;
     try {
+      const text = _collectBriefingText();
       const r = await fetch('/api/github/integration/briefing', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ briefing: briefingTa.value }),
+        body: JSON.stringify({ briefing: text }),
       });
       if (!r.ok) { _flash(briefingMsg, 'Save failed', 'err'); return; }
       _flash(briefingMsg, 'Saved', 'ok');
-      // Re-fetch so an empty save (which resets to default server-side) shows
-      // the restored default in the textarea.
-      const fresh = await _fetchState();
-      if (fresh) _render(fresh);
     } catch (e) {
       _flash(briefingMsg, `Save failed: ${e.message || e}`, 'err');
     } finally {
@@ -4655,7 +4778,12 @@ async function initGitHubIntegration() {
       });
       if (!r.ok) { _flash(briefingMsg, 'Reset failed', 'err'); return; }
       const data = await r.json();
-      briefingTa.value = data.briefing || _defaultBriefing || '';
+      // Re-render the section editor with the default
+      if (_rawMode) {
+        briefingTa.value = data.briefing || _defaultBriefing || '';
+      } else {
+        _renderSections(data.briefing || _defaultBriefing || '');
+      }
       _flash(briefingMsg, 'Reset to default', 'ok');
     } catch (e) {
       _flash(briefingMsg, `Reset failed: ${e.message || e}`, 'err');

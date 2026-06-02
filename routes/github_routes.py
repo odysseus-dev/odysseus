@@ -35,66 +35,44 @@ GH_TIMEOUT = 15.0
 USER_AGENT = "Odysseus-Integration/0.1"
 
 # Default briefing seeded for new users. The agent receives this as a
-# system-prompt addendum when GitHub is toggled on for a turn. The universal
-# sections ship with real defaults; the taste-specific sections (commit style,
-# PR voice) ship as comment-wrapped prompts inviting the user to fill them in.
-#
-# Comments (<!-- ... -->) are EDITING SCAFFOLD: they guide the user in the
-# Settings editor but are stripped by strip_briefing_prompts() before the
-# briefing is sent to the agent, so the model never sees the prompts — only
-# real standards and whatever the user wrote.
+# system-prompt addendum when GitHub is toggled on for a turn. Each section
+# maps to a collapsible block in the Settings editor so users can expand and
+# edit individual sections without wading through a wall of text.
 DEFAULT_BRIEFING = """\
 You have GitHub tools available. Apply these standards whenever you use them.
-This briefing is repo-agnostic: it should hold whether you're contributing to
-someone else's open-source project, working on your own fork, or making changes
-in an internal codebase. Write for whoever reads your output next (the
-maintainer, a teammate, or your future self), and optimize for their attention.
+This briefing is repo-agnostic: it holds whether you're contributing to someone
+else's open-source project, working on your own fork, or making internal changes.
+Write for whoever reads your output next.
 
 QUALITY BAR
 - Write code you'd be willing to defend in review. If you'd cringe explaining a choice to a strong engineer, redo it before submitting.
-- Treat first-pass fixes with suspicion: edge case missed, scope creep, or a shape that papers over the bug class instead of removing it? Fix the cause, not the symptom.
+- Treat first-pass fixes with suspicion: edge case missed, scope creep, or a shape that papers over the bug class instead of removing it?
 - Reader-time is the scarce resource. Every line of diff and every sentence of a PR body is a cost. Earn each one.
 
 HONESTY
 - If you didn't run something, don't claim you did. "I tested this" means you executed it and observed the result; "this should work" is fine when stated honestly.
-- If you're unsure about an API, path, syntax, or behavior, check the code or docs before relying on it. A confident guess fails silently and burns trust harder than "let me check."
-- When the user references an issue, PR, or commit by number, fetch it before assuming what it's about from the title.
-- When you report that something changed (a check flipped, an issue closed, a notification cleared), establish the real cause before describing it: fetch the thread or run timeline, don't infer it from earlier conversation.
+- If you're unsure about an API, path, syntax, or behavior, check the code or docs before relying on it.
+- When the user references an issue, PR, or commit by number, fetch it before assuming what it's about.
+- When you report that something changed, establish the real cause before describing it: fetch the thread or timeline, don't infer from conversation.
 
 HOW THE WORK GETS DONE
-- Verify the bug or starting condition first, on the actual branch the work will land on. Don't trust that it reproduces, or that it isn't already fixed somewhere you haven't looked.
-- Match the codebase's existing idiom. Skim recent merged PRs and a few representative files in the area before drafting; consistency beats personal preference.
-- Smallest viable diff. Resist "while I'm here" refactors, test additions, and cleanups; mention them as follow-ups in the PR body instead of smuggling them into the diff.
+- Verify the bug or starting condition first, on the actual branch the work will land on.
+- Match the codebase's existing idiom. Skim recent merged PRs and representative files before drafting.
+- Smallest viable diff. Resist "while I'm here" refactors; mention them as follow-ups instead.
 
-WRITE ACTIONS (commits, PR comments, opening or editing PRs, pushes)
-- Before a write action, say in one or two sentences WHAT you're about to do and WHY. This isn't asking permission (the user opted into write actions in settings); it's giving them a chance to course-correct mid-thread.
-- After a write action, state what you did and link to it (PR URL, commit SHA, comment permalink). Don't make the user hunt for the result.
+WRITE ACTIONS
+- Before a write action, say what you're about to do and why. After, state what you did and link to it.
+- This applies to commits, PR comments, opening or editing PRs, and pushes.
 
 ANTI-PATTERNS
 - Don't drop a fix without confirming the bug exists on the current branch.
-- Don't make the reader choose between approaches in a comment thread; ship cross-linked alternative PRs instead.
+- Don't make the reader choose between approaches in a comment; ship alternatives as separate PRs.
 - Don't include unrelated formatting changes in a diff.
 - Don't claim work is "tested" without actually running it.
-- Don't add scope the user didn't ask for; surface it as a follow-up suggestion instead.
+- Don't add scope the user didn't ask for; surface it as a follow-up suggestion.
 
 AI-ATTRIBUTION
-- Keep the Co-Authored-By trailer on commits you author as an honest disclosure that an agent co-authored the work. Don't add a separate "Generated with..." footer to PR bodies; the trailer is the disclosure, the body should read as the user's own.
-
-<!-- The sections below are yours to fill in. They capture personal house style,
-     which no default can guess. Lines wrapped in comment markers like this are
-     editing prompts: they are stripped before the briefing is sent to the
-     agent, so leave them, replace them, or delete them as you like. -->
-
-COMMIT MESSAGE STYLE
-<!-- prompt: How do you like commits written? e.g. Conventional Commits
-     (feat:/fix:/chore:), imperative mood, subject under 50 chars, body wrapped
-     at 72. Replace this line with your preference, or delete it to leave it open. -->
-
-PR-WRITING VOICE
-<!-- prompt: How should the agent sound in PR bodies and review replies? e.g.
-     keep reviewer replies to one line ("fixed in <sha>, thanks"); often just
-     push the fix instead of replying; no needy closers like "ready for another
-     look"; avoid em-dashes. Replace with your own, or delete. -->
+- Include the Co-Authored-By trailer on agent-authored commits as an honest disclosure. No separate "Generated with..." footer in PR bodies.
 """
 
 # Matches HTML-style comments used as editing scaffold in the briefing.
@@ -132,6 +110,7 @@ class UpdateFlagsRequest(BaseModel):
     enabled: bool | None = None
     notify_enabled: bool | None = None
     write_enabled: bool | None = None
+    confirm_before_write: bool | None = None
 
 
 class UpdateBriefingRequest(BaseModel):
@@ -152,6 +131,7 @@ def _row_to_dict(row: GitHubIntegration) -> dict:
         "github_username": row.github_username,
         "enabled": bool(row.enabled),
         "write_enabled": bool(getattr(row, "write_enabled", False)),
+        "confirm_before_write": bool(getattr(row, "confirm_before_write", True)),
         "notify_enabled": bool(getattr(row, "notify_enabled", False)),
         "briefing": briefing,
         "briefing_agent_preview": strip_briefing_prompts(briefing),
@@ -316,6 +296,8 @@ def setup_github_routes(mcp_manager=None):
                 row.notify_enabled = bool(body.notify_enabled)
             if body.write_enabled is not None:
                 row.write_enabled = bool(body.write_enabled)
+            if body.confirm_before_write is not None:
+                row.confirm_before_write = bool(body.confirm_before_write)
             row.updated_at = datetime.utcnow()
             db.commit()
             db.refresh(row)

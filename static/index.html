@@ -2241,8 +2241,7 @@
               <a href="#" id="gh-tab-back-to-intg">Connection settings live in Integrations →</a>
             </div>
 
-            <!-- Write actions grant. When ON, the agent can comment on PRs,
-                 open PRs, push to branches whenever the chat GitHub toggle is on. -->
+            <!-- Write actions grant. -->
             <div class="gh-intg-section">
               <label class="gh-intg-row">
                 <span>
@@ -2250,6 +2249,17 @@
                   <span class="gh-intg-row-hint">comments, open PRs, push to branches</span>
                 </span>
                 <input type="checkbox" class="gh-toggle-switch" id="gh-intg-write">
+              </label>
+            </div>
+
+            <!-- Autonomy: ask before each write action, or act and inform. -->
+            <div class="gh-intg-section" id="gh-intg-confirm-section">
+              <label class="gh-intg-row">
+                <span>
+                  Ask before write actions
+                  <span class="gh-intg-row-hint">agent describes what it wants to do and waits for your OK</span>
+                </span>
+                <input type="checkbox" class="gh-toggle-switch" id="gh-intg-confirm" checked>
               </label>
             </div>
 
@@ -2275,14 +2285,15 @@
             <div class="gh-intg-section">
               <label class="gh-intg-label">Agent briefing</label>
               <div class="gh-intg-hint" style="margin-bottom:6px">
-                Appended to the agent's system prompt for any chat where the GitHub toggle is on. Lines wrapped in
-                <code>&lt;!-- --&gt;</code> are editing notes that guide you here; they're stripped before the briefing is
-                sent to the agent. Fill in the bottom sections to set your own commit style and PR voice.
+                Appended to the agent's system prompt when the GitHub toggle is on. Expand a section to edit it.
               </div>
-              <textarea id="gh-intg-briefing" rows="12" spellcheck="false"></textarea>
+              <div id="gh-intg-briefing-editor"></div>
+              <!-- Hidden textarea for raw-edit fallback -->
+              <textarea id="gh-intg-briefing" rows="12" spellcheck="false" style="display:none"></textarea>
               <div class="gh-intg-briefing-actions">
                 <button type="button" class="admin-btn-sm" id="gh-intg-briefing-save">Save briefing</button>
                 <button type="button" class="admin-btn-sm" id="gh-intg-briefing-reset">Reset to default</button>
+                <button type="button" class="admin-btn-sm" id="gh-intg-briefing-raw" style="margin-left:auto;opacity:0.6;font-size:10px">Raw edit</button>
                 <span class="gh-intg-msg" id="gh-intg-briefing-msg"></span>
               </div>
             </div>

@@ -287,6 +287,34 @@ def _fetch_github_briefing(owner: str | None) -> str | None:
         return None
 
 
+def _fetch_github_confirm_instruction(owner: str | None) -> str | None:
+    """When the user has 'ask before write actions' on (the default), return an
+    instruction that overrides the briefing's WRITE ACTIONS section to require
+    explicit user confirmation before any write. Returns None when the flag is
+    off (agent acts and informs per the briefing)."""
+    try:
+        from core.database import SessionLocal as _SL, GitHubIntegration as _GI
+    except Exception:
+        return None
+    try:
+        with _SL() as db:
+            row = db.query(_GI).filter_by(owner=owner or "").first()
+        if not row or not row.enabled:
+            return None
+        if getattr(row, "confirm_before_write", True):
+            return (
+                "IMPORTANT: Before taking ANY write action on GitHub (posting "
+                "comments, opening or editing PRs, pushing commits, closing "
+                "issues, marking notifications read), describe exactly what you "
+                "intend to do and wait for the user's explicit confirmation "
+                "before proceeding. Do not take write actions on your own "
+                "initiative, even if the user's request implies them."
+            )
+        return None
+    except Exception:
+        return None
+
+
 async def _fetch_github_notif_hint(owner: str | None) -> str | None:
     """If the user opted into notifications and has unread ones, return a
     one-liner telling the agent to surface the count and OFFER to sift through
@@ -568,6 +596,9 @@ def setup_chat_routes(
             _gh_brief = _fetch_github_briefing(getattr(sess, "owner", None) or "")
             if _gh_brief:
                 _extra_prompts.append(_gh_brief)
+            _gh_confirm = _fetch_github_confirm_instruction(getattr(sess, "owner", None) or "")
+            if _gh_confirm:
+                _extra_prompts.append(_gh_confirm)
 
         # GitHub notifications: when the user opted in, surface the unread count
         # so the agent can let them know and offer to sift through them.

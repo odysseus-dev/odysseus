@@ -1523,10 +1523,28 @@ class GitHubIntegration(Base):
     enabled = Column(Boolean, default=True, nullable=False)
     write_enabled = Column(Boolean, default=False, nullable=False)
     notify_enabled = Column(Boolean, default=False, nullable=False)
+    confirm_before_write = Column(Boolean, default=True, nullable=False)
     last_notif_count = Column(Integer, default=0, nullable=False)
     last_notif_polled_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+def _migrate_add_gh_confirm_column():
+    """Add confirm_before_write to github_integrations for existing installs."""
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        import sqlite3 as _sql
+        conn = _sql.connect(db_path)
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(github_integrations)").fetchall()]
+        if cols and "confirm_before_write" not in cols:
+            conn.execute("ALTER TABLE github_integrations ADD COLUMN confirm_before_write BOOLEAN DEFAULT 1")
+            conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 
 # WARNING: Foreign-key enforcement is enabled globally for all SQLite connections.
@@ -1574,6 +1592,7 @@ def init_db():
     _migrate_encrypt_email_passwords()
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
+    _migrate_add_gh_confirm_column()
 
 
 def _migrate_add_email_smtp_security():

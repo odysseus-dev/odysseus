@@ -35587,3 +35587,50 @@ body.theme-frosted .modal {
     .gh-intg-faq summary { cursor: pointer; opacity: 0.7; user-select: none; }
     .gh-intg-faq summary:hover { opacity: 1; }
     .gh-intg-faq p { margin: 8px 0 0; opacity: 0.7; line-height: 1.5; }
+
+    /* ── Structured briefing editor ── */
+    .gh-briefing-intro {
+      font-size: 11.5px;
+      line-height: 1.45;
+      opacity: 0.65;
+      margin-bottom: 8px;
+      padding: 6px 0;
+    }
+    .gh-briefing-section {
+      border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+      border-radius: 5px;
+      margin-bottom: 4px;
+    }
+    .gh-briefing-section summary {
+      cursor: pointer;
+      padding: 7px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      user-select: none;
+      list-style: none;
+    }
+    .gh-briefing-section summary::-webkit-details-marker { display: none; }
+    .gh-briefing-section summary::before {
+      content: '\25B8';
+      display: inline-block;
+      margin-right: 6px;
+      font-size: 10px;
+      transition: transform 0.12s;
+    }
+    .gh-briefing-section[open] summary::before { transform: rotate(90deg); }
+    .gh-briefing-section summary:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+    .gh-briefing-section-ta {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 6px 10px;
+      font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.45;
+      background: var(--bg);
+      color: var(--fg);
+      border: none;
+      border-top: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
+      resize: vertical;
+      min-height: 40px;
+    }
+    .gh-briefing-section-ta:focus { outline: none; }
