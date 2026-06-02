@@ -17,6 +17,29 @@ function esc(s) { return uiModule.esc(s); }
 /* ── Tab switching ── */
 const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'users', 'system']);
 
+const SETTINGS_TAB_BLURBS = {
+  services: 'Connect local and cloud model endpoints for chat and images.',
+  ai: 'Default chat model, utility model, and related AI behavior.',
+  search: 'Search API used for web search and deep research.',
+  integrations: 'All external service connections in one place.',
+  email: 'Email writing style and links to account setup in Integrations.',
+  reminders: 'How fired note reminders are delivered (browser, email, ntfy).',
+  appearance: 'Toggle visibility of tools and modules across the interface.',
+  shortcuts: 'Click a shortcut to rebind; press Escape to cancel.',
+  account: 'Profile, password, and two-factor authentication.',
+  tools: 'Enable or disable tools available to the AI agent.',
+  users: 'User accounts, open signup, and per-user privileges.',
+  system: 'Backup, import, tokens, webhooks, and server maintenance.',
+};
+
+function syncSettingsTabBlurb(tab) {
+  const blurb = el('settings-tab-blurb');
+  if (!blurb) return;
+  const text = SETTINGS_TAB_BLURBS[tab] || '';
+  blurb.textContent = text;
+  blurb.style.display = text ? '' : 'none';
+}
+
 function initTabs() {
   modalEl.querySelectorAll('[data-settings-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -28,6 +51,7 @@ function initTabs() {
       }
       modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
       modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
+      syncSettingsTabBlurb(tab);
       // Mark when the Appearance tab is open so the modal can go
       // semi-transparent — lets the user see the rest of the UI react as
       // they flip toggles instead of having to close + reopen the modal.
@@ -4358,6 +4382,7 @@ export function open(tab) {
   }
   // Auto-init admin data if showing an admin tab
   const activeTab = tab || (modalEl.querySelector('[data-settings-tab].active') || {}).dataset?.settingsTab || 'services';
+  syncSettingsTabBlurb(activeTab);
   document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
   syncAppearanceOpacity(activeTab === 'appearance');
   if (activeTab === 'ai') refreshAiModelEndpoints();
