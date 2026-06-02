@@ -1154,7 +1154,10 @@ def _pre_retrieve_context(body: str, sender: str) -> tuple:
         try:
             from routes.contacts_routes import _fetch_contacts
             for c in _fetch_contacts() or []:
-                if (c.get("email") or "").lower() == sender_addr:
+                # Contacts are normalized to plural `emails` lists (see
+                # contacts_routes._normalize_contact); the old `c.get("email")`
+                # singular key never exists, so known senders were never matched.
+                if sender_addr in [(e or "").lower() for e in (c.get("emails") or [])]:
                     is_known = True
                     break
         except Exception:
