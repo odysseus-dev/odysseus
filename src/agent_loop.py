@@ -16,6 +16,7 @@ from typing import AsyncGenerator, List, Dict, Optional, Set
 
 from src.llm_core import stream_llm, stream_llm_with_fallback
 from src.model_context import estimate_tokens
+from src.prompt_budget import apply_slim_schemas, budget_for_context
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner
@@ -549,6 +550,7 @@ def _build_system_prompt(
     mcp_disabled_map: Optional[Dict[str, set]] = None,
     compact: bool = False,
     owner: Optional[str] = None,
+    context_budget: Optional[dict] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -700,26 +702,37 @@ def _build_system_prompt(
                 )
             else:
                 _doc_raw = active_document.current_content or ""
-                _doc_numbered = "\n".join(
-                    f"{_i}\t{_ln}" for _i, _ln in enumerate(_doc_raw.split("\n"), 1)
-                )
-                doc_ctx = (
-                    f'ACTIVE DOCUMENT (open in the editor — the user is looking at it right now)\n'
-                    f'Title: "{active_document.title}" | Language: {active_document.language or "text"}\n'
-                    f'Below is the full text. Each line is prefixed with its line number and a TAB, '
-                    f'purely so you can locate references like "[Doc edit: L25]" — the number and tab '
-                    f'are NOT part of the document.\n'
-                    f'```\n{_doc_numbered}\n```\n'
-                    f'You ALREADY HAVE this document — it is right above. Do NOT ask the user to paste '
-                    f'it, and do NOT use read_file, bash, cat, or any tool to fetch it: it lives in the '
-                    f'editor, NOT on disk, so those attempts will fail. Every request is about THIS '
-                    f'document unless the user clearly says otherwise.\n'
-                    f'A "[Doc edit: L25]" prefix means the user is pointing at that line — use the '
-                    f'numbers above to find the text they mean.\n'
-                    f'To edit: use edit_document with <<<FIND>>>...<<<REPLACE>>>...<<<END>>>. The FIND '
-                    f'text must match the document EXACTLY and must NOT include the leading line-number '
-                    f'or tab (those are reference-only). To rewrite entirely: update_document.'
-                )
+                _doc_max_chars = (context_budget or {}).get("doc_max_chars")
+                if _doc_max_chars == 0:
+                    # Tiny context: skip document injection entirely
+                    doc_ctx = (
+                        f'ACTIVE DOCUMENT: "{active_document.title}" '
+                        f'(content omitted — context window too small). '
+                        f'Use edit_document or update_document to make changes.'
+                    )
+                else:
+                    if _doc_max_chars and len(_doc_raw) > _doc_max_chars:
+                        _doc_raw = _doc_raw[:_doc_max_chars] + "\n…[truncated for context budget]"
+                    _doc_numbered = "\n".join(
+                        f"{_i}\t{_ln}" for _i, _ln in enumerate(_doc_raw.split("\n"), 1)
+                    )
+                    doc_ctx = (
+                        f'ACTIVE DOCUMENT (open in the editor — the user is looking at it right now)\n'
+                        f'Title: "{active_document.title}" | Language: {active_document.language or "text"}\n'
+                        f'Below is the full text. Each line is prefixed with its line number and a TAB, '
+                        f'purely so you can locate references like "[Doc edit: L25]" — the number and tab '
+                        f'are NOT part of the document.\n'
+                        f'```\n{_doc_numbered}\n```\n'
+                        f'You ALREADY HAVE this document — it is right above. Do NOT ask the user to paste '
+                        f'it, and do NOT use read_file, bash, cat, or any tool to fetch it: it lives in the '
+                        f'editor, NOT on disk, so those attempts will fail. Every request is about THIS '
+                        f'document unless the user clearly says otherwise.\n'
+                        f'A "[Doc edit: L25]" prefix means the user is pointing at that line — use the '
+                        f'numbers above to find the text they mean.\n'
+                        f'To edit: use edit_document with <<<FIND>>>...<<<REPLACE>>>...<<<END>>>. The FIND '
+                        f'text must match the document EXACTLY and must NOT include the leading line-number '
+                        f'or tab (those are reference-only). To rewrite entirely: update_document.'
+                    )
         _doc_message = untrusted_context_message("active editor document", doc_ctx)
         _doc_message["_protected"] = True
 
@@ -846,6 +859,10 @@ def _build_system_prompt(
             except (TypeError, ValueError):
                 _skill_max_injected = 3
             _skill_max_injected = max(0, min(12, _skill_max_injected))
+            # Cap injection for small-context models
+            _cb_skill_max = (context_budget or {}).get("skill_max_injected")
+            if _cb_skill_max is not None:
+                _skill_max_injected = min(_skill_max_injected, _cb_skill_max)
             relevant_skills = sm.get_relevant_skills(
                 last_user,
                 skills=sm.load(owner=owner),
@@ -1463,12 +1480,36 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
+
+    # Determine effective context size for prompt-budget decisions.
+    # context_length may be 0 when caller didn't probe the endpoint; fall back
+    # to the known-windows table (fast dict lookup, no HTTP) so common small
+    # models (phi-4, gpt-4, openchat, etc.) still get slim prompts.
+    _eff_context = context_length
+    if _eff_context == 0:
+        from src.model_context import KNOWN_CONTEXT_WINDOWS as _KCW
+        _mname_lc = _model_lc
+        _mbase = _mname_lc.split("/")[-1].split(":")[0]
+        _best_key, _best_ctx = None, None
+        for _key, _ctx in _KCW.items():
+            if (_key in _mbase or _key in _mname_lc):
+                if _best_key is None or len(_key) > len(_best_key):
+                    _best_key, _best_ctx = _key, _ctx
+        if _best_ctx:
+            _eff_context = _best_ctx
+
+    _context_budget = budget_for_context(_eff_context)
+    # Small-context models also get compact (terse) system prompt, regardless
+    # of whether the endpoint natively supports function calling.
+    _compact_prompt = _is_api_model or _context_budget["use_compact_prompt"]
+
     messages, mcp_schemas = _build_system_prompt(
         messages, model, active_document, mcp_mgr, disabled_tools,
         needs_admin=_needs_admin, relevant_tools=_relevant_tools,
         mcp_disabled_map=_mcp_disabled_map,
-        compact=_is_api_model,
+        compact=_compact_prompt,
         owner=owner,
+        context_budget=_context_budget,
     )
     prep_timings["prompt_build"] = time.time() - _t2
 
@@ -1591,6 +1632,10 @@ async def stream_agent_loop(
             _last_content = _last_user.lower()
             _wants_mcp = any(kw in _last_content for kw in _MCP_KEYWORDS)
             all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
+        # Slim schemas for small-context models — applied after all filtering
+        # so the count reduction happens on the already-pruned set.
+        if not _force_answer and _eff_context > 0:
+            all_tool_schemas = apply_slim_schemas(all_tool_schemas, _eff_context)
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
