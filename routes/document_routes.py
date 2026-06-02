@@ -1659,4 +1659,20 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         finally:
             db.close()
 
+    # ---- POST /api/document/deactivate ----
+    @router.post("/api/document/deactivate")
+    async def deactivate_document(request: Request) -> Dict[str, Any]:
+        """Clear the server-side active document state so the agent stops
+        injecting a closed document's content into subsequent chat turns.
+
+        The frontend should call this when the user closes a document tab.
+        Without it, the in-process ``_active_document_id`` global persists
+        indefinitely (it is only cleared on *delete*), causing the agent to
+        reference documents the user explicitly closed.
+        """
+        from src.tool_implementations import set_active_document, get_active_document
+        prev = get_active_document()
+        set_active_document(None)
+        return {"ok": True, "previous_id": prev}
+
     return router
