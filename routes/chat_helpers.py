@@ -215,7 +215,7 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
         # Skip current endpoint
         if current_url and base in current_url:
             continue
-        # Quick ping with configurable timeout
+        # Quick ping
         ping_url = build_models_url(base)
         headers = build_headers(ep.api_key, base)
         try:
