@@ -12,6 +12,7 @@ import logging
 from core.database import Comparison, SessionLocal
 from core.session_manager import SessionManager
 from src.auth_helpers import get_current_user
+from routes.session_routes import _reject_raw_endpoint_url_for_non_admin
 
 logger = logging.getLogger(__name__)
 
@@ -63,10 +64,10 @@ def setup_compare_routes(session_manager: SessionManager):
         Returns the comparison ID and the two session IDs so the client
         can fire two independent SSE streams to /api/chat_stream.
         """
+        user = getattr(request.state, 'current_user', None)
         comp_id = str(uuid.uuid4())
         sid_a = str(uuid.uuid4())
         sid_b = str(uuid.uuid4())
-        user = getattr(request.state, 'current_user', None)
 
         # Blind mapping: randomly assign left/right
         blind = str(is_blind).lower() == "true"
@@ -89,6 +90,7 @@ def setup_compare_routes(session_manager: SessionManager):
 
         # Create ephemeral sessions (prefixed [CMP])
         for sid, model, endpoint in [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]:
+            _reject_raw_endpoint_url_for_non_admin(request, user, None, endpoint)
             name = f"[CMP] {slot_name[sid]}" if blind else f"[CMP] {model.split('/')[-1]}"
             session_manager.create_session(
                 session_id=sid,
