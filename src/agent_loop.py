@@ -2001,8 +2001,11 @@ async def stream_agent_loop(
                 )
             desc, result = await _tool_task
 
-            # Extract structured web sources from web_search tool output
-            _src_text = result.get("results") or result.get("stdout") or ""
+            # Extract structured web sources from web_search tool output.
+            # web_search returns {"output": ..., "exit_code": 0}; check "output"
+            # first so the <!-- SOURCES:…--> marker is found and stripped even
+            # when the result doesn't carry a "results" or "stdout" key.
+            _src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
             if block.tool_type == "web_search" and _src_text:
                 _src_marker = "<!-- SOURCES:"
                 _src_idx = _src_text.find(_src_marker)
@@ -2014,7 +2017,9 @@ async def stream_agent_loop(
                             yield f'data: {json.dumps({"type": "web_sources", "data": _extracted_sources})}\n\n'
                             # Strip the marker from the result so it doesn't show in chat
                             _clean = _src_text[:_src_idx].rstrip()
-                            if "results" in result:
+                            if "output" in result:
+                                result["output"] = _clean
+                            elif "results" in result:
                                 result["results"] = _clean
                             elif "stdout" in result:
                                 result["stdout"] = _clean

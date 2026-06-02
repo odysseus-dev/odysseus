@@ -530,16 +530,24 @@ export async function _hwfitFetch(fresh = false) {
       const sortSel = document.getElementById('hwfit-sort');
       const sortKey = sortSel?.value || 'score';
       const asc = sortSel?.dataset.reverse === '1';   // reversed → ascending (lowest first)
-      const field = { score: 'score', vram: 'required_gb', speed: 'speed_tps', params: 'params_b', context: 'context' }[sortKey] || 'score';
-      data.models.sort((a, b) => {
-        if (sortKey === 'fit') {
-          const rank = { perfect: 4, good: 3, marginal: 2, too_tight: 1, no_fit: 0 };
-          const av = rank[a.fit_level] || 0, bv = rank[b.fit_level] || 0;
+      if (sortKey === 'fit') {
+        // fit_level is categorical (perfect→good→marginal→too_tight), not numeric,
+        // so rank it explicitly instead of falling through to the score column.
+        // Tie-break by score so rows within one fit tier stay meaningfully ordered.
+        const fitRank = { perfect: 4, good: 3, marginal: 2, too_tight: 1, no_fit: 0 };
+        data.models.sort((a, b) => {
+          const ar = fitRank[a.fit_level] ?? -1, br = fitRank[b.fit_level] ?? -1;
+          if (ar !== br) return asc ? ar - br : br - ar;
+          const as = Number(a.score) || 0, bs = Number(b.score) || 0;
+          return asc ? as - bs : bs - as;
+        });
+      } else {
+        const field = { score: 'score', vram: 'required_gb', speed: 'speed_tps', params: 'params_b', context: 'context' }[sortKey] || 'score';
+        data.models.sort((a, b) => {
+          const av = Number(a[field]) || 0, bv = Number(b[field]) || 0;
           return asc ? av - bv : bv - av;
-        }
-        const av = Number(a[field]) || 0, bv = Number(b[field]) || 0;
-        return asc ? av - bv : bv - av;
-      });
+        });
+      }
     }
     _hwfitRenderList(list, _applyEngineFilter(data.models));
     // Persist this result so the next page load can paint it instantly.
@@ -819,7 +827,9 @@ export function _hwfitRenderList(el, models) {
     const pcount = m.parameter_count || '?';
     const ctx = m.context ? (m.context >= 1024 ? (m.context / 1024).toFixed(0) + 'k' : m.context) : '?';
     const fitLabel = (m.fit_level || '').replace('_', ' ');
-    const modeLabel = (m.run_mode || '').replace('_', '+');
+    const modeLabel = m.run_mode === 'cpu_offload'
+      ? 'cpu+offload'
+      : (m.run_mode || '').replace(/_/g, ' ');
     const vramLabel = m.required_gb ? m.required_gb.toFixed(1) + 'G' : '?';
     const moeBadge = m.is_moe ? '<span class="hwfit-badge hwfit-moe">MoE</span>' : '';
     const imgBadge = m.is_image_gen ? '<span class="hwfit-badge" style="background:color-mix(in srgb, var(--red) 20%, transparent);color:var(--red);font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px;">IMG</span>' : '';

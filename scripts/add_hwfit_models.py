@@ -43,7 +43,8 @@ _GENERIC_TAGS = {
     "transformers", "safetensors", "conversational", "text-generation",
     "image-text-to-text", "text-generation-inference", "endpoints_compatible",
     "autotrain_compatible", "compressed-tensors", "gguf", "mlx", "vllm", "4-bit",
-    "8-bit", "awq", "gptq", "fp8", "quantized", "chat",
+    "8-bit", "awq", "gptq", "fp8", "fp4", "nvfp4", "mxfp4", "nf4",
+    "quantized", "chat",
 }
 
 api = HfApi()
@@ -79,6 +80,20 @@ def _base_model_tag(tags):
 
 def _quant_from_name(name):
     n = name.lower()
+    if "nvfp4" in n:
+        return "NVFP4"
+    if "mxfp4" in n:
+        return "MXFP4"
+    if re.search(r"(^|[-_/])nf4($|[-_/])", n):
+        return "NF4"
+    if re.search(r"(^|[-_/])fp4($|[-_/])", n):
+        return "FP4"
+    if re.search(r"(^|[-_/])w4a16($|[-_/])", n):
+        return "W4A16"
+    if re.search(r"(^|[-_/])w8a8($|[-_/])", n):
+        return "W8A8"
+    if re.search(r"(^|[-_/])w8a16($|[-_/])", n):
+        return "W8A16"
     is8 = "8bit" in n or "8-bit" in n or "int8" in n
     if "awq" in n:
         return "AWQ-8bit" if is8 else "AWQ-4bit"
@@ -93,7 +108,9 @@ def _quant_from_name(name):
     if "fp8" in n:
         return "FP8"
     if "int4" in n or "4bit" in n or "4-bit" in n:
-        return "AWQ-4bit"
+        return "INT4"
+    if "int8" in n or "8bit" in n or "8-bit" in n:
+        return "INT8"
     return "Q4_K_M"
 
 
@@ -160,7 +177,10 @@ def _entry_from_modelinfo(mi, overrides):
     rel = created.strftime("%Y-%m-%d") if created else datetime.utcnow().strftime("%Y-%m-%d")
     # Rough RAM/VRAM hints (fit.py recomputes the real requirement from params+quant).
     _BPP = {"AWQ-4bit": 0.58, "GPTQ-Int4": 0.58, "mlx-4bit": 0.55, "mlx-6bit": 0.85,
-            "AWQ-8bit": 1.1, "GPTQ-Int8": 1.1, "mlx-8bit": 1.1, "FP8": 1.1, "NVFP4": 0.6, "Q4_K_M": 0.6}
+            "AWQ-8bit": 1.1, "GPTQ-Int8": 1.1, "mlx-8bit": 1.1, "FP8": 1.1,
+            "FP4": 0.58, "NVFP4": 0.58, "MXFP4": 0.58, "NF4": 0.58,
+            "INT4": 0.58, "INT8": 1.1, "W4A16": 0.58, "W8A8": 1.1, "W8A16": 1.1,
+            "Q4_K_M": 0.6}
     bpp = _BPP.get(quant, 0.6)
     vram = round(pb * bpp + 0.5, 1)
     entry = {

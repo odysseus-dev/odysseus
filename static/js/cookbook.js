@@ -262,10 +262,10 @@ export function _detectBackend(model) {
   const isRocm = sysBackend === 'rocm';
   const isAppleSilicon = ['metal', 'mps', 'apple'].includes(sysBackend);
   const _nm = `${model.repo_id || ''} ${model.path || ''} ${model.name || ''}`.toLowerCase();
-  if (!isAppleSilicon && (/\bmlx\b|mlx-|_mlx/i.test(_nm) || q.startsWith('MLX'))) {
+  if (/\bmlx\b|mlx-|_mlx/i.test(_nm) || q.startsWith('MLX')) {
     return { backend: 'unsupported', label: 'Unsupported' };
   }
-  const isAwqLike = /^AWQ|^GPTQ|^NVFP4/.test(q) || q === 'FP8' || /\b(awq|gptq|fp8|nvfp4)\b/i.test(_nm);
+  const isAwqLike = /^AWQ|^GPTQ|^NVFP4/.test(q) || ['FP8', 'FP4', 'MXFP4', 'NF4', 'INT4', 'INT8', 'W4A16', 'W8A8', 'W8A16'].includes(q) || /\b(awq|gptq|fp8|fp4|nvfp4|mxfp4|nf4|int4|int8|w4a16|w8a8|w8a16)\b/i.test(_nm);
   const isGgufLike = model.is_gguf || /^Q[2-8]/.test(q) || /^IQ/.test(q) || q === 'GGUF' || _nm.includes('gguf');
 
   // Image gen models → diffusers
@@ -291,7 +291,7 @@ export function _detectBackend(model) {
   }
 
   // Apple Silicon (Metal) → llama.cpp (GGUF). vLLM/SGLang are CUDA/ROCm-only and
-  // don't run on macOS; AWQ/GPTQ/FP8 (vLLM-only) models are already filtered out
+  // don't run on macOS; vLLM-native quantized models are already filtered out
   // of metal Cookbook results, so llama.cpp is always the right engine here.
   if (['metal', 'mps', 'apple'].includes(sysBackend)) {
     return { backend: 'llamacpp', label: 'llama.cpp' };
@@ -1516,7 +1516,7 @@ function _renderRecipes() {
   html += '<option value="Q4_K_M">Q4</option><option value="Q8_0">Q8</option>';
   html += '<option value="Q6_K">Q6</option><option value="Q5_K_M">Q5</option>';
   html += '<option value="Q3_K_M">Q3</option><option value="Q2_K">Q2</option>';
-  html += '<option value="AWQ-4bit">AWQ</option><option value="FP8">FP8</option>';
+  html += '<option value="AWQ-4bit">AWQ</option><option value="FP8">FP8</option><option value="FP4">FP4</option>';
   html += '<option value="">Native</option></select>';
   // Engine filter: show only models whose serve engine matches. "llama.cpp"
   // (GGUF) runs everywhere incl. consumer AMD/Apple; vLLM/SGLang are CUDA /
