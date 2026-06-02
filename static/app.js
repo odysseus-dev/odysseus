@@ -1592,15 +1592,15 @@ function initializeEventListeners() {
     saveToggleState(state);
   }
 
-  const TOOL_TOGGLE_TOAST_LABELS = {
-    web: 'Web search',
-    bash: 'Shell',
+  const TOOL_TOGGLE_TOAST_KEYS = {
+    web: { on: 'chat.toolToggle.web.on', off: 'chat.toolToggle.web.off' },
+    bash: { on: 'chat.toolToggle.shell.on', off: 'chat.toolToggle.shell.off' },
   };
 
   function showToolToggleToast(stateKey, active) {
-    const label = TOOL_TOGGLE_TOAST_LABELS[stateKey];
-    if (!label || !uiModule?.showToast) return;
-    uiModule.showToast(`${label} ${active ? 'on' : 'off'}`, 1800);
+    const keys = TOOL_TOGGLE_TOAST_KEYS[stateKey];
+    if (!keys || !uiModule?.showToast) return;
+    uiModule.showToast(i18nT(active ? keys.on : keys.off), 1800);
   }
 
   function applyModeToToggles(mode) {

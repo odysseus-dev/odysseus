@@ -2,6 +2,7 @@
 
 import uiModule from './ui.js';
 import sessionModule from './sessions.js';
+import { t } from './i18n.js';
 
 let API_BASE = '';
 let debounceTimer = null;
@@ -69,7 +70,7 @@ function renderResults(data, query) {
 
   if (!data || data.length === 0) {
     container.innerHTML = query
-      ? '<div class="search-empty">No results found</div>'
+      ? `<div class="search-empty">${t('search.noResults')}</div>`
       : '';
     return;
   }

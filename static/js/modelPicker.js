@@ -5,7 +5,7 @@ import { providerLogo } from './providers.js';
 import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { sortModelObjects } from './modelSort.js';
-import { t } from './i18n.js';
+import { t, onLocaleChange } from './i18n.js';
 
 const API_BASE = window.location.origin;
 
@@ -266,7 +266,7 @@ function _initModelPickerDropdown() {
     listEl.classList.toggle('is-empty', !hasAnyModel);
     menu.classList.toggle('no-models', !hasAnyModel);
     if (search) {
-      search.placeholder = hasAnyModel ? 'Search models…' : 'No models connected';
+      search.placeholder = hasAnyModel ? t('chat.modelPicker.searchPlaceholder') : t('chat.modelPicker.noModelsConnected');
     }
     if (searchRow) {
       searchRow.classList.toggle('searching', !!q);
@@ -299,7 +299,7 @@ function _initModelPickerDropdown() {
       if (m.stale) {
         row.classList.add('model-switch-stale');
         row.style.opacity = '0.45';
-        row.title = `Local server appears offline: ${m.staleReason}. Click to try anyway, or relaunch in Cookbook.`;
+        row.title = t('chat.modelPicker.staleTitle', { reason: m.staleReason });
       }
       const _mlogo = providerLogo(m.mid);
       if (_mlogo) {
@@ -316,7 +316,7 @@ function _initModelPickerDropdown() {
       if (m.stale) {
         const badge = document.createElement('span');
         badge.className = 'model-switch-stale-badge';
-        badge.textContent = 'offline';
+        badge.textContent = t('chat.modelPicker.offline');
         badge.style.cssText = 'font-size:10px;opacity:0.7;padding:1px 6px;border:1px solid var(--border);border-radius:8px;margin-left:6px;';
         row.appendChild(badge);
       }
@@ -334,8 +334,8 @@ function _initModelPickerDropdown() {
       favDot.textContent = '●';
       const _setFavState = (on) => {
         favDot.classList.toggle('active', on);
-        favDot.title = on ? 'Remove from favorites' : 'Add to favorites';
-        favDot.setAttribute('aria-label', on ? 'Remove from favorites' : 'Add to favorites');
+        favDot.title = on ? t('chat.modelPicker.favRemove') : t('chat.modelPicker.favAdd');
+        favDot.setAttribute('aria-label', on ? t('chat.modelPicker.favRemove') : t('chat.modelPicker.favAdd'));
         favDot.setAttribute('aria-pressed', on ? 'true' : 'false');
       };
       _setFavState(favs.includes(m.mid));
@@ -373,7 +373,7 @@ function _initModelPickerDropdown() {
         return [m.mid, m.display, m.epName, m.providerText, provName]
           .filter(Boolean).join(' ').toLowerCase().includes(q);
       });
-      if (matches.length === 0) _addEmpty('No matching models');
+      if (matches.length === 0) _addEmpty(t('chat.modelPicker.noMatching'));
       else matches.forEach(_addRow);
       return;
     }
@@ -387,11 +387,11 @@ function _initModelPickerDropdown() {
     const favModels = favs.map(id => byId.get(id)).filter(Boolean);
 
     if (recentModels.length) {
-      _addSection('Recent');
+      _addSection(t('chat.modelPicker.section.recent'));
       recentModels.forEach(m => { shown.add(m.mid); _addRow(m); });
     }
     if (favModels.length) {
-      _addSection('Favorites');
+      _addSection(t('chat.modelPicker.section.favorites'));
       favModels.forEach(m => { shown.add(m.mid); _addRow(m); });
     }
 
@@ -399,7 +399,7 @@ function _initModelPickerDropdown() {
     if (all.length <= BROWSE_ALL_LIMIT) {
       const rest = all.filter(m => !shown.has(m.mid));
       if (rest.length) {
-        if (shown.size) _addSection('All models');
+        if (shown.size) _addSection(t('chat.modelPicker.section.allModels'));
         rest.forEach(_addRow);
       }
     } else {
@@ -599,6 +599,11 @@ function _initModelPickerDropdown() {
       _close();
     }
   });
+
+  onLocaleChange(() => {
+    if (!menu.classList.contains('hidden')) _populate(search?.value || '');
+    updateModelPicker();
+  });
 }
 
 /**
@@ -686,7 +691,7 @@ export function updateModelPicker() {
     }
   }
 
-  const displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  const displayName = modelId ? modelId.split('/').pop() : t('chat.modelPicker.selectModel');
   const logo = modelId ? providerLogo(modelId) : null;
   if (logo) {
     label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ' + displayName;
