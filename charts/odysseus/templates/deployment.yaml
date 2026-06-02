@@ -1,0 +1,147 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "odysseus.fullname" . }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "odysseus.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: odysseus
+  template:
+    metadata:
+      labels:
+        {{- include "odysseus.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: odysseus
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "odysseus.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.setup.enabled }}
+      initContainers:
+        - name: setup
+          image: {{ include "odysseus.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            {{- toYaml .Values.setup.command | nindent 12 }}
+          env:
+            {{- include "odysseus.envVars" . | nindent 12 }}
+            {{- range $key, $value := .Values.setup.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if or .Values.secretEnv.existingSecret .Values.secretEnv.values .Values.extraEnvFrom }}
+          envFrom:
+            {{- if or .Values.secretEnv.existingSecret .Values.secretEnv.values }}
+            - secretRef:
+                name: {{ include "odysseus.secretName" . }}
+            {{- end }}
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            {{- range $name, $mount := .Values.volumeMounts }}
+            - name: odysseus-data
+              mountPath: {{ $mount.mountPath | quote }}
+              subPath: {{ $mount.subPath | quote }}
+            {{- end }}
+          {{- end }}
+      {{- end }}
+      containers:
+        - name: odysseus
+          image: {{ include "odysseus.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.odysseus.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.odysseus.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            {{- include "odysseus.envVars" . | nindent 12 }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if or .Values.secretEnv.existingSecret .Values.secretEnv.values .Values.extraEnvFrom }}
+          envFrom:
+            {{- if or .Values.secretEnv.existingSecret .Values.secretEnv.values }}
+            - secretRef:
+                name: {{ include "odysseus.secretName" . }}
+            {{- end }}
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 7000
+              protocol: TCP
+          startupProbe:
+            tcpSocket:
+              port: http
+            failureThreshold: 30
+            periodSeconds: 4
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 20
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            {{- range $name, $mount := .Values.volumeMounts }}
+            - name: odysseus-data
+              mountPath: {{ $mount.mountPath | quote }}
+              subPath: {{ $mount.subPath | quote }}
+            {{- end }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- if .Values.persistence.enabled }}
+      volumes:
+        - name: odysseus-data
+          persistentVolumeClaim:
+            claimName: {{ include "odysseus.persistenceClaimName" . }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
