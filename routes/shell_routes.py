@@ -37,6 +37,7 @@ from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
     find_bash,
+    git_bash_path,
 )
 
 
@@ -368,8 +369,12 @@ async def _create_shell(command: str, **kwargs):
     POSIX: /bin/sh via create_subprocess_shell (unchanged behaviour).
     Windows: prefer a real bash (Git Bash/WSL) so bash-syntax commands behave
     the same as on Linux; fall back to cmd.exe when no bash is installed.
+    Powershell commands are executed directly via cmd.exe /c to avoid quoting
+    and env variable expansion errors under Git Bash.
     """
     if IS_WINDOWS:
+        if command.strip().lower().startswith("powershell"):
+            return await asyncio.create_subprocess_shell(command, **kwargs)
         bash = find_bash()
         if bash:
             return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
@@ -672,8 +677,8 @@ async def _generate_win_detached(cmd: str, request: Request):
     if bash:
         script_path = TMUX_LOG_DIR / f"{session_id}.sh"
         script_path.write_text(
-            f"{cmd} > {shlex.quote(str(log_path))} 2>&1\n"
-            f"echo $? > {shlex.quote(str(exit_path))}\n",
+            f"{cmd} > {shlex.quote(git_bash_path(log_path))} 2>&1\n"
+            f"echo $? > {shlex.quote(git_bash_path(exit_path))}\n",
             encoding="utf-8",
         )
         argv = [bash, str(script_path)]

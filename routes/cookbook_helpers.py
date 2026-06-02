@@ -178,6 +178,10 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     exit code is preserved (no ``| tail`` masking) and the last 5 lines of
     pip output appear in the Cookbook log on failure.
     """
+    from core.platform_compat import IS_WINDOWS
+    if IS_WINDOWS and "llama-cpp-python" in package:
+        package += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
+
     upgrade_flag = " -U" if upgrade else ""
     base = _pip_install_attempt(f"{python_cmd} install -q{upgrade_flag} {package}")
     user = _pip_install_attempt(f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {package}")
@@ -481,6 +485,7 @@ def _validate_serve_cmd(v: str | None) -> str | None:
     # Backticks and raw newlines are never legitimate here.
     if any(c in v for c in ("`", "\n", "\r")):
         raise HTTPException(400, "Invalid characters in cmd")
+
     # Known GGUF launcher prelude → validate the serve invocation(s) it guards.
     m = _GGUF_PRELUDE_RE.match(v)
     if m:
@@ -489,9 +494,19 @@ def _validate_serve_cmd(v: str | None) -> str | None:
         for part in rest.split("||"):
             _check_serve_binary(part.strip())
         return v
+
     # Otherwise: a single invocation — no shell metacharacters allowed.
+    # Temporarily replace safe $(printf %s ...) expressions with a placeholder
+    # to avoid triggering the metacharacter/command-injection checks.
+    cleaned_v = v
+    printf_matches = list(re.finditer(r"\$\(\s*printf\s+%s\s+([^\n()]*?)\)", v))
+    for match in printf_matches:
+        inner = match.group(1)
+        if not any(c in inner for c in (";", "&&", "||", "$(", "`")):
+            cleaned_v = cleaned_v.replace(match.group(0), "/placeholder/safe/path.gguf")
+
     # (`$(` was the original intent; bare `$` is fine for shell-safe paths.)
-    if any(c in v for c in (";", "&&", "||", "$(")):
+    if any(c in cleaned_v for c in (";", "&&", "||", "$(")):
         raise HTTPException(400, "Invalid characters in cmd")
     _check_serve_binary(v)
     return v
@@ -508,9 +523,11 @@ def _append_serve_preflight_exit_lines(runner_lines: list[str], *, keep_shell_op
     runner_lines.append('fi')
 
 
-def _append_serve_exit_code_lines(runner_lines: list[str], *, keep_shell_open: bool) -> None:
+def _append_serve_exit_code_lines(runner_lines: list[str], *, keep_shell_open: bool, is_pip_install: bool = False) -> None:
     """Append serve-runner lines that preserve and report the command exit code."""
     runner_lines.append('ODYSSEUS_CMD_EXIT=$?')
+    if is_pip_install:
+        runner_lines.append('if [ $ODYSSEUS_CMD_EXIT -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; fi')
     if keep_shell_open:
         runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="; exec "${SHELL:-/bin/bash}"')
     else:
@@ -541,20 +558,20 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('        export HIP_PATH="${HIP_PATH:-$(hipconfig -R)}"')
     runner_lines.append('      fi')
     runner_lines.append('      echo "[odysseus] ROCm/HIP detected — building llama-server with HIP support..."')
-    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON \\\\')
-    runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\\\')
+    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON \\')
+    runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\')
     runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
     runner_lines.append('    elif command -v nvcc &>/dev/null; then')
     runner_lines.append('      echo "[odysseus] CUDA nvcc found — building llama-server with CUDA (GPU) support..."')
-    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON \\\\')
-    runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\\\')
+    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON \\')
+    runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\')
     runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
     runner_lines.append('    else')
     runner_lines.append('      echo "[odysseus] WARNING: no HIP/CUDA toolchain found — building llama-server for CPU only."')
     runner_lines.append('      echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
     runner_lines.append('      echo "[odysseus]   Install ROCm for AMD GPUs or vLLM/CUDA tooling for NVIDIA, then re-launch this serve task."')
-    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release \\\\')
-    runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\\\')
+    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release \\')
+    runner_lines.append('        && cmake --build build -j"$NPROC" --target llama-server \\')
     runner_lines.append('        && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
     runner_lines.append('    fi')
 
