@@ -1151,10 +1151,7 @@ body.bg-pattern-sparkles {
       display: flex; align-items: center; gap: 6px;
       margin: 0; padding: 0; border: none;
       font-size: 10px; font-weight: 400; font-family: inherit;
-      /* 1.3 (not 1) so Fira Code's tall glyph box isn't vertically clipped in
-         Chromium/Edge — mirrors the .list-item fix. The title is flex-centred
-         in a fixed-height (29px) header, so this adds headroom without reflow. */
-      line-height: 1.3; letter-spacing: 0; text-transform: none;
+      line-height: 1; letter-spacing: 0; text-transform: none;
       color: var(--fg);
     }
     .section-icon,
@@ -12785,7 +12782,9 @@ mark.doc-find-mark.current {
   position: absolute;
   top: 0; left: 0; right: 0; bottom: 0;
   margin: 0;
-  padding: 10px 12px 10px 48px;
+  /* Match the textarea's visible scrollbar width so both layers wrap text at
+     the same column once long documents start scrolling. */
+  padding: 10px 22px 10px 48px;
   font-family: inherit;
   font-size: 11px !important;
   line-height: 1.45 !important;
