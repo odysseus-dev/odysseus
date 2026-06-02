@@ -17,6 +17,7 @@ DEFAULT_TAIL_LINES = 200
 _SCRUB_PATTERNS = (
     (re.compile(r"(api[_-]?key\s*[=:]\s*)\S+", re.I), r"\1***"),
     (re.compile(r"(password\s*[=:]\s*)\S+", re.I), r"\1***"),
+    (re.compile(r"(Authorization:\s*Bearer\s+)\S+", re.I), r"\1***"),
     (re.compile(r"(Authorization:\s*)\S+", re.I), r"\1***"),
     (re.compile(r"(Bearer\s+)\S+", re.I), r"\1***"),
 )
