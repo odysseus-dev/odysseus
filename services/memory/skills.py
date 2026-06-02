@@ -472,23 +472,28 @@ class SkillsManager:
     # Reading a single skill (used by the skill_view tool)
     # ----------------------------------------------------------------------
 
-    def read_skill_md(self, name: str) -> Optional[str]:
+    def read_skill_md(self, name: str, owner: Optional[str] = None) -> Optional[str]:
         for path in self._iter_skill_files():
             sk = self._read_skill(path)
-            if sk and sk.name == name:
-                try:
-                    with open(path, encoding="utf-8") as f:
-                        return f.read()
-                except Exception:
-                    return None
+            if not sk or sk.name != name:
+                continue
+            if (sk.owner or "") != (owner or ""):
+                continue
+            try:
+                with open(path, encoding="utf-8") as f:
+                    return f.read()
+            except Exception:
+                return None
         return None
 
-    def read_skill_reference(self, name: str, ref_path: str) -> Optional[str]:
+    def read_skill_reference(self, name: str, ref_path: str, owner: Optional[str] = None) -> Optional[str]:
         """Read a sub-file under the skill's directory (references/, etc).
         Refuses path traversal."""
         for path in self._iter_skill_files():
             sk = self._read_skill(path)
             if not sk or sk.name != name:
+                continue
+            if (sk.owner or "") != (owner or ""):
                 continue
             base = os.path.realpath(os.path.dirname(path))
             target = os.path.realpath(os.path.join(base, ref_path))

@@ -1,5 +1,22 @@
 # app.py — slim orchestrator
+import mimetypes
 import os
+
+
+def register_static_mime_types() -> None:
+    """Force stable JS module MIME types across platforms.
+
+    Some native Windows setups inherit stale/incorrect registry mappings for
+    ``.js``/``.mjs``, which can make Starlette serve ES modules with a non-JS
+    ``Content-Type`` and cause the UI to load but fail on click. Re-register the
+    standard MIME types at startup so static assets are served consistently.
+    """
+
+    mimetypes.add_type("text/javascript", ".js")
+    mimetypes.add_type("application/javascript", ".mjs")
+
+
+register_static_mime_types()
 
 # Windows: force HuggingFace/fastembed to COPY model files instead of symlinking.
 # On a network-share/UNC data dir Windows can't follow HF's symlinks ([WinError
@@ -152,9 +169,25 @@ if AUTH_ENABLED:
         "/login",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
+    # Dynamic paths whose own handler proves identity via a path-embedded
+    # secret instead of the session/bearer auth. The route handler at
+    # routes/task_routes.py validates the per-task `webhook_token` itself
+    # and returns 404 on mismatch, so the path is the credential — the
+    # UI labels these URLs "no auth needed" precisely because external
+    # callers (Zapier, n8n, curl) can't supply a session cookie. Without
+    # this exemption AuthMiddleware rejects every POST with 401 before
+    # the token is ever checked.
+    import re as _re
+    AUTH_EXEMPT_PATTERNS = [
+        _re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$"),
+    ]
 
     def _is_auth_exempt(path: str) -> bool:
-        return path in AUTH_EXEMPT_EXACT or any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES)
+        if path in AUTH_EXEMPT_EXACT:
+            return True
+        if any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES):
+            return True
+        return any(p.match(path) for p in AUTH_EXEMPT_PATTERNS)
 
     # In-memory token cache: prefix → list[(token_id, token_hash, owner, scopes)]. The DB
     # query was running on every API-bearer request and scanning bcrypt
@@ -661,6 +694,9 @@ app.include_router(setup_vault_routes())
 # Contacts (CardDAV)
 from routes.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())
+
+from companion import setup_companion_routes
+app.include_router(setup_companion_routes())
 
 # ========= ROUTES (kept in app.py) =========
 

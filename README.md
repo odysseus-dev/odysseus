@@ -90,7 +90,14 @@ cd odysseus
 ./start-macos.sh
 ```
 
-It launches at `http://127.0.0.1:7860`. To build a clickable app wrapper:
+It launches at `http://127.0.0.1:7860`. To expose it to your phone over a trusted LAN/VPN such as Tailscale, bind all interfaces:
+
+```bash
+ODYSSEUS_HOST=0.0.0.0 ./start-macos.sh
+# then open http://<tailscale-ip>:7860
+```
+
+Keep auth enabled when binding outside loopback, and do not expose this port directly to the public internet. To build a clickable app wrapper:
 
 ```bash
 ./build-macos-app.sh

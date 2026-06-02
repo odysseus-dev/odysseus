@@ -21,6 +21,10 @@ _REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]
 # the real on-disk path separately; this identifier is only for UI/task
 # bookkeeping, so serving should accept the same safe glyph set as repo IDs.
 _LOCAL_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# Ollama model names include tags, e.g. `qwen2.5:0.5b` or `llama3.2:latest`.
+# Some registries also use a namespace path. Keep this shell-safe: no spaces,
+# quotes, `$`, `;`, `&`, pipes, or redirects.
+_OLLAMA_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,200}$")
 # Include pattern is a glob: allow typical safe glyphs only.
 _INCLUDE_RE = re.compile(r"^[A-Za-z0-9._\-*?/\[\]]+$")
 # Remote host: user@host (optionally with :port-free hostname parts).
@@ -48,9 +52,9 @@ def _validate_repo_id(v: str | None) -> str:
 def _validate_serve_model_id(v: str | None) -> str:
     if not v:
         raise HTTPException(400, "repo_id is required")
-    if _REPO_ID_RE.match(v) or _LOCAL_MODEL_ID_RE.match(v):
+    if _REPO_ID_RE.match(v) or _LOCAL_MODEL_ID_RE.match(v) or _OLLAMA_MODEL_ID_RE.match(v):
         return v
-    raise HTTPException(400, "Invalid repo_id — must be <org>/<name> or a cached local model id using [A-Za-z0-9._-]")
+    raise HTTPException(400, "Invalid repo_id — must be <org>/<name>, an Ollama name:tag, or a cached local model id")
 
 
 def _validate_include(v: str | None) -> str | None:
@@ -144,10 +148,23 @@ def _local_tooling_path_export(executable: str) -> str:
     return f'export PATH="{esc}:$PATH"'
 
 
+def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m pip", upgrade: bool = False) -> str:
+    """Build a bash pip install fallback chain.
+
+    Try the active interpreter/environment first. `--user` is invalid inside
+    many venvs, so keep the user-site fallback for PEP-668 system Pythons only
+    after the venv-safe attempt has failed.
+    """
+    upgrade_flag = " -U" if upgrade else ""
+    base = f"{python_cmd} install -q{upgrade_flag} {package} 2>/dev/null"
+    user = f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {package} 2>/dev/null"
+    return f"{base} || {user}"
+
+
 def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
     """Build the standalone Python scanner used by /api/model/cached."""
     lines = [
-        "import json, os",
+        "import json, os, re, shutil, subprocess, urllib.request",
         "models = []",
         "seen = set()",
         "BLOCKED_ROOTS = ('/sys', '/proc', '/dev', '/run', '/var/run')",
@@ -209,7 +226,48 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
         "                except Exception: pass",
         "        is_diff = os.path.exists(os.path.join(fp, 'model_index.json'))",
         "        models.append({'repo_id':d,'size_bytes':sz,'nb_files':nf,'has_incomplete':False,'path':p,'is_local_dir':True,'is_diffusion':is_diff,'is_gguf':is_gguf})",
+        "def parse_size(num, unit):",
+        "    try: n = float(num)",
+        "    except Exception: return 0",
+        "    u = (unit or '').upper()",
+        "    if u.startswith('TB'): return int(n * 1024 ** 4)",
+        "    if u.startswith('GB'): return int(n * 1024 ** 3)",
+        "    if u.startswith('MB'): return int(n * 1024 ** 2)",
+        "    if u.startswith('KB'): return int(n * 1024)",
+        "    return int(n)",
+        "def scan_ollama():",
+        "    if not shutil.which('ollama'): return",
+        "    try:",
+        "        p = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=6)",
+        "    except Exception:",
+        "        return",
+        "    if p.returncode != 0: return",
+        "    for line in (p.stdout or '').splitlines()[1:]:",
+        "        parts = line.split()",
+        "        if len(parts) < 4: continue",
+        "        name = parts[0]",
+        "        if not name or name in seen: continue",
+        "        size_bytes = parse_size(parts[2], parts[3])",
+        "        seen.add(name)",
+        "        models.append({'repo_id':name,'size_bytes':size_bytes,'nb_files':1,'has_incomplete':False,'path':'ollama','backend':'ollama','is_ollama':True})",
+        "def scan_ollama_api():",
+        "    urls = ['http://127.0.0.1:11434/api/tags', 'http://localhost:11434/api/tags', 'http://host.docker.internal:11434/api/tags']",
+        "    for url in urls:",
+        "        try:",
+        "            with urllib.request.urlopen(url, timeout=2) as r:",
+        "                data = json.loads(r.read().decode('utf-8', 'replace'))",
+        "        except Exception:",
+        "            continue",
+        "        for item in data.get('models', []):",
+        "            name = item.get('name') or item.get('model')",
+        "            if not name or name in seen: continue",
+        "            size_bytes = int(item.get('size') or item.get('size_bytes') or 0)",
+        "            seen.add(name)",
+        "            models.append({'repo_id':name,'size_bytes':size_bytes,'nb_files':1,'has_incomplete':False,'path':'ollama','backend':'ollama','is_ollama':True})",
+        "        return",
         "scan_hf(os.path.expanduser('~/.cache/huggingface/hub'))",
+        "scan_ollama()",
+        "scan_ollama_api()",
     ]
     for model_dir in model_dirs or []:
         lines.append(f"scan_dir(os.path.expanduser({model_dir!r}))")
@@ -388,6 +446,8 @@ def _parse_serve_phase(snapshot: str, task_type: str = "serve") -> dict:
             "reqs": reqs,
         }
     if "Application startup complete" in flat:
+        return {"phase": "ready", "status": "ready"}
+    if re.search(r'Ollama API ready on port\s+\d+', flat, re.I):
         return {"phase": "ready", "status": "ready"}
     # HTTP access logs (e.g. GET /v1/models 200 OK) mean the server is up and serving
     if re.search(r'(?:GET|POST)\s+/[^\s]*\s+HTTP/[\d.]+"\s*\d{3}', flat):

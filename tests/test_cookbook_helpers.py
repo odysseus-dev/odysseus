@@ -10,6 +10,7 @@ from routes.cookbook_helpers import (
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
     _local_tooling_path_export,
+    _pip_install_fallback_chain,
     _safe_env_prefix,
     _validate_gpus,
     _validate_repo_id,
@@ -80,6 +81,20 @@ def test_local_tooling_path_export_preserves_spaces_and_expands_path():
     line = _local_tooling_path_export("/Users/John Smith/.venv/bin/python3")
     assert line == 'export PATH="/Users/John Smith/.venv/bin:$PATH"'
     assert line.endswith(':$PATH"')  # $PATH stays expandable in double quotes
+
+
+def test_pip_install_fallback_chain_prefers_venv_safe_install():
+    chain = _pip_install_fallback_chain("huggingface_hub", upgrade=True)
+    assert chain.startswith("python3 -m pip install -q -U huggingface_hub")
+    assert "|| python3 -m pip install --user --break-system-packages -q -U huggingface_hub" in chain
+
+
+def test_pip_install_fallback_chain_allows_custom_python_command():
+    chain = _pip_install_fallback_chain("hf_transfer", python_cmd="pip", upgrade=False)
+    assert chain == (
+        "pip install -q hf_transfer 2>/dev/null || "
+        "pip install --user --break-system-packages -q hf_transfer 2>/dev/null"
+    )
 
 
 def test_serve_preflight_failure_keeps_tmux_pane_visible():

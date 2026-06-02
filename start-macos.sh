@@ -17,6 +17,11 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
 PORT="${ODYSSEUS_PORT:-7860}"   # 7860, not 7000 — macOS AirPlay Receiver holds 7000.
+HOST="${ODYSSEUS_HOST:-127.0.0.1}" # Set ODYSSEUS_HOST=0.0.0.0 for LAN/Tailscale access.
+PROBE_HOST="$HOST"
+if [ "$PROBE_HOST" = "0.0.0.0" ] || [ "$PROBE_HOST" = "::" ]; then
+  PROBE_HOST="127.0.0.1"
+fi
 
 # Friendly message on any failure — re-running is safe (every step is idempotent).
 trap 'echo; echo "✗ Setup failed above. It is safe to re-run ./start-macos.sh."; exit 1' ERR
@@ -24,8 +29,8 @@ trap 'echo; echo "✗ Setup failed above. It is safe to re-run ./start-macos.sh.
 echo "▶ Odysseus quick start for macOS"
 
 # Fail fast if the port is already taken (e.g. a previous run still running).
-if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
-  echo "✗ Port $PORT is already in use. Stop what's using it, or pick another port:"
+if (exec 3<>"/dev/tcp/$PROBE_HOST/$PORT") 2>/dev/null; then
+  echo "✗ Port $PORT is already in use on $PROBE_HOST. Stop what's using it, or pick another port:"
   echo "    ODYSSEUS_PORT=7900 ./start-macos.sh"
   exit 1
 fi
@@ -100,8 +105,20 @@ echo "▶ Installing Python packages (first run downloads a few — can take a f
 echo "▶ Preparing Odysseus…"
 ODYSSEUS_SKIP_RUN_HINT=1 ./venv/bin/python setup.py
 
-# 5. Launch. Bind to loopback only (safe default).
-URL="http://127.0.0.1:$PORT"
+# 5. Launch. Bind to loopback by default; opt into LAN/Tailscale with
+#    ODYSSEUS_HOST=0.0.0.0.
+URL_HOST="$HOST"
+if [ "$URL_HOST" = "0.0.0.0" ] || [ "$URL_HOST" = "::" ]; then
+  URL_HOST="127.0.0.1"
+fi
+URL="http://$URL_HOST:$PORT"
+TAILSCALE_URL=""
+if [ "$HOST" = "0.0.0.0" ] && command -v tailscale >/dev/null 2>&1; then
+  TS_IP="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
+  if [ -n "$TS_IP" ]; then
+    TAILSCALE_URL="http://$TS_IP:$PORT"
+  fi
+fi
 
 # Open the browser automatically once the server is accepting connections — so
 # the URL isn't lost in the startup logs that keep scrolling. Runs in the
@@ -111,7 +128,7 @@ POLLER_PID=""
 if [ -z "$ODYSSEUS_NO_OPEN" ] && command -v open >/dev/null 2>&1; then
   (
     for _ in $(seq 1 90); do
-      if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
+      if (exec 3<>"/dev/tcp/$PROBE_HOST/$PORT") 2>/dev/null; then
         printf '\n'
         printf '  ┌────────────────────────────────────────────┐\n'
         printf '  │  ✓ Odysseus is ready — opening your browser  │\n'
@@ -134,6 +151,9 @@ trap '[ -n "$POLLER_PID" ] && kill "$POLLER_PID" 2>/dev/null' EXIT INT TERM
 
 echo
 echo "▶ Starting Odysseus — it will open in your browser at $URL"
+if [ -n "$TAILSCALE_URL" ]; then
+  echo "  Tailscale/LAN URL: $TAILSCALE_URL"
+fi
 echo "  (this takes a few seconds; press Ctrl+C here to stop)"
 echo
-"$PY" -m uvicorn app:app --host 127.0.0.1 --port "$PORT"
+"$PY" -m uvicorn app:app --host "$HOST" --port "$PORT"

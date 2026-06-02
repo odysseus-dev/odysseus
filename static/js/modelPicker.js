@@ -8,6 +8,49 @@ import { sortModelObjects } from './modelSort.js';
 
 const API_BASE = window.location.origin;
 
+// ── Recent + Favorites persistence ──
+// Recent is auto-tracked (last 5 picks, most-recent-first) and lives in its
+// own key. Favorites is the SAME key the sidebar Models section uses, so a
+// favorite toggled here shows up there and vice-versa.
+const RECENT_KEY = 'odysseus-model-recent';
+const FAVORITES_KEY = 'odysseus-model-favorites';
+const RECENT_MAX = 5;
+// Catalogs at or below this size are small enough that hiding everything
+// behind search would be a regression — keep listing them in browse mode.
+const BROWSE_ALL_LIMIT = 12;
+
+function _loadList(key) {
+  try {
+    const a = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(a) ? a : [];
+  } catch { return []; }
+}
+function _saveList(key, list) {
+  try { localStorage.setItem(key, JSON.stringify(list)); } catch { /* quota / private mode */ }
+}
+function _loadRecent() { return _loadList(RECENT_KEY); }
+function _pushRecent(mid) {
+  if (!mid) return;
+  const next = _loadRecent().filter(x => x !== mid);
+  next.unshift(mid);
+  _saveList(RECENT_KEY, next.slice(0, RECENT_MAX));
+}
+function _loadFavorites() { return _loadList(FAVORITES_KEY); }
+function _toggleFavorite(mid) {
+  const favs = _loadFavorites();
+  const i = favs.indexOf(mid);
+  if (i >= 0) favs.splice(i, 1);
+  else favs.push(mid);
+  _saveList(FAVORITES_KEY, favs);
+  // Keep the sidebar Models section (same key) in sync if it's mounted.
+  try {
+    if (window.modelsModule && typeof window.modelsModule.refreshModels === 'function') {
+      window.modelsModule.refreshModels();
+    }
+  } catch { /* sidebar not present */ }
+  return i < 0; // true when now favorited
+}
+
 // ── Shared keyboard nav for model pickers ──
 function _handlePickerKeydown(e, listEl, itemSelector, closeFn) {
   if (e.key === 'Escape') { closeFn(); return; }
@@ -152,6 +195,12 @@ function _initModelPickerDropdown() {
           url: item.url,
           endpointId: item.endpoint_id,
           epName: item.endpoint_name || '',
+          providerText: [
+            item.endpoint_name || '',
+            item.category || '',
+            item.host || '',
+            item.url || '',
+          ].filter(Boolean).join(' '),
           stale: isLocalDead,
           staleReason: isLocalDead ? (probeResult.error || 'not responding') : '',
         });
@@ -163,7 +212,7 @@ function _initModelPickerDropdown() {
   function _populate(filter) {
     listEl.innerHTML = '';
     const all = _getAllModels();
-    const q = (filter || '').toLowerCase();
+    const q = (filter || '').trim().toLowerCase();
     const hasAnyModel = all.length > 0;
     listEl.classList.toggle('is-empty', !hasAnyModel);
     menu.classList.toggle('no-models', !hasAnyModel);
@@ -171,28 +220,29 @@ function _initModelPickerDropdown() {
       search.placeholder = hasAnyModel ? 'Search models…' : 'No models connected';
     }
     if (searchRow) {
-      searchRow.classList.toggle('searching', !!filter);
+      searchRow.classList.toggle('searching', !!q);
     }
 
-    // Load favorites
-    const favs = (function() { try { return JSON.parse(localStorage.getItem('odysseus-model-favorites') || '[]'); } catch { return []; } })();
+    if (!hasAnyModel) return; // collapsed empty list — nothing to render
 
-    // Partition: favorites first, then rest
-    const favModels = [];
-    const restModels = [];
-    all.forEach(m => {
-      if (q && !m.mid.toLowerCase().includes(q) && !m.display.toLowerCase().includes(q)) return;
-      if (favs.includes(m.mid)) favModels.push(m);
-      else restModels.push(m);
-    });
-    sortModelObjects(favModels).forEach(function(m, i) { favModels[i] = m; });
-    sortModelObjects(restModels).forEach(function(m, i) { restModels[i] = m; });
+    // Unique lookup so Recent/Favorites (stored as bare model IDs) can be
+    // resolved back to full model objects; drops anything no longer offered.
+    const byId = new Map();
+    all.forEach(m => { if (!byId.has(m.mid)) byId.set(m.mid, m); });
+
+    const favs = _loadFavorites();
 
     function _addSection(label) {
       const el = document.createElement('div');
       el.className = 'mp-section-label';
       el.textContent = label;
       listEl.appendChild(el);
+    }
+    function _addEmpty(text) {
+      const empty = document.createElement('div');
+      empty.className = 'model-switch-empty';
+      empty.textContent = text;
+      listEl.appendChild(empty);
     }
     function _addRow(m) {
       const row = document.createElement('div');
@@ -211,6 +261,7 @@ function _initModelPickerDropdown() {
         row.appendChild(logoSpan);
       }
       const nameSpan = document.createElement('span');
+      nameSpan.className = 'mp-model-name';
       nameSpan.textContent = m.display;
       row.appendChild(nameSpan);
       if (m.stale) {
@@ -226,33 +277,102 @@ function _initModelPickerDropdown() {
       const _epDisplay = m.epName && !m.display.toLowerCase().includes(m.epName.toLowerCase().split('/').pop()) ? m.epName : '';
       epSpan.textContent = _epDisplay;
       row.appendChild(epSpan);
+
+      // Inline favorite dot — toggles favorite, never picks the model.
+      const favDot = document.createElement('button');
+      favDot.type = 'button';
+      favDot.className = 'mp-fav-dot' + (favs.includes(m.mid) ? ' active' : '');
+      favDot.textContent = '●';
+      const _setFavState = (on) => {
+        favDot.classList.toggle('active', on);
+        favDot.title = on ? 'Remove from favorites' : 'Add to favorites';
+        favDot.setAttribute('aria-label', on ? 'Remove from favorites' : 'Add to favorites');
+        favDot.setAttribute('aria-pressed', on ? 'true' : 'false');
+      };
+      _setFavState(favs.includes(m.mid));
+      favDot.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const nowFav = _toggleFavorite(m.mid);
+        _setFavState(nowFav);
+        favDot.classList.remove('pulse');
+        void favDot.offsetWidth;
+        favDot.classList.add('pulse');
+        // Keep our in-memory copy aligned so a follow-up re-render is correct.
+        const idx = favs.indexOf(m.mid);
+        if (nowFav && idx < 0) favs.push(m.mid);
+        else if (!nowFav && idx >= 0) favs.splice(idx, 1);
+        if (uiModule && uiModule.showToast) uiModule.showToast(nowFav ? 'Favorited' : 'Unfavorited');
+        // In browse mode the Favorites section membership changed — rebuild
+        // (cheap: Recent + Favorites). In search mode the row stays put, so
+        // the in-place favorite update above is enough.
+        if (!q) {
+          const st = listEl.scrollTop;
+          _populate('');
+          listEl.scrollTop = st;
+        }
+      });
+      row.appendChild(favDot);
+
       row.addEventListener('click', () => _pick(m));
       listEl.appendChild(row);
     }
 
-    if (favModels.length > 0) {
+    // ── Search mode: flat, filtered results across the whole catalog ──
+    if (q) {
+      const matches = all.filter(m =>
+        [
+          m.mid,
+          m.display,
+          m.epName,
+          m.providerText,
+        ].filter(Boolean).join(' ').toLowerCase().includes(q));
+      if (matches.length === 0) _addEmpty('No matching models');
+      else matches.forEach(_addRow);
+      return;
+    }
+
+    // ── Browse mode: Recent (auto) + Favorites (manual). No flat "All" dump. ──
+    const shown = new Set();
+    const recentModels = _loadRecent()
+      .map(id => byId.get(id))
+      .filter(Boolean)
+      .slice(0, RECENT_MAX);
+    const favModels = favs.map(id => byId.get(id)).filter(Boolean);
+
+    if (recentModels.length) {
+      _addSection('Recent');
+      recentModels.forEach(m => { shown.add(m.mid); _addRow(m); });
+    }
+    if (favModels.length) {
       _addSection('Favorites');
-      favModels.forEach(_addRow);
+      favModels.forEach(m => { shown.add(m.mid); _addRow(m); });
     }
-    if (restModels.length > 0) {
-      if (favModels.length > 0) _addSection('All models');
-      restModels.forEach(_addRow);
-    }
-    if (listEl.children.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'model-switch-empty';
-      if (hasAnyModel) {
-        empty.textContent = 'No matching models';
-      } else {
-        return;
+
+    // Small catalogs: still list everything so users aren't forced to search.
+    if (all.length <= BROWSE_ALL_LIMIT) {
+      const rest = all.filter(m => !shown.has(m.mid));
+      if (rest.length) {
+        if (shown.size) _addSection('All models');
+        rest.forEach(_addRow);
       }
-      listEl.appendChild(empty);
+    } else if (!recentModels.length && !favModels.length) {
+      // Large catalog, nothing pinned yet — point them at the search box.
+      const hint = document.createElement('div');
+      hint.className = 'model-switch-empty mp-empty-hint';
+      hint.innerHTML =
+        '<span class="mp-empty-title">Search ' + all.length + ' models</span>'
+        + '<span class="mp-empty-sub">Picks land in Recent · tap the dot to favorite</span>';
+      listEl.appendChild(hint);
     }
   }
 
   async function _pick(m) {
     const currentSessionId = _deps.getCurrentSessionId();
     const _pendingChat = _deps.getPendingChat();
+
+    // Remember this pick so it surfaces under "Recent" next time the picker
+    // opens — the whole point of quick-switch.
+    if (m && m.mid) _pushRecent(m.mid);
 
     // Broadcast immediately so listeners (e.g. the tour) can advance without
     // waiting for the async session-create/PATCH that follows.
@@ -330,6 +450,7 @@ function _initModelPickerDropdown() {
           url: item.url || detail.url || '',
           endpointId: item.endpoint_id || detail.endpointId || '',
           epName: item.endpoint_name || detail.endpointName || '',
+          providerText: [item.endpoint_name || detail.endpointName || '', item.url || detail.url || ''].filter(Boolean).join(' '),
         };
         break;
       }
@@ -341,6 +462,7 @@ function _initModelPickerDropdown() {
         url: detail.url,
         endpointId: detail.endpointId || '',
         epName: detail.endpointName || '',
+        providerText: [detail.endpointName || '', detail.url || ''].filter(Boolean).join(' '),
       };
     }
     if (match) await _pick(match);

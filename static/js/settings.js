@@ -6,6 +6,7 @@ import searchModule from './search.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { clearDockSide } from './modalSnap.js';
 import { sortModelIds } from './modelSort.js';
+import { isAltGrEvent } from './platform.js';
 
 let initialized = false;
 let modalEl = null;
@@ -1425,7 +1426,7 @@ async function initResearchSettings() {
     var tv = parseInt(tokensInput.value, 10);
     if (tv && tv >= 1024) payload.research_max_tokens = tv;
     var et = parseInt(extractTimeoutInput.value, 10);
-    if (et && et >= 15 && et <= 600) payload.research_extraction_timeout_seconds = et;
+    if (et && et >= 15 && et <= 3600) payload.research_extraction_timeout_seconds = et;
     var ec = parseInt(extractConcurrencyInput.value, 10);
     if (ec && ec >= 1 && ec <= 12) payload.research_extraction_concurrency = ec;
     try {
@@ -1710,6 +1711,10 @@ function _formatKeyCaps(combo) {
 }
 
 function _comboFromEvent(e) {
+  // Drop a stray AltGr keystroke (e.g. AltGr+E to type €) so it isn't recorded
+  // as a bogus ctrl+alt+<char> binding — onKey ignores empty combos. See
+  // platform.js for the macOS carve-out and Windows trade-off.
+  if (isAltGrEvent(e)) return '';
   const parts = [];
   if (e.ctrlKey || e.metaKey) parts.push('ctrl');
   if (e.altKey) parts.push('alt');

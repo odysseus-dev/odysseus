@@ -537,6 +537,104 @@ def test_require_user_accepts_loopback_when_unconfigured(monkeypatch):
     assert auth_helpers.require_user(_LoopReq()) == ""
 
 
+def test_require_user_accepts_anyone_when_auth_disabled(monkeypatch):
+    """AUTH_ENABLED=false must let unauthenticated callers through from
+    any host — including the docker bridge / reverse proxy / LAN — so
+    the frontend's global 401 redirect doesn't bounce the user to /login
+    despite the operator turning auth off (issue #622)."""
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    sys.modules.pop("src.auth_helpers", None)
+    from src import auth_helpers  # noqa: WPS433
+
+    class _State:
+        current_user = None
+
+    class _AppState:
+        class _Mgr:
+            # Even with a prior admin account on disk, AUTH_ENABLED=false
+            # must take precedence over is_configured=True.
+            is_configured = True
+        auth_manager = _Mgr()
+
+    class _App:
+        state = _AppState()
+
+    class _DockerClient:
+        host = "172.18.0.1"  # docker bridge gateway, not loopback
+
+    class _Req:
+        state = _State()
+        app = _App()
+        client = _DockerClient()
+
+    assert auth_helpers.require_user(_Req()) == ""
+
+
+def test_require_user_localhost_bypass_admits_loopback(monkeypatch):
+    """LOCALHOST_BYPASS=true is the dev-only switch that admits loopback
+    callers without an auth cookie. require_user must mirror the auth
+    middleware so routes don't 401 a caller the middleware already let
+    through."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("LOCALHOST_BYPASS", "true")
+    sys.modules.pop("src.auth_helpers", None)
+    from src import auth_helpers  # noqa: WPS433
+
+    class _State:
+        current_user = None
+
+    class _AppState:
+        class _Mgr:
+            is_configured = True
+        auth_manager = _Mgr()
+
+    class _App:
+        state = _AppState()
+
+    class _LoopClient:
+        host = "127.0.0.1"
+
+    class _LoopReq:
+        state = _State()
+        app = _App()
+        client = _LoopClient()
+
+    assert auth_helpers.require_user(_LoopReq()) == ""
+
+
+def test_require_user_localhost_bypass_still_rejects_lan(monkeypatch):
+    """LOCALHOST_BYPASS=true must not extend to non-loopback callers —
+    a LAN visitor still needs to authenticate."""
+    from fastapi import HTTPException
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("LOCALHOST_BYPASS", "true")
+    sys.modules.pop("src.auth_helpers", None)
+    from src import auth_helpers  # noqa: WPS433
+
+    class _State:
+        current_user = None
+
+    class _AppState:
+        class _Mgr:
+            is_configured = True
+        auth_manager = _Mgr()
+
+    class _App:
+        state = _AppState()
+
+    class _LanClient:
+        host = "192.168.1.42"
+
+    class _LanReq:
+        state = _State()
+        app = _App()
+        client = _LanClient()
+
+    with pytest.raises(HTTPException) as exc:
+        auth_helpers.require_user(_LanReq())
+    assert exc.value.status_code == 401
+
+
 def test_require_admin_rejects_unconfigured_public_api(monkeypatch):
     """First-run API mode must not treat "no users yet" as admin access."""
     from fastapi import HTTPException
@@ -831,3 +929,20 @@ def test_mcp_oauth_page_escapes_reflected_values():
     body = text.split("def _oauth_authorize_page(", 1)[1].split("return f", 1)[0]
     for var in ("auth_url", "server_id", "host"):
         assert f"{var} = html.escape({var}" in body, var
+
+
+def test_chat_active_document_lookup_is_owner_scoped():
+    """The explicit `active_doc_id` path in /api/chat_stream must scope the
+    document lookup to the caller. Resolving by id alone let any user inject
+    another user's document into their own chat context (the session and
+    in-memory fallbacks were already owner/session-bound; this branch wasn't)."""
+    import re
+
+    src = Path(__file__).resolve().parents[1] / "routes" / "chat_routes.py"
+    text = src.read_text()
+    # The frontend-supplied id is resolved through the shared owner filter.
+    assert "_owner_session_filter(_doc_q, ctx.user)" in text
+    # And never by id alone (the previous IDOR shape, whitespace-insensitive).
+    flat = re.sub(r"\s+", " ", text)
+    assert "filter( DBDocument.id == active_doc_id, ).first()" not in flat
+    assert "filter(DBDocument.id == active_doc_id).first()" not in flat

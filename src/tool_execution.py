@@ -373,7 +373,7 @@ async def _direct_fallback(
             return {"output": output or "(no output)", "exit_code": rc or 0}
 
         if tool == "read_file":
-            path = content.split("\n", 1)[0].strip()
+            path = os.path.expanduser(content.split("\n", 1)[0].strip())
             if not path:
                 return {"error": "read_file: path required", "exit_code": 1}
             try:
@@ -395,7 +395,7 @@ async def _direct_fallback(
 
         if tool == "write_file":
             lines = content.split("\n", 1)
-            path = lines[0].strip()
+            path = os.path.expanduser(lines[0].strip())
             body = lines[1] if len(lines) > 1 else ""
             if not path:
                 return {"error": "write_file: path required", "exit_code": 1}
