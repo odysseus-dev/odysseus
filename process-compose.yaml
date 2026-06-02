@@ -5,8 +5,9 @@ version: "0.5"
 processes:
   
   # 1. Vector Database Process
+  # Bind on 8100 to match the app default (CHROMADB_PORT, see src/chroma_client.py).
   chroma:
-    command: chroma run --path ./data/chroma
+    command: chroma run --path ./data/chroma --host 0.0.0.0 --port 8100
     availability:
       # Automatically recovers the database if it crashes unexpectedly
       restart: "on_failure"

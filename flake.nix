@@ -75,6 +75,7 @@
                 qrcode
                 pillow
                 croniter
+                python-magic
                 pytest
                 pytest-asyncio
               ]
@@ -113,6 +114,12 @@
             APP_PORT = "7000";
             PYTHONPATH = ".";
             ODYSSEUS_DATA_DIR = "./data";
+            CHROMA_DATA_DIR = "./data/chroma";
+            # Built-in "Browser" MCP server (`npx @playwright/mcp`) needs browsers.
+            # Point Playwright at the nixpkgs-provided, pre-patched browsers so it
+            # doesn't try to download unpatched binaries that won't run on Nix.
+            PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
+            PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
           };
 
           # A bash script that executes automatically when a user runs `nix develop`
