@@ -1,3 +1,5 @@
+**English** · [Русский](README.ru.md)
+
 # Odysseus
 
 ```

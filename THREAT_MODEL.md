@@ -1,3 +1,5 @@
+**English** · [Русский](THREAT_MODEL.ru.md)
+
 # Threat Model
 
 Odysseus is a **self-hosted AI workspace with privileged local access**. This document states the trust boundary so contributors can reason about security decisions without reading through the full auth and middleware stack.

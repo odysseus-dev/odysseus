@@ -1,3 +1,5 @@
+**English** · [Русский](README.ru.md)
+
 # Companion bridge
 
 A thin, additive layer so a LAN client (e.g. a phone) can discover what an
