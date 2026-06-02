@@ -145,7 +145,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             create_form_markdown_document,
             create_plain_pdf_document,
         )
-        from src.document_processor import _process_pdf
+        from src.document_processor import _process_pdf, strip_pdf_content_marker
         import os
 
         from src.auth_helpers import require_privilege
@@ -184,7 +184,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
         title = os.path.splitext(meta.get("original_name") or meta.get("name") or upload_id)[0]
         try:
-            body_text = _process_pdf(pdf_path).lstrip("\n[PDF content]:").strip()
+            body_text = strip_pdf_content_marker(_process_pdf(pdf_path))
         except Exception:
             body_text = None
 
@@ -402,7 +402,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         text extraction was wired, plus for scanned/image-only PDFs where the
         VL model picks up text the basic pypdf path missed."""
         import re
-        from src.document_processor import _process_pdf
+        from src.document_processor import _process_pdf, strip_pdf_content_marker
         from src.pdf_form_doc import find_source_upload_id
 
         user = get_current_user(request)
@@ -423,7 +423,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 raise HTTPException(404, "Source PDF could not be located")
 
             try:
-                body_text = _process_pdf(pdf_path).lstrip("\n[PDF content]:").strip()
+                body_text = strip_pdf_content_marker(_process_pdf(pdf_path))
             except Exception as e:
                 logger.error(f"extract_pdf_text failed for {pdf_path}: {e}")
                 raise HTTPException(500, f"Extraction failed: {e}")
@@ -593,6 +593,15 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if req.session_id is not None:
                 # Empty string = unlink from session
                 doc.session_id = req.session_id if req.session_id else None
+                if not req.session_id:
+                    # Tab closed / doc detached from its session — drop the
+                    # in-memory active-doc pointer so the last-resort injection
+                    # path doesn't re-surface this doc in a later chat (#1160).
+                    try:
+                        from src.tool_implementations import clear_active_document
+                        clear_active_document(doc_id)
+                    except Exception:
+                        pass
             db.commit()
             db.refresh(doc)
             return _doc_to_dict(doc)
@@ -615,6 +624,13 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 raise HTTPException(404, "Document not found")
             _verify_doc_owner(db, doc, user)
             doc.is_active = False
+            # Closed/deleted — drop the in-memory active-doc pointer so it isn't
+            # re-injected into a later, unrelated chat (#1160).
+            try:
+                from src.tool_implementations import clear_active_document
+                clear_active_document(doc_id)
+            except Exception:
+                pass
             db.commit()
             return {"status": "deleted", "id": doc_id}
         except HTTPException:

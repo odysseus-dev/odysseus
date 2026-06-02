@@ -20,9 +20,9 @@ import re
 _THINK_CLOSED_RE = re.compile(r"<think(?:ing)?>[\s\S]*?</think(?:ing)?>\s*", re.IGNORECASE)
 # Orphan opening or closing tags that survive after the closed-pass.
 _THINK_TAG_RE = re.compile(r"</?think(?:ing)?[^>]*>\s*", re.IGNORECASE)
-# Dangling opener at the top of the response with no closer — strip everything
-# from `<think>` up to either `</think>` (if it ever shows) or end of string.
-_THINK_OPEN_RE = re.compile(r"^\s*<think(?:ing)?>.*?(?:</think(?:ing)?>|$)", re.DOTALL | re.IGNORECASE)
+# Dangling opener anywhere in the response with no closer — strip everything
+# from `<think>` to the end of string.
+_THINK_OPEN_RE = re.compile(r"<think(?:ing)?>[\s\S]*$", re.IGNORECASE)
 # Streaming models occasionally emit `<thinking time="0.42">`-style attributes.
 # Normalize to a plain `<think>` so the regexes above catch them.
 _THINK_ATTR_RE = re.compile(r"<think(?:ing)?\s+[^>]*>", re.IGNORECASE)

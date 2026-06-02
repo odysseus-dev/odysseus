@@ -101,7 +101,16 @@ def _normalize_model_entry(model):
 
 def is_prequantized(model):
     q = model.get("quantization", "")
-    return any(q.startswith(p) for p in PREQUANTIZED_PREFIXES)
+    name = (model.get("name") or "").lower()
+    fmt = (model.get("format") or "").lower()
+    text = f"{name} {fmt}"
+    return (
+        "nvfp4" in text
+        or re.search(r"(^|[-_/])fp8($|[-_/\s])", text) is not None
+        or (not (model.get("is_gguf") or model.get("gguf_sources")) and re.search(r"(^|[-_/])(?:int)?8bit($|[-_/\s])", text) is not None)
+        or any(x in text for x in ("awq", "gptq", "mlx"))
+        or any(q.startswith(p) for p in PREQUANTIZED_PREFIXES)
+    )
 
 
 def params_b(model):

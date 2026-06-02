@@ -148,15 +148,39 @@ def _local_tooling_path_export(executable: str) -> str:
     return f'export PATH="{esc}:$PATH"'
 
 
-def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m pip", upgrade: bool = False) -> str:
-    """Build a bash pip install fallback chain.
+def _pip_install_attempt(pip_cmd: str) -> str:
+    """Wrap a single pip install command so its exit status survives the
+    fallback chain and its stderr is visible in the tmux log on failure.
 
-    Try the active interpreter/environment first. `--user` is invalid inside
-    many venvs, so only attempt the --user fallback when NOT inside a venv.
+    Without this wrapper, `pip … 2>&1 | tail -5` returns ``tail``'s exit
+    code (0), masking pip's real failure and preventing the next fallback
+    from running.  The generated snippet captures all output to a temp
+    file, prints the last 5 lines on failure (so the Cookbook log panel
+    shows useful diagnostics), cleans up, and exits with pip's original
+    status.
+    """
+    return (
+        "bash -c '"
+        f'_out=$(mktemp) && {pip_cmd} >"$_out" 2>&1; _rc=$?; '
+        'tail -5 "$_out"; rm -f "$_out"; exit $_rc'
+        "'"
+    )
+
+
+def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m pip", upgrade: bool = False) -> str:
+    """Build a bash pip install fallback chain that surfaces errors.
+
+    Try the active interpreter/environment first. ``--user`` is invalid
+    inside many venvs, so only attempt the ``--user`` fallback when NOT
+    inside a venv.
+
+    Each attempt is wrapped via :func:`_pip_install_attempt` so pip's real
+    exit code is preserved (no ``| tail`` masking) and the last 5 lines of
+    pip output appear in the Cookbook log on failure.
     """
     upgrade_flag = " -U" if upgrade else ""
-    base = f"{python_cmd} install -q{upgrade_flag} {package} 2>/dev/null"
-    user = f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {package} 2>/dev/null"
+    base = _pip_install_attempt(f"{python_cmd} install -q{upgrade_flag} {package}")
+    user = _pip_install_attempt(f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {package}")
     # Derive the python executable for the venv detection check.
     # Must use the same interpreter that pip belongs to; hardcoding
     # python3 breaks when pip lives in a venv that only has "python".
@@ -169,8 +193,41 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     else:
         python_exe = "python3"
     venv_check = f'{python_exe} -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"'
-    # venv_check exits 0 (true) when IN a venv; --user is only valid outside one.
-    return f"{base} || {{ {venv_check} || {user}; }}"
+    # Negated: `! venv_check` succeeds (exit 0) when NOT in a venv → `&&` tries
+    # --user.  When IN a venv `! venv_check` fails → `&&` skips --user and the
+    # group exits non-zero, propagating the base-install failure instead of
+    # masking it as success (the `|| { venv_check || … }` shape from #903
+    # swallowed the exit code because venv_check's exit-0 became the group's
+    # result).
+    return f"{base} || {{ ! {venv_check} && {user}; }}"
+
+
+def _venv_safe_local_pip_install_cmd(cmd: str, *, local: bool, in_venv: bool) -> str:
+    """Drop pip user-install flags that are invalid for local venv installs.
+
+    Cookbook dependency installs run through the model-serve task path so users
+    can watch progress in the same log UI. For local POSIX runs, that task
+    prepends Odysseus' own interpreter directory to PATH. If Odysseus itself is
+    running from a venv, `python3` resolves to the venv Python and pip rejects
+    `--user` with "User site-packages are not visible in this virtualenv".
+
+    Keep remote and non-venv installs unchanged: remotes may intentionally use
+    system Python, and Docker/non-venv installs still need user-site fallback.
+    """
+    if not local or not in_venv:
+        return cmd
+    if "pip install" not in (cmd or ""):
+        return cmd
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        return cmd
+    stripped = [
+        part
+        for part in parts
+        if part not in {"--user", "--break-system-packages"}
+    ]
+    return shlex.join(stripped)
 
 
 def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
@@ -458,7 +515,42 @@ def _append_serve_exit_code_lines(runner_lines: list[str], *, keep_shell_open: b
         runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="; exec "${SHELL:-/bin/bash}"')
     else:
         runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="')
+        runner_lines.append('exit "$ODYSSEUS_CMD_EXIT"')
 
+
+def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
+    """Append Linux llama.cpp build lines that prefer ROCm/HIP when available.
+
+    Cookbook already detects AMD GPUs elsewhere, but the llama.cpp bootstrap used
+    to hard-wire CUDA on Linux. That made ROCm hosts attempt a CUDA configure and
+    fail with "CUDA Toolkit not found" instead of building with HIP.
+    """
+    # Detect pip-installed nvcc (from vLLM/nvidia CUDA wheels) and put it on PATH
+    # so cmake's CUDA configure can find it. We keep this after the ROCm/HIP
+    # check — a machine with both stacks should honor the native HIP toolchain on
+    # AMD hosts instead of accidentally preferring a stray nvcc wheel.
+    runner_lines.append('    for _cudir in ~/.local/lib/python*/site-packages/nvidia/cu13 ~/.local/lib/python*/site-packages/nvidia/cu12 ~/.local/lib/python*/site-packages/nvidia/cuda_nvcc; do')
+    runner_lines.append('      [ -x "$_cudir/bin/nvcc" ] && export CUDA_HOME="$_cudir" && export PATH="$_cudir/bin:$PATH" && break')
+    runner_lines.append('    done')
+    # rm -rf build so a prior poisoned CMakeCache.txt (e.g. from a failed CUDA
+    # or HIP attempt) doesn't cause the next configure to reuse stale settings.
+    runner_lines.append('    cd ~/llama.cpp && rm -rf build')
+    runner_lines.append('    if command -v hipconfig &>/dev/null || [ -d /opt/rocm ] || [ -n "$ROCM_PATH" ] || [ -n "$HIP_PATH" ]; then')
+    runner_lines.append('      if command -v hipconfig &>/dev/null; then')
+    runner_lines.append('        export HIPCXX="${HIPCXX:-$(hipconfig -l)/clang}"')
+    runner_lines.append('        export HIP_PATH="${HIP_PATH:-$(hipconfig -R)}"')
+    runner_lines.append('      fi')
+    runner_lines.append('      echo "[odysseus] ROCm/HIP detected — building llama-server with HIP support..."')
+    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('    elif command -v nvcc &>/dev/null; then')
+    runner_lines.append('      echo "[odysseus] CUDA nvcc found — building llama-server with CUDA (GPU) support..."')
+    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('    else')
+    runner_lines.append('      echo "[odysseus] WARNING: no HIP/CUDA toolchain found — building llama-server for CPU only."')
+    runner_lines.append('      echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
+    runner_lines.append('      echo "[odysseus]   Install ROCm for AMD GPUs or vLLM/CUDA tooling for NVIDIA, then re-launch this serve task."')
+    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('    fi')
 
 class ModelDownloadRequest(BaseModel):
     repo_id: str

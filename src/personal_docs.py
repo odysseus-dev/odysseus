@@ -246,8 +246,15 @@ class PersonalDocsManager:
         # Normalize the path
         directory = os.path.abspath(directory)
 
-        # Clear any exclusions for files in this directory
-        self.excluded_files = {p for p in self.excluded_files if not p.startswith(directory)}
+        # Clear any exclusions for files in this directory. Match on a path
+        # boundary (the directory itself or paths under it) rather than a raw
+        # string prefix: a bare ``startswith(directory)`` also matches sibling
+        # directories that merely share a name prefix (e.g. adding ``/docs``
+        # would wrongly un-exclude files under ``/docs2``).
+        self.excluded_files = {
+            p for p in self.excluded_files
+            if not (p == directory or p.startswith(directory + os.sep))
+        }
         self._save_excluded()
 
         if directory not in self.indexed_directories:

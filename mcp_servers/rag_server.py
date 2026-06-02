@@ -112,6 +112,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         try:
             result = _rag_manager.index_personal_documents(directory)
             indexed = result.get("indexed_count", 0) if isinstance(result, dict) else 0
+            # Record the directory so `list` and `remove_directory` can see it.
+            # Indexing was just done above, so pass index=False to avoid a second
+            # (ownerless) pass. Without this the directory was indexed but never
+            # tracked in indexed_directories, so it was invisible/unremovable.
+            if _personal_docs_manager and hasattr(_personal_docs_manager, "add_directory"):
+                try:
+                    _personal_docs_manager.add_directory(directory, index=False)
+                except Exception:
+                    pass
             return [TextContent(type="text", text=f"Directory '{directory}' added to RAG index ({indexed} chunks indexed)")]
         except Exception as e:
             return [TextContent(type="text", text=f"Error: Failed to index directory: {e}")]
@@ -120,6 +129,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         directory = arguments.get("directory", "").strip()
         if not directory:
             return [TextContent(type="text", text="Error: remove_directory needs a directory path")]
+        # Expand ~ to match add_directory, which indexes the expanded path.
+        # Without this, removing "~/docs" never matches the stored absolute path.
+        directory = os.path.expanduser(directory)
         if not _personal_docs_manager:
             return [TextContent(type="text", text="Error: Personal docs manager not available")]
         try:
