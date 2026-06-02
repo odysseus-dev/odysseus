@@ -366,6 +366,8 @@ export function _buildServeCmd(f, modelName, backend) {
     cmd += ` --gpu-memory-utilization ${f.gpu_mem || '0.90'}`;
     if (f.swap && f.swap !== '0') cmd += ` --swap-space ${f.swap}`;
     cmd += ` --dtype ${f.dtype || 'auto'}`;
+    const _kv = (f.vllm_kv_cache_dtype ?? '').toString().trim();
+    if (_kv === 'fp8') cmd += ' --kv-cache-dtype fp8';
     if (f.max_seqs && f.max_seqs.toString().trim()) cmd += ` --max-num-seqs ${f.max_seqs.toString().trim()}`;
     if (f.enforce_eager) cmd += ' --enforce-eager';
     if (f.trust_remote) cmd += ' --trust-remote-code';

@@ -257,6 +257,16 @@ def test_serve_runner_preserves_command_exit_code():
     assert 'echo "=== Process exited with code $? ==="' not in script
 
 
+def test_validate_serve_cmd_accepts_vllm_kv_cache_dtype():
+    cmd = (
+        "CUDA_VISIBLE_DEVICES=0,1 vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 "
+        "--host 0.0.0.0 --port 8000 --tensor-parallel-size 2 "
+        "--max-model-len 4096 --dtype auto --kv-cache-dtype fp8"
+    )
+
+    assert _validate_serve_cmd(cmd) == cmd
+
+
 def test_validate_serve_cmd_accepts_llama_advanced_controls():
     cmd = (
         "MODEL_FILE=$(printf %s ${HOME}'/.cache/huggingface/hub/models--Qwen--Qwen3-GGUF/snapshots/model.gguf') "

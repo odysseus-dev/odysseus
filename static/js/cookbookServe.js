@@ -453,6 +453,7 @@ function _rerenderCachedModels() {
           : (_es.gpus || detectedGpuIds));
       const tpOpts = [1,2,4,8].map(n => `<option${defaultTp==String(n)?' selected':''}>${n}</option>`).join('');
       const dtypeOpts = ['auto','float16','bfloat16'].map(d => `<option value="${d}"${sv('dtype','auto')===d?' selected':''}>${d}</option>`).join('');
+      const vllmKvCacheOpts = ['auto','fp8'].map(d => `<option value="${d}"${sv('vllm_kv_cache_dtype','auto')===d?' selected':''}>${d}</option>`).join('');
       const _l = (name, tip) => `<span>${name}<span class="hwfit-hint" title="${tip}">?</span></span>`;
       const _ggufChoices = _runnableGgufFiles(m);
       const _savedGguf = String(sv('gguf_file', '') || '');
@@ -524,6 +525,7 @@ function _rerenderCachedModels() {
       panelHtml += `<label class="hwfit-backend-vllm">${_l('Swap','CPU swap space in GB. Leave empty to omit (removed in newer vLLM)')}<input type="text" class="hwfit-sf" data-field="swap" value="${esc(sv('swap', ''))}" placeholder="off" /></label>`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('Max Seqs','Maximum concurrent requests. Lower = less memory. Default 8 — prosumer GPUs often OOM on vLLM default 256 during CUDA graph capture.')}<input type="text" class="hwfit-sf" data-field="max_seqs" value="${esc(sv('max_seqs', '8'))}" placeholder="8" /></label>`;
       panelHtml += `<label>${_l('Dtype','Data type for weights. auto picks best for GPU')}<select class="hwfit-sf" data-field="dtype">${dtypeOpts}</select></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm">${_l('KV Cache','vLLM --kv-cache-dtype. auto uses the model/runtime default; fp8 reduces KV memory for long context.')}<select class="hwfit-sf" data-field="vllm_kv_cache_dtype">${vllmKvCacheOpts}</select></label>`;
       panelHtml += `</div>`;
       // Row 2b: Diffusers settings
       const diffDtypeOpts = ['bfloat16','float16','float32'].map(d => `<option value="${d}"${sv('diff_dtype','bfloat16')===d?' selected':''}>${d}</option>`).join('');
@@ -882,6 +884,7 @@ function _rerenderCachedModels() {
             gpu_mem: _ex(/--gpu-memory-utilization\s+([\d.]+)/) || '0.90',
             swap: _ex(/--swap-space\s+(\d+)/) || '',
             dtype: _ex(/--dtype\s+(\w+)/) || 'auto',
+            vllm_kv_cache_dtype: _ex(/--kv-cache-dtype\s+([\w.-]+)/) || 'auto',
             max_seqs: _ex(/--max-num-seqs\s+(\d+)/) || '',
             cache_type: _ex(/(?:--cache-type-k|-ctk)\s+(\S+)/) || '',
             llama_fit: _ex(/(?:--fit|-fit)\s+(on|off)/) || '',

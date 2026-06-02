@@ -1332,6 +1332,7 @@ function _parseServeCmdToFields(cmd) {
     gpu_mem: ex(/--gpu-memory-utilization\s+([\d.]+)/) || '0.90',
     swap: ex(/--swap-space\s+(\d+)/) || '',
     dtype: ex(/--dtype\s+(\w+)/) || 'auto',
+    vllm_kv_cache_dtype: ex(/--kv-cache-dtype\s+([\w.-]+)/) || 'auto',
     max_seqs: ex(/--max-num-seqs\s+(\d+)/) || '',
     gpus: ex(/CUDA_VISIBLE_DEVICES=(\S+)/) || '',
     cache_type: ex(/(?:--cache-type-k|-ctk)\s+(\S+)/) || '',
