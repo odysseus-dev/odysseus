@@ -1513,7 +1513,10 @@ export async function _fetchCachedModels() {
     const data = await res.json();
     _dlWp.destroy();
 
-    const ready = data.models.filter(m => m.status === 'ready' && (m.backend === 'ollama' || !m.size.includes('MB')));
+    // CHANGELOG: 'ready' already excludes partial downloads; 
+    // show every complete model regardless of size/backend.
+    const ready = data.models.filter(m => m.status === 'ready');
+
     const downloading = data.models.filter(m => m.status === 'downloading');
     const allModels = [...ready, ...downloading];
     _cachedAllModels = allModels;
