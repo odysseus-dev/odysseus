@@ -14,7 +14,10 @@ from services.memory.skills import SkillsManager  # noqa: E402
 
 
 def _skill(name, description, tags):
-    return {"name": name, "description": description, "when_to_use": "", "tags": tags, "procedure": []}
+    # status must be published/draft or get_relevant_skills filters the skill
+    # out before the tag-scoring path runs.
+    return {"name": name, "description": description, "when_to_use": "",
+            "tags": tags, "procedure": [], "status": "published"}
 
 
 def test_tag_substring_does_not_boost(tmp_path):
