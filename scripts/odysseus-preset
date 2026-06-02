@@ -49,6 +49,15 @@ def _save(data: dict) -> None:
     tmp.replace(_PATH)
 
 
+def _entry_or_fail(presets: dict, name: str) -> dict:
+    if name not in presets:
+        fail(f"no preset named {name!r}")
+    entry = presets[name]
+    if not isinstance(entry, dict):
+        fail(f"preset {name!r} is corrupt: expected an object")
+    return entry
+
+
 def cmd_list(args):
     presets = _load()
     rows = []
@@ -66,9 +75,7 @@ def cmd_list(args):
 
 def cmd_get(args):
     presets = _load()
-    if args.name not in presets:
-        fail(f"no preset named {args.name!r}")
-    emit({"id": args.name, **presets[args.name]}, args)
+    emit({"id": args.name, **_entry_or_fail(presets, args.name)}, args)
 
 
 def cmd_set(args):
@@ -93,9 +100,8 @@ def cmd_set(args):
 
 def cmd_delete(args):
     presets = _load()
-    if args.name not in presets:
-        fail(f"no preset named {args.name!r}")
-    snap = presets.pop(args.name)
+    snap = _entry_or_fail(presets, args.name)
+    presets.pop(args.name)
     _save(presets)
     emit({"ok": True, "deleted": {"id": args.name, **snap}}, args)
 
