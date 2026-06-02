@@ -39,7 +39,17 @@ _PRIVATE_NETWORKS = (
 
 
 def _is_private_address(addr: ipaddress._BaseAddress) -> bool:
-    return any(addr in net for net in _PRIVATE_NETWORKS) or addr.is_private or addr.is_loopback
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_multicast
+        or addr.is_unspecified
+        or any(addr in net for net in _PRIVATE_NETWORKS)
+    )
 
 
 def _resolve_hostname_ips(hostname: str) -> List[ipaddress._BaseAddress]:
@@ -56,6 +66,8 @@ def _public_http_url(url: str) -> bool:
         return False
     host = parsed.hostname.strip().lower()
     if host in ("localhost", "metadata.google.internal", "metadata"):
+        return False
+    if host.endswith((".local", ".localhost", ".internal", ".lan", ".intranet")):
         return False
     try:
         return not _is_private_address(ipaddress.ip_address(host))
