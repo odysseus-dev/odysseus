@@ -2,7 +2,7 @@
 
 Before the fix, allow_ai_tidy = len(memory_owners) <= 1 meant the AI phase
 was permanently skipped for housekeeping sweeps (owner="") in any multi-owner
-install.  The fix loops over owner groups and calls the AI once per group.
+install. The fix loops over owner groups and calls the AI once per group.
 """
 import asyncio
 import json

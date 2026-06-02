@@ -123,6 +123,18 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                     if len(group_memories) < 2:
                         keep_ids.update(m.get("id") for m in group_memories if m.get("id"))
                         continue
+                    # For housekeeping runs (owner=""), resolve per-group so
+                    # each user's configured model is used rather than the
+                    # global/empty-owner config. Fall back to the global
+                    # endpoint if the group owner has no personal config.
+                    if not _owner_clean and group_key:
+                        g_url, g_model, g_headers = resolve_endpoint("utility", owner=group_key)
+                        if not g_url or not g_model:
+                            g_url, g_model, g_headers = resolve_endpoint("default", owner=group_key)
+                        if not g_url or not g_model:
+                            g_url, g_model, g_headers = url, model, headers
+                    else:
+                        g_url, g_model, g_headers = url, model, headers
                     try:
                         items = [
                             {
@@ -148,12 +160,12 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                             f"MEMORIES:\n{json.dumps(items, ensure_ascii=False)}"
                         )
                         raw = await llm_call_async(
-                            url=url,
-                            model=model,
+                            url=g_url,
+                            model=g_model,
                             messages=[{"role": "user", "content": prompt}],
                             temperature=0.0,
                             max_tokens=4096,
-                            headers=headers,
+                            headers=g_headers,
                             timeout=120,
                         )
                         raw = strip_think(raw or "", prose=False, prompt_echo=False).strip()
