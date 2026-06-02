@@ -59,6 +59,10 @@ async def maybe_extract_skill(
     owner: Optional[str] = None,
 ):
     """Extract a skill if the agent run was complex enough."""
+    if not model:
+        logger.debug("[skill-extract] No model provided, skipping")
+        return None
+
     # Quiet by default; flip to DEBUG when chasing extractor issues.
     logger.debug(
         "[skill-extract] start: rounds=%d tools=%d model=%s owner=%s",
@@ -78,9 +82,23 @@ async def maybe_extract_skill(
             logger.debug("[skill-extract] no recent messages, skipping")
             return None
 
+        # Strip media (images/audio) from messages
+        stripped_recent = []
+        for msg in recent:
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                text_only = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                if not text_only and content:
+                    continue
+                content = text_only
+            stripped_recent.append({"role": msg.get("role"), "content": content})
+
+        if not stripped_recent:
+            return None
+
         # Build conversation summary for extraction
         conv_lines = []
-        for msg in recent:
+        for msg in stripped_recent:
             role = msg.get("role", "?")
             content = msg.get("content", "")
             if isinstance(content, list):

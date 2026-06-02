@@ -556,7 +556,7 @@ export async function refreshModels(force = false) {
       // No endpoints yet: keep the welcome screen focused on first setup.
       const welcomeSub = document.getElementById('welcome-sub');
       if (welcomeSub) welcomeSub.innerHTML = translate('Type /setup to get started.')
-        .replace('/setup', '<span style="color:var(--accent,var(--red));font-weight:600">/setup</span>');
+        .replace('/setup', '<span class="setup-trigger-link" style="color:var(--accent,var(--red));font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to launch setup">/setup</span>');
       const welcomeTip = document.getElementById('welcome-tip');
       if (welcomeTip) welcomeTip.textContent = 'Type /setup, then choose Local models or API.';
     } else {

@@ -27,6 +27,7 @@
 
 import { previewZoneAt, clearPreview, snapModalToZone } from './tileManager.js';
 import { suspendDock, resumeDock, clearRightDock, applyEdgeDock } from './modalSnap.js';
+import { dismissOrRemove } from './escMenuStack.js';
 
 const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized, restoreMinHeight }
 
@@ -77,10 +78,20 @@ function _captureRestoreHeight(modal, state) {
   if (!modal || !state) return;
   const content = modal.querySelector('.modal-content');
   if (!content) return;
+  if (modal.id === 'email-lib-modal'
+      && (modal.classList.contains('modal-left-docked')
+          || modal.classList.contains('email-snap-left')
+          || document.body.classList.contains('email-doc-split-active'))) {
+    delete state.restoreMinHeight;
+    return;
+  }
   const rect = content.getBoundingClientRect();
   if (!rect || rect.height < 120) return;
   const maxHeight = Math.max(180, window.innerHeight - 24);
-  state.restoreMinHeight = `${Math.round(Math.min(rect.height, maxHeight))}px`;
+  const minHeight = modal.id === 'email-lib-modal' && window.innerWidth > 768
+    ? Math.min(560, maxHeight)
+    : 0;
+  state.restoreMinHeight = `${Math.round(Math.max(minHeight, Math.min(rect.height, maxHeight)))}px`;
 }
 
 function _applyRestoreHeight(modal, state) {
@@ -89,7 +100,10 @@ function _applyRestoreHeight(modal, state) {
   if (!content) return;
   const maxHeight = Math.max(180, window.innerHeight - 24);
   const requested = parseInt(state.restoreMinHeight, 10);
-  const height = Number.isFinite(requested) ? Math.min(requested, maxHeight) : null;
+  const minHeight = modal.id === 'email-lib-modal' && window.innerWidth > 768
+    ? Math.min(560, maxHeight)
+    : 0;
+  const height = Number.isFinite(requested) ? Math.max(minHeight, Math.min(requested, maxHeight)) : null;
   if (height) content.style.minHeight = `${height}px`;
 }
 
@@ -379,7 +393,7 @@ function _renderDock() {
       chip.style.setProperty('position', 'fixed', 'important');
       chip.style.setProperty('left', `${pos.left}px`, 'important');
       chip.style.setProperty('top', `${pos.top}px`, 'important');
-      chip.style.setProperty('z-index', '999', 'important');
+      chip.style.setProperty('z-index', '10020', 'important');
       document.body.appendChild(chip);
     } else {
       dock.appendChild(chip);
@@ -819,7 +833,7 @@ function _wireChipDrag(chip, dock) {
       // inline styles set via .style on some Safari versions.
       chip.style.setProperty('transition', 'none', 'important');
       chip.style.setProperty('transform', `translate(${tx}px, ${ty}px) scale(${inZone ? 1.12 : 1.05})`, 'important');
-      chip.style.setProperty('z-index', '10000', 'important');
+      chip.style.setProperty('z-index', '10030', 'important');
       chip.style.setProperty('position', 'fixed', 'important');
       chip.style.setProperty('left', `${chipStartLeft}px`, 'important');
       chip.style.setProperty('top', `${chipStartTop}px`, 'important');
@@ -835,7 +849,7 @@ function _wireChipDrag(chip, dock) {
     if (dragMode === 'reorder') {
       chip.style.transition = 'none';
       chip.style.transform = `translate(${dx}px, ${dy}px) scale(1.05)`;
-      chip.style.zIndex = '1000';
+      chip.style.zIndex = '10030';
 
       // Find sibling under cursor and swap
       const siblings = [...dock.querySelectorAll('.minimized-dock-chip:not(.dragging)')];
@@ -1213,7 +1227,9 @@ export function minimize(id) {
     // If this window is edge-docked (right/left), SUSPEND the dock: release
     // the body push so the chat returns to full width while the window is
     // minimized, but keep the dock so restoring the chip snaps it back in.
-    if (modal.classList.contains('modal-right-docked') || modal.classList.contains('modal-left-docked')) {
+    if (modal.classList.contains('modal-right-docked')
+        || modal.classList.contains('modal-left-docked')
+        || modal.classList.contains('email-snap-left')) {
       try { suspendDock(modal); } catch (e) { console.warn('suspendDock on minimize failed', e); }
     }
     modal.classList.add('hidden');
@@ -1452,6 +1468,24 @@ const _SWIPE_DOWN_MINIMIZES = new Set([
 // (per-email reader tabs) survive swipe-down too.
 const _SWIPE_DOWN_MINIMIZES_PREFIX = ['email-reader-'];
 
+function _clearEmailSplitAfterMinimize() {
+  document.body.classList.remove('email-doc-split-active', 'email-front');
+  document.documentElement.style.removeProperty('--email-doc-split-left-x');
+  document.documentElement.style.removeProperty('--email-doc-split-email-w');
+  document.documentElement.style.removeProperty('--email-doc-split-right-x');
+  const docPane = document.getElementById('doc-editor-pane');
+  if (docPane) {
+    [
+      'position', 'left', 'right', 'top', 'bottom', 'width', 'max-width',
+      'height', 'z-index', 'transform',
+    ].forEach(prop => docPane.style.removeProperty(prop));
+  }
+  const divider = document.getElementById('doc-divider');
+  if (divider) divider.style.display = '';
+  requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 80);
+}
+
 // Re-route swipe-dismiss to minimize-rather-than-close — but only for the
 // allowlisted tools above. For every other modal, return early so the
 // default close handler runs and the modal goes away.
@@ -1463,7 +1497,7 @@ window.addEventListener('modal-dismissed', (e) => {
   if (id === 'cookbook-modal') {
     document.querySelectorAll(
       '.cookbook-task-dropdown, .cookbook-gpu-split-menu, .hwfit-cached-dropdown, .cookbook-saved-menu, .cookbook-dep-menu'
-    ).forEach(d => d.remove());
+    ).forEach(dismissOrRemove);
   }
 });
 
@@ -1478,7 +1512,16 @@ window.addEventListener('modal-dismissed', (e) => {
   s.isMinimized = true;
   _setBadge(s.btnIds, true);
   const modal = document.getElementById(id);
-  if (modal) modal.classList.add('modal-minimized');
+  if (modal) {
+    const isEmailModal = id === 'email-lib-modal' || id.startsWith('email-reader-');
+    if (modal.classList.contains('modal-right-docked')
+        || modal.classList.contains('modal-left-docked')
+        || modal.classList.contains('email-snap-left')) {
+      try { suspendDock(modal); } catch (err) { console.warn('suspendDock on dismissed failed', err); }
+    }
+    if (isEmailModal) _clearEmailSplitAfterMinimize();
+    modal.classList.add('modal-minimized');
+  }
   _ensureDock();
   _renderDock();
   // Stop legacy listeners that reset internal `_open` state

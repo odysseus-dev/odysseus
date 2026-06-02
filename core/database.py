@@ -1,7 +1,9 @@
 import os
 import logging
+import sqlite3
 from datetime import datetime
-from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
+from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.orm import relationship, sessionmaker, backref
@@ -32,6 +34,18 @@ engine = create_engine(
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+# Listening on the Engine class ensures this listener fires for all Engine
+# instances created within the process, not just the primary application engine.
+# The isinstance(sqlite3.Connection) check ensures that this PRAGMA foreign_keys=ON
+# configuration remains a no-op when using non-SQLite database backends.
+@event.listens_for(Engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    if isinstance(dbapi_connection, sqlite3.Connection):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 
 class EncryptedText(TypeDecorator):
@@ -298,6 +312,7 @@ class EmailAccount(TimestampMixin, Base):
     # SMTP (sending)
     smtp_host      = Column(String, default="")
     smtp_port      = Column(Integer, default=465)
+    smtp_security  = Column(String, default="ssl")  # ssl | starttls | none
     smtp_user      = Column(String, default="")
     smtp_password  = Column(String, default="")
 
@@ -1483,6 +1498,10 @@ def _migrate_seed_email_account():
         logging.getLogger(__name__).warning(f"seed email account migration: {e}")
 
 
+# WARNING: Foreign-key enforcement is enabled globally for all SQLite connections.
+# Any future migrations or schema changes that temporarily violate foreign-key
+# constraints will fail. To perform such operations, foreign_keys must be
+# temporarily disabled around the migration workflow.
 def init_db():
     """
     Initialize the database by creating all tables.
@@ -1517,12 +1536,39 @@ def init_db():
     _migrate_drop_ping_notes_tasks()
     _migrate_add_crew_member_id()
     _migrate_add_assistant_columns()
+    _migrate_add_email_smtp_security()
     _migrate_seed_email_account()
     _migrate_add_calendar_metadata()
     _migrate_add_calendar_is_utc()
     _migrate_encrypt_email_passwords()
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
+
+
+def _migrate_add_email_smtp_security():
+    """Add explicit SMTP security mode for Proton Bridge/custom local SMTP."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(email_accounts)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "smtp_security" not in columns:
+            conn.execute("ALTER TABLE email_accounts ADD COLUMN smtp_security TEXT DEFAULT 'ssl'")
+            conn.execute(
+                "UPDATE email_accounts SET smtp_security = CASE "
+                "WHEN COALESCE(smtp_port, 465) = 587 THEN 'starttls' "
+                "WHEN COALESCE(smtp_port, 465) = 465 THEN 'ssl' "
+                "ELSE 'ssl' END "
+                "WHERE smtp_security IS NULL OR smtp_security = ''"
+            )
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added smtp_security column to email_accounts")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"smtp_security migration skipped: {e}")
 
 
 def _migrate_encrypt_endpoint_keys():
