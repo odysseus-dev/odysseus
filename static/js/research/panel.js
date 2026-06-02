@@ -323,7 +323,7 @@ export function closePanel() {
 }
 
 function _buildPanelHTML() {
-  const searchProviders = ['', 'searxng', 'duckduckgo', 'tavily', 'brave', 'google', 'serper'];
+  const searchProviders = ['', 'searxng', 'duckduckgo', 'tavily', 'brave', 'google', 'serper', 'serpapi'];
   const providerOpts = searchProviders.map(p =>
     `<option value="${p}">${p || 'Default'}</option>`
   ).join('');

@@ -29,6 +29,7 @@ from .providers import (
     google_pse_search,
     tavily_search,
     serper_search,
+    serpapi_search,
     _get_search_settings,
     _get_result_count,
 )
@@ -82,6 +83,8 @@ def _call_provider(provider_name: str, query: str, count: int, time_filter: str 
         return tavily_search(query, count, time_filter)
     elif provider_name == "serper":
         return serper_search(query, count, time_filter)
+    elif provider_name == "serpapi":
+        return serpapi_search(query, count, time_filter)
     return []
 
 

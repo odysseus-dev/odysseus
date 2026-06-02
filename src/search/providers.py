@@ -1,4 +1,4 @@
-"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper."""
+"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper, SerpApi."""
 
 import json
 import logging
@@ -25,6 +25,7 @@ PROVIDER_INFO = {
     "google_pse": ("Google PSE",      True,  False),
     "tavily":   ("Tavily",            True,  False),
     "serper":   ("Serper",            True,  False),
+    "serpapi":  ("SerpApi",           True,  False),
     "disabled": ("Disabled",          False, False),
 }
 
@@ -57,6 +58,7 @@ def _get_provider_key(provider: str) -> str:
         "google_pse": "google_pse_key",
         "tavily": "tavily_api_key",
         "serper": "serper_api_key",
+        "serpapi": "serpapi_api_key",
     }
     field = key_map.get(provider, "")
     if field:
@@ -607,4 +609,52 @@ def serper_search(query: str, count: int = 10, time_filter: Optional[str] = None
         })
 
     logger.info(f"Serper returned {len(results)} results")
+    return results
+
+
+# ── SerpApi Google Light ──
+
+def serpapi_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+    """Search using SerpApi's Google Light engine. Requires serpapi_api_key or SERPAPI_API_KEY."""
+    api_key = _get_provider_key("serpapi") or os.environ.get("SERPAPI_API_KEY", "")
+    if not api_key:
+        logger.warning("SerpApi: no API key configured")
+        return []
+
+    params = {
+        "engine": "google_light",
+        "q": query,
+        "api_key": api_key,
+    }
+
+    try:
+        response = httpx.get(
+            "https://serpapi.com/search.json",
+            params=params,
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code == 429:
+            raise RateLimitError("SerpApi rate limit hit")
+        response.raise_for_status()
+        data = response.json()
+    except httpx.RequestError as e:
+        error_logger.error(f"SerpApi search failed: {e}")
+        return []
+    except RateLimitError as e:
+        error_logger.error(str(e))
+        return []
+
+    results = []
+    for item in data.get("organic_results", [])[:count]:
+        url = item.get("link", "")
+        if not url:
+            continue
+        results.append({
+            "title": item.get("title", ""),
+            "url": url,
+            "snippet": item.get("snippet", ""),
+            "age": item.get("date", ""),
+        })
+
+    logger.info(f"SerpApi returned {len(results)} results")
     return results
