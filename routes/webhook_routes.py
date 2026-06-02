@@ -280,7 +280,22 @@ def setup_webhook_routes(
 
             # Resolve base_url: explicit > provider name > model prefix auto-detect
             base_url = body.base_url.strip().rstrip("/") if body.base_url else None
-            if not base_url:
+            if base_url:
+                # SECURITY (SSRF): an explicit base_url is fully attacker-controlled
+                # by any chat-scoped token. Without validation the server can be
+                # coerced into issuing requests to loopback / link-local / RFC1918
+                # targets — e.g. http://169.254.169.254/... to lift cloud-metadata
+                # credentials — and the upstream response is reflected back to the
+                # caller (see llm_call_async error/schema paths). Run it through the
+                # same guard used for webhooks and web_fetch (http(s)-only scheme +
+                # private/metadata address block, DNS-resolved). Admin-configured
+                # endpoints (Case 3) are trusted and intentionally exempt, so a local
+                # LLM on the LAN still works when wired up through Admin.
+                try:
+                    validate_webhook_url(base_url)
+                except ValueError as e:
+                    raise HTTPException(400, f"Invalid base_url: {e}")
+            else:
                 base_url = _resolve_base_url(model, body.provider)
             if not base_url:
                 raise HTTPException(400,
