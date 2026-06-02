@@ -2059,6 +2059,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           { label: 'Copy', action: () => _copyChatById(s.id) },
           { label: 'Archive', action: async () => { await fetch(API_BASE + '/api/session/' + s.id + '/archive', { method: 'POST', headers: {'Content-Type':'application/json'} }); _renderLibChats(); } },
           { label: 'Delete', action: async () => {
+            if(!await uiModule.styledConfirm('Are you sure you want to delete this conversation? This action cannot be undone.', {confirmText: 'Yes', cancelText: 'No', danger: true})) return;
             await fetch(API_BASE + '/api/session/' + s.id, { method: 'DELETE' });
             card.style.maxHeight = `${Math.max(card.getBoundingClientRect().height, card.scrollHeight)}px`;
             card.classList.add('memory-tidy-removing');
@@ -2412,7 +2413,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           { label: 'Open', action: () => { if (window.sessionModule) window.sessionModule.selectSession(s.id); } },
           { label: 'Copy', action: () => _copyChatById(s.id) },
           { label: 'Restore', action: async () => { await fetch(API_BASE + '/api/session/' + s.id + '/unarchive', { method: 'POST' }); _renderLibArchive(); } },
-          { label: 'Delete', action: async () => { await fetch(API_BASE + '/api/session/' + s.id, { method: 'DELETE' }); _renderLibArchive(); }, danger: true },
+          { label: 'Delete', action: async () => { if(!await uiModule.styledConfirm('Are you sure you want to delete this conversation? This action cannot be undone.', {confirmText: 'Yes', cancelText: 'No', danger: true})) return; await fetch(API_BASE + '/api/session/' + s.id, { method: 'DELETE' }); _renderLibArchive(); }, danger: true },
         ], { onSelect: () => {
           _arcSelectMode = true;
           _arcSelected.add('chats:' + s.id);
