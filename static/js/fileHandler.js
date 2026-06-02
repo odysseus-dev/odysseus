@@ -112,7 +112,7 @@ function _createChip(f, idx) {
     chip.classList.add('thumb-image');  // lets CSS overlay the remove-X on the corner (mobile)
     const img = document.createElement('img');
     img.className = 'thumb-img';
-    img.src = URL.createObjectURL(f);
+    img.src = _getPreviewUrl(f);
     img.alt = f.name || 'image';
     chip.appendChild(img);
   } else {
@@ -172,6 +172,17 @@ export async function uploadPending() {
       method: 'POST',
       body: fd
     });
+    if (!res.ok) {
+      // Surface the failure instead of swallowing it. Previously a non-OK
+      // response (e.g. 429 rate limit, 413 too large) was ignored: the files
+      // silently vanished and the chat sent with no attachments, so the model
+      // "didn't even see them" (issue #1346). Show the server's reason and keep
+      // pendingFiles so the strip re-renders for a retry (see finally below).
+      let detail = '';
+      try { const e = await res.json(); detail = e.detail || e.error || ''; } catch (_) {}
+      _showToast('Upload failed' + (detail ? ': ' + detail : ` (HTTP ${res.status})`));
+      return [];
+    }
     const data = await res.json();
     uploaded = (data.files || []);
     pendingFiles = [];          // clear only on success

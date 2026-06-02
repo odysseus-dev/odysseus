@@ -184,14 +184,22 @@ def get_context_length(endpoint_url: str, model: str) -> int:
 
 
 def _lookup_known(model: str) -> Optional[int]:
-    """Check known context windows by substring match."""
+    """Check known context windows by substring match.
+
+    Picks the LONGEST matching key so a short key never shadows a more specific
+    one. Without this, 'o1' (200k) precedes 'o1-mini' (128k) in the table and a
+    first-match return would report o1-mini's window as 200k.
+    """
     name = model.lower()
     basename = name.split("/")[-1] if "/" in name else name
     basename = basename.split(":")[0]  # strip :free, :extended etc.
+    best_key: Optional[str] = None
+    best_ctx: Optional[int] = None
     for key, ctx in KNOWN_CONTEXT_WINDOWS.items():
         if key in basename or key in name:
-            return ctx
-    return None
+            if best_key is None or len(key) > len(best_key):
+                best_key, best_ctx = key, ctx
+    return best_ctx
 
 
 def _query_context_length(endpoint_url: str, model: str) -> int:

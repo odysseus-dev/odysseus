@@ -160,7 +160,7 @@ def setup_embedding_routes():
         _downloading[model_name] = True
         try:
             # Run in thread to not block the event loop
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             cache = _cache_dir()
             await loop.run_in_executor(
                 None,
@@ -241,6 +241,18 @@ def setup_embedding_routes():
         url = url.strip()
         if not url:
             raise HTTPException(400, "URL is required")
+
+        # SSRF hardening: validate the user-supplied URL before any outbound
+        # request. Local-first means loopback/LAN endpoints are allowed by
+        # default; non-HTTP(S) schemes and the cloud metadata range are always
+        # rejected. Set EMBEDDING_BLOCK_PRIVATE_IPS=true for full lockdown.
+        from src.url_safety import check_outbound_url
+        ok, reason = check_outbound_url(
+            url,
+            block_private=os.getenv("EMBEDDING_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+        )
+        if not ok:
+            raise HTTPException(400, f"Rejected endpoint URL: {reason}")
 
         # Quick health check
         try:

@@ -14,7 +14,7 @@ from src.constants import (
     UPLOAD_DIR,
 )
 from core.models import ChatMessage
-from src.chat_helpers import extract_urls, is_vision_model
+from src.chat_helpers import extract_urls, model_supports_vision
 from src.document_processor import build_user_content, analyze_image_with_vl_result
 from src.youtube_handler import (
     is_youtube_url,
@@ -146,7 +146,9 @@ class ChatHandler:
         # Analyze images — skip if vision disabled, or if main model is vision-capable
         from src.settings import get_setting
         vision_enabled = get_setting("vision_enabled", True)
-        main_is_vision = is_vision_model(sess.model or "")
+        main_is_vision = await asyncio.to_thread(
+            model_supports_vision, sess.model or "", getattr(sess, "endpoint_url", "") or ""
+        )
 
         # Resolve uploads once with the session owner. Attachment IDs are
         # bearer-like references; never trust them without an owner check.

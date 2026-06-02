@@ -45,6 +45,21 @@ from routes.email_helpers import (
 logger = logging.getLogger(__name__)
 
 
+def _owner_for_email_account(account_id: str | None) -> str:
+    if not account_id:
+        return ""
+    try:
+        from core.database import SessionLocal as _SL, EmailAccount as _EA
+        db = _SL()
+        try:
+            row = db.query(_EA.owner).filter(_EA.id == account_id).first()
+            return (row[0] or "") if row else ""
+        finally:
+            db.close()
+    except Exception:
+        return ""
+
+
 # ── Routes ──
 
 async def _emit_progress(progress_cb, message: str):
@@ -132,7 +147,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
     import sqlite3 as _sql3
     import requests as _req
     from src.endpoint_resolver import resolve_endpoint
-    from src.llm_core import _uses_max_completion_tokens
+    from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
 
     settings = _load_settings()
     auto_sum = settings.get("email_auto_summarize", False)
@@ -143,25 +158,18 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
     if not auto_sum and not auto_reply and not auto_tag and not auto_spam and not auto_cal:
         return "Nothing to do"
 
-    # Owner of the account being processed. All calendar reads/writes below are
-    # scoped to this user: the multi-account fan-out runs every user's mailbox,
-    # so an unscoped pass would disclose and mutate other tenants' calendars.
-    _acct_owner = None
-    try:
-        from core.database import SessionLocal as _SLo, EmailAccount as _EAo
-        _dbo = _SLo()
-        try:
-            if account_id:
-                _arow = _dbo.query(_EAo).filter(_EAo.id == account_id).first()
-                _acct_owner = _arow.owner if _arow else None
-        finally:
-            _dbo.close()
-    except Exception:
-        _acct_owner = None
+    # Owner of the account being processed. All calendar + mailbox reads/writes
+    # below are scoped to this user: the multi-account fan-out runs every user's
+    # mailbox, so an unscoped pass would disclose/mutate other tenants' data.
+    # One resolution feeds both the mailbox path (account_owner) and upstream's
+    # calendar path (_acct_owner, which expects None rather than "").
+    account_owner = _owner_for_email_account(account_id)
+    _acct_owner = account_owner or None
 
+    conn = None
     try:
         await _emit_progress(progress_cb, "Connecting to mail…")
-        conn = _imap_connect(account_id)
+        conn = _imap_connect(account_id, owner=account_owner)
         from datetime import timedelta as _td
         since = (datetime.utcnow() - _td(days=max(1, days_back))).strftime("%d-%b-%Y")
         # uid_list carries real IMAP UIDs, matching the email UI/read routes.
@@ -205,14 +213,19 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         # Re-select INBOX as default for downstream code
         conn.select("INBOX", readonly=True)
         if not uid_list:
-            conn.logout()
             return "No recent emails"
         await _emit_progress(progress_cb, f"Found {len(uid_list)} recent email(s); checking cache…")
 
         _c = _sql3.connect(SCHEDULED_DB)
         _sum_existing = {r[0] for r in _c.execute("SELECT message_id FROM email_summaries").fetchall()}
         _reply_existing = {r[0] for r in _c.execute("SELECT message_id FROM email_ai_replies").fetchall()}
-        _tag_existing = {r[0] for r in _c.execute("SELECT message_id FROM email_tags").fetchall()} if (auto_tag or auto_spam) else set()
+        if auto_tag or auto_spam:
+            if account_owner:
+                _tag_existing = {r[0] for r in _c.execute("SELECT message_id FROM email_tags WHERE owner=?", (account_owner,)).fetchall()}
+            else:
+                _tag_existing = {r[0] for r in _c.execute("SELECT message_id FROM email_tags WHERE owner='' OR owner IS NULL").fetchall()}
+        else:
+            _tag_existing = set()
         _cal_existing = {r[0] for r in _c.execute("SELECT message_id FROM email_calendar_extractions").fetchall()} if auto_cal else set()
         # Urgency is handled by the built-in `check_email_urgency` task. Keep
         # this legacy poller path disabled so users don't get two independent
@@ -225,7 +238,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         # this per-iteration was making big inbox scans crawl. Used by the
         # urgency self-loop check below.
         try:
-            _self_self_addr = (_get_email_config(account_id).get("from_address") or "").strip().lower()
+            _self_self_addr = (_get_email_config(account_id, owner=account_owner).get("from_address") or "").strip().lower()
         except Exception:
             _self_self_addr = ""
 
@@ -233,11 +246,10 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         if auto_spam and not spam_folder:
             logger.warning("Auto-spam enabled but no Junk/Spam folder detected — will classify but not move")
 
-        url, model, headers = resolve_endpoint("utility")
+        url, model, headers = resolve_endpoint("utility", owner=account_owner)
         if not url:
-            url, model, headers = resolve_endpoint("default")
+            url, model, headers = resolve_endpoint("default", owner=account_owner)
         if not url or not model:
-            conn.logout()
             return "No model configured"
 
         writing_style = settings.get("email_writing_style", "")
@@ -355,6 +367,9 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                         "temperature": 0.3,
                         "stream": False,
                     }
+                    # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
+                    if _restricts_temperature(model):
+                        payload.pop("temperature", None)
                     try:
                         # Use to_thread so this sync HTTP call doesn't freeze
                         # the entire event loop while the LLM thinks (240s).
@@ -392,8 +407,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                     await _emit_progress(progress_cb, f"Drafting reply {processed + 1}/{_max_process} · checked {examined}/{len(uid_list)}")
                     # Background reply drafting should not make the whole app
                     # feel busy. Keep it lightweight: no extra IMAP context
-                    # mining here; manual AI Reply can still do that when the
-                    # user explicitly asks for a draft on one email.
+                    # mining here; manual AI Reply can still do that (owner-scoped)
+                    # when the user explicitly asks for a draft on one email.
                     context_snippets, _terms = [], []
                     sys_prompt = _EMAIL_REPLY_SYS_PROMPT_BASE
                     if att_text:
@@ -708,7 +723,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                             # Send alert email immediately if critical or high
                             if urgency in ("critical", "high"):
                                 try:
-                                    cfg = _get_email_config(account_id)
+                                    cfg = _get_email_config(account_id, owner=account_owner)
                                     to_addr = cfg["from_address"]  # self-email
 
                                     # Deep-link to open the original email in Odysseus (if public URL is configured).
@@ -806,6 +821,9 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                             "temperature": 0.1,
                             "stream": False,
                         }
+                        # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
+                        if _restricts_temperature(model):
+                            payload.pop("temperature", None)
                         # to_thread keeps the event loop responsive during the LLM call
                         resp = await asyncio.to_thread(
                             _req.post, url, json=payload, headers=req_headers, timeout=120
@@ -840,17 +858,17 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
 
                                 moved_to = ""
                                 if is_spam and auto_spam and spam_folder:
-                                    if _imap_move(uid, spam_folder):
+                                    if _imap_move(uid, spam_folder, account_id=account_id, owner=account_owner):
                                         moved_to = spam_folder
                                         logger.info(f"Auto-spam moved uid={uid.decode()} to {spam_folder}: {spam_reason}")
 
                                 _c = _sql3.connect(SCHEDULED_DB)
                                 _c.execute("""
                                     INSERT OR REPLACE INTO email_tags
-                                    (message_id, uid, folder, subject, sender, tags, spam_verdict,
+                                    (message_id, owner, uid, folder, subject, sender, tags, spam_verdict,
                                      spam_reason, moved_to, model_used, created_at)
-                                    VALUES (?, ?, 'INBOX', ?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (message_id, uid.decode(), subject, sender,
+                                    VALUES (?, ?, ?, 'INBOX', ?, ?, ?, ?, ?, ?, ?, ?)
+                                """, (message_id, account_owner or "", uid.decode(), subject, sender,
                                       json.dumps(tags), 1 if is_spam else 0,
                                       spam_reason, moved_to, model, datetime.utcnow().isoformat()))
                                 _c.commit()
@@ -865,7 +883,6 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                 logger.warning(f"Auto-process {uid} failed: {e}")
                 continue
 
-        conn.logout()
         await _emit_progress(progress_cb, "Finishing…")
         if processed > 0:
             logger.info(f"Auto-processed {processed} new email(s) for summary/reply/classify")
@@ -902,6 +919,12 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
     except Exception as e:
         logger.warning(f"Auto-summarize pass error: {e}")
         return f"Error: {e}"
+    finally:
+        if conn:
+            try:
+                conn.logout()
+            except Exception:
+                pass
 
 
 async def _auto_summarize_poller():
@@ -930,8 +953,9 @@ def _scheduled_poll_once() -> dict:
         conn = sqlite3.connect(SCHEDULED_DB)
         cols = [row[1] for row in conn.execute("PRAGMA table_info(scheduled_emails)").fetchall()]
         kind_expr = "odysseus_kind" if "odysseus_kind" in cols else "'scheduled' AS odysseus_kind"
+        owner_expr = "owner" if "owner" in cols else "'' AS owner"
         rows = conn.execute(f"""
-            SELECT id, to_addr, cc, bcc, subject, body, in_reply_to, references_hdr, attachments, account_id, {kind_expr}
+            SELECT id, to_addr, cc, bcc, subject, body, in_reply_to, references_hdr, attachments, account_id, {kind_expr}, {owner_expr}
             FROM scheduled_emails
             WHERE status = 'pending' AND send_at <= ?
         """, (now_iso,)).fetchall()
@@ -943,7 +967,8 @@ def _scheduled_poll_once() -> dict:
                 attachments = json.loads(r[8] or "[]")
                 row_account_id = r[9] if len(r) > 9 else None
                 odysseus_kind = r[10] if len(r) > 10 else "scheduled"
-                cfg = _get_email_config(row_account_id)
+                row_owner = (r[11] if len(r) > 11 else "") or _owner_for_email_account(row_account_id)
+                cfg = _get_email_config(row_account_id, owner=row_owner)
                 has_atts = bool(attachments)
                 if has_atts:
                     outer = MIMEMultipart("mixed")
@@ -980,7 +1005,7 @@ def _scheduled_poll_once() -> dict:
 
                 # Append to local Sent folder
                 try:
-                    with _imap() as imap:
+                    with _imap(row_account_id, owner=row_owner) as imap:
                         sent_folder = _detect_sent_folder(imap)
                         imap.append(sent_folder, "\\Seen", None, outer.as_bytes())
                 except Exception as e:

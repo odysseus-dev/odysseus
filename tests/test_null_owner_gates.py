@@ -33,12 +33,14 @@ for _stub in [
         m = types.ModuleType(_stub)
         # Provide the names the importers will look up.
         if _stub == "core.database":
+            m.Base = MagicMock()
             m.SessionLocal = MagicMock()
             m.CalendarCal = MagicMock()
             m.CalendarEvent = MagicMock()
             m.Document = MagicMock()
             m.DocumentVersion = MagicMock()
             m.Session = MagicMock()
+            m.ChatMessage = MagicMock()
             m.GalleryImage = MagicMock()
             m.GalleryAlbum = MagicMock()
             m.Note = MagicMock()
@@ -165,3 +167,155 @@ def test_gallery_owner_filter_passes_user():
     # logged-in users.
     fake_q.filter.assert_called_once()
     assert out is fake_q.filter.return_value
+
+
+# ---------------------------------------------------------------------------
+# webhook._caller_owns_session  (POST /api/v1/chat sync-chat endpoint)
+# ---------------------------------------------------------------------------
+# This is the FOURTH place the `owner and owner != user` pattern showed up:
+# the token-authenticated sync-chat endpoint let any chat-scoped token resume
+# a null-owner session by passing its id, leaking its history and reusing the
+# owner's endpoint credentials. The gate must fail closed, exactly like the
+# calendar/notes/gallery gates above and _verify_session_owner.
+
+def _import_webhook_helper():
+    """Import routes.webhook_routes without dragging in the real webhook
+    manager / database. Stub src.webhook_manager (only referenced by an
+    import line) and ensure core.database exposes the names the import chain
+    (core/__init__ → session_manager) looks up."""
+    for _name in ("Webhook", "ChatMessage"):
+        setattr(sys.modules["core.database"], _name, MagicMock())
+    if "src.webhook_manager" not in sys.modules:
+        wm = types.ModuleType("src.webhook_manager")
+        wm.WebhookManager = MagicMock()
+        wm.validate_webhook_url = MagicMock()
+        wm.validate_events = MagicMock()
+        sys.modules["src.webhook_manager"] = wm
+    return __import__(
+        "routes.webhook_routes", fromlist=["_caller_owns_session"]
+    )
+
+
+def test_sync_chat_gate_rejects_null_owner_session():
+    wh_mod = _import_webhook_helper()
+    # Legacy/migrated session with no owner must NOT be resumable by a token.
+    assert wh_mod._caller_owns_session(None, "alice") is False
+
+
+def test_sync_chat_gate_rejects_cross_owner_session():
+    wh_mod = _import_webhook_helper()
+    assert wh_mod._caller_owns_session("bob", "alice") is False
+
+
+def test_sync_chat_gate_rejects_unresolvable_caller():
+    wh_mod = _import_webhook_helper()
+    # If the token's owner can't be resolved, fail closed rather than opening
+    # up null-owner sessions.
+    assert wh_mod._caller_owns_session(None, None) is False
+    assert wh_mod._caller_owns_session("alice", None) is False
+
+
+def test_sync_chat_gate_accepts_matching_owner():
+    wh_mod = _import_webhook_helper()
+    assert wh_mod._caller_owns_session("alice", "alice") is True
+
+
+# ---------------------------------------------------------------------------
+# webhook._first_enabled_endpoint  (POST /api/v1/chat, Case 3 fallback)
+# ---------------------------------------------------------------------------
+# The SAME multi-tenant leak in a second spot on this endpoint: when a
+# chat-scoped token sends no session and no api_key, sync-chat falls back to a
+# configured ModelEndpoint and uses that row's *decrypted* api_key. The query
+# was an unscoped `.first()`, so a token for "alice" could fall back onto
+# "bob"'s PRIVATE endpoint and silently spend bob's API key / reach bob's
+# internal base_url. The fallback must be owner-scoped (own rows + legacy
+# null-owner shared rows), exactly like routes/model_routes.py and
+# companion/routes.py.
+
+class _Predicate:
+    def __init__(self, check):
+        self._check = check
+
+    def __call__(self, row):
+        return self._check(row)
+
+    def __or__(self, other):
+        return _Predicate(lambda row: self(row) or other(row))
+
+
+class _Column:
+    def __init__(self, name):
+        self.name = name
+
+    def __eq__(self, value):
+        return _Predicate(lambda row: getattr(row, self.name) == value)
+
+
+class _ModelEndpoint:
+    is_enabled = _Column("is_enabled")
+    owner = _Column("owner")
+
+
+class _Query:
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def filter(self, *predicates):
+        self._rows = [r for r in self._rows if all(p(r) for p in predicates)]
+        return self
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class _DB:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def query(self, model):
+        assert model is _ModelEndpoint
+        return _Query(self._rows)
+
+
+def _ep(name, owner, *, is_enabled=True):
+    return SimpleNamespace(name=name, owner=owner, is_enabled=is_enabled)
+
+
+def _select(rows, owner):
+    wh_mod = _import_webhook_helper()
+    sys.modules["core.database"].ModelEndpoint = _ModelEndpoint
+    return wh_mod._first_enabled_endpoint(_DB(rows), owner)
+
+
+def test_sync_chat_fallback_never_picks_another_owners_endpoint():
+    # bob's private endpoint is first in the table, but alice must never get it.
+    rows = [_ep("bob-private", "bob"), _ep("alice-private", "alice")]
+    ep = _select(rows, "alice")
+    assert ep is not None and ep.name == "alice-private"
+
+
+def test_sync_chat_fallback_prefers_owned_or_shared_only():
+    rows = [_ep("bob-private", "bob"), _ep("shared", None)]
+    ep = _select(rows, "alice")
+    # Only the legacy null-owner shared row is visible to alice.
+    assert ep is not None and ep.name == "shared"
+
+
+def test_sync_chat_fallback_returns_none_when_only_others_endpoints():
+    rows = [_ep("bob-private", "bob"), _ep("carol-private", "carol")]
+    # No owned/shared row → fall through to the 400, never borrow bob's key.
+    assert _select(rows, "alice") is None
+
+
+def test_sync_chat_fallback_skips_disabled_owned_endpoint():
+    rows = [_ep("alice-disabled", "alice", is_enabled=False), _ep("shared", None)]
+    ep = _select(rows, "alice")
+    assert ep is not None and ep.name == "shared"
+
+
+def test_sync_chat_fallback_null_owner_is_legacy_single_user_noop():
+    # An unresolvable/empty token owner keeps the original single-user behaviour
+    # (owner_filter no-op): first enabled row, whatever it is.
+    rows = [_ep("first", "bob"), _ep("second", "alice")]
+    ep = _select(rows, None)
+    assert ep is not None and ep.name == "first"

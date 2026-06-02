@@ -51,3 +51,16 @@ def test_reply_all_excludes_only_self_exactly():
     cc = json.loads(_run(js))
     # Our own address is dropped; a substring-similar address is kept.
     assert cc == "Alice <alice@x.com>, bob@x.com"
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_reply_all_excludes_all_of_my_addresses():
+    # Multi-account user: every one of their own addresses must be excluded,
+    # not just the active one.
+    data = {"to": "Alice <alice@x.com>, me@work.com", "cc": "me@personal.com, bob@x.com"}
+    js = f"""
+    import {{ buildReplyAllCc }} from '{_HELPER.as_posix()}';
+    console.log(JSON.stringify(buildReplyAllCc({json.dumps(data)}, ["me@work.com", "me@personal.com"])));
+    """
+    cc = json.loads(_run(js))
+    assert cc == "Alice <alice@x.com>, bob@x.com"

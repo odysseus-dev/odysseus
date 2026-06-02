@@ -38,6 +38,20 @@ _PRIVATE_NETWORKS = [
 
 
 def _ip_is_private(addr: ipaddress._BaseAddress) -> bool:
+    # If the address is IPv4-mapped IPv6, extract and evaluate the embedded IPv4
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+
+    if (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_multicast
+        or addr.is_unspecified
+    ):
+        return True
+
     return any(addr in net for net in _PRIVATE_NETWORKS)
 
 
