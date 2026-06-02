@@ -508,7 +508,7 @@ def get_builtin_overrides() -> dict:
         ov = get_setting("builtin_tool_overrides", {})
         return ov if isinstance(ov, dict) else {}
     except Exception as e:
-        logger.warning('Failed to load builtin tool overrides: %s', e)
+        logger.warning("Failed to load builtin tool overrides, using defaults: %s", e)
         return {}
 
 
@@ -893,8 +893,8 @@ def _build_system_prompt(
     try:
         from src.user_time import current_datetime_prompt
         agent_prompt = current_datetime_prompt() + agent_prompt
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to inject timezone context into agent prompt: %s", e)
 
     # Document context is kept as a SEPARATE message (not merged into the tool
     # prompt) so the context trimmer doesn't destroy it when truncating the
@@ -937,8 +937,8 @@ def _build_system_prompt(
             try:
                 from src.pdf_form_doc import find_source_upload_id
                 _is_form_backed = bool(find_source_upload_id(active_document.current_content or ""))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to detect if document is form-backed, assuming plain: %s", e)
 
             if _is_form_backed:
                 doc_ctx = (
