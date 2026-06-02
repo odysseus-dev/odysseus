@@ -77,6 +77,11 @@ def split_chunks(text: str, size: int = config.CHUNK_SIZE, overlap: int = config
     while i < n:
         j = min(i + size, n)
         chunks.append(text[i:j])
+        if j >= n:
+            # Reached the end. Without this, the next start (j - overlap) is
+            # still > i, so the loop appended one extra chunk duplicating the
+            # last `overlap` chars of the text.
+            break
         i = j - overlap if j - overlap > i else j
     return chunks
 
