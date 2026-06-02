@@ -190,6 +190,22 @@ def _process_office_document(path: str, display_name: str) -> str:
         return f"\n\n[Attached document: {display_name} — {exc}]"
 
 
+# Marker that _process_pdf prepends to extracted text.
+_PDF_CONTENT_MARKER = "\n\n[PDF content]:"
+
+
+def strip_pdf_content_marker(text: str) -> str:
+    """Remove the leading ``[PDF content]:`` wrapper that ``_process_pdf`` adds.
+
+    Uses ``str.removeprefix`` rather than ``str.lstrip(chars)``: ``lstrip``
+    treats its argument as a *set of characters*, so ``lstrip("\\n[PDF content]:")``
+    keeps chewing into the page text that follows the marker. For example
+    ``"\\n\\n[PDF content]:\\n\\n[Page 1 text]:\\nto the board"`` would lose the
+    leading "to" because 't' and 'o' are in the marker's character set.
+    """
+    return (text or "").removeprefix(_PDF_CONTENT_MARKER).strip()
+
+
 def _load_vl_settings() -> dict:
     """Load admin settings from disk."""
     try:

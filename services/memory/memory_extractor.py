@@ -235,6 +235,10 @@ async def extract_and_store(
     Designed to run as a background task (asyncio.create_task).
     Errors are logged, never raised.
     """
+    if not endpoint_url or not model:
+        logger.debug("[memory-extract] No model or URL provided, skipping")
+        return
+
     try:
         from src.llm_core import llm_call_async
 
@@ -245,11 +249,30 @@ async def extract_and_store(
         if len(recent) < 2:
             return  # Need at least a user message and assistant response
 
-        fallback_facts = _fallback_memory_candidates(recent)
+        # Strip media (images/audio) from messages — background memory extraction
+        # only needs the text. The VL-generated descriptions are already in the
+        # text content of the messages. This avoids sending image tokens to
+        # non-vision models and prevents accidental "vision grounding" triggers.
+        stripped_recent = []
+        for msg in recent:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                # Filter out multimodal blocks that aren't text
+                text_only = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                if not text_only and content:
+                    continue
+                content = text_only
+            stripped_recent.append({"role": role, "content": content})
+
+        if not stripped_recent:
+            return
+
+        fallback_facts = _fallback_memory_candidates(stripped_recent)
 
         extraction_messages = [
             {"role": "system", "content": EXTRACT_SYSTEM_PROMPT},
-        ] + recent
+        ] + stripped_recent
 
         facts = []
         try:

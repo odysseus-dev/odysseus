@@ -1313,7 +1313,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         if not names:
             raise TaskNoop("no skills to test")
 
-        url, model, headers = resolve_endpoint("default")
+        url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return "No Default/Utility model configured — set one in Settings.", False
 
@@ -1374,7 +1374,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
                 # user-set value (e.g. 1.0 → 0.95) is destructive.
                 if v in ("pass", "needs_work", "fail", "inconclusive"):
                     try:
-                        sm.set_audit(name, v, by_teacher=False, worker_model=model)
+                        sm.set_audit(name, v, by_teacher=False, worker_model=model, owner=owner)
                     except Exception as _e:
                         logger.warning(f"test_skills set_audit({name}) failed: {_e}")
                 if v == "unknown":

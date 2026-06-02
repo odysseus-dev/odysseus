@@ -118,6 +118,7 @@ def _running_in_container(dockerenv_path="/.dockerenv", cgroup_path="/proc/1/cgr
 
 
 DockerRowStatus = namedtuple("DockerRowStatus", ["applicable", "install_hint"])
+PackageUpdateStatus = namedtuple("PackageUpdateStatus", ["available", "note"])
 
 
 def _docker_row_status(*, on_remote, in_container, installed, default_hint):
@@ -125,6 +126,24 @@ def _docker_row_status(*, on_remote, in_container, installed, default_hint):
     if local_docker_unavailable:
         return DockerRowStatus(applicable=False, install_hint=DOCKER_IN_CONTAINER_HINT)
     return DockerRowStatus(applicable=True, install_hint=default_hint)
+
+
+def _pip_dist_name(pkg: dict) -> str:
+    """Distribution name for importlib.metadata lookups.
+
+    The Cookbook package catalog carries both the import name (``name``, e.g.
+    ``llama_cpp``) and the pip spec (``pip``, e.g. ``llama-cpp-python[server]``).
+    The distribution is NOT always the import name with underscores swapped for
+    dashes — ``llama_cpp`` ships in the ``llama-cpp-python`` distribution — so
+    derive it from the pip spec (stripping any ``[extras]`` and version markers)
+    and fall back to the munged import name only when no pip spec is declared.
+    """
+    pip = (pkg.get("pip") or "").strip()
+    if pip:
+        base = re.split(r"[\[<>=!~;\s]", pip, maxsplit=1)[0].strip()
+        if base:
+            return base
+    return (pkg.get("name") or "").replace("_", "-")
 
 
 def _package_installed_from_probe(name: str, probe: dict) -> bool:
@@ -162,7 +181,10 @@ def _package_status_note(name: str, probe: dict) -> str:
     locations = module.get("locations") or []
     if name == "vllm":
         if binaries.get("vllm"):
-            return f"vLLM CLI: {binaries['vllm']}"
+            parts = [f"vLLM CLI: {binaries['vllm']}"]
+            if dists.get("vllm"):
+                parts.append(f"python package: vllm {dists['vllm']}")
+            return "; ".join(parts)
         if module.get("found") and not dists.get("vllm"):
             loc = locations[0] if locations else module.get("origin") or "unknown path"
             return f"Python sees a vllm namespace at {loc}, but no vLLM CLI is on PATH."
@@ -181,6 +203,35 @@ def _package_status_note(name: str, probe: dict) -> str:
     if name in dists:
         return f"{name} {dists[name]}"
     return ""
+
+
+def _package_pip_update_status(pkg: dict, probe: dict | None = None) -> PackageUpdateStatus:
+    """Return whether the Dependencies UI should offer a generic pip update.
+
+    "Installed" means Cookbook can use the dependency. It does not always mean
+    the dependency is a Python package that Cookbook should update with pip:
+    native llama-server can come from a package manager/source build, and a CLI
+    may be on PATH without matching Python package metadata.
+    """
+    if pkg.get("kind") == "system" or not pkg.get("pip"):
+        return PackageUpdateStatus(False, "Update this system dependency outside Odysseus.")
+
+    name = pkg.get("name")
+    binaries = probe.get("binaries") if isinstance(probe, dict) and isinstance(probe.get("binaries"), dict) else {}
+    dists = probe.get("dists") if isinstance(probe, dict) and isinstance(probe.get("dists"), dict) else {}
+
+    if name == "llama_cpp" and binaries.get("llama-server"):
+        return PackageUpdateStatus(
+            False,
+            "Using native llama-server on PATH; update it with its package manager or source checkout.",
+        )
+    if name == "vllm" and binaries.get("vllm") and not dists.get("vllm"):
+        return PackageUpdateStatus(
+            False,
+            "Using a vLLM CLI on PATH without Python package metadata; update it outside Odysseus.",
+        )
+
+    return PackageUpdateStatus(True, "Update uses pip in the selected Python environment.")
 
 
 def _prepend_user_install_bins_to_path() -> None:
@@ -926,6 +977,7 @@ def setup_shell_routes() -> APIRouter:
 
         for pkg in packages:
             on_remote = bool(host and pkg.get("target") == "remote")
+            probe = None
             if on_remote:
                 pkg["installed"] = bool(remote_status.get(pkg["name"], False))
                 probe = remote_details.get(pkg["name"])
@@ -939,18 +991,35 @@ def setup_shell_routes() -> APIRouter:
             elif pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
                 pkg["installed"] = True
                 pkg["status_note"] = f"native llama-server: {shutil.which('llama-server')}"
+                probe = {"binaries": {"llama-server": shutil.which("llama-server")}, "dists": {}}
+            elif pkg["name"] == "vllm":
+                _vllm_cli = shutil.which("vllm")
+                pkg["installed"] = _vllm_cli is not None
+                if pkg["installed"]:
+                    try:
+                        _vllm_version = importlib_metadata.version(_pip_dist_name(pkg))
+                    except importlib_metadata.PackageNotFoundError:
+                        _vllm_version = None
+                    probe = {
+                        "binaries": {"vllm": _vllm_cli},
+                        "dists": {"vllm": _vllm_version} if _vllm_version else {},
+                    }
+                    pkg["status_note"] = _package_status_note("vllm", probe)
             else:
                 try:
                     importlib.import_module(pkg["name"])
-                    if pkg["name"] == "vllm":
-                        pkg["installed"] = shutil.which("vllm") is not None
-                    else:
-                        importlib_metadata.version(pkg["name"].replace("_", "-"))
-                        pkg["installed"] = True
+                    importlib_metadata.version(_pip_dist_name(pkg))
+                    pkg["installed"] = True
                 except ImportError:
                     pkg["installed"] = False
                 except importlib_metadata.PackageNotFoundError:
                     pkg["installed"] = False
+
+            if pkg.get("installed"):
+                update_status = _package_pip_update_status(pkg, probe)
+                pkg["pip_update_available"] = update_status.available
+                if update_status.note:
+                    pkg["update_note"] = update_status.note
 
             if pkg["name"] == "docker":
                 status = _docker_row_status(
