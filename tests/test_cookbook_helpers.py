@@ -158,6 +158,38 @@ def test_pip_install_fallback_chain_tries_user_outside_venv():
     assert "user_attempt" in result.stdout, "Chain should try --user when not in venv and base fails"
 
 
+def test_pip_install_fallback_chain_quotes_extras_spec():
+    """An extras spec like ``llama-cpp-python[server]`` must be shell-quoted so
+    bash does not treat the brackets as a glob, and the ``[server]`` extra
+    (which pulls in starlette_context for ``python -m llama_cpp.server``) is
+    actually installed instead of a bare ``llama-cpp-python`` (issue #730)."""
+    chain = _pip_install_fallback_chain("llama-cpp-python[server]", python_cmd="pip")
+    # Quoted in both the plain and the --user attempt.
+    assert chain.count("'llama-cpp-python[server]'") == 2
+    # Never the unquoted form (bracket-glob risk).
+    assert "install -q llama-cpp-python[server]" not in chain
+    # A plain package name is still passed through unquoted (no regression).
+    plain = _pip_install_fallback_chain("hf_transfer", python_cmd="pip")
+    assert "install -q hf_transfer" in plain
+
+
+def test_serve_runner_installs_llama_cpp_server_extra():
+    """The llama.cpp serve auto-install must request the ``[server]`` extra in
+    every path (issue #730): a bare ``llama-cpp-python`` passes the
+    ``import llama_cpp`` guard, so ``python -m llama_cpp.server`` then crashes
+    with ``ModuleNotFoundError: No module named 'starlette_context'`` and the
+    extra is never reinstalled."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+    # No serve path may install a bare (extra-less) llama-cpp-python.
+    assert "pip install llama-cpp-python " not in src
+    assert "_pip_install_fallback_chain('llama-cpp-python'" not in src
+    # The [server] extra is requested in the build/fallback paths.
+    assert "'llama-cpp-python[server]'" in src
+    assert "_pip_install_fallback_chain('llama-cpp-python[server]'" in src
+
+
 def test_venv_safe_local_pip_install_strips_user_flags_only_for_local_venv():
     cmd = 'python3 -m pip install -U --user --break-system-packages "vllm"'
 

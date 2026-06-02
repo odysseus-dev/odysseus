@@ -179,8 +179,13 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     pip output appear in the Cookbook log on failure.
     """
     upgrade_flag = " -U" if upgrade else ""
-    base = _pip_install_attempt(f"{python_cmd} install -q{upgrade_flag} {package}")
-    user = _pip_install_attempt(f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {package}")
+    # Shell-quote the package spec: an extras spec like ``llama-cpp-python[server]``
+    # contains brackets that bash would treat as a glob, so it must be quoted
+    # before being embedded in the install command. Plain names (e.g.
+    # ``huggingface_hub``) are returned unchanged by ``shlex.quote``.
+    pkg = shlex.quote(package)
+    base = _pip_install_attempt(f"{python_cmd} install -q{upgrade_flag} {pkg}")
+    user = _pip_install_attempt(f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {pkg}")
     # Derive the python executable for the venv detection check.
     # Must use the same interpreter that pip belongs to; hardcoding
     # python3 breaks when pip lives in a venv that only has "python".
