@@ -451,7 +451,11 @@ def setup_cookbook_routes() -> APIRouter:
         # On Windows (Git Bash), `python3` is usually absent — only `python.exe`
         # exists. Define a shell function and export it so subshells (bash -c)
         # used by the pip install fallback chain also see it.
+        # Also force UTF-8 I/O: the detached process has no console, so Python
+        # defaults to the system charmap (cp1252) which chokes on Unicode
+        # characters like ✓ that the hf CLI prints on completion.
         if IS_WINDOWS and not req.remote_host:
+            lines.append('export PYTHONIOENCODING=utf-8')
             lines.append('if ! command -v python3 >/dev/null 2>&1 && command -v python >/dev/null 2>&1; then python3() { python "$@"; }; export -f python3; fi')
         # Best-effort install hf CLI (always). hf_transfer (Rust parallel downloader)
         # is fast but flaky on large files — it tends to crash near the end at high
@@ -940,6 +944,7 @@ def setup_cookbook_routes() -> APIRouter:
             if not remote:
                 runner_lines.append(_local_tooling_path_export(sys.executable))
             if IS_WINDOWS and not remote:
+                runner_lines.append('export PYTHONIOENCODING=utf-8')
                 runner_lines.append('if ! command -v python3 >/dev/null 2>&1 && command -v python >/dev/null 2>&1; then python3() { python "$@"; }; export -f python3; fi')
             runner_lines.append("export FLASHINFER_DISABLE_VERSION_CHECK=1")
             if req.hf_token:

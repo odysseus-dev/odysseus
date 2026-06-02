@@ -44,8 +44,7 @@ _STATE_PATH = _DATA_DIR / "cookbook_state.json"
 
 # Mirror routes/shell_routes.TMUX_LOG_DIR — don't import it because that pulls
 # the whole web app into the process. Match its definition instead.
-import tempfile
-_TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "odysseus-tmux"
+_TMUX_LOG_DIR = _DATA_DIR / "cookbook-sessions"
 
 
 def fail(msg: str, code: int = 1) -> None:

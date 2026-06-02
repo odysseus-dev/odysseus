@@ -2285,6 +2285,14 @@ async function _reconnectTask(el, task) {
   el._abort = controller;
   let failCount = 0;
 
+  // Local Windows tasks use a detached process + log file instead of tmux.
+  // The tmux capture-pane loop below would always fail (tmux doesn't exist on
+  // Windows), causing the task to be marked "crashed" even when the download
+  // succeeds. For these tasks, the background status poller already reads the
+  // log file via /api/cookbook/tasks/status — let it handle status updates.
+  const _localNoTmux = !task.remoteHost && !_isWindows(task) && typeof navigator !== 'undefined' && /Win/.test(navigator.platform || navigator.userAgent);
+  if (_localNoTmux) return;
+
   while (!controller.signal.aborted) {
     if (!el.isConnected) {
       controller.abort();
