@@ -53,17 +53,22 @@ function _isDangerousSrcset(value) {
 }
 
 // Escape + linkify URLs and email addresses. Returns innerHTML-safe markup.
+// URLs and emails are matched in a SINGLE pass: a URL whose query/userinfo
+// contains an email-shaped substring (e.g. ".../c?e=foo@bar.com") is consumed
+// whole, so the email isn't re-linkified inside the href — which previously
+// produced invalid nested <a> tags and a corrupted link.
 export function _escLinkify(text) {
   const escaped = _esc(text);
-  // URLs: http(s)://... or www....
-  const urlRe = /\b((?:https?:\/\/|www\.)[^\s<>"']+[^\s<>"'.,;:!?)\]])/g;
-  const mailRe = /\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g;
-  return escaped
-    .replace(urlRe, (m) => {
+  const url = '(?:https?:\\/\\/|www\\.)[^\\s<>"\']+[^\\s<>"\'.,;:!?)\\]]';
+  const mail = '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}';
+  const tokenRe = new RegExp(`${url}|\\b${mail}\\b`, 'g');
+  return escaped.replace(tokenRe, (m) => {
+    if (/^(?:https?:\/\/|www\.)/.test(m)) {
       const href = m.startsWith('www.') ? `https://${m}` : m;
       return `<a href="${_attrEsc(href)}" target="_blank" rel="noopener noreferrer">${m}</a>`;
-    })
-    .replace(mailRe, (m) => `<a href="${_attrEsc(`mailto:${m}`)}">${m}</a>`);
+    }
+    return `<a href="${_attrEsc(`mailto:${m}`)}">${m}</a>`;
+  });
 }
 
 // Pull display name out of "Name <email@x>"; fallback to local-part of
