@@ -1936,6 +1936,21 @@ async function _reconnectTask(el, task) {
             el.dataset.status = 'crashed';
             const badge = el.querySelector('.cookbook-task-status');
             if (badge) { badge.textContent = _statusLabel('crashed', task.type); badge.className = 'cookbook-task-status cookbook-task-crashed'; }
+            // Show crash details — last 20 lines of output or "no output"
+            let diagEl = el.querySelector('.cookbook-diagnosis');
+            if (!diagEl) {
+              diagEl = document.createElement('div');
+              diagEl.className = 'cookbook-diagnosis';
+              el.appendChild(diagEl);
+            }
+            const crashLines = lastOutput.trim() ? lastOutput.trim().split('\n').slice(-20).join('\n') : 'No output captured — process may have been killed or failed to start.';
+            diagEl.innerHTML = `<div class="cookbook-diag-box cookbook-diag-error" style="margin-top:8px;">
+              <div class="cookbook-diag-title" style="font-weight:600;margin-bottom:4px;color:var(--red);">Process crashed — last output:</div>
+              <pre style="margin:0;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:11px;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;">${esc(crashLines)}</pre>
+              <div style="margin-top:6px;display:flex;gap:6px;">
+                <button class="cookbook-diag-action" onclick="navigator.clipboard.writeText(this.closest('.cookbook-diagnosis').querySelector('pre').textContent).then(()=>this.textContent='Copied!')" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--panel);color:var(--fg);cursor:pointer;">Copy logs</button>
+              </div>
+            </div>`;
             _showCookbookNotif(true);
           } else {
             _updateTask(task.sessionId, { status: 'done' });
@@ -2379,11 +2394,25 @@ async function _checkServeReachability() {
           badge.textContent = 'unreachable';
           badge.className = 'cookbook-task-status cookbook-task-error';
           badge.title = pr.error || 'Server not responding — it may have crashed';
+          // Show crash details if we have an error message
+          if (pr.error && !el.querySelector('.cookbook-diagnosis')) {
+            const diagEl = document.createElement('div');
+            diagEl.className = 'cookbook-diagnosis';
+            diagEl.innerHTML = `<div class="cookbook-diag-box cookbook-diag-error" style="margin-top:8px;">
+              <div class="cookbook-diag-title" style="font-weight:600;margin-bottom:4px;color:var(--red);">Server unreachable:</div>
+              <div style="font-size:11px;opacity:0.8;">${esc(pr.error)}</div>
+              <div style="margin-top:6px;font-size:10px;opacity:0.5;">Check the output below for crash details, or restart the serve task.</div>
+            </div>`;
+            el.appendChild(diagEl);
+          }
         } else if (badge.textContent === 'unreachable') {
           // Recovered — restore the normal running label.
           badge.textContent = _statusLabel('running', task.type);
           badge.className = 'cookbook-task-status cookbook-task-running';
           badge.title = '';
+          // Remove diagnosis if server recovered
+          const diagEl = el.querySelector('.cookbook-diagnosis');
+          if (diagEl) diagEl.remove();
         }
       }
     }
