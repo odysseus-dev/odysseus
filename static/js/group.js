@@ -58,7 +58,7 @@ function _initGroupTab() {
       });
     });
     _modelsCache = sortModelObjects(result);
-    return result;
+    return _modelsCache;
   }
 
   function _render() {
@@ -410,7 +410,7 @@ export async function showModelPicker() {
         });
       });
       _cachedModels = sortModelObjects(result);
-      return result;
+      return _cachedModels;
     }
 
     async function render(filter) {
