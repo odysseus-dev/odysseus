@@ -54,7 +54,8 @@ def _git_bash_path(path: str) -> str:
     drive, tail = os.path.splitdrive(path)
     if not drive:
         return path.replace("\\", "/")
-    return f"/{drive[0].lower()}{tail.replace('\\', '/')}"
+    sep = tail.replace("\\", "/")
+    return f"/{drive[0].lower()}{sep}"
 
 
 def _validate_repo_id(v: str | None) -> str:
