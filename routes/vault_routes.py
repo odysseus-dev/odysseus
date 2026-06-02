@@ -16,6 +16,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from core.middleware import require_admin
+from core.platform_compat import IS_WINDOWS, safe_chmod, which_tool
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +24,23 @@ VAULT_FILE = Path("data/vault.json")
 
 
 def _find_bw() -> str:
-    """Locate the bw binary, checking PATH and common npm-global locations."""
-    p = shutil.which("bw")
+    """Locate the bw binary, checking PATH and common npm-global locations.
+
+    On Windows the Bitwarden CLI shim is `bw.cmd`/`bw.exe`, resolved by
+    which_tool via PATHEXT.
+    """
+    p = which_tool("bw")
     if p:
         return p
+    if IS_WINDOWS:
+        appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
+        for candidate in (
+            os.path.join(appdata, "npm", "bw.cmd"),
+            os.path.join(appdata, "npm", "bw.exe"),
+        ):
+            if os.path.isfile(candidate):
+                return candidate
+        return "bw"
     home = os.path.expanduser("~")
     for candidate in (
         f"{home}/.npm-global/bin/bw",
@@ -47,7 +61,7 @@ def _find_bw() -> str:
 def _load_config() -> dict:
     if VAULT_FILE.exists():
         try:
-            return json.loads(VAULT_FILE.read_text())
+            return json.loads(VAULT_FILE.read_text(encoding="utf-8"))
         except Exception:
             pass
     return {}
@@ -55,18 +69,25 @@ def _load_config() -> dict:
 
 def _save_config(cfg: dict):
     VAULT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    VAULT_FILE.write_text(json.dumps(cfg, indent=2))
-    try:
-        os.chmod(str(VAULT_FILE), 0o600)
-    except Exception:
-        pass
+    VAULT_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    # POSIX: restrict the BW_SESSION store to 0o600. Windows: no-op (profile dir
+    # is ACL-restricted already).
+    safe_chmod(str(VAULT_FILE), 0o600)
 
 
-async def _run_bw(args: list, session: str = None, input_text: str = None) -> tuple:
+async def _run_bw(args: list, session: str = None, input_text: str = None,
+                  bw_password: str = None) -> tuple:
     env = {}
     env.update(os.environ)
     if session:
         env["BW_SESSION"] = session
+    # Secrets must never be passed as argv — process arguments are world-readable
+    # via `ps` / `/proc/<pid>/cmdline` to any local user. Hand the master password
+    # to `bw` through the environment instead (paired with `--passwordenv
+    # BW_PASSWORD` in args); /proc/<pid>/environ is readable only by the process
+    # owner. This mirrors how BW_SESSION is already passed above.
+    if bw_password is not None:
+        env["BW_PASSWORD"] = bw_password
     bw_path = _find_bw()
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -162,8 +183,13 @@ def setup_vault_routes():
     async def unlock(req: VaultUnlockRequest, request: Request):
         """Unlock the vault and save the session key."""
         require_admin(request)
+        # Pass the master password via the environment (--passwordenv), NOT as
+        # an argv element — argv is visible to every local user through `ps` /
+        # /proc/<pid>/cmdline. (The sibling /login handler already keeps the
+        # password off argv by feeding it on stdin.)
         stdout, stderr, rc = await _run_bw(
-            ["unlock", req.master_password, "--raw"],
+            ["unlock", "--passwordenv", "BW_PASSWORD", "--raw"],
+            bw_password=req.master_password,
         )
         if rc != 0:
             return {"ok": False, "error": f"Unlock failed: {stderr[:300]}"}

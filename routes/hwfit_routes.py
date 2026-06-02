@@ -1,3 +1,4 @@
+import re
 from copy import deepcopy
 
 from fastapi import APIRouter
@@ -173,6 +174,64 @@ def setup_hwfit_routes():
 
         results = rank_models(system, use_case=use_case or None, limit=limit, search=search or None, sort=sort, quant=quant or None)
         return {"system": system, "models": results}
+
+    @router.get("/profiles")
+    def get_serve_profiles(model: str = "", host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, serve_weights_gb: float = 0.0, serve_quant: str = ""):
+        """Compute llama.cpp serve profiles (Quality/Balanced/Speed) for `model`
+        against the detected hardware on `host` (or local). Returns concrete
+        flags (n_gpu_layers, n_cpu_moe, cache_type, ctx) the serve UI can apply.
+
+        `model` is matched against the catalog by name; if it's not in the
+        catalog (e.g. an ad-hoc HF repo), pass enough hints via a minimal synthetic
+        entry isn't possible here, so we return [] and the UI keeps manual flags.
+        """
+        from services.hwfit.hardware import detect_system
+        from services.hwfit.models import get_models
+        from services.hwfit.profiles import compute_serve_profiles
+        system = detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh)
+        if system.get("error"):
+            return {"system": system, "profiles": [], "error": system["error"]}
+        catalog = {m.get("name"): m for m in (get_models() or [])}
+
+        def _norm(s):
+            # Normalize for matching: drop org/ prefix, a trailing -GGUF/-gguf
+            # marker, and any quant tag, lowercase. So "DeepSeek-Coder-V2-Lite-
+            # Instruct-GGUF" (a local folder name) matches catalog entry
+            # "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct".
+            s = (s or "").lower().strip()
+            s = s.split("/")[-1]                     # drop org prefix
+            s = re.sub(r"[-_.]?gguf$", "", s)        # drop trailing gguf marker
+            s = re.sub(r"[-_.](q\d[^/]*|iq\d[^/]*|fp8|bf16|f16|awq[^/]*|gptq[^/]*)$", "", s)
+            return s
+
+        m = catalog.get(model)
+        if m is None and model:
+            want = _norm(model)
+            for name, entry in catalog.items():
+                nn = _norm(name)
+                if nn and (nn == want or want.endswith(nn) or nn.endswith(want)):
+                    m = entry
+                    break
+        if m is None:
+            return {"system": system, "profiles": [], "error": "model not in catalog"}
+        # Surface the model's trained context limit so the serve UI can clamp a
+        # user-typed context down to it (asking for ctx > n_ctx_train overflows
+        # and, with a quantized KV cache, can crash the GPU).
+        model_ctx_max = 0
+        for k in ("context_length", "max_position_embeddings", "n_ctx_train", "context"):
+            v = m.get(k)
+            if isinstance(v, (int, float)) and v > 0:
+                model_ctx_max = int(v)
+                break
+        return {
+            "system": system,
+            "profiles": compute_serve_profiles(
+                system, m,
+                serve_weights_gb=(serve_weights_gb or None),
+                serve_quant=(serve_quant or None),
+            ),
+            "model_ctx_max": model_ctx_max,
+        }
 
     @router.get("/image-models")
     def get_image_models(sort: str = "fit", search: str = "", host: str = "", gpu_count: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False):

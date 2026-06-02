@@ -5,13 +5,213 @@
  */
 
 import themeModule from './theme.js';
+import * as Modals from './modalManager.js';
+import spinnerModule from './spinner.js';
+import { registerMenuDismiss, dismissTopMenu, dismissOrRemove } from './escMenuStack.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
+let hoveredToggleCard = null;
+let hoveredToggleWindow = null;
+let hoveredDockChip = null;
+let _lastPointerClientX = null;
+let _lastPointerClientY = null;
 
 // Smooth scroll state
 let _scrollRafId = null;
 let _scrollBox = null;
+
+function _isTextEditingTarget(target) {
+  const el = target && target.nodeType === 1 ? target : target?.parentElement;
+  return !!(el && el.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]'));
+}
+
+function _targetEl(target) {
+  return target && target.nodeType === 1 ? target : target?.parentElement || null;
+}
+
+const SPACE_CARD_SELECTOR = [
+  '#email-lib-modal .doclib-card',
+  '#doclib-modal .doclib-card',
+  '#doclib-modal .doclib-chat-row',
+  '#memory-modal .doclib-card',
+  '#tasks-modal .task-card',
+  '#tasks-modal .task-log-row',
+  '#research-overlay [data-job-id]',
+  '#cookbook-modal .doclib-card',
+  '.email-reader-tab-modal .doclib-card',
+  '.email-window-modal .doclib-card',
+].join(', ');
+
+const SPACE_BLOCKED_SELECTOR = [
+  'button',
+  'a',
+  'input',
+  'textarea',
+  'select',
+  '[contenteditable="true"]',
+  '[contenteditable=""]',
+  '.recipient-chip',
+  '.doclib-card-dropdown',
+  '.email-card-dropdown',
+  '.task-log-row-actions',
+  '.modal-header',
+].join(', ');
+
+function _visibleModalForSpace(win) {
+  const modal = win?.closest?.('.modal[id]');
+  if (!modal || modal.classList.contains('hidden') || modal.classList.contains('modal-minimized')) return null;
+  return modal;
+}
+
+function _isSpaceVisible(el) {
+  if (!el || !document.contains(el)) return false;
+  if (el.closest?.('.modal.hidden, .modal.modal-minimized, [hidden]')) return false;
+  return true;
+}
+
+function _spaceWindowId(win) {
+  if (!win || !document.contains(win)) return null;
+  const modal = _visibleModalForSpace(win);
+  if (modal && Modals.isRegistered(modal.id)) return modal.id;
+  if (win.closest?.('.doc-editor-pane') && Modals.isRegistered('doc-panel') && !Modals.isMinimized('doc-panel')) return 'doc-panel';
+  return null;
+}
+
+function _windowAtPointer() {
+  if (_lastPointerClientX == null || _lastPointerClientY == null) return null;
+  const x = _lastPointerClientX;
+  const y = _lastPointerClientY;
+  const candidates = [
+    ...document.querySelectorAll('.modal:not(.hidden):not(.modal-minimized) .modal-content'),
+    ...document.querySelectorAll('.doc-editor-pane'),
+  ].filter(el => {
+    if (!document.contains(el)) return false;
+    const r = el.getBoundingClientRect();
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  });
+  if (!candidates.length) return null;
+  return candidates.reduce((top, el) => {
+    const mz = parseInt(getComputedStyle(el.closest('.modal') || el).zIndex, 10) || 0;
+    const tz = parseInt(getComputedStyle(top.closest('.modal') || top).zIndex, 10) || 0;
+    return mz >= tz ? el : top;
+  });
+}
+
+function _containsPointer(el) {
+  if (!el || _lastPointerClientX == null || _lastPointerClientY == null) return false;
+  const r = el.getBoundingClientRect();
+  return _lastPointerClientX >= r.left && _lastPointerClientX <= r.right
+    && _lastPointerClientY >= r.top && _lastPointerClientY <= r.bottom;
+}
+
+function _closeHoveredWindow() {
+  let win = _windowAtPointer();
+  if (!win) {
+    try {
+      const underPointer = document.elementFromPoint(_lastPointerClientX, _lastPointerClientY);
+      win = underPointer?.closest?.('.modal:not(.hidden):not(.modal-minimized) .modal-content, .doc-editor-pane') || null;
+    } catch {}
+  }
+  if (!win) win = hoveredToggleWindow;
+  if (!win || !document.contains(win)) return false;
+  const modalForWin = win.closest?.('.modal[id]');
+  if (modalForWin?.id === 'email-lib-modal') {
+    const closeBtn = document.getElementById('email-lib-close') || modalForWin.querySelector('.close-btn');
+    if (closeBtn) {
+      try { closeBtn.click(); return true; } catch {}
+    }
+    try { modalForWin.remove(); return true; } catch {}
+  }
+  const id = _spaceWindowId(win);
+  if (id && Modals.isRegistered(id)) {
+    Modals.close(id);
+    return true;
+  }
+  const modal = _visibleModalForSpace(win);
+  if (!modal) return false;
+  const closeBtn = modal.querySelector('.close-btn, .modal-close, .modal-close-btn, [data-action="close"]');
+  if (closeBtn) {
+    try { closeBtn.click(); return true; } catch {}
+  }
+  try { modal.classList.add('hidden'); return true; } catch {}
+  return false;
+}
+
+function _spaceIsBlocked(e, surface) {
+  const target = _targetEl(e.target);
+  if (!target) return false;
+  if (_isTextEditingTarget(target)) return !surface || surface.contains(target);
+  const blocked = target.closest?.(SPACE_BLOCKED_SELECTOR);
+  return !!(blocked && (!surface || surface.contains(blocked)));
+}
+
+function _activateSpaceCard(card) {
+  if (!card || !document.contains(card)) return false;
+  if (card.matches('#tasks-modal .task-card')) {
+    const titleRow = card.querySelector('.memory-item-title')?.closest('div');
+    if (titleRow) {
+      titleRow.click();
+      return true;
+    }
+  }
+  card.dataset.spaceToggle = '1';
+  card.click();
+  setTimeout(() => {
+    try { delete card.dataset.spaceToggle; } catch {}
+  }, 0);
+  return true;
+}
+
+function _initHoverCardSpaceToggle() {
+  if (document._odysseusHoverCardSpaceToggle) return;
+  document._odysseusHoverCardSpaceToggle = true;
+  document.addEventListener('pointerover', (e) => {
+    _lastPointerClientX = e.clientX;
+    _lastPointerClientY = e.clientY;
+    const chip = e.target?.closest?.('.minimized-dock-chip[data-modal-id]');
+    if (chip) hoveredDockChip = chip;
+    const card = e.target?.closest?.(SPACE_CARD_SELECTOR);
+    if (card) hoveredToggleCard = card;
+    const win = e.target?.closest?.('.modal:not(.hidden):not(.modal-minimized) .modal-content, .doc-editor-pane');
+    if (win) hoveredToggleWindow = win;
+  }, true);
+  document.addEventListener('pointermove', (e) => {
+    _lastPointerClientX = e.clientX;
+    _lastPointerClientY = e.clientY;
+  }, true);
+  document.addEventListener('pointerout', (e) => {
+    const next = e.relatedTarget;
+    if (hoveredDockChip && (!next || !hoveredDockChip.contains(next))) hoveredDockChip = null;
+    if (hoveredToggleCard && (!next || !hoveredToggleCard.contains(next))) hoveredToggleCard = null;
+    if (hoveredToggleWindow && (!next || !hoveredToggleWindow.contains(next))) hoveredToggleWindow = null;
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space' || e.repeat) return;
+    if (hoveredToggleCard && _isSpaceVisible(hoveredToggleCard)) {
+      if (_spaceIsBlocked(e, hoveredToggleCard)) return;
+      e.preventDefault();
+      _activateSpaceCard(hoveredToggleCard);
+      return;
+    }
+    if (hoveredDockChip && document.contains(hoveredDockChip)) {
+      if (_spaceIsBlocked(e, hoveredDockChip)) return;
+      const id = hoveredDockChip.dataset.modalId;
+      if (id && Modals.isRegistered(id)) {
+        e.preventDefault();
+        Modals.restore(id);
+      }
+      return;
+    }
+    const id = _spaceWindowId(hoveredToggleWindow);
+    if (!id) return;
+    if (_spaceIsBlocked(e, hoveredToggleWindow)) return;
+    e.preventDefault();
+    Modals.minimize(id);
+  }, true);
+}
+
+_initHoverCardSpaceToggle();
 
 /**
  * Copy text to clipboard
@@ -104,18 +304,31 @@ export function showToast(msg, durationOrOpts) {
   toastEl.textContent = '';
   toastEl.classList.remove('error');
 
-  let duration = 1200, actionLabel = null, onAction = null, actionHint = null, actionIcon = null;
+  let duration = 1200, actionLabel = null, onAction = null, actionHint = null, actionIcon = null, leadingIcon = null;
   if (typeof durationOrOpts === 'object' && durationOrOpts) {
     duration = durationOrOpts.duration || 5000;
     actionLabel = durationOrOpts.action;
     onAction = durationOrOpts.onAction;
     actionHint = durationOrOpts.actionHint || null;
     actionIcon = durationOrOpts.actionIcon || null;
+    leadingIcon = durationOrOpts.leadingIcon || null;
   } else if (typeof durationOrOpts === 'number') {
     duration = durationOrOpts;
   }
 
   const textSpan = document.createElement('span');
+  if (leadingIcon === 'check') {
+    const icon = document.createElement('span');
+    icon.className = 'toast-checkmark';
+    icon.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+    toastEl.appendChild(icon);
+  } else if (leadingIcon === 'spinner') {
+    const wp = spinnerModule.createWhirlpool(14);
+    const icon = wp.element;
+    icon.classList.add('toast-whirlpool');
+    icon.style.cssText = 'width:14px;height:14px;margin:0 8px 0 0;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;';
+    toastEl.appendChild(icon);
+  }
   textSpan.textContent = msg;
   toastEl.appendChild(textSpan);
 
@@ -366,8 +579,8 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
       overlay.id = 'styled-confirm-overlay';
       overlay.className = 'modal';
       overlay.innerHTML =
-        '<div class="modal-content styled-confirm-box">' +
-          '<div class="modal-header"><h4>Confirm</h4></div>' +
+        '<div class="modal-content styled-confirm-box" role="dialog" aria-modal="true" aria-labelledby="styled-confirm-title" aria-describedby="styled-confirm-msg">' +
+          '<div class="modal-header"><h4 id="styled-confirm-title">Confirm</h4></div>' +
           '<div class="modal-body"><p id="styled-confirm-msg"></p></div>' +
           '<div class="modal-footer">' +
             '<button id="styled-confirm-cancel"></button>' +
@@ -387,6 +600,8 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
     okBtn.className = danger ? 'confirm-btn confirm-btn-danger' : 'confirm-btn confirm-btn-primary';
     cancelBtn.className = 'confirm-btn confirm-btn-secondary';
 
+    // Remember what had focus so we can restore it when the dialog closes.
+    const _prevFocus = document.activeElement;
     overlay.classList.remove('hidden');
     overlay.style.display = '';
 
@@ -397,6 +612,7 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
       cancelBtn.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onBackdrop);
       document.removeEventListener('keydown', onKey);
+      try { _prevFocus && _prevFocus.focus && _prevFocus.focus(); } catch {}
       resolve(result);
     }
     function onOk() { cleanup(true); }
@@ -413,6 +629,13 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
         e.stopPropagation();
         e.stopImmediatePropagation();
         cleanup(false);
+      } else if (e.key === 'Tab') {
+        // Trap focus inside the dialog so Tab can't wander to the page behind.
+        e.preventDefault();
+        const f = [cancelBtn, okBtn];
+        const i = f.indexOf(document.activeElement);
+        const n = e.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i >= f.length - 1 ? 0 : i + 1);
+        f[n].focus();
       }
     }
 
@@ -443,7 +666,7 @@ export function styledPrompt(message, {
       overlay.id = 'styled-prompt-overlay';
       overlay.className = 'modal';
       overlay.innerHTML =
-        '<div class="modal-content styled-confirm-box styled-prompt-box">' +
+        '<div class="modal-content styled-confirm-box styled-prompt-box" role="dialog" aria-modal="true" aria-labelledby="styled-prompt-title" aria-describedby="styled-prompt-msg">' +
           '<div class="modal-header"><h4 id="styled-prompt-title"></h4></div>' +
           '<div class="modal-body">' +
             '<p id="styled-prompt-msg"></p>' +
@@ -472,6 +695,8 @@ export function styledPrompt(message, {
     okBtn.textContent = confirmText;
     cancelBtn.textContent = cancelText;
 
+    // Remember what had focus so we can restore it when the dialog closes.
+    const _prevFocus = document.activeElement;
     overlay.classList.remove('hidden');
     overlay.style.display = '';
 
@@ -483,6 +708,7 @@ export function styledPrompt(message, {
       overlay.removeEventListener('click', onBackdrop);
       document.removeEventListener('keydown', onKey);
       input.removeEventListener('keydown', onInputKey);
+      try { _prevFocus && _prevFocus.focus && _prevFocus.focus(); } catch {}
       resolve(result);
     }
     function onOk() { cleanup((input.value || '').trim()); }
@@ -494,6 +720,13 @@ export function styledPrompt(message, {
         e.stopPropagation();
         e.stopImmediatePropagation();
         cleanup(null);
+      } else if (e.key === 'Tab') {
+        // Trap focus inside the dialog (input → Cancel → OK → input …).
+        e.preventDefault();
+        const f = [input, cancelBtn, okBtn];
+        const i = f.indexOf(document.activeElement);
+        const n = e.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i >= f.length - 1 ? 0 : i + 1);
+        f[n].focus();
       }
     }
     function onInputKey(e) {
@@ -516,14 +749,15 @@ export function styledPrompt(message, {
   });
 }
 
+// Lookup table for esc(); hoisted out of the replace callback so it is
+// allocated once rather than per matched character.
+const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 /**
  * HTML-escape a string to prevent XSS.
  * Canonical implementation — other modules should use uiModule.esc() instead of local copies.
  */
 export function esc(s) {
-  return (s || '').replace(/[&<>"']/g, function(m) {
-    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
-  });
+  return (s || '').replace(/[&<>"']/g, (m) => _ESC_MAP[m]);
 }
 
 // ── Mobile: suppress synthetic click/mousedown on backdrop ──
@@ -556,7 +790,7 @@ function _initScrollDismiss() {
   if (chatHistory) {
     chatHistory.addEventListener('scroll', () => {
       chatHistory.querySelectorAll('.dropdown.show').forEach(d => d.classList.remove('show'));
-      document.querySelectorAll('.ctx-popup').forEach(p => p.remove());
+      document.querySelectorAll('.ctx-popup').forEach(dismissOrRemove);
     }, { passive: true });
   } else {
     // Retry once if element doesn't exist yet
@@ -609,7 +843,8 @@ const uiModule = {
   el,
   esc,
   isTouchInsideModal,
-  emptyStateIcon
+  emptyStateIcon,
+  registerMenuDismiss
 };
 
 export default uiModule;
@@ -670,7 +905,9 @@ if ('ontouchstart' in window) {
       '.email-card-dropdown, .hwfit-cached-dropdown, .cookbook-saved-menu, .cookbook-dep-menu'
     ).forEach(d => {
       if (d._anchor) d._anchor.classList.remove('cookbook-menu-active', 'reader-more-active');
-      d.remove();
+      // Registered menus tear down through their own dismiss (releasing the
+      // Escape-stack entry); unregistered ones (email/dep) just get removed.
+      dismissOrRemove(d);
     });
   }
 
@@ -976,8 +1213,6 @@ if (!window._odyEscExpandGuard) {
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || e.defaultPrevented) return;
-    const t = e.target;
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
 
     // Find the single thing to close, in priority order. The first hit wins.
     // Important: if a thinking block is open we MUST handle it ourselves and
@@ -985,6 +1220,21 @@ if (!window._odyEscExpandGuard) {
     // (the live-stream chat rebuilds thinking DOM mid-stream so the header
     // can briefly be absent). Toggling the `expanded` class directly is the
     // fallback so ESC never bypasses the thinking block to hit a modal.
+    if (_closeHoveredWindow()) {
+      e.stopImmediatePropagation(); e.preventDefault();
+      return;
+    }
+    // Transient ad-hoc menus (dropdowns / context popups) live outside the
+    // .modal system and register a dismiss callback in escMenuStack. Close the
+    // most-recently-opened one first — so a menu opened over a modal dismisses
+    // before the modal — and do it BEFORE the text-input guard below, since a
+    // menu may own the focused input (e.g. a search dropdown).
+    if (dismissTopMenu()) {
+      e.stopImmediatePropagation(); e.preventDefault();
+      return;
+    }
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     const expanded = document.querySelector('.doclib-card-expanded');
     const think = document.querySelector('.thinking-content.expanded');
     if (expanded) {

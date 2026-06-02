@@ -32,32 +32,40 @@ from fastapi import Query, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List
 
-from src.auth_helpers import get_current_user
+from src.auth_helpers import _auth_disabled, get_current_user
 from src.secret_storage import decrypt as _decrypt
 
 logger = logging.getLogger(__name__)
 
 
-def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message: str | bytes, timeout: int = 30) -> None:
-    """Send through SMTP using the conventional TLS mode for the configured port.
+def _smtp_security_mode(cfg: dict) -> str:
+    raw = str(cfg.get("smtp_security") or "").strip().lower()
+    if raw in {"ssl", "starttls", "none"}:
+        return raw
+    port = int(cfg.get("smtp_port") or 465)
+    if port == 587:
+        return "starttls"
+    return "ssl"
 
-    Account settings only store host/port today. Port 465 is implicit TLS
-    (SMTP_SSL); port 587 is plain SMTP upgraded with STARTTLS. Using SSL
-    directly against 587 raises the classic "[SSL: WRONG_VERSION_NUMBER]"
-    error even when credentials are correct.
-    """
+
+def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message: str | bytes, timeout: int = 30) -> None:
+    """Send through SMTP using the configured transport security mode."""
     host = cfg["smtp_host"]
     port = int(cfg.get("smtp_port") or 465)
     user = cfg.get("smtp_user") or ""
     password = cfg.get("smtp_password") or ""
-    if port == 587:
-        with smtplib.SMTP(host, port, timeout=timeout) as smtp:
-            smtp.starttls()
+    security = _smtp_security_mode(cfg)
+
+    if security == "ssl":
+        with smtplib.SMTP_SSL(host, port, timeout=timeout) as smtp:
             if user and password:
                 smtp.login(user, password)
             smtp.sendmail(from_addr, recipients, message)
         return
-    with smtplib.SMTP_SSL(host, port, timeout=timeout) as smtp:
+
+    with smtplib.SMTP(host, port, timeout=timeout) as smtp:
+        if security == "starttls":
+            smtp.starttls()
         if user and password:
             smtp.login(user, password)
         smtp.sendmail(from_addr, recipients, message)
@@ -82,8 +90,8 @@ def _strip_think(text: str) -> str:
 import re as _re_reply
 # Accept REPLY / SUMMARY / OUTPUT as the opening fence so the same extractor
 # serves replies and summaries (any fenced final-output block).
-_REPLY_OPEN_RE = _re_reply.compile(r"<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>>", _re_reply.I)
-_REPLY_CLOSE_RE = _re_reply.compile(r"<<<\s*END\s*>>>", _re_reply.I)
+_REPLY_OPEN_RE = _re_reply.compile(r"<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+", _re_reply.I)
+_REPLY_CLOSE_RE = _re_reply.compile(r"<<<\s*END\s*>>+", _re_reply.I)
 
 
 def _extract_reply(text: str) -> str:
@@ -139,6 +147,8 @@ def _require_auth(request: Request) -> str:
     u = get_current_user(request)
     if u:
         return u
+    if _auth_disabled():
+        return ""
     auth_mgr = getattr(request.app.state, "auth_manager", None)
     if auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
         raise HTTPException(401, "Not authenticated")
@@ -254,6 +264,20 @@ ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 COMPOSE_UPLOADS_DIR = ATTACHMENTS_DIR / "_compose"
 COMPOSE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 SCHEDULED_DB = DATA_DIR / "scheduled_emails.db"
+
+
+def attachment_extract_dir(folder: str, uid: str) -> Path:
+    """Containment-safe extraction directory for an attachment.
+
+    `folder` and `uid` are user-controlled (query/path params). Flatten them to
+    a single safe path segment so a value like folder='../../tmp' can't escape
+    ATTACHMENTS_DIR, then assert containment as belt-and-suspenders."""
+    key = re.sub(r"[^A-Za-z0-9._-]", "_", f"{folder}_{uid}") or "_"
+    target = (ATTACHMENTS_DIR / key).resolve()
+    base = ATTACHMENTS_DIR.resolve()
+    if target != base and base not in target.parents:
+        raise HTTPException(400, "Invalid attachment location")
+    return target
 
 
 def _init_scheduled_db():
@@ -444,7 +468,7 @@ _init_scheduled_db()
 
 def _load_settings():
     if SETTINGS_FILE.exists():
-        return json.loads(SETTINGS_FILE.read_text())
+        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
     return {}
 
 
@@ -514,6 +538,7 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
                     "account_name": row.name,
                     "smtp_host": row.smtp_host or "",
                     "smtp_port": int(row.smtp_port or 465),
+                    "smtp_security": _smtp_security_mode({"smtp_security": getattr(row, "smtp_security", ""), "smtp_port": row.smtp_port}),
                     "smtp_user": row.smtp_user or "",
                     "smtp_password": _decrypt(row.smtp_password or ""),
                     "imap_host": row.imap_host or "",
@@ -540,6 +565,10 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
         "account_name": "legacy",
         "smtp_host": settings.get("smtp_host", os.environ.get("SMTP_HOST", "")),
         "smtp_port": int(settings.get("smtp_port", os.environ.get("SMTP_PORT", "465")) or 465),
+        "smtp_security": _smtp_security_mode({
+            "smtp_security": settings.get("smtp_security", os.environ.get("SMTP_SECURITY", "")),
+            "smtp_port": settings.get("smtp_port", os.environ.get("SMTP_PORT", "465")),
+        }),
         "smtp_user": settings.get("smtp_user", os.environ.get("SMTP_USER", "")),
         "smtp_password": settings.get("smtp_password", os.environ.get("SMTP_PASSWORD", "")),
         "imap_host": settings.get("imap_host", os.environ.get("IMAP_HOST", "")),

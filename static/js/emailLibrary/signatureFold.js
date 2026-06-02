@@ -110,13 +110,18 @@ export function _foldSummary(label, iconSvg, meta) {
       subMeta = '';
     }
   }
+  // `meta` is derived from _extractQuoteMeta, which strips tags but then
+  // un-escapes entities (to recover `<foo@bar.com>` for bubble alignment) —
+  // so it can carry attacker-controlled angle brackets from a quoted block.
+  // This summary is built into innerHTML, so escape both parts to stop a
+  // crafted quote (e.g. `From: <img src=x onerror=...>`) from running script.
   const metaSpan = subMeta
-    ? `<span class="email-fold-summary-meta">${subMeta}</span>`
+    ? `<span class="email-fold-summary-meta">${_esc(subMeta)}</span>`
     : '';
   return (
     '<summary class="email-fold-summary">'
     + iconSvg
-    + `<span class="email-fold-summary-name">${primary}</span>`
+    + `<span class="email-fold-summary-name">${_esc(primary)}</span>`
     + metaSpan
     + '<svg class="email-summary-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;transition:transform .15s ease;"><polyline points="6 9 12 15 18 9"/></svg>'
     + '</summary>'
@@ -158,9 +163,12 @@ export function _extractQuoteMeta(html) {
   if (from.length > 60) from = from.slice(0, 57) + '…';
   if (date.length > 28) date = date.slice(0, 25) + '…';
 
-  if (from && date) return `${_esc(from)} · ${_esc(date)}`;
-  if (from) return _esc(from);
-  if (date) return _esc(date);
+  // Return the raw sender/date text; `_foldSummary` is the single sink that
+  // builds these into HTML, so it owns escaping. Escaping here too would
+  // double-encode (e.g. "Ben & Jerry" -> "Ben &amp;amp; Jerry").
+  if (from && date) return `${from} · ${date}`;
+  if (from) return from;
+  if (date) return date;
   return '';
 }
 

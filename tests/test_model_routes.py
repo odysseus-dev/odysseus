@@ -6,6 +6,13 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
+_endpoint_resolver = sys.modules.get("src.endpoint_resolver")
+if _endpoint_resolver is not None and not getattr(_endpoint_resolver, "__file__", None):
+    # Other tests stub this module during collection. These helper tests need
+    # the real URL normalization helpers so Anthropic /v1 handling is covered.
+    sys.modules.pop("src.endpoint_resolver", None)
+    sys.modules.pop("routes.model_routes", None)
+
 if "core.database" not in sys.modules:
     _core_db = types.ModuleType("core.database")
     for _name in [
@@ -57,6 +64,9 @@ class TestMatchProviderCurated:
 
     def test_xai_url(self):
         assert _match_provider_curated("https://api.x.ai/v1", "openai") == "xai"
+
+    def test_ollama_url(self):
+        assert _match_provider_curated("https://ollama.com/api", "openai") == "ollama"
 
     def test_no_url_match_returns_provider(self):
         assert _match_provider_curated("https://localhost:1234", "openai") == "openai"
@@ -256,6 +266,26 @@ class TestSetupProbeSafety:
         assert _probe_endpoint("https://api.anthropic.com/v1", "good-key") == ["claude-sonnet-4-5"]
         assert seen == ["https://api.anthropic.com/v1/models"]
 
+    def test_ollama_cloud_probe_uses_native_tags_endpoint(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+        seen = []
+
+        def fake_get(url, headers=None, timeout=None):
+            seen.append((url, headers))
+            request = httpx.Request("GET", url)
+            response = httpx.Response(
+                200,
+                request=request,
+                json={"models": [{"name": "gpt-oss:120b"}, {"model": "qwen3:235b"}]},
+            )
+            return response
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+
+        assert _probe_endpoint("https://ollama.com/api", "ollama-key") == ["gpt-oss:120b", "qwen3:235b"]
+        assert seen == [("https://ollama.com/api/tags", {"Authorization": "Bearer ollama-key"})]
+
     def test_unkeyed_anthropic_probe_can_use_curated_fallback(self, monkeypatch):
         monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
         monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
@@ -266,3 +296,23 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
 
         assert _probe_endpoint("https://api.anthropic.com/v1") == ANTHROPIC_MODELS
+
+def test_ollama_endpoint_error_message_includes_troubleshooting():
+    msg = model_routes._model_endpoint_error_message(
+        "http://localhost:11434/v1",
+        {"error": "Connection refused"},
+    )
+
+    assert "No Ollama models found" in msg
+    assert "Connection refused" in msg
+    assert "http://localhost:11434/v1" in msg
+    assert "ollama list" in msg
+
+
+def test_generic_endpoint_error_message_preserves_probe_error():
+    msg = model_routes._model_endpoint_error_message(
+        "https://api.example.com/v1",
+        {"error": "HTTP 401"},
+    )
+
+    assert msg == "No models found for that provider/key. Last probe error: HTTP 401."

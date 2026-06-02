@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 import logging
+from datetime import datetime
 from typing import Dict, Any, AsyncGenerator, List
 
 from fastapi import APIRouter, Request, HTTPException, Form, Query
@@ -17,11 +18,13 @@ from src.agent_loop import stream_agent_loop
 from src import agent_runs
 from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
+from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user
 from routes.session_routes import _verify_session_owner
-from core.database import SessionLocal
+from routes.document_helpers import _owner_session_filter
+from core.database import SessionLocal, get_session_mode, set_session_mode
 from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
 from routes.research_routes import _resolve_research_endpoint
@@ -33,6 +36,7 @@ from routes.chat_helpers import (
     clean_thinking_for_save,
     _enforce_chat_privileges,
 )
+from src.action_intents import message_needs_tools as _message_needs_tools
 
 logger = logging.getLogger(__name__)
 
@@ -53,38 +57,103 @@ def _stream_set(session_id: str, **fields) -> None:
     rec.update(fields)
 
 
-import re as _re
-# Phrases that clearly signal the user wants to create a todo / reminder /
-# calendar event. When any of these hit in plain chat mode we silently
-# escalate to the agent loop so manage_notes / manage_calendar are in scope.
-_TOOL_INTENT_PATTERNS = [
-    _re.compile(r"\bremind\s+me\b", _re.I),
-    _re.compile(r"\badd\s+(a\s+|an\s+)?(todo|task|reminder)\b", _re.I),
-    _re.compile(r"\b(create|schedule|book)\s+(a\s+|an\s+)?(event|meeting|appointment|reminder|call)\b", _re.I),
-    _re.compile(r"\bput\s+.+\bon\s+(my\s+)?calendar\b", _re.I),
-    _re.compile(r"\b(todo|reminder)\s*:", _re.I),
-    _re.compile(r"\bmake\s+(a\s+|an\s+)?(note|todo|reminder)\b", _re.I),
-    # Email intent — "write/send/email/message [someone]", "write hi to X"
-    _re.compile(r"\b(write|send)\s+.{1,30}\bto\s+\w+", _re.I),
-    _re.compile(r"\b(send|write|reply)\s+(an?\s+)?(email|message|mail)\b", _re.I),
-    _re.compile(r"\b(email|message)\s+\w+\b", _re.I),
-    _re.compile(r"\bcheck\s+(my\s+)?(email|inbox|mail)\b", _re.I),
-    _re.compile(r"\bunread\s+(email|mail)s?\b", _re.I),
-    # Shell / remote-host intent — covers the deepseek "can you ssh into X"
-    # case. We escalate to agent so `bash` is available; the model can still
-    # decide it doesn't need to actually run anything.
-    _re.compile(r"\bssh\s+(in)?to\b", _re.I),
-    _re.compile(r"\bssh\s+\w+", _re.I),
-    _re.compile(r"\b(run|execute)\s+.{1,40}\bon\s+\w+", _re.I),
-    _re.compile(r"\b(can|could|please|would)\s+you\s+(run|execute|exec)\b", _re.I),
-    _re.compile(r"\b(deploy|build|install|restart|reboot|kill|tail|grep|cat|ls|cd|cp|mv|rm)\b\s+\S+", _re.I),
-    _re.compile(r"\b(check|see)\s+(if|whether|what)\s+.{1,40}\b(running|process|service|port|file|exists?)\b", _re.I),
-]
-
-def _message_needs_tools(text: str) -> bool:
-    if not text:
+def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
+    if not session_url or not endpoint_base:
         return False
-    return any(p.search(text) for p in _TOOL_INTENT_PATTERNS)
+    sess = session_url.rstrip("/")
+    base = _normalize_base(endpoint_base).rstrip("/")
+    variants = {
+        base,
+        base + "/chat/completions",
+        build_chat_url(base).rstrip("/"),
+    }
+    return sess in variants or sess.startswith(base + "/")
+
+
+def _clear_orphaned_session_endpoint(sess) -> bool:
+    """Clear a session model if its endpoint was deleted from ModelEndpoint."""
+    if not getattr(sess, "endpoint_url", ""):
+        return False
+    db = SessionLocal()
+    try:
+        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        for ep in endpoints:
+            if _session_url_matches_endpoint(sess.endpoint_url or "", ep.base_url or ""):
+                return False
+        db_session = db.query(DBSession).filter(DBSession.id == sess.id).first()
+        if db_session:
+            db_session.endpoint_url = ""
+            db_session.model = ""
+            db_session.updated_at = datetime.utcnow()
+            db.commit()
+        sess.endpoint_url = ""
+        sess.model = ""
+        sess.headers = {}
+        return True
+    except Exception:
+        db.rollback()
+        return False
+    finally:
+        db.close()
+
+
+def _recover_empty_session_model(sess, session_id: str) -> bool:
+    """Re-populate sess.model from the matching endpoint's cached models.
+
+    Covers the window between endpoint setup and the first chat send: the
+    picker showed a model in the dropdown but the session record never got
+    written (Issue #587 — UI uses the cached endpoint list, not s.model).
+    Without this, we'd POST the upstream with model="" and get a generic
+    401/503 instead of using the model the user already picked.
+
+    Returns True iff sess.model was repaired.
+    """
+    if getattr(sess, "model", None):
+        return False
+    db = SessionLocal()
+    try:
+        # Prefer the endpoint whose base URL matches the session — we know the
+        # user already pointed this session at that endpoint, so its first
+        # cached model is the most defensible default.
+        ep = None
+        if getattr(sess, "endpoint_url", ""):
+            endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+            for cand in endpoints:
+                if _session_url_matches_endpoint(sess.endpoint_url or "", cand.base_url or ""):
+                    ep = cand
+                    break
+        if not ep:
+            return False
+        try:
+            cached = json.loads(ep.cached_models) if isinstance(ep.cached_models, str) else (ep.cached_models or [])
+        except Exception:
+            cached = []
+        if not cached:
+            return False
+        model = cached[0]
+        if not isinstance(model, str) or not model.strip():
+            return False
+        model = model.strip()
+        # Persist so the next request, websocket reconnect, or page reload
+        # picks up the same model (we'd otherwise re-pick on every send
+        # and silently switch on the user if the cached order shifts).
+        db_session = db.query(DBSession).filter(DBSession.id == session_id).first()
+        if db_session:
+            db_session.model = model
+            db_session.updated_at = datetime.utcnow()
+            db.commit()
+        sess.model = model
+        logger.info(
+            "Recovered empty session model for %s — picked %r from endpoint %s",
+            session_id, model, ep.id,
+        )
+        return True
+    except Exception as e:
+        db.rollback()
+        logger.warning("Failed to recover empty session model for %s: %s", session_id, e)
+        return False
+    finally:
+        db.close()
 
 
 def setup_chat_routes(
@@ -121,6 +190,18 @@ def setup_chat_routes(
             sess = session_manager.get_session(session)
         except KeyError:
             raise HTTPException(404, f"Session '{session}' not found")
+        if _clear_orphaned_session_endpoint(sess):
+            raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
+
+        # Empty model + live endpoint = setup race (Issue #587). Repair from
+        # the endpoint's cached model list before privilege checks, which
+        # otherwise see "" and behave inconsistently with the allowlist.
+        _recover_empty_session_model(sess, session)
+        if not getattr(sess, "model", "").strip():
+            raise HTTPException(
+                400,
+                "No model selected for this chat. Open the model picker and choose one before sending.",
+            )
 
         # Same allowed_models + daily-cap gate as chat_stream (mirror so the
         # non-streaming path can't be used to bypass).
@@ -259,6 +340,20 @@ def setup_chat_routes(
             # but BEFORE loading. Prevents cross-user session hijack.
             _verify_session_owner(request, session)
             sess = session_manager.get_session(session)
+            if _clear_orphaned_session_endpoint(sess):
+                raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
+            # Issue #587: picker shows a model from the endpoint cache but
+            # s.model never made it onto the DB row (first-send race after
+            # endpoint setup, or a previous endpoint delete/recreate). Pull
+            # the first cached model off the matching endpoint so the
+            # upstream isn't called with model="" (which surfaces as a
+            # generic 401/503).
+            _recover_empty_session_model(sess, session)
+            if not getattr(sess, "model", "").strip():
+                raise HTTPException(
+                    400,
+                    "No model selected for this chat. Open the model picker and choose one before sending.",
+                )
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))
         except (ValueError, ValidationError):
@@ -280,26 +375,14 @@ def setup_chat_routes(
         # Check for research_pending BEFORE mode persist overwrites it
         do_research = str(use_research).lower() == "true"
         if not do_research:
-            try:
-                _mode_db = SessionLocal()
-                _db_mode = _mode_db.query(DBSession.mode).filter(DBSession.id == session).scalar()
-                _mode_db.close()
-                if _db_mode == 'research_pending':
-                    do_research = True
-                    logger.info(f"Session {session} in research_pending — auto-triggering research")
-            except Exception:
-                pass
+            if get_session_mode(session) == 'research_pending':
+                do_research = True
+                logger.info(f"Session {session} in research_pending — auto-triggering research")
 
         # Persist session mode (research > agent > chat)
         _effective_mode = 'research' if do_research else (chat_mode or 'chat')
         if _effective_mode in ('agent', 'research', 'chat'):
-            try:
-                _mdb = SessionLocal()
-                _mdb.query(DBSession).filter(DBSession.id == session).update({"mode": _effective_mode})
-                _mdb.commit()
-                _mdb.close()
-            except Exception as _me:
-                logger.warning("Failed to persist session mode: %s", _me)
+            set_session_mode(session, _effective_mode)
 
         att_ids = []
         if body and isinstance(body.get("attachments"), list):
@@ -342,9 +425,12 @@ def setup_chat_routes(
         try:
             if active_doc_id:
                 logger.info(f"[doc-inject] active_doc_id from frontend: {active_doc_id}")
-                active_doc = _doc_db.query(DBDocument).filter(
-                    DBDocument.id == active_doc_id,
-                ).first()
+                # Scope to the caller's documents. The session and in-memory
+                # fallbacks below are already owner/session-bound; this
+                # explicit-id path looked up by id alone, so a user could
+                # inject another user's document by passing its id.
+                _doc_q = _doc_db.query(DBDocument).filter(DBDocument.id == active_doc_id)
+                active_doc = _owner_session_filter(_doc_q, ctx.user).first()
                 if active_doc:
                     logger.info(f"[doc-inject] found by ID: title={active_doc.title!r}, lang={active_doc.language!r}, is_active={active_doc.is_active}, content_len={len(active_doc.current_content or '')}")
                 else:
@@ -388,6 +474,7 @@ def setup_chat_routes(
             disabled_tools.add("bash")
         if str(allow_web_search).lower() != "true":
             disabled_tools.add("web_search")
+            disabled_tools.add("web_fetch")
 
         # Nobody/incognito mode: deny tools that would expose the user's
         # persistent memory, past chats, or other identity-linked data.
@@ -451,7 +538,7 @@ def setup_chat_routes(
             disabled_tools.update(_compare_strip)
             # In chat mode compare, disable ALL agent tools (no bash, python, file ops)
             if chat_mode == 'chat':
-                disabled_tools.update({"bash", "python", "read_file", "write_file", "web_search", "search_chats", "manage_tasks"})
+                disabled_tools.update({"bash", "python", "read_file", "write_file", "web_search", "web_fetch", "search_chats", "manage_tasks"})
 
         async def stream_with_save() -> AsyncGenerator[str, None]:
             # _effective_mode is read-only here; closure captures it from
@@ -501,13 +588,7 @@ def setup_chat_routes(
                     logger.info(f"First research message — asking clarifying questions for: {message[:60]}")
                     yield f'data: {json.dumps({"type": "model_info", "model": sess.model, "suffix": "Research"})}\n\n'
                     # Set DB mode to research_pending so the NEXT message auto-triggers research
-                    try:
-                        _pdb = SessionLocal()
-                        _pdb.query(DBSession).filter(DBSession.id == session).update({"mode": "research_pending"})
-                        _pdb.commit()
-                        _pdb.close()
-                    except Exception as _pe:
-                        logger.warning(f"Failed to set research_pending: {_pe}")
+                    set_session_mode(session, "research_pending")
                     ctx.messages.insert(0, {"role": "system", "content":
                         "The user wants to start deep web research. Before searching, ask 2-3 brief "
                         "clarifying questions to understand exactly what they want to know. For example: "
@@ -692,6 +773,7 @@ def setup_chat_routes(
                 return
             elif chat_mode == "chat":
                 _chat_start = time.time()
+                _answered_by = None  # set if the selected model failed and a fallback answered
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
                     _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
@@ -712,12 +794,22 @@ def setup_chat_routes(
                             try:
                                 data = json.loads(chunk[6:])
                                 if "delta" in data:
-                                    full_response += data["delta"]
-                                    _stream_set(session, partial=full_response)
+                                    # Reasoning tokens arrive flagged thinking:true.
+                                    # Forward them so the client can show a thinking
+                                    # indicator, but don't fold them into the saved
+                                    # reply (mirrors the rewrite path below).
+                                    if not data.get("thinking"):
+                                        full_response += data["delta"]
+                                        _stream_set(session, partial=full_response)
+                                    yield chunk
+                                elif data.get("type") == "fallback":
+                                    # Selected model failed; a fallback answered.
+                                    # Forward the notice and remember the real model.
+                                    _answered_by = data.get("answered_by") or _answered_by
                                     yield chunk
                                 elif data.get("type") == "usage":
                                     last_metrics = data.get("data", {})
-                                    last_metrics["model"] = sess.model
+                                    last_metrics["model"] = _answered_by or sess.model
                                     if ctx.context_length and last_metrics.get("input_tokens"):
                                         pct = min(round((last_metrics["input_tokens"] / ctx.context_length) * 100, 1), 100.0)
                                         last_metrics["context_percent"] = pct
@@ -785,6 +877,7 @@ def setup_chat_routes(
                 # ── Agent mode: full agent loop with tools ──
                 _agent_rounds = 0
                 _agent_tool_calls = 0
+                _answered_by = None  # set if the selected model failed and a fallback answered
                 try:
                     from src.settings import get_setting
                     _tool_budget = int(get_setting("agent_max_tool_calls", 0))
@@ -809,8 +902,12 @@ def setup_chat_routes(
                             try:
                                 data = json.loads(chunk[6:])
                                 if "delta" in data:
-                                    full_response += data["delta"]
-                                    _stream_set(session, partial=full_response)
+                                    # Reasoning tokens arrive flagged thinking:true.
+                                    # Forward them for the live indicator, but keep
+                                    # them out of the saved reply (same as chat mode).
+                                    if not data.get("thinking"):
+                                        full_response += data["delta"]
+                                        _stream_set(session, partial=full_response)
                                     yield chunk
                                 elif data.get("type") == "web_sources":
                                     web_sources = data.get("data", [])
@@ -825,9 +922,16 @@ def setup_chat_routes(
                                     elif data.get("type") == "tool_start":
                                         _agent_tool_calls += 1
                                     yield chunk
+                                elif data.get("type") == "fallback":
+                                    # Selected model failed; a fallback answered.
+                                    # Forward the notice and remember the real
+                                    # model so metrics reflect it, not the masked
+                                    # selected model.
+                                    _answered_by = data.get("answered_by") or _answered_by
+                                    yield chunk
                                 elif data.get("type") == "metrics":
                                     last_metrics = data.get("data", {})
-                                    last_metrics["model"] = sess.model
+                                    last_metrics["model"] = _answered_by or sess.model
                                     yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             except json.JSONDecodeError:
                                 yield chunk
@@ -924,11 +1028,15 @@ def setup_chat_routes(
         _verify_session_owner(request, session_id)
         # A detached run can still be going even if _active_streams was popped;
         # report it as active so the client knows to reconnect via /resume.
-        if session_id not in _active_streams:
+        # Read once via .get() to avoid a KeyError race between the membership
+        # check and the indexed read if a sibling stream's finally pops the
+        # entry in between (same pattern _stream_set already uses).
+        rec = _active_streams.get(session_id)
+        if rec is None:
             if agent_runs.is_active(session_id):
                 return {"status": "streaming", "detached": True}
             raise HTTPException(404, "No active stream for this session")
-        return _active_streams[session_id]
+        return rec
 
     # ------------------------------------------------------------------ #
     # POST /api/inject_context

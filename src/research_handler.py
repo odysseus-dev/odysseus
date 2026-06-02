@@ -22,6 +22,14 @@ logger = logging.getLogger(__name__)
 RESEARCH_DATA_DIR = Path("data/deep_research")
 
 
+def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, n))
+
+
 class ResearchHandler:
     """Handles research service operations with iterative deep research."""
 
@@ -61,8 +69,40 @@ class ResearchHandler:
         """
         # Build conversation context from history
         history = getattr(sess, 'history', [])
+
+        # A bare affirmation ("yes", "ok", "go ahead") is the user accepting the
+        # clarifying-question round, NOT a research topic — researching the word
+        # "yes" is the classic failure here. When synthesis can't run or fails,
+        # fall back to the earliest substantive user message (the original ask)
+        # rather than the literal follow-up.
+        #
+        # Match on an explicit affirmation/continuation phrase only (plus the
+        # empty/punctuation-only case). We deliberately do NOT use a length
+        # heuristic: a short answer like "UK", "C++", or "Rust" is a real topic
+        # in a clarification flow and must be left untouched.
+        _AFFIRMATIONS = {
+            "yes", "y", "yeah", "yep", "yup", "sure", "sure thing", "ok", "okay",
+            "k", "kk", "go", "go ahead", "go for it", "do it", "please",
+            "yes please", "sounds good", "continue", "proceed", "lets go",
+            "let's go", "yes go ahead",
+        }
+
+        def _normalize(text: str) -> str:
+            return (text or "").strip().lower().strip("!.? ")
+
+        def _fallback() -> str:
+            normalized = _normalize(latest_message)
+            if normalized and normalized not in _AFFIRMATIONS:
+                return latest_message  # short or long, it's a real topic
+            # Affirmation, or empty/punctuation-only: use the original ask.
+            for m in history:
+                c = (m.content or "").strip()
+                if m.role == "user" and c and _normalize(c) not in _AFFIRMATIONS:
+                    return c
+            return latest_message
+
         if len(history) <= 1:
-            return latest_message  # No conversation to synthesize
+            return _fallback()  # No conversation to synthesize
 
         # Take last 6 messages max for context
         recent = history[-6:]
@@ -96,7 +136,7 @@ class ResearchHandler:
         except Exception as e:
             logger.warning(f"Query synthesis failed: {e}")
 
-        return latest_message  # Fallback
+        return _fallback()
 
     async def generate_plan(
         self, query: str, llm_endpoint: str, llm_model: str, llm_headers: dict = None,
@@ -156,7 +196,7 @@ class ResearchHandler:
         llm_endpoint: str,
         llm_model: str,
         max_time: int = 300,
-        hard_timeout: int = 600,
+        hard_timeout: int = None,
         llm_headers: dict = None,
         on_complete: callable = None,
         prior_report: str = "",
@@ -165,6 +205,8 @@ class ResearchHandler:
         max_rounds: int = 20,
         search_provider: str = None,
         category: str = None,
+        extraction_timeout: int = None,
+        extraction_concurrency: int = None,
         owner: str = "",
     ) -> dict:
         """Start research as a background task. Returns task info dict.
@@ -172,6 +214,18 @@ class ResearchHandler:
         max_rounds is the safety cap; the AI's _should_stop decision (after
         min_rounds) terminates the loop earlier in normal operation.
         """
+        # Resolve the hard wall-clock timeout from settings when the caller
+        # didn't pin one. Local / edge models routinely need more than the
+        # old 600s default to finish a deep-research synthesis.
+        if hard_timeout is None:
+            from src.settings import get_setting
+            hard_timeout = _bounded_int(
+                get_setting("research_run_timeout_seconds", 1800),
+                default=1800,
+                minimum=60,
+                maximum=86400,
+            )
+
         # Cancel any existing research for this session
         if session_id in self._active_tasks:
             existing = self._active_tasks[session_id]
@@ -222,6 +276,8 @@ class ResearchHandler:
                         max_rounds=max_rounds,
                         search_provider=search_provider,
                         category=category,
+                        extraction_timeout=extraction_timeout,
+                        extraction_concurrency=extraction_concurrency,
                     ),
                     timeout=hard_timeout,
                 )
@@ -287,7 +343,7 @@ class ResearchHandler:
         path = RESEARCH_DATA_DIR / f"{session_id}.json"
         if path.exists():
             try:
-                data = json.loads(path.read_text())
+                data = json.loads(path.read_text(encoding="utf-8"))
                 if data.get("consumed"):
                     return None
                 return {
@@ -326,7 +382,7 @@ class ResearchHandler:
         path = RESEARCH_DATA_DIR / f"{session_id}.json"
         if path.exists():
             try:
-                data = json.loads(path.read_text())
+                data = json.loads(path.read_text(encoding="utf-8"))
                 if data.get("consumed"):
                     return None
                 return data.get("result")
@@ -348,7 +404,7 @@ class ResearchHandler:
         path = RESEARCH_DATA_DIR / f"{session_id}.json"
         if path.exists():
             try:
-                data = json.loads(path.read_text())
+                data = json.loads(path.read_text(encoding="utf-8"))
                 return data.get("sources")
             except Exception:
                 pass
@@ -365,7 +421,7 @@ class ResearchHandler:
         path = RESEARCH_DATA_DIR / f"{session_id}.json"
         if path.exists():
             try:
-                data = json.loads(path.read_text())
+                data = json.loads(path.read_text(encoding="utf-8"))
                 return data.get("raw_findings")
             except Exception as e:
                 logger.warning(f"Failed to read raw findings for {session_id}: {e}")
@@ -413,7 +469,7 @@ class ResearchHandler:
         try:
             for p in RESEARCH_DATA_DIR.glob("*.json"):
                 try:
-                    data = json.loads(p.read_text())
+                    data = json.loads(p.read_text(encoding="utf-8"))
                     if data.get("status") == "done":
                         started = data.get("started_at", 0)
                         completed = data.get("completed_at", 0)
@@ -436,9 +492,9 @@ class ResearchHandler:
         path = RESEARCH_DATA_DIR / f"{session_id}.json"
         if path.exists():
             try:
-                data = json.loads(path.read_text())
+                data = json.loads(path.read_text(encoding="utf-8"))
                 data["consumed"] = True
-                path.write_text(json.dumps(data))
+                path.write_text(json.dumps(data), encoding="utf-8")
             except Exception:
                 pass
 
@@ -469,7 +525,7 @@ class ResearchHandler:
                 # SECURITY: stamp owner so route handlers can filter by user.
                 "owner": entry.get("owner", ""),
             }
-            path.write_text(json.dumps(data))
+            path.write_text(json.dumps(data), encoding="utf-8")
             logger.info(f"Research result saved to {path}")
             try:
                 from src.event_bus import fire_event
@@ -484,7 +540,7 @@ class ResearchHandler:
         path = RESEARCH_DATA_DIR / f"{session_id}.json"
         if path.exists():
             try:
-                return json.loads(path.read_text())
+                return json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 pass
         return None
@@ -499,7 +555,7 @@ class ResearchHandler:
         try:
             from src.visual_report import generate_visual_report
 
-            data = json.loads(json_path.read_text())
+            data = json.loads(json_path.read_text(encoding="utf-8"))
             report_md = data.get("raw_report") or data.get("result", "")
             html_content = generate_visual_report(
                 question=data.get("query", ""),
@@ -522,12 +578,12 @@ class ResearchHandler:
         if not path.exists():
             return False
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             hidden = data.get("hidden_images") or []
             if image_url not in hidden:
                 hidden.append(image_url)
                 data["hidden_images"] = hidden
-                path.write_text(json.dumps(data))
+                path.write_text(json.dumps(data), encoding="utf-8")
                 logger.info(f"Hid image {image_url[:80]} for research {session_id}")
             return True
         except Exception as e:
@@ -540,9 +596,9 @@ class ResearchHandler:
         if not path.exists():
             return False
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             data["hidden_images"] = []
-            path.write_text(json.dumps(data))
+            path.write_text(json.dumps(data), encoding="utf-8")
             logger.info(f"Cleared hidden_images for research {session_id}")
             return True
         except Exception as e:
@@ -592,6 +648,8 @@ class ResearchHandler:
         max_rounds: int = 20,
         search_provider: str = None,
         category: str = None,
+        extraction_timeout: int = None,
+        extraction_concurrency: int = None,
     ) -> str:
         """
         Run iterative deep research using the LLM-in-the-loop DeepResearcher.
@@ -627,6 +685,18 @@ class ResearchHandler:
 
             from src.settings import get_setting
             _max_report_tokens = int(get_setting("research_max_tokens", 16384))
+            _extraction_timeout = _bounded_int(
+                extraction_timeout if extraction_timeout is not None else get_setting("research_extraction_timeout_seconds", 90),
+                default=90,
+                minimum=15,
+                maximum=3600,
+            )
+            _extraction_concurrency = _bounded_int(
+                extraction_concurrency if extraction_concurrency is not None else get_setting("research_extraction_concurrency", 3),
+                default=3,
+                minimum=1,
+                maximum=12,
+            )
 
             researcher = DeepResearcher(
                 llm_endpoint=llm_endpoint,
@@ -636,6 +706,8 @@ class ResearchHandler:
                 min_rounds=min(3, max_rounds),
                 max_time=max_time,
                 max_report_tokens=_max_report_tokens,
+                extraction_timeout=_extraction_timeout,
+                extraction_concurrency=_extraction_concurrency,
                 progress_callback=progress_callback,
                 search_provider=search_provider,
                 category=category,
@@ -678,7 +750,7 @@ class ResearchHandler:
             try:
                 import asyncio
                 logger.info("Falling back to legacy ResearchOrchestrator...")
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 result = await loop.run_in_executor(
                     None, self._legacy_engine.start_research, query, max_time
                 )

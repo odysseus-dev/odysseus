@@ -1,0 +1,34 @@
+# NVIDIA GPU overlay. Enable by setting COMPOSE_FILE in .env:
+#   COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml
+#
+# Use scripts/check-docker-gpu.sh to diagnose GPU passthrough, optionally
+# install the NVIDIA Container Toolkit (Ubuntu/Debian), and write COMPOSE_FILE
+# to .env. The script is read-only by default — it installs nothing and never
+# edits .env unless explicitly asked.
+#
+# Requires the NVIDIA Container Toolkit on the host.
+#   Arch:    sudo pacman -S nvidia-container-toolkit
+#   Debian:  sudo apt install nvidia-container-toolkit
+#   Fedora:  sudo dnf install nvidia-container-toolkit
+# Then:
+#   sudo nvidia-ctk runtime configure --runtime=docker
+#   sudo systemctl restart docker
+# Verify with:
+#   docker info | grep -i nvidia
+#
+# This overlay only passes the host GPU through to the container.
+# The slim Odysseus image does not bundle CUDA userspace or inference
+# engines — install vLLM / llama-cpp-python / SGLang via
+# Cookbook -> Dependencies (or pip) before serving GPU models.
+services:
+  odysseus:
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

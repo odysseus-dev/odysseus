@@ -7,6 +7,7 @@
 
 import uiModule from './ui.js';
 import { selectSession } from './sessions.js';
+import { sortModelIds } from './modelSort.js';
 
 const API = '/api/assistant';
 
@@ -179,7 +180,7 @@ function _renderSettingsBody(body, data, tzList) {
       <div class="assistant-field">
         <span style="display:flex;align-items:center;gap:8px;">Personality
           <select id="assistant-character-pick" style="font-size:11px;padding:1px 6px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);max-width:180px;">
-            <option value="">-- pick from character --</option>
+            <option value="">-- pick from persona --</option>
           </select>
         </span>
         <textarea id="assistant-personality" rows="6" placeholder="Describe the assistant's personality, tone, and behavior...">${_esc(crew.personality || '')}</textarea>
@@ -250,9 +251,8 @@ function _renderSettingsBody(body, data, tzList) {
       try {
         const models = await _fetchJSON(`/api/model-endpoints/${ep.id}/models`);
         let mHTML = '';
-        for (const m of (models.models || models || [])) {
-          const mid = typeof m === 'string' ? m : (m.id || m.name || '');
-          if (!mid) continue;
+        const modelIds = (models.models || models || []).map(m => typeof m === 'string' ? m : (m.id || m.name || '')).filter(Boolean);
+        for (const mid of sortModelIds(modelIds)) {
           const sel = mid === crew.model ? ' selected' : '';
           mHTML += `<option value="${_esc(mid)}"${sel}>${_esc(mid.split('/').pop())}</option>`;
         }
@@ -293,7 +293,7 @@ function _renderSettingsBody(body, data, tzList) {
           allPresets.push(...presetsRaw);
         }
         const allTemplates = Array.isArray(templates) ? templates : [];
-        let opts = '<option value="">-- pick from character --</option>';
+        let opts = '<option value="">-- pick from persona --</option>';
         if (allPresets.length) {
           opts += '<optgroup label="Presets">';
           for (const p of allPresets) {
@@ -304,7 +304,7 @@ function _renderSettingsBody(body, data, tzList) {
           opts += '</optgroup>';
         }
         if (allTemplates.length) {
-          opts += '<optgroup label="Characters">';
+          opts += '<optgroup label="Personas">';
           for (const t of allTemplates) {
             if (!t.system_prompt && !t.personality) continue;
             const name = t.character_name || t.name || 'Unnamed';

@@ -40,6 +40,22 @@ DEFAULT_AUTH_PATH = os.path.join(
 )
 TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 
+# Usernames the auth + middleware layer reserve as internal "synthetic owner"
+# sentinels; they must never belong to a real account. The most dangerous is
+# "internal-tool": `core.middleware.require_admin` treats any request whose
+# `current_user == "internal-tool"` as the in-process tool loopback and grants
+# admin, and because the cookie auth path sets `current_user` to the raw
+# username, an account literally named "internal-tool" would be silently
+# treated as an admin by every `require_admin`-gated route. "api" collides with
+# the bearer-token owner-attribution sentinel. "demo"/"system" round out the
+# synthetic-owner set the rest of the codebase already special-cases (see
+# `_SYNTHETIC_OWNERS` in routes/assistant_routes.py and the matching guards in
+# src/task_scheduler.py / routes/research_routes.py) — a real account with one
+# of those names would be denied an assistant and inconsistently owner-scoped.
+# Refuse to create or rename into any of them so the sentinels can't be
+# impersonated. (Keep this in sync with that synthetic-owner set.)
+RESERVED_USERNAMES = frozenset({"internal-tool", "api", "demo", "system"})
+
 
 def _hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
@@ -60,6 +76,9 @@ class AuthManager:
         # Guards mutations of self._sessions and the on-disk sessions.json.
         # Validate/create/revoke run concurrently from the FastAPI threadpool.
         self._sessions_lock = threading.RLock()
+        # Guards the first-run setup check-and-write so concurrent requests
+        # cannot both observe is_configured==False and both create admin accounts.
+        self._setup_lock = threading.Lock()
         self._load()
         self._load_sessions()
         self._migrate_single_user()
@@ -68,8 +87,17 @@ class AuthManager:
     def _load(self):
         try:
             if os.path.exists(self.auth_path):
-                with open(self.auth_path, "r") as f:
+                with open(self.auth_path, "r", encoding="utf-8") as f:
                     self._config = json.load(f)
+                # Normalize all stored usernames to lowercase so they match
+                # the .strip().lower() applied at login/verify time. Fixes
+                # "Invalid credentials" when auth.json was written with
+                # mixed-case keys (e.g. via manual edit or a future migration).
+                if "users" in self._config:
+                    self._config["users"] = {
+                        k.strip().lower(): v
+                        for k, v in self._config["users"].items()
+                    }
                 logger.info("Auth config loaded")
             else:
                 self._config = {}
@@ -82,7 +110,7 @@ class AuthManager:
         """Load persisted session tokens from disk, pruning expired ones."""
         try:
             if os.path.exists(self._sessions_path):
-                with open(self._sessions_path, "r") as f:
+                with open(self._sessions_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 now = time.time()
                 self._sessions = {k: v for k, v in data.items() if v.get("expiry", 0) > now}
@@ -157,13 +185,19 @@ class AuthManager:
 
     def setup(self, username: str, password: str) -> bool:
         """First-run admin setup. Only works if no users exist."""
-        if self.is_configured:
-            return False
-        return self.create_user(username, password, is_admin=True)
+        with self._setup_lock:
+            if self.is_configured:
+                return False
+            return self.create_user(username, password, is_admin=True)
 
     def create_user(self, username: str, password: str, is_admin: bool = False) -> bool:
         """Create a new user account."""
         username = username.strip().lower()
+        if not username:
+            return False
+        if username in RESERVED_USERNAMES:
+            logger.warning("Refused to create reserved username '%s'", username)
+            return False
         if username in self.users:
             return False
         if "users" not in self._config:
@@ -208,6 +242,39 @@ class AuthManager:
         if revoked:
             self._save_sessions()
         logger.info(f"Deleted user '{username}' (by {requesting_user}); revoked {revoked} active session(s)")
+        return True
+
+    def rename_user(self, old_username: str, new_username: str, requesting_user: str) -> bool:
+        """Rename a user in auth config and active sessions. Admin only."""
+        old_username = old_username.strip().lower()
+        new_username = new_username.strip().lower()
+        requesting_user = (requesting_user or "").strip().lower()
+        if not old_username or not new_username:
+            return False
+        if new_username in RESERVED_USERNAMES:
+            logger.warning("Refused to rename '%s' into reserved username '%s'", old_username, new_username)
+            return False
+        if old_username not in self.users:
+            return False
+        if new_username in self.users:
+            return False
+        if not self.users.get(requesting_user, {}).get("is_admin"):
+            return False
+        self._config.setdefault("users", {})[new_username] = self._config["users"].pop(old_username)
+        self._save()
+
+        renamed_sessions = 0
+        with self._sessions_lock:
+            for sess in self._sessions.values():
+                if (sess or {}).get("username") == old_username:
+                    sess["username"] = new_username
+                    renamed_sessions += 1
+        if renamed_sessions:
+            self._save_sessions()
+        logger.info(
+            "Renamed user '%s' -> '%s' (by %s); updated %d active session(s)",
+            old_username, new_username, requesting_user, renamed_sessions,
+        )
         return True
 
     def is_admin(self, username: str) -> bool:
@@ -411,6 +478,22 @@ class AuthManager:
         with self._sessions_lock:
             self._sessions.pop(token, None)
         self._save_sessions()
+
+    def revoke_user_sessions(self, username: str, except_token: Optional[str] = None) -> int:
+        """Revoke active browser sessions for a user, optionally preserving one."""
+        username = username.strip().lower()
+        revoked = 0
+        with self._sessions_lock:
+            to_drop = [
+                token for token, session in self._sessions.items()
+                if token != except_token and (session or {}).get("username") == username
+            ]
+            for token in to_drop:
+                self._sessions.pop(token, None)
+                revoked += 1
+            if revoked:
+                self._save_sessions()
+        return revoked
 
     def status(self, token: Optional[str]) -> Dict[str, Any]:
         username = self.get_username_for_token(token)

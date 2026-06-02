@@ -5,6 +5,7 @@ import * as jobs from './jobs.js';
 import themeModule from '../theme.js';
 import createResearchSynapse from '../researchSynapse.js';
 import spinnerModule from '../spinner.js';
+import { sortModelIds } from '../modelSort.js';
 
 // jobId -> { synapse, status } — survives across _renderJobs() rebuilds so
 // the SVG keeps its accumulated nodes/edges between progress events.
@@ -637,7 +638,7 @@ function _populateModels(endpointId) {
   if (!endpointId) return;
   const ep = _endpoints.find(e => e.id === endpointId);
   if (!ep || !ep.models) return;
-  ep.models.forEach(m => {
+  sortModelIds(ep.models).forEach(m => {
     const opt = document.createElement('option');
     opt.value = m;
     opt.textContent = m;

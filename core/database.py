@@ -298,6 +298,7 @@ class EmailAccount(TimestampMixin, Base):
     # SMTP (sending)
     smtp_host      = Column(String, default="")
     smtp_port      = Column(Integer, default=465)
+    smtp_security  = Column(String, default="ssl")  # ssl | starttls | none
     smtp_user      = Column(String, default="")
     smtp_password  = Column(String, default="")
 
@@ -996,7 +997,7 @@ def _migrate_assign_legacy_owner():
         auth_path = os.path.join("data", "auth.json")
     admin_user = None
     try:
-        with open(auth_path, "r") as f:
+        with open(auth_path, "r", encoding="utf-8") as f:
             auth_data = _json.load(f)
         users = auth_data.get("users", {})
         if users:
@@ -1067,12 +1068,12 @@ def _migrate_assign_legacy_owner():
     prefs_path = os.path.join("data", "user_prefs.json")
     try:
         if os.path.exists(prefs_path):
-            with open(prefs_path, "r") as f:
+            with open(prefs_path, "r", encoding="utf-8") as f:
                 prefs = _json.load(f)
             if "_users" not in prefs and prefs:
                 # Flat format → nest under admin user
                 new_prefs = {"_users": {admin_user: prefs}}
-                with open(prefs_path, "w") as f:
+                with open(prefs_path, "w", encoding="utf-8") as f:
                     _json.dump(new_prefs, f, indent=2)
                 logger.info(f"Migrated user_prefs.json to per-user format under '{admin_user}'")
     except Exception as e:
@@ -1437,7 +1438,7 @@ def _migrate_seed_email_account():
         if not settings_file.exists():
             return
         try:
-            s = _json.loads(settings_file.read_text())
+            s = _json.loads(settings_file.read_text(encoding="utf-8"))
         except Exception:
             return
 
@@ -1517,12 +1518,39 @@ def init_db():
     _migrate_drop_ping_notes_tasks()
     _migrate_add_crew_member_id()
     _migrate_add_assistant_columns()
+    _migrate_add_email_smtp_security()
     _migrate_seed_email_account()
     _migrate_add_calendar_metadata()
     _migrate_add_calendar_is_utc()
     _migrate_encrypt_email_passwords()
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
+
+
+def _migrate_add_email_smtp_security():
+    """Add explicit SMTP security mode for Proton Bridge/custom local SMTP."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(email_accounts)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "smtp_security" not in columns:
+            conn.execute("ALTER TABLE email_accounts ADD COLUMN smtp_security TEXT DEFAULT 'ssl'")
+            conn.execute(
+                "UPDATE email_accounts SET smtp_security = CASE "
+                "WHEN COALESCE(smtp_port, 465) = 587 THEN 'starttls' "
+                "WHEN COALESCE(smtp_port, 465) = 465 THEN 'ssl' "
+                "ELSE 'ssl' END "
+                "WHERE smtp_security IS NULL OR smtp_security = ''"
+            )
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added smtp_security column to email_accounts")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"smtp_security migration skipped: {e}")
 
 
 def _migrate_encrypt_endpoint_keys():
@@ -1755,10 +1783,63 @@ def update_session_last_accessed(session_id: str):
             return True
     return False
 
+def get_session_mode(session_id: str):
+    """Return a session's persisted `mode`, or None if unset/unknown.
+
+    Best-effort: never raises (returns None on any DB error) so callers on hot
+    request paths needn't guard it. Routed through get_db_session() so the
+    connection is always returned to the pool."""
+    try:
+        with get_db_session() as db:
+            return db.query(Session.mode).filter(Session.id == session_id).scalar()
+    except Exception:
+        logger.warning("Failed to read mode for session %s", session_id)
+        return None
+
+def set_session_mode(session_id: str, mode: str) -> bool:
+    """Persist a session's `mode`. Best-effort: never raises, returns success.
+
+    Routed through get_db_session() so a failure mid-write (e.g. a SQLite
+    'database is locked' under concurrent streams) still returns the connection
+    to the pool instead of leaking it — repeated leaks would exhaust it."""
+    try:
+        with get_db_session() as db:
+            db.query(Session).filter(Session.id == session_id).update({"mode": mode})
+        return True
+    except Exception:
+        logger.warning("Failed to persist mode %r for session %s", mode, session_id)
+        return False
+
 def get_session_by_id(session_id: str):
     """Get a session by ID"""
     with get_db_session() as db:
         return db.query(Session).filter(Session.id == session_id).first()
+
+def get_upcoming_events(owner, horizon_days: int = 60, limit: int = 40):
+    """Upcoming, non-cancelled events as {uid, title, start} dicts, soonest first.
+
+    owner=None means NO owner scoping (single-user / legacy). Multi-user callers
+    MUST pass the owning username — otherwise they read every tenant's events.
+    The autonomous email->calendar pass relies on this to avoid disclosing (and
+    acting on) other users' calendars."""
+    from datetime import timedelta
+    now = datetime.utcnow()
+    with get_db_session() as db:
+        q = db.query(CalendarEvent).join(CalendarCal).filter(
+            CalendarEvent.dtstart >= now,
+            CalendarEvent.dtstart <= now + timedelta(days=horizon_days),
+            CalendarEvent.status != "cancelled",
+        )
+        if owner is not None:
+            q = q.filter(CalendarCal.owner == owner)
+        return [
+            {
+                "uid": e.uid,
+                "title": e.summary or "",
+                "start": e.dtstart.isoformat() if e.dtstart else "",
+            }
+            for e in q.order_by(CalendarEvent.dtstart).limit(limit).all()
+        ]
 
 def archive_session(session_id: str):
     """Archive a session"""

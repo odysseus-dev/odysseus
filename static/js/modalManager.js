@@ -27,8 +27,9 @@
 
 import { previewZoneAt, clearPreview, snapModalToZone } from './tileManager.js';
 import { suspendDock, resumeDock, clearRightDock, applyEdgeDock } from './modalSnap.js';
+import { dismissOrRemove } from './escMenuStack.js';
 
-const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized }
+const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized, restoreMinHeight }
 
 const _rememberedDockKey = (id) => `odysseus-modal-remembered-dock-${id}`;
 function _rememberDock(id, side) {
@@ -71,6 +72,26 @@ function _emitModalOpened(id, modal) {
       detail: { id, modal },
     }));
   } catch (_) {}
+}
+
+function _captureRestoreHeight(modal, state) {
+  if (!modal || !state) return;
+  const content = modal.querySelector('.modal-content');
+  if (!content) return;
+  const rect = content.getBoundingClientRect();
+  if (!rect || rect.height < 120) return;
+  const maxHeight = Math.max(180, window.innerHeight - 24);
+  state.restoreMinHeight = `${Math.round(Math.min(rect.height, maxHeight))}px`;
+}
+
+function _applyRestoreHeight(modal, state) {
+  if (!modal || !state?.restoreMinHeight) return;
+  const content = modal.querySelector('.modal-content');
+  if (!content) return;
+  const maxHeight = Math.max(180, window.innerHeight - 24);
+  const requested = parseInt(state.restoreMinHeight, 10);
+  const height = Number.isFinite(requested) ? Math.min(requested, maxHeight) : null;
+  if (height) content.style.minHeight = `${height}px`;
 }
 
 function _setBadge(btnIds, on) {
@@ -1109,6 +1130,7 @@ export function register(id, { restoreFn, closeFn, railBtnId, sidebarBtnId, labe
     closeFn:   closeFn   || (() => {}),
     btnIds,
     isMinimized: false,
+    restoreMinHeight: '',
   });
   // Auto-stack: whichever modal becomes visible last sits on top of any
   // already-open modals. The various tool open() functions (gallery,
@@ -1188,6 +1210,7 @@ export function minimize(id) {
   // and let the chip drive restore/close via the registered functions.
   const modal = document.getElementById(id);
   if (modal) {
+    _captureRestoreHeight(modal, s);
     // If this window is edge-docked (right/left), SUSPEND the dock: release
     // the body push so the chat returns to full width while the window is
     // minimized, but keep the dock so restoring the chip snaps it back in.
@@ -1218,6 +1241,7 @@ export function restore(id) {
   if (modal) {
     modal.classList.remove('hidden', 'modal-minimized');
     modal.style.display = '';
+    _applyRestoreHeight(modal, s);
     // Surface above any already-open tool window — restoring from the dock
     // should bring this tool to the front, not leave it stuck behind one with
     // a higher static z-index.
@@ -1440,7 +1464,7 @@ window.addEventListener('modal-dismissed', (e) => {
   if (id === 'cookbook-modal') {
     document.querySelectorAll(
       '.cookbook-task-dropdown, .cookbook-gpu-split-menu, .hwfit-cached-dropdown, .cookbook-saved-menu, .cookbook-dep-menu'
-    ).forEach(d => d.remove());
+    ).forEach(dismissOrRemove);
   }
 });
 

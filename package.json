@@ -1,4 +1,8 @@
 {
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pewdiepie-archdaemon/odysseus.git"
+  },
   "devDependencies": {
     "@antithesishq/bombadil": "^0.3.2"
   },

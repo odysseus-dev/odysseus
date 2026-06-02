@@ -9,6 +9,7 @@ __pycache__/
 dist/
 build/
 .env
+.env.bak.*
 /data/
 /logs/
 .git/
@@ -18,6 +19,8 @@ build/
 .vscode/
 .idea/
 dev-docs/
+docs/
+*.md
 *.db
 *.sqlite
 *.sqlite3

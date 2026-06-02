@@ -92,7 +92,9 @@ async function toggleMode() {
     deactivate(true);
     return false;
   }
+  if (state._openingSelector) return false;
 
+  state._openingSelector = true;
   try {
     const confirmed = await showModelSelector();
     if (!confirmed) return false;
@@ -104,6 +106,8 @@ async function toggleMode() {
   } catch (err) {
     console.error('Compare toggleMode error:', err);
     return false;
+  } finally {
+    state._openingSelector = false;
   }
 }
 
