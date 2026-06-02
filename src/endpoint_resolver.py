@@ -12,7 +12,7 @@ from typing import Optional, Tuple, Dict
 from urllib.parse import urlparse, urlunparse
 
 from src.database import SessionLocal, ModelEndpoint
-from src.llm_core import _detect_provider
+from src.llm_core import _detect_provider, _host_match
 
 logger = logging.getLogger(__name__)
 
@@ -122,8 +122,7 @@ def normalize_base(url: str) -> str:
 def _anthropic_api_root(base: str) -> str:
     """Return Anthropic's API root, preserving /v1 for OpenAI-compatible APIs elsewhere."""
     base = (base or "").strip().rstrip("/")
-    host = urlparse(base).hostname or ""
-    if host.endswith("anthropic.com") and base.endswith("/v1"):
+    if _host_match(base, "anthropic.com") and base.endswith("/v1"):
         return base[:-3].rstrip("/")
     return base
 
@@ -132,11 +131,10 @@ def _ollama_api_root(base: str) -> str:
     """Return the native Ollama API root, adding /api for ollama.com hosts."""
     base = (base or "").strip().rstrip("/")
     parsed = urlparse(base)
-    host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
     if path.endswith("/api"):
         return base
-    if host.endswith("ollama.com"):
+    if _host_match(base, "ollama.com"):
         root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
         return root.rstrip("/") + "/api"
     return base
@@ -146,10 +144,9 @@ def build_chat_url(base: str) -> str:
     """Return the correct chat endpoint URL for a given base."""
     base = resolve_url(base)
     provider = _detect_provider(base)
-    host = urlparse(base).hostname or ""
-    if provider == "anthropic" or host.endswith("anthropic.com"):
+    if provider == "anthropic":
         return _anthropic_api_root(base) + "/v1/messages"
-    if provider == "ollama" or host.endswith("ollama.com"):
+    if provider == "ollama":
         return _ollama_api_root(base) + "/chat"
     return base + "/chat/completions"
 
@@ -158,10 +155,9 @@ def build_models_url(base: str) -> str:
     """Return the provider-specific model-list endpoint URL for a base."""
     base = resolve_url(base)
     provider = _detect_provider(base)
-    host = urlparse(base).hostname or ""
-    if provider == "anthropic" or host.endswith("anthropic.com"):
+    if provider == "anthropic":
         return _anthropic_api_root(base) + "/v1/models"
-    if provider == "ollama" or host.endswith("ollama.com"):
+    if provider == "ollama":
         return _ollama_api_root(base) + "/tags"
     return base + "/models"
 

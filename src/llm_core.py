@@ -163,7 +163,7 @@ def _is_ollama_native_url(url: str) -> bool:
         return False
     host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
-    if host.endswith("ollama.com"):
+    if _host_match(url, "ollama.com"):
         return True
     local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or parsed.port == 11434
     return local_ollama_host and (path == "/api" or path.startswith("/api/"))
@@ -173,7 +173,6 @@ def _ollama_api_root(url: str) -> str:
     """Return a native Ollama API root such as https://ollama.com/api."""
     url = (url or "").strip().rstrip("/")
     parsed = urlparse(url)
-    host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
     if path.endswith("/api/chat"):
         return url[: -len("/chat")]
@@ -183,7 +182,7 @@ def _ollama_api_root(url: str) -> str:
         return url[: -len("/generate")]
     if path.endswith("/api"):
         return url
-    if host.endswith("ollama.com"):
+    if _host_match(url, "ollama.com"):
         root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
         return root.rstrip("/") + "/api"
     return url
