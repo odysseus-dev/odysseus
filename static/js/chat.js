@@ -156,6 +156,13 @@ import createResearchSynapse from './researchSynapse.js';
     initSlashCommands({ apiBase, isStreaming: () => isStreaming });
     // Initialize email inbox
     emailInbox.init(documentModule);
+    // Wire the slash-command autocomplete popup on the chat composer. The
+    // dispatcher already handles the typed command — this just surfaces the
+    // registry as a discoverable menu when the user starts a message with /.
+    import('./slashAutocomplete.js').then(mod => {
+      const ta = document.getElementById('message');
+      if (ta && mod.initSlashAutocomplete) mod.initSlashAutocomplete(ta);
+    }).catch(() => {});
   }
 
   // addMessage, createMsgFooter, displayMetrics, hideWelcomeScreen, showWelcomeScreen

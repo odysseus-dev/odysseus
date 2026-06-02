@@ -1,5 +1,5 @@
-"""Tests for agent_loop.py — _detect_admin_intent and _compute_final_metrics.
-Uses mock imports to avoid loading the full app stack."""
+"""Tests for agent_loop.py — _detect_admin_intent, _compute_final_metrics,
+and _append_tool_results. Uses mock imports to avoid loading the full app stack."""
 
 import sys
 from unittest.mock import MagicMock
@@ -15,7 +15,11 @@ for mod in [
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
 
-from src.agent_loop import _detect_admin_intent, _compute_final_metrics
+from src.agent_loop import (
+    _detect_admin_intent,
+    _compute_final_metrics,
+    _append_tool_results,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -239,3 +243,61 @@ class TestComputeFinalMetrics:
         m = _compute_final_metrics(**self._base_args(tool_events=[], round_texts=[]))
         assert "tool_events" not in m
         assert "round_texts" not in m
+
+
+# ---------------------------------------------------------------------------
+# _append_tool_results — native tool-call message shaping
+# ---------------------------------------------------------------------------
+
+class TestAppendToolResultsNativeContent:
+    """After a native tool call with no prose, the assistant message's content
+    must be JSON null (None), not an empty string. Google Gemini's
+    OpenAI-compatible endpoint and Ollama both reject `tool_calls` + ""
+    content with HTTP 400, which breaks every tool-using turn."""
+
+    def _native(self):
+        return [{"id": "call_abc", "name": "web_fetch", "arguments": '{"url": "https://example.com"}'}]
+
+    def test_empty_text_yields_null_content(self):
+        messages = []
+        _append_tool_results(
+            messages, "", self._native(), [{}], ["page text"],
+            used_native=True, round_num=1,
+        )
+        assistant = messages[0]
+        assert assistant["role"] == "assistant"
+        assert assistant["content"] is None  # NOT ""
+        assert assistant["tool_calls"][0]["id"] == "call_abc"
+        assert assistant["tool_calls"][0]["type"] == "function"
+        # tool result follows as a role:tool message keyed by tool_call_id
+        assert messages[1]["role"] == "tool"
+        assert messages[1]["tool_call_id"] == "call_abc"
+        assert messages[1]["content"] == "page text"
+
+    def test_whitespace_only_text_yields_null_content(self):
+        messages = []
+        _append_tool_results(
+            messages, "   \n\t  ", self._native(), [{}], ["r"],
+            used_native=True, round_num=2,
+        )
+        assert messages[0]["content"] is None
+
+    def test_real_prose_is_preserved(self):
+        messages = []
+        _append_tool_results(
+            messages, "Let me check that page.", self._native(), [{}], ["r"],
+            used_native=True, round_num=1,
+        )
+        assert messages[0]["content"] == "Let me check that page."
+
+    def test_non_native_path_unaffected(self):
+        # The text-block fallback path still wraps results in a user message.
+        messages = []
+        _append_tool_results(
+            messages, "thinking...", [], ["tool output"], [],
+            used_native=False, round_num=1,
+        )
+        assert messages[0]["role"] == "assistant"
+        assert messages[0]["content"] == "thinking..."
+        assert messages[1]["role"] == "user"
+        assert "tool output" in messages[1]["content"]

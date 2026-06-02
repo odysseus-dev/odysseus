@@ -7,6 +7,7 @@ import { addAITTSButton } from './tts-ai.js';
 import { providerLogo } from './providers.js';
 import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
+import { bindMenuDismiss } from './escMenuStack.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -568,7 +569,7 @@ export function applyModelColor(roleEl, modelName) {
     roleEl.style.cursor = 'pointer';
     roleEl.addEventListener('click', (e) => {
       e.stopPropagation();
-      document.querySelectorAll('.ctx-popup').forEach(p => p.remove());
+      document.querySelectorAll('.ctx-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
       const info = getModelInfo(modelName);
       const short = shortModel(modelName);
       const logoHtml = providerLogo(modelName);
@@ -626,10 +627,7 @@ export function applyModelColor(roleEl, modelName) {
       const pr = popup.getBoundingClientRect();
       if (pr.bottom > window.innerHeight - 8) popup.style.top = (rect.top - pr.height - 4) + 'px';
       if (pr.right > window.innerWidth - 8) popup.style.left = (window.innerWidth - pr.width - 8) + 'px';
-      const closePopup = (ev) => {
-        if (!popup.contains(ev.target)) { popup.remove(); document.removeEventListener('click', closePopup, true); }
-      };
-      setTimeout(() => document.addEventListener('click', closePopup, true), 0);
+      bindMenuDismiss(popup, () => popup.remove());
     });
   }
 }
@@ -1332,12 +1330,17 @@ export function createMsgFooter(msgElement) {
     moreBtn.textContent = '\u00B7\u00B7\u00B7';
     moreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      // Toggle overflow menu — close any existing one first
+      // Toggle overflow menu — close any existing one first (through its own
+      // dismiss so the Escape registry entry goes with it).
       const existing = document.querySelector('.msg-overflow-menu');
-      if (existing) { existing.remove(); if (existing._trigger === moreBtn) return; }
+      if (existing) {
+        if (typeof existing._dismiss === 'function') existing._dismiss(); else existing.remove();
+        if (existing._trigger === moreBtn) return;
+      }
 
       const menu = document.createElement('div');
       menu.className = 'msg-overflow-menu';
+      let closeMenu = () => menu.remove();
       overflow.forEach(a => {
         const item = document.createElement('button');
         item.className = 'msg-overflow-item';
@@ -1347,7 +1350,7 @@ export function createMsgFooter(msgElement) {
         item.addEventListener('click', (ev) => {
           ev.stopPropagation();
           _trackAction(a.id);
-          menu.remove();
+          closeMenu();
           a.handler(ev);
         });
         menu.appendChild(item);
@@ -1363,15 +1366,9 @@ export function createMsgFooter(msgElement) {
       // Keep within right edge
       const mr = menu.getBoundingClientRect();
       if (mr.right > window.innerWidth - 8) menu.style.left = (window.innerWidth - mr.width - 8) + 'px';
-      // Close on outside click
-      const close = (ev) => {
-        if (!menu.contains(ev.target) && ev.target !== moreBtn) {
-          menu.remove();
-          document.removeEventListener('click', close, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', close, true), 0);
-    });
+      // Close on outside click or Escape. The trigger button is treated as
+      // "inside" so its own click toggles rather than double-fires.
+      closeMenu = bindMenuDismiss(menu, () => menu.remove(), (ev) => !menu.contains(ev.target) && ev.target !== moreBtn);    });
     actions.appendChild(moreBtn);
   }
 
@@ -1392,9 +1389,14 @@ export function createMsgFooter(msgElement) {
     pill.addEventListener('click', (e) => {
       e.stopPropagation();
       let detail = pill._openDetail || document.querySelector('.memory-used-detail');
-      if (detail) { detail.remove(); pill._openDetail = null; return; }
+      if (detail) {
+        if (typeof detail._dismiss === 'function') detail._dismiss();
+        else { detail.remove(); pill._openDetail = null; }
+        return;
+      }
       detail = document.createElement('div');
       detail.className = 'memory-used-detail';
+      let closeDetail = () => { detail.remove(); pill._openDetail = null; };
       mems.forEach(m => {
         const row = document.createElement('div');
         row.className = 'memory-used-row';
@@ -1410,8 +1412,7 @@ export function createMsgFooter(msgElement) {
         row.appendChild(text);
         row.addEventListener('click', (ev) => {
           ev.stopPropagation();
-          detail.remove();
-          pill._openDetail = null;
+          closeDetail();
           const memModal = document.getElementById('memory-modal');
           if (memModal) memModal.classList.remove('hidden');
         });
@@ -1435,15 +1436,8 @@ export function createMsgFooter(msgElement) {
       if (parseFloat(detail.style.left) < 8) detail.style.left = '8px';
       detail.style.visibility = '';
       pill._openDetail = detail;
-      const close = (ev) => {
-        if (!detail.contains(ev.target) && ev.target !== pill) {
-          detail.remove();
-          pill._openDetail = null;
-          document.removeEventListener('click', close, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', close, true), 0);
-    });
+      // Close on outside click or Escape (pill click toggles, so it's inside).
+      closeDetail = bindMenuDismiss(detail, () => { detail.remove(); pill._openDetail = null; }, (ev) => !detail.contains(ev.target) && ev.target !== pill);    });
 
     footer.appendChild(pill);
   }
@@ -1528,10 +1522,14 @@ export function createUserMsgFooter(msgElement) {
     moreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const existing = document.querySelector('.msg-overflow-menu');
-      if (existing) { existing.remove(); if (existing._trigger === moreBtn) return; }
+      if (existing) {
+        if (typeof existing._dismiss === 'function') existing._dismiss(); else existing.remove();
+        if (existing._trigger === moreBtn) return;
+      }
 
       const menu = document.createElement('div');
       menu.className = 'msg-overflow-menu';
+      let closeMenu = () => menu.remove();
       overflow.forEach(a => {
         const item = document.createElement('button');
         item.className = 'msg-overflow-item';
@@ -1541,7 +1539,7 @@ export function createUserMsgFooter(msgElement) {
         item.addEventListener('click', (ev) => {
           ev.stopPropagation();
           _trackUserAction(a.id);
-          menu.remove();
+          closeMenu();
           a.handler(ev);
         });
         menu.appendChild(item);
@@ -1554,14 +1552,7 @@ export function createUserMsgFooter(msgElement) {
       if (parseFloat(menu.style.top) < 8) menu.style.top = (btnRect.bottom + 4) + 'px';
       const mr = menu.getBoundingClientRect();
       if (mr.right > window.innerWidth - 8) menu.style.left = (window.innerWidth - mr.width - 8) + 'px';
-      const close = (ev) => {
-        if (!menu.contains(ev.target) && ev.target !== moreBtn) {
-          menu.remove();
-          document.removeEventListener('click', close, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', close, true), 0);
-    });
+      closeMenu = bindMenuDismiss(menu, () => menu.remove(), (ev) => !menu.contains(ev.target) && ev.target !== moreBtn);    });
     actions.appendChild(moreBtn);
   }
 
@@ -1625,7 +1616,7 @@ export function displayMetrics(messageElement, metrics) {
   metricsDivider.style.pointerEvents = 'none';
   metricsContainer.addEventListener('click', (e) => {
     e.stopPropagation();
-    document.querySelectorAll('.ctx-popup').forEach(p => p.remove());
+    document.querySelectorAll('.ctx-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
     const costStr = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : 'n/a';
     const speedStr = tps != null && tps !== 'undefined' ? `${tps} tok/s` : 'n/a';
@@ -1685,13 +1676,7 @@ export function displayMetrics(messageElement, metrics) {
     if (parseFloat(popup.style.left) < 8) popup.style.left = '8px';
     popup.style.visibility = '';
 
-    const closePopup = (ev) => {
-      if (!popup.contains(ev.target)) {
-        popup.remove();
-        document.removeEventListener('click', closePopup, true);
-      }
-    };
-    setTimeout(() => document.addEventListener('click', closePopup, true), 0);
+    bindMenuDismiss(popup, () => popup.remove());
   });
 
   // Store real context length for model info popup
@@ -1722,7 +1707,7 @@ export function displayMetrics(messageElement, metrics) {
 
     ctxRing.addEventListener('click', (e) => {
       e.stopPropagation();
-      document.querySelectorAll('.ctx-detail-popup').forEach(p => p.remove());
+      document.querySelectorAll('.ctx-detail-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
       const usedTokens = inputTokens || 0;
       const totalCtx = ctxLen || 0;
@@ -1826,13 +1811,7 @@ export function displayMetrics(messageElement, metrics) {
       }
       popup.style.visibility = '';
 
-      const closePopup = (ev) => {
-        if (!popup.contains(ev.target) && ev.target !== ctxRing && !ctxRing.contains(ev.target)) {
-          popup.remove();
-          document.removeEventListener('click', closePopup, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', closePopup, true), 0);
+      bindMenuDismiss(popup, () => popup.remove(), (ev) => !popup.contains(ev.target) && ev.target !== ctxRing && !ctxRing.contains(ev.target));
     });
   }
 

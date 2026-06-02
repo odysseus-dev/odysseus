@@ -78,18 +78,14 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         manager = MemoryManager(DATA_DIR)
         all_memories = manager.load_all()
 
-        # When the scheduled task was created without an explicit owner
-        # (the common case for built-in housekeeping rows), task.owner
-        # arrives as "" or None. The old filter then required memories
-        # with a matching empty owner — which excluded every real memory
-        # and the action no-op'd with "nothing to consolidate" even
-        # though hundreds of memories were sitting there. Treat empty
-        # owner as "no filter" so the housekeeping action actually runs.
+        # Empty owner means "all owners" for built-in housekeeping, but never
+        # mix owners in the same AI prompt/apply step. A specific owner is
+        # scoped strictly to that owner; unowned rows are their own group.
         _owner_clean = (owner or "").strip()
         if _owner_clean:
             def _belongs_to_owner(mem: dict) -> bool:
                 mem_owner = (mem.get("owner") or "").strip()
-                return mem_owner == _owner_clean or not mem_owner
+                return mem_owner == _owner_clean
         else:
             def _belongs_to_owner(mem: dict) -> bool:
                 return True
@@ -98,21 +94,27 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         if not owner_memories:
             raise TaskNoop("no memories to consolidate")
 
+        memory_owners = {(m.get("owner") or "").strip() for m in owner_memories}
+        allow_ai_tidy = len(memory_owners) <= 1
+
         url, model, headers = resolve_endpoint("utility", owner=owner)
         if not url or not model:
             url, model, headers = resolve_endpoint("default", owner=owner)
 
-        if url and model and len(owner_memories) >= 2:
+        if url and model and allow_ai_tidy and len(owner_memories) >= 2:
             try:
+                text_limit = 2000
                 items = [
                     {
                         "id": m.get("id"),
                         "category": m.get("category", "fact"),
-                        "text": (m.get("text") or "").strip()[:600],
+                        "text": (m.get("text") or "").strip()[:text_limit],
+                        "truncated": len((m.get("text") or "").strip()) > text_limit,
                     }
                     for m in owner_memories
                     if m.get("id") and (m.get("text") or "").strip()
                 ]
+                truncated_ids = {item["id"] for item in items if item.get("truncated")}
                 prompt = (
                     "You are tidying a user's saved personal memories. Return ONLY raw JSON, no markdown.\n"
                     "Remove memories that are empty, broken, trivial conversation filler, duplicates, or obsolete "
@@ -161,6 +163,9 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                                 "text": text,
                                 "category": (item.get("category") or by_id[mid].get("category") or "fact").strip(),
                             }
+                        # If the model only saw a truncated memory, do not let
+                        # that partial view delete or rewrite the full memory.
+                        keep_ids.update(mid for mid in truncated_ids if mid in by_id)
 
                         if keep_ids:
                             changed_text = 0
@@ -173,6 +178,8 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                                 if mid not in keep_ids:
                                     continue
                                 cleaned = cleaned_by_id.get(mid) or {}
+                                if mid in truncated_ids:
+                                    cleaned.pop("text", None)
                                 if cleaned.get("text") and cleaned["text"] != mem.get("text"):
                                     mem["text"] = cleaned["text"]
                                     changed_text += 1
@@ -208,10 +215,12 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         removed_examples = []
         for mem in owner_memories:
             text = (mem.get("text") or "").strip()
-            key = " ".join(text.lower().split())
-            if not key:
+            normalized = " ".join(text.lower().split())
+            if not normalized:
                 removed_examples.append("(empty)")
                 continue
+            mem_owner = (mem.get("owner") or "").strip()
+            key = (mem_owner, normalized)
             if key in seen:
                 if len(removed_examples) < 3:
                     removed_examples.append(text[:60] + ("..." if len(text) > 60 else ""))
