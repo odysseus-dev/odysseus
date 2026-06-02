@@ -22,7 +22,7 @@ Key terms used in the codebase and issues. Definitions are approximate — read 
 | **Cookbook** | Hardware-aware model discovery, download ranking, and serving. Scans GPU/RAM, recommends models, handles GGUF/FP8/AWQ formats via vLLM, llama.cpp, or SGLang backends | `routes/cookbook_routes.py`, `services/hwfit/` |
 | **Hardware Fit (hwfit)** | Scoring system in Cookbook that ranks models by architecture age, quant format, VRAM/RAM fit, backend support, and likely serve reliability | `services/hwfit/fit.py` |
 | **Deep Research** | Multi-step research runs that gather sources, read pages, and synthesize into a visual report | `services/research/` |
-| **Memory** | Persistent vector-backed memory store (ChromaDB + fastembed ONNX). Stores facts about the user across sessions | `services/memory/`, `src/memory_vector.py` |
+| **Memory** | Dual-layer memory: JSON-backed `MemoryManager` for extraction/fallback, ChromaDB-backed `MemoryVectorStore` for semantic retrieval | `services/memory/`, `src/memory.py`, `src/memory_vector.py` |
 | **Skills** | User-editable instructions that extend agent capabilities. Stored per-user, loaded into agent context. Treated as untrusted data for prompt-injection safety | `services/memory/skills.py` |
 | **Session** | A chat conversation container with its own model, endpoint URL, message history, and RAG toggle | `core/session_manager.py`, `core/models.py` |
 | **Provider / Endpoint** | An LLM server (Ollama, vLLM, OpenAI, Anthropic, etc.) registered in Settings. Identified by its base URL | `src/llm_core.py`, `src/endpoint_resolver.py` |
