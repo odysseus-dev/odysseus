@@ -328,55 +328,59 @@ def setup_cookbook_routes() -> APIRouter:
             return await _remote_binary_available(remote, ssh_port, binary, windows=windows)
         return shutil.which(binary) is not None
 
-    def _launch_local_detached(session_id: str, bash_lines: list[str]) -> dict:
+    def _launch_local_detached(session_id: str, bash_lines: list[str], is_ps: bool = False) -> dict:
         """Windows-native stand-in for a LOCAL tmux session (tmux doesn't exist
         on Windows). Mirrors shell_routes._generate_win_detached / bg_jobs.launch:
         runs the wrapper detached so it survives a browser/SSE disconnect (the
         whole point of the tmux feature for long downloads/serves), writing a
         <session>.log the status poller tails and a <session>.pid for liveness.
 
-        `bash_lines` is the same bash wrapper used on POSIX. Prefers Git Bash
-        for full command-syntax parity; falls back to a cmd.exe wrapper that
-        runs the script through whatever bash is reachable, else best-effort
-        directly (simple commands only). Returns the launched job record."""
+        If is_ps is True, runs a PowerShell script directly (used for Windows downloads).
+        Otherwise, prefers Git Bash for full command-syntax parity."""
         log_path = TMUX_LOG_DIR / f"{session_id}.log"
         pid_path = TMUX_LOG_DIR / f"{session_id}.pid"
-        bash = find_bash()
-        if bash:
-            # Run the existing bash wrapper verbatim through Git Bash, redirecting
-            # all output to the log the poller reads. Paths handed to bash use
-            # POSIX form + shell-quoting so drive paths / spaces survive.
-            inner = TMUX_LOG_DIR / f"{session_id}_run.sh"
-            inner.write_text("\n".join(bash_lines) + "\n", encoding="utf-8")
-            lp = shlex.quote(log_path.as_posix())
-            ip = shlex.quote(inner.as_posix())
-            script_path = TMUX_LOG_DIR / f"{session_id}.sh"
-            script_path.write_text(
-                f"bash {ip} > {lp} 2>&1\n",
-                encoding="utf-8",
-            )
-            argv = [bash, str(script_path)]
+        
+        if is_ps:
+            script_path = TMUX_LOG_DIR / f"{session_id}.ps1"
+            script_path.write_text("\n".join(bash_lines) + "\n", encoding="utf-8")
+            cmd_script = TMUX_LOG_DIR / f"{session_id}.cmd"
+            cmd_script.write_text(f'@echo off\r\npowershell -ExecutionPolicy Bypass -File "{script_path}" > "{log_path}" 2>&1\r\n', encoding="utf-8")
+            argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(cmd_script)]
         else:
-            # No bash on this Windows host: the bash wrapper can't run. Fall back
-            # to a cmd.exe wrapper that just records a clear error to the log so
-            # the UI surfaces "install Git Bash" instead of silently hanging.
-            script_path = TMUX_LOG_DIR / f"{session_id}.cmd"
-            script_path.write_text(
-                "@echo off\r\n"
-                f'echo Cookbook LOCAL execution on Windows needs Git Bash ^(bash.exe^) on PATH. > "{log_path}" 2>&1\r\n'
-                f'echo Install Git for Windows, then retry. >> "{log_path}"\r\n',
-                encoding="utf-8",
+            bash = find_bash()
+            if bash:
+                inner = TMUX_LOG_DIR / f"{session_id}_run.sh"
+                inner.write_text("\n".join(bash_lines) + "\n", encoding="utf-8")
+                lp = shlex.quote(log_path.as_posix())
+                ip = shlex.quote(inner.as_posix())
+                script_path = TMUX_LOG_DIR / f"{session_id}.sh"
+                script_path.write_text(
+                    f"bash {ip} > {lp} 2>&1\n",
+                    encoding="utf-8",
+                )
+                argv = [bash, str(script_path)]
+            else:
+                script_path = TMUX_LOG_DIR / f"{session_id}.cmd"
+                script_path.write_text(
+                    "@echo off\r\n"
+                    f'echo Cookbook LOCAL execution on Windows needs Git Bash ^(bash.exe^) on PATH. > "{log_path}" 2>&1\r\n'
+                    f'echo Install Git for Windows, then retry. >> "{log_path}"\r\n',
+                    encoding="utf-8",
+                )
+                argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
+
+        try:
+            proc = subprocess.Popen(
+                argv,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                **detached_popen_kwargs(),
             )
-            argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
-        proc = subprocess.Popen(
-            argv,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            **detached_popen_kwargs(),
-        )
-        pid_path.write_text(str(proc.pid), encoding="utf-8")
-        return {"pid": proc.pid, "log_path": str(log_path)}
+            pid_path.write_text(str(proc.pid), encoding="utf-8")
+            return {"pid": proc.pid, "log_path": str(log_path)}
+        except Exception as e:
+            raise RuntimeError(f"Failed to launch detached process: {e}")
 
     @router.post("/api/model/download")
     async def model_download(request: Request, req: ModelDownloadRequest):
@@ -432,31 +436,29 @@ def setup_cookbook_routes() -> APIRouter:
         # throughput. Retries set disable_hf_transfer to fall back to the plain,
         # slower-but-reliable downloader (resumes cleanly from the .incomplete files).
         # Use `python3 -m pip` not `pip` — macOS has no bare `pip` command.
-        lines.append("command -v hf >/dev/null 2>&1 || python3 -m pip install --user --break-system-packages -q -U huggingface_hub 2>/dev/null || python3 -m pip install -q -U huggingface_hub 2>/dev/null")
+        _py = "python" if IS_WINDOWS else "python3"
+        lines.append(f"command -v hf >/dev/null 2>&1 || {_py} -m pip install --user --break-system-packages -q -U huggingface_hub 2>/dev/null || {_py} -m pip install -q -U huggingface_hub 2>/dev/null")
         if req.disable_hf_transfer:
             lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
             lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
         else:
-            lines.append("python3 -c 'import hf_transfer' 2>/dev/null || python3 -m pip install --user --break-system-packages -q hf_transfer 2>/dev/null || python3 -m pip install -q hf_transfer 2>/dev/null")
-            lines.append("python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
+            lines.append(f"{_py} -c 'import hf_transfer' 2>/dev/null || {_py} -m pip install --user --break-system-packages -q hf_transfer 2>/dev/null || {_py} -m pip install -q hf_transfer 2>/dev/null")
+            lines.append(f"{_py} -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
             lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
 
         remote = req.remote_host  # None for local
-        is_windows = req.platform == "windows"
-        # LOCAL execution on a native-Windows host never uses tmux (it uses the
-        # detached-process path below), regardless of the UI-supplied platform.
-        local_windows = IS_WINDOWS and not remote
+        is_windows = req.platform == "windows" or (IS_WINDOWS and not req.remote_host)
         logger.info(f"Download request: repo={req.repo_id}, remote={remote}, ssh_port={req.ssh_port}, platform={req.platform}")
 
-        if not is_windows and not local_windows and not await _binary_available("tmux", remote, req.ssh_port):
+        if not is_windows and not await _binary_available("tmux", remote, req.ssh_port):
             return {
                 "ok": False,
                 "error": _missing_binary_message("tmux", remote or "local server"),
                 "session_id": session_id,
             }
 
-        if remote and is_windows:
-            # ── Windows remote: generate .ps1 runner, use Start-Process for background ──
+        if is_windows:
+            # ── Windows (local and remote): generate .ps1 runner, use Start-Process for background ──
             remote_runner = f".{session_id}_run.ps1"
             ps_lines = []
             ps_lines.append('$sessionDir = "$env:TEMP\\odysseus-sessions"')
@@ -494,24 +496,39 @@ def setup_cookbook_routes() -> APIRouter:
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
             runner_path.write_text("\r\n".join(ps_lines) + "\r\n", encoding="utf-8")
 
-            # scp the .ps1 script, then launch it as a detached process with log + pid files
-            _port = req.ssh_port
-            _Pf = f"-P {_port} " if _port and _port != "22" else ""
-            _pf = f"-p {_port} " if _port and _port != "22" else ""
-            # Start-Process creates a fully detached process that survives SSH disconnect
-            launch_ps = (
-                "$sd = \\\"$env:TEMP\\odysseus-sessions\\\"; "
-                f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','$HOME\\{remote_runner}' "
-                f"-RedirectStandardOutput \\\"$sd\\{session_id}.log\\\" "
-                f"-RedirectStandardError \\\"$sd\\{session_id}.err.log\\\" "
-                f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \\\"$sd\\{session_id}.pid\\\" }}"
-            )
-            setup_cmd = (
-                f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                f'ssh {_pf}{remote} "powershell -Command \\"{launch_ps}\\""'
-            )
+            if remote:
+                # scp the .ps1 script, then launch it as a detached process with log + pid files
+                _port = req.ssh_port
+                _Pf = f"-P {_port} " if _port and _port != "22" else ""
+                _pf = f"-p {_port} " if _port and _port != "22" else ""
+                # Start-Process creates a fully detached process that survives SSH disconnect
+                launch_ps = (
+                    "$sd = \\\"$env:TEMP\\odysseus-sessions\\\"; "
+                    f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','$HOME\\{remote_runner}' "
+                    f"-RedirectStandardOutput \\\"$sd\\{session_id}.log\\\" "
+                    f"-RedirectStandardError \\\"$sd\\{session_id}.err.log\\\" "
+                    f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \\\"$sd\\{session_id}.pid\\\" }}"
+                )
+                setup_cmd = (
+                    f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
+                    f'ssh {_pf}{remote} "powershell -Command \\"{launch_ps}\\""'
+                )
+                proc = await asyncio.create_subprocess_shell(
+                    setup_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await proc.wait()
+            else:
+                try:
+                    _launch_local_detached(session_id, ps_lines, is_ps=True)
+                except Exception as e:
+                    logger.error(f"Local detached download launch failed: {e}")
+                    return {"ok": False, "error": str(e), "session_id": session_id}
+            
+            return {"ok": True, "session_id": session_id}
 
-        elif remote:
+        if remote:
             # ── Linux/Termux remote: create tmux session ON the remote host ──
             remote_runner = f".{session_id}_run.sh"
             runner_lines = ["#!/bin/bash"]
@@ -582,43 +599,29 @@ def setup_cookbook_routes() -> APIRouter:
             # Show whether the HF token reached this run (masked) — tells a gated
             # "not authorized" failure apart from a missing token.
             lines.append(_HF_TOKEN_STATUS_SNIPPET)
-            if IS_WINDOWS:
-                # Detached path: no controlling TTY, so skip `< /dev/null`
-                # (handled by Popen stdin=DEVNULL) and don't keep a shell open.
-                lines.append(hf_cmd)
-                lines.append('if [ $? -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $?)"; fi')
-            else:
-                # < /dev/null suppresses interactive "update available? [Y/n]" prompt
-                lines.append(f"{hf_cmd} < /dev/null")
-                lines.append('if [ $? -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $?)"; fi')
-                lines.append(f"rm -f '{wrapper_script}'")
-                lines.append('exec "${SHELL:-/bin/bash}"')
-                wrapper_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
-                wrapper_script.chmod(0o755)
-            setup_cmd = None if IS_WINDOWS else f"tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
+            # < /dev/null suppresses interactive "update available? [Y/n]" prompt
+            lines.append(f"{hf_cmd} < /dev/null")
+            lines.append('if [ $? -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $?)"; fi')
+            lines.append(f"rm -f '{wrapper_script}'")
+            lines.append('exec "${SHELL:-/bin/bash}"')
+            wrapper_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            wrapper_script.chmod(0o755)
+            setup_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
 
         logger.info(f"Model download: {req.repo_id} (include={req.include}, session={session_id}, remote={remote})")
         logger.info(f"Download setup_cmd: {setup_cmd}")
 
-        if setup_cmd is None:
-            # LOCAL Windows: launch the bash wrapper detached; no tmux setup_cmd.
-            try:
-                _launch_local_detached(session_id, lines)
-            except Exception as e:
-                logger.error(f"Local detached download launch failed: {e}")
-                return {"ok": False, "error": str(e), "session_id": session_id}
-        else:
-            proc = await asyncio.create_subprocess_shell(
-                setup_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.wait()
+        proc = await asyncio.create_subprocess_shell(
+            setup_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.wait()
 
-            if proc.returncode != 0:
-                stderr = (await proc.stderr.read()).decode(errors="replace")
-                logger.error(f"Download failed (rc={proc.returncode}): {stderr}")
-                return {"ok": False, "error": stderr, "session_id": session_id}
+        if proc.returncode != 0:
+            stderr = (await proc.stderr.read()).decode(errors="replace")
+            logger.error(f"Download failed (rc={proc.returncode}): {stderr}")
+            return {"ok": False, "error": stderr, "session_id": session_id}
 
         # Log to assistant
         try:
