@@ -1,15 +1,28 @@
-FROM python:3.12-slim
+# Stage 1 — build Python wheels (needs compiler toolchain)
+FROM python:3.12-slim AS builder
 
-# System deps. tmux is required by Cookbook for background downloads/serves.
-# openssh-client is required for Cookbook remote server tests, setup, probes,
-# downloads, and serves from Docker installs.
-# git/cmake are required when Cookbook builds llama.cpp on first llama.cpp
-# launch inside Docker.
-# nodejs/npm provide npx for the optional built-in Browser MCP server.
-# gosu lets the entrypoint drop privileges cleanly so signals still reach
-# uvicorn directly (no extra shell layer like `su`/`sudo` would add).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+
+# Stage 2 — slim runtime image
+FROM python:3.12-slim
+
+# Runtime system deps. tmux is required by Cookbook for background
+# downloads/serves. openssh-client is required for Cookbook remote server
+# tests, setup, probes, downloads, and serves from Docker installs.
+# git/cmake are required when Cookbook builds llama.cpp on first launch
+# inside Docker. nodejs/npm provide npx for the optional built-in Browser
+# MCP server. gosu lets the entrypoint drop privileges cleanly so signals
+# still reach uvicorn directly (no extra shell layer like `su`/`sudo`).
+RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     curl \
     git \
@@ -20,16 +33,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     && rm -rf /var/lib/apt/lists/*
 
+# Pre-create the non-root app user (default UID 1000). The entrypoint
+# reuses this user when PUID matches, or creates a new one on override.
+RUN useradd -u 1000 -m -s /bin/sh -d /app odysseus
+
 WORKDIR /app
 
-# Install Python deps first (layer cache)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy pre-built Python packages from the builder stage
+COPY --from=builder /install /usr/local
 
 # Copy app code
 COPY . .
 
-# Create data directory (mount a volume here for persistence)
+# Create data directories (mount volumes here for persistence)
 RUN mkdir -p data logs services/cache/search
 
 # Entrypoint that drops to PUID/PGID (default 1000:1000) and repairs

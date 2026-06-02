@@ -14,13 +14,27 @@ set -e
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
 
-# Reuse an existing matching group/user if the host's UID/GID already
-# corresponds to one in /etc/passwd (e.g. when the image is rebuilt
-# and "odysseus" already exists at the same id). Otherwise create.
-if ! getent group "$PGID" >/dev/null 2>&1; then
+# The Dockerfile pre-creates an "odysseus" user + group at UID/GID 1000.
+# For the default case (PUID=PGID=1000) this is a no-op.  When the host
+# user overrides PUID/PGID we shift the existing user/group in-place with
+# usermod/groupmod so the container still runs under a single named
+# identity regardless of the chosen ids.
+if getent group odysseus >/dev/null 2>&1; then
+    EXISTING_GID=$(getent group odysseus | cut -d: -f3)
+    if [ "$EXISTING_GID" != "$PGID" ]; then
+        groupmod -g "$PGID" odysseus
+    fi
+elif ! getent group "$PGID" >/dev/null 2>&1; then
     groupadd -g "$PGID" odysseus
 fi
-if ! getent passwd "$PUID" >/dev/null 2>&1; then
+
+if getent passwd odysseus >/dev/null 2>&1; then
+    EXISTING_UID=$(id -u odysseus 2>/dev/null || echo 0)
+    if [ "$EXISTING_UID" != "$PUID" ]; then
+        usermod -u "$PUID" odysseus
+    fi
+    usermod -g "$PGID" odysseus
+elif ! getent passwd "$PUID" >/dev/null 2>&1; then
     useradd -u "$PUID" -g "$PGID" -M -s /bin/sh -d /app odysseus
 fi
 
