@@ -38,9 +38,12 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
+import urllib.error
 import urllib.request
 import zipfile
+from urllib.parse import urlsplit
 from typing import Any, Dict, List, Optional
 
 from src.plugin_system import plugins_dir, get_manager
@@ -49,17 +52,49 @@ DEFAULT_REGISTRY = (
     "https://raw.githubusercontent.com/pewdiepie-archdaemon/odysseus/main/plugins/registry.json"
 )
 
+# Resource caps — guard against zip bombs / oversized downloads (DoS).
+MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024        # compressed download
+MAX_TOTAL_UNCOMPRESSED = 256 * 1024 * 1024   # sum of extracted bytes
+MAX_REGISTRY_BYTES = 4 * 1024 * 1024         # registry index JSON
+
 
 def _allowed_url(url: str) -> bool:
-    """Allow https anywhere, or http only to loopback (local/LAN registries +
-    testing). Blocks plaintext http to arbitrary hosts (MITM risk)."""
-    u = (url or "").lower()
-    if u.startswith("https://"):
-        return True
-    if u.startswith("http://"):
-        host = u[len("http://"):].split("/", 1)[0].split(":", 1)[0]
-        return host in ("127.0.0.1", "localhost", "[::1]", "::1")
+    """Allow https to any host, or http only to loopback (local/LAN registries +
+    testing). Parses with urlsplit and rejects userinfo/whitespace so the host we
+    validate is the host urllib actually connects to — blocks tricks like
+    ``http://127.0.0.1:1@evil.com`` and plaintext http to arbitrary hosts."""
+    if not isinstance(url, str) or url != url.strip() or any(c in url for c in " \t\r\n"):
+        return False
+    try:
+        u = urlsplit(url)
+    except Exception:
+        return False
+    if u.username or u.password or "@" in (u.netloc or ""):
+        return False
+    host = (u.hostname or "").lower()
+    if u.scheme == "https":
+        return bool(host)
+    if u.scheme == "http":
+        return host in ("127.0.0.1", "localhost", "::1")
     return False
+
+
+class _ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Re-apply ``_allowed_url`` to every redirect hop so an https URL can't 302
+    to http://internal-host / cloud-metadata (SSRF) and bypass the policy."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _allowed_url(newurl):
+            raise urllib.error.HTTPError(newurl, code, "redirect to a disallowed URL blocked", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_ValidatingRedirectHandler())
+
+
+def _urlopen(url: str, timeout: int):
+    """urlopen via an opener that re-validates redirect targets."""
+    return _OPENER.open(url, timeout=timeout)
 
 
 def _data_root() -> str:
@@ -88,8 +123,10 @@ def _load_custom() -> List[str]:
 def _save_custom(urls: List[str]) -> None:
     path = _custom_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(urls, f, indent=2)
+    os.replace(tmp, path)   # atomic write — no truncation on crash mid-write
 
 
 def get_registries() -> List[str]:
@@ -143,8 +180,11 @@ def fetch_registry(url: Optional[str] = None, timeout: int = 15) -> List[Dict[st
     url = url or registry_url()
     if not _allowed_url(url):
         raise ValueError("registry URL must be https (or http to loopback)")
-    with urllib.request.urlopen(url, timeout=timeout) as r:  # nosec - admin-configured
-        data = json.loads(r.read().decode("utf-8"))
+    with _urlopen(url, timeout) as r:  # redirect-validated; admin-configured
+        raw = r.read(MAX_REGISTRY_BYTES + 1)
+    if len(raw) > MAX_REGISTRY_BYTES:
+        raise ValueError("registry index too large")
+    data = json.loads(raw.decode("utf-8"))
     if isinstance(data, dict) and isinstance(data.get("plugins"), list):
         data = data["plugins"]
     if not isinstance(data, list):
@@ -208,8 +248,10 @@ def _ver(v: str):
 
 def _safe_extract(zf: zipfile.ZipFile, dest: str) -> None:
     """Extract ``zf`` into ``dest``, rejecting zip-slip (absolute paths / ``..``
-    that escape dest) and symlinks."""
+    that escape dest) and symlinks, and capping the total uncompressed size to
+    guard against zip bombs."""
     dest_real = os.path.realpath(dest)
+    budget = MAX_TOTAL_UNCOMPRESSED
     for member in zf.infolist():
         name = member.filename
         if name.endswith("/"):
@@ -222,8 +264,17 @@ def _safe_extract(zf: zipfile.ZipFile, dest: str) -> None:
         if mode == 0o120000:
             raise ValueError(f"symlink not allowed in archive: {name}")
         os.makedirs(os.path.dirname(target), exist_ok=True)
+        # Bounded copy — enforce the ACTUAL decompressed size (member.file_size
+        # can lie), so a crafted archive can't exhaust the disk.
         with zf.open(member) as src, open(target, "wb") as out:
-            shutil.copyfileobj(src, out)
+            while True:
+                chunk = src.read(65536)
+                if not chunk:
+                    break
+                budget -= len(chunk)
+                if budget < 0:
+                    raise ValueError("archive exceeds the uncompressed size limit")
+                out.write(chunk)
 
 
 def install(entry: Optional[Dict[str, Any]] = None, *, url: Optional[str] = None,
@@ -243,13 +294,19 @@ def install(entry: Optional[Dict[str, Any]] = None, *, url: Optional[str] = None
         raise ValueError("download URL must be https (or http to loopback)")
     if not _is_safe_id(plugin_id):
         raise ValueError("invalid plugin id")
+    # Require a verified digest — installing runs third-party code, so never
+    # install an unverified blob (covers registry entries AND install-from-URL).
+    digest = (sha256 or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("a valid sha256 digest is required to install (integrity check)")
 
-    with urllib.request.urlopen(url, timeout=timeout) as r:  # nosec - admin action
-        blob = r.read()
-    if sha256:
-        got = hashlib.sha256(blob).hexdigest()
-        if got.lower() != sha256.lower():
-            raise ValueError(f"sha256 mismatch (expected {sha256}, got {got})")
+    with _urlopen(url, timeout) as r:  # redirect-validated; admin action
+        blob = r.read(MAX_DOWNLOAD_BYTES + 1)
+    if len(blob) > MAX_DOWNLOAD_BYTES:
+        raise ValueError(f"download exceeds the {MAX_DOWNLOAD_BYTES // (1024 * 1024)} MB limit")
+    got = hashlib.sha256(blob).hexdigest()
+    if got != digest:
+        raise ValueError(f"sha256 mismatch (expected {digest}, got {got})")
 
     target = os.path.join(plugins_dir(), plugin_id)
     staging = target + ".incoming"
@@ -269,11 +326,17 @@ def install(entry: Optional[Dict[str, Any]] = None, *, url: Optional[str] = None
 
     mgr = get_manager()
     if mgr:
-        mgr.load_enabled()            # rescan picks up the new folder
-        try:
-            return mgr.enable(plugin_id)
-        except KeyError:
-            pass
+        # Atomic w.r.t. other manager mutations (RLock, reentrant) so a concurrent
+        # uninstall of the same id can't slip between discover() and reload().
+        with mgr._lock:
+            mgr.discover()              # pick up the new folder + fresh manifest
+            rec = mgr.records.get(plugin_id)
+            if rec is not None:
+                rec.enabled = True      # installing (re)enables it
+                mgr._save_state()
+                # reload() tears down any previously-running version and
+                # re-imports the just-written code (enable() would keep the old).
+                return mgr.reload(plugin_id)
     return {"id": plugin_id, "installed": True}
 
 

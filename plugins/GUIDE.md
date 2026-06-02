@@ -65,6 +65,12 @@ route:
 - `LOCALHOST_BYPASS=true` lets same-machine clients skip auth at the middleware,
   **but `require_admin` does NOT honor it** (it needs a real admin session, the
   internal-tool token, or `AUTH_ENABLED=false`). Use a token for admin routes.
+- Your routes must be mounted under **`/api/plugins/<id>/`** (enforced by
+  `add_router`) — otherwise a plugin could shadow an auth-exempt path and expose
+  an unauthenticated endpoint.
+- The global gate only checks *logged-in*; the manifest **`permission` field is
+  advisory** (it controls who may toggle the plugin, not your routes). Gate any
+  admin-only route yourself with `require_admin`.
 - `/static` is auth-exempt, so the theme assets load on any page.
 
 ---

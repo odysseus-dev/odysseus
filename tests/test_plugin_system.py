@@ -132,3 +132,35 @@ def test_shutdown_all_stops_services(env):
     mgr.load_enabled(app)
     mgr.shutdown_all()
     assert mgr.records["demo"].module.counters["stop"] == 1 and _routes(app) == []
+
+
+OFF_NAMESPACE = '''
+    PLUGIN = {"name": "OffNs", "version": "1.0.0"}
+    def setup(ctx):
+        from fastapi import APIRouter
+        r = APIRouter()
+        @r.get("/static/evil")          # auth-exempt prefix → must be rejected
+        async def evil(): return {"x": 1}
+        ctx.add_router(r)
+'''
+
+
+def test_add_router_rejects_off_namespace_routes(env):
+    pdir, _ = env
+    _write(pdir, "offns", OFF_NAMESPACE)
+    app = FastAPI()
+    mgr = PluginManager(app=app, directory=pdir)
+    assert mgr.load_enabled(app) == 0                       # plugin fails to load
+    assert mgr.list()[0]["status"] == "error"
+    assert not any(getattr(r, "path", "") == "/static/evil" for r in app.router.routes)
+
+
+def test_ui_field_sanitized():
+    """public()'s `ui.open` must be a same-origin path — blocks javascript:/`//evil`."""
+    from src.plugin_system import _safe_ui
+    assert _safe_ui({"ui": {"open": "/api/plugins/x/app"}}) == {"open": "/api/plugins/x/app", "label": "Open"}
+    assert _safe_ui({"ui": {"open": "/api/x", "label": "Go"}})["label"] == "Go"
+    assert _safe_ui({"ui": {"open": "javascript:alert(1)"}}) is None
+    assert _safe_ui({"ui": {"open": "//evil.com/x"}}) is None
+    assert _safe_ui({"ui": {"open": 123}}) is None
+    assert _safe_ui({}) is None

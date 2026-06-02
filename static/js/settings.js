@@ -151,8 +151,11 @@ async function _installFromUrlPrompt() {
   if (!url) return;
   const id = prompt('Install as plugin id (folder name):');
   if (!id) return;
+  const sha = prompt('SHA-256 of the zip (64 hex chars — required for integrity):');
+  if (!sha) return;
+  if (!/^[0-9a-f]{64}$/i.test(sha.trim())) { alert('That is not a valid 64-char SHA-256.'); return; }
   try {
-    const r = await fetch('/api/plugins/install', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: url.trim(), id: id.trim() }) });
+    const r = await fetch('/api/plugins/install', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: url.trim(), id: id.trim(), sha256: sha.trim() }) });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { alert(d.detail || 'Install failed'); return; }
     alert('Installed: ' + (d.id || id));
@@ -175,7 +178,7 @@ function _browseCard(e) {
         <div style="font-weight:600;">${esc(e.name || e.id)} <span style="opacity:.5;font-weight:normal;font-size:.85em;">v${esc(e.version || '')}</span>
           <span style="opacity:.5;font-weight:normal;font-size:.8em;border:1px solid var(--border,#444);border-radius:6px;padding:1px 6px;margin-left:6px;">${esc(e.category || 'General')}</span></div>
         <div class="admin-toggle-sub" style="margin-top:2px;">${esc(e.description || '')}${e.author ? (' — by ' + esc(e.author)) : ''}</div>
-        ${e.homepage ? `<div style="margin-top:5px;"><a href="${esc(e.homepage)}" target="_blank" rel="noopener" style="font-size:.82em;color:var(--accent,#6af);text-decoration:none;">${/github\.com/i.test(e.homepage) ? 'View on GitHub' : 'Learn more'} ↗</a></div>` : ''}
+        ${(e.homepage && /^https?:\/\//i.test(e.homepage)) ? `<div style="margin-top:5px;"><a href="${esc(e.homepage)}" target="_blank" rel="noopener" style="font-size:.82em;color:var(--accent,#6af);text-decoration:none;">${/github\.com/i.test(e.homepage) ? 'View on GitHub' : 'Learn more'} ↗</a></div>` : ''}
       </div>${action}
     </div>
     <div class="depot-msg" style="margin-top:6px;font-size:.85em;"></div>`;
@@ -209,6 +212,9 @@ function _pluginCard(p) {
   card.className = 'admin-card';
   card.style.cssText = 'margin-bottom:10px;padding:12px 14px;';
   const err = p.status === 'error' ? `<div class="adm-ep-inline-msg" style="color:var(--red,#e66);margin-top:6px;">Failed to load: ${esc(p.error || '').split('\n').pop()}</div>` : '';
+  // Render the Open link only if ui.open is a same-origin path (defense in depth
+  // — the server sanitizes this too; blocks javascript:/`//evil` links).
+  const safeOpen = (p.ui && typeof p.ui.open === 'string' && /^\/(?!\/)/.test(p.ui.open)) ? p.ui.open : null;
   card.innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;">
       <div style="flex:1;min-width:0;">
@@ -216,8 +222,8 @@ function _pluginCard(p) {
           <span style="opacity:.5;font-weight:normal;font-size:.8em;border:1px solid var(--border,#444);border-radius:6px;padding:1px 6px;margin-left:6px;">${esc(p.category)}</span></div>
         <div class="admin-toggle-sub" style="margin-top:2px;">${esc(p.description)}${p.author ? ' — by ' + esc(p.author) : ''}</div>
       </div>
-      ${(p.ui && p.ui.open && p.enabled && p.status === 'loaded')
-        ? `<a class="admin-btn-sm" href="${esc(p.ui.open)}" target="_blank" rel="noopener"
+      ${(safeOpen && p.enabled && p.status === 'loaded')
+        ? `<a class="admin-btn-sm" href="${esc(safeOpen)}" target="_blank" rel="noopener"
              style="text-decoration:none;display:inline-flex;align-items:center;gap:4px;">${esc(p.ui.label || 'Open')} ↗</a>`
         : ''}
       <button class="admin-btn-sm plugin-toggle" data-id="${esc(p.id)}" data-enabled="${p.enabled ? '1' : '0'}"
@@ -254,7 +260,7 @@ async function _renderTunnelControls(host) {
         <span style="font-size:.85em;opacity:.85;">
           ${running && s.url ? `Public URL: <a href="${s.url}" target="_blank" rel="noopener" style="color:var(--accent,#6ab7ff);font-weight:600;">${s.url}</a> <span style="opacity:.55;">(may take a few seconds to come online)</span>`
             : running ? (s && s.provisioning ? 'almost ready… (bringing the tunnel online)' : 'starting… (fetching public URL)')
-            : (s && s.error ? '<span style="color:var(--red,#e66)">' + String(s.error) + '</span>' : 'stopped — auth still required when started')}
+            : (s && s.error ? '<span style="color:var(--red,#e66)">' + String(s.error).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])) + '</span>' : 'stopped — auth still required when started')}
         </span>
       </div>`;
     host.querySelector('#tunnel-toggle').addEventListener('click', async (e) => {

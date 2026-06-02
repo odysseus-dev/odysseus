@@ -42,12 +42,16 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import threading
 import traceback
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# A safe plugin id: used as a filesystem path component AND a Python import name.
+_ID_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$")
 
 
 def plugins_dir() -> str:
@@ -92,10 +96,26 @@ class PluginContext:
 
     # -- routes -------------------------------------------------------------
     def add_router(self, router, **include_kwargs) -> None:
-        """Mount a FastAPI APIRouter; its routes are tracked for clean removal."""
+        """Mount a FastAPI APIRouter; its routes are tracked for clean removal.
+
+        Routes MUST live under ``/api/plugins/`` — otherwise a plugin could mount
+        under an auth-exempt prefix (``/static``, ``/api/auth``, ``/api/health``)
+        and expose an UNAUTHENTICATED endpoint, since the auth middleware gates by
+        path. Off-namespace routes are rolled back and rejected."""
         before = len(self.app.router.routes)
         self.app.include_router(router, **include_kwargs)
-        self._routes.extend(self.app.router.routes[before:])
+        added = self.app.router.routes[before:]
+        bad = [r for r in added if not str(getattr(r, "path", "")).startswith("/api/plugins/")]
+        if bad:
+            for r in added:
+                try:
+                    self.app.router.routes.remove(r)
+                except ValueError:
+                    pass
+            raise ValueError(
+                "plugin routes must be mounted under /api/plugins/<id>/ "
+                f"(rejected: {[getattr(r, 'path', '?') for r in bad][:3]})")
+        self._routes.extend(added)
 
     # -- background services -----------------------------------------------
     def add_service(self, start: Optional[Callable] = None,
@@ -145,9 +165,9 @@ class PluginRecord:
             "permission": m.get("permission", "admin"),
             "requires": m.get("requires", []),
             # Optional UI contribution: {"open": "/api/.../page", "label": "Open"}.
-            # The Plugins panel renders an "Open" button for enabled plugins that
-            # declare it — a plugin's only hook into the frontend.
-            "ui": m.get("ui"),
+            # Sanitized (see _safe_ui) so `open` must be a same-origin path — the
+            # Plugins panel renders it as a link, so block javascript:/`//evil`.
+            "ui": _safe_ui(m),
             "enabled": self.enabled,
             "status": self.status,
             "error": self.error,
@@ -177,8 +197,10 @@ class PluginManager:
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             state = {pid: {"enabled": r.enabled} for pid, r in self.records.items()}
-            with open(path, "w", encoding="utf-8") as f:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(state, f, indent=2)
+            os.replace(tmp, path)   # atomic — a crash mid-write can't truncate the file
         except Exception as e:
             logger.warning("Could not persist plugin state: %s", e)
 
@@ -194,17 +216,28 @@ class PluginManager:
                 return
             for entry in sorted(os.listdir(self.directory)):
                 full = os.path.join(self.directory, entry)
+                if os.path.islink(full):
+                    continue   # don't load a symlinked entry (could point outside the dir)
                 if os.path.isdir(full) and os.path.isfile(os.path.join(full, "plugin.py")):
                     pid, path = entry, os.path.join(full, "plugin.py")
                 elif entry.endswith("_plugin.py"):
                     pid, path = entry[:-len("_plugin.py")], full
                 else:
                     continue
+                # id is used as a filesystem path + an import name, and the entry
+                # file must not be a symlink to code outside the plugins dir.
+                if not _ID_RE.match(pid) or os.path.islink(path):
+                    continue
                 rec = self.records.get(pid) or PluginRecord(plugin_id=pid, path=path)
                 rec.path = path
                 rec.manifest = _read_manifest(path) or rec.manifest
                 rec.enabled = state.get(pid, {}).get("enabled", True)
                 found[pid] = rec
+            # Tear down any previously-loaded plugin whose folder vanished from
+            # disk, so its routes/services don't linger (orphaned otherwise).
+            for pid, rec in self.records.items():
+                if pid not in found and rec.ctx is not None:
+                    self._teardown(rec)
             self.records = found
 
     # -- load / unload ------------------------------------------------------
@@ -334,6 +367,7 @@ class PluginManager:
                 raise KeyError(plugin_id)
             self._teardown(rec)
             rec.module = None
+            rec.status = "discovered"   # force _setup to re-import the (possibly new) code
             rec.manifest = _read_manifest(rec.path) or {}
             if rec.enabled:
                 self._setup(rec)
@@ -355,6 +389,21 @@ class PluginManager:
         d = os.path.join(_data_root(), "plugins", plugin_id)
         os.makedirs(d, exist_ok=True)
         return d
+
+
+def _safe_ui(manifest: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Sanitize the manifest ``ui`` entry for the Plugins panel. ``open`` must be
+    a same-origin path (a single leading ``/``) so the rendered Open button can't
+    become a ``javascript:`` or protocol-relative (``//evil``) link. Returns None
+    if absent or unsafe."""
+    ui = manifest.get("ui")
+    if not isinstance(ui, dict):
+        return None
+    open_ = ui.get("open")
+    if not (isinstance(open_, str) and open_.startswith("/") and not open_.startswith("//")):
+        return None
+    label = ui.get("label")
+    return {"open": open_, "label": label if isinstance(label, str) and label else "Open"}
 
 
 def _read_manifest(path: str) -> Dict[str, Any]:
