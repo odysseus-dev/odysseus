@@ -171,6 +171,21 @@ def _windows_bash_fallbacks() -> List[str]:
     return paths
 
 
+def _is_wsl_bash(path: str) -> bool:
+    """True if ``path`` points to the WSL ``bash.exe`` shim in system32.
+
+    WSL bash runs inside a Linux subsystem with a separate filesystem
+    namespace (Windows ``C:\\`` is at ``/mnt/c``). Scripts that use native
+    Windows paths (``C:/Users/...``) will silently fail under WSL bash.
+    Cookbook/background-job scripts always use Windows-native paths, so we
+    must prefer Git Bash (MSYS2) which shares the Windows filesystem.
+    """
+    if not path:
+        return False
+    normed = ntpath.normcase(ntpath.abspath(path))
+    return "system32" in normed or "syswow64" in normed
+
+
 def find_bash() -> Optional[str]:
     """Locate a real ``bash`` interpreter, or None.
 
@@ -178,17 +193,30 @@ def find_bash() -> Optional[str]:
     agent ``bash`` tool, background jobs, Cookbook scripts) emit bash syntax, so
     when a bash is present we use it and keep full parity with POSIX. Result is
     cached.
+
+    On Windows, Git Bash (MSYS2) is strongly preferred over WSL bash because
+    Cookbook scripts use native Windows paths that WSL cannot resolve.
     """
     global _BASH_CACHE, _BASH_PROBED
     if _BASH_PROBED:
         return _BASH_CACHE
     _BASH_PROBED = True
     found = which_tool("bash")
-    if not found and IS_WINDOWS:
-        for cand in _windows_bash_fallbacks():
-            if os.path.exists(cand):
-                found = cand
-                break
+    if IS_WINDOWS:
+        # Git Bash shares the Windows filesystem; WSL bash does not.
+        # Always try the Git Bash fallback paths first when which_tool
+        # returned WSL bash (system32/bash.exe) or returned nothing.
+        if not found or _is_wsl_bash(found):
+            wsl_fallback = found  # keep as last resort
+            found = None
+            for cand in _windows_bash_fallbacks():
+                if os.path.exists(cand):
+                    found = cand
+                    break
+            if not found:
+                found = wsl_fallback
+    elif not found:
+        pass  # POSIX: which_tool already checked
     _BASH_CACHE = found
     return found
 
