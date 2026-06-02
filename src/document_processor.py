@@ -490,10 +490,28 @@ def build_user_content(
             else:
                 content.insert(0, {"type": "text", "text": extracted_text.lstrip()})
         else:
+            try:
+                _size_bytes = os.path.getsize(path)
+                if _size_bytes < 1024:
+                    _size_h = f"{_size_bytes} B"
+                elif _size_bytes < 1024 * 1024:
+                    _size_h = f"{_size_bytes / 1024:.1f} KB"
+                else:
+                    _size_h = f"{_size_bytes / (1024 * 1024):.1f} MB"
+            except OSError:
+                _size_h = "unknown size"
+            note = (
+                f"\n\n[Attached non-text file: {display_name} "
+                f"({_size_h}, {mime})]\n"
+                f"[Saved to: {path}]\n"
+                f"[upload_id: {fid}]\n"
+                f"Use bash or python tools (cat, python -c, file, xxd, "
+                f"numpy-stl, trimesh, etc.) to inspect or process this file."
+            )
             if content and content[0]["type"] == "text":
-                content[0]["text"] += "\n\n[Attached non-text file]"
+                content[0]["text"] += note
             else:
-                content.insert(0, {"type": "text", "text": "[Attached non-text file]"})
+                content.insert(0, {"type": "text", "text": note.lstrip()})
 
     has_media = any(item.get("type") in ["image_url", "audio"] for item in content if isinstance(item, dict))
     if not has_media and content:
