@@ -12,6 +12,7 @@ def test_src_search_core_aliases_services_core():
     service_core = importlib.import_module("services.search.core")
 
     assert src_core is service_core
+    assert src_core.atomic_web_search is service_core.atomic_web_search
     assert src_core.comprehensive_web_search is service_core.comprehensive_web_search
     assert src_core.invalidate_search_cache is service_core.invalidate_search_cache
 
@@ -29,6 +30,7 @@ def test_src_search_package_exports_still_resolve():
     import src.search as search
     import services.search as service_search
 
+    assert search.atomic_web_search is service_search.atomic_web_search
     assert search.comprehensive_web_search is service_search.comprehensive_web_search
     assert search.searxng_search_results is service_search.searxng_search_results
     assert search.searxng_search_api is service_search.searxng_search_api

@@ -50,14 +50,67 @@ def test_function_call_to_tool_block_invalid_json_returns_none():
 
 def test_google_search_mapping():
     """google_search should map to web_search and extract the first query from queries list or string."""
+    import json
+
     # List of queries case
     block = function_call_to_tool_block("google_search", '{"queries": ["testing google search"]}')
     assert block is not None
     assert block.tool_type == "web_search"
-    assert block.content == "testing google search"
+    payload = json.loads(block.content)
+    assert payload["query"] == "testing google search"
+    assert payload["count"] == 5
 
     # Single string query case
     block = function_call_to_tool_block("google_search_retrieval", '{"queries": "testing google search string"}')
     assert block is not None
     assert block.tool_type == "web_search"
-    assert block.content == "testing google search string"
+    payload = json.loads(block.content)
+    assert payload["query"] == "testing google search string"
+    assert payload["count"] == 5
+
+
+def test_web_search_query_only_produces_json_payload():
+    """web_search with only query produces JSON with default count, no time_filter."""
+    import json
+    block = function_call_to_tool_block("web_search", '{"query": "test query"}')
+    assert block is not None
+    assert block.tool_type == "web_search"
+    payload = json.loads(block.content)
+    assert payload["query"] == "test query"
+    assert payload["count"] == 5
+    assert "time_filter" not in payload
+
+
+def test_web_search_time_filter_included_when_present():
+    """web_search with time_filter includes it in the JSON payload."""
+    import json
+    block = function_call_to_tool_block(
+        "web_search",
+        '{"query": "latest news", "time_filter": "day"}'
+    )
+    assert block is not None
+    payload = json.loads(block.content)
+    assert payload["query"] == "latest news"
+    assert payload["time_filter"] == "day"
+
+
+def test_web_search_count_is_passed_through():
+    """web_search count parameter is passed through to JSON payload."""
+    import json
+    block = function_call_to_tool_block(
+        "web_search",
+        '{"query": "test", "count": 10}'
+    )
+    payload = json.loads(block.content)
+    assert payload["count"] == 10
+
+
+def test_web_search_queries_list_takes_priority():
+    """When both query and queries are present, queries[0] wins."""
+    import json
+    block = function_call_to_tool_block(
+        "web_search",
+        '{"query": "ignored", "queries": ["from list"]}'
+    )
+    payload = json.loads(block.content)
+    assert payload["query"] == "from list"
