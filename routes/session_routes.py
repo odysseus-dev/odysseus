@@ -316,16 +316,19 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             from core.database import ModelEndpoint
             from src.endpoint_resolver import build_headers
             from src.session_switch import find_session_endpoint, build_switch_headers
-            # Resolve the endpoint that owns the NEW url (by id, else by url) so we
-            # can attach the RIGHT api key. Critically this runs even when
-            # endpoint_id is omitted — otherwise the previous endpoint's key stays
-            # on the session and is sent to the new url, causing a 401 (#1186).
+            from src.auth_helpers import effective_user, owner_filter
+            # Resolve the endpoint that owns the NEW url (by id, else by EXACT url)
+            # so we attach the RIGHT api key. This runs even when endpoint_id is
+            # omitted — otherwise the previous endpoint's key stays on the session
+            # and is sent to the new url, causing a 401 (#1186). The lookup is
+            # scoped to the caller's own (or shared) endpoints so a URL match can
+            # never resolve another user's key; on no exact match, headers are
+            # cleared rather than a key inferred.
+            owner = effective_user(request)
             _db = SessionLocal()
             try:
-                rows = _db.query(ModelEndpoint).all()
+                rows = owner_filter(_db.query(ModelEndpoint), ModelEndpoint, owner).all()
                 ep = find_session_endpoint(rows, endpoint_id, endpoint_url)
-                if endpoint_id and ep is None:
-                    raise HTTPException(400, "Model endpoint no longer exists")
                 # Build headers while the row is still attached to the session.
                 new_headers = build_switch_headers(ep, endpoint_url, build_headers)
             finally:

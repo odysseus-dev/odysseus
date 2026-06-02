@@ -35,6 +35,21 @@ def test_find_missing_returns_none():
     assert find_session_endpoint(ENDPOINTS, "nope", None) is None
 
 
+def test_prefix_url_does_not_match_only_exact():
+    # A URL that merely shares a prefix with a stored base must NOT match — else
+    # the wrong saved API key gets attached. Exact normalized match only.
+    prefix_eps = [
+        Ep("a", "https://api.example.com/v1", "key-v1"),
+        Ep("b", "https://api.example.com/v1beta", "key-v1beta"),
+    ]
+    # Sub-path of v1 (not exactly v1) → no match, not a wrong-key guess.
+    assert find_session_endpoint(prefix_eps, None, "https://api.example.com/v1/extra") is None
+    # A shorter shared base → no match either.
+    assert find_session_endpoint(prefix_eps, None, "https://api.example.com") is None
+    # Exact still matches.
+    assert find_session_endpoint(prefix_eps, None, "https://api.example.com/v1beta") is prefix_eps[1]
+
+
 def test_switch_uses_new_endpoint_key_not_old():
     # The core regression: switch to Cerebras → headers carry the Cerebras key.
     headers = build_switch_headers(CEREBRAS, "https://api.cerebras.ai/v1", build_headers)

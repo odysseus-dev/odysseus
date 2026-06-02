@@ -39,9 +39,12 @@ def find_session_endpoint(
         return None
     if endpoint_url:
         target = _norm_url(endpoint_url)
+        # EXACT normalized base match only. Prefix matching is unsafe for picking
+        # an API key — two endpoints sharing a prefix (or one being a shorter
+        # provider base) could attach the wrong saved credential. No exact match
+        # → None → headers are cleared rather than a key guessed.
         for ep in endpoints:
-            base = _norm_url(getattr(ep, "base_url", None))
-            if base and (base == target or target.startswith(base) or base.startswith(target)):
+            if target and _norm_url(getattr(ep, "base_url", None)) == target:
                 return ep
     return None
 
