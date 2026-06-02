@@ -1753,7 +1753,7 @@ body.bg-pattern-sparkles {
     /* Welcome screen — centered in available space above input bar */
     #welcome-screen {
       position:absolute;
-      top:40%;
+      top:30%;
       left:50%;
       transform:translate(-50%,-50%);
       display:flex;
@@ -1772,13 +1772,13 @@ body.bg-pattern-sparkles {
       overflow: hidden;
     }
     @media (max-height: 650px) {
-      #welcome-screen { top: 28%; }
+      #welcome-screen { top: 22%; }
       #welcome-screen .welcome-tip { opacity: 0; max-height: 0; margin: 0; }
       #welcome-screen .welcome-version { margin-top: 6px; }
       .incognito-btn { margin-top: 8px; }
     }
     @media (max-height: 500px) {
-      #welcome-screen { top: 22%; }
+      #welcome-screen { top: 18%; }
       #welcome-screen .welcome-name { font-size: 1.4rem; margin-bottom: 0; }
       #welcome-screen .welcome-sub { opacity: 0; max-height: 0; margin: 0; }
       .incognito-btn { margin-top: 4px !important; }
@@ -35016,4 +35016,352 @@ body.theme-frosted .modal {
 .slash-ac-empty code {
   font-family: 'Fira Code', ui-monospace, monospace;
   color: var(--accent, var(--red));
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Prompt Shortcuts
+ * Stacked, click-to-send prompt rows above the chat input + the tool
+ * window that manages them. See static/js/promptShortcuts.js.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Above the chat input ── */
+.chat-shortcuts-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  width: 100%;
+  max-width: var(--chat-max-width, 800px);
+  margin: 0 auto 8px;
+  padding: 0 8px;
+  box-sizing: border-box;
+}
+#chat-container:not(.welcome-active) #chat-shortcuts-bar {
+  display: none;
+}
+.chat-shortcuts-bar:empty {
+  display: none;
+}
+.chat-shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, transform 0.08s;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+}
+.chat-shortcut-row:hover {
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 30%, var(--border));
+}
+.chat-shortcut-row:active {
+  transform: scale(0.98);
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+}
+/* Single-column on narrow viewports so titles aren't crushed. */
+@media (max-width: 480px) {
+  .chat-shortcuts-bar {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Tool window modal ── */
+.prompt-shortcuts-modal-content {
+  width: min(560px, 92vw);
+  max-height: min(720px, 88vh);
+  display: flex;
+  flex-direction: column;
+}
+.prompt-shortcuts-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+.prompt-shortcuts-desc {
+  font-size: 11.5px;
+  opacity: 0.7;
+  margin: 0 0 4px;
+  line-height: 1.4;
+}
+.prompt-shortcuts-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px;
+  min-height: 100px;
+}
+
+/* List row (read-only preview) */
+.prompt-shortcuts-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: border-color 0.12s, background 0.12s;
+}
+.prompt-shortcuts-row:hover {
+  border-color: color-mix(in srgb, var(--fg) 25%, var(--border));
+}
+.prompt-shortcuts-drag-handle {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  color: var(--fg);
+  opacity: 0.35;
+  cursor: grab;
+  user-select: none;
+}
+.prompt-shortcuts-drag-handle:active {
+  cursor: grabbing;
+}
+.prompt-shortcuts-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: text;
+  align-self: center;
+}
+.prompt-shortcuts-row-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prompt-shortcuts-row-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11.5px;
+  line-height: 1.35;
+  opacity: 0.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.prompt-shortcuts-row-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.prompt-shortcuts-delete-btn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--fg);
+  opacity: 0.4;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: opacity 0.12s, background 0.12s, border-color 0.12s, color 0.12s;
+}
+.prompt-shortcuts-delete-btn:hover {
+  opacity: 1;
+  color: var(--color-error, #e25555);
+  border-color: color-mix(in srgb, var(--color-error, #e25555) 40%, transparent);
+  background: color-mix(in srgb, var(--color-error, #e25555) 10%, transparent);
+}
+/* List row in edit mode (textarea + footer) */
+.prompt-shortcuts-row-editing {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 10px;
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 60%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 4%, transparent);
+}
+.prompt-shortcuts-editor-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.prompt-shortcuts-editor-title {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  box-sizing: border-box;
+}
+.prompt-shortcuts-editor-title:focus,
+.prompt-shortcuts-editor-textarea:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 70%, var(--border));
+}
+.prompt-shortcuts-editor-title-counter {
+  flex-shrink: 0;
+  font-size: 10.5px;
+}
+.prompt-shortcuts-editor-textarea {
+  width: 100%;
+  min-height: 60px;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  box-sizing: border-box;
+}
+.prompt-shortcuts-editor-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.prompt-shortcuts-editor-counter {
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+.prompt-shortcuts-editor-cancel,
+.prompt-shortcuts-editor-save {
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 11.5px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.12s, opacity 0.12s, color 0.12s, border-color 0.12s;
+}
+.prompt-shortcuts-editor-cancel {
+  background: transparent;
+  color: var(--fg);
+  opacity: 0.7;
+}
+.prompt-shortcuts-editor-cancel:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.prompt-shortcuts-editor-save {
+  background: var(--accent, var(--red));
+  color: #fff;
+  border-color: var(--accent, var(--red));
+  font-weight: 600;
+}
+.prompt-shortcuts-editor-save:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Separator between visible (top 5) and hidden (extras) */
+.prompt-shortcuts-separator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 6px 0;
+  font-size: 10.5px;
+  opacity: 0.55;
+  font-style: italic;
+  text-align: center;
+  position: relative;
+}
+.prompt-shortcuts-separator::before,
+.prompt-shortcuts-separator::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.prompt-shortcuts-separator span {
+  padding: 0 10px;
+}
+
+/* Empty state */
+.prompt-shortcuts-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px 16px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+.prompt-shortcuts-empty-text {
+  font-size: 12.5px;
+  opacity: 0.6;
+}
+
+/* Footer with Add button */
+.prompt-shortcuts-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+.prompt-shortcuts-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 40%, var(--border));
+  border-radius: 6px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, opacity 0.12s;
+}
+.prompt-shortcuts-add-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+}
+.prompt-shortcuts-add-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.prompt-shortcuts-add-first-btn {
+  padding: 8px 16px;
+}
+
+/* Drag-active row visual */
+.prompt-shortcuts-row.dragging {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 60%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.16);
+  z-index: 10;
 }

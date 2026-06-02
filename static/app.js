@@ -23,6 +23,7 @@ import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
+import promptShortcutsModule from './js/promptShortcuts.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -871,6 +872,18 @@ function initializeEventListeners() {
         notesModule.togglePanel();
       }
     });
+  }
+  // Prompt Shortcuts tool button
+  const toolPromptShortcutsBtn = el('tool-prompt-shortcuts-btn');
+  if (toolPromptShortcutsBtn) {
+    toolPromptShortcutsBtn.addEventListener('click', () => {
+      if (promptShortcutsModule) promptShortcutsModule.togglePromptShortcuts();
+    });
+  }
+  // Render the shortcut row stack above the chat input and start observing
+  // chat-empty transitions so the rows reappear on /new-chat.
+  if (promptShortcutsModule && promptShortcutsModule.initPromptShortcuts) {
+    promptShortcutsModule.initPromptShortcuts();
   }
   // Refresh notes due-reminder badge on load and every 5 minutes
   if (notesModule && notesModule.refreshDueBadge) {
@@ -2348,11 +2361,13 @@ function initializeEventListeners() {
     'tool-library':        '#tool-library-btn',
     'tool-memory':         '#tool-memory-btn',
     'tool-notes':          '#tool-notes-btn',
+    'tool-prompt-shortcuts':'#tool-prompt-shortcuts-btn',
     'tool-tasks':          '#tool-tasks-btn',
     'tool-theme':          '#tool-theme-btn',
     'user-bar':            '#user-bar-profile',
     'sidebar-settings-btn':'#user-bar-settings',
     'chat-meta':           '.chat-meta-overlay',
+    'chat-shortcuts':      '#chat-shortcuts-bar',
     'welcome-text':        '.welcome-name, .welcome-sub, #welcome-tip',
     'incognito-btn':       '.incognito-btn',
     'web-toggle-btn':      '#web-toggle-btn',

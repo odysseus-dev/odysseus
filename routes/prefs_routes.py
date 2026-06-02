@@ -67,8 +67,43 @@ def setup_prefs_routes():
     async def set_pref(request: Request, key: str, body: dict):
         user = get_current_user(request)
         prefs = _load_for_user(user)
-        prefs[key] = body.get("value")
+        value = body.get("value")
+        if key == "chat_shortcut_prompts":
+            value = _sanitize_chat_shortcut_prompts(value)
+        prefs[key] = value
         _save_for_user(user, prefs)
         return {"key": key, "value": prefs[key]}
 
     return router
+
+
+def _sanitize_chat_shortcut_prompts(value):
+    """Clamp the per-user chat shortcut prompts list to 20 entries.
+    Each item is `{id, title, text}` with title <= 50 chars and text <= 2000
+    chars. Blank/malformed entries are dropped. If a legacy entry has no
+    title, the first non-empty line of `text` is used as a fallback so older
+    saved data renders cleanly after the title field was added."""
+    if not isinstance(value, list):
+        return []
+    cleaned = []
+    for item in value[:20]:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        title = item.get("title")
+        if not isinstance(title, str) or not title.strip():
+            first_line = next((ln for ln in text.splitlines() if ln.strip()), "")
+            title = first_line.strip()[:50]
+        else:
+            title = title.strip()[:50]
+        if not title:
+            continue
+        ident = item.get("id")
+        cleaned.append({
+            "id": str(ident)[:64] if ident is not None else "",
+            "title": title,
+            "text": text[:2000],
+        })
+    return cleaned
