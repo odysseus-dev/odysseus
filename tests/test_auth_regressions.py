@@ -81,6 +81,17 @@ _ensure_stub("src.endpoint_resolver",
     build_chat_url=MagicMock(),
     build_headers=MagicMock(),
 )
+_ensure_stub("src.integrations",
+    load_integrations=MagicMock(return_value=[]),
+    add_integration=MagicMock(),
+    update_integration=MagicMock(),
+    delete_integration=MagicMock(),
+    get_integration=MagicMock(return_value=None),
+    mask_integration_secret=MagicMock(),
+    execute_api_call=MagicMock(),
+    INTEGRATION_PRESETS={},
+    migrate_from_settings=MagicMock(),
+)
 
 from fastapi import HTTPException
 
@@ -161,6 +172,100 @@ def test_set_signup_enabled_requires_admin():
 
     assert exc.value.status_code == 403
     assert auth.signup_enabled is False
+
+def test_rename_owner_references_matches_legacy_mixed_case_owners(monkeypatch):
+    from routes import auth_routes
+
+    class _OwnerColumn:
+        pass
+
+    class _LowerOwnerColumn:
+        def __eq__(self, expected):
+            return lambda row: (row.owner or "").lower() == expected
+
+    class _Func:
+        @staticmethod
+        def lower(column):
+            assert isinstance(column, _OwnerColumn)
+            return _LowerOwnerColumn()
+
+    class OwnedModel:
+        owner = _OwnerColumn()
+
+    class OwnerlessModel:
+        pass
+
+    rows = [
+        SimpleNamespace(owner="Admin"),
+        SimpleNamespace(owner="admin"),
+        SimpleNamespace(owner="ADMIN"),
+        SimpleNamespace(owner="bob"),
+        SimpleNamespace(owner=None),
+    ]
+
+    class _Query:
+        def __init__(self, rows):
+            self.rows = rows
+            self.predicate = lambda row: True
+
+        def filter(self, predicate):
+            self.predicate = predicate
+            return self
+
+        def update(self, values, synchronize_session=False):
+            changed = 0
+            for row in self.rows:
+                if self.predicate(row):
+                    row.owner = values["owner"]
+                    changed += 1
+            return changed
+
+    class _Db:
+        def __init__(self):
+            self.committed = False
+            self.rolled_back = False
+            self.closed = False
+
+        def query(self, model):
+            assert model is OwnedModel
+            return _Query(rows)
+
+        def commit(self):
+            self.committed = True
+
+        def rollback(self):
+            self.rolled_back = True
+
+        def close(self):
+            self.closed = True
+
+    db = _Db()
+    fake_db_mod = types.ModuleType("core.database")
+    fake_db_mod.SessionLocal = lambda: db
+    fake_db_mod.Base = SimpleNamespace(
+        registry=SimpleNamespace(
+            mappers=[
+                SimpleNamespace(class_=OwnedModel),
+                SimpleNamespace(class_=OwnerlessModel),
+            ]
+        )
+    )
+
+    monkeypatch.setattr(auth_routes, "func", _Func)
+    monkeypatch.setitem(sys.modules, "core.database", fake_db_mod)
+
+    auth_routes._rename_owner_references("admin", "missionctrl")
+
+    assert [row.owner for row in rows] == [
+        "missionctrl",
+        "missionctrl",
+        "missionctrl",
+        "bob",
+        None,
+    ]
+    assert db.committed is True
+    assert db.rolled_back is False
+    assert db.closed is True
 
 # ---------------------------------------------------------------------------
 # Research endpoints — `_require_user` rejects anonymous

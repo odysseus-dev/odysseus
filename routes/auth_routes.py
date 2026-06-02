@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Request, Response, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from typing import Optional
 import asyncio
 import logging
@@ -71,6 +72,28 @@ class SetOpenRegistrationRequest(BaseModel):
     enabled: bool
 
 SESSION_COOKIE = "odysseus_session"
+
+
+def _rename_owner_references(old_username: str, new_username: str) -> None:
+    from core.database import Base, SessionLocal
+
+    db = SessionLocal()
+    try:
+        for mapper in Base.registry.mappers:
+            model = mapper.class_
+            if not hasattr(model, "owner"):
+                continue
+            (
+                db.query(model)
+                .filter(func.lower(model.owner) == old_username)
+                .update({"owner": new_username}, synchronize_session=False)
+            )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
@@ -297,24 +320,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         # owner-scoped DB rows before changing auth so the account keeps
         # access to its sessions, docs, email accounts, tasks, etc.
         try:
-            from core.database import Base, SessionLocal
-            db = SessionLocal()
-            try:
-                for mapper in Base.registry.mappers:
-                    model = mapper.class_
-                    if not hasattr(model, "owner"):
-                        continue
-                    (
-                        db.query(model)
-                        .filter(model.owner == old_username)
-                        .update({"owner": new_username}, synchronize_session=False)
-                    )
-                db.commit()
-            except Exception:
-                db.rollback()
-                raise
-            finally:
-                db.close()
+            _rename_owner_references(old_username, new_username)
         except Exception as e:
             logger.error("Failed to rename owner references %s -> %s: %s", old_username, new_username, e)
             raise HTTPException(500, "Failed to rename user data")
