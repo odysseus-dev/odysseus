@@ -847,20 +847,25 @@ def _detect_spam_folder(conn):
 
 def _imap_move(uid, dest, src="INBOX", account_id: str | None = None, owner: str = ""):
     """Move a single IMAP UID from src folder to dest. Returns True on success."""
+    c = None
     try:
         c = _imap_connect(account_id, owner=owner)
         c.select(_q(src))
         status, _ = c.copy(uid, _q(dest))
         if status != "OK":
-            c.logout()
             return False
         c.store(uid, "+FLAGS", "\\Deleted")
         c.expunge()
-        c.logout()
         return True
     except Exception as e:
         logger.warning(f"IMAP move {uid} → {dest} failed: {e}")
         return False
+    finally:
+        if c:
+            try:
+                c.logout()
+            except Exception:
+                pass
 
 
 def _extract_attachment_text(msg, max_chars: int = 6000) -> str:

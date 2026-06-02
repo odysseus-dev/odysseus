@@ -528,13 +528,20 @@ def setup_calendar_routes() -> APIRouter:
         owner = _require_user(request)
         from routes.prefs_routes import _load_for_user
         cfg = (_load_for_user(owner) or {}).get("caldav", {}) or {}
+        caldav_password = cfg.get("password") or ""
+        if caldav_password:
+            try:
+                from src.secret_storage import decrypt
+                caldav_password = decrypt(caldav_password)
+            except Exception:
+                pass
         # Surface url+username but never hand the password back to the
         # client — saved-state UI shouldn't leak the credential.
         return {
             "url": cfg.get("url", "") or "",
             "username": cfg.get("username", "") or "",
             "password": "",
-            "has_password": bool(cfg.get("password")),
+            "has_password": bool(caldav_password),
             "local": not bool(cfg.get("url")),
         }
 
@@ -553,12 +560,20 @@ def setup_calendar_routes() -> APIRouter:
             prefs.pop("caldav", None)
             _save_for_user(owner, prefs)
             return {"ok": True, "cleared": True}
-        cfg["url"] = body.get("url", "").strip()
+        from src.caldav_sync import validate_caldav_url
+        try:
+            cfg["url"] = validate_caldav_url(body.get("url", ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
         cfg["username"] = (body.get("username") or "").strip()
         # Preserve the stored password when the client sends an empty
         # one (edit form re-submitted without re-typing the password).
         if body.get("password"):
-            cfg["password"] = body["password"]
+            from src.secret_storage import encrypt
+            cfg["password"] = encrypt(body["password"])
+        elif cfg.get("password"):
+            from src.secret_storage import encrypt
+            cfg["password"] = encrypt(cfg["password"])
         prefs["caldav"] = cfg
         _save_for_user(owner, prefs)
         return {"ok": True}
@@ -585,9 +600,21 @@ def setup_calendar_routes() -> APIRouter:
             cfg = (_load_for_user(owner) or {}).get("caldav", {}) or {}
             url = url or (cfg.get("url") or "")
             user = user or (cfg.get("username") or "")
-            pw = pw or (cfg.get("password") or "")
+            if not pw:
+                pw = cfg.get("password") or ""
+                if pw:
+                    try:
+                        from src.secret_storage import decrypt
+                        pw = decrypt(pw)
+                    except Exception:
+                        pass
         if not (url and user and pw):
             return {"ok": False, "error": "Missing URL, username, or password"}
+        from src.caldav_sync import validate_caldav_url
+        try:
+            url = validate_caldav_url(url)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
         import httpx
         propfind_body = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -595,7 +622,7 @@ def setup_calendar_routes() -> APIRouter:
             '</d:prop></d:propfind>'
         )
         try:
-            async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as cx:
+            async with httpx.AsyncClient(timeout=8.0, follow_redirects=False, trust_env=False) as cx:
                 r = await cx.request(
                     "PROPFIND", url,
                     auth=(user, pw),
@@ -612,6 +639,8 @@ def setup_calendar_routes() -> APIRouter:
                 return {"ok": False, "error": "Forbidden — user can't access that URL"}
             if r.status_code == 404:
                 return {"ok": False, "error": "Not found — check the URL path"}
+            if 300 <= r.status_code < 400:
+                return {"ok": False, "error": "Redirects are not followed for CalDAV safety; use the final URL"}
             return {"ok": False, "error": f"HTTP {r.status_code}"}
         except httpx.ConnectError as e:
             return {"ok": False, "error": f"Connection refused: {e}"[:200]}

@@ -115,7 +115,7 @@ def compute_next_run(schedule: str, scheduled_time: str,
             return None
 
     if schedule == "once":
-        if scheduled_date and scheduled_date > (now.replace(tzinfo=None) if tz is not None else now):
+        if scheduled_date and scheduled_date > (_to_utc_naive(now) if tz is not None else now):
             return scheduled_date
         return None
 

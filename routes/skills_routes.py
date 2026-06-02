@@ -1442,7 +1442,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     @router.post("/{skill_id}/markdown")
     async def save_skill_markdown(request: Request, skill_id: str):
         """Replace SKILL.md with new raw content. Parses + validates first."""
-        from services.memory.skill_format import Skill, slugify
+        from services.memory.skill_format import Skill
         user = _owner(request)
         body = await request.json()
         new_content = body.get("markdown")
@@ -1457,7 +1457,10 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             sk = Skill.from_markdown(new_content)
         except Exception as e:
             raise HTTPException(400, f"Could not parse SKILL.md: {e}")
-        sk.name = slugify(sk.name or match.get("name"))
+        # Never rename on save: a changed `name` in the markdown would move
+        # the skill dir (update_skill) and orphan the original id, so a later
+        # delete 404s (#1333). Pin to the stored name, like _apply_skill_md.
+        sk.name = match.get("name")
         if not sk.owner:
             sk.owner = match.get("owner") or user
         ok = skills_manager.update_skill(match.get("name"), {
