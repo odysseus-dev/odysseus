@@ -124,6 +124,36 @@ def test_detect_amd_reports_family(monkeypatch):
     assert info["gpu_arch"] == "gfx1200"
 
 
+def test_detect_system_propagates_amd_family(monkeypatch):
+    """detect_system must not drop _detect_amd's ISA/family fields; ranking uses
+    them to keep consumer Radeon on GGUF/llama.cpp instead of ROCm vLLM paths."""
+    monkeypatch.setattr(hardware, "_cache_by_host", {})
+    monkeypatch.setattr(hardware, "_get_ram_gb", lambda: 64.0)
+    monkeypatch.setattr(hardware, "_get_available_ram_gb", lambda: 48.0)
+    monkeypatch.setattr(hardware, "_get_cpu_count", lambda: 16)
+    monkeypatch.setattr(hardware, "_get_cpu_name", lambda: "Test CPU")
+    monkeypatch.setattr(hardware, "_detect_apple_silicon", lambda: None)
+    monkeypatch.setattr(hardware, "_detect_nvidia", lambda: None)
+    monkeypatch.setattr(hardware, "_detect_amd", lambda: {
+        "gpu_name": "AMD Radeon RX 6900 XT",
+        "gpu_vram_gb": 16.0,
+        "gpu_count": 1,
+        "gpus": [{"index": 0, "name": "AMD Radeon RX 6900 XT", "vram_gb": 16.0}],
+        "gpu_groups": [],
+        "homogeneous": True,
+        "backend": "rocm",
+        "unified_memory": False,
+        "gpu_arch": "gfx1030",
+        "gpu_family": "rdna",
+    })
+
+    info = hardware.detect_system(fresh=True)
+
+    assert info["backend"] == "rocm"
+    assert info["gpu_arch"] == "gfx1030"
+    assert info["gpu_family"] == "rdna"
+
+
 def test_consumer_amd_cards_have_real_bandwidth():
     """Consumer AMD cards must be in the bandwidth table so speed estimates use
     real VRAM bandwidth, not the crude rocm FALLBACK_K constant. The RX 9060 XT

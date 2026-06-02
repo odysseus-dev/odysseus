@@ -148,6 +148,16 @@ function _runtimeNoteText(backend, pkg, target) {
   const label = labels[backend] || backend;
   if (!pkg) return `${label} readiness unavailable for ${target.label}.`;
   const note = pkg.status_note || pkg.update_note || '';
+  if (backend === 'llamacpp' && pkg.installed && pkg.accelerator_ready === false) {
+    return note
+      ? `llama.cpp installed on ${target.label}, but only CPU backend was detected: ${note}`
+      : `llama.cpp installed on ${target.label}, but no accelerator backend was detected.`;
+  }
+  if (backend === 'llamacpp' && pkg.installed && pkg.accelerator_ready == null) {
+    return note
+      ? `llama.cpp installed on ${target.label}; accelerator backend is not verified: ${note}`
+      : `llama.cpp installed on ${target.label}; accelerator backend is not verified.`;
+  }
   if (pkg.installed) {
     return note ? `${label} ready on ${target.label}: ${note}` : `${label} ready on ${target.label}.`;
   }

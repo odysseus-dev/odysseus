@@ -1,6 +1,8 @@
 """Shell routes — user-facing command execution endpoint."""
 
 import asyncio
+import importlib.metadata as importlib_metadata
+import importlib.util
 import json
 import logging
 import os
@@ -120,6 +122,16 @@ def _running_in_container(dockerenv_path="/.dockerenv", cgroup_path="/proc/1/cgr
 DockerRowStatus = namedtuple("DockerRowStatus", ["applicable", "install_hint"])
 PackageUpdateStatus = namedtuple("PackageUpdateStatus", ["available", "note"])
 
+_LLAMA_CPP_BACKEND_MARKERS = {
+    "cuda": ("ggml-cuda",),
+    "hip": ("ggml-hip", "ggml-rocm"),
+    "metal": ("ggml-metal",),
+    "vulkan": ("ggml-vulkan",),
+    "sycl": ("ggml-sycl",),
+    "cpu": ("ggml-cpu",),
+}
+_LLAMA_CPP_ACCEL_BACKENDS = {"cuda", "hip", "metal", "vulkan", "sycl"}
+
 
 def _docker_row_status(*, on_remote, in_container, installed, default_hint):
     local_docker_unavailable = not on_remote and in_container and not installed
@@ -144,6 +156,108 @@ def _pip_dist_name(pkg: dict) -> str:
         if base:
             return base
     return (pkg.get("name") or "").replace("_", "-")
+
+
+def _module_probe_status(name: str) -> dict:
+    spec = importlib.util.find_spec(name)
+    loader = getattr(spec, "loader", None) if spec else None
+    return {
+        "found": bool(spec),
+        "origin": getattr(spec, "origin", None) if spec else None,
+        "loader": type(loader).__name__ if loader else None,
+        "locations": list(getattr(spec, "submodule_search_locations", []) or []),
+        "real_module": bool(spec and loader),
+    }
+
+
+def _dist_probe_status(names: list[str]) -> dict:
+    out = {}
+    for name in names:
+        try:
+            out[name] = importlib_metadata.version(name)
+        except Exception:
+            pass
+    return out
+
+
+def _llama_cpp_capability_from_probe(probe: dict) -> dict:
+    modules = probe.get("modules") if isinstance(probe.get("modules"), dict) else {}
+    binaries = probe.get("binaries") if isinstance(probe.get("binaries"), dict) else {}
+    module = modules.get("llama_cpp") if isinstance(modules.get("llama_cpp"), dict) else {}
+    roots: list[str] = []
+    for loc in module.get("locations") or []:
+        roots.extend([loc, os.path.join(loc, "lib")])
+    origin = module.get("origin")
+    if origin:
+        base = os.path.dirname(origin)
+        roots.extend([base, os.path.join(base, "lib")])
+
+    libraries: list[str] = []
+    seen_roots = set()
+    for root in roots:
+        if not root or root in seen_roots or not os.path.isdir(root):
+            continue
+        seen_roots.add(root)
+        root_depth = len(Path(root).parts)
+        for dirpath, _dirnames, filenames in os.walk(root):
+            if len(Path(dirpath).parts) - root_depth > 3:
+                continue
+            for filename in filenames:
+                lower = filename.lower()
+                if lower.startswith(("libggml", "ggml")) and (
+                    lower.endswith((".so", ".dylib", ".dll")) or ".so." in lower
+                ):
+                    libraries.append(filename)
+
+    backends = set()
+    for filename in libraries:
+        lower = filename.lower()
+        for backend, markers in _LLAMA_CPP_BACKEND_MARKERS.items():
+            if any(marker in lower for marker in markers):
+                backends.add(backend)
+
+    accelerator_backends = sorted(backends & _LLAMA_CPP_ACCEL_BACKENDS)
+    if binaries.get("llama-server") and not accelerator_backends:
+        backends.add("unknown")
+
+    if accelerator_backends:
+        accelerator_ready = True
+    elif "unknown" in backends:
+        accelerator_ready = None
+    else:
+        accelerator_ready = False
+
+    return {
+        "backends": sorted(backends),
+        "accelerator_backends": accelerator_backends,
+        "accelerator_ready": accelerator_ready,
+        "libraries": sorted(set(libraries))[:80],
+    }
+
+
+def _local_package_probe(name: str) -> dict:
+    dist_names = {
+        "vllm": ["vllm"],
+        "llama_cpp": ["llama-cpp-python"],
+        "sglang": ["sglang"],
+        "diffusers": ["diffusers", "torch"],
+        "hf_transfer": ["hf-transfer", "hf_transfer"],
+    }
+    bin_names = {
+        "vllm": ["vllm"],
+        "llama_cpp": ["llama-server"],
+    }
+    modules = {name: _module_probe_status(name)}
+    if name == "diffusers":
+        modules["torch"] = _module_probe_status("torch")
+    probe = {
+        "modules": modules,
+        "dists": _dist_probe_status(dist_names.get(name, [name])),
+        "binaries": {binary: shutil.which(binary) for binary in bin_names.get(name, [])},
+    }
+    if name == "llama_cpp":
+        probe["capabilities"] = _llama_cpp_capability_from_probe(probe)
+    return probe
 
 
 def _package_installed_from_probe(name: str, probe: dict) -> bool:
@@ -195,6 +309,15 @@ def _package_status_note(name: str, probe: dict) -> str:
             parts.append(f"native llama-server: {binaries['llama-server']}")
         if dists.get("llama-cpp-python"):
             parts.append(f"python package: llama-cpp-python {dists['llama-cpp-python']}")
+        capabilities = probe.get("capabilities") if isinstance(probe.get("capabilities"), dict) else {}
+        backends = capabilities.get("backends") if isinstance(capabilities.get("backends"), list) else []
+        accelerators = capabilities.get("accelerator_backends") if isinstance(capabilities.get("accelerator_backends"), list) else []
+        if accelerators:
+            parts.append("accelerator backend: " + ", ".join(accelerators))
+        elif "unknown" in backends:
+            parts.append("backend: unknown until llama-server startup reports device placement")
+        elif "cpu" in backends:
+            parts.append("backend: CPU-only")
         return "; ".join(parts) if parts else "No native llama-server or llama-cpp-python server package found."
     if name == "diffusers":
         if _package_installed_from_probe(name, probe):
@@ -203,6 +326,20 @@ def _package_status_note(name: str, probe: dict) -> str:
     if name in dists:
         return f"{name} {dists[name]}"
     return ""
+
+
+def _apply_package_probe_details(pkg: dict, probe: dict) -> None:
+    """Attach structured probe details used by Cookbook dependency/readiness UI."""
+    pkg["details"] = probe
+    note = _package_status_note(pkg["name"], probe)
+    if note:
+        pkg["status_note"] = note
+    if pkg.get("name") == "llama_cpp":
+        capabilities = probe.get("capabilities") if isinstance(probe.get("capabilities"), dict) else {}
+        if capabilities:
+            pkg["runtime_backends"] = capabilities.get("backends", [])
+            pkg["accelerator_backends"] = capabilities.get("accelerator_backends", [])
+            pkg["accelerator_ready"] = capabilities.get("accelerator_ready")
 
 
 def _package_pip_update_status(pkg: dict, probe: dict | None = None) -> PackageUpdateStatus:
@@ -282,6 +419,15 @@ bin_names={{
     'vllm':['vllm'],
     'llama_cpp':['llama-server'],
 }}
+llama_cpp_backend_markers={{
+    'cuda': ('ggml-cuda',),
+    'hip': ('ggml-hip', 'ggml-rocm'),
+    'metal': ('ggml-metal',),
+    'vulkan': ('ggml-vulkan',),
+    'sycl': ('ggml-sycl',),
+    'cpu': ('ggml-cpu',),
+}}
+llama_cpp_accel_backends={{'cuda', 'hip', 'metal', 'vulkan', 'sycl'}}
 
 def add_user_install_bins_to_path():
     candidates = []
@@ -321,13 +467,68 @@ def dist_status(ds):
             pass
     return out
 
+def llama_cpp_capability(modules, binaries):
+    module = modules.get('llama_cpp') if isinstance(modules.get('llama_cpp'), dict) else {{}}
+    roots = []
+    for loc in module.get('locations') or []:
+        roots.extend([loc, os.path.join(loc, 'lib')])
+    origin = module.get('origin')
+    if origin:
+        base = os.path.dirname(origin)
+        roots.extend([base, os.path.join(base, 'lib')])
+
+    libraries = []
+    seen_roots = set()
+    for root in roots:
+        if not root or root in seen_roots or not os.path.isdir(root):
+            continue
+        seen_roots.add(root)
+        root_depth = len(os.path.normpath(root).split(os.sep))
+        for dirpath, _dirnames, filenames in os.walk(root):
+            if len(os.path.normpath(dirpath).split(os.sep)) - root_depth > 3:
+                continue
+            for filename in filenames:
+                lower = filename.lower()
+                if lower.startswith(('libggml', 'ggml')) and (
+                    lower.endswith(('.so', '.dylib', '.dll')) or '.so.' in lower
+                ):
+                    libraries.append(filename)
+
+    backends = set()
+    for filename in libraries:
+        lower = filename.lower()
+        for backend, markers in llama_cpp_backend_markers.items():
+            if any(marker in lower for marker in markers):
+                backends.add(backend)
+
+    accelerator_backends = sorted(backends & llama_cpp_accel_backends)
+    if binaries.get('llama-server') and not accelerator_backends:
+        backends.add('unknown')
+
+    if accelerator_backends:
+        accelerator_ready = True
+    elif 'unknown' in backends:
+        accelerator_ready = None
+    else:
+        accelerator_ready = False
+
+    return {{
+        'backends': sorted(backends),
+        'accelerator_backends': accelerator_backends,
+        'accelerator_ready': accelerator_ready,
+        'libraries': sorted(set(libraries))[:80],
+    }}
+
 def probe(n):
     mods = {{n: mod_status(n)}}
     if n == 'diffusers':
         mods['torch'] = mod_status('torch')
     dists = dist_status(dist_names.get(n, [n]))
     bins = {{b: shutil.which(b) for b in bin_names.get(n, [])}}
-    return {{'modules': mods, 'dists': dists, 'binaries': bins}}
+    out = {{'modules': mods, 'dists': dists, 'binaries': bins}}
+    if n == 'llama_cpp':
+        out['capabilities'] = llama_cpp_capability(mods, bins)
+    return out
 
 print(json.dumps({{n: probe(n) for n in names}}))
 """
@@ -982,16 +1183,13 @@ def setup_shell_routes() -> APIRouter:
                 pkg["installed"] = bool(remote_status.get(pkg["name"], False))
                 probe = remote_details.get(pkg["name"])
                 if isinstance(probe, dict):
-                    pkg["details"] = probe
-                    note = _package_status_note(pkg["name"], probe)
-                    if note:
-                        pkg["status_note"] = note
+                    _apply_package_probe_details(pkg, probe)
             elif pkg.get("kind") == "system":
                 pkg["installed"] = shutil.which(pkg["name"]) is not None
-            elif pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
-                pkg["installed"] = True
-                pkg["status_note"] = f"native llama-server: {shutil.which('llama-server')}"
-                probe = {"binaries": {"llama-server": shutil.which("llama-server")}, "dists": {}}
+            elif pkg["name"] == "llama_cpp":
+                probe = _local_package_probe("llama_cpp")
+                pkg["installed"] = _package_installed_from_probe("llama_cpp", probe)
+                _apply_package_probe_details(pkg, probe)
             elif pkg["name"] == "vllm":
                 _vllm_cli = shutil.which("vllm")
                 pkg["installed"] = _vllm_cli is not None

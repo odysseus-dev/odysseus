@@ -4,6 +4,7 @@ import builtins
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,8 @@ from routes.shell_routes import (
     _find_line_break,
     _running_in_container,
     _docker_row_status,
+    _apply_package_probe_details,
+    _llama_cpp_capability_from_probe,
     _package_installed_from_probe,
     _package_pip_update_status,
     _package_probe_script,
@@ -246,13 +249,111 @@ class TestPackageProbeStatus:
             "modules": {"llama_cpp": {"found": False, "real_module": False}},
             "dists": {},
             "binaries": {"llama-server": "/usr/local/bin/llama-server"},
+            "capabilities": {
+                "backends": ["unknown"],
+                "accelerator_backends": [],
+                "accelerator_ready": None,
+                "libraries": [],
+            },
         }
 
         assert _package_installed_from_probe("llama_cpp", probe) is True
         assert "native llama-server" in _package_status_note("llama_cpp", probe)
+        assert "backend: unknown" in _package_status_note("llama_cpp", probe)
         status = _package_pip_update_status({"name": "llama_cpp", "pip": "llama-cpp-python[server]"}, probe)
         assert status.available is False
         assert "package manager or source checkout" in status.note
+
+    def test_llama_cpp_python_cpu_backend_is_not_accelerator_ready(self):
+        probe = {
+            "modules": {"llama_cpp": {"found": True, "real_module": True}},
+            "dists": {"llama-cpp-python": "0.3.25"},
+            "binaries": {"llama-server": None},
+            "capabilities": {
+                "backends": ["cpu"],
+                "accelerator_backends": [],
+                "accelerator_ready": False,
+                "libraries": ["libggml-cpu.so"],
+            },
+        }
+
+        assert _package_installed_from_probe("llama_cpp", probe) is True
+        assert "python package: llama-cpp-python 0.3.25" in _package_status_note("llama_cpp", probe)
+        assert "backend: CPU-only" in _package_status_note("llama_cpp", probe)
+
+    def test_llama_cpp_probe_details_surface_accelerator_fields(self):
+        pkg = {"name": "llama_cpp"}
+        probe = {
+            "modules": {"llama_cpp": {"found": True, "real_module": True}},
+            "dists": {"llama-cpp-python": "0.3.25"},
+            "binaries": {"llama-server": None},
+            "capabilities": {
+                "backends": ["cpu"],
+                "accelerator_backends": [],
+                "accelerator_ready": False,
+                "libraries": ["libggml-cpu.so"],
+            },
+        }
+
+        _apply_package_probe_details(pkg, probe)
+
+        assert pkg["runtime_backends"] == ["cpu"]
+        assert pkg["accelerator_backends"] == []
+        assert pkg["accelerator_ready"] is False
+        assert "backend: CPU-only" in pkg["status_note"]
+
+    def test_llama_cpp_native_binary_keeps_backend_unknown_even_with_cpu_wheel(self):
+        probe = {
+            "modules": {"llama_cpp": {"found": True, "real_module": True}},
+            "dists": {"llama-cpp-python": "0.3.25"},
+            "binaries": {"llama-server": "/usr/local/bin/llama-server"},
+            "capabilities": {
+                "backends": ["cpu", "unknown"],
+                "accelerator_backends": [],
+                "accelerator_ready": None,
+                "libraries": ["libggml-cpu.so"],
+            },
+        }
+
+        assert "backend: unknown" in _package_status_note("llama_cpp", probe)
+        assert "backend: CPU-only" not in _package_status_note("llama_cpp", probe)
+
+    def test_llama_cpp_python_hip_backend_is_accelerator_ready(self):
+        probe = {
+            "modules": {"llama_cpp": {"found": True, "real_module": True}},
+            "dists": {"llama-cpp-python": "0.3.25"},
+            "binaries": {"llama-server": None},
+            "capabilities": {
+                "backends": ["cpu", "hip"],
+                "accelerator_backends": ["hip"],
+                "accelerator_ready": True,
+                "libraries": ["libggml-cpu.so", "libggml-hip.so"],
+            },
+        }
+
+        assert _package_installed_from_probe("llama_cpp", probe) is True
+        assert "accelerator backend: hip" in _package_status_note("llama_cpp", probe)
+
+    def test_llama_cpp_capability_scans_python_package_backend_libs(self, tmp_path):
+        package_dir = tmp_path / "llama_cpp"
+        lib_dir = package_dir / "lib"
+        lib_dir.mkdir(parents=True)
+        (lib_dir / "libggml-cpu.so").write_text("")
+        (lib_dir / "libggml-hip.so").write_text("")
+
+        capability = _llama_cpp_capability_from_probe({
+            "modules": {
+                "llama_cpp": {
+                    "locations": [str(package_dir)],
+                    "origin": str(package_dir / "__init__.py"),
+                },
+            },
+            "binaries": {"llama-server": None},
+        })
+
+        assert capability["backends"] == ["cpu", "hip"]
+        assert capability["accelerator_backends"] == ["hip"]
+        assert capability["accelerator_ready"] is True
 
     def test_diffusers_requires_torch_too(self):
         missing_torch = {
@@ -288,6 +389,24 @@ class TestPackageProbeStatus:
         assert "os.path.expanduser('~/.local/bin')" in script
         assert "add_user_install_bins_to_path()" in script
         assert "shutil.which(b)" in script
+
+    def test_remote_package_probe_reports_llama_cpp_capability(self):
+        script = _package_probe_script(["llama_cpp"])
+
+        assert "def llama_cpp_capability" in script
+        assert "accelerator_ready" in script
+        assert "out['capabilities'] = llama_cpp_capability(mods, bins)" in script
+
+    def test_remote_package_probe_script_executes_with_llama_cpp_capability(self):
+        script = _package_probe_script(["llama_cpp"])
+
+        proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
+        payload = json.loads(proc.stdout)
+        capability = payload["llama_cpp"]["capabilities"]
+
+        assert "backends" in capability
+        assert "accelerator_backends" in capability
+        assert capability["accelerator_ready"] in (True, False, None)
 
 
 class TestSshBaseArgv:

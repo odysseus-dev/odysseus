@@ -18579,6 +18579,12 @@ body.gallery-selecting .gallery-dl-btn,
   color: var(--green, #50fa7b);
   border: 1px solid color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
 }
+.cookbook-dep-warn {
+  background: color-mix(in srgb, var(--color-warning, #f0ad4e) 16%, transparent);
+  color: var(--color-warning, #f0ad4e);
+  border: 1px solid color-mix(in srgb, var(--color-warning, #f0ad4e) 35%, transparent);
+  cursor: help;
+}
 .cookbook-dep-na {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: color-mix(in srgb, var(--fg) 60%, transparent);

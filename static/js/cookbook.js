@@ -622,6 +622,14 @@ async function _fetchDependencies() {
     const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
       if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
+      if (pkg.name === 'llama_cpp' && pkg.installed && pkg.accelerator_ready === false) {
+        const tip = esc(pkg.status_note || 'llama.cpp is installed, but no accelerator backend was detected.');
+        return `<span class="cookbook-dep-tag cookbook-dep-warn" title="${tip}">CPU-only</span>`;
+      }
+      if (pkg.name === 'llama_cpp' && pkg.installed && pkg.accelerator_ready == null) {
+        const tip = esc(pkg.status_note || 'llama.cpp is installed, but accelerator support is unknown.');
+        return `<span class="cookbook-dep-tag cookbook-dep-warn" title="${tip}">Unknown</span>`;
+      }
       if (pkg.installed && pkg.pip_update_available === false) {
         const tip = esc(pkg.update_note || pkg.status_note || 'Found externally; update outside Odysseus.');
         return `<span class="cookbook-dep-tag cookbook-dep-installed" title="${tip}">Installed</span>`;

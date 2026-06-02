@@ -643,6 +643,10 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             # flag through so callers can tell unified from discrete VRAM.
             "unified_memory": gpu_info.get("unified_memory", False),
         }
+        if gpu_info.get("gpu_arch"):
+            result["gpu_arch"] = gpu_info["gpu_arch"]
+        if gpu_info.get("gpu_family"):
+            result["gpu_family"] = gpu_info["gpu_family"]
     else:
         if _remote_host:
             arch_out = _run(["uname", "-m"]) or ""
