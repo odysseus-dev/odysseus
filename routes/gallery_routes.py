@@ -32,6 +32,44 @@ def _sanitize_gallery_filename(filename: str) -> str:
         safe_name = uuid.uuid4().hex[:12]
     return safe_name
 
+
+def _norm_image_endpoint_url(u: str) -> str:
+    """Normalize an endpoint URL for matching: drop trailing slash + /v1 suffix.
+    Users may store base_url with/without /v1 and trailing slash."""
+    if not u:
+        return u
+    u = u.rstrip("/")
+    if u.endswith("/v1"):
+        u = u[:-3].rstrip("/")
+    return u
+
+
+def _owned_image_endpoint(db, owner, target_url=None):
+    """A ModelEndpoint VISIBLE to `owner` (their own rows + legacy null-owner
+    "shared" rows) for the image edit/inpaint/harmonize proxies; None otherwise.
+
+    With `target_url`, returns the visible endpoint whose normalized base_url
+    matches it (the caller's `_endpoint`); otherwise the caller's first enabled
+    image endpoint. Owner-scoped on purpose: the resolved row's *decrypted*
+    api_key is sent upstream as the request's Bearer credential, so an UNSCOPED
+    lookup would let a (image-privileged) user pass another user's endpoint URL —
+    or fall through to their first image endpoint — and spend that owner's API
+    key / quota. Mirrors session_routes._owned_endpoint. A null/empty owner is a
+    no-op (single-user / legacy mode).
+    """
+    from src.auth_helpers import owner_filter
+    if target_url is not None:
+        target = _norm_image_endpoint_url(target_url)
+        for ep in owner_filter(db.query(ModelEndpoint), ModelEndpoint, owner).all():
+            if _norm_image_endpoint_url(ep.base_url) == target:
+                return ep
+        return None
+    q = db.query(ModelEndpoint).filter(
+        ModelEndpoint.is_enabled == True,  # noqa: E712
+        ModelEndpoint.model_type == "image",
+    )
+    return owner_filter(q, ModelEndpoint, owner).first()
+
 def setup_gallery_routes() -> APIRouter:
     router = APIRouter(tags=["gallery"])
 
@@ -923,7 +961,7 @@ def setup_gallery_routes() -> APIRouter:
         the request for /v1/images/edits (multipart, inverted mask). Otherwise
         proxy through to a self-hosted diffusion server's /v1/images/inpaint."""
         import httpx
-        require_privilege(request, "can_generate_images")
+        user = require_privilege(request, "can_generate_images")
         body = await request.json()
         # Use endpoint from request body (editor dropdown) or fall back to DB lookup
         base = (body.pop("_endpoint", "") or "").rstrip("/")
@@ -942,34 +980,24 @@ def setup_gallery_routes() -> APIRouter:
         if not base:
             db = SessionLocal()
             try:
-                eps = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.is_enabled == True,
-                    ModelEndpoint.model_type == "image",
-                ).all()
-                if not eps:
+                # Owner-scoped: the caller's own first enabled image endpoint
+                # (or a legacy shared one), never another user's.
+                ep = _owned_image_endpoint(db, user)
+                if not ep:
                     raise HTTPException(400, "No image generation endpoint configured. Serve a diffusion model via Cookbook first.")
-                base = eps[0].base_url.rstrip("/")
-                api_key = eps[0].api_key
+                base = ep.base_url.rstrip("/")
+                api_key = ep.api_key
             finally:
                 db.close()
         else:
-            # Pull api_key from the matching DB row so OpenAI auth works.
-            # Users may have stored base_url with/without /v1 suffix and with/without
-            # trailing slash, so compare normalized forms.
-            def _norm_url(u: str) -> str:
-                if not u:
-                    return u
-                u = u.rstrip("/")
-                if u.endswith("/v1"):
-                    u = u[:-3]
-                return u
-            _target = _norm_url(base)
+            # Pull api_key from the matching DB row so OpenAI auth works — but
+            # only from an endpoint the caller owns (or a legacy shared one), so
+            # a caller-supplied _endpoint can't borrow another user's api_key.
             db = SessionLocal()
             try:
-                for ep in db.query(ModelEndpoint).all():
-                    if _norm_url(ep.base_url) == _target:
-                        api_key = ep.api_key
-                        break
+                ep = _owned_image_endpoint(db, user, base)
+                if ep:
+                    api_key = ep.api_key
             finally:
                 db.close()
 
@@ -1121,7 +1149,7 @@ def setup_gallery_routes() -> APIRouter:
         you get edge blending + lighting unification while keeping the
         composition recognisable."""
         import httpx, base64 as _b64
-        require_privilege(request, "can_generate_images")
+        user = require_privilege(request, "can_generate_images")
         body = await request.json()
 
         image_b64 = body.get("image")
@@ -1148,23 +1176,22 @@ def setup_gallery_routes() -> APIRouter:
         if not base:
             db = SessionLocal()
             try:
-                eps = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.is_enabled == True,
-                    ModelEndpoint.model_type == "image",
-                ).all()
-                if not eps:
+                # Owner-scoped first enabled image endpoint (or legacy shared).
+                ep = _owned_image_endpoint(db, user)
+                if not ep:
                     raise HTTPException(400, "No image generation endpoint configured.")
-                base = eps[0].base_url.rstrip("/")
-                api_key = eps[0].api_key
+                base = ep.base_url.rstrip("/")
+                api_key = ep.api_key
             finally:
                 db.close()
         else:
+            # Owner-scoped match for the caller-supplied _endpoint so its api_key
+            # can't be borrowed from another user's private endpoint.
             db = SessionLocal()
             try:
-                for ep in db.query(ModelEndpoint).all():
-                    if ep.base_url.rstrip("/").removesuffix("/v1").rstrip("/") == base.rstrip("/").removesuffix("/v1").rstrip("/"):
-                        api_key = ep.api_key
-                        break
+                ep = _owned_image_endpoint(db, user, base)
+                if ep:
+                    api_key = ep.api_key
             finally:
                 db.close()
 
