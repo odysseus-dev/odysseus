@@ -25,6 +25,8 @@ def test_llm_call_posts_native_ollama_payload(monkeypatch):
         )
 
     monkeypatch.setattr(llm_core.httpx, "post", fake_post)
+    # Mock get_context_length so it returns a known value
+    monkeypatch.setattr("src.model_context.get_context_length", lambda url, model: 32768)
 
     result = llm_core.llm_call(
         "https://ollama.com/api",
@@ -40,7 +42,7 @@ def test_llm_call_posts_native_ollama_payload(monkeypatch):
     assert seen["url"] == "https://ollama.com/api/chat"
     assert seen["headers"]["Authorization"] == "Bearer ollama-key"
     assert seen["json"]["stream"] is False
-    assert seen["json"]["options"] == {"temperature": 0.2, "num_predict": 7}
+    assert seen["json"]["options"] == {"temperature": 0.2, "num_predict": 7, "num_ctx": 32768}
 
 
 # ---------------------------------------------------------------------------
