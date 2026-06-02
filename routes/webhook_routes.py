@@ -26,6 +26,44 @@ MAX_MESSAGE_LEN = 32_000
 from core.middleware import require_admin as _require_admin
 
 
+def _first_enabled_endpoint(db, owner):
+    """First enabled ModelEndpoint VISIBLE to `owner` — their own rows plus
+    legacy null-owner ("shared") rows. Owner-scoped on purpose: ModelEndpoint
+    is per-user (core/database.py — "when non-null, the model picker only shows
+    the endpoint to that user"), and the sync-chat fallback uses the row's
+    decrypted `api_key`. An unscoped ``.first()`` would let a chat-scoped token
+    (e.g. a paired mobile device) fall back onto ANOTHER user's private
+    endpoint and silently spend that owner's API key / quota — and reach
+    whatever internal base_url they configured. Mirrors the owner_filter scoping
+    in routes/model_routes.py and companion/routes.py. A null/empty owner is a
+    no-op (single-user / legacy mode), preserving the original behaviour.
+    """
+    from core.database import ModelEndpoint
+    from src.auth_helpers import owner_filter
+    q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
+    q = owner_filter(q, ModelEndpoint, owner)
+    return q.first()
+
+
+def _caller_owns_session(sess_owner, caller) -> bool:
+    """Strict session-ownership gate for the token-authenticated sync-chat
+    endpoint (`POST /api/v1/chat`).
+
+    Mirrors ``_verify_session_owner`` in session_routes.py and the null-owner
+    gates in notes/calendar/gallery: a caller may resume a session ONLY when
+    its owner matches them exactly. A null/empty session owner (legacy or
+    migrated rows) is deliberately NOT resumable by an arbitrary token — the
+    old ``sess_owner and sess_owner != caller`` form skipped the check whenever
+    ``sess_owner`` was falsy, so any chat-scoped token (e.g. a paired mobile
+    device) could resume such a session, inject a message, and read back its
+    history and reuse the owner's endpoint credentials. Fail closed: an
+    unresolvable caller also returns False.
+    """
+    if not caller:
+        return False
+    return sess_owner == caller
+
+
 def setup_webhook_routes(
     webhook_manager: WebhookManager,
     auth_manager,
@@ -159,6 +197,7 @@ def setup_webhook_routes(
         "openrouter": "https://openrouter.ai/api/v1",
         "ollama": "https://ollama.com/api",
         "fireworks": "https://api.fireworks.ai/inference/v1",
+        "venice": "https://api.venice.ai/api/v1",
     }
 
     # Model prefix → provider mapping for auto-detection
@@ -203,7 +242,6 @@ def setup_webhook_routes(
 
         from core.models import ChatMessage
         from src.llm_core import llm_call_async
-        from core.database import ModelEndpoint
         from src.endpoint_resolver import build_chat_url, build_headers, build_models_url, normalize_base
 
         message = body.message.strip()
@@ -228,8 +266,11 @@ def setup_webhook_routes(
                 _tok_user = token_owner or getattr(request.state, "user", None) or _gcu(request)
             except Exception:
                 _tok_user = None
+            # Strict ownership (see _caller_owns_session): fail closed so a
+            # null-owner / cross-owner session can't be resumed by an arbitrary
+            # chat-scoped token.
             _sess_owner = getattr(sess, "owner", None)
-            if _tok_user and _sess_owner and _sess_owner != _tok_user:
+            if not _caller_owns_session(_sess_owner, _tok_user):
                 raise HTTPException(404, "Session not found")
 
         # --- Case 2: Direct API key + model (no pre-configured endpoint needed) ---
@@ -265,7 +306,9 @@ def setup_webhook_routes(
         if not sess:
             db = SessionLocal()
             try:
-                ep = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).first()
+                # Owner-scoped: only THIS token owner's endpoints + legacy
+                # shared rows, never another user's private endpoint/api_key.
+                ep = _first_enabled_endpoint(db, token_owner)
             finally:
                 db.close()
 

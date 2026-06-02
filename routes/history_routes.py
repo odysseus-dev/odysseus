@@ -477,10 +477,10 @@ def setup_history_routes(session_manager) -> APIRouter:
 
     @router.get("/api/conversations/topics")
     async def get_conversation_topics(request: Request) -> Dict[str, Any]:
-        from src.auth_helpers import get_current_user
-        user = get_current_user(request)
+        from src.auth_helpers import require_user
+        user = require_user(request)
         try:
-            return analyze_topics(session_manager, owner=user)
+            return analyze_topics(session_manager, owner=user or None)
         except Exception as e:
             raise HTTPException(500, f"Topic analysis failed: {e}")
 

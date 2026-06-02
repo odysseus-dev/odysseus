@@ -15,7 +15,6 @@ import os
 import sys
 import types
 import asyncio
-import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -79,23 +78,18 @@ def _login_endpoint(auth_manager):
     raise AssertionError("login route not found on the auth router")
 
 
-def test_login_runs_bcrypt_off_the_event_loop():
-    loop_thread = threading.get_ident()
-    seen = {}
-
+def test_login_offloads_bcrypt_bearing_calls(monkeypatch):
+    calls = []
     auth = MagicMock()
 
-    def _verify(username, password):
-        seen["verify_thread"] = threading.get_ident()
-        return True
+    async def fake_to_thread(fn, *args, **kwargs):
+        calls.append(fn)
+        return fn(*args, **kwargs)
 
-    def _create(username, password):
-        seen["create_thread"] = threading.get_ident()
-        return "tok-123"
-
-    auth.verify_password.side_effect = _verify
+    monkeypatch.setattr("routes.auth_routes.asyncio.to_thread", fake_to_thread)
+    auth.verify_password.return_value = True
     auth.totp_enabled.return_value = False
-    auth.create_session.side_effect = _create
+    auth.create_session.return_value = "tok-123"
 
     login = _login_endpoint(auth)
 
@@ -108,6 +102,6 @@ def test_login_runs_bcrypt_off_the_event_loop():
     assert result["ok"] is True
     auth.verify_password.assert_called_once()
     auth.create_session.assert_called_once()
-    # The whole point: the expensive bcrypt calls must NOT run on the loop thread.
-    assert seen["verify_thread"] != loop_thread, "verify_password ran on the event-loop thread"
-    assert seen["create_thread"] != loop_thread, "create_session ran on the event-loop thread"
+    # The whole point: the expensive bcrypt-bearing calls go through
+    # asyncio.to_thread rather than running inline in the request coroutine.
+    assert calls == [auth.verify_password, auth.create_session]

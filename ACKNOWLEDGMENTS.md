@@ -118,6 +118,7 @@ Core (`requirements.txt`) and optional (`requirements-optional.txt`):
 | croniter | MIT |
 | pytest / pytest-asyncio | MIT / Apache-2.0 |
 | duckduckgo-search (optional) | MIT |
+| markitdown (optional — Office/EPUB text extraction) | MIT |
 | **PyMuPDF** *(optional — form-filling only)* | **AGPL-3.0** — see note below |
 
 ## Companion services (interoperated with, not bundled)
@@ -152,6 +153,9 @@ concerns from earlier are resolved:
   deployment (Artifex also sells a commercial PyMuPDF license that lifts this).
 - **`caldav`** (Python lib) is **dual-licensed GPL-3.0-or-later OR Apache-2.0**.
   Odysseus uses it under **Apache-2.0**, which is permissive and MIT-compatible.
+- **`markitdown`** (Microsoft) is **MIT** and used only as an *optional* dependency for Office/EPUB text
+  extraction (`src/markitdown_runtime.py`), lazy-imported with graceful fallback — the MIT core runs without
+  it. The cloud `az-doc-intel` extra is deliberately **not** installed, keeping extraction fully local.
 
 ---
 
