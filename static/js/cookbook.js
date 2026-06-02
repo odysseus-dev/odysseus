@@ -411,7 +411,8 @@ export function _buildServeCmd(f, modelName, backend) {
     }
   } else if (backend === 'ollama') {
     const ollamaPort = f.port || '11434';
-    const hostEnv = ollamaPort !== '11434' ? `OLLAMA_HOST=0.0.0.0:${ollamaPort} ` : '';
+    const bindHost = _envState.remoteHost ? '0.0.0.0' : '127.0.0.1';
+    const hostEnv = ollamaPort !== '11434' ? `OLLAMA_HOST=${bindHost}:${ollamaPort} ` : '';
     cmd = `${hostEnv}ollama serve`;
   } else if (backend === 'diffusers') {
     const gpuStr = f.gpus?.trim();

@@ -37,7 +37,7 @@ from routes.cookbook_helpers import (
     _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
-    _append_serve_exit_code_lines, _cached_model_scan_script,
+    _append_serve_exit_code_lines, _cached_model_scan_script, _ollama_bind_from_cmd,
     _pip_install_fallback_chain, ModelDownloadRequest, ServeRequest,
 )
 
@@ -980,13 +980,15 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('fi')
             elif "ollama" in req.cmd:
                 handled_ollama_serve = True
-                _ollama_port = "11434"
-                _ollama_match = re.search(r"OLLAMA_HOST=[^\s:]+:(\d+)", req.cmd)
-                if _ollama_match:
-                    _ollama_port = _ollama_match.group(1)
+                _ollama_default_host = "0.0.0.0" if remote else "127.0.0.1"
+                _ollama_host, _ollama_port = _ollama_bind_from_cmd(
+                    req.cmd,
+                    default_host=_ollama_default_host,
+                )
                 # Ollama can be a host binary, a system service, or a Docker
                 # container. If the HTTP API is already reachable, the model is
                 # already served and we should not require a host `ollama` CLI.
+                runner_lines.append(f'ODYSSEUS_OLLAMA_HOST={_bash_squote(_ollama_host)}')
                 runner_lines.append(f'ODYSSEUS_OLLAMA_PORT="{_ollama_port}"')
                 runner_lines.append('ODYSSEUS_OLLAMA_URL=""')
                 runner_lines.append('for _ody_ollama_port in "$ODYSSEUS_OLLAMA_PORT" 11434; do')
@@ -1015,8 +1017,12 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  echo "=== Process exited with code 127 ==="')
                 runner_lines.append('  exec bash -i')
                 runner_lines.append('fi')
-                runner_lines.append('echo "Starting ollama server on 0.0.0.0:${ODYSSEUS_OLLAMA_PORT}..."')
-                runner_lines.append('OLLAMA_HOST="0.0.0.0:${ODYSSEUS_OLLAMA_PORT}" ollama serve')
+                runner_lines.append('ODYSSEUS_OLLAMA_URL="http://${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}"')
+                if remote and _ollama_host in ("0.0.0.0", "::"):
+                    runner_lines.append('echo "[odysseus] WARNING: remote Ollama will bind to ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT} so Odysseus can reach it from this host."')
+                    runner_lines.append('echo "[odysseus] Ollama has no built-in authentication; expose this only on a trusted LAN/VPN or provide an explicit OLLAMA_HOST with your own access controls."')
+                runner_lines.append('echo "Starting ollama server on ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}..."')
+                runner_lines.append('OLLAMA_HOST="${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}" ollama serve')
                 runner_lines.append('_ody_exit=$?')
                 runner_lines.append('echo')
                 runner_lines.append('echo "=== Process exited with code ${_ody_exit} ==="')

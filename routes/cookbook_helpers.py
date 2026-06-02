@@ -306,6 +306,38 @@ _SERVE_CMD_ALLOWLIST = {
 _GGUF_PRELUDE_RE = re.compile(
     r'^MODEL_FILE=\$\([^\n]*?\)\s*&&\s*\{[^{}]*\}\s*\|\|\s*\{[^{}]*\}\s*&&\s*'
 )
+_OLLAMA_HOST_ASSIGNMENT_RE = re.compile(r"(?:^|\s)OLLAMA_HOST=([^\s]+)")
+_OLLAMA_BIND_RE = re.compile(r"^\[([^\]]+)\]:(\d+)$|^([^:]+):(\d+)$")
+_OLLAMA_BIND_HOST_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
+
+
+def _ollama_bind_from_cmd(cmd: str | None, *, default_host: str = "127.0.0.1") -> tuple[str, str]:
+    """Return the Ollama bind host/port requested by a serve command.
+
+    Plain local `ollama serve` defaults to loopback. Remote callers can pass a
+    wider default host so the resulting API is reachable by Odysseus.
+    """
+    if not cmd:
+        return default_host, "11434"
+    match = _OLLAMA_HOST_ASSIGNMENT_RE.search(cmd)
+    if not match:
+        return default_host, "11434"
+    value = match.group(1).strip("'\"")
+    bind_match = _OLLAMA_BIND_RE.match(value)
+    if not bind_match:
+        return "127.0.0.1", "11434"
+    bracketed_host = bind_match.group(1)
+    host = bracketed_host or bind_match.group(3) or "127.0.0.1"
+    port = bind_match.group(2) or bind_match.group(4) or "11434"
+    if not _OLLAMA_BIND_HOST_RE.match(host):
+        return "127.0.0.1", "11434"
+    try:
+        port_num = int(port, 10)
+    except ValueError:
+        return "127.0.0.1", "11434"
+    if port_num < 1 or port_num > 65535:
+        return "127.0.0.1", "11434"
+    return f"[{host}]" if bracketed_host else host, port
 
 
 def _check_serve_binary(seg: str) -> None:

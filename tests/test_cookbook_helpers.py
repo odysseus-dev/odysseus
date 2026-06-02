@@ -11,6 +11,7 @@ from routes.cookbook_helpers import (
     _append_serve_preflight_exit_lines,
     _local_tooling_path_export,
     _pip_install_fallback_chain,
+    _ollama_bind_from_cmd,
     _safe_env_prefix,
     _validate_gpus,
     _validate_repo_id,
@@ -127,6 +128,40 @@ def test_serve_runner_preserves_command_exit_code():
     assert "ODYSSEUS_CMD_EXIT=$?" in script
     assert 'echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="' in script
     assert 'echo "=== Process exited with code $? ==="' not in script
+
+
+def test_ollama_serve_defaults_to_loopback_bind():
+    assert _ollama_bind_from_cmd("ollama serve") == ("127.0.0.1", "11434")
+    assert _ollama_bind_from_cmd("ollama run qwen2.5:0.5b") == ("127.0.0.1", "11434")
+
+
+def test_ollama_serve_accepts_remote_reachable_default_bind():
+    assert (
+        _ollama_bind_from_cmd("ollama serve", default_host="0.0.0.0")
+        == ("0.0.0.0", "11434")
+    )
+
+
+def test_ollama_serve_preserves_explicit_bind_opt_in():
+    assert (
+        _ollama_bind_from_cmd("OLLAMA_HOST=0.0.0.0:12345 ollama serve")
+        == ("0.0.0.0", "12345")
+    )
+    assert (
+        _ollama_bind_from_cmd("OLLAMA_HOST=[::1]:11435 ollama serve")
+        == ("[::1]", "11435")
+    )
+
+
+def test_ollama_serve_rejects_unsafe_bind_values():
+    assert (
+        _ollama_bind_from_cmd("OLLAMA_HOST='$HOST:11434' ollama serve")
+        == ("127.0.0.1", "11434")
+    )
+    assert (
+        _ollama_bind_from_cmd("OLLAMA_HOST=127.0.0.1:99999 ollama serve")
+        == ("127.0.0.1", "11434")
+    )
 
 
 def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):
