@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Odysseus</title>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0f1115;
+        color: #e6e6e6;
+        font-family: system-ui, "Segoe UI", sans-serif;
+      }
+      .wrap { text-align: center; }
+      .spinner {
+        width: 36px; height: 36px;
+        margin: 0 auto 18px;
+        border: 3px solid #2a2d36;
+        border-top-color: #7aa2f7;
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .title { font-size: 15px; letter-spacing: 0.3px; opacity: 0.85; }
+      .sub { font-size: 12px; opacity: 0.5; margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="spinner"></div>
+      <div class="title">Starting Odysseus…</div>
+      <div class="sub">launching local server</div>
+    </div>
+    <script>
+      // First launch → show the setup screen. Otherwise the Rust side navigates
+      // this splash to the app once the backend is up.
+      (function () {
+        function go(n) {
+          if (window.__TAURI__ && window.__TAURI__.core) {
+            window.__TAURI__.core.invoke('is_first_run')
+              .then(function (first) { if (first) window.location.replace('setup.html'); })
+              .catch(function () {});
+          } else if (n > 0) { setTimeout(function () { go(n - 1); }, 100); }
+        }
+        go(30);
+      })();
+    </script>
+  </body>
+</html>

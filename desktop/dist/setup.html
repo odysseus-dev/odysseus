@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Odysseus — Setup</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --fg:#cdd2da; --muted:#8a92a0; --red:#e06c75; --border:rgba(255,255,255,.08); --ok:#50fa7b; }
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,"Segoe UI",sans-serif;}
+  .wrap{max-width:680px;margin:0 auto;padding:22px 22px 40px;}
+  h1{font-size:20px;margin:0 0 4px;}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:16px;line-height:1.5;}
+  .gpu{font-size:12px;color:var(--muted);margin-bottom:18px;}
+  .gpu b{color:var(--fg);}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:14px;}
+  .card h2{font-size:15px;margin:0 0 4px;display:flex;align-items:center;gap:8px;}
+  .badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:99px;background:color-mix(in srgb,var(--red) 22%,transparent);color:var(--red);}
+  .card p{color:var(--muted);font-size:13px;margin:0 0 10px;line-height:1.5;}
+  .check{display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0 2px;}
+  .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;background:#444;}
+  .dot.ok{background:var(--ok);} .dot.bad{background:var(--red);}
+  .hint{color:var(--muted);font-size:12px;margin:2px 0 6px 17px;line-height:1.5;}
+  a{color:var(--red);cursor:pointer;text-decoration:none;} a:hover{text-decoration:underline;}
+  button{font-family:inherit;font-size:13px;border-radius:7px;border:1px solid var(--border);background:#222631;color:var(--fg);padding:7px 13px;cursor:pointer;}
+  button:hover{background:#2a2f3b;}
+  button.primary{background:var(--red);border-color:var(--red);color:#fff;font-weight:600;}
+  button.primary:hover{filter:brightness(1.08);}
+  button:disabled{opacity:.55;cursor:default;}
+  .row{display:flex;gap:10px;align-items:center;}
+  .foot{display:flex;justify-content:space-between;align-items:center;margin-top:22px;}
+  .skip{color:var(--muted);font-size:12px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Set up local AI models</h1>
+  <div class="sub">Odysseus already works out of the box — this just sets up running models on your own machine. You can skip and do it later.</div>
+  <div class="gpu" id="gpu">Detecting hardware…</div>
+
+  <div class="card">
+    <h2>Run models locally <span class="badge">Recommended</span></h2>
+    <p>Ollama is the simplest way — no setup, GPU-accelerated, works on any PC. Install it once and Odysseus picks up your models automatically.</p>
+    <div class="row">
+      <button class="primary" onclick="openUrl('https://ollama.com/download')">Get Ollama</button>
+      <span class="hint" style="margin:0;">then, e.g., <b>ollama pull hermes3</b></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Advanced — high-throughput serving (vLLM / SGLang)</h2>
+    <p>For power users serving large models on a GPU. These engines are Linux-only, so on Windows they run via WSL2. Requirements:</p>
+    <div class="check"><span class="dot" id="virt-dot"></span><span id="virt-txt">CPU virtualization…</span></div>
+    <div class="hint" id="virt-hint" style="display:none;">Turn on <b>Intel VT-x</b> / <b>AMD-V</b> (sometimes labelled <b>SVM</b>) in your PC's BIOS/UEFI, then reboot. <a onclick="openUrl('https://www.google.com/search?q=how+to+enable+cpu+virtualization+in+bios')">How do I do that? &rarr;</a></div>
+    <div class="check"><span class="dot" id="wsl-dot"></span><span id="wsl-txt">WSL2…</span></div>
+    <div class="hint" id="wsl-hint" style="display:none;"><button onclick="installWsl()">Install WSL2</button> <span style="opacity:.7;">needs admin + a reboot</span></div>
+    <div class="hint" id="adv-ready" style="display:none;color:var(--ok);">&#10003; Your machine meets the requirements for the Linux serving stack.</div>
+  </div>
+
+  <div class="foot">
+    <span class="skip">You can change all of this later.</span>
+    <button class="primary" id="continueBtn" onclick="cont()">Continue to Odysseus &rarr;</button>
+  </div>
+</div>
+<script>
+  function inv(c, a){ return window.__TAURI__.core.invoke(c, a); }
+  function openUrl(u){ try { inv('open_url', { url: u }); } catch(e){} }
+  function installWsl(){ try { inv('install_wsl2'); } catch(e){}
+    alert('Starting the WSL2 install — approve the admin prompt. A reboot may be required, then reopen Odysseus.'); }
+
+  async function load(){
+    let env;
+    try { env = await inv('detect_env'); } catch(e){ env = { virtualization:false, wsl2:false, ollama:false, gpus:[] }; }
+    var g = document.getElementById('gpu');
+    g.innerHTML = (env.gpus && env.gpus.length)
+      ? ('Detected GPU: <b>' + env.gpus.join('</b>, <b>') + '</b>')
+      : 'No discrete GPU detected — local models will run on CPU (slower).';
+    var vd=document.getElementById('virt-dot'), vt=document.getElementById('virt-txt'), vh=document.getElementById('virt-hint');
+    if(env.virtualization){ vd.className='dot ok'; vt.textContent='CPU virtualization — enabled'; }
+    else { vd.className='dot bad'; vt.textContent='CPU virtualization — OFF'; vh.style.display='block'; }
+    var wd=document.getElementById('wsl-dot'), wt=document.getElementById('wsl-txt'), wh=document.getElementById('wsl-hint');
+    if(env.wsl2){ wd.className='dot ok'; wt.textContent='WSL2 — installed'; }
+    else { wd.className='dot bad'; wt.textContent='WSL2 — not installed'; wh.style.display='block'; }
+    if(env.virtualization && env.wsl2){ document.getElementById('adv-ready').style.display='block'; }
+  }
+
+  async function cont(){
+    var btn=document.getElementById('continueBtn'); btn.disabled=true; btn.textContent='Starting Odysseus…';
+    try { await inv('finish_setup'); } catch(e){}
+    for(var i=0;i<240;i++){
+      try { await fetch('http://127.0.0.1:7000/', { mode:'no-cors' }); window.location.replace('http://127.0.0.1:7000/'); return; }
+      catch(e){ await new Promise(function(r){ setTimeout(r,500); }); }
+    }
+    window.location.replace('http://127.0.0.1:7000/');
+  }
+
+  (function waitTauri(n){
+    if(window.__TAURI__ && window.__TAURI__.core){ load(); }
+    else if(n>0){ setTimeout(function(){ waitTauri(n-1); }, 100); }
+    else { load(); }
+  })(30);
+</script>
+</body>
+</html>

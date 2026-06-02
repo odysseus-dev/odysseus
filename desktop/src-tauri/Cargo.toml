@@ -1,0 +1,12 @@
+[package]
+name = "odysseus-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Odysseus desktop shell (Tauri)"
+
+[build-dependencies]
+tauri-build = { version = "2.6.2", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.2", features = [] }
+serde = { version = "1", features = ["derive"] }

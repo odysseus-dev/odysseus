@@ -1,0 +1,19 @@
+# Rust build output
+src-tauri/target/
+
+# Bundled payload — rebuilt by the build script, never committed.
+# Keep only our two launchers from backend/.
+src-tauri/backend/*
+!src-tauri/backend/chroma_server.py
+!src-tauri/backend/updater.py
+# upstream app's env template (belongs to the app repo, not this wrapper)
+src-tauri/backend/.env.example
+
+# Node
+node_modules/
+
+# Python caches
+**/__pycache__/
+
+# Local scratch
+*.log
