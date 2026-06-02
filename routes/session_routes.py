@@ -550,6 +550,11 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
 
         Supported formats: md (markdown), txt (plain text), json, html
         """
+
+        def _safe_export_name(name: str) -> str:
+            name = (name or "").replace("\r", "").replace("\n", "")
+            name = re.sub(r'[/\\\:\x00]', '_', name)
+            return name[:128]
         _verify_session_owner(request, sid)
         try:
             session = session_manager.get_session(sid)
@@ -567,7 +572,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 "exported": datetime.now().isoformat(),
                 "messages": [{"role": m.role, "content": m.content} for m in session.history],
             }
-            out_name = filename or f"conversation_{safe_name}_{timestamp}.json"
+            out_name = _safe_export_name(filename) or f"conversation_{safe_name}_{timestamp}.json"
             return Response(
                 content=_json.dumps(data, indent=2, ensure_ascii=False),
                 media_type="application/json",
@@ -580,7 +585,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 lines.append(f"[{m.role.upper()}]")
                 lines.append(m.content)
                 lines.append("")
-            out_name = filename or f"conversation_{safe_name}_{timestamp}.txt"
+            out_name = _safe_export_name(filename) or f"conversation_{safe_name}_{timestamp}.txt"
             return Response(
                 content="\n".join(lines),
                 media_type="text/plain",
@@ -605,7 +610,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 content = content.replace("\n", "<br>")
                 html_parts.append(f'<div class="msg {cls}"><div class="role">{m.role}</div>{content}</div>')
             html_parts.append("</body></html>")
-            out_name = filename or f"conversation_{safe_name}_{timestamp}.html"
+            out_name = _safe_export_name(filename) or f"conversation_{safe_name}_{timestamp}.html"
             return Response(
                 content="\n".join(html_parts),
                 media_type="text/html",
@@ -626,7 +631,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             markdown_lines.append("---\n")
         if len(markdown_lines) > 3:
             markdown_lines.pop()
-        out_name = filename or f"conversation_{safe_name}_{timestamp}.md"
+        out_name = _safe_export_name(filename) or f"conversation_{safe_name}_{timestamp}.md"
         return Response(
             content="\n".join(markdown_lines),
             media_type="text/markdown",
