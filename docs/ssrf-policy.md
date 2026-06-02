@@ -27,10 +27,17 @@ Current strict-policy enforcement:
 - `src.search.content._get_public_url`: used by web/search content fetches and
   the `web_fetch` tool. Redirect targets are checked at each hop.
 
-Trusted user-configured endpoints are not wired through strict policy in this
-PR. Model, embedding, CalDAV/CardDAV, and ntfy flows should use
-`trusted_user_configured_endpoint` in separate endpoint-specific PRs if they
-need classification.
+Current trusted configured-endpoint handling:
+
+- `routes.model_routes`: model endpoint list/create/test/update returns
+  `security_notice` metadata. Create/test/update reject metadata-service
+  targets but continue to allow loopback, LAN, and Tailscale model servers.
+- `routes.embedding_routes`: custom embedding endpoint get/set returns
+  `security_notice` metadata. Set rejects metadata-service targets but
+  continues to allow loopback, LAN, and Tailscale embedding servers.
+
+CalDAV/CardDAV and ntfy should use `trusted_user_configured_endpoint` in
+separate endpoint-specific PRs if they need the same response metadata.
 
 ## Address Classes
 

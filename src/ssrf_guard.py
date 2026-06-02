@@ -175,3 +175,34 @@ def assess_url(
         return UrlAccessDecision(True, "allowed_trusted_configured_endpoint", inspection)
 
     return UrlAccessDecision(False, "unknown_policy", inspection)
+
+
+def trusted_endpoint_notice(url: str, resolver: Resolver | None = None) -> dict:
+    """Return warning metadata for a trusted configured service endpoint.
+
+    Trusted endpoints may intentionally resolve to loopback, LAN, or Tailscale
+    addresses. The notice lets routes surface that fact without treating it as
+    an error. Metadata-service targets remain blocked even for trusted config.
+    """
+    decision = assess_url(url, UrlAccessPolicy.TRUSTED_USER_CONFIGURED_ENDPOINT, resolver=resolver)
+    allowed = decision.allowed or decision.reason == "dns_resolution_failed"
+    categories = sorted(decision.inspection.categories)
+    local_categories = {"loopback", "private", "link_local", "tailscale"}
+    is_local = bool(set(categories).intersection(local_categories))
+    warning = ""
+    if not allowed:
+        warning = "Metadata-service endpoints are not allowed."
+    elif is_local:
+        warning = (
+            "This endpoint resolves to a local, LAN, or Tailscale address. "
+            "Only use services you intentionally trust on this network."
+        )
+
+    return {
+        "allowed": allowed,
+        "policy": UrlAccessPolicy.TRUSTED_USER_CONFIGURED_ENDPOINT.value,
+        "reason": decision.reason,
+        "categories": categories,
+        "is_local": is_local,
+        "warning": warning,
+    }

@@ -9,8 +9,16 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Form, Depends
 from core.constants import BASE_DIR
 from core.middleware import require_admin
+from src.ssrf_guard import trusted_endpoint_notice
 
 logger = logging.getLogger(__name__)
+
+
+def _trusted_endpoint_notice_or_error(url: str) -> dict:
+    notice = trusted_endpoint_notice(url)
+    if not notice.get("allowed"):
+        raise HTTPException(400, notice.get("warning") or "Endpoint URL is not allowed")
+    return notice
 
 _ENDPOINT_FILE = os.path.join(BASE_DIR, "data", "embedding_endpoint.json")
 
@@ -229,10 +237,12 @@ def setup_embedding_routes():
         """Get the current custom embedding endpoint config."""
         saved = _load_custom_endpoint()
         current_url = os.environ.get("EMBEDDING_URL", "")
+        url = saved.get("url", current_url)
         return {
-            "url": saved.get("url", current_url),
+            "url": url,
             "model": saved.get("model", os.environ.get("EMBEDDING_MODEL", "")),
-            "active": bool(saved.get("url") or current_url),
+            "active": bool(url),
+            "security_notice": trusted_endpoint_notice(url) if url else None,
         }
 
     @router.post("/endpoint")
@@ -241,6 +251,7 @@ def setup_embedding_routes():
         url = url.strip()
         if not url:
             raise HTTPException(400, "URL is required")
+        security_notice = _trusted_endpoint_notice_or_error(url)
 
         # Quick health check
         try:
@@ -284,7 +295,7 @@ def setup_embedding_routes():
             pass
 
         logger.info(f"Custom embedding endpoint set: {url}")
-        return {"success": True, "url": url, "model": model}
+        return {"success": True, "url": url, "model": model, "security_notice": security_notice}
 
     @router.delete("/endpoint")
     def clear_endpoint():

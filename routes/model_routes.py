@@ -25,6 +25,7 @@ from src.endpoint_resolver import (
     build_headers,
 )
 from src.auth_helpers import _auth_disabled, owner_filter
+from src.ssrf_guard import trusted_endpoint_notice
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,13 @@ logger = logging.getLogger(__name__)
 # llama.cpp, vLLM, …). Inside Docker these point at the *container*, not the
 # host the server actually runs on.
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+
+def _trusted_endpoint_notice_or_error(base_url: str) -> Dict[str, Any]:
+    notice = trusted_endpoint_notice(base_url)
+    if not notice.get("allowed"):
+        raise HTTPException(400, notice.get("warning") or "Endpoint URL is not allowed")
+    return notice
 
 
 def _docker_host_gateway_reachable() -> bool:
@@ -1008,6 +1016,7 @@ def setup_model_routes(model_discovery):
                     "ping_error": (ping or {}).get("error") if ping else None,
                     "model_type": getattr(r, "model_type", None) or "llm",
                     "supports_tools": getattr(r, "supports_tools", None),
+                    "security_notice": trusted_endpoint_notice(r.base_url),
                 })
             return results
         finally:
@@ -1038,6 +1047,7 @@ def setup_model_routes(model_discovery):
         # In Docker, rewrite a loopback URL to host.docker.internal so the probe
         # — and the saved URL used for chat — reach the host, not the container.
         base_url = _rewrite_loopback_for_docker(base_url)
+        security_notice = _trusted_endpoint_notice_or_error(base_url)
 
         # Auto-generate name from URL if not provided
         if not name.strip():
@@ -1070,6 +1080,7 @@ def setup_model_routes(model_discovery):
                     "online": True,
                     "status": "online",
                     "existing": True,
+                    "security_notice": trusted_endpoint_notice(existing.base_url),
                 }
         finally:
             _db_dedup.close()
@@ -1132,6 +1143,7 @@ def setup_model_routes(model_discovery):
             "online": bool(model_ids) or bool(ping.get("reachable")),
             "status": "online" if model_ids else ("empty" if ping.get("reachable") else "offline"),
             "ping_error": ping.get("error") if ping else None,
+            "security_notice": security_notice,
         }
 
     @router.post("/model-endpoints/test")
@@ -1147,6 +1159,7 @@ def setup_model_routes(model_discovery):
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
         base_url = _rewrite_loopback_for_docker(base_url)
+        security_notice = _trusted_endpoint_notice_or_error(base_url)
         probe_timeout = 3 if (":11434" in base_url or "ollama" in base_url.lower()) else 2
         models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
         ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
@@ -1157,6 +1170,7 @@ def setup_model_routes(model_discovery):
             "ping_error": ping.get("error") if ping else None,
             "models": models,
             "count": len(models),
+            "security_notice": security_notice,
         }
 
     @router.get("/model-endpoints/{ep_id}/probe")
@@ -1410,6 +1424,7 @@ def setup_model_routes(model_discovery):
                             _new_base = _new_base[: -len(_suffix)].rstrip("/")
                     _new_base = _normalize_base(_new_base)
                     if _new_base:
+                        _trusted_endpoint_notice_or_error(_new_base)
                         ep.base_url = _new_base
             else:
                 ep.is_enabled = not ep.is_enabled
@@ -1423,6 +1438,7 @@ def setup_model_routes(model_discovery):
                 "name": ep.name,
                 "model_type": ep.model_type,
                 "base_url": ep.base_url,
+                "security_notice": trusted_endpoint_notice(ep.base_url),
             }
         finally:
             db.close()

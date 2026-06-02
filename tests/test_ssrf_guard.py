@@ -1,6 +1,12 @@
 """Pure tests for product-aware SSRF URL policy helpers."""
 
-from src.ssrf_guard import UrlAccessPolicy, assess_url, classify_ip, inspect_url
+from src.ssrf_guard import (
+    UrlAccessPolicy,
+    assess_url,
+    classify_ip,
+    inspect_url,
+    trusted_endpoint_notice,
+)
 
 
 def _resolver(mapping):
@@ -118,3 +124,44 @@ def test_non_http_scheme_is_rejected_before_policy_specific_allow():
 
     assert decision.allowed is False
     assert decision.reason == "missing_host"
+
+
+def test_trusted_endpoint_notice_warns_for_local_addresses():
+    notice = trusted_endpoint_notice(
+        "http://localhost:11434/v1",
+        resolver=_resolver({"localhost": ["127.0.0.1"]}),
+    )
+
+    assert notice["allowed"] is True
+    assert notice["is_local"] is True
+    assert "loopback" in notice["categories"]
+    assert "local, LAN, or Tailscale" in notice["warning"]
+
+
+def test_trusted_endpoint_notice_warns_for_tailscale_addresses():
+    notice = trusted_endpoint_notice("http://100.64.1.2:8000/v1")
+
+    assert notice["allowed"] is True
+    assert notice["is_local"] is True
+    assert "tailscale" in notice["categories"]
+    assert notice["warning"]
+
+
+def test_trusted_endpoint_notice_blocks_metadata_service():
+    notice = trusted_endpoint_notice("http://169.254.169.254/latest/meta-data/")
+
+    assert notice["allowed"] is False
+    assert notice["reason"] == "metadata_service_blocked"
+    assert "metadata" in notice["categories"]
+    assert "Metadata-service" in notice["warning"]
+
+
+def test_trusted_endpoint_notice_does_not_block_dns_failures():
+    notice = trusted_endpoint_notice(
+        "https://temporarily-missing.example.test/v1",
+        resolver=_resolver({"temporarily-missing.example.test": []}),
+    )
+
+    assert notice["allowed"] is True
+    assert notice["reason"] == "dns_resolution_failed"
+    assert notice["warning"] == ""
