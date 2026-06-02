@@ -4468,6 +4468,12 @@ function _openMobileFullscreenEdit(id, fromCard) {
   document.body.appendChild(overlay);
   _mobileFsOverlay = overlay;
 
+  // Esc to close without saving
+  const _onEscFs = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); _closeMobileFullscreenEdit({ save: false }); document.removeEventListener('keydown', _onEscFs, true); }
+  };
+  document.addEventListener('keydown', _onEscFs, true);
+
   // Animate up from the tapped tile's position so the transition reads
   // as a zoom rather than a hard cut.
   if (fromCard) {

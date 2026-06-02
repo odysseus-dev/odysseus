@@ -627,9 +627,12 @@ export function applyModelColor(roleEl, modelName) {
       if (pr.bottom > window.innerHeight - 8) popup.style.top = (rect.top - pr.height - 4) + 'px';
       if (pr.right > window.innerWidth - 8) popup.style.left = (window.innerWidth - pr.width - 8) + 'px';
       const closePopup = (ev) => {
-        if (!popup.contains(ev.target)) { popup.remove(); document.removeEventListener('click', closePopup, true); }
+        if (!popup.contains(ev.target)) { popup.remove(); document.removeEventListener('click', closePopup, true); document.removeEventListener('keydown', onEscPopup, true); }
       };
-      setTimeout(() => document.addEventListener('click', closePopup, true), 0);
+      const onEscPopup = (ev) => {
+        if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); popup.remove(); document.removeEventListener('click', closePopup, true); document.removeEventListener('keydown', onEscPopup, true); }
+      };
+      setTimeout(() => { document.addEventListener('click', closePopup, true); document.addEventListener('keydown', onEscPopup, true); }, 0);
     });
   }
 }
@@ -1368,9 +1371,13 @@ export function createMsgFooter(msgElement) {
         if (!menu.contains(ev.target) && ev.target !== moreBtn) {
           menu.remove();
           document.removeEventListener('click', close, true);
+          document.removeEventListener('keydown', onEsc, true);
         }
       };
-      setTimeout(() => document.addEventListener('click', close, true), 0);
+      const onEsc = (ev) => {
+        if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); menu.remove(); document.removeEventListener('click', close, true); document.removeEventListener('keydown', onEsc, true); }
+      };
+      setTimeout(() => { document.addEventListener('click', close, true); document.addEventListener('keydown', onEsc, true); }, 0);
     });
     actions.appendChild(moreBtn);
   }
@@ -1558,9 +1565,13 @@ export function createUserMsgFooter(msgElement) {
         if (!menu.contains(ev.target) && ev.target !== moreBtn) {
           menu.remove();
           document.removeEventListener('click', close, true);
+          document.removeEventListener('keydown', onEsc, true);
         }
       };
-      setTimeout(() => document.addEventListener('click', close, true), 0);
+      const onEsc = (ev) => {
+        if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); menu.remove(); document.removeEventListener('click', close, true); document.removeEventListener('keydown', onEsc, true); }
+      };
+      setTimeout(() => { document.addEventListener('click', close, true); document.addEventListener('keydown', onEsc, true); }, 0);
     });
     actions.appendChild(moreBtn);
   }

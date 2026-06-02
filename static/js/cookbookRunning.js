@@ -1724,6 +1724,9 @@ export function _renderRunningTab() {
             _cleanup();
           }
         };
+        const onEsc = (ev) => {
+          if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); _cleanup(); }
+        };
         // Close on scroll too — once the page scrolls, the dropdown's
         // fixed position no longer matches the originating ⋮ button, so
         // it visually drifts. Matches the email kebab behaviour.
@@ -1731,11 +1734,13 @@ export function _renderRunningTab() {
         const _cleanup = () => {
           dropdown.remove();
           document.removeEventListener('click', closeHandler);
+          document.removeEventListener('keydown', onEsc, true);
           window.removeEventListener('scroll', scrollClose, true);
           window.visualViewport?.removeEventListener('scroll', scrollClose);
         };
         setTimeout(() => {
           document.addEventListener('click', closeHandler);
+          document.addEventListener('keydown', onEsc, true);
           window.addEventListener('scroll', scrollClose, true);
           window.visualViewport?.addEventListener('scroll', scrollClose);
         }, 0);

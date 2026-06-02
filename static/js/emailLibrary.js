@@ -4337,9 +4337,13 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       dropdown.remove();
       anchor.classList.remove('reader-more-active');
       document.removeEventListener('click', close, true);
+      document.removeEventListener('keydown', onEsc, true);
     }
   };
-  setTimeout(() => document.addEventListener('click', close, true), 10);
+  const onEsc = (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); dropdown.remove(); anchor.classList.remove('reader-more-active'); document.removeEventListener('click', close, true); document.removeEventListener('keydown', onEsc, true); }
+  };
+  setTimeout(() => { document.addEventListener('click', close, true); document.addEventListener('keydown', onEsc, true); }, 10);
 }
 
 function _showCardMenu(em, anchor) {
@@ -4502,9 +4506,13 @@ function _showCardMenu(em, anchor) {
       dropdown.remove();
       anchor.classList.remove('reader-more-active');
       document.removeEventListener('click', close, true);
+      document.removeEventListener('keydown', onEsc, true);
     }
   };
-  setTimeout(() => document.addEventListener('click', close, true), 10);
+  const onEsc = (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); dropdown.remove(); anchor.classList.remove('reader-more-active'); document.removeEventListener('click', close, true); document.removeEventListener('keydown', onEsc, true); }
+  };
+  setTimeout(() => { document.addEventListener('click', close, true); document.addEventListener('keydown', onEsc, true); }, 10);
 }
 
 // Bulk "Actions" dropdown for select mode — Delete is a separate visible button.
@@ -4549,9 +4557,13 @@ function _showBulkActionsMenu(anchor) {
     if (!dropdown.contains(ev.target) && ev.target !== anchor) {
       dropdown.remove();
       document.removeEventListener('click', close, true);
+      document.removeEventListener('keydown', onEsc, true);
     }
   };
-  setTimeout(() => document.addEventListener('click', close, true), 10);
+  const onEsc = (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); dropdown.remove(); document.removeEventListener('click', close, true); document.removeEventListener('keydown', onEsc, true); }
+  };
+  setTimeout(() => { document.addEventListener('click', close, true); document.addEventListener('keydown', onEsc, true); }, 10);
 }
 
 function _updateBulkBar() {

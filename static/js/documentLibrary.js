@@ -599,9 +599,13 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               dropdown.style.display = 'none';
               menuWrap.appendChild(dropdown);
               document.removeEventListener('click', close, true);
+              document.removeEventListener('keydown', onEsc, true);
             }
           };
-          setTimeout(() => document.addEventListener('click', close, true), 0);
+          const onEsc = (ev) => {
+            if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); dropdown.style.display = 'none'; menuWrap.appendChild(dropdown); document.removeEventListener('click', close, true); document.removeEventListener('keydown', onEsc, true); }
+          };
+          setTimeout(() => { document.addEventListener('click', close, true); document.addEventListener('keydown', onEsc, true); }, 0);
         }
       }
     });

@@ -689,9 +689,13 @@ async function _fetchDependencies() {
         if (!dropdown.contains(ev.target) && ev.target !== anchor && !anchor.contains(ev.target)) {
           dropdown.remove();
           document.removeEventListener('click', close, true);
+          document.removeEventListener('keydown', onEsc, true);
         }
       };
-      setTimeout(() => document.addEventListener('click', close, true), 10);
+      const onEsc = (ev) => {
+        if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); dropdown.remove(); document.removeEventListener('click', close, true); document.removeEventListener('keydown', onEsc, true); }
+      };
+      setTimeout(() => { document.addEventListener('click', close, true); document.addEventListener('keydown', onEsc, true); }, 10);
     }
     list.querySelectorAll('.cookbook-dep-installed-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {

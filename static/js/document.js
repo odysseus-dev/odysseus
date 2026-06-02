@@ -8253,7 +8253,11 @@ import * as Modals from './modalManager.js';
           table.addEventListener('input', () => syncTableToTextarea(preview, textarea));
           // Prevent Enter from creating <br> inside cells
           table.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              const cell = e.target.closest('td,th');
+              if (cell) cell.blur();
+            } else if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
               // Move to next row, same column
               const cell = e.target.closest('td,th');

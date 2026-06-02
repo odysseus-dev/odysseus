@@ -290,8 +290,9 @@ function _rerenderCachedModels() {
         dropdown.style.top = top + 'px';
         dropdown.style.visibility = '';
       }
-      const close = (ev) => { if (!dropdown.contains(ev.target) && ev.target !== btn) { dropdown.remove(); btn.classList.remove('cookbook-menu-active'); document.removeEventListener('click', close, true); } };
-      setTimeout(() => document.addEventListener('click', close, true), 0);
+      const close = (ev) => { if (!dropdown.contains(ev.target) && ev.target !== btn) { dropdown.remove(); btn.classList.remove('cookbook-menu-active'); document.removeEventListener('click', close, true); document.removeEventListener('keydown', onEsc, true); } };
+      const onEsc = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); dropdown.remove(); btn.classList.remove('cookbook-menu-active'); document.removeEventListener('click', close, true); document.removeEventListener('keydown', onEsc, true); } };
+      setTimeout(() => { document.addEventListener('click', close, true); document.addEventListener('keydown', onEsc, true); }, 0);
     });
   });
 
@@ -756,9 +757,13 @@ function _rerenderCachedModels() {
             dropdown.remove();
             anchor.classList.remove('cookbook-menu-active');
             document.removeEventListener('click', close, true);
+            document.removeEventListener('keydown', onEsc, true);
           }
         };
-        setTimeout(() => document.addEventListener('click', close, true), 10);
+        const onEsc = (ev) => {
+          if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); dropdown.remove(); anchor.classList.remove('cookbook-menu-active'); document.removeEventListener('click', close, true); document.removeEventListener('keydown', onEsc, true); }
+        };
+        setTimeout(() => { document.addEventListener('click', close, true); document.addEventListener('keydown', onEsc, true); }, 10);
       }
 
       // "Save" segment — save the current config directly.
@@ -863,12 +868,17 @@ function _rerenderCachedModels() {
             if (!menu.contains(e.target) && e.target !== _splitArrow) {
               menu.remove();
               document.removeEventListener('click', close);
+              document.removeEventListener('keydown', onEsc, true);
               window.removeEventListener('scroll', _scrollClose, true);
             }
           };
-          const _scrollClose = () => { menu.remove(); document.removeEventListener('click', close); window.removeEventListener('scroll', _scrollClose, true); };
+          const onEsc = (e) => {
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); menu.remove(); document.removeEventListener('click', close); document.removeEventListener('keydown', onEsc, true); window.removeEventListener('scroll', _scrollClose, true); }
+          };
+          const _scrollClose = () => { menu.remove(); document.removeEventListener('click', close); document.removeEventListener('keydown', onEsc, true); window.removeEventListener('scroll', _scrollClose, true); };
           setTimeout(() => {
             document.addEventListener('click', close);
+            document.addEventListener('keydown', onEsc, true);
             window.addEventListener('scroll', _scrollClose, true);
           }, 0);
         });

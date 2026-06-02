@@ -3180,6 +3180,20 @@ import createResearchSynapse from './researchSynapse.js';
         btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
         btn.title = 'Done editing';
         btn.classList.add('active');
+        // Esc to exit edit mode
+        const _onEscCode = (ev) => {
+          if (ev.key === 'Escape') {
+            ev.preventDefault(); ev.stopPropagation();
+            codeEl.contentEditable = 'false';
+            codeEl.classList.remove('editing');
+            pre.classList.remove('editing');
+            btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+            btn.title = 'Edit';
+            btn.classList.remove('active');
+            codeEl.removeEventListener('keydown', _onEscCode, true);
+          }
+        };
+        codeEl.addEventListener('keydown', _onEscCode, true);
       }
     });
 
@@ -4130,7 +4144,13 @@ import createResearchSynapse from './researchSynapse.js';
       textarea.remove();
       bar.remove();
       body.style.display = '';
+      document.removeEventListener('keydown', onEscEdit, true);
     }
+
+    const onEscEdit = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cleanup(); }
+    };
+    document.addEventListener('keydown', onEscEdit, true);
 
     cancelBtn.addEventListener('click', (e) => {
       e.stopPropagation();
