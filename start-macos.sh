@@ -117,16 +117,23 @@ if [ ! -d venv ]; then
   echo "▶ Creating Python environment…"
   "$PY" -m venv venv
 fi
+
+# From here on, use the venv's own interpreter — NOT "$PY". Homebrew's Python is
+# "externally managed" (PEP 668), so "$PY" -m pip refuses to install and aborts
+# with "error: externally-managed-environment". A venv is not externally managed,
+# so pip there works normally — and the app then runs against exactly the deps we
+# install here.
+VENV_PY="./venv/bin/python"
 echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
-"$PY" -m pip install --quiet --upgrade pip
+"$VENV_PY" -m pip install --quiet --upgrade pip
 # Not --quiet: this is the slow step, so show progress (and any real errors).
-"$PY" -m pip install -r requirements.txt
+"$VENV_PY" -m pip install -r requirements.txt
 
 # 4. First-run setup: creates data dirs and prints an initial admin password
 #    the first time (idempotent — does nothing if already set up). Suppress its
 #    manual run hint — we launch the server ourselves just below.
 echo "▶ Preparing Odysseus…"
-ODYSSEUS_SKIP_RUN_HINT=1 ./venv/bin/python setup.py
+ODYSSEUS_SKIP_RUN_HINT=1 "$VENV_PY" setup.py
 
 # 5. Launch. Bind to loopback by default; opt into LAN/Tailscale with
 #    ODYSSEUS_HOST=0.0.0.0.
@@ -179,4 +186,4 @@ if [ -n "$TAILSCALE_URL" ]; then
 fi
 echo "  (this takes a few seconds; press Ctrl+C here to stop)"
 echo
-"$PY" -m uvicorn app:app --host "$HOST" --port "$PORT"
+"$VENV_PY" -m uvicorn app:app --host "$HOST" --port "$PORT"
