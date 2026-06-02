@@ -32,14 +32,17 @@ import pytest
 
 
 # ── module-load stubbing (matches other tests in this repo) ──────────
-# Stub heavy deps so importing the skills manager doesn't pull DB / FastAPI.
-for _mod in [
+# Save original modules to prevent polluting subsequent tests
+_mods_to_stub = [
     "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext",
     "sqlalchemy.ext.declarative", "src.database",
-    "core.atomic_io",  # we'll patch atomic_write_text below
-]:
-    if _mod not in sys.modules:
-        sys.modules[_mod] = MagicMock()
+    "core.atomic_io",
+]
+_orig_mods = {name: sys.modules.get(name) for name in _mods_to_stub}
+
+# Stub heavy deps so importing the skills manager doesn't pull DB / FastAPI.
+for name in _mods_to_stub:
+    sys.modules[name] = MagicMock()
 
 
 # Provide a no-op atomic_write_text for SkillsManager._write_skill.
@@ -57,6 +60,13 @@ sys.modules["core.atomic_io"] = _fake_core
 
 from services.memory.skills import SkillsManager  # noqa: E402
 from services.memory.skill_format import Skill, slugify  # noqa: E402
+
+# Restore the original modules immediately after importing to isolate stubs.
+for name, orig in _orig_mods.items():
+    if orig is not None:
+        sys.modules[name] = orig
+    else:
+        sys.modules.pop(name, None)
 
 
 def _write_skill_md(skills_root: Path, category: str, name: str,

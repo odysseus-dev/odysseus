@@ -5,20 +5,30 @@ from unittest.mock import MagicMock
 for mod in ['src.agent_tools', 'src.tool_parsing', 'src.tool_schemas', 'src.tool_execution']:
     sys.modules.pop(mod, None)
 
-# Mock heavy database/model dependencies before importing
-for mod in [
+# Save original modules to prevent polluting subsequent tests
+_mods_to_stub = [
     'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
     'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
     'src.database', 'core.models', 'core.database', 'core.auth'
-]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
+]
+_orig_mods = {name: sys.modules.get(name) for name in _mods_to_stub}
+
+# Mock heavy database/model dependencies before importing
+for name in _mods_to_stub:
+    sys.modules[name] = MagicMock()
 
 import pytest
 import src.agent_tools
 from src.tool_parsing import parse_tool_blocks
 from src.tool_schemas import function_call_to_tool_block
 from src.tool_execution import execute_tool_block
+
+# Restore the original modules immediately after importing to isolate stubs.
+for name, orig in _orig_mods.items():
+    if orig is not None:
+        sys.modules[name] = orig
+    else:
+        sys.modules.pop(name, None)
 from types import SimpleNamespace
 
 

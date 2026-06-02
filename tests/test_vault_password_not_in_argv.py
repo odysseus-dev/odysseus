@@ -22,26 +22,39 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Importing routes.vault_routes pulls in core.middleware → core/__init__ →
-# session_manager, which explodes under the conftest stubs. Stub the heavy
-# imports the module needs so we can reach the self-contained _run_bw helper.
-if "core.database" not in sys.modules:
-    _db = types.ModuleType("core.database")
-    for _n in ("SessionLocal", "ChatMessage", "Session", "Document"):
-        setattr(_db, _n, MagicMock())
-    sys.modules["core.database"] = _db
-if "core.middleware" not in sys.modules:
-    _mw = types.ModuleType("core.middleware")
-    _mw.require_admin = MagicMock()
-    sys.modules["core.middleware"] = _mw
-if "core.platform_compat" not in sys.modules:
-    _pc = types.ModuleType("core.platform_compat")
-    _pc.IS_WINDOWS = False
-    _pc.safe_chmod = MagicMock()
-    _pc.which_tool = MagicMock(return_value="bw")
-    sys.modules["core.platform_compat"] = _pc
+# Save original modules to prevent polluting subsequent tests
+_orig_core_db = sys.modules.get("core.database")
+_orig_core_mw = sys.modules.get("core.middleware")
+_orig_core_pc = sys.modules.get("core.platform_compat")
+
+# Stub the heavy imports the module needs so we can reach the self-contained _run_bw helper.
+_db = types.ModuleType("core.database")
+for _n in ("SessionLocal", "ChatMessage", "Session", "Document"):
+    setattr(_db, _n, MagicMock())
+sys.modules["core.database"] = _db
+
+_mw = types.ModuleType("core.middleware")
+_mw.require_admin = MagicMock()
+sys.modules["core.middleware"] = _mw
+
+_pc = types.ModuleType("core.platform_compat")
+_pc.IS_WINDOWS = False
+_pc.safe_chmod = MagicMock()
+_pc.which_tool = MagicMock(return_value="bw")
+sys.modules["core.platform_compat"] = _pc
 
 import routes.vault_routes as vr  # noqa: E402
+
+# Restore the original modules immediately after importing to isolate stubs.
+for name, orig in [
+    ("core.database", _orig_core_db),
+    ("core.middleware", _orig_core_mw),
+    ("core.platform_compat", _orig_core_pc),
+]:
+    if orig is not None:
+        sys.modules[name] = orig
+    else:
+        sys.modules.pop(name, None)
 
 
 class _FakeProc:

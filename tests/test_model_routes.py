@@ -13,6 +13,7 @@ if _endpoint_resolver is not None and not getattr(_endpoint_resolver, "__file__"
     sys.modules.pop("src.endpoint_resolver", None)
     sys.modules.pop("routes.model_routes", None)
 
+
 _orig_core_db = sys.modules.get("core.database")
 
 _core_db = types.ModuleType("core.database")
@@ -28,11 +29,13 @@ sys.modules["core.database"] = _core_db
 import routes.model_routes as model_routes
 import src.endpoint_resolver as endpoint_resolver
 
-# Clean up import side-effects to avoid polluting subsequent tests
+# Restore core.database state immediately after imports to isolate stubs.
 if _orig_core_db is not None:
     sys.modules["core.database"] = _orig_core_db
 else:
     sys.modules.pop("core.database", None)
+
+
 from routes.model_routes import (
     _match_provider_curated,
     _curate_models,
