@@ -338,8 +338,8 @@ def _parse_dt(s: str) -> datetime:
             return None
         return h, mn
 
-    # today/tomorrow/yesterday [at] TIME
-    m = _re.match(r'^(today|tomorrow|tmrw|yesterday)(?:\s+at)?\s*(.*)$', lower)
+    # today/tonight/tomorrow/yesterday [at] TIME
+    m = _re.match(r'^(today|tonight|tomorrow|tmrw|yesterday)(?:\s+at)?\s*(.*)$', lower)
     if m:
         word, rest = m.group(1), m.group(2).strip()
         base = today
