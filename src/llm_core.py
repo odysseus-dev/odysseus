@@ -238,6 +238,7 @@ def _build_ollama_payload(
     max_tokens: int,
     stream: bool = False,
     tools: Optional[List[Dict]] = None,
+    num_ctx: Optional[int] = None,
 ) -> Dict:
     payload: Dict = {
         "model": model,
@@ -249,11 +250,32 @@ def _build_ollama_payload(
         options["temperature"] = temperature
     if max_tokens and max_tokens > 0:
         options["num_predict"] = max_tokens
+    # Ollama defaults num_ctx to 2048 when unspecified, silently truncating
+    # the *input* window regardless of what the model actually supports. Only
+    # emit the option when we have a value larger than that default so we
+    # don't accidentally clamp a model whose server-side default is higher.
+    if num_ctx and num_ctx > 2048:
+        options["num_ctx"] = int(num_ctx)
     if options:
         payload["options"] = options
     if tools:
         payload["tools"] = tools
     return payload
+
+
+def _resolve_ollama_num_ctx(url: str, model: str) -> Optional[int]:
+    """Look up the serving context length for an Ollama-backed model.
+
+    Returns ``None`` on any failure so the caller falls back to Ollama's
+    default behaviour. Wrapped in a broad try/except because a context-length
+    probe failure must never break the chat path.
+    """
+    try:
+        from src.model_context import get_context_length
+        return get_context_length(url, model)
+    except Exception as e:
+        logger.debug(f"Skipping num_ctx for {model}: {e}")
+        return None
 
 
 def _parse_ollama_response(data: dict) -> str:
@@ -675,7 +697,10 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
-        payload = _build_ollama_payload(model, messages_copy, temperature, max_tokens, stream=False)
+        payload = _build_ollama_payload(
+            model, messages_copy, temperature, max_tokens, stream=False,
+            num_ctx=_resolve_ollama_num_ctx(url, model),
+        )
     else:
         target_url = url
         payload = {
@@ -790,7 +815,10 @@ async def llm_call_async(
         h = {"Content-Type": "application/json"}
         if headers:
             h.update(headers)
-        payload = _build_ollama_payload(model, messages_copy, temperature, max_tokens, stream=False)
+        payload = _build_ollama_payload(
+            model, messages_copy, temperature, max_tokens, stream=False,
+            num_ctx=_resolve_ollama_num_ctx(url, model),
+        )
     else:
         target_url = url
         h = _provider_headers(provider, headers)
@@ -888,7 +916,10 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         h = {"Content-Type": "application/json"}
         if headers:
             h.update(headers)
-        payload = _build_ollama_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
+        payload = _build_ollama_payload(
+            model, messages_copy, temperature, max_tokens, stream=True, tools=tools,
+            num_ctx=_resolve_ollama_num_ctx(url, model),
+        )
     else:
         target_url = url
         payload = {

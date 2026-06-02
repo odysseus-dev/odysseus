@@ -25,6 +25,9 @@ def test_llm_call_posts_native_ollama_payload(monkeypatch):
         )
 
     monkeypatch.setattr(llm_core.httpx, "post", fake_post)
+    # Pin the context probe so this test stays focused on payload shape;
+    # dedicated tests below cover num_ctx wiring end-to-end.
+    monkeypatch.setattr(llm_core, "_resolve_ollama_num_ctx", lambda url, model: None)
 
     result = llm_core.llm_call(
         "https://ollama.com/api",
@@ -113,3 +116,78 @@ def test_ollama_payload_tolerates_malformed_arguments():
     payload = llm_core._build_ollama_payload("m", msgs, temperature=0.0, max_tokens=0)
     # Falls back to an empty object rather than raising.
     assert payload["messages"][0]["tool_calls"][0]["function"]["arguments"] == {}
+
+
+# ---------------------------------------------------------------------------
+# num_ctx: Ollama silently defaults the input window to 2048 tokens when the
+# request omits options.num_ctx, truncating long prompts regardless of the
+# model's advertised context length. _build_ollama_payload must forward a
+# caller-supplied num_ctx so the compactor's budget is actually honoured.
+# ---------------------------------------------------------------------------
+
+def test_ollama_payload_emits_num_ctx_when_supplied():
+    msgs = [{"role": "user", "content": "hi"}]
+    payload = llm_core._build_ollama_payload(
+        "kimi-k2", msgs, temperature=0.0, max_tokens=0, num_ctx=128_000,
+    )
+    assert payload["options"]["num_ctx"] == 128_000
+
+
+def test_ollama_payload_skips_num_ctx_at_or_below_default():
+    """Don't clamp a model whose server-side default already exceeds 2048."""
+    msgs = [{"role": "user", "content": "hi"}]
+    for ctx in (None, 0, 2048, 1024):
+        payload = llm_core._build_ollama_payload(
+            "m", msgs, temperature=0.0, max_tokens=0, num_ctx=ctx,
+        )
+        assert "num_ctx" not in payload.get("options", {})
+
+
+def test_ollama_payload_num_ctx_coexists_with_num_predict():
+    msgs = [{"role": "user", "content": "hi"}]
+    payload = llm_core._build_ollama_payload(
+        "m", msgs, temperature=0.2, max_tokens=512, num_ctx=32_768,
+    )
+    assert payload["options"] == {
+        "temperature": 0.2,
+        "num_predict": 512,
+        "num_ctx": 32_768,
+    }
+
+
+def test_llm_call_forwards_num_ctx_for_ollama(monkeypatch):
+    seen = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen["json"] = json
+        request = httpx.Request("POST", url)
+        return httpx.Response(
+            200,
+            request=request,
+            json={"message": {"content": "OK"}, "done": True},
+        )
+
+    monkeypatch.setattr(llm_core.httpx, "post", fake_post)
+    monkeypatch.setattr(llm_core, "_resolve_ollama_num_ctx", lambda url, model: 65_536)
+
+    llm_core.llm_call(
+        "https://ollama.com/api",
+        "minimax-m3",
+        [{"role": "user", "content": "hello"}],
+        temperature=0.0,
+        max_tokens=0,
+        headers={"Authorization": "Bearer k"},
+    )
+    assert seen["json"]["options"]["num_ctx"] == 65_536
+
+
+def test_resolve_ollama_num_ctx_swallows_lookup_errors(monkeypatch):
+    """A failed context probe must never break the chat path — returning None
+    lets the payload helper fall back to Ollama's default behaviour."""
+    import src.model_context as model_context
+
+    def boom(*_a, **_k):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(model_context, "get_context_length", boom)
+    assert llm_core._resolve_ollama_num_ctx("http://x/api", "m") is None
