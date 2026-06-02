@@ -175,7 +175,7 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
 
 def _remote_linux_download_setup_script() -> str:
     """Build the SSH Linux setup script used before remote HF downloads."""
-    hf_setup = _pip_install_fallback_chain("huggingface_hub hf_transfer", python_cmd="pip")
+    hf_setup = _pip_install_fallback_chain("huggingface_hub hf_transfer")
     return (
         # Install tmux if missing — try common package managers; skip if no sudo
         "if ! command -v tmux >/dev/null 2>&1; then "

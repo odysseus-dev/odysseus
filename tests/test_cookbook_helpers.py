@@ -104,10 +104,10 @@ def test_pip_install_fallback_chain_allows_custom_python_command():
 def test_remote_linux_download_setup_avoids_user_install_inside_venv():
     script = _remote_linux_download_setup_script()
 
-    assert "pip install -q huggingface_hub hf_transfer" in script
-    assert 'python -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"' in script
-    assert "|| pip install --user --break-system-packages -q huggingface_hub hf_transfer" in script
-    assert script.index('python -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"') < script.index("|| pip install --user")
+    assert "python3 -m pip install -q huggingface_hub hf_transfer" in script
+    assert 'python3 -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"' in script
+    assert "|| python3 -m pip install --user --break-system-packages -q huggingface_hub hf_transfer" in script
+    assert script.index('python3 -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"') < script.index("|| python3 -m pip install --user")
 
 
 def test_serve_preflight_failure_keeps_tmux_pane_visible():
