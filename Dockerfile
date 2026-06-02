@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 # System deps. tmux is required by Cookbook for background downloads/serves.
 # openssh-client is required for Cookbook remote server tests, setup, probes,
@@ -8,7 +8,9 @@ FROM python:3.12-slim
 # nodejs/npm provide npx for the optional built-in Browser MCP server.
 # gosu lets the entrypoint drop privileges cleanly so signals still reach
 # uvicorn directly (no extra shell layer like `su`/`sudo` would add).
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     curl \
@@ -17,14 +19,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     npm \
     tmux \
     openssh-client \
-    gosu \
-    && rm -rf /var/lib/apt/lists/*
+    gosu
 
 WORKDIR /app
 
-# Install Python deps first (layer cache)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Enable bytecode compilation
+ENV UV_COMPILE_BYTECODE=1
+
+# Install Python deps first (layer cache) using uv sync
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project
 
 # Copy app code
 COPY . .
@@ -44,4 +49,5 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 EXPOSE 7000
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7000"]
+CMD ["/app/.venv/bin/uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7000"]
+
