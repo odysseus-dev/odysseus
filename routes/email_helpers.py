@@ -608,7 +608,32 @@ def _list_email_accounts() -> list[dict]:
 
 # ── IMAP helpers ──
 
-_IMAP_TIMEOUT_SECONDS = 15
+def _coerce_imap_timeout_seconds(raw: str | None) -> int:
+    try:
+        value = int(raw or "30")
+    except (TypeError, ValueError):
+        value = 30
+    return max(5, min(value, 300))
+
+
+_IMAP_TIMEOUT_SECONDS = _coerce_imap_timeout_seconds(os.environ.get("ODYSSEUS_IMAP_TIMEOUT_SECONDS"))
+
+
+def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int = _IMAP_TIMEOUT_SECONDS):
+    """Open an IMAP connection using the configured security mode."""
+    port = int(port or 993)
+    if starttls:
+        conn = imaplib.IMAP4(host, port, timeout=timeout)
+        conn.starttls()
+    elif port == 993:
+        conn = imaplib.IMAP4_SSL(host, port, timeout=timeout)
+    else:
+        conn = imaplib.IMAP4(host, port, timeout=timeout)
+    try:
+        conn.sock.settimeout(timeout)
+    except Exception:
+        pass
+    return conn
 
 def _imap_connect(account_id: str | None = None, owner: str = ""):
     # SECURITY: passing `owner` scopes the fallback config lookup so a brand
@@ -622,17 +647,12 @@ def _imap_connect(account_id: str | None = None, owner: str = ""):
     # The last branch is critical: previously this fell into IMAP4_SSL
     # for any non-STARTTLS port, which would fail the TLS handshake on
     # plain local servers (Dovecot on 31143, etc.).
-    if cfg.get("imap_starttls"):
-        conn = imaplib.IMAP4(cfg["imap_host"], cfg["imap_port"], timeout=_IMAP_TIMEOUT_SECONDS)
-        conn.starttls()
-    elif int(cfg.get("imap_port") or 993) == 993:
-        conn = imaplib.IMAP4_SSL(cfg["imap_host"], cfg["imap_port"], timeout=_IMAP_TIMEOUT_SECONDS)
-    else:
-        conn = imaplib.IMAP4(cfg["imap_host"], cfg["imap_port"], timeout=_IMAP_TIMEOUT_SECONDS)
-    try:
-        conn.sock.settimeout(_IMAP_TIMEOUT_SECONDS)
-    except Exception:
-        pass
+    conn = _open_imap_connection(
+        cfg["imap_host"],
+        cfg["imap_port"],
+        starttls=bool(cfg.get("imap_starttls")),
+        timeout=_IMAP_TIMEOUT_SECONDS,
+    )
     conn.login(cfg["imap_user"], cfg["imap_password"])
     return conn
 
@@ -1134,7 +1154,10 @@ def _pre_retrieve_context(body: str, sender: str) -> tuple:
         try:
             from routes.contacts_routes import _fetch_contacts
             for c in _fetch_contacts() or []:
-                if (c.get("email") or "").lower() == sender_addr:
+                # Contacts are normalized to plural `emails` lists (see
+                # contacts_routes._normalize_contact); the old `c.get("email")`
+                # singular key never exists, so known senders were never matched.
+                if sender_addr in [(e or "").lower() for e in (c.get("emails") or [])]:
                     is_known = True
                     break
         except Exception:
@@ -1228,13 +1251,13 @@ def _pre_retrieve_context(body: str, sender: str) -> tuple:
                 t_lower = term.lower()
                 matches = [c for c in all_contacts
                            if t_lower in (c.get("name") or "").lower()
-                           or t_lower in (c.get("email") or "").lower()]
+                           or any(t_lower in (e or "").lower() for e in (c.get("emails") or []))]
                 for c in matches[:2]:
                     parts = [f"Name: {c.get('name','')}"]
-                    if c.get("email"):
-                        parts.append(f"Email: {c['email']}")
-                    if c.get("phone"):
-                        parts.append(f"Phone: {c['phone']}")
+                    if c.get("emails"):
+                        parts.append(f"Email: {', '.join(c['emails'])}")
+                    if c.get("phones"):
+                        parts.append(f"Phone: {', '.join(c['phones'])}")
                     context_snippets.append(f"[Contact match for \"{term}\"] " + ", ".join(parts))
         except Exception:
             pass

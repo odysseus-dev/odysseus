@@ -115,6 +115,7 @@ _API_AGENT_RULES = """\
 - Keep answers concise unless the user asks for depth.
 - For long code or content, use document tools instead of pasting large blocks into chat.
 - Editing an existing document: ALWAYS use `edit_document` with find/replace. Only use `update_document` for genuine full rewrites (>50% changed) — do NOT echo the entire file back for small edits.
+- If the active editor document is an email draft/compose window, treat that open email as the target for "write this", "write the email", "reply with...", "make it say...", "draft this", and similar requests. Do NOT create another document, search/list/manage documents, or open a different reply unless the user explicitly asks. Edit the open email draft with `edit_document` or `update_document`; preserve To/Cc/Bcc/Subject/In-Reply-To/References/X-* header lines unless the user asks to change them.
 - "Give suggestions / feedback / review / how can I improve this / what would make it better" about the OPEN document → call `suggest_document`, do NOT write a prose list of ideas in chat. It creates inline accept/reject bubbles on the doc. Give concrete `find`/`replace`/`reason` items. To suggest an ADDITION (e.g. "add a bow to the SVG", a new section), set `find` to a short existing anchor snippet and `replace` to that same snippet PLUS the new content. Only answer in prose when no document is open, or the request is purely conceptual with no concrete change to propose.
 - BIAS TOWARD ACTION on edit requests. If the user says "edit out X", "remove the Y paragraph", "change Z" — call the edit tool with your best interpretation. Don't ask for clarification on minor ambiguity. The user can undo.
 - AFTER A TOOL SUCCEEDS, do not second-guess. A success response means it worked. Reply in ONE short sentence confirming what was done. No verification thinking, no re-analyzing — move on.
@@ -456,7 +457,7 @@ _API_HOSTS = frozenset([
     "api.deepseek.com", "deepseek.com",
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
-    "ollama.com",
+    "ollama.com", "api.venice.ai",
     # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
     # Without these, `_is_api_model` falls back to keyword sniffing on the
     # model name, so well-behaved local servers don't get native tool
@@ -642,6 +643,7 @@ def _build_system_prompt(
                 f'ACTIVE EMAIL DRAFT (open in editor — the user is looking at this right now)\n'
                 f'Title: "{active_document.title}"\n'
                 f'```\n{_doc_raw}\n```\n\n'
+                f'This is the current email compose window, not a normal document library item. If the user says "write", "draft", "reply", "make it say", or "write the email" without naming another target, edit THIS email draft.\n\n'
                 f'When the user asks you to write, reply to, or improve this email:\n'
                 f'1. Use `update_document` to replace the ENTIRE content — keep all the header lines (To, Subject, In-Reply-To, References, X-Source-UID, X-Source-Folder, X-Attachments) and the `---` separator EXACTLY as they are.\n'
                 f'2. Replace ONLY the body text (the part after `---`). If there is a quoted original email (lines starting with `>`), keep that quoted block unchanged BELOW your new reply.\n'
@@ -792,7 +794,7 @@ def _build_system_prompt(
     # When creating email documents, instruct the AI on the format
     if relevant_tools and (_EMAIL_TOOL_HINTS & set(relevant_tools)):
         agent_prompt += (
-            '\n\n📧 EMAIL DOCUMENT FORMAT: When drafting email replies, use create_document with language="email". '
+            '\n\n📧 EMAIL DOCUMENT FORMAT: If no email draft is already open and you need to create an email draft, use create_document with language="email". '
             'The content format is:\n'
             'To: recipient@example.com\n'
             'Subject: Re: Original subject\n'
@@ -800,8 +802,8 @@ def _build_system_prompt(
             'References: <original-message-id>\n'
             '---\n'
             'Body text here...\n\n'
-            'The user can then edit and click Send or Draft in the editor. For an already-open email draft, '
-            'edit the current document instead of creating another one.'
+            'The user can then edit and click Send or Draft in the editor. If an email draft is already open, '
+            'that open draft is the target: use update_document/edit_document on it instead of creating another document.'
         )
 
     # Inject relevant skills based on the user's last message. The
@@ -1448,7 +1450,7 @@ async def stream_agent_loop(
     except Exception as _e:
         logger.debug(f"endpoint supports_tools lookup failed: {_e}")
     _model_supports_tools = any(kw in _model_lc for kw in (
-        "deepseek", "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
+        "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
         "qwen3", "qwen2.5", "mixtral", "mistral", "llama-3.1", "llama-3.2",
         "llama-3.3", "llama-4",
         # Local-served models that follow OpenAI-style function calling
@@ -1456,10 +1458,20 @@ async def stream_agent_loop(
         # with the per-endpoint flag above.
         "minimax", "kimi", "yi-", "phi-3", "phi-4", "command-r",
         "glm-4", "internlm", "hermes",
+        # deepseek-v2/v3/chat support tools via the cloud API; deepseek-r1
+        # (reasoning model) does not — handled by the blocklist below.
+        "deepseek-v", "deepseek-chat",
+    ))
+    # Models known to reject tool schemas at the Ollama/local level even when
+    # the endpoint URL would otherwise enable native function calling.
+    # The per-endpoint supports_tools flag (True/False) always takes priority
+    # and can override this list for users who know their setup.
+    _model_no_tools = any(kw in _model_lc for kw in (
+        "deepseek-r1",
     ))
     if _endpoint_supports is True:
         _is_api_model = True
-    elif _endpoint_supports is False:
+    elif _endpoint_supports is False or _model_no_tools:
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
@@ -1475,12 +1487,21 @@ async def stream_agent_loop(
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
+        from src.context_budget import compute_input_token_budget
+        from src.settings import is_setting_overridden
 
         soft_budget = int(get_setting("agent_input_token_budget", 6000) or 0)
         if soft_budget > 0:
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
-            effective_budget = min(context_length or soft_budget, soft_budget)
+            # Scale the default budget to the model's context window so long-context
+            # models aren't silently capped at 6000; an explicit user setting is
+            # still honoured (clamped to the window). (#1170)
+            effective_budget = compute_input_token_budget(
+                soft_budget,
+                context_length,
+                is_setting_overridden("agent_input_token_budget"),
+            )
             trimmed_messages = trim_for_context(
                 messages,
                 effective_budget,

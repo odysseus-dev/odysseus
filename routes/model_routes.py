@@ -28,11 +28,104 @@ from src.auth_helpers import _auth_disabled, owner_filter
 
 logger = logging.getLogger(__name__)
 
+_SPEECH_ENDPOINT_SETTINGS = (
+    ("tts_provider", "tts_model", "tts-1", "Text to Speech"),
+    ("stt_provider", "stt_model", "base", "Speech to Text"),
+)
+
+_ENDPOINT_SETTING_FIELDS = {
+    "default_endpoint_id":  ("default_model",  "Default Model"),
+    "utility_endpoint_id":  ("utility_model",   "Utility Model"),
+    "research_endpoint_id": ("research_model",  "Deep Research"),
+    "task_endpoint_id":     ("task_model",       "Background Tasks"),
+}
+
+_ENDPOINT_FALLBACK_FIELDS = {
+    "default_model_fallbacks": "Default Model Fallbacks",
+    "utility_model_fallbacks": "Utility Model Fallbacks",
+    "vision_model_fallbacks":  "Vision Model Fallbacks",
+}
+
+
+def _speech_settings_using_endpoint(settings: dict, ep_id: str) -> list:
+    """Return speech settings that reference a model endpoint."""
+    endpoint_ref = f"endpoint:{ep_id}"
+    return [
+        label
+        for provider_key, _, _, label in _SPEECH_ENDPOINT_SETTINGS
+        if (settings.get(provider_key) or "") == endpoint_ref
+    ]
+
+
+def _clear_speech_settings_for_endpoint(settings: dict, ep_id: str) -> list:
+    """Reset speech settings that reference a model endpoint."""
+    endpoint_ref = f"endpoint:{ep_id}"
+    cleared = []
+    for provider_key, model_key, default_model, label in _SPEECH_ENDPOINT_SETTINGS:
+        if (settings.get(provider_key) or "") == endpoint_ref:
+            settings[provider_key] = "disabled"
+            settings[model_key] = default_model
+            cleared.append(label)
+    return cleared
+
+
+def _endpoint_settings_using_endpoint(settings: dict, ep_id: str, *, include_speech: bool = False) -> list:
+    """Return labels for settings and fallback chains that reference an endpoint."""
+    affected = []
+    for ep_key, (_, label) in _ENDPOINT_SETTING_FIELDS.items():
+        if (settings.get(ep_key) or "") == ep_id:
+            affected.append(label)
+    for fallback_key, label in _ENDPOINT_FALLBACK_FIELDS.items():
+        chain = settings.get(fallback_key) or []
+        if any(isinstance(entry, dict) and (entry.get("endpoint_id") or "") == ep_id for entry in chain):
+            affected.append(label)
+    if include_speech:
+        affected.extend(_speech_settings_using_endpoint(settings, ep_id))
+    return affected
+
+
+def _clear_endpoint_settings_for_endpoint(settings: dict, ep_id: str, *, include_speech: bool = False) -> list:
+    """Remove an endpoint from direct settings and model fallback chains."""
+    cleared = []
+    for ep_key, (model_key, label) in _ENDPOINT_SETTING_FIELDS.items():
+        if (settings.get(ep_key) or "") == ep_id:
+            settings[ep_key] = ""
+            settings[model_key] = ""
+            cleared.append(label)
+    for fallback_key, label in _ENDPOINT_FALLBACK_FIELDS.items():
+        chain = settings.get(fallback_key)
+        if not isinstance(chain, list):
+            continue
+        kept = [
+            entry for entry in chain
+            if not (isinstance(entry, dict) and (entry.get("endpoint_id") or "") == ep_id)
+        ]
+        if len(kept) != len(chain):
+            settings[fallback_key] = kept
+            cleared.append(label)
+    if include_speech:
+        cleared.extend(_clear_speech_settings_for_endpoint(settings, ep_id))
+    return cleared
+
+
+def _clear_user_pref_endpoint_refs(all_prefs: dict, ep_id: str) -> int:
+    """Remove endpoint references from scoped or legacy-flat user preferences."""
+    if not isinstance(all_prefs, dict):
+        return 0
+    users = all_prefs.get("_users")
+    pref_sets = users.values() if isinstance(users, dict) else [all_prefs]
+    cleared_users = 0
+    for prefs in pref_sets:
+        if isinstance(prefs, dict) and _clear_endpoint_settings_for_endpoint(prefs, ep_id):
+            cleared_users += 1
+    return cleared_users
+
 
 # Loopback hosts a user might type for a local model server (LM Studio,
 # llama.cpp, vLLM, …). Inside Docker these point at the *container*, not the
 # host the server actually runs on.
-_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+_ANY_BIND_HOSTS = {"0.0.0.0", "::"}
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", *_ANY_BIND_HOSTS}
 
 
 def _docker_host_gateway_reachable() -> bool:
@@ -56,19 +149,33 @@ def _docker_host_gateway_reachable() -> bool:
         return False
 
 
-def _rewrite_loopback_for_docker(base_url: str) -> str:
+def _rewrite_loopback_for_docker(base_url: str, *, container_local: bool = False) -> str:
     """Rewrite a loopback model-endpoint URL to ``host.docker.internal`` when
     running in Docker. A URL like ``http://localhost:1234/v1`` (the LM Studio
     default) otherwise targets the Odysseus container itself, so the probe gets
     a connection error and the endpoint is rejected with a misleading "No
-    models found for that provider/key". The Ollama paths already handle this;
-    this extends the same fix to OpenAI-compatible local servers."""
+    models found for that provider/key".
+
+    Cookbook local serves are the opposite case: Odysseus started the model
+    server inside the same container/process environment, so the saved endpoint
+    must remain container-local. In that mode, normalize a bind address such as
+    0.0.0.0 to a connectable loopback host, but do not jump to the Docker host.
+    """
     try:
         parsed = urlparse(base_url)
     except Exception:
         return base_url
-    if (parsed.hostname or "").lower() not in _LOOPBACK_HOSTS:
+    host = (parsed.hostname or "").lower()
+    if host not in _LOOPBACK_HOSTS:
         return base_url
+    if container_local:
+        if host in _ANY_BIND_HOSTS:
+            netloc = "127.0.0.1" + (f":{parsed.port}" if parsed.port else "")
+            return urlunparse(parsed._replace(netloc=netloc))
+        return base_url
+    if host in _ANY_BIND_HOSTS and not _docker_host_gateway_reachable():
+        netloc = "127.0.0.1" + (f":{parsed.port}" if parsed.port else "")
+        return urlunparse(parsed._replace(netloc=netloc))
     if not _docker_host_gateway_reachable():
         return base_url
     netloc = "host.docker.internal" + (f":{parsed.port}" if parsed.port else "")
@@ -1023,6 +1130,7 @@ def setup_model_routes(model_discovery):
         require_models: str = Form("false"),
         model_type: str = Form("llm"),
         supports_tools: str = Form(""),  # "true"/"false"/"" (unknown)
+        container_local: str = Form("false"),
         # Default `shared=true` → endpoints are visible to all users (the
         # app's historical behaviour). Admins can pass `shared=false` to
         # scope a new endpoint to their own account only.
@@ -1035,9 +1143,10 @@ def setup_model_routes(model_discovery):
         # Resolve hostname via Tailscale if DNS fails
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
-        # In Docker, rewrite a loopback URL to host.docker.internal so the probe
-        # — and the saved URL used for chat — reach the host, not the container.
-        base_url = _rewrite_loopback_for_docker(base_url)
+        # In Docker, manually added loopback URLs usually point at a host-local
+        # server. Cookbook local serves are launched inside Odysseus itself, so
+        # keep those container-local when the frontend marks them as such.
+        base_url = _rewrite_loopback_for_docker(base_url, container_local=_truthy(container_local))
 
         # Auto-generate name from URL if not provided
         if not name.strip():
@@ -1427,43 +1536,30 @@ def setup_model_routes(model_discovery):
         finally:
             db.close()
 
-    # ── Settings fields that store an endpoint ID ──
-    _EP_SETTING_FIELDS = {
-        "default_endpoint_id":  ("default_model",  "Default Model"),
-        "utility_endpoint_id":  ("utility_model",   "Utility Model"),
-        "research_endpoint_id": ("research_model",  "Deep Research"),
-        "task_endpoint_id":     ("task_model",       "Background Tasks"),
-    }
-
     def _settings_using_endpoint(ep_id: str) -> list:
         """Return human-readable labels for settings that reference this endpoint."""
-        settings = _load_settings()
-        affected = []
-        for ep_key, (_, label) in _EP_SETTING_FIELDS.items():
-            if (settings.get(ep_key) or "") == ep_id:
-                affected.append(label)
-        tts_prov = settings.get("tts_provider") or ""
-        if tts_prov == f"endpoint:{ep_id}":
-            affected.append("Text to Speech")
-        return affected
+        return _endpoint_settings_using_endpoint(_load_settings(), ep_id, include_speech=True)
 
     def _clear_settings_for_endpoint(ep_id: str) -> list:
         """Clear all settings that reference this endpoint. Returns list of cleared labels."""
         settings = _load_settings()
-        cleared = []
-        for ep_key, (model_key, label) in _EP_SETTING_FIELDS.items():
-            if (settings.get(ep_key) or "") == ep_id:
-                settings[ep_key] = ""
-                settings[model_key] = ""
-                cleared.append(label)
-        tts_prov = settings.get("tts_provider") or ""
-        if tts_prov == f"endpoint:{ep_id}":
-            settings["tts_provider"] = "disabled"
-            settings["tts_model"] = "tts-1"
-            cleared.append("Text to Speech")
+        cleared = _clear_endpoint_settings_for_endpoint(settings, ep_id, include_speech=True)
         if cleared:
             _save_settings(settings)
         return cleared
+
+    def _clear_user_prefs_for_endpoint(ep_id: str) -> int:
+        """Clear per-user endpoint selections and fallback chains."""
+        try:
+            from routes.prefs_routes import _load as _load_prefs, _save as _save_prefs
+            all_prefs = _load_prefs()
+            cleared_users = _clear_user_pref_endpoint_refs(all_prefs, ep_id)
+            if cleared_users:
+                _save_prefs(all_prefs)
+            return cleared_users
+        except Exception as e:
+            logger.warning("Failed to clear user prefs for endpoint %s: %s", ep_id, e)
+            return 0
 
     def _session_uses_endpoint_url(session_url: str, base_url: str) -> bool:
         if not session_url or not base_url:
@@ -1529,6 +1625,7 @@ def setup_model_routes(model_discovery):
                 raise HTTPException(404, "Endpoint not found")
             # Clean up any settings that reference this endpoint
             cleared = _clear_settings_for_endpoint(ep_id)
+            cleared_user_preferences = _clear_user_prefs_for_endpoint(ep_id)
             cleared_sessions = _clear_sessions_for_endpoint(db, ep.base_url)
             cleared_loaded_sessions = _clear_loaded_sessions_for_endpoint(ep.base_url)
             db.delete(ep)
@@ -1538,6 +1635,7 @@ def setup_model_routes(model_discovery):
             return {
                 "deleted": True,
                 "cleared_settings": cleared,
+                "cleared_user_preferences": cleared_user_preferences,
                 "cleared_sessions": cleared_sessions,
                 "cleared_loaded_sessions": cleared_loaded_sessions,
             }

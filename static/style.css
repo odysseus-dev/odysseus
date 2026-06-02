@@ -58,6 +58,11 @@
   --color-save-green: var(--color-success);
   --color-link-hover: #66c7ff;
   --color-subheader: #6b8a94;
+  --select-bg: var(--bg);
+  --select-fg: var(--fg);
+  --select-option-bg: color-mix(in srgb, var(--panel) 74%, var(--bg));
+  --select-option-fg: var(--fg);
+  --select-option-active-bg: color-mix(in srgb, var(--accent, var(--red)) 24%, var(--panel));
   /* Warm accent — used by the Goals/Today UI in Notes. Lives as a token so
      themes can override without touching the goal CSS. */
   --accent-warm: #d19a66;
@@ -78,6 +83,11 @@
   --hl-builtin: #0070a0;
   --hl-variable: #383a42;
   --hl-params: #4a4f5c;
+  --select-bg: #eaeaea;
+  --select-fg: var(--fg);
+  --select-option-bg: var(--panel);
+  --select-option-fg: var(--fg);
+  --select-option-active-bg: color-mix(in srgb, var(--red) 16%, var(--panel));
 }
 
 /* ── Reset & Base ── */
@@ -87,6 +97,11 @@ html, body { overflow-x: hidden; height: 100%; margin: 0; overscroll-behavior: n
 body {
   background-color: var(--bg);
   color: var(--fg);
+  /* Animate the dock push BOTH ways. Keeping the transition on the base body
+     (not on .right/left-dock-active) means removing the class on undock also
+     animates padding back to 0 — otherwise the chat snapped back instantly. */
+  transition: padding-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              padding-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
   font-family: var(--font-family, 'Fira Code', monospace);
   display: flex;
   height: 100%;
@@ -823,11 +838,11 @@ body.bg-pattern-sparkles {
     #tile-ghost.visible { opacity: 1; transform: scale(1); }
     /* Bottom dock — chip per minimized modal */
     #minimized-dock {
-      position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+      position: fixed; bottom: var(--composer-clearance, 12px); left: 50%; transform: translateX(-50%);
       display: flex; gap: 6px; flex-wrap: wrap;
       max-width: calc(100vw - 24px);
       padding: 4px;
-      z-index: 999;
+      z-index: 10020;
       pointer-events: none;
     }
     .minimized-dock-chip {
@@ -902,7 +917,7 @@ body.bg-pattern-sparkles {
             color-mix(in srgb, #f0abfc 22%, var(--panel, var(--bg))));
         border-color: color-mix(in srgb, var(--accent, var(--red)) 72%, #fff 12%) !important;
         animation: chip-long-press-pulse 0.82s ease-in-out infinite;
-        z-index: 10;
+        z-index: 10030;
       }
       .minimized-dock-chip.chip-long-press::before {
         content: '';
@@ -1718,7 +1733,22 @@ body.bg-pattern-sparkles {
     textarea { width:100%; min-height:32px; height:auto; max-height:30lh; overflow-y:auto; resize:none; }
     button { height:32px; padding:0 10px; }
     #chat-form button[type="submit"] { height:38px; }
-    select { height:32px; color-scheme: dark; }
+    select {
+      height:32px;
+      color-scheme: dark;
+      background-color: var(--select-bg);
+      color: var(--select-fg);
+    }
+    select option,
+    select optgroup {
+      background-color: var(--select-option-bg);
+      color: var(--select-option-fg);
+    }
+    select option:checked {
+      background-color: var(--select-option-active-bg);
+      color: var(--select-option-fg);
+    }
+    :root.light select { color-scheme: light; }
     .chat-container {
       flex:1;
       display:flex;
@@ -2162,12 +2192,12 @@ body.bg-pattern-sparkles {
       background: transparent;
       border: none;
       outline: none;
-      resize: none;
+      resize: vertical;
       font-size: 14px;
       line-height: 1.5;
       color: var(--fg);
       min-height: 24px;
-      max-height: 200px;
+      max-height: min(60vh, 600px);
       padding: 0;
       font-family: inherit;
       transition: height 0.12s ease-out;
@@ -4871,7 +4901,7 @@ body.bg-pattern-sparkles {
     /* Bottom dock for minimized modals */
     #modal-dock {
       position:fixed;
-      bottom:0;
+      bottom:var(--composer-clearance, 0px);
       left:0;
       right:0;
       display:flex;
@@ -10102,6 +10132,24 @@ textarea.memory-add-input {
 #memory-modal .memory-bulk-bar {
   padding-right: 18px;
 }
+#email-lib-bulk-delete.email-bulk-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  opacity: 0.9;
+  cursor: wait;
+}
+#email-lib-bulk-delete.email-bulk-loading .email-bulk-whirlpool {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  position: relative;
+  top: -1px;
+}
+#email-lib-bulk-delete.email-bulk-loading .email-bulk-loading-label {
+  position: relative;
+  top: 0;
+}
 /* Drafts bulk bar defaults to justify-content:flex-end (whole row hugs the
    right). Reset it so All + count sit on the left and only the action button
    is pushed right — matching every other bulk bar. */
@@ -14498,10 +14546,10 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
     overflow: hidden !important;
     z-index: 155 !important;
   }
-  body.email-doc-split-active #email-lib-modal.email-snap-left .modal-content,
-  body.email-doc-split-active #email-lib-modal.modal-left-docked .modal-content,
-  body.email-doc-split-active .modal[id^="email-reader-"].email-snap-left .modal-content,
-  body.email-doc-split-active .modal[id^="email-reader-"].modal-left-docked .modal-content {
+  body.email-doc-split-active #email-lib-modal.email-snap-left:not(.modal-dragging) .modal-content,
+  body.email-doc-split-active #email-lib-modal.modal-left-docked:not(.modal-dragging) .modal-content,
+  body.email-doc-split-active .modal[id^="email-reader-"].email-snap-left:not(.modal-dragging) .modal-content,
+  body.email-doc-split-active .modal[id^="email-reader-"].modal-left-docked:not(.modal-dragging) .modal-content {
     position: absolute !important;
     left: 0 !important;
     top: 0 !important;
@@ -14529,6 +14577,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
     z-index: 260 !important;
     margin-top: 0 !important;
     transform: none !important;
+    border-left: none !important;
   }
 }
 
@@ -14546,11 +14595,9 @@ body [data-act="from-sender"] {
    fit instead of being hidden behind the panel. */
 body.right-dock-active {
   padding-right: var(--right-dock-w, 0px);
-  transition: padding-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 body.left-dock-active {
   padding-left: var(--left-dock-w, 0px);
-  transition: padding-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 .modal.modal-right-docked {
   align-items: stretch;
@@ -14818,10 +14865,16 @@ body.left-dock-active {
 #email-lib-modal .modal-content {
   transition: width 0.22s ease-out, height 0.22s ease-out;
 }
+@media (min-width: 769px) {
+  body:not(.email-doc-split-active) #email-lib-modal:not(.email-lib-fullscreen):not(.modal-left-docked):not(.modal-right-docked) .modal-content {
+    min-height: min(560px, 85vh);
+  }
+}
 
 /* Cookbook's cached-model list should scale with viewport height, not be capped at 400px */
 .hwfit-cached-list {
   max-height: min(75vh, 900px) !important;
+  overflow-y: auto;
 }
 /* Drag-and-drop visual hint for the email compose pane. Subtle accent
    outline + tinted overlay so it's obvious files will attach if dropped. */
@@ -17580,6 +17633,30 @@ body.gallery-selecting .gallery-dl-btn,
   min-height: 0;
   scrollbar-width: thin;
 }
+#cookbook-modal .modal-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#cookbook-modal .modal-header {
+  flex: 0 0 auto;
+}
+#cookbook-modal .cookbook-body {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+#cookbook-modal .cookbook-group {
+  min-height: 0;
+}
+#cookbook-modal .cookbook-group > .admin-card {
+  min-height: 0;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+#cookbook-modal .cookbook-section-body {
+  min-height: 0;
+}
 .cookbook-body::-webkit-scrollbar {
   width: 4px;
 }
@@ -19093,6 +19170,44 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-task-clear-label { display: none; }
 .cookbook-task-check-ico { display: none; }
 .cookbook-task-clear-ico { display: inline; }
+.cookbook-task[data-status="done"] .cookbook-task-check {
+  color: var(--green, #50fa7b);
+}
+.cookbook-task[data-status="done"] .cookbook-task-check:hover {
+  background: color-mix(in srgb, var(--green, #50fa7b) 16%, transparent);
+}
+.cookbook-task[data-status="done"] .cookbook-task-done-label {
+  color: var(--green, #50fa7b);
+}
+.cookbook-task[data-status="done"] .cookbook-task-check-ico { display: inline; }
+.cookbook-task[data-status="done"] .cookbook-task-clear-ico { display: none; }
+.cookbook-task-start-now {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  position: relative;
+  top: -4px;
+  cursor: pointer;
+  padding: 1px 6px 1px 4px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 9px;
+  line-height: 1;
+  text-transform: lowercase;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.cookbook-task-start-now svg {
+  flex-shrink: 0;
+  position: relative;
+  top: 0;
+}
+.cookbook-task-start-now:hover {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
 /* "Serve" button on a finished download — green pill matching the "running" /
    finished badge (it sits next to the green FINISHED chip + check). */
 .cookbook-task-serve-btn {
@@ -20249,6 +20364,68 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-toolbar .hwfit-usecase { min-width: 70px; flex-shrink: 0; }
 .hwfit-toolbar .hwfit-quant { min-width: 50px; flex-shrink: 0; }
 .hwfit-toolbar .hwfit-search { flex: 1; min-width: 80px; }
+.hwfit-help-chip {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  position: relative;
+  top: -1px;
+  margin-left: -1px;
+}
+.hwfit-help-chip:hover {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 45%, transparent);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.hwfit-help-chip-inline {
+  margin-left: -2px;
+  margin-right: 0;
+}
+.hwfit-ctx-control {
+  height: 28px;
+  min-width: 134px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-muted);
+  background: var(--bg);
+  font-size: 10px;
+  box-sizing: border-box;
+}
+.hwfit-ctx-control span {
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  opacity: 0.75;
+}
+.hwfit-ctx-control input[type="range"] {
+  width: 54px;
+  min-width: 54px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  accent-color: var(--accent, var(--red));
+}
+.hwfit-ctx-control output {
+  min-width: 28px;
+  text-align: right;
+  color: var(--fg);
+  font-weight: 600;
+}
 .hwfit-server-toggle { flex-shrink: 0; font-size: 10px !important; padding: 3px 8px !important; white-space: nowrap; }
 .hwfit-toolbar .hwfit-host { width: 110px; flex-shrink: 0; }
 .hwfit-env-row { gap: 6px; flex-wrap: wrap; }
@@ -20444,7 +20621,7 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-c-ctx    { width: 32px; }
 .hwfit-c-speed  { width: 44px; }
 .hwfit-c-score  { width: 40px; font-weight: 700; font-size: 11px; color: var(--fg); }
-.hwfit-c-mode   { width: 48px; }
+.hwfit-c-mode   { width: 72px; }
 .hwfit-moe {
   display: inline-block; padding: 0 4px; border-radius: 4px; margin-left: 4px;
   background: color-mix(in srgb, var(--red) 15%, transparent);
@@ -20517,6 +20694,15 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .hwfit-panel-actions {
   display: flex; gap: 4px; flex-wrap: wrap;
+}
+.hwfit-panel-note {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--fg-muted);
+  background: color-mix(in srgb, var(--yellow, #f1fa8c) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--yellow, #f1fa8c) 18%, var(--border));
+  border-radius: 4px;
+  padding: 5px 7px;
 }
 
 /* ── Saved presets ── */
@@ -21072,6 +21258,36 @@ body:not(.welcome-ready) #welcome-screen {
   margin-left: 6px;
   opacity: 0.6;
   font-variant-numeric: tabular-nums;
+}
+.task-log-force-run {
+  border: 0;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  box-shadow: none;
+  color: inherit;
+  opacity: .82;
+  margin-left: 7px;
+  padding: 1px 6px 1px 4px;
+  min-height: 16px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  position: relative;
+  top: -1px;
+}
+.task-log-force-run svg {
+  display: block;
+  flex-shrink: 0;
+}
+.task-log-force-run:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--green, #50fa7b) 16%, transparent);
+  color: var(--green, #50fa7b);
 }
 .task-log-stop {
   border: 0;
@@ -26581,17 +26797,17 @@ button .spinner-whirlpool {
   transition: opacity 0.15s, color 0.15s;
   opacity: 0.15; color: var(--fg);
 }
-/* Hover preview: bright accent when un-checked so the user sees a check
-   coming; dim+grey when already active so they can distinguish the
-   "click to UN-check" target from the active state itself. */
+/* Hover preview: bright accent when unchecked so the user sees a check coming.
+   Once active, keep the exact same color on hover so the done state does not
+   visually flip while the pointer is still over it. */
 .email-card-done:not(.active):hover {
   opacity: 0.75 !important;
   color: var(--accent-primary, var(--red));
 }
 .email-card-done.active { opacity: 0.95; color: var(--accent-primary, var(--red)); }
 .email-card-done.active:hover {
-  opacity: 0.35 !important;
-  color: var(--fg) !important;
+  opacity: 0.95 !important;
+  color: var(--accent-primary, var(--red)) !important;
 }
 .email-card-done.just-checked {
   animation: check-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -26739,6 +26955,7 @@ button .spinner-whirlpool {
 }
 .recipient-chip {
   display: inline-flex; align-items: center;
+  gap: 5px;
   padding: 1px 8px; font-size: 10px;
   background: color-mix(in srgb, var(--fg) 6%, transparent);
   border: 1px solid var(--border);
@@ -26750,6 +26967,35 @@ button .spinner-whirlpool {
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.recipient-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recipient-chip-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  top: -2px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.recipient-chip-copy:hover,
+.recipient-chip-copy.copied {
+  opacity: 1;
+  color: var(--accent-primary, var(--red));
+}
+.recipient-chip-copy[hidden] {
+  display: none !important;
 }
 .recipient-chip:hover {
   background: color-mix(in srgb, var(--accent-primary, var(--red)) 12%, transparent);
@@ -28236,6 +28482,55 @@ body.doc-find-active mark.doc-find-mark.current {
   display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
   border-bottom: 1px solid var(--border); background: var(--bg); flex-shrink: 0;
 }
+.doc-email-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+.doc-email-collapse-btn {
+  width: 100%;
+  min-height: 24px;
+  display: none;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 4px 3px;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.72;
+  text-align: left;
+}
+.doc-email-collapse-btn:hover { opacity: 1; color: var(--accent, var(--red)); }
+.doc-email-collapse-btn svg {
+  flex-shrink: 0;
+  opacity: 0.65;
+  transition: transform 0.14s ease;
+}
+.doc-email-collapse-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.74;
+}
+.doc-email-header:not(.doc-email-header-collapsed) .doc-email-collapse-summary {
+  opacity: 0.45;
+}
+.doc-email-header.doc-email-header-collapsed {
+  gap: 0;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+.doc-email-header.doc-email-header-collapsed .doc-email-fields {
+  display: none;
+}
+.doc-email-header.doc-email-header-collapsed .doc-email-collapse-btn svg {
+  transform: rotate(180deg);
+}
 .email-field { display: flex; align-items: center; gap: 8px; position: relative; }
 .email-field label { font-size: 11px; font-weight: 600; color: var(--fg); opacity: 0.5; min-width: 50px; text-align: right; flex-shrink: 0; }
 .email-field input {
@@ -28263,6 +28558,11 @@ body.doc-find-active mark.doc-find-mark.current {
 .email-field .email-cc-toggle {
   position: absolute; right: 6px; top: calc(50% + 4px); transform: translateY(-50%);
   z-index: 2;
+}
+@media (min-width: 769px) {
+  .email-field .email-cc-toggle {
+    top: calc(50% + 4px);
+  }
 }
 .email-field input { padding-right: 60px; }
 .email-field #doc-email-cc, .email-field #doc-email-bcc, .email-field #doc-email-subject { padding-right: 8px; }
@@ -28438,16 +28738,38 @@ body.doc-find-active mark.doc-find-mark.current {
   gap: 0;
 }
 @media (max-width: 768px) {
+  .doc-email-collapse-btn {
+    background: inherit;
+  }
   /* Mobile: keep the pill but ensure a comfortable touch target. */
   .email-attachment-open {
     height: 26px; padding: 0 10px;
     min-height: 26px !important;
   }
+  .email-attachments,
+  .email-compose-atts {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-left: 0;
+    padding-bottom: 2px;
+  }
+  .email-attachments::-webkit-scrollbar,
+  .email-compose-atts::-webkit-scrollbar {
+    display: none;
+  }
   /* Attachment chip body — modest minimum height so the open icon sits
      neatly without dominating. */
-  .email-attachment-chip {
+  .email-attachment-chip,
+  .email-compose-chip {
+    flex: 0 0 auto;
     padding: 6px 8px !important;
     min-height: 36px !important;
+  }
+  .email-compose-chip .compose-chip-name {
+    max-width: 190px;
   }
 }
 
@@ -28475,7 +28797,25 @@ body.doc-find-active mark.doc-find-mark.current {
   opacity: 0.4; font-size: 11px; cursor: pointer;
   padding: 4px 8px; font-family: inherit;
 }
-.email-cc-toggle:hover { opacity: 1; color: var(--accent, #4a9eff); }
+.email-cc-toggle:hover {
+  opacity: 1;
+  color: var(--accent, #4a9eff);
+  background: none !important;
+}
+
+@media (max-width: 768px) {
+  .doc-email-collapse-btn {
+    display: flex;
+  }
+}
+@media (min-width: 769px) {
+  #doc-email-header #doc-email-collapse-btn.doc-email-collapse-btn {
+    display: none !important;
+  }
+  #doc-email-header.doc-email-header-collapsed .doc-email-fields {
+    display: flex !important;
+  }
+}
 
 .email-autocomplete {
   position: absolute; top: 100%; left: 58px; right: 0; z-index: 1000;
@@ -32791,7 +33131,7 @@ button.cal-view-btn {
   line-height: 11px;
   padding: 0 4px;
   border-radius: 3px;
-  color: #fff;
+  color: var(--cal-event-fg, #fff);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -33017,7 +33357,7 @@ button.cal-view-btn {
   font-weight: 500;
   padding: 2px 5px;
   border-radius: 3px;
-  color: var(--fg);
+  color: var(--cal-event-fg, var(--fg));
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;

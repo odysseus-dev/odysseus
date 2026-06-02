@@ -97,6 +97,11 @@ DEFAULT_SETTINGS = {
     "agent_max_tool_calls": 0,
     "agent_input_token_budget": 6000,
     "agent_stream_timeout_seconds": 300,
+    # Extra directory roots that read_file / write_file may access, in
+    # addition to the built-in project data/ and system temp dirs. Each
+    # entry is an absolute path. Sensitive subpaths (.ssh, .gnupg, shell
+    # rc files, SSH key files) are always blocked regardless of roots.
+    "tool_path_extra_roots": [],
     "task_endpoint_id": "",
     "task_model": "",
     "default_endpoint_id": "",
@@ -188,6 +193,21 @@ def save_settings(settings: dict):
 def get_setting(key: str, default: Any = None) -> Any:
     """Read a single setting value."""
     return load_settings().get(key, default)
+
+
+def is_setting_overridden(key: str) -> bool:
+    """True if ``key`` is explicitly present in the saved settings file.
+
+    ``load_settings`` merges DEFAULT_SETTINGS with the saved file, so a value
+    equal to its default is indistinguishable from "never set" via get_setting.
+    Callers that need to treat an explicit user choice differently from the
+    default (e.g. adaptive budgets) use this to read the raw saved file.
+    """
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            return key in json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False
 
 
 # Per-user settings (user prefs override the global admin default). Used for

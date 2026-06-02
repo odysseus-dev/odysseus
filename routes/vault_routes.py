@@ -61,7 +61,8 @@ def _find_bw() -> str:
 def _load_config() -> dict:
     if VAULT_FILE.exists():
         try:
-            return json.loads(VAULT_FILE.read_text(encoding="utf-8"))
+            data = json.loads(VAULT_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
         except Exception:
             pass
     return {}

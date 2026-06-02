@@ -90,7 +90,11 @@ def get_active_document():
 
 def _owned_document_query(query, Document, owner: Optional[str]):
     if owner is None:
-        return query.filter(False)
+        # A bare Python `False` is not a valid SQL expression — SQLAlchemy 1.4
+        # deprecates it and 2.0 raises ArgumentError. Use the SQL `false()`
+        # literal to return zero rows for an unscoped (owner-less) query.
+        from sqlalchemy import false
+        return query.filter(false())
     return query.filter(Document.owner == owner)
 
 

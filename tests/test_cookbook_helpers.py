@@ -15,6 +15,7 @@ from routes.cookbook_helpers import (
     _pip_install_fallback_chain,
     _ollama_bind_from_cmd,
     _safe_env_prefix,
+    _venv_safe_local_pip_install_cmd,
     _validate_gpus,
     _validate_repo_id,
     _validate_serve_cmd,
@@ -157,6 +158,16 @@ def test_pip_install_fallback_chain_tries_user_outside_venv():
     assert "user_attempt" in result.stdout, "Chain should try --user when not in venv and base fails"
 
 
+def test_venv_safe_local_pip_install_strips_user_flags_only_for_local_venv():
+    cmd = 'python3 -m pip install -U --user --break-system-packages "vllm"'
+
+    cleaned = _venv_safe_local_pip_install_cmd(cmd, local=True, in_venv=True)
+
+    assert cleaned == "python3 -m pip install -U vllm"
+    assert _venv_safe_local_pip_install_cmd(cmd, local=False, in_venv=True) == cmd
+    assert _venv_safe_local_pip_install_cmd(cmd, local=True, in_venv=False) == cmd
+
+
 def test_pip_install_attempt_wraps_in_status_preserving_subshell():
     """Each pip attempt must be a bash -c subshell that captures output,
     prints tail, cleans up, and exits with pip's real status — not tail's."""
@@ -244,6 +255,16 @@ def test_serve_runner_preserves_command_exit_code():
     assert "ODYSSEUS_CMD_EXIT=$?" in script
     assert 'echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="' in script
     assert 'echo "=== Process exited with code $? ==="' not in script
+
+
+def test_validate_serve_cmd_accepts_vllm_kv_cache_dtype():
+    cmd = (
+        "CUDA_VISIBLE_DEVICES=0,1 vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 "
+        "--host 0.0.0.0 --port 8000 --tensor-parallel-size 2 "
+        "--max-model-len 4096 --dtype auto --kv-cache-dtype fp8"
+    )
+
+    assert _validate_serve_cmd(cmd) == cmd
 
 
 def test_validate_serve_cmd_accepts_llama_advanced_controls():

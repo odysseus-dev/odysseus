@@ -93,6 +93,67 @@ function _allGpuIds(count) {
   return Array.from({ length: Math.floor(n) }, (_, i) => String(i)).join(',');
 }
 
+function _selectedServeTarget(panel) {
+  const select = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
+  const servers = Array.isArray(_envState.servers) ? _envState.servers : [];
+  let host = _envState.remoteHost || '';
+  let server = host ? servers.find(s => s.host === host) : null;
+  if (select && select.value != null) {
+    if (select.value === 'local') {
+      host = '';
+      server = servers.find(s => !s.host || s.host === 'local') || null;
+    } else {
+      const idx = /^\d+$/.test(String(select.value)) ? parseInt(select.value, 10) : -1;
+      server = servers.find(s => s.host === select.value) || (idx >= 0 ? servers[idx] : null) || null;
+      host = server?.host || '';
+    }
+  }
+  const venv = panel?.querySelector('[data-field="venv"]')?.value?.trim() || server?.envPath || _envState.envPath || '';
+  const label = host
+    ? (server?.name ? `${server.name} (${host})` : host)
+    : (server?.name || 'local server');
+  return {
+    host,
+    port: host ? (_getPort(host) || server?.port || '') : '',
+    venv,
+    label,
+  };
+}
+
+async function _fetchServeRuntimePackage(panel, backend) {
+  const packageByBackend = {
+    vllm: 'vllm',
+    sglang: 'sglang',
+    llamacpp: 'llama_cpp',
+    diffusers: 'diffusers',
+  };
+  const packageName = packageByBackend[backend];
+  if (!packageName) return null;
+  const target = _selectedServeTarget(panel);
+  const params = new URLSearchParams();
+  if (target.host) {
+    params.set('host', target.host);
+    if (target.port) params.set('ssh_port', target.port);
+    if (target.venv) params.set('venv', target.venv);
+  }
+  const res = await fetch('/api/cookbook/packages' + (params.toString() ? '?' + params.toString() : ''), { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  const pkg = (data.packages || []).find(p => p.name === packageName);
+  return { pkg, target };
+}
+
+function _runtimeNoteText(backend, pkg, target) {
+  const labels = { vllm: 'vLLM', sglang: 'SGLang', llamacpp: 'llama.cpp', diffusers: 'Diffusers' };
+  const label = labels[backend] || backend;
+  if (!pkg) return `${label} readiness unavailable for ${target.label}.`;
+  const note = pkg.status_note || pkg.update_note || '';
+  if (pkg.installed) {
+    return note ? `${label} ready on ${target.label}: ${note}` : `${label} ready on ${target.label}.`;
+  }
+  return note ? `${label} missing on ${target.label}: ${note}` : `${label} missing on ${target.label}.`;
+}
+
 // ── Filter/sort cached model list ──
 
 function _filterCachedList() {
@@ -399,7 +460,9 @@ function _rerenderCachedModels() {
 
       // Toggle — close if already open
       if (item.classList.contains('doclib-card-expanded')) {
-        item.querySelector('.hwfit-serve-panel')?.remove();
+        const existingPanel = item.querySelector('.hwfit-serve-panel');
+        existingPanel?._cleanupRuntimeReadiness?.();
+        existingPanel?.remove();
         item.classList.remove('doclib-card-expanded');
         item.style.flexDirection = '';
         item.style.alignItems = '';
@@ -410,7 +473,9 @@ function _rerenderCachedModels() {
 
       // Collapse any other expanded
       list.querySelectorAll('.doclib-card-expanded').forEach(c => {
-        c.querySelector('.hwfit-serve-panel')?.remove();
+        const openPanel = c.querySelector('.hwfit-serve-panel');
+        openPanel?._cleanupRuntimeReadiness?.();
+        openPanel?.remove();
         c.classList.remove('doclib-card-expanded');
         c.style.flexDirection = '';
         c.style.alignItems = '';
@@ -453,6 +518,7 @@ function _rerenderCachedModels() {
           : (_es.gpus || detectedGpuIds));
       const tpOpts = [1,2,4,8].map(n => `<option${defaultTp==String(n)?' selected':''}>${n}</option>`).join('');
       const dtypeOpts = ['auto','float16','bfloat16'].map(d => `<option value="${d}"${sv('dtype','auto')===d?' selected':''}>${d}</option>`).join('');
+      const vllmKvCacheOpts = ['auto','fp8'].map(d => `<option value="${d}"${sv('vllm_kv_cache_dtype','auto')===d?' selected':''}>${d}</option>`).join('');
       const _l = (name, tip) => `<span>${name}<span class="hwfit-hint" title="${tip}">?</span></span>`;
       const _ggufChoices = _runnableGgufFiles(m);
       const _savedGguf = String(sv('gguf_file', '') || '');
@@ -508,6 +574,7 @@ function _rerenderCachedModels() {
       }
       panelHtml += `<label>${_l('GPUs','Toggle which GPUs to use')}<div class="cookbook-gpu-group">${_gpuBtnsHtml}</div><input type="hidden" class="hwfit-sf" data-field="gpus" value="${esc(defaultGpus)}" /></label>`;
       panelHtml += `</div>`;
+      panelHtml += `<div class="hwfit-serve-runtime-note" style="display:none;font-size:11px;line-height:1.35;color:var(--fg-muted);margin-top:-4px;"></div>`;
       if (_ggufChoices.length > 1) {
         panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp">`;
         panelHtml += `<label class="hwfit-backend-llamacpp">${_l('GGUF File','Choose the exact GGUF artifact to serve from this cached model folder.')}<select class="hwfit-sf hwfit-sf-wide" data-field="gguf_file">${_ggufOptions}</select></label>`;
@@ -524,6 +591,7 @@ function _rerenderCachedModels() {
       panelHtml += `<label class="hwfit-backend-vllm">${_l('Swap','CPU swap space in GB. Leave empty to omit (removed in newer vLLM)')}<input type="text" class="hwfit-sf" data-field="swap" value="${esc(sv('swap', ''))}" placeholder="off" /></label>`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('Max Seqs','Maximum concurrent requests. Lower = less memory. Default 8 — prosumer GPUs often OOM on vLLM default 256 during CUDA graph capture.')}<input type="text" class="hwfit-sf" data-field="max_seqs" value="${esc(sv('max_seqs', '8'))}" placeholder="8" /></label>`;
       panelHtml += `<label>${_l('Dtype','Data type for weights. auto picks best for GPU')}<select class="hwfit-sf" data-field="dtype">${dtypeOpts}</select></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm">${_l('KV Cache','vLLM --kv-cache-dtype. auto uses the model/runtime default; fp8 reduces KV memory for long context.')}<select class="hwfit-sf" data-field="vllm_kv_cache_dtype">${vllmKvCacheOpts}</select></label>`;
       panelHtml += `</div>`;
       // Row 2b: Diffusers settings
       const diffDtypeOpts = ['bfloat16','float16','float32'].map(d => `<option value="${d}"${sv('diff_dtype','bfloat16')===d?' selected':''}>${d}</option>`).join('');
@@ -648,9 +716,10 @@ function _rerenderCachedModels() {
       item.classList.add('doclib-card-expanded');
       item.style.flexDirection = 'column';
       item.style.alignItems = 'stretch';
-      if (list) list.scrollTop = 0;
       item.insertAdjacentHTML('beforeend', panelHtml);
       const panel = item.querySelector('.hwfit-serve-panel');
+      // Scroll the serve panel into view within its nearest scrollable ancestor
+      requestAnimationFrame(() => panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
 
       // Build command preview
       function updateCmd() {
@@ -853,6 +922,38 @@ function _rerenderCachedModels() {
       }
       updateBackendVisibility();
 
+      async function updateRuntimeReadinessNote() {
+        const note = panel.querySelector('.hwfit-serve-runtime-note');
+        if (!note) return;
+        const backend = panel.querySelector('[data-field="backend"]')?.value || 'vllm';
+        if (!['vllm', 'sglang', 'llamacpp', 'diffusers'].includes(backend)) {
+          note.style.display = 'none';
+          note.textContent = '';
+          return;
+        }
+        const seq = (panel._runtimeReadinessSeq || 0) + 1;
+        panel._runtimeReadinessSeq = seq;
+        note.style.display = '';
+        note.textContent = 'Checking runtime on selected server...';
+        try {
+          const { pkg, target } = await _fetchServeRuntimePackage(panel, backend);
+          if (panel._runtimeReadinessSeq !== seq) return;
+          note.textContent = _runtimeNoteText(backend, pkg, target);
+          note.style.color = pkg?.installed ? 'var(--fg-muted)' : 'var(--red)';
+        } catch (err) {
+          if (panel._runtimeReadinessSeq !== seq) return;
+          note.textContent = `Runtime readiness unavailable: ${err?.message || err}`;
+          note.style.color = 'var(--fg-muted)';
+        }
+      }
+      updateRuntimeReadinessNote();
+      const runtimeServerSelect = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
+      if (runtimeServerSelect) {
+        const refreshRuntimeOnServerChange = () => updateRuntimeReadinessNote();
+        runtimeServerSelect.addEventListener('change', refreshRuntimeOnServerChange);
+        panel._cleanupRuntimeReadiness = () => runtimeServerSelect.removeEventListener('change', refreshRuntimeOnServerChange);
+      }
+
       // Wire save slots
       function _loadSlotIntoPanel(slotIdx) {
         const presets = _loadPresets();
@@ -882,6 +983,7 @@ function _rerenderCachedModels() {
             gpu_mem: _ex(/--gpu-memory-utilization\s+([\d.]+)/) || '0.90',
             swap: _ex(/--swap-space\s+(\d+)/) || '',
             dtype: _ex(/--dtype\s+(\w+)/) || 'auto',
+            vllm_kv_cache_dtype: _ex(/--kv-cache-dtype\s+([\w.-]+)/) || 'auto',
             max_seqs: _ex(/--max-num-seqs\s+(\d+)/) || '',
             cache_type: _ex(/(?:--cache-type-k|-ctk)\s+(\S+)/) || '',
             llama_fit: _ex(/(?:--fit|-fit)\s+(on|off)/) || '',
@@ -935,6 +1037,7 @@ function _rerenderCachedModels() {
         const _gf = panel.querySelector('[data-field="gpus"]');
         if (_gf) _gf.value = activeGpus.join(',');
         updateBackendVisibility();
+        updateRuntimeReadinessNote();
         updateCmd();
         panel.querySelectorAll('.cookbook-slot-btn').forEach(b => b.classList.remove('active'));
         panel.querySelector(`.cookbook-slot-btn[data-slot="${slotIdx}"]`)?.classList.add('active');
@@ -1474,6 +1577,10 @@ function _rerenderCachedModels() {
             const extraEl = panel.querySelector('[data-field="extra"]');
             if (extraEl) extraEl.value = '';
             updateBackendVisibility();
+            updateRuntimeReadinessNote();
+          }
+          if (e.target.dataset.field === 'venv') {
+            updateRuntimeReadinessNote();
           }
           updateCmd();
         });
@@ -1505,6 +1612,7 @@ function _rerenderCachedModels() {
       // "back out" affordance next to Launch.
       panel.querySelector('.hwfit-serve-cancel')?.addEventListener('click', (ev) => {
         ev.stopPropagation();
+        panel._cleanupRuntimeReadiness?.();
         panel.remove();
         item.classList.remove('doclib-card-expanded');
         item.style.flexDirection = '';

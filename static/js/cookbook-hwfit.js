@@ -213,8 +213,32 @@ export function _renderGpuToggles(system) {
 // reload paints instantly, then we refresh in the background and swap.
 const _SCAN_CACHE_KEY = 'hwfit_scan_cache_v1';
 const _MANUAL_HW_KEY = 'hwfit_manual_hardware_v1';
+const _CTX_KEY = 'hwfit_target_context_v1';
+const _CTX_PRESETS = [8192, 16384, 32768, 50000, 131072, 0]; // 0 = model max
 const _SCAN_CACHE_MAX = 12;            // keep the newest N signatures
 const _SCAN_CACHE_TTL = 6 * 3600 * 1000; // 6 h — hardware rarely changes
+
+function _ctxLabel(value) {
+  const n = Number(value) || 0;
+  if (!n) return 'Max';
+  return n >= 1000 ? Math.round(n / 1000) + 'k' : String(n);
+}
+
+function _ctxValue() {
+  const slider = document.getElementById('hwfit-context');
+  const idx = Math.max(0, Math.min(_CTX_PRESETS.length - 1, Number(slider?.value ?? 3) || 0));
+  return _CTX_PRESETS[idx] || 0;
+}
+
+function _syncCtxControl() {
+  const slider = document.getElementById('hwfit-context');
+  const label = document.getElementById('hwfit-context-label');
+  if (!slider) return;
+  const saved = localStorage.getItem(_CTX_KEY);
+  const savedIdx = saved == null ? 3 : _CTX_PRESETS.indexOf(Number(saved));
+  slider.value = String(savedIdx >= 0 ? savedIdx : 3);
+  if (label) label.textContent = _ctxLabel(_ctxValue());
+}
 
 function _manualHwState() {
   try {
@@ -316,6 +340,7 @@ function _scanSig() {
     o: sortEl?.value || 'score',
     r: sortEl?.dataset.reverse === '1' ? 1 : 0,
     q: document.getElementById('hwfit-quant')?.value || '',
+    c: _ctxValue(),
     g: (tc && typeof tc._activeCount === 'number') ? String(tc._activeCount) : '',
     gg: (tc && tc._activeGroup) ? String(tc._activeGroup) : '',
     m: _manualHwParams(),
@@ -440,6 +465,7 @@ export async function _hwfitFetch(fresh = false) {
   try {
     const sortBy = document.getElementById('hwfit-sort')?.value || 'score';
     const quantPref = document.getElementById('hwfit-quant')?.value || '';
+    const targetCtx = _ctxValue();
     // Get active GPU count from toggles
     const toggleContainer = document.getElementById('hwfit-gpu-toggles');
     let gpuCountOverride = '';
@@ -475,6 +501,7 @@ export async function _hwfitFetch(fresh = false) {
     if (!isImageMode) {
       if (useCase) params.set('use_case', useCase);
       if (quantPref) params.set('quant', quantPref);
+      if (targetCtx) params.set('ctx', String(targetCtx));
     }
     const endpoint = isImageMode ? `/api/hwfit/image-models?${params}` : `/api/hwfit/models?${params}`;
     const res = await fetch(endpoint);
@@ -770,6 +797,20 @@ function _wireManualHardwareControls(el) {
 
 export const _fitColors = { perfect: 'var(--green, #50fa7b)', good: 'var(--yellow, #f1fa8c)', marginal: 'var(--orange, #ffb86c)', too_tight: 'var(--red, #ff5555)' };
 
+function _requiresAcceleratorBackend(model) {
+  const q = String(model?.quant || model?.quantization || '').toUpperCase();
+  const text = `${model?.name || ''} ${model?.repo_id || ''} ${model?.path || ''}`.toLowerCase();
+  return /^AWQ|^GPTQ|^NVFP4/.test(q) || q === 'FP8' || /\b(awq|gptq|fp8|nvfp4)\b/i.test(text);
+}
+
+function _modeLabel(model) {
+  if (model?.is_image_gen) return 'image';
+  if (_requiresAcceleratorBackend(model)) return 'vLLM/SGLang';
+  const detected = _detectBackend(model);
+  if (detected?.label) return detected.label;
+  return String(model?.run_mode || '').replace('_', '+');
+}
+
 export const _hwfitColumns = [
   { key: 'fit', label: 'Fit',    cls: 'hwfit-fit' },
   { key: null,    label: 'Model',  cls: 'hwfit-name' },
@@ -827,9 +868,7 @@ export function _hwfitRenderList(el, models) {
     const pcount = m.parameter_count || '?';
     const ctx = m.context ? (m.context >= 1024 ? (m.context / 1024).toFixed(0) + 'k' : m.context) : '?';
     const fitLabel = (m.fit_level || '').replace('_', ' ');
-    const modeLabel = m.run_mode === 'cpu_offload'
-      ? 'cpu+offload'
-      : (m.run_mode || '').replace(/_/g, ' ');
+    const modeLabel = _modeLabel(m);
     const vramLabel = m.required_gb ? m.required_gb.toFixed(1) + 'G' : '?';
     const moeBadge = m.is_moe ? '<span class="hwfit-badge hwfit-moe">MoE</span>' : '';
     const imgBadge = m.is_image_gen ? '<span class="hwfit-badge" style="background:color-mix(in srgb, var(--red) 20%, transparent);color:var(--red);font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px;">IMG</span>' : '';
@@ -843,7 +882,7 @@ export function _hwfitRenderList(el, models) {
     html += `<span class="hwfit-col hwfit-c-ctx">${m.is_image_gen ? '\u2014' : ctx}</span>`;
     html += `<span class="hwfit-col hwfit-c-speed">${m.is_image_gen ? '\u2014' : tps + ' t/s'}</span>`;
     html += `<span class="hwfit-col hwfit-c-score">${score}</span>`;
-    html += `<span class="hwfit-col hwfit-c-mode">${m.is_image_gen ? 'image' : esc(modeLabel)}</span>`;
+    html += `<span class="hwfit-col hwfit-c-mode" title="${_requiresAcceleratorBackend(m) ? 'Requires vLLM or SGLang with a visible CUDA/ROCm accelerator. llama.cpp and Ollama need GGUF files.' : ''}">${esc(modeLabel)}</span>`;
     html += `</div>`;
   }
   el.innerHTML = html;
@@ -943,6 +982,8 @@ export function _expandModelRow(row, modelData) {
   html += `</div>`;
   if (modelData.is_image_gen) {
     html += `<div style="font-size:10px;opacity:0.5;margin-top:4px;">${esc((modelData.capabilities || []).join(' \u00B7 ') || '')}${modelData.description ? ' \u2014 ' + esc(modelData.description) : ''}</div>`;
+  } else if (_requiresAcceleratorBackend(modelData)) {
+    html += `<div class="hwfit-panel-note">This is a safetensors GPU-serving format. Use vLLM/SGLang with a visible CUDA/ROCm accelerator, or pick a GGUF download for llama.cpp/Ollama.</div>`;
   }
   html += `</div>`;
 
@@ -1139,8 +1180,11 @@ export function _hwfitInit() {
   const uc = document.getElementById('hwfit-usecase');
   const sort = document.getElementById('hwfit-sort');
   const qpref = document.getElementById('hwfit-quant');
+  const ctx = document.getElementById('hwfit-context');
+  const ctxLabel = document.getElementById('hwfit-context-label');
   const search = document.getElementById('hwfit-search');
   const remote = document.getElementById('hwfit-host');
+  _syncCtxControl();
   if (uc) uc.addEventListener('change', () => _hwfitFetch());
   if (sort) sort.addEventListener('change', () => _hwfitFetch());
   if (qpref) qpref.addEventListener('change', () => _hwfitFetch());
@@ -1155,6 +1199,28 @@ export function _hwfitInit() {
       _hwfitFetch();
     }
   });
+  if (ctx && !ctx.dataset.bound) {
+    ctx.dataset.bound = '1';
+    ctx.addEventListener('input', () => {
+      if (ctxLabel) ctxLabel.textContent = _ctxLabel(_ctxValue());
+    });
+    ctx.addEventListener('change', () => {
+      const targetCtx = _ctxValue();
+      try { localStorage.setItem(_CTX_KEY, String(targetCtx)); } catch {}
+      const sortSel = document.getElementById('hwfit-sort');
+      if (sortSel) {
+        if (targetCtx) {
+          sortSel.value = 'fit';
+          sortSel.dataset.reverse = '1';
+        } else {
+          sortSel.value = 'score';
+          sortSel.dataset.reverse = '';
+        }
+      }
+      _hwfitCache = null;
+      _hwfitFetch();
+    });
+  }
   // Rescan — force a fresh hardware probe (bypasses the per-host cache).
   const rescan = document.getElementById('hwfit-rescan');
   if (rescan && !rescan.dataset.bound) {

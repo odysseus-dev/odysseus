@@ -469,7 +469,7 @@ async def _run_skill_test_job(key, name, md, task, url, model, headers, owner, s
         conf = {"pass": 0.95, "needs_work": 0.6, "fail": 0.4}.get(v)
         if conf is not None:
             try:
-                skills_manager.update_skill(name, {"confidence": conf})
+                skills_manager.update_skill(name, {"confidence": conf}, owner=owner)
             except Exception:
                 pass
     job["status"] = "done"
@@ -638,7 +638,7 @@ def _audit_finalize_status(skills_manager, name: str, owner, verdict: str,
     c = float(confidence or 0.0)
     status = "published" if (auto_publish and necessary and verdict == "pass" and c >= min_conf) else "draft"
     try:
-        skills_manager.update_skill(name, {"status": status})
+        skills_manager.update_skill(name, {"status": status}, owner=owner)
     except Exception:
         pass
     return status
@@ -662,7 +662,7 @@ def _apply_skill_md(skills_manager, name: str, md: str, owner) -> bool:
             "teacher_model": sk.teacher_model, "owner": sk.owner or owner,
             "when_to_use": sk.when_to_use, "procedure": sk.procedure,
             "pitfalls": sk.pitfalls, "verification": sk.verification, "body_extra": sk.body_extra,
-        }))
+        }, owner=owner))
     except Exception as e:
         logger.warning(f"Audit: could not save edited skill {name}: {e}")
         return False
@@ -762,7 +762,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
     # earns a bit less; a skill that still fails is marked low.
     def _set_conf(c):
         try:
-            skills_manager.update_skill(name, {"confidence": c})
+            skills_manager.update_skill(name, {"confidence": c}, owner=owner)
         except Exception:
             pass
 
@@ -799,7 +799,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
     if generic_reason or duplicate_of or (isinstance(nec, dict) and nec.get("necessary") is False):
         reason = generic_reason or (f"Lower-priority duplicate of {duplicate_of}" if duplicate_of else str((nec or {}).get("reason") or "Unnecessary skill"))
         try:
-            skills_manager.update_skill(name, {"status": "draft", "confidence": 0.35})
+            skills_manager.update_skill(name, {"status": "draft", "confidence": 0.35}, owner=owner)
             skills_manager.set_audit(name, "skipped", by_teacher=False, worker_model=model)
             if duplicate_of:
                 skills_manager.set_necessity(name, False, [duplicate_of], reason)
@@ -901,7 +901,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
 
     # Still failing → demote to draft + low confidence + flag (do NOT delete).
     try:
-        skills_manager.update_skill(name, {"status": "draft", "confidence": 0.35})
+        skills_manager.update_skill(name, {"status": "draft", "confidence": 0.35}, owner=owner)
     except Exception:
         pass
     skills_manager.set_audit(
@@ -1474,7 +1474,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             "pitfalls": sk.pitfalls,
             "verification": sk.verification,
             "body_extra": sk.body_extra,
-        })
+        }, owner=user)
         if not ok:
             raise HTTPException(500, "Update failed")
         # Manual markdown edits can create or substantially rewrite a draft
@@ -1496,7 +1496,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         updates = body.dict(exclude_none=True)
         if not updates:
             return {"ok": True}
-        ok = skills_manager.update_skill(match.get("name"), updates)
+        ok = skills_manager.update_skill(match.get("name"), updates, owner=user)
         if not ok:
             raise HTTPException(404, "Skill not found")
         if not match.get("audit_verdict"):

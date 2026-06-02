@@ -13,6 +13,7 @@ vault) to any local user for the lifetime of the unlock subprocess.
 """
 
 import os
+import json
 import re
 import sys
 import types
@@ -98,3 +99,11 @@ def test_unlock_handler_uses_passwordenv_not_argv():
     # And the secure shape must be present.
     assert "--passwordenv" in text
     assert re.search(r"bw_password\s*=\s*req\.master_password", text)
+
+
+def test_load_config_ignores_non_object_json(tmp_path, monkeypatch):
+    vault_file = tmp_path / "vault.json"
+    vault_file.write_text(json.dumps(["not", "a", "config", "object"]), encoding="utf-8")
+    monkeypatch.setattr(vr, "VAULT_FILE", vault_file)
+
+    assert vr._load_config() == {}

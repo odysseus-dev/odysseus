@@ -175,8 +175,15 @@ def _quality_score(model, quant, use_case):
     model_uc = infer_use_case(model)
     if model_uc == "coding" and use_case == "coding":
         base += 6
+    elif model_uc == "coding" and use_case in ("general", "chat"):
+        # Coder-specialized models are still useful generally, but they should
+        # not dominate the default scan. If the user wants code, the Coding
+        # filter gives them the boost above.
+        base -= 10
     if model_uc == "reasoning" and use_case == "reasoning" and pb >= 13:
         base += 5
+    elif model_uc == "reasoning" and use_case == "chat":
+        base -= 4
     if model_uc == "multimodal" and use_case == "multimodal":
         base += 6
 
@@ -262,7 +269,30 @@ def _quant_bits(q):
     return 0
 
 
-def analyze_model(model, system, target_quant=None, scoring_use_case=None):
+def _native_quant(model):
+    native_quant = model.get("quantization", "Q4_K_M")
+    name = (model.get("name") or "").lower()
+    fmt = (model.get("format") or "").lower()
+    text = f"{name} {fmt}"
+    if "nvfp4" in text:
+        return "NVFP4"
+    if re.search(r"(^|[-_/])fp8($|[-_/\s])", text):
+        return "FP8"
+    if "gptq" in text:
+        m = re.search(r"(?:gptq|int|w)(?:[-_]?)(\d{1,2})(?:bit)?", text)
+        return f"GPTQ-{m.group(1)}bit" if m else "GPTQ"
+    if "awq" in text:
+        m = re.search(r"(?:awq|int|w)(?:[-_]?)(\d{1,2})(?:bit)?", text)
+        return f"AWQ-{m.group(1)}bit" if m else "AWQ"
+    if "mlx" in text:
+        m = re.search(r"mlx[-_]?(\d{1,2})bit", text)
+        return f"mlx-{m.group(1)}bit" if m else native_quant
+    if not (model.get("is_gguf") or model.get("gguf_sources")) and re.search(r"(^|[-_/])(?:int)?8bit($|[-_/\s])", text):
+        return "INT8"
+    return native_quant
+
+
+def analyze_model(model, system, target_quant=None, scoring_use_case=None, target_context=None):
     pb = params_b(model)
     if pb <= 0:
         return None
@@ -282,11 +312,14 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None):
     gpu_only = bool(system.get("gpu_only")) and has_gpu and gpu_vram > 0
     eff_ram = 0 if gpu_only else available_ram
     is_moe = model.get("is_moe", False)
-    ctx = model.get("context_length", 4096) or 4096
+    model_ctx = model.get("context_length", 4096) or 4096
+    try:
+        target_context = int(target_context or 0)
+    except (TypeError, ValueError):
+        target_context = 0
+    ctx = min(model_ctx, target_context) if target_context > 0 else model_ctx
 
-    native_quant = model.get("quantization", "Q4_K_M")
-    if "nvfp4" in (model.get("name") or "").lower():
-        native_quant = "NVFP4"
+    native_quant = _native_quant(model)
     preq = is_prequantized(model)
 
     # GGUF models can't be sharded across GPUs — use single GPU VRAM
@@ -355,7 +388,8 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None):
             "score": 0,
             "scores": {"quality": 0, "speed": 0, "fit": 0, "context": 0},
             "gguf_sources": model.get("gguf_sources", []),
-            "context_length": model.get("context_length", 4096),
+            "context_length": model_ctx,
+            "target_context": target_context or None,
         }
 
     run_mode, quant, fit_ctx, required_gb = result
@@ -413,8 +447,9 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None):
             "context": round(c_score, 1),
         },
         "gguf_sources": model.get("gguf_sources", []),
-        "context_length": model.get("context_length", 4096),
+        "context_length": model_ctx,
         "release_date": model.get("release_date", ""),
+        "target_context": target_context or None,
     }
 
 
@@ -431,7 +466,7 @@ SORT_KEYS = {
 }
 
 
-def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None):
+def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None, target_context=None):
     """Rank all models against detected hardware. Returns sorted list of fit results."""
     models = get_models()
     results = []
@@ -495,9 +530,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     consumer_amd = system_backend == "rocm" and gpu_family == "rdna"
 
     for m in models:
-        native_q = m.get("quantization", "")
-        if "nvfp4" in (m.get("name") or "").lower():
-            native_q = "NVFP4"
+        native_q = _native_quant(m)
 
         # MLX needs the mlx_lm runtime, which Odysseus does not generate serve
         # commands for. Hide it on every backend, including Metal.
@@ -548,7 +581,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
             if search.lower() not in name and search.lower() not in provider:
                 continue
 
-        result = analyze_model(m, system, target_quant=quant, scoring_use_case=(use_case or "general"))
+        result = analyze_model(m, system, target_quant=quant, scoring_use_case=(use_case or "general"), target_context=target_context)
         if result is None:
             continue
 

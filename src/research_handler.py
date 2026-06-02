@@ -30,6 +30,24 @@ def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, n))
 
 
+def _format_probe_failure(model: str, exc: Exception) -> str:
+    """Turn a failed research model probe into a user-facing message."""
+    detail = getattr(exc, "detail", None)
+    status = getattr(exc, "status_code", None)
+    err = str(detail if detail is not None else exc).strip()
+
+    if status in {401, 403} or "401" in err or "API key" in err or "Unauthorized" in err:
+        return f"Model '{model}' requires an API key. Check your endpoint configuration."
+
+    if status and err:
+        return f"Model '{model}' probe failed: {err}"
+
+    if err:
+        return f"Cannot reach model '{model}' — {err}"
+
+    return f"Cannot reach model '{model}' — check that the endpoint is running and accessible."
+
+
 class ResearchHandler:
     """Handles research service operations with iterative deep research."""
 
@@ -634,14 +652,7 @@ class ResearchHandler:
             logger.info(f"Endpoint probe OK: {model}")
         except Exception as e:
             logger.error(f"Probe failed for {model}: {e}")
-            err = str(e)
-            if "401" in err or "API key" in err or "Unauthorized" in err:
-                raise RuntimeError(
-                    f"Model '{model}' requires an API key. Check your endpoint configuration."
-                ) from e
-            raise RuntimeError(
-                f"Cannot reach model '{model}' — check that the endpoint is running and accessible."
-            ) from e
+            raise RuntimeError(_format_probe_failure(model, e)) from e
 
     async def call_research_service(
         self,

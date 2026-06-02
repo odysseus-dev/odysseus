@@ -38,7 +38,8 @@ from routes.cookbook_helpers import (
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
-    _ollama_bind_from_cmd, _pip_install_fallback_chain, ModelDownloadRequest, ServeRequest,
+    _ollama_bind_from_cmd, _pip_install_fallback_chain, _venv_safe_local_pip_install_cmd,
+    ModelDownloadRequest, ServeRequest,
 )
 
 _HF_TOKEN_STATUS_SNIPPET = (
@@ -545,12 +546,18 @@ def setup_cookbook_routes() -> APIRouter:
                 )
             # Ensure pip-user scripts (e.g. hf CLI installed via --user) are on PATH
             runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
-            # Install hf CLI + hf_transfer best-effort so future runs get the fast path.
+            # Install hf CLI + optional hf_transfer best-effort. Retries disable
+            # hf_transfer because the Rust parallel path is fast but has been
+            # flaky near the end of very large multi-file downloads.
             # Use --break-system-packages on PEP-668 systems (Arch, newer Debian) so it doesn't bail.
             runner_lines.append(f"command -v hf >/dev/null 2>&1 || {_pip_install_fallback_chain('huggingface_hub', python_cmd='pip', upgrade=True)}")
-            runner_lines.append(f"python3 -c 'import hf_transfer' 2>/dev/null || {_pip_install_fallback_chain('hf_transfer', python_cmd='pip')}")
-            runner_lines.append("python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
-            runner_lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
+            if req.disable_hf_transfer:
+                runner_lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
+                runner_lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
+            else:
+                runner_lines.append(f"python3 -c 'import hf_transfer' 2>/dev/null || {_pip_install_fallback_chain('hf_transfer', python_cmd='pip')}")
+                runner_lines.append("python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
+                runner_lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
             # Surface whether the HF token actually reached THIS server, so a gated
             # download's "not authorized" failure can be told apart from a missing
             # token (the token is masked — we only print applied / not-set).
@@ -561,13 +568,17 @@ def setup_cookbook_routes() -> APIRouter:
             runner_lines.append(f'  {hf_cmd} < /dev/null')
             runner_lines.append('elif python3 -c "import huggingface_hub" 2>/dev/null; then')
             runner_lines.append('  echo "hf CLI not found, using Python huggingface_hub..."')
-            runner_lines.append(f'  python3 -c "import os; from huggingface_hub import snapshot_download; snapshot_download(\'{req.repo_id}\'{_dl_pyarg}, max_workers=8)"')
+            runner_lines.append(f'  python3 -c "import os; from huggingface_hub import snapshot_download; snapshot_download(\'{req.repo_id}\'{_dl_pyarg}, max_workers={4 if req.disable_hf_transfer else 8})"')
             runner_lines.append('else')
             runner_lines.append('  echo "Installing huggingface-hub and dependencies..."')
             runner_lines.append('  pip install --no-deps -q huggingface-hub 2>/dev/null')
-            runner_lines.append('  pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests hf_transfer 2>/dev/null')
-            runner_lines.append("  python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
-            runner_lines.append(f'  python3 -c "import os; from huggingface_hub import snapshot_download; snapshot_download(\'{req.repo_id}\'{_dl_pyarg}, max_workers=8)"')
+            if req.disable_hf_transfer:
+                runner_lines.append('  pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests 2>/dev/null')
+                runner_lines.append('  export HF_HUB_ENABLE_HF_TRANSFER=0')
+            else:
+                runner_lines.append('  pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests hf_transfer 2>/dev/null')
+                runner_lines.append("  python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
+            runner_lines.append(f'  python3 -c "import os; from huggingface_hub import snapshot_download; snapshot_download(\'{req.repo_id}\'{_dl_pyarg}, max_workers={4 if req.disable_hf_transfer else 8})"')
             runner_lines.append('fi')
             runner_lines.append('if [ $? -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $?)"; fi')
             runner_lines.append(f"rm -f {remote_runner}")
@@ -819,6 +830,11 @@ def setup_cookbook_routes() -> APIRouter:
         # many downstream `"engine" in req.cmd` membership checks can't hit
         # `TypeError: argument of type 'NoneType'` (a 500 instead of a clean 400).
         req.cmd = _validate_serve_cmd(req.cmd) or ""
+        req.cmd = _venv_safe_local_pip_install_cmd(
+            req.cmd,
+            local=not bool(req.remote_host),
+            in_venv=sys.prefix != sys.base_prefix,
+        )
         is_pip_install = bool(req.cmd and "pip install" in req.cmd)
         if is_pip_install:
             # PEP-508-style package spec — letters, digits, `.-_` for the
@@ -988,16 +1004,20 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append(f'ODYSSEUS_OLLAMA_HOST={_bash_squote(_ollama_host)}')
                 runner_lines.append(f'ODYSSEUS_OLLAMA_PORT="{_ollama_port}"')
                 runner_lines.append('ODYSSEUS_OLLAMA_URL=""')
-                runner_lines.append('for _ody_ollama_port in "$ODYSSEUS_OLLAMA_PORT" 11434; do')
-                runner_lines.append('  [ -z "$_ody_ollama_port" ] && continue')
-                runner_lines.append('  for _ody_ollama_host in 127.0.0.1 localhost host.docker.internal; do')
-                runner_lines.append('    _ody_ollama_url="http://${_ody_ollama_host}:${_ody_ollama_port}"')
-                runner_lines.append('    if curl -sf "$_ody_ollama_url/api/tags" >/dev/null 2>&1; then')
-                runner_lines.append('      ODYSSEUS_OLLAMA_URL="$_ody_ollama_url"')
-                runner_lines.append('      ODYSSEUS_OLLAMA_PORT="$_ody_ollama_port"')
-                runner_lines.append('      break 2')
-                runner_lines.append('    fi')
+                runner_lines.append('for _ody_ollama_try in $(seq 1 20); do')
+                runner_lines.append('  for _ody_ollama_port in "$ODYSSEUS_OLLAMA_PORT" 11434; do')
+                runner_lines.append('    [ -z "$_ody_ollama_port" ] && continue')
+                runner_lines.append('    for _ody_ollama_host in 127.0.0.1 localhost host.docker.internal; do')
+                runner_lines.append('      _ody_ollama_url="http://${_ody_ollama_host}:${_ody_ollama_port}"')
+                runner_lines.append('      if curl -sf "$_ody_ollama_url/api/tags" >/dev/null 2>&1; then')
+                runner_lines.append('        ODYSSEUS_OLLAMA_URL="$_ody_ollama_url"')
+                runner_lines.append('        ODYSSEUS_OLLAMA_PORT="$_ody_ollama_port"')
+                runner_lines.append('        break 3')
+                runner_lines.append('      fi')
+                runner_lines.append('    done')
                 runner_lines.append('  done')
+                runner_lines.append('  [ "$_ody_ollama_try" -eq 1 ] && echo "[odysseus] Waiting for an existing Ollama API on ports ${ODYSSEUS_OLLAMA_PORT}/11434..."')
+                runner_lines.append('  sleep 1')
                 runner_lines.append('done')
                 runner_lines.append('if [ -n "$ODYSSEUS_OLLAMA_URL" ]; then')
                 runner_lines.append('  if [ "$ODYSSEUS_OLLAMA_PORT" != "' + _ollama_port + '" ]; then')
@@ -1814,6 +1834,43 @@ def setup_cookbook_routes() -> APIRouter:
     def _cookbook_tasks_status_sync():
         import subprocess
 
+        def _download_cache_complete(repo_id: str, remote_host: str = "", ssh_port: str = "") -> bool:
+            """Best-effort check for a completed HF cache entry.
+
+            tmux output can stop at a stale progress line if the pane/session
+            disappears before Cookbook captures the final DOWNLOAD_OK marker.
+            In that case, trust the cache shape: a snapshot directory with files
+            and no *.incomplete blobs means HuggingFace finished materializing the
+            model.
+            """
+            if not repo_id or "/" not in repo_id:
+                return False
+            py = (
+                "import os,sys;"
+                "repo=sys.argv[1];"
+                "base=os.environ.get('HUGGINGFACE_HUB_CACHE') or os.path.join(os.environ.get('HF_HOME', os.path.expanduser('~/.cache/huggingface')), 'hub');"
+                "d=os.path.join(base,'models--'+repo.replace('/','--'));"
+                "snap=os.path.join(d,'snapshots');"
+                "ok=os.path.isdir(snap) and any(os.path.isdir(os.path.join(snap,x)) and os.listdir(os.path.join(snap,x)) for x in os.listdir(snap));"
+                "inc=False;"
+                "blobs=os.path.join(d,'blobs');"
+                "inc=os.path.isdir(blobs) and any(x.endswith('.incomplete') for x in os.listdir(blobs));"
+                "sys.exit(0 if ok and not inc else 1)"
+            )
+            cmd = ["python3", "-c", py, repo_id]
+            try:
+                if remote_host:
+                    ssh_base = ["ssh"]
+                    if ssh_port and ssh_port != "22":
+                        ssh_base.extend(["-p", str(ssh_port)])
+                    shell_cmd = " ".join(shlex.quote(x) for x in cmd)
+                    proc = subprocess.run(ssh_base + [remote_host, shell_cmd], timeout=12, capture_output=True)
+                else:
+                    proc = subprocess.run(cmd, timeout=12, capture_output=True)
+                return proc.returncode == 0
+            except Exception:
+                return False
+
         # Load saved tasks from cookbook state
         tasks = []
         if _cookbook_state_path.exists():
@@ -1990,7 +2047,14 @@ def setup_cookbook_routes() -> APIRouter:
                     status = "running"
             else:
                 # Session is dead — check if it completed or crashed
-                status = "stopped"
+                if task_type == "download" and _download_cache_complete(_payload.get("repo_id") or model, remote, str(_tport or "")):
+                    status = "completed"
+                    if not progress_text:
+                        progress_text = "Download complete"
+                    if not full_snapshot:
+                        full_snapshot = "DOWNLOAD_OK"
+                else:
+                    status = "stopped"
 
             # Parse structured phase info — single source of truth for the UI
             phase_info = _parse_serve_phase(full_snapshot, task_type) if (task_type == "serve" and status == "running" and full_snapshot) else {}
