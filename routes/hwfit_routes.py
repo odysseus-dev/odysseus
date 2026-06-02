@@ -4,84 +4,101 @@ from copy import deepcopy
 from fastapi import APIRouter
 
 
+# Backends the manual hardware simulator accepts. Must stay a subset of what
+# services.hwfit.fit understands so a simulated box ranks like a real one:
+# "metal" routes through the Apple-Silicon path (GGUF-only, llama.cpp/Ollama),
+# the CPU backends through the RAM/offload path, cuda/rocm through vLLM.
+_MANUAL_BACKENDS = {"cuda", "rocm", "metal", "cpu_x86", "cpu_arm"}
+
+
+def _apply_manual_hardware(system, manual_mode="", manual_gpu_count="", manual_vram_gb="", manual_ram_gb="", manual_backend=""):
+    """Manual hardware is a "what if I had this setup" simulator —
+    REPLACES the detected hardware entirely instead of adding to it.
+
+    The previous additive behavior averaged the manual VRAM across
+    all GPUs (base + manual), which meant adding "1× 400 GB" on top
+    of "2× 70 GB" only nudged the per-GPU cap from 70 to 180 GB
+    (= 540 / 3), so GGUF models bigger than that still didn't surface
+    — exactly the "cap stuck at detected level" bug the user hit.
+    """
+    manual_mode = (manual_mode or "").lower()
+    if manual_mode not in {"gpu", "ram"}:
+        return system
+
+    try:
+        override_ram_gb = float(manual_ram_gb) if manual_ram_gb else 0
+    except ValueError:
+        override_ram_gb = 0
+    override_ram_gb = max(0.0, override_ram_gb)
+    if override_ram_gb:
+        # Replace RAM, don't add. The number in the field is the
+        # TOTAL system memory the user wants to simulate.
+        system["available_ram_gb"] = round(override_ram_gb, 1)
+        system["total_ram_gb"] = round(override_ram_gb, 1)
+    system["manual_hardware"] = True
+
+    if manual_mode == "ram":
+        # RAM-only simulation — wipe GPU entirely so the ranker uses
+        # CPU/RAM paths.
+        system["has_gpu"] = False
+        system["gpu_name"] = None
+        system["gpu_vram_gb"] = 0
+        system["gpu_count"] = 0
+        system["gpus"] = []
+        system["gpu_groups"] = []
+        system["backend"] = "cpu_x86"
+        system.pop("unified_memory", None)
+        return system
+
+    try:
+        count = int(manual_gpu_count) if manual_gpu_count else 1
+    except ValueError:
+        count = 1
+    try:
+        vram_each = float(manual_vram_gb) if manual_vram_gb else 8.0
+    except ValueError:
+        vram_each = 8.0
+    count = max(1, min(count, 16))
+    vram_each = max(1.0, vram_each)
+    backend = (manual_backend or system.get("backend") or "cuda").lower()
+    if backend not in _MANUAL_BACKENDS:
+        backend = "cuda"
+    total_vram = round(vram_each * count, 1)
+    gpu_name = f"Simulated {backend.upper()} GPU" + (f" × {count}" if count > 1 else "")
+    system["has_gpu"] = True
+    system["gpu_name"] = gpu_name
+    system["gpu_vram_gb"] = total_vram
+    system["gpu_count"] = count
+    system["gpus"] = [
+        {"index": i, "name": gpu_name, "vram_gb": vram_each}
+        for i in range(count)
+    ]
+    # Single homogeneous pool — vram_each here is the ACTUAL per-GPU
+    # VRAM the user entered, not an average. That's the whole point:
+    # raising vram_each lifts the per-GPU cap (GGUF, tensor-parallel
+    # math) all the way up, not just by a small fraction.
+    system["gpu_groups"] = [{
+        "name": gpu_name,
+        "vram_each": vram_each,
+        "count": count,
+        "indices": list(range(count)),
+        "vram_total": total_vram,
+    }]
+    system["homogeneous"] = True
+    system["backend"] = backend
+    # Apple Silicon shares one unified memory pool with the GPU; flag it so
+    # the API/UI report it the way real Metal detection does. Discrete GPUs
+    # (cuda/rocm) and the CPU backends carry separate VRAM, so clear any
+    # stale flag a previous detection left on the dict.
+    if backend == "metal":
+        system["unified_memory"] = True
+    else:
+        system.pop("unified_memory", None)
+    return system
+
+
 def setup_hwfit_routes():
     router = APIRouter(prefix="/api/hwfit", tags=["hwfit"])
-
-    def _apply_manual_hardware(system, manual_mode="", manual_gpu_count="", manual_vram_gb="", manual_ram_gb="", manual_backend=""):
-        """Manual hardware is a "what if I had this setup" simulator —
-        REPLACES the detected hardware entirely instead of adding to it.
-
-        The previous additive behavior averaged the manual VRAM across
-        all GPUs (base + manual), which meant adding "1× 400 GB" on top
-        of "2× 70 GB" only nudged the per-GPU cap from 70 to 180 GB
-        (= 540 / 3), so GGUF models bigger than that still didn't surface
-        — exactly the "cap stuck at detected level" bug the user hit.
-        """
-        manual_mode = (manual_mode or "").lower()
-        if manual_mode not in {"gpu", "ram"}:
-            return system
-
-        try:
-            override_ram_gb = float(manual_ram_gb) if manual_ram_gb else 0
-        except ValueError:
-            override_ram_gb = 0
-        override_ram_gb = max(0.0, override_ram_gb)
-        if override_ram_gb:
-            # Replace RAM, don't add. The number in the field is the
-            # TOTAL system memory the user wants to simulate.
-            system["available_ram_gb"] = round(override_ram_gb, 1)
-            system["total_ram_gb"] = round(override_ram_gb, 1)
-        system["manual_hardware"] = True
-
-        if manual_mode == "ram":
-            # RAM-only simulation — wipe GPU entirely so the ranker uses
-            # CPU/RAM paths.
-            system["has_gpu"] = False
-            system["gpu_name"] = None
-            system["gpu_vram_gb"] = 0
-            system["gpu_count"] = 0
-            system["gpus"] = []
-            system["gpu_groups"] = []
-            system["backend"] = "cpu_x86"
-            return system
-
-        try:
-            count = int(manual_gpu_count) if manual_gpu_count else 1
-        except ValueError:
-            count = 1
-        try:
-            vram_each = float(manual_vram_gb) if manual_vram_gb else 8.0
-        except ValueError:
-            vram_each = 8.0
-        count = max(1, min(count, 16))
-        vram_each = max(1.0, vram_each)
-        backend = (manual_backend or system.get("backend") or "cuda").lower()
-        if backend not in {"cuda", "rocm", "cpu_x86", "cpu_arm"}:
-            backend = "cuda"
-        total_vram = round(vram_each * count, 1)
-        gpu_name = f"Simulated {backend.upper()} GPU" + (f" × {count}" if count > 1 else "")
-        system["has_gpu"] = True
-        system["gpu_name"] = gpu_name
-        system["gpu_vram_gb"] = total_vram
-        system["gpu_count"] = count
-        system["gpus"] = [
-            {"index": i, "name": gpu_name, "vram_gb": vram_each}
-            for i in range(count)
-        ]
-        # Single homogeneous pool — vram_each here is the ACTUAL per-GPU
-        # VRAM the user entered, not an average. That's the whole point:
-        # raising vram_each lifts the per-GPU cap (GGUF, tensor-parallel
-        # math) all the way up, not just by a small fraction.
-        system["gpu_groups"] = [{
-            "name": gpu_name,
-            "vram_each": vram_each,
-            "count": count,
-            "indices": list(range(count)),
-            "vram_total": total_vram,
-        }]
-        system["homogeneous"] = True
-        system["backend"] = backend
-        return system
 
     @router.get("/system")
     def get_system(host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False):
