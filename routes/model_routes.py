@@ -424,6 +424,15 @@ def _model_endpoint_error_message(base_url: str, ping: Dict[str, Any] = None) ->
     return "No models found for that provider/key."
 
 
+def _visible_models(cached_models, hidden_models):
+    """Filter cached model IDs by hidden_models. Returns list of visible IDs."""
+    all_models = json.loads(cached_models) if isinstance(cached_models, str) else (cached_models or [])
+    if not hidden_models:
+        return all_models
+    hidden = set(json.loads(hidden_models) if isinstance(hidden_models, str) else (hidden_models or []))
+    return [m for m in all_models if m not in hidden]
+
+
 def setup_model_routes(model_discovery):
     router = APIRouter(prefix="/api")
 
