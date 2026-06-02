@@ -8,6 +8,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import uuid
 import tempfile
 from collections import namedtuple
@@ -260,6 +261,59 @@ def _prepend_user_install_bins_to_path() -> None:
         os.environ["PATH"] = os.pathsep.join(parts)
 
 
+def _mode(label: str, status: str, detail: str = "") -> dict:
+    return {"label": label, "status": status, "detail": detail}
+
+
+def _package_modes(name: str, probe: dict, system_details: dict | None = None) -> list[dict]:
+    binaries = probe.get("binaries") if isinstance(probe.get("binaries"), dict) else {}
+    modules = probe.get("modules") if isinstance(probe.get("modules"), dict) else {}
+    dists = probe.get("dists") if isinstance(probe.get("dists"), dict) else {}
+    system_details = system_details or {}
+
+    if name == "vllm":
+        modes = []
+        cli_path = binaries.get("vllm")
+        modes.append(_mode("CLI", "ready" if cli_path else "missing", cli_path or "No vllm executable on PATH"))
+        docker_images = system_details.get("docker_images") or []
+        if docker_images:
+            modes.append(_mode("Docker", "ready", ", ".join(docker_images[:2])))
+        elif system_details.get("docker"):
+            modes.append(_mode("Docker", "missing", "Docker is installed, but no local vLLM image was found"))
+        if modules.get("vllm", {}).get("found") and not dists.get("vllm"):
+            locs = modules.get("vllm", {}).get("locations") or []
+            modes.append(_mode("Python", "warn", f"Namespace only: {locs[0] if locs else 'unknown path'}"))
+        elif dists.get("vllm") and not cli_path:
+            modes.append(_mode("Python", "warn", f"Package {dists['vllm']} found, but CLI is not on PATH"))
+        return modes
+
+    if name == "llama_cpp":
+        native = binaries.get("llama-server")
+        python_pkg = dists.get("llama-cpp-python")
+        return [
+            _mode("Native", "ready" if native else "missing", native or "No llama-server executable on PATH"),
+            _mode("Python", "ready" if python_pkg else "missing", f"llama-cpp-python {python_pkg}" if python_pkg else "No llama_cpp.server package"),
+        ]
+
+    if name == "diffusers":
+        diffusers = dists.get("diffusers") or ("available" if modules.get("diffusers", {}).get("real_module") else "")
+        torch = dists.get("torch") or ("available" if modules.get("torch", {}).get("real_module") else "")
+        return [
+            _mode("Diffusers", "ready" if diffusers else "missing", str(diffusers or "missing")),
+            _mode("Torch", "ready" if torch else "missing", str(torch or "missing")),
+        ]
+
+    if name == "sglang":
+        version = dists.get("sglang")
+        return [_mode("Python", "ready" if version else "missing", f"sglang {version}" if version else "No sglang package")]
+
+    if name == "hf_transfer":
+        version = dists.get("hf-transfer") or dists.get("hf_transfer")
+        return [_mode("Python", "ready" if version else "missing", f"hf_transfer {version}" if version else "No hf_transfer package")]
+
+    return []
+
+
 def _package_probe_script(names: list[str]) -> str:
     names_lit = ",".join(repr(n) for n in names)
     return f"""
@@ -269,6 +323,7 @@ import json
 import os
 import shutil
 import site
+import sys
 
 names=[{names_lit}]
 dist_names={{
@@ -329,8 +384,228 @@ def probe(n):
     bins = {{b: shutil.which(b) for b in bin_names.get(n, [])}}
     return {{'modules': mods, 'dists': dists, 'binaries': bins}}
 
-print(json.dumps({{n: probe(n) for n in names}}))
+out = {{n: probe(n) for n in names}}
+out['_meta'] = {{
+    'python': sys.executable,
+    'prefix': sys.prefix,
+    'version': sys.version.split()[0],
+    'path': os.environ.get('PATH', ''),
+}}
+print(json.dumps(out))
 """
+
+
+def _empty_package_probe(name: str) -> dict:
+    return {"modules": {name: {"found": False, "real_module": False}}, "dists": {}, "binaries": {}}
+
+
+def _backend_readiness_from_probe(
+    *,
+    package_details: dict,
+    system_details: dict | None = None,
+    hardware: dict | None = None,
+    server: dict | None = None,
+) -> dict:
+    """Build a structured Cookbook backend capability summary from cheap probes.
+
+    This is deliberately read-only: it reports facts and recommended next
+    actions, but never installs packages, pulls images, or allocates GPUs.
+    """
+    package_details = package_details or {}
+    system_details = system_details or {}
+    hardware = hardware or {}
+    server = server or {}
+    python_meta = package_details.get("_meta") if isinstance(package_details.get("_meta"), dict) else {}
+
+    def probe(name: str) -> dict:
+        value = package_details.get(name)
+        return value if isinstance(value, dict) else _empty_package_probe(name)
+
+    def binary_path(package_name: str, binary_name: str) -> str:
+        p = probe(package_name)
+        bins = p.get("binaries") if isinstance(p.get("binaries"), dict) else {}
+        return bins.get(binary_name) or ""
+
+    def dist_version(package_name: str, dist_name: str) -> str:
+        p = probe(package_name)
+        dists = p.get("dists") if isinstance(p.get("dists"), dict) else {}
+        return dists.get(dist_name) or ""
+
+    def module_info(package_name: str, module_name: str | None = None) -> dict:
+        p = probe(package_name)
+        modules = p.get("modules") if isinstance(p.get("modules"), dict) else {}
+        module_name = module_name or package_name
+        value = modules.get(module_name)
+        return value if isinstance(value, dict) else {}
+
+    def mode(ok: bool, reason: str, *, path: str = "", version: str = "", action: str = "", details: dict | None = None) -> dict:
+        out = {"ok": bool(ok), "reason": reason}
+        if path:
+            out["path"] = path
+        if version:
+            out["version"] = version
+        if action:
+            out["action"] = action
+        if details:
+            out["details"] = details
+        return out
+
+    docker_detail = system_details.get("docker") if isinstance(system_details.get("docker"), dict) else {}
+    tmux_detail = system_details.get("tmux") if isinstance(system_details.get("tmux"), dict) else {}
+    docker_path = docker_detail.get("path") or ""
+    docker_images = docker_detail.get("docker_images") or []
+    if isinstance(docker_images, str):
+        docker_images = [item for item in docker_images.split(",") if item]
+    docker_ok = bool(docker_detail.get("installed") or docker_path)
+    tmux_path = tmux_detail.get("path") or ""
+    tmux_ok = bool(tmux_detail.get("installed") or tmux_path)
+
+    backend_name = (hardware.get("backend") or "").lower()
+    gpu_vendor = "cpu"
+    runtime = "none"
+    if backend_name == "cuda":
+        gpu_vendor = "nvidia"
+        runtime = "cuda"
+    elif backend_name == "rocm":
+        gpu_vendor = "amd"
+        runtime = "rocm"
+    elif backend_name == "metal":
+        gpu_vendor = "apple"
+        runtime = "metal"
+    elif backend_name:
+        gpu_vendor = backend_name
+        runtime = backend_name
+
+    vllm_cli = binary_path("vllm", "vllm")
+    vllm_version = dist_version("vllm", "vllm")
+    vllm_module = module_info("vllm", "vllm")
+    vllm_namespace_only = bool(vllm_module.get("found") and not vllm_module.get("real_module") and not vllm_version)
+    vllm_cli_reason = "vLLM CLI is on PATH" if vllm_cli else "No vllm executable on PATH"
+    if vllm_namespace_only:
+        locs = vllm_module.get("locations") or []
+        vllm_cli_reason = f"Python sees a vllm namespace at {locs[0] if locs else 'unknown path'}, but no CLI is on PATH"
+    vllm_docker_ok = docker_ok and bool(docker_images)
+
+    llama_native = binary_path("llama_cpp", "llama-server")
+    llama_py_version = dist_version("llama_cpp", "llama-cpp-python")
+
+    sglang_version = dist_version("sglang", "sglang")
+    diffusers_version = dist_version("diffusers", "diffusers")
+    torch_version = dist_version("diffusers", "torch")
+    hf_transfer_version = dist_version("hf_transfer", "hf-transfer") or dist_version("hf_transfer", "hf_transfer")
+
+    return {
+        "server": {
+            "host": server.get("host") or "",
+            "ssh_port": server.get("ssh_port") or "",
+            "platform": server.get("platform") or "",
+            "venv": server.get("venv") or "",
+            "remote": bool(server.get("host")),
+        },
+        "python": {
+            "executable": python_meta.get("python") or "",
+            "prefix": python_meta.get("prefix") or "",
+            "version": python_meta.get("version") or "",
+            "path": python_meta.get("path") or "",
+        },
+        "hardware": {
+            "backend": backend_name or "cpu_x86",
+            "gpu_vendor": gpu_vendor,
+            "runtime": runtime,
+            "has_gpu": bool(hardware.get("has_gpu")),
+            "gpu_name": hardware.get("gpu_name"),
+            "gpu_count": hardware.get("gpu_count") or 0,
+            "gpu_vram_gb": hardware.get("gpu_vram_gb") or 0,
+            "gpu_groups": hardware.get("gpu_groups") or [],
+            "error": hardware.get("error") or "",
+        },
+        "tools": {
+            "tmux": mode(tmux_ok, "tmux is available" if tmux_ok else "tmux is not on PATH", path=tmux_path),
+            "docker": mode(
+                docker_ok,
+                "Docker is available" if docker_ok else "Docker is not on PATH",
+                path=docker_path,
+                details={"vllm_images": docker_images},
+            ),
+        },
+        "system_tools": system_details,
+        "backends": {
+            "vllm": {
+                "modes": {
+                    "cli": mode(
+                        bool(vllm_cli),
+                        vllm_cli_reason,
+                        path=vllm_cli,
+                        version=vllm_version,
+                        action="install_vllm_cli_in_selected_env" if not vllm_cli else "",
+                    ),
+                    "docker": mode(
+                        vllm_docker_ok,
+                        "Docker and a local vLLM image are available" if vllm_docker_ok
+                        else ("Docker is available, but no local vLLM image was found" if docker_ok else "Docker is not available"),
+                        path=docker_path,
+                        action="pull_vllm_docker_image" if docker_ok and not docker_images else ("install_docker" if not docker_ok else ""),
+                        details={"images": docker_images},
+                    ),
+                    "python": mode(
+                        bool(vllm_version),
+                        f"vLLM Python package {vllm_version}" if vllm_version
+                        else ("Namespace only; not a servable install" if vllm_namespace_only else "vLLM Python package was not found"),
+                        version=vllm_version,
+                        details=vllm_module,
+                    ),
+                }
+            },
+            "llama_cpp": {
+                "modes": {
+                    "native": mode(
+                        bool(llama_native),
+                        "native llama-server is on PATH" if llama_native else "No llama-server executable on PATH",
+                        path=llama_native,
+                        action="setup_native_llama_cpp" if not llama_native else "",
+                    ),
+                    "python": mode(
+                        bool(llama_py_version),
+                        f"llama-cpp-python {llama_py_version}" if llama_py_version else "llama-cpp-python server package was not found",
+                        version=llama_py_version,
+                        action="install_llama_cpp_python_fallback" if not llama_py_version else "",
+                    ),
+                }
+            },
+            "sglang": {
+                "modes": {
+                    "python": mode(
+                        bool(sglang_version),
+                        f"SGLang {sglang_version}" if sglang_version else "SGLang package was not found",
+                        version=sglang_version,
+                        action="install_sglang_in_selected_env" if not sglang_version else "",
+                    )
+                }
+            },
+            "diffusers": {
+                "modes": {
+                    "python": mode(
+                        bool(diffusers_version and torch_version),
+                        f"diffusers {diffusers_version}, torch {torch_version}" if diffusers_version and torch_version
+                        else "Diffusers serving needs both diffusers and torch",
+                        version=diffusers_version,
+                        details={"torch": torch_version},
+                        action="install_diffusers_torch_stack" if not (diffusers_version and torch_version) else "",
+                    )
+                }
+            },
+            "download": {
+                "modes": {
+                    "hf_transfer": mode(
+                        bool(hf_transfer_version),
+                        f"hf_transfer {hf_transfer_version}" if hf_transfer_version else "hf_transfer is not installed",
+                        version=hf_transfer_version,
+                        action="install_hf_transfer" if not hf_transfer_version else "",
+                    )
+                }
+            },
+        },
+    }
 
 
 def _find_line_break(buf):
@@ -744,6 +1019,110 @@ async def _generate_win_detached(cmd: str, request: Request):
 def setup_shell_routes() -> APIRouter:
     router = APIRouter(tags=["shell"])
 
+    def _ssh_port_arg(ssh_port: str | None) -> str:
+        if not ssh_port or str(ssh_port).strip() in ("", "22"):
+            return ""
+        _port = str(ssh_port).strip()
+        if not _port.isdigit():
+            raise HTTPException(400, "Invalid ssh_port")
+        port_num = int(_port)
+        if port_num < 1 or port_num > 65535:
+            raise HTTPException(400, "Invalid ssh_port")
+        return f"-p {port_num} "
+
+    async def _probe_packages_on_target(host: str | None, ssh_port: str | None, venv: str | None, names: list[str]) -> dict:
+        if not names:
+            return {}
+        py = _package_probe_script(names)
+        src = ""
+        if venv:
+            act = venv if venv.endswith("/bin/activate") else venv.rstrip("/") + "/bin/activate"
+            # Keep a leading ~ shell-expandable on the target.
+            src = f". {act} && "
+        if host:
+            inner = f"{src}python3 -c {shlex.quote(py)}"
+            ssh_cmd = (
+                f"ssh -o ConnectTimeout=6 -o StrictHostKeyChecking=no {_ssh_port_arg(ssh_port)}"
+                f"{shlex.quote(host)} {shlex.quote(inner)}"
+            )
+            proc = await asyncio.create_subprocess_shell(
+                ssh_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+        elif src:
+            proc = await asyncio.create_subprocess_shell(
+                f"{src}python3 -c {shlex.quote(py)}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        else:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-c",
+                py,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        out, _err = await asyncio.wait_for(proc.communicate(), timeout=12)
+        txt = out.decode("utf-8", errors="replace").strip()
+        for line in reversed(txt.splitlines()):
+            line = line.strip()
+            if line.startswith("{"):
+                return json.loads(line)
+        return {}
+
+    async def _probe_system_tools_on_target(host: str | None, ssh_port: str | None, names: list[str]) -> dict:
+        if not names:
+            return {}
+        checks = []
+        for name in names:
+            qn = shlex.quote(name)
+            checks.append(f"if command -v {qn} >/dev/null 2>&1; then echo {qn}=1; echo {qn}_path=$(command -v {qn}); else echo {qn}=0; fi")
+        if "docker" in names:
+            checks.append("if command -v docker >/dev/null 2>&1; then docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | awk '/^vllm\\/vllm-openai(-rocm)?:/ {print}' | paste -sd ',' - | sed 's/^/docker_images=/'; fi")
+        inner = " ; ".join(checks)
+        if host:
+            cmd = (
+                f"ssh -o ConnectTimeout=6 -o StrictHostKeyChecking=no {_ssh_port_arg(ssh_port)}"
+                f"{shlex.quote(host)} {shlex.quote(inner)}"
+            )
+            proc = await asyncio.create_subprocess_shell(
+                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+        else:
+            proc = await asyncio.create_subprocess_shell(
+                inner, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+        out, _err = await asyncio.wait_for(proc.communicate(), timeout=12)
+        txt = out.decode("utf-8", errors="replace").strip()
+        details: dict[str, dict] = {}
+        for line in txt.splitlines():
+            name, sep, value = line.strip().partition("=")
+            if not sep:
+                continue
+            if name in names:
+                details.setdefault(name, {})["installed"] = value == "1"
+            elif name.endswith("_path"):
+                pkg_name = name[:-5]
+                if pkg_name in names:
+                    details.setdefault(pkg_name, {})["path"] = value
+            elif name == "docker_images":
+                images = [item for item in value.split(",") if item]
+                details.setdefault("docker", {})["docker_images"] = images
+        return details
+
+    async def _detect_cookbook_hardware(host: str | None, ssh_port: str | None, platform: str | None, fresh: bool = False) -> dict:
+        try:
+            from services.hwfit.hardware import detect_system
+            return await asyncio.to_thread(
+                detect_system,
+                host=host or "",
+                ssh_port=ssh_port or "",
+                platform=platform or "",
+                fresh=fresh,
+            )
+        except Exception as exc:
+            return {"error": str(exc)}
+
     @router.post("/api/shell/exec")
     async def shell_exec(request: Request, req: ShellExecRequest) -> Dict[str, Any]:
         """Execute a shell command and return output. Admin only."""
@@ -879,6 +1258,41 @@ def setup_shell_routes() -> APIRouter:
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 
+    @router.get("/api/cookbook/backend-readiness")
+    async def cookbook_backend_readiness(
+        request: Request,
+        host: str | None = None,
+        ssh_port: str | None = None,
+        venv: str | None = None,
+        platform: str | None = None,
+        fresh: bool = False,
+    ):
+        """Read-only backend capability facts for the selected Cookbook server.
+
+        This intentionally does not install packages, pull Docker images, or
+        load models. It is the shared truth surface for Dependencies, Serve
+        preflight, and future backend launch-mode controls.
+        """
+        _require_admin(request)
+        remote_names = ["vllm", "llama_cpp", "sglang", "diffusers", "hf_transfer"]
+        system_names = ["tmux", "docker", "nvidia-smi", "rocm-smi", "rocminfo", "hipcc", "llama-server", "vllm"]
+        package_details, system_details, hardware = await asyncio.gather(
+            _probe_packages_on_target(host, ssh_port, venv, remote_names),
+            _probe_system_tools_on_target(host, ssh_port, system_names),
+            _detect_cookbook_hardware(host, ssh_port, platform, fresh=fresh),
+        )
+        return _backend_readiness_from_probe(
+            package_details=package_details,
+            system_details=system_details,
+            hardware=hardware,
+            server={
+                "host": host or "",
+                "ssh_port": ssh_port or "",
+                "platform": platform or "",
+                "venv": venv or "",
+            },
+        )
+
     @router.get("/api/cookbook/packages")
     async def list_packages(request: Request, host: str | None = None, ssh_port: str | None = None, venv: str | None = None):
         """Check which optional packages are installed.
@@ -923,6 +1337,7 @@ def setup_shell_routes() -> APIRouter:
         # venv over SSH so a remote `pip install` actually reflects here.
         remote_status: dict = {}
         remote_details: dict = {}
+        remote_system_details: dict = {}
         remote_names = [p["name"] for p in packages if p.get("target") == "remote" and p.get("kind") != "system"]
         remote_system_names = [p["name"] for p in packages if p.get("target") == "remote" and p.get("kind") == "system"]
         if host and remote_names:
@@ -958,7 +1373,9 @@ def setup_shell_routes() -> APIRouter:
                 checks = []
                 for name in remote_system_names:
                     qn = shlex.quote(name)
-                    checks.append(f"if command -v {qn} >/dev/null 2>&1; then echo {qn}=1; else echo {qn}=0; fi")
+                    checks.append(f"if command -v {qn} >/dev/null 2>&1; then echo {qn}=1; echo {qn}_path=$(command -v {qn}); else echo {qn}=0; fi")
+                if "docker" in remote_system_names:
+                    checks.append("if command -v docker >/dev/null 2>&1; then docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | awk '/^vllm\\/vllm-openai(-rocm)?:/ {print}' | paste -sd ',' - | sed 's/^/docker_images=/'; fi")
                 inner = " ; ".join(checks)
                 argv = _ssh_base_argv(host, ssh_port) + [inner]
                 proc = await asyncio.create_subprocess_exec(
@@ -970,6 +1387,14 @@ def setup_shell_routes() -> APIRouter:
                     name, sep, value = line.strip().partition("=")
                     if sep and name in remote_system_names:
                         remote_status[name] = value == "1"
+                        remote_system_details.setdefault(name, {})["installed"] = value == "1"
+                    elif sep and name.endswith("_path"):
+                        pkg_name = name[:-5]
+                        if pkg_name in remote_system_names:
+                            remote_system_details.setdefault(pkg_name, {})["path"] = value
+                    elif sep and name == "docker_images":
+                        images = [item for item in value.split(",") if item]
+                        remote_system_details.setdefault("docker", {})["docker_images"] = images
             except ValueError as e:
                 raise HTTPException(400, str(e))
             except Exception:
@@ -978,16 +1403,24 @@ def setup_shell_routes() -> APIRouter:
         for pkg in packages:
             on_remote = bool(host and pkg.get("target") == "remote")
             probe = None
+            system_detail = remote_system_details.get(pkg["name"], {}) if on_remote else {}
             if on_remote:
                 pkg["installed"] = bool(remote_status.get(pkg["name"], False))
                 probe = remote_details.get(pkg["name"])
                 if isinstance(probe, dict):
+                    if pkg["name"] == "vllm":
+                        probe.setdefault("system", {}).update(remote_system_details.get("docker", {}))
                     pkg["details"] = probe
+                    modes = _package_modes(pkg["name"], probe, remote_system_details.get("docker", {}))
+                    if modes:
+                        pkg["modes"] = modes
                     note = _package_status_note(pkg["name"], probe)
                     if note:
                         pkg["status_note"] = note
             elif pkg.get("kind") == "system":
                 pkg["installed"] = shutil.which(pkg["name"]) is not None
+                if pkg["installed"]:
+                    pkg["status_note"] = f"{pkg['name']}: {shutil.which(pkg['name'])}"
             elif pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
                 pkg["installed"] = True
                 pkg["status_note"] = f"native llama-server: {shutil.which('llama-server')}"
@@ -1022,6 +1455,8 @@ def setup_shell_routes() -> APIRouter:
                     pkg["update_note"] = update_status.note
 
             if pkg["name"] == "docker":
+                if system_detail:
+                    pkg["details"] = system_detail
                 status = _docker_row_status(
                     on_remote=on_remote,
                     in_container=_running_in_container() if not on_remote else False,

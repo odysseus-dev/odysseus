@@ -18722,6 +18722,85 @@ body.gallery-selecting .gallery-dl-btn,
   border-left: 1px solid color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
 }
 .cookbook-dep-installed-btn:hover { filter: brightness(1.15); }
+.cookbook-dep-menu-btn {
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  overflow: hidden;
+  position: relative;
+  top: -3px;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+.cookbook-dep-menu-btn .cookbook-dep-installed-label { padding: 0 8px; }
+.cookbook-dep-menu-btn .cookbook-dep-caret {
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  padding: 0 7px;
+  font-size: 12px;
+  opacity: 0.85;
+  border-left: 1px solid currentColor;
+}
+.cookbook-dep-menu-btn:hover { filter: brightness(1.15); }
+.cookbook-dep-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+.cookbook-dep-mode {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  font-size: 9px;
+  line-height: 1;
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.cookbook-dep-mode-ready {
+  color: var(--green, #50fa7b);
+  border-color: color-mix(in srgb, var(--green, #50fa7b) 30%, transparent);
+  background: color-mix(in srgb, var(--green, #50fa7b) 10%, transparent);
+}
+.cookbook-dep-mode-warn {
+  color: #e6b450;
+  border-color: color-mix(in srgb, #e6b450 35%, transparent);
+  background: color-mix(in srgb, #e6b450 10%, transparent);
+}
+.cookbook-dep-menu-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 3px 2px 7px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.cookbook-dep-menu-mode {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  gap: 8px;
+  align-items: baseline;
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+}
+.cookbook-dep-menu-mode span {
+  font-weight: 600;
+  color: var(--fg);
+}
+.cookbook-dep-menu-mode-ready span { color: var(--green, #50fa7b); }
+.cookbook-dep-menu-mode-warn span { color: #e6b450; }
+.cookbook-dep-menu-mode small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
+}
 .hwfit-serve-row {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));

@@ -73,6 +73,40 @@ def test_validate_serve_model_id_accepts_cached_local_model_names():
     with pytest.raises(HTTPException):
         _validate_serve_model_id("../escape")
 
+def test_validate_serve_cmd_accepts_vllm_docker_launch():
+    cmd = (
+        "docker run --rm --gpus '\"device=0\"' "
+        '-v "${HF_HOME:-$HOME/.cache/huggingface}:/root/.cache/huggingface" '
+        '--env "HF_TOKEN=$HF_TOKEN" -p 8000:8000 --ipc=host '
+        "vllm/vllm-openai:cu130-nightly Qwen/Qwen3-0.6B "
+        "--host 0.0.0.0 --port 8000"
+    )
+    assert _validate_serve_cmd(cmd) == cmd
+
+
+def test_validate_serve_cmd_rejects_docker_shell_payload():
+    with pytest.raises(HTTPException):
+        _validate_serve_cmd("docker run alpine echo ok; touch /tmp/pwned")
+
+
+def test_validate_serve_cmd_accepts_llama_native_fallback_launch():
+    cmd = (
+        'MODEL_FILE=$({ find "$HOME/.cache/huggingface" -type f -name "*.gguf"; } | head -1) '
+        '&& { [ -n "$MODEL_FILE" ] && [ -f "$MODEL_FILE" ]; } '
+        '|| { echo "ERROR: No GGUF found"; exit 1; } && '
+        'CUDA_VISIBLE_DEVICES=0 llama-server --model "$MODEL_FILE" --host 0.0.0.0 --port 8000 '
+        '-ngl 99 -c 8192 --cache-type-k q8_0 --cache-type-v q8_0 --flash-attn on '
+        '--spec-type draft-mtp --spec-draft-n-max 3 || '
+        'CUDA_VISIBLE_DEVICES=0 python3 -m llama_cpp.server --model "$MODEL_FILE" '
+        '--host 0.0.0.0 --port 8000 --n_gpu_layers 99 --n_ctx 8192'
+    )
+    assert _validate_serve_cmd(cmd) == cmd
+
+
+def test_validate_serve_cmd_rejects_arbitrary_if_command():
+    with pytest.raises(HTTPException):
+        _validate_serve_cmd("if true; then llama-server --model ok; fi")
+
 
 def test_local_tooling_path_export_prepends_interpreter_bin():
     """The cookbook runners must see the venv's bin (where `hf`/`python` live)

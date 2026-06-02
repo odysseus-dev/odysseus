@@ -15,10 +15,12 @@ from routes.shell_routes import (
     _running_in_container,
     _docker_row_status,
     _package_installed_from_probe,
+    _package_modes,
     _package_pip_update_status,
     _package_probe_script,
     _package_status_note,
     _prepend_user_install_bins_to_path,
+    _backend_readiness_from_probe,
     _reject_cross_site,
     _ssh_base_argv,
     _venv_activate_prefix,
@@ -216,6 +218,10 @@ class TestPackageProbeStatus:
         assert _package_installed_from_probe("vllm", probe) is False
         assert "namespace" in _package_status_note("vllm", probe)
         assert "no vLLM CLI" in _package_status_note("vllm", probe)
+        modes = _package_modes("vllm", probe, {"docker": True, "docker_images": ["vllm/vllm-openai:cu130-nightly"]})
+        assert {"label": "CLI", "status": "missing", "detail": "No vllm executable on PATH"} in modes
+        assert any(mode["label"] == "Docker" and mode["status"] == "ready" for mode in modes)
+        assert any(mode["label"] == "Python" and mode["status"] == "warn" for mode in modes)
 
     def test_vllm_requires_cli_for_current_serve_command(self):
         probe = {
@@ -253,6 +259,11 @@ class TestPackageProbeStatus:
         status = _package_pip_update_status({"name": "llama_cpp", "pip": "llama-cpp-python[server]"}, probe)
         assert status.available is False
         assert "package manager or source checkout" in status.note
+        modes = _package_modes("llama_cpp", probe)
+        assert modes[0]["label"] == "Native"
+        assert modes[0]["status"] == "ready"
+        assert modes[1]["label"] == "Python"
+        assert modes[1]["status"] == "missing"
 
     def test_diffusers_requires_torch_too(self):
         missing_torch = {
@@ -361,3 +372,78 @@ class TestRejectCrossSite:
 
     def test_missing_header_allowed(self):
         assert _reject_cross_site(self._req({})) is None
+
+
+class TestBackendReadiness:
+    """Backend readiness should model launch modes, not just import status."""
+
+    def test_vllm_docker_ready_while_cli_missing_is_partial_capability(self):
+        payload = _backend_readiness_from_probe(
+            package_details={
+                "_meta": {"python": "/venv/bin/python", "prefix": "/venv", "version": "3.13.0", "path": "/venv/bin:/usr/bin"},
+                "vllm": {
+                    "modules": {
+                        "vllm": {
+                            "found": True,
+                            "origin": None,
+                            "loader": None,
+                            "locations": ["/root/vllm"],
+                            "real_module": False,
+                        }
+                    },
+                    "dists": {},
+                    "binaries": {"vllm": None},
+                }
+            },
+            system_details={
+                "docker": {
+                    "installed": True,
+                    "path": "/usr/bin/docker",
+                    "docker_images": ["vllm/vllm-openai:cu130-nightly"],
+                }
+            },
+            hardware={"backend": "cuda", "has_gpu": True, "gpu_name": "NVIDIA RTX", "gpu_count": 2, "gpu_vram_gb": 32},
+            server={"host": "user@gpu-box", "ssh_port": "22", "venv": "", "platform": "linux"},
+        )
+
+        assert payload["hardware"]["gpu_vendor"] == "nvidia"
+        assert payload["python"]["executable"] == "/venv/bin/python"
+        assert payload["hardware"]["runtime"] == "cuda"
+        assert payload["backends"]["vllm"]["modes"]["cli"]["ok"] is False
+        assert "namespace" in payload["backends"]["vllm"]["modes"]["cli"]["reason"]
+        assert payload["backends"]["vllm"]["modes"]["docker"]["ok"] is True
+        assert payload["backends"]["vllm"]["modes"]["docker"]["details"]["images"] == ["vllm/vllm-openai:cu130-nightly"]
+
+    def test_amd_rocm_hardware_maps_to_rocm_runtime(self):
+        payload = _backend_readiness_from_probe(
+            package_details={},
+            system_details={"docker": {"installed": True, "docker_images": ["vllm/vllm-openai-rocm:nightly"]}},
+            hardware={"backend": "rocm", "has_gpu": True, "gpu_name": "AMD Radeon", "gpu_count": 1, "gpu_vram_gb": 16},
+            server={},
+        )
+
+        assert payload["hardware"]["gpu_vendor"] == "amd"
+        assert payload["hardware"]["runtime"] == "rocm"
+        assert payload["backends"]["vllm"]["modes"]["docker"]["ok"] is True
+        assert payload["backends"]["vllm"]["modes"]["docker"]["details"]["images"] == ["vllm/vllm-openai-rocm:nightly"]
+        assert payload["backends"]["llama_cpp"]["modes"]["native"]["action"] == "setup_native_llama_cpp"
+
+    def test_native_llama_server_and_python_fallback_are_separate_modes(self):
+        payload = _backend_readiness_from_probe(
+            package_details={
+                "llama_cpp": {
+                    "modules": {"llama_cpp": {"found": False, "real_module": False}},
+                    "dists": {"llama-cpp-python": "0.3.16"},
+                    "binaries": {"llama-server": "/usr/local/bin/llama-server"},
+                }
+            },
+            system_details={},
+            hardware={"backend": "metal", "has_gpu": True},
+            server={},
+        )
+
+        assert payload["hardware"]["gpu_vendor"] == "apple"
+        assert payload["backends"]["llama_cpp"]["modes"]["native"]["ok"] is True
+        assert payload["backends"]["llama_cpp"]["modes"]["native"]["path"] == "/usr/local/bin/llama-server"
+        assert payload["backends"]["llama_cpp"]["modes"]["python"]["ok"] is True
+        assert payload["backends"]["llama_cpp"]["modes"]["python"]["version"] == "0.3.16"

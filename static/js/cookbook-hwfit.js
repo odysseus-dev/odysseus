@@ -12,13 +12,11 @@ import {
   _runModelDownload,
   _runPanelCmd,
   _buildDownloadCmd,
-  _addTask,
-  _renderRunningTab,
+  _launchServeTask,
   _detectToolParser,
   _lastCacheHost,
   _setLastCacheHost,
   _serverByVal,
-  _shellQuote,
   _MODELDIR_CHECK_ON,
   _MODELDIR_CHECK_OFF,
   _serverEntryHtml,
@@ -1189,47 +1187,22 @@ export function _expandModelRow(row, modelData) {
         cmd += ` --enable-auto-tool-choice --tool-call-parser ${parser}`;
       }
 
-      // Build env prefix
-      let envPrefix = '';
-      if (_envState.env === 'venv' && _envState.envPath) {
-        const p = _envState.envPath;
-        envPrefix = 'source ' + _shellQuote(p.endsWith('/bin/activate') ? p : p + '/bin/activate');
-      } else if (_envState.env === 'conda' && _envState.envPath) {
-        envPrefix = 'eval "$(conda shell.bash hook)" && conda activate ' + _shellQuote(_envState.envPath);
-      }
-
-      // Launch via serve API. Field names must match the backend ServeRequest
-      // schema (repo_id + cmd) — sending `command`/`model` failed Pydantic
-      // validation (422), which is why Run silently did nothing.
-      const _srv = (_envState.servers || []).find(s => s.host === host);
-      const payload = {
-        repo_id: modelData.name,
-        cmd: cmd,
-        remote_host: host || undefined,
-        ssh_port: (_srv && _srv.port) || undefined,
-        env_prefix: envPrefix || undefined,
-        hf_token: _envState.hfToken || undefined,
-        gpus: _envState.gpus || cudaDevices || undefined,
-        platform: _envState.platform || undefined,
-      };
-
       try {
-        const res = await fetch('/api/model/serve', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const data = await res.json();
-        if (data.ok) {
-          const shortName = modelData.name.split('/').pop();
-          _addTask(data.session_id, shortName, 'serve', { _cmd: cmd, model: modelData.name, backend: runBackend, remote_host: host });
-          _renderRunningTab();
-          uiModule.showToast(`Launching ${shortName}...`);
-          // Switch to Running tab
-          const runTab = document.querySelector('.cookbook-tab[data-backend="Running"]');
-          if (runTab) runTab.click();
-        } else {
-          uiModule.showError('Launch failed: ' + (data.error || ''));
+        const shortName = modelData.name.split('/').pop();
+        const oldGpus = _envState.gpus;
+        const launchFields = {
+          backend: runBackend,
+          port: runBackend === 'llamacpp' ? '8080' : port,
+          tp: String(tp),
+          ctx: String(maxCtx),
+          gpu_mem: gpuUtil,
+          gpus: oldGpus || cudaDevices || '',
+        };
+        if (!oldGpus && cudaDevices) _envState.gpus = cudaDevices;
+        try {
+          await _launchServeTask(shortName, modelData.name, cmd, launchFields, host);
+        } finally {
+          _envState.gpus = oldGpus;
         }
       } catch (e) {
         uiModule.showError('Launch failed: ' + e.message);

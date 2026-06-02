@@ -1254,7 +1254,7 @@ export async function _serveAutoRetryReplace(panel, flag, value) {
   if (task.remoteHost) _envState.remoteHost = task.remoteHost;
   try {
     uiModule.showToast(`Retrying with ${flag} ${value}...`);
-    await _launchServeTask(task.name, task.payload.repo_id, newCmd);
+    await _launchServeTask(task.name, task.payload.repo_id, newCmd, _parseServeCmdToFields(newCmd), task.remoteHost || '');
   } finally {
     _envState.remoteHost = origHost;
   }
@@ -1287,7 +1287,7 @@ export async function _serveAutoRetryRemove(panel, flag) {
   if (task.remoteHost) _envState.remoteHost = task.remoteHost;
   try {
     uiModule.showToast(`Retrying without ${flag}...`);
-    await _launchServeTask(task.name, task.payload.repo_id, newCmd);
+    await _launchServeTask(task.name, task.payload.repo_id, newCmd, _parseServeCmdToFields(newCmd), task.remoteHost || '');
   } finally {
     _envState.remoteHost = origHost;
   }
@@ -1321,7 +1321,7 @@ export async function _serveAutoRetry(panel, flag) {
   if (task.remoteHost) _envState.remoteHost = task.remoteHost;
   try {
     uiModule.showToast(`Retrying with ${flag}...`);
-    await _launchServeTask(task.name, task.payload.repo_id, newCmd);
+    await _launchServeTask(task.name, task.payload.repo_id, newCmd, _parseServeCmdToFields(newCmd), task.remoteHost || '');
   } finally {
     _envState.remoteHost = origHost;
   }
@@ -1372,20 +1372,33 @@ function _promptEditServeCmd(currentCmd) {
 function _parseServeCmdToFields(cmd) {
   if (!cmd) return null;
   const ex = (re) => { const m = cmd.match(re); return m ? m[1] : ''; };
+  const dockerImage = ex(/\s['"]?((?:[\w.-]+(?::\d+)?\/)?vllm\/vllm-openai(?:-rocm)?:[^\s'"]+)/);
+  const dockerGpuDevices = (() => {
+    const quoted = cmd.match(/--gpus\s+(['"])(.*?)\1/);
+    const raw = quoted ? quoted[2] : ex(/--gpus\s+(\S+)/);
+    const val = String(raw || '').replace(/^['"]|['"]$/g, '');
+    const m = val.match(/device=([0-9,\s]+)/);
+    return m ? m[1].replace(/\s+/g, '') : '';
+  })();
   const fields = {
     backend: cmd.includes('llama_cpp') || cmd.includes('llama-server') ? 'llamacpp'
       : cmd.includes('diffusion_server') ? 'diffusers'
       : cmd.includes('sglang') ? 'sglang'
       : cmd.includes('ollama') ? 'ollama' : 'vllm',
+    launch_mode: cmd.includes('docker run') && cmd.includes('vllm/vllm-openai') ? 'docker' : 'cli',
+    docker_runtime: cmd.includes('vllm/vllm-openai-rocm') || cmd.includes('--device /dev/kfd') ? 'rocm' : 'nvidia',
+    docker_image: dockerImage || '',
     port: ex(/--port\s+(\d+)/) || '8000',
     tp: ex(/--tensor-parallel-size\s+(\d+)/) || '1',
     ctx: ex(/--max-model-len\s+(\d+)/) || ex(/--n_ctx\s+(\d+)/) || ex(/-c\s+(\d+)/) || '8192',
     gpu_mem: ex(/--gpu-memory-utilization\s+([\d.]+)/) || '0.90',
+    llama_speculative_mtp: /--spec-type\s+\S*draft-mtp/.test(cmd),
+    llama_spec_tokens: ex(/--spec-draft-n-max\s+(\d+)/) || '3',
     swap: ex(/--swap-space\s+(\d+)/) || '',
     dtype: ex(/--dtype\s+(\w+)/) || 'auto',
     vllm_kv_cache_dtype: ex(/--kv-cache-dtype\s+([\w.-]+)/) || 'auto',
     max_seqs: ex(/--max-num-seqs\s+(\d+)/) || '',
-    gpus: ex(/CUDA_VISIBLE_DEVICES=(\S+)/) || '',
+    gpus: ex(/CUDA_VISIBLE_DEVICES=(\S+)/) || dockerGpuDevices || '',
     cache_type: ex(/(?:--cache-type-k|-ctk)\s+(\S+)/) || '',
     llama_fit: ex(/(?:--fit|-fit)\s+(on|off)/) || '',
     llama_split_mode: ex(/(?:--split-mode|-sm)\s+(none|layer|row|tensor)/) || '',
@@ -1394,7 +1407,6 @@ function _parseServeCmdToFields(cmd) {
     llama_parallel: ex(/(?:--parallel|-np)\s+(\d+)/) || '',
     llama_batch_size: ex(/(?:--batch-size|-b)\s+(\d+)/) || '',
     llama_ubatch_size: ex(/(?:--ubatch-size|-ub)\s+(\d+)/) || '',
-    llama_spec_tokens: ex(/--spec-draft-n-max\s+(\d+)/) || '3',
     enforce_eager: cmd.includes('--enforce-eager'),
     trust_remote: cmd.includes('--trust-remote-code'),
     prefix_cache: cmd.includes('--enable-prefix-caching'),
@@ -1403,12 +1415,101 @@ function _parseServeCmdToFields(cmd) {
     unified_mem: /GGML_CUDA_ENABLE_UNIFIED_MEMORY=1/.test(cmd),
     llama_no_mmap: /--no-mmap\b/.test(cmd),
     llama_no_warmup: /--no-warmup\b/.test(cmd),
-    llama_speculative_mtp: /--spec-type\s+\S*draft-mtp/.test(cmd),
     speculative: cmd.includes('--speculative-config'),
   };
   const spec = cmd.match(/--speculative-config\s+'?\{[^}]*"method"\s*:\s*"([^"]+)"[^}]*"num_speculative_tokens"\s*:\s*(\d+)/);
   if (spec) { fields.spec_method = spec[1]; fields.spec_tokens = spec[2]; }
   return fields;
+}
+
+function _backendMode(readiness, backend, mode) {
+  return readiness?.backends?.[backend]?.modes?.[mode] || {};
+}
+
+function _modeOk(readiness, backend, mode) {
+  return !!_backendMode(readiness, backend, mode).ok;
+}
+
+function _modeDetail(readiness, backend, mode) {
+  const m = _backendMode(readiness, backend, mode);
+  return m.detail || m.path || m.version || '';
+}
+
+export async function _fetchBackendReadinessForServe(host, platform, envKind, envPath) {
+  const params = new URLSearchParams();
+  if (host) params.set('host', host);
+  const sshPort = _getPort(host);
+  if (sshPort) params.set('ssh_port', sshPort);
+  if (platform) params.set('platform', platform);
+  // The readiness endpoint currently accepts venv activation paths. Conda
+  // activation needs a separate server-side env-kind parameter, so do not pass
+  // conda paths as venvs and accidentally probe the wrong Python.
+  if (envKind === 'venv' && envPath) params.set('venv', envPath);
+  const url = '/api/cookbook/backend-readiness' + (params.toString() ? '?' + params.toString() : '');
+  const res = await fetch(url, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(`readiness check failed (${res.status})`);
+  const data = await res.json();
+  if (!data || typeof data !== 'object') throw new Error('readiness check returned an invalid response');
+  return data;
+}
+
+function _serveFieldPreflightMessage(backend, fields) {
+  if (backend === 'vllm') {
+    const selectedGpus = String(fields?.gpus || '').split(',').map(s => s.trim()).filter(Boolean);
+    const tp = parseInt(fields?.tp || '1', 10) || 1;
+    if (selectedGpus.length > 1 && tp !== selectedGpus.length) {
+      return `vLLM has ${selectedGpus.length} GPUs selected but TP is ${tp}. Set TP to ${selectedGpus.length} so the model is split across the selected GPUs, or select one GPU.`;
+    }
+  }
+  return '';
+}
+
+function _servePreflightMessage(readiness, backend, envKind, fields) {
+  const target = readiness?.server?.host ? `remote server ${readiness.server.host}` : 'local server';
+  const fieldMessage = _serveFieldPreflightMessage(backend, fields);
+  if (fieldMessage) return fieldMessage;
+  if (envKind === 'conda') {
+    return '';
+  }
+  if (backend === 'vllm') {
+    const launchMode = fields?.launch_mode || 'cli';
+    if (launchMode === 'docker') {
+      if (_modeOk(readiness, 'vllm', 'docker')) {
+        const images = _backendMode(readiness, 'vllm', 'docker')?.details?.images || [];
+        const selectedImage = String(fields?.docker_image || '').trim();
+        if (!selectedImage && images[0]) {
+          return `vLLM Docker mode needs an image tag. Use the detected image ${images[0]}, or enter another local vLLM image.`;
+        }
+        if (selectedImage && images.length && !images.includes(selectedImage)) {
+          return `Selected vLLM Docker image ${selectedImage} was not found on the selected ${target}. Use ${images[0]}, pull that image first, or switch mode.`;
+        }
+        return '';
+      }
+      const dockerToolOk = !!readiness?.tools?.docker?.ok;
+      return dockerToolOk
+        ? `vLLM Docker mode is selected, but no local vLLM Docker image was found on the selected ${target}. Pull a vllm/vllm-openai image first, or switch vLLM mode back to CLI.`
+        : `vLLM Docker mode is selected, but Docker is not available on the selected ${target}. Install/configure Docker there, or switch vLLM mode back to CLI.`;
+    }
+    if (_modeOk(readiness, 'vllm', 'cli')) return '';
+    const dockerReady = _modeOk(readiness, 'vllm', 'docker');
+    const dockerDetail = _modeDetail(readiness, 'vllm', 'docker');
+    return dockerReady
+      ? `vLLM CLI mode is selected, but the selected ${target} does not have a vllm CLI. Docker image is available${dockerDetail ? ` (${dockerDetail})` : ''}. Switch Mode to Docker, or install vLLM CLI in the selected env.`
+      : `vLLM CLI mode is selected, but the selected ${target} does not have a vllm CLI. Install vLLM in the selected env, or switch to Docker after pulling a vllm/vllm-openai image.`;
+  }
+  if (backend === 'llamacpp') {
+    if (_modeOk(readiness, 'llama_cpp', 'native') || _modeOk(readiness, 'llama_cpp', 'python')) return '';
+    return `llama.cpp is not ready on the selected ${target}. Install native llama-server or llama-cpp-python before serving GGUF models.`;
+  }
+  if (backend === 'sglang') {
+    if (_modeOk(readiness, 'sglang', 'python')) return '';
+    return `SGLang is not installed in the selected ${target} Python env.`;
+  }
+  if (backend === 'diffusers') {
+    if (_modeOk(readiness, 'diffusers', 'python')) return '';
+    return `Diffusers with torch is not installed in the selected ${target} Python env.`;
+  }
+  return '';
 }
 
 export async function _launchServeTask(shortName, repo, cmd, fields, hostOverride) {
@@ -1419,6 +1520,35 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
   const _host = (hostOverride !== undefined) ? (hostOverride || '') : (_envState.remoteHost || '');
   const _hsrv = _envState.servers.find(s => s.host === _host) || {};
   const _hplatform = _host ? (_hsrv.platform || '') : (_envState.platform || '');
+
+  // Capture the env + GPU pin used for THIS launch BEFORE any await. The serve
+  // panel temporarily writes these into _envState, calls us, then restores them.
+  const _usedEnv = _envState.env;
+  const _usedEnvPath = _envState.envPath;
+  const _usedGpus = _envState.gpus || '';
+
+  // Preflight before killing/replacing an existing server: if the selected
+  // local/remote target cannot launch this backend, leave any current task alone
+  // and explain the exact mismatch instead of creating a doomed tmux job.
+  try {
+    const _fields = fields || _parseServeCmdToFields(cmd) || {};
+    const _backend = _fields.backend || _parseServeCmdToFields(cmd)?.backend || 'vllm';
+    const fieldMsg = _serveFieldPreflightMessage(_backend, _fields);
+    if (fieldMsg) {
+      console.warn('[cookbook] serve preflight blocked launch', { backend: _backend, host: _host, message: fieldMsg });
+      uiModule.showToast(fieldMsg, 11000);
+      return;
+    }
+    const readiness = await _fetchBackendReadinessForServe(_host, _hplatform, _usedEnv, _usedEnvPath);
+    const msg = _servePreflightMessage(readiness, _backend, _usedEnv, _fields);
+    if (msg) {
+      console.warn('[cookbook] serve preflight blocked launch', { backend: _backend, host: _host, message: msg, readiness });
+      uiModule.showToast(msg, 11000);
+      return;
+    }
+  } catch (e) {
+    console.warn('[cookbook] serve preflight unavailable; falling back to launcher validation', e);
+  }
 
   // Replace any serve already targeting this same host:port — you can't run two
   // servers on one port, so re-serving (or retrying) should stop & remove the
@@ -1444,15 +1574,6 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
       }
     }
   } catch {}
-  // Capture the env + GPU pin used for THIS launch BEFORE building the request.
-  // The serve panel sets _envState.env/envPath/gpus, calls us, then restores them
-  // synchronously — and our payload is built after an `await`, so reading
-  // _envState there would see the restored (wrong) values. Persisting these lets
-  // a saved preset relaunch with the same venv + GPUs (otherwise a confirmed
-  // working config fails: no venv activation, no GPU pinning).
-  const _usedEnv = _envState.env;
-  const _usedEnvPath = _envState.envPath;
-  const _usedGpus = _envState.gpus || '';
   let envPrefix = '';
   if (_isWindows()) {
     if (_envState.env === 'venv' && _envState.envPath) {

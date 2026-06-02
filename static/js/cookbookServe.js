@@ -33,6 +33,7 @@ let _getGpuToggleTotal;
 let modelLogo;
 let esc;
 let _launchServeTask;
+let _fetchBackendReadinessForServe;
 let _retryDownload;
 let _nextAvailablePort;
 
@@ -510,6 +511,7 @@ function _rerenderCachedModels() {
       const ss = (_byRepo[repo] && typeof _byRepo[repo] === 'object')
         ? _byRepo[repo]
         : (_lastUsed || (_isLegacyFlat ? _allSs : {}));
+      const _serveStateIsRepoSpecific = !!(_byRepo[repo] && typeof _byRepo[repo] === 'object');
       const detectedBackend = _detectBackend(m).backend;
       const _allowedBackends = new Set(_isWindows()
         ? ['llamacpp']
@@ -519,6 +521,7 @@ function _rerenderCachedModels() {
         : detectedBackend;
       const savedMatchesBackend = !!ss._forceBackend || (ss.backend || 'vllm') === detectedBackend;
       const sv = (k, def) => (ss[k] !== undefined && savedMatchesBackend) ? ss[k] : def;
+      const _hasExplicitVllmMode = savedMatchesBackend && _hasOwn(ss, 'launch_mode') && (_serveStateIsRepoSpecific || _isLegacyFlat);
       const defaultTp = defaultBackend === 'llamacpp' ? '1' : sv('tp', '1');
       const detectedGpuIds = _allGpuIds(_getGpuToggleTotal?.());
       const defaultGpus = defaultBackend === 'llamacpp'
@@ -529,6 +532,9 @@ function _rerenderCachedModels() {
       const tpOpts = [1,2,4,8].map(n => `<option${defaultTp==String(n)?' selected':''}>${n}</option>`).join('');
       const dtypeOpts = ['auto','float16','bfloat16'].map(d => `<option value="${d}"${sv('dtype','auto')===d?' selected':''}>${d}</option>`).join('');
       const vllmKvCacheOpts = ['auto','fp8'].map(d => `<option value="${d}"${sv('vllm_kv_cache_dtype','auto')===d?' selected':''}>${d}</option>`).join('');
+      const initialLaunchMode = _hasExplicitVllmMode ? sv('launch_mode','cli') : 'cli';
+      const launchModeOpts = [['cli','CLI'], ['docker','Docker']].map(([v,l]) => `<option value="${v}"${initialLaunchMode===v?' selected':''}>${l}</option>`).join('');
+      const dockerRuntimeOpts = [['nvidia','NVIDIA'], ['rocm','ROCm']].map(([v,l]) => `<option value="${v}"${sv('docker_runtime','nvidia')===v?' selected':''}>${l}</option>`).join('');
       const _l = (name, tip) => `<span>${name}<span class="hwfit-hint" title="${tip}">?</span></span>`;
       const _ggufChoices = _runnableGgufFiles(m);
       const _savedGguf = String(sv('gguf_file', '') || '');
@@ -579,6 +585,10 @@ function _rerenderCachedModels() {
         : [['vllm','vLLM'],['sglang','SGLang'],['llamacpp','llama.cpp'],['ollama','Ollama'],['diffusers','Diffusers']];
       const backendOpts = _backendChoices.map(([v,l]) => `<option value="${v}"${defaultBackend===v?' selected':''}>${l}</option>`).join('');
       panelHtml += `<label>${_l('Backend','Inference engine: vLLM, SGLang, llama.cpp, Ollama, or Diffusers')}<select class="hwfit-sf" data-field="backend">${backendOpts}</select></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm">${_l('Mode','vLLM launch mode. CLI uses vllm on PATH; Docker uses an official vLLM image on the selected server.')}<select class="hwfit-sf" data-field="launch_mode">${launchModeOpts}</select></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm hwfit-vllm-docker-mode">${_l('Runtime','Docker GPU runtime for this server')}<select class="hwfit-sf" data-field="docker_runtime">${dockerRuntimeOpts}</select></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm hwfit-vllm-docker-mode">${_l('Image','Docker image for vLLM Docker mode')}<input type="text" class="hwfit-sf hwfit-sf-wide" data-field="docker_image" value="${esc(sv('docker_image', ''))}" placeholder="vllm/vllm-openai:latest" /></label>`;
+      panelHtml += `<div class="hwfit-backend-vllm hwfit-vllm-readiness-note" style="display:none;align-self:end;max-width:360px;font-size:11px;line-height:1.35;color:var(--fg-muted);"></div>`;
       panelHtml += `<input type="hidden" class="hwfit-sf" data-field="host" value="${esc(_es.remoteHost || '')}" />`;
       panelHtml += `<label>${_l('venv','Path to Python venv or conda env activate script')}<input type="text" class="hwfit-sf hwfit-sf-wide" data-field="venv" value="${esc(sv('venv', _es.envPath || _srvVenv || ''))}" placeholder="~/venv" /></label>`;
       const defaultPort = defaultBackend === 'ollama' ? '11434' : _nextAvailablePort();
@@ -607,7 +617,7 @@ function _rerenderCachedModels() {
       // ctx resets to the model's max on every panel open (the real ctx slider
       // lives in the Scan/Download toolbar — see cookbook.js .hwfit-ctx-control).
       panelHtml += `<label>${_l('Context','Max tokens per request — resets to the model max on every open. Lower = less VRAM')}<input type="text" class="hwfit-sf" data-field="ctx" value="${esc(m.context_length || m.context || '20000')}" /></label>`;
-      panelHtml += `<label>${_l('GPU','Which GPU to use. Leave empty for default')}<input type="text" class="hwfit-sf" data-field="gpu_id" value="${esc(sv('gpu_id', ''))}" placeholder="auto" style="width:50px;" /></label>`;
+      panelHtml += `<label class="hwfit-single-gpu-field">${_l('GPU','Which single GPU to use when not using the GPU toggles')}<input type="text" class="hwfit-sf" data-field="gpu_id" value="${esc(sv('gpu_id', ''))}" placeholder="auto" style="width:50px;" /></label>`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('GPU Mem','Fraction of GPU memory (0.0–1.0). Lower if OOM')}<input type="text" class="hwfit-sf" data-field="gpu_mem" value="${esc(sv('gpu_mem', '0.90'))}" /></label>`;
       panelHtml += `<label class="hwfit-backend-vllm">${_l('Swap','CPU swap space in GB. Leave empty to omit (removed in newer vLLM)')}<input type="text" class="hwfit-sf" data-field="swap" value="${esc(sv('swap', ''))}" placeholder="off" /></label>`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('Max Seqs','Maximum concurrent requests. Lower = less memory. Default 4 — prosumer GPUs often OOM on vLLM default 256 during CUDA graph capture.')}<input type="text" class="hwfit-sf" data-field="max_seqs" value="${esc(sv('max_seqs', '4'))}" placeholder="4" /></label>`;
@@ -741,6 +751,26 @@ function _rerenderCachedModels() {
       const panel = item.querySelector('.hwfit-serve-panel');
       // Scroll the serve panel into view within its nearest scrollable ancestor
       requestAnimationFrame(() => panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+      let _cmdManuallyEdited = false;
+
+      function _selectedGpuList() {
+        const raw = panel.querySelector('[data-field="gpus"]')?.value || '';
+        return String(raw).split(',').map(s => s.trim()).filter(Boolean);
+      }
+
+      function _syncVllmTpWithSelectedGpus({ notify = false } = {}) {
+        const backend = panel.querySelector('[data-field="backend"]')?.value || 'vllm';
+        if (backend !== 'vllm') return false;
+        const gpus = _selectedGpuList();
+        if (gpus.length <= 1) return false;
+        const tpEl = panel.querySelector('[data-field="tp"]');
+        if (!tpEl || ![2, 4, 8].includes(gpus.length)) return false;
+        const next = String(gpus.length);
+        if (tpEl.value === next || panel._tpManuallyEdited) return false;
+        tpEl.value = next;
+        if (notify) uiModule.showToast(`TP set to ${next} for ${gpus.length} selected GPUs`, 3500);
+        return true;
+      }
 
       // Build command preview
       function updateCmd() {
@@ -751,6 +781,7 @@ function _rerenderCachedModels() {
         });
         const backend = f.backend || 'vllm';
         const serveModel = m.is_local_dir && m.path ? `${m.path}/${repo}` : repo;
+        f.quant = m.quant || m.quantization || '';
         if (backend === 'llamacpp') {
           const ggufChoices = _runnableGgufFiles(m);
           const selectedGguf = ggufChoices.find(file => file.rel_path === f.gguf_file);
@@ -785,6 +816,7 @@ function _rerenderCachedModels() {
         panel._host = f.host || '';
         return cmd;
       }
+      _syncVllmTpWithSelectedGpus();
       updateCmd();
 
       // Context clamp. Two ceilings:
@@ -935,9 +967,16 @@ function _rerenderCachedModels() {
       // Show/hide backend-specific sections
       function updateBackendVisibility() {
         const b = panel.querySelector('[data-field="backend"]')?.value || 'vllm';
+        const vllmMode = panel.querySelector('[data-field="launch_mode"]')?.value || 'cli';
         panel.querySelectorAll('[class*="hwfit-backend-"]').forEach(el => {
           const show = el.classList.contains(`hwfit-backend-${b}`);
           el.style.display = show ? '' : 'none';
+        });
+        panel.querySelectorAll('.hwfit-vllm-docker-mode').forEach(el => {
+          el.style.display = (b === 'vllm' && vllmMode === 'docker') ? '' : 'none';
+        });
+        panel.querySelectorAll('.hwfit-single-gpu-field').forEach(el => {
+          el.style.display = (b === 'vllm' && vllmMode === 'docker') ? 'none' : '';
         });
       }
       updateBackendVisibility();
@@ -946,7 +985,7 @@ function _rerenderCachedModels() {
         const note = panel.querySelector('.hwfit-serve-runtime-note');
         if (!note) return;
         const backend = panel.querySelector('[data-field="backend"]')?.value || 'vllm';
-        if (!['vllm', 'sglang', 'llamacpp', 'diffusers'].includes(backend)) {
+        if (!['sglang', 'llamacpp', 'diffusers'].includes(backend)) {
           note.style.display = 'none';
           note.textContent = '';
           return;
@@ -969,10 +1008,90 @@ function _rerenderCachedModels() {
       updateRuntimeReadinessNote();
       const runtimeServerSelect = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
       if (runtimeServerSelect) {
-        const refreshRuntimeOnServerChange = () => updateRuntimeReadinessNote();
+        const refreshRuntimeOnServerChange = () => {
+          updateRuntimeReadinessNote();
+          updateVllmReadinessNote();
+        };
         runtimeServerSelect.addEventListener('change', refreshRuntimeOnServerChange);
         panel._cleanupRuntimeReadiness = () => runtimeServerSelect.removeEventListener('change', refreshRuntimeOnServerChange);
       }
+
+      function _selectedServeTargetForPanel() {
+        let host = panel.querySelector('[data-field="host"]')?.value?.trim() || '';
+        let srv = (_envState.servers || []).find(s => s.host === host) || _selSrv || {};
+        const ssEl = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
+        if (ssEl && ssEl.value != null) {
+          if (ssEl.value === 'local') {
+            host = '';
+            srv = (_envState.servers || []).find(s => !s.host || s.host === 'local') || {};
+          } else {
+            const picked = (_envState.servers || []).find(s => s.host === ssEl.value)
+              || (_envState.servers || [])[parseInt(ssEl.value, 10)];
+            if (picked) {
+              srv = picked;
+              host = picked.host || '';
+            }
+          }
+        }
+        const hostEl = panel.querySelector('[data-field="host"]');
+        if (hostEl) hostEl.value = host;
+        return {
+          host,
+          platform: srv.platform || _es.platform || '',
+          envKind: srv.env || _es.env || '',
+          venvPath: panel.querySelector('[data-field="venv"]')?.value?.trim() || srv.envPath || '',
+        };
+      }
+
+      async function updateVllmReadinessNote() {
+        const note = panel.querySelector('.hwfit-vllm-readiness-note');
+        if (!note) return;
+        const b = panel.querySelector('[data-field="backend"]')?.value || 'vllm';
+        if (b !== 'vllm' || typeof _fetchBackendReadinessForServe !== 'function') {
+          note.style.display = 'none';
+          return;
+        }
+        const { host, platform, envKind, venvPath } = _selectedServeTargetForPanel();
+        note.textContent = '';
+        note.style.display = 'none';
+        try {
+          const readiness = await _fetchBackendReadinessForServe(host, platform, envKind, venvPath);
+          const vllm = readiness?.backends?.vllm?.modes || {};
+          const cliOk = !!vllm?.cli?.ok;
+          const dockerOk = !!vllm?.docker?.ok;
+          const images = vllm?.docker?.details?.images || [];
+          const imageEl = panel.querySelector('[data-field="docker_image"]');
+          const modeEl = panel.querySelector('[data-field="launch_mode"]');
+          if (images[0] && imageEl && !imageEl.value.trim()) {
+            imageEl.value = images[0];
+          }
+          let switched = false;
+          if (!_hasExplicitVllmMode && !cliOk && dockerOk && modeEl?.value === 'cli') {
+            modeEl.value = 'docker';
+            switched = true;
+            updateBackendVisibility();
+          }
+          if (switched || (images[0] && imageEl && !imageEl.dataset.readinessApplied)) {
+            if (imageEl) imageEl.dataset.readinessApplied = '1';
+            updateCmd();
+          }
+          const target = readiness?.server?.host ? readiness.server.host : 'local server';
+          if (cliOk || dockerOk) {
+            note.textContent = '';
+            note.style.display = 'none';
+          } else if (readiness?.tools?.docker?.ok) {
+            note.textContent = `vLLM CLI missing; Docker is available but no vllm/vllm-openai image was found on ${target}.`;
+            note.style.display = '';
+          } else {
+            note.textContent = `vLLM CLI missing and Docker is not ready on ${target}.`;
+            note.style.display = '';
+          }
+        } catch (err) {
+          note.textContent = `Readiness check unavailable: ${err?.message || err}`;
+          note.style.display = '';
+        }
+      }
+      updateVllmReadinessNote();
 
       // Wire save slots
       function _loadSlotIntoPanel(slotIdx) {
@@ -1001,6 +1120,7 @@ function _rerenderCachedModels() {
             tp: _ex(/--tensor-parallel-size\s+(\d+)/) || '1',
             ctx: _ex(/--max-model-len\s+(\d+)/) || _ex(/--n_ctx\s+(\d+)/) || _ex(/-c\s+(\d+)/) || '8192',
             gpu_mem: _ex(/--gpu-memory-utilization\s+([\d.]+)/) || '0.90',
+            llama_spec_tokens: _ex(/--spec-draft-n-max\s+(\d+)/) || '3',
             swap: _ex(/--swap-space\s+(\d+)/) || '',
             dtype: _ex(/--dtype\s+(\w+)/) || 'auto',
             vllm_kv_cache_dtype: _ex(/--kv-cache-dtype\s+([\w.-]+)/) || 'auto',
@@ -1013,7 +1133,6 @@ function _rerenderCachedModels() {
             llama_parallel: _ex(/(?:--parallel|-np)\s+(\d+)/) || '',
             llama_batch_size: _ex(/(?:--batch-size|-b)\s+(\d+)/) || '',
             llama_ubatch_size: _ex(/(?:--ubatch-size|-ub)\s+(\d+)/) || '',
-            llama_spec_tokens: _ex(/--spec-draft-n-max\s+(\d+)/) || '3',
             venv: p.envPath || '',
           };
           const checks = {
@@ -1025,8 +1144,8 @@ function _rerenderCachedModels() {
             unified_mem: /GGML_CUDA_ENABLE_UNIFIED_MEMORY=1/.test(cmd),
             llama_no_mmap: /--no-mmap\b/.test(cmd),
             llama_no_warmup: /--no-warmup\b/.test(cmd),
-            llama_speculative_mtp: /--spec-type\s+\S*draft-mtp/.test(cmd),
             speculative: cmd.includes('--speculative-config'),
+            llama_speculative_mtp: /--spec-type\s+\S*draft-mtp/.test(cmd),
           };
           const _specMatch = cmd.match(/--speculative-config\s+'?\{[^}]*"method"\s*:\s*"([^"]+)"[^}]*"num_speculative_tokens"\s*:\s*(\d+)/);
           if (_specMatch) {
@@ -1058,6 +1177,8 @@ function _rerenderCachedModels() {
         if (_gf) _gf.value = activeGpus.join(',');
         updateBackendVisibility();
         updateRuntimeReadinessNote();
+        _syncVllmTpWithSelectedGpus();
+        updateVllmReadinessNote();
         updateCmd();
         panel.querySelectorAll('.cookbook-slot-btn').forEach(b => b.classList.remove('active'));
         panel.querySelector(`.cookbook-slot-btn[data-slot="${slotIdx}"]`)?.classList.add('active');
@@ -1233,6 +1354,7 @@ function _rerenderCachedModels() {
           const activeBtns = [...panel.querySelectorAll('.cookbook-gpu-btn.active')];
           const active = activeBtns.map(b => b.dataset.gpu).join(',');
           panel.querySelector('[data-field="gpus"]').value = active;
+          _syncVllmTpWithSelectedGpus({ notify: true });
           // Guard: vLLM/SGLang tensor-parallel only works across IDENTICAL GPUs.
           // If the probe knows the per-GPU models and the selection mixes types,
           // warn — serving across a mixed set will fail or run badly.
@@ -1591,19 +1713,36 @@ function _rerenderCachedModels() {
 
       // Update preview on input change
       panel.querySelectorAll('.hwfit-sf').forEach(el => {
-        el.addEventListener('input', updateCmd);
+        el.addEventListener('input', (e) => {
+          if (e.target.dataset.field === 'tp') panel._tpManuallyEdited = true;
+          updateCmd();
+        });
         el.addEventListener('change', (e) => {
+          if (e.target.dataset.field === 'tp') panel._tpManuallyEdited = true;
           if (e.target.dataset.field === 'backend') {
             const extraEl = panel.querySelector('[data-field="extra"]');
             if (extraEl) extraEl.value = '';
             updateBackendVisibility();
             updateRuntimeReadinessNote();
+            _syncVllmTpWithSelectedGpus();
+            updateVllmReadinessNote();
           }
           if (e.target.dataset.field === 'venv') {
             updateRuntimeReadinessNote();
+            updateVllmReadinessNote();
+          }
+          if (e.target.dataset.field === 'launch_mode') {
+            updateBackendVisibility();
+            updateVllmReadinessNote();
           }
           updateCmd();
         });
+      });
+      const _serveServerSelect = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
+      _serveServerSelect?.addEventListener('change', () => {
+        _selectedServeTargetForPanel();
+        updateVllmReadinessNote();
+        if (!_cmdManuallyEdited) updateCmd();
       });
       // Themed +/- buttons next to spec_tokens — step the adjacent number input.
       panel.querySelectorAll('.hwfit-numstep-btn').forEach(btn => {
@@ -1623,7 +1762,6 @@ function _rerenderCachedModels() {
       });
 
       // Track manual edits
-      let _cmdManuallyEdited = false;
       const _cmdTextarea = panel.querySelector('.hwfit-serve-cmd');
       if (_cmdTextarea) _cmdTextarea.addEventListener('input', () => { _cmdManuallyEdited = true; });
 
@@ -1648,7 +1786,10 @@ function _rerenderCachedModels() {
         // stale preset or typo (e.g. 16000000) overflows and, with a quantized
         // KV cache, can crash the GPU. Skip only if the user hand-edited the raw
         // command (then we respect their literal text).
-        if (!_cmdManuallyEdited) _clampCtx(true);
+        if (!_cmdManuallyEdited) {
+          _clampCtx(true);
+          await updateVllmReadinessNote();
+        }
         if (!_cmdManuallyEdited) updateCmd();
         const launchCmd = _cmdTextarea ? _cmdTextarea.value.trim() : panel._cmd;
         const serveState = {};
@@ -2121,6 +2262,7 @@ export function initServe(shared) {
   modelLogo = shared.modelLogo;
   esc = shared.esc;
   _launchServeTask = shared._launchServeTask;
+  _fetchBackendReadinessForServe = shared._fetchBackendReadinessForServe;
   _retryDownload = shared._retryDownload;
   _nextAvailablePort = shared._nextAvailablePort;
 }
