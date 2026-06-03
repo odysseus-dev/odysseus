@@ -46,31 +46,38 @@ for mod in ['src.settings', 'src.prompt_security', 'src.tool_security',
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
 
-# Break circular import: pre-create agent_tools with the names tool_parsing needs
-if 'src.agent_tools' not in sys.modules:
-    _agent_tools_stub = types.ModuleType('src.agent_tools')
-    _agent_tools_stub.ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
-    _agent_tools_stub.TOOL_TAGS = {
-        "bash", "python", "web_search", "web_fetch", "read_file", "write_file",
-        "create_document", "update_document", "edit_document", "suggest_document",
-        "search_chats", "chat_with_model", "create_session", "list_sessions",
-        "send_to_session", "pipeline", "manage_session", "manage_memory",
-        "list_models", "ui_control", "generate_image", "manage_tasks", "api_call",
-        "ask_teacher", "manage_skills", "manage_endpoints", "manage_mcp",
-        "manage_webhooks", "manage_tokens", "manage_documents", "manage_settings",
-        "manage_notes", "manage_calendar", "resolve_contact", "manage_contact",
-        "list_email_accounts", "send_email", "list_emails", "read_email",
-        "reply_to_email", "bulk_email", "archive_email", "delete_email",
-        "mark_email_read", "download_model", "serve_model", "list_served_models",
-        "stop_served_model", "list_downloads", "cancel_download",
-        "search_hf_models", "list_cached_models", "list_serve_presets",
-        "serve_preset", "adopt_served_model", "list_cookbook_servers",
-        "edit_image", "trigger_research", "manage_research", "app_api",
-        "vault_search", "vault_get", "vault_unlock",
-    }
-    sys.modules['src.agent_tools'] = _agent_tools_stub
+# ── Test-order pollution guard ──────────────────────────────────────────────
+# Earlier test suites (test_agent_loop, test_app_api, test_action_intents) may
+# have injected MagicMock stubs into sys.modules['src.agent_tools'] to break
+# circular imports.  We always install our canonical TOOL_TAGS set here, then
+# force reimport of dependent modules so they pick up the real allowlist.
+_ORIG_AGENT_TOOLS = sys.modules.get('src.agent_tools')
+_agent_tools_stub = types.ModuleType('src.agent_tools')
+_agent_tools_stub.ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
+_agent_tools_stub.TOOL_TAGS = {
+    "bash", "python", "web_search", "web_fetch", "read_file", "write_file",
+    "create_document", "update_document", "edit_document", "suggest_document",
+    "search_chats", "chat_with_model", "create_session", "list_sessions",
+    "send_to_session", "pipeline", "manage_session", "manage_memory",
+    "list_models", "ui_control", "generate_image", "manage_tasks", "api_call",
+    "ask_teacher", "manage_skills", "manage_endpoints", "manage_mcp",
+    "manage_webhooks", "manage_tokens", "manage_documents", "manage_settings",
+    "manage_notes", "manage_calendar", "resolve_contact", "manage_contact",
+    "list_email_accounts", "send_email", "list_emails", "read_email",
+    "reply_to_email", "bulk_email", "archive_email", "delete_email",
+    "mark_email_read", "download_model", "serve_model", "list_served_models",
+    "stop_served_model", "list_downloads", "cancel_download",
+    "search_hf_models", "list_cached_models", "list_serve_presets",
+    "serve_preset", "adopt_served_model", "list_cookbook_servers",
+    "edit_image", "trigger_research", "manage_research", "app_api",
+    "vault_search", "vault_get", "vault_unlock",
+}
+sys.modules['src.agent_tools'] = _agent_tools_stub
 
-# Now safe to import tool_parsing
+for _mod in ('src.tool_parsing', 'src.tool_schemas'):
+    if _mod in sys.modules:
+        del sys.modules[_mod]
+
 from src.tool_parsing import parse_tool_blocks, strip_tool_blocks
 
 
