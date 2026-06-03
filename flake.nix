@@ -735,6 +735,46 @@
               # unset it so httpx falls back to system certs
               unset SSL_CERT_FILE
 
+              # Start the bundled ChromaDB server first — the app connects to it
+              # over HTTP, exactly as the darwin module wires it up. Without this
+              # the app runs degraded (vector RAG / memory unavailable).
+              CHROMA_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind((\"\", 0)); print(s.getsockname()[1]); s.close()")
+              mkdir -p "$ODYSSEUS_DATA_DIR/chroma"
+              ${odysseus}/bin/odysseus-chroma run \
+                --path "$ODYSSEUS_DATA_DIR/chroma" \
+                --host 127.0.0.1 \
+                --port "$CHROMA_PORT" > "$DATA_DIR/chroma.log" 2>&1 &
+              CHROMA_PID=$!
+
+              # Ensure both background processes are reaped on any exit path
+              trap 'kill $CHROMA_PID 2>/dev/null || true; kill ''${SERVER_PID:-} 2>/dev/null || true' EXIT
+
+              # Point the app at the Chroma server, the same way the module does
+              export CHROMADB_HOST=127.0.0.1
+              export CHROMADB_PORT="$CHROMA_PORT"
+
+              # Wait for Chroma to accept connections (any HTTP reply = up)
+              i=0
+              while [ $i -lt 60 ]; do
+                if curl -s -o /dev/null "http://127.0.0.1:$CHROMA_PORT/api/v2/heartbeat"; then
+                  break
+                fi
+                if ! kill -0 $CHROMA_PID 2>/dev/null; then
+                  echo "FAIL: ChromaDB exited early"
+                  echo "--- chroma.log ---"
+                  tail -40 "$DATA_DIR/chroma.log" || true
+                  exit 1
+                fi
+                i=$((i + 1))
+                sleep 1
+              done
+              if [ $i -eq 60 ]; then
+                echo "FAIL: timed out waiting for ChromaDB"
+                tail -40 "$DATA_DIR/chroma.log" || true
+                exit 1
+              fi
+              echo "ChromaDB is up on port $CHROMA_PORT"
+
               # Create admin user
               ${odysseus}/bin/odysseus-setup
 
@@ -780,8 +820,18 @@
 
               echo "PASS: got response from Odysseus on port $PORT"
 
-              # Clean up
-              kill $SERVER_PID 2>/dev/null || true
+              # The app must have actually reached Chroma — assert the startup
+              # warning is absent so a broken CHROMADB_* wiring fails the check.
+              if grep -q "ChromaDB is not reachable" "$DATA_DIR/server.log"; then
+                echo "FAIL: app could not reach ChromaDB"
+                echo "--- chroma/vector lines from server.log ---"
+                grep -i "chroma\|vectorrag\|degraded" "$DATA_DIR/server.log" || true
+                exit 1
+              fi
+              echo "PASS: app connected to ChromaDB"
+
+              # Clean up (trap also covers early exits)
+              kill $SERVER_PID $CHROMA_PID 2>/dev/null || true
               wait $SERVER_PID 2>/dev/null || true
 
               touch $out
