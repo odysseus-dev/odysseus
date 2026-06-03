@@ -461,6 +461,8 @@ class ResearchHandler:
         seen = set()
         sources = []
         for f in findings:
+            if not isinstance(f, dict):
+                continue
             url = f.get("url", "")
             title = f.get("title", "") or url
             summary = f.get("summary", "") or f.get("evidence", "")
