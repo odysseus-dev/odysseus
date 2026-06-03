@@ -63,6 +63,18 @@ Good pull requests usually include:
 
 Please keep PRs small. Large PRs that mix unrelated cleanup, formatting, refactors, and behavior changes are much harder to review.
 
+### Keep your branch rebased
+
+`main` moves quickly, so the most common reason a finished PR stalls in review is a stale branch. Before you open a PR — and again before you ask for a re-review — rebase onto current `main` and check the direct (two-dot) diff:
+
+```bash
+git fetch origin
+git rebase origin/main
+git diff origin/main..HEAD --name-only   # should list ONLY the files you intended to change
+```
+
+If that diff lists files you did not touch, your branch is behind and is effectively trying to revert already-merged work — keep rebasing until the diff is just your change. A clean, current two-dot diff is much faster to review and merge.
+
 ## Issue Reports
 
 For bugs, include:
