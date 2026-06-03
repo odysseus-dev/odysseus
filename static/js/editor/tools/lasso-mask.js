@@ -25,7 +25,7 @@ export function lassoOffsetPoints(points, grow) {
     const p = points[i], q = points[(i + 1) % n];
     area += (q.x - p.x) * (q.y + p.y);
   }
-  const sign = area > 0 ? 1 : -1;
+  const sign = area > 0 ? -1 : 1;
   const out = new Array(n);
   for (let i = 0; i < n; i++) {
     const a = points[(i - 1 + n) % n], b = points[i], c = points[(i + 1) % n];
