@@ -512,10 +512,14 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
             # Convert multimodal content (image_url → image) for Anthropic
             content = _convert_openai_content_to_anthropic(m["content"])
             chat_messages.append({"role": m["role"], "content": content})
-    # Anthropic API only accepts temperature in 0.0–1.0; values above 1.0
-    # return HTTP 400. Clamp silently so presets like "Nietzsche" (1.2) and
-    # the UI slider (0–2) work against Claude models without error.
-    clamped_temp = min(temperature, 1.0) if temperature is not None else temperature
+    # Anthropic API only accepts temperature in 0.0–1.0; values outside this
+    # range return HTTP 400. Clamp and warn so presets like "Nietzsche" (1.2)
+    # and the UI slider (0–2) work against Claude models without error.
+    clamped_temp = temperature
+    if temperature is not None:
+        clamped_temp = max(0.0, min(temperature, 1.0))
+        if clamped_temp != temperature:
+            logger.warning("Anthropic temperature clamped from %.2f to %.2f (API accepts 0.0–1.0)", temperature, clamped_temp)
     payload = {
         "model": model,
         "messages": chat_messages,
