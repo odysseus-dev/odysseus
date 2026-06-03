@@ -5,8 +5,10 @@ import os
 import time
 import uuid
 import re
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Callable, Any
 from datetime import datetime
+
+from core.file_lock import file_lock
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +135,25 @@ class MemoryManager:
             return entries
         return [e for e in entries if e.get("owner") == owner]
     
+    def claim_ownerless(self, owner: str) -> None:
+        """Assign all ownerless memory entries to ``owner`` (one-time migration).
+
+        Atomic read-modify-write via mutate() so it can't clobber concurrent
+        writes. Merged in from the former services/memory MemoryManager during
+        unification."""
+
+        def _claim(entries):
+            claimed = 0
+            for e in entries:
+                if not e.get("owner"):
+                    e["owner"] = owner
+                    claimed += 1
+            return entries, claimed
+
+        claimed = self.mutate(_claim)
+        if claimed:
+            logger.info("Claimed %d ownerless memories for %s", claimed, owner)
+
     def _validate_entries(self, entries: List[Dict]) -> List[Dict]:
         """Ensure all entries have required fields."""
         validated = []
@@ -192,11 +213,39 @@ class MemoryManager:
             if "category" not in entry:
                 entry["category"] = "fact"
         
-        # Use atomic write
-        tmp_file = self.memory_file + ".tmp"
+        # Atomic write. The tmp file carries the live PID so two processes saving
+        # the same file (the main app + the memory MCP subprocess, or parallel
+        # tests) never collide on the rename target; fsync before replace for
+        # durability (mirrors core/atomic_io.atomic_write_json).
+        tmp_file = f"{self.memory_file}.tmp.{os.getpid()}"
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(entries, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp_file, self.memory_file)
+
+    def mutate(self, fn: Callable[[List[Dict]], Tuple[List[Dict], Any]]) -> Any:
+        """Atomically read-modify-write memory.json under a cross-process lock.
+
+        ``fn(entries)`` receives the freshly-loaded entries (already under the
+        lock) and must return ``(new_entries, result)``: ``new_entries`` is
+        persisted and ``result`` is returned to the caller. Running the whole
+        load -> modify -> save cycle inside one lock acquisition is what closes
+        the lost-update window (two unguarded cycles otherwise silently drop one
+        write — see core/file_lock).
+
+        ``fn`` MUST be fast and purely in-memory. Never run an LLM/network call
+        inside ``fn`` (it would hold the cross-process lock for the call's full
+        duration), and never call ``mutate()``/``file_lock()`` again from within
+        ``fn`` (the lock is not reentrant). For LLM-driven edits, do the slow work
+        first, then call ``mutate()`` with an ``fn`` that merges the result onto
+        the fresh list.
+        """
+        with file_lock(self.memory_file):
+            entries = self.load_all()
+            new_entries, result = fn(entries)
+            self.save(new_entries)
+            return result
     
     def add_entry(self, text: str, source: str = "user", category: str = "fact", owner: str = None) -> Dict:
         """Add a new memory entry."""
@@ -217,18 +266,21 @@ class MemoryManager:
 
     def increment_uses(self, ids: List[str]) -> None:
         """Bump the uses counter for each memory id. Called after a memory has
-        actually been injected into a chat's context (not just retrieved)."""
+        actually been injected into a chat's context (not just retrieved).
+
+        Atomic read-modify-write via mutate() so a concurrent writer (or the
+        background consolidation) can't clobber the bump."""
         if not ids:
             return
         id_set = set(ids)
-        entries = self.load_all()
-        changed = False
-        for e in entries:
-            if e.get("id") in id_set:
-                e["uses"] = int(e.get("uses", 0) or 0) + 1
-                changed = True
-        if changed:
-            self.save(entries)
+
+        def _bump(entries):
+            for e in entries:
+                if e.get("id") in id_set:
+                    e["uses"] = int(e.get("uses", 0) or 0) + 1
+            return entries, None
+
+        self.mutate(_bump)
     
     def find_duplicates(self, text: str, entries: List[Dict] = None) -> List[Dict]:
         """Find duplicate memory entries based on text content."""
