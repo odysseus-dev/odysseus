@@ -59,6 +59,8 @@ def init_youtube():
 
 
 def is_youtube_url(url: str) -> bool:
+    if not isinstance(url, str):
+        return False
     return "youtube.com" in url or "youtu.be" in url
 
 
