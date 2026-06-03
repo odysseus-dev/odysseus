@@ -271,6 +271,21 @@ def _digest_windows(now):
     ]
 
 
+def _naive_utc_bound(dt):
+    """Convert a digest-window bound to naive UTC for DB comparison.
+
+    Calendar events are stored as naive UTC (is_utc rows). When a check-in
+    runs in a crew member's local timezone, the window bounds are tz-aware
+    LOCAL datetimes; stripping tzinfo without converting compared local
+    wall-clock against UTC-stored rows, shifting every digest bucket by the
+    user's UTC offset. Convert to UTC first.
+    """
+    if getattr(dt, "tzinfo", None) is not None:
+        from datetime import timezone as _tz
+        return dt.astimezone(_tz.utc).replace(tzinfo=None)
+    return dt
+
+
 def _checkin_calendar_events(db, owner, start, end):
     """Calendar events in [start, end] for ONE owner, for the check-in digest.
 
@@ -1346,9 +1361,10 @@ class TaskScheduler:
             _db = _SL()
             try:
                 for label, start, end in _digest_windows(now):
-                    # Strip timezone for naive DB comparison
-                    _s = start.replace(tzinfo=None) if start.tzinfo else start
-                    _e = end.replace(tzinfo=None) if end.tzinfo else end
+                    # Convert tz-aware (crew-local) window bounds to naive UTC
+                    # to match how events are stored.
+                    _s = _naive_utc_bound(start)
+                    _e = _naive_utc_bound(end)
                     evs = _checkin_calendar_events(_db, task.owner, _s, _e)
                     if not evs:
                         continue
