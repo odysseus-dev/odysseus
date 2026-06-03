@@ -102,7 +102,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
             memory_vector.add(new_entry["id"], text)
         try:
             from src.event_bus import fire_event
-            fire_event("memory_added", user)
+            fire_event("memory_added", owner=user, memory_entry=new_entry)
         except Exception:
             logger.debug("memory_added event dispatch failed", exc_info=True)
         return {"ok": True, "count": len([m for m in all_mem if m.get("owner") == user])}

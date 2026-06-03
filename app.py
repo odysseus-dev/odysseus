@@ -443,6 +443,7 @@ research_handler  = components["research_handler"]
 chat_handler      = components["chat_handler"]
 model_discovery   = components["model_discovery"]
 skills_manager    = components["skills_manager"]
+knowledge_graph_manager = components.get("knowledge_graph_manager")
 
 # TTS
 from services.tts import get_tts_service
@@ -623,6 +624,11 @@ app.include_router(setup_backup_routes(memory_manager, preset_manager, skills_ma
 
 from routes.font_routes import setup_font_routes
 app.include_router(setup_font_routes())
+
+# Knowledge Graph routes
+from routes.knowledge_graph_routes import setup_knowledge_graph_routes
+app.include_router(setup_knowledge_graph_routes(knowledge_graph_manager))
+logger.info('Knowledge graph routes initialized')
 
 
 # MCP (Model Context Protocol)

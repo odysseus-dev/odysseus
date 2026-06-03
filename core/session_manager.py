@@ -172,16 +172,27 @@ class SessionManager:
     def add_message(self, session_id: str, message: ChatMessage):
         """
         Add a message to a session and persist to database.
-
-        Args:
-            session_id: Session ID
-            message: ChatMessage to add
+        ...
         """
         session = self.get_session(session_id)
         session.history.append(message)
         session.message_count = len(session.history)
 
         self._persist_message(session_id, message)
+        
+        # Fire chat_message event for knowledge graph
+        try:
+            from src.event_bus import fire_event
+            fire_event(
+                "chat_message",
+                owner=session.owner,
+                session_id=session_id,
+                message_role=message.role,
+                message_content=message.content,
+                message_timestamp=message.metadata.get('timestamp') if message.metadata else None
+            )
+        except Exception:
+            logger.debug("chat_message event dispatch failed", exc_info=True)
 
     def _persist_message(self, session_id: str, message: ChatMessage):
         """Persist a single message to the database."""

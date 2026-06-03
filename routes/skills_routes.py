@@ -1072,10 +1072,10 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         if skill.get("owner") != user:
             raise HTTPException(404, "Skill not found")
 
-    def _fire_skill_added(user: Optional[str]):
+    def _fire_skill_added(user: Optional[str], skill_data: dict = None):
         try:
             from src.event_bus import fire_event
-            fire_event("skill_added", user)
+            fire_event("skill_added", owner=user, skill_data=skill_data)
         except Exception:
             logger.debug("skill_added event dispatch failed", exc_info=True)
 
@@ -1224,7 +1224,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             steps=body.steps,
         )
         if not entry.get("_deduped"):
-            _fire_skill_added(user)
+            _fire_skill_added(user, entry)
         return {"ok": True, "deduped": bool(entry.get("_deduped")), "skill": entry}
 
     @router.get("/{skill_id}")
@@ -1481,7 +1481,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         # skill without going through /add. Treat unaudited saves as new audit
         # candidates so the event-driven Skills Audit pipeline still runs.
         if not match.get("audit_verdict"):
-            _fire_skill_added(user)
+            _fire_skill_added(user, sk.to_dict())
         return {"ok": True, "name": sk.name}
 
     @router.put("/{skill_id}")
@@ -1500,7 +1500,9 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         if not ok:
             raise HTTPException(404, "Skill not found")
         if not match.get("audit_verdict"):
-            _fire_skill_added(user)
+            # Construct updated skill data
+            updated_skill = {**match, **updates}
+            _fire_skill_added(user, updated_skill)
         return {"ok": True}
 
     @router.delete("/{skill_id}")

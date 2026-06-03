@@ -42,11 +42,12 @@ def _content_tokens(text: str) -> list:
 
 
 class ChatProcessor:
-    def __init__(self, memory_manager, personal_docs_manager, memory_vector=None, skills_manager=None):
+    def __init__(self, memory_manager, personal_docs_manager, memory_vector=None, skills_manager=None, graph_manager=None):
         self.memory_manager = memory_manager
         self.personal_docs_manager = personal_docs_manager
         self.memory_vector = memory_vector
         self.skills_manager = skills_manager
+        self.graph_manager = graph_manager
 
     # Minimum similarity score for RAG results to be injected
     RAG_SIMILARITY_THRESHOLD = 0.35
@@ -316,5 +317,14 @@ class ChatProcessor:
                         desc = s.get("description") or ""
                         lines.append(f"    - {s['name']}: {desc}" if desc else f"    - {s['name']}")
                 preface.append(untrusted_context_message("available skills index", "\n".join(lines)))
+
+        # Knowledge Graph context injection
+        if self.graph_manager and not incognito:
+            try:
+                graph_context = self.graph_manager.get_context_pack(message, owner=owner, limit=3)
+                if graph_context:
+                    preface.append(untrusted_context_message("knowledge graph context", graph_context))
+            except Exception as e:
+                logger.warning(f"Knowledge graph context injection failed: {e}")
 
         return preface, rag_sources, web_sources

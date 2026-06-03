@@ -21,6 +21,45 @@ from src.chat_handler import ChatHandler
 from src.research_handler import ResearchHandler
 from src.upload_handler import UploadHandler
 from src.search import update_search_config
+from src.knowledge_graph import KnowledgeGraphManager
+
+def _register_graph_event_handlers(graph_manager):
+    """Subscribe the knowledge graph manager to relevant system events."""
+    from src.event_bus import subscribe
+
+    def _on_memory_added(owner=None, memory_entry=None, **kwargs):
+        if memory_entry and graph_manager:
+            try:
+                graph_manager.upsert_memory_node(memory_entry, owner=owner)
+            except Exception as e:
+                logger.warning(f"Graph sync (memory_added) failed: {e}")
+
+    def _on_skill_added(owner=None, skill_data=None, **kwargs):
+        if skill_data and graph_manager:
+            try:
+                graph_manager.upsert_skill_node(skill_data, owner=owner)
+            except Exception as e:
+                logger.warning(f"Graph sync (skill_added) failed: {e}")
+
+    def _on_document_indexed(owner=None, **kwargs):
+        if graph_manager and kwargs:
+            try:
+                graph_manager.upsert_document_node(kwargs, owner=owner)
+            except Exception as e:
+                logger.warning(f"Graph sync (document_indexed) failed: {e}")
+
+    def _on_chat_message(owner=None, **kwargs):
+        pass
+
+    def _on_verification_result(owner=None, **kwargs):
+        pass
+
+    subscribe("memory_added", _on_memory_added)
+    subscribe("skill_added", _on_skill_added)
+    subscribe("document_indexed", _on_document_indexed)
+    subscribe("chat_message", _on_chat_message)
+    subscribe("verification_result", _on_verification_result)
+    logger.info("Knowledge graph event handlers registered")
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +90,12 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
     personal_docs_manager = PersonalDocsManager(PERSONAL_DIR, rag_manager)
     api_key_manager = APIKeyManager(DATA_DIR)
     preset_manager = PresetManager(DATA_DIR)
+    
+    # Initialize knowledge graph manager
+    knowledge_graph_manager = KnowledgeGraphManager()
+
+    # Register graph manager as event subscriber
+    _register_graph_event_handlers(knowledge_graph_manager)
 
     # Initialize memory vector store (share embedding model with RAG if available)
     memory_vector = None
@@ -74,7 +119,7 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
         memory_vector = None
 
     # Initialize processors
-    chat_processor = ChatProcessor(memory_manager, personal_docs_manager, memory_vector=memory_vector, skills_manager=skills_manager)
+    chat_processor = ChatProcessor(memory_manager, personal_docs_manager, memory_vector=memory_vector, skills_manager=skills_manager, graph_manager=knowledge_graph_manager)
     research_handler = ResearchHandler()
     
     # Initialize chat handler with all dependencies
@@ -110,5 +155,6 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
         "chat_handler": chat_handler,
         "model_discovery": model_discovery,
         "current_presets": preset_manager.presets,
-        "PERSONAL_INDEX": personal_docs_manager.index
+        "PERSONAL_INDEX": personal_docs_manager.index,
+        "knowledge_graph_manager": knowledge_graph_manager
     }

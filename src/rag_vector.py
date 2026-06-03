@@ -111,6 +111,12 @@ class VectorRAG:
                 documents=[text],
                 metadatas=[metadata],
             )
+            # Fire event for document added
+            try:
+                from src.event_bus import fire_event
+                fire_event("document_indexed", owner=metadata.get("owner"), **metadata)
+            except Exception:
+                logger.debug("document_indexed event dispatch failed", exc_info=True)
             return True
         except Exception as e:
             logger.error(f"add_document failed: {e}")
@@ -155,6 +161,13 @@ class VectorRAG:
                         documents=batch_texts,
                         metadatas=batch_metas,
                     )
+                    # Fire event for each document in this batch
+                    try:
+                        from src.event_bus import fire_event
+                        for text, meta in zip(batch_texts, batch_metas):
+                            fire_event("document_indexed", owner=meta.get("owner"), **meta)
+                    except Exception:
+                        logger.debug("document_indexed event dispatch failed", exc_info=True)
 
             return {
                 "success": True,

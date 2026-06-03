@@ -42,6 +42,12 @@ def record_verification_result(request_id: str, passed: bool, summary: str, outp
     _append(_data_root() / "verification-results.json", "results", item)
     if not passed:
         create_repair_item(source_id=item["id"], severity="repair_required", summary=f"Verification failed: {summary}", suggested_next_step="Inspect verifier output, create a patch proposal, and re-run verification after approval.", metadata={"requestId": request_id, **(metadata or {})})
+    # Fire event for knowledge graph
+    try:
+        from src.event_bus import fire_event
+        fire_event("verification_result", owner=metadata.get("owner") if metadata else None, **item)
+    except Exception:
+        logger.debug("verification_result event dispatch failed", exc_info=True)
     return item
 def create_repair_item(source_id: str, severity: str, summary: str, suggested_next_step: str = "", metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     item = {"id": _safe_id("repair"), "type": "repair_item", "status": "OPEN", "sourceId": source_id, "severity": severity, "summary": summary, "suggestedNextStep": suggested_next_step, "metadata": metadata or {}, "createdAt": _utc(), "executionLocked": True}
