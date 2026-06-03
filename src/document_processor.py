@@ -530,7 +530,7 @@ def build_user_content(
             if content and content[0]["type"] == "text":
                 content[0]["text"] += extracted_text
             else:
-                content.insert(0, {"type": "text", "text": extracted_text.lstrip()})
+                content.insert(0, {"type": "text", "text": strip_pdf_content_marker(extracted_text)})
         else:
             if content and content[0]["type"] == "text":
                 content[0]["text"] += "\n\n[Attached non-text file]"
