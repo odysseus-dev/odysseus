@@ -321,6 +321,7 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
         "                if not os.path.isdir(sf): continue",
         "                if os.path.exists(os.path.join(sf, 'model_index.json')): is_diffusion = True",
         "                for f in collect_ggufs(sf): f['rel_path'] = sd + '/' + f['rel_path']; gguf_files.append(f)",
+        "        if sz == 0 and not ic: continue",  # skip stale skeletons: blobs deleted/moved
         "        models.append({'repo_id':rid,'size_bytes':sz,'nb_files':nf,'has_incomplete':ic,'path':cache,'is_diffusion':is_diffusion,'is_gguf':bool(gguf_files),'gguf_files':gguf_files})",
         "def scan_dir(p):",
         "    if not os.path.isdir(p) or not safe_path(p): return",
@@ -386,6 +387,8 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
         "            models.append({'repo_id':name,'size_bytes':size_bytes,'nb_files':1,'has_incomplete':False,'path':'ollama','backend':'ollama','is_ollama':True})",
         "        return",
         "scan_hf(os.path.expanduser('~/.cache/huggingface/hub'))",
+        "for _d in os.environ.get('ODYSSEUS_MODEL_DIRS', '').split(','):",
+        "    if _d.strip(): scan_dir(os.path.expanduser(_d.strip()))",
         "scan_ollama()",
         "scan_ollama_api()",
     ]
