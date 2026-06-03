@@ -517,7 +517,7 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
         return {"error": str(e)}
 
 
-async def do_send_to_session(content: str, session_id: Optional[str] = None) -> Dict:
+async def do_send_to_session(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """Send a message to an existing session and get a response.
 
     Content format:
@@ -538,7 +538,12 @@ async def do_send_to_session(content: str, session_id: Optional[str] = None) -> 
     message = lines[1].strip()
 
     sess = _session_manager.get_session(target_sid)
-    if not sess:
+    # Owner-scope the lookup: an agent acting for `owner` must not read from or
+    # write into another user's session. Return the same "not found" message
+    # whether the session is missing or owned by someone else, so a caller can't
+    # probe which ids exist. `owner` is None on single-user / no-auth installs,
+    # where the guard is a no-op (behavior unchanged). Mirrors do_manage_session.
+    if not sess or (owner is not None and getattr(sess, "owner", None) != owner):
         return {"error": f"Session '{target_sid}' not found"}
 
     if not message:
@@ -1769,7 +1774,7 @@ async def dispatch_ai_tool(
     elif tool == "send_to_session":
         sid = content.split("\n")[0].strip()[:20]
         desc = f"send_to_session: {sid}"
-        result = await do_send_to_session(content, session_id)
+        result = await do_send_to_session(content, session_id, owner=owner)
 
     elif tool == "pipeline":
         desc = "pipeline: running steps"
