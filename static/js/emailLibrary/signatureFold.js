@@ -298,7 +298,7 @@ export function _foldSignature(html, hintSig) {
   m = html.match(/<div[^>]*id=["'](?:Signature|signature|divRplyFwdMsg)["'][\s\S]*$/i);
   if (m) return wrap(html.slice(0, html.length - m[0].length), '', m[0]);
 
-  m = html.match(/(<br>|\n)\s*--\s*(<br>|\n)([\s\S]*)$/i);
+  m = html.match(/(<br\s*\/?>|\n)\s*--\s*(<br\s*\/?>|\n)([\s\S]*)$/i);
   if (m) {
     const idx = html.lastIndexOf(m[0]);
     return wrap(html.slice(0, idx), m[1], m[3]);
