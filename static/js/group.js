@@ -7,6 +7,7 @@ import chatRenderer from './chatRenderer.js';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { PROMPT_TEMPLATES, getAllPresets } from './presets.js';
+import { mergeGroupCharacters } from './groupCharacters.js';
 import { sortModelObjects } from './modelSort.js';
 import Storage from './storage.js';
 
@@ -284,32 +285,21 @@ function _initGroupTab() {
 }
 
 async function _getCharacterList() {
-  // Built-in characters from PROMPT_TEMPLATES
-  const chars = PROMPT_TEMPLATES.filter(t => t.isCharacter).map(t => ({
-    id: t.id, name: t.name, prompt: t.prompt,
-  }));
-  // User-created characters from presets
+  // The single "custom" preset slot, if it holds a persona.
+  let customPreset = null;
   try {
     const allPresets = getAllPresets();
-    if (allPresets && allPresets.custom && allPresets.custom.character_name) {
-      chars.push({
-        id: 'custom',
-        name: allPresets.custom.character_name,
-        prompt: allPresets.custom.system_prompt || allPresets.custom.prompt || '',
-      });
-    }
+    customPreset = allPresets && allPresets.custom;
   } catch (e) {}
-  // Load user templates and wait for them before returning
+  // User-saved templates — the endpoint returns a bare array. Each saved
+  // template is a persona; merge them all (see groupCharacters.js / #1656).
+  let userTemplates = [];
   try {
     const r = await fetch(API_BASE + '/api/presets/templates', { credentials: 'same-origin' });
     const data = await r.json();
-    (data.templates || []).forEach(t => {
-      if (t.isCharacter && !chars.find(c => c.id === t.id)) {
-        chars.push({ id: t.id, name: t.name, prompt: t.prompt || '' });
-      }
-    });
+    userTemplates = Array.isArray(data) ? data : (data.templates || []);
   } catch (e) {}
-  return chars;
+  return mergeGroupCharacters(PROMPT_TEMPLATES, customPreset, userTemplates);
 }
 
 export function isActive() { return _active; }
