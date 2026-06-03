@@ -12,8 +12,11 @@ def test_estimate_handles_non_string():
     assert _message_text_token_estimate(123) == 4
 
 
-def test_truncate_handles_non_string():
-    assert _truncate_text_to_token_budget(None, 1000) is None
+def test_truncate_returns_string_for_non_string():
+    # Returns an empty string, not the raw non-string, so callers that
+    # concatenate/measure the result don't crash downstream.
+    assert _truncate_text_to_token_budget(None, 1000) == ""
+    assert _truncate_text_to_token_budget(123, 1000) == ""
 
 
 def test_valid_text_unchanged():
