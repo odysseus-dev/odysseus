@@ -479,6 +479,8 @@ class ResearchHandler:
         try:
             items = []
             for f in findings:
+                if not isinstance(f, dict):
+                    continue
                 url = f.get("url", "")
                 title = f.get("title", "") or "Untitled"
                 summary = f.get("summary", "")
