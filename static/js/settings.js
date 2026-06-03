@@ -2632,6 +2632,11 @@ async function initEmailAccountsSettings() {
         <div class="settings-row"><label class="settings-label">Same as IMAP${_hint('Use the IMAP username and password for SMTP too (this is right for almost every provider). Turn off to enter separate SMTP credentials.')}</label><label class="admin-switch"><input type="checkbox" id="eaf-smtp-same" ${(!isEdit || (a.smtp_user && a.imap_user && a.smtp_user === a.imap_user)) ? 'checked' : ''}><span class="admin-slider"></span></label></div>
         <div class="settings-row eaf-smtp-creds"><label class="settings-label">Username${_hint('Usually the same as your IMAP username (your email address).')}</label><input id="eaf-smtp-user" class="settings-input" value="${esc(a.smtp_user || '')}"></div>
         <div class="settings-row eaf-smtp-creds"><label class="settings-label">Password${_hint('Your SMTP password — often the same as your IMAP password.')}</label><input id="eaf-smtp-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_smtp_password ? '(unchanged)' : ''}"></div>
+        <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">OAuth2 (XOAUTH2) <span style="font-weight:normal;opacity:0.7">— optional, for Gmail / Outlook instead of a password</span></div>
+        <div class="settings-row"><label class="settings-label">Provider${_hint('Pick Google or Microsoft to sign in with OAuth2 instead of an app password. Needs your own OAuth client from the provider console; redirect URI is <your URL>/api/email/oauth/callback.')}</label><select id="eaf-oauth-provider" class="settings-select"><option value="">— none —</option><option value="gmail">Google (Gmail)</option><option value="outlook">Microsoft (Outlook/Office365)</option></select></div>
+        <div class="settings-row"><label class="settings-label">Client ID${_hint('OAuth client_id from your Google Cloud or Microsoft Entra app.')}</label><input id="eaf-oauth-client-id" class="settings-input" value=""></div>
+        <div class="settings-row"><label class="settings-label">Client Secret${_hint('OAuth client_secret. Stored encrypted. Leave blank to keep the existing one.')}</label><input id="eaf-oauth-client-secret" class="settings-input" type="password" placeholder=""></div>
+        <div class="settings-row"><label class="settings-label">Connect${_hint('Saves the client, then sends you to the provider to grant access. Save a new account first.')}</label><button class="admin-btn-add" id="eaf-oauth-connect" type="button" style="display:inline-flex;align-items:center;gap:5px;">Connect with OAuth</button></div>
         <div class="settings-row" style="margin-top:10px;align-items:center;">
           <button class="admin-btn-add" id="eaf-save" style="background:var(--red);border-color:var(--red);color:#fff;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
@@ -2670,6 +2675,24 @@ async function initEmailAccountsSettings() {
     el('eaf-smtp-same').addEventListener('change', _syncSmtpSame);
     _syncSmtpSame();
 
+    const _oauthMsg = (t, ok) => { const m = el('eaf-msg'); if (m) { m.textContent = t; m.style.color = ok ? 'var(--green)' : 'var(--red)'; } };
+    el('eaf-oauth-connect').addEventListener('click', async () => {
+      if (!a.id) { _oauthMsg('Save the account first, then Connect.'); return; }
+      const provider = el('eaf-oauth-provider').value;
+      const clientId = el('eaf-oauth-client-id').value.trim();
+      if (!provider || !clientId) { _oauthMsg('Provider and Client ID are required'); return; }
+      const fd = new FormData();
+      fd.append('account_id', a.id);
+      fd.append('provider', provider);
+      fd.append('client_id', clientId);
+      fd.append('client_secret', el('eaf-oauth-client-secret').value.trim());
+      try {
+        const r = await fetch('/api/email/oauth/authorize', { method: 'POST', credentials: 'same-origin', body: fd });
+        const d = await r.json();
+        if (r.ok && d.authorize_url) { window.location.href = d.authorize_url; }
+        else { _oauthMsg(d.detail || 'Authorize failed'); }
+      } catch (e) { _oauthMsg('Network error'); }
+    });
     el('eaf-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
     el('eaf-save').addEventListener('click', async () => {
       const body = {
