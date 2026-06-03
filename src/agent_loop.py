@@ -507,6 +507,55 @@ def _extract_last_user_message(messages: List[Dict]) -> str:
     return ""
 
 
+_READ_ONLY_REQUEST_RE = re.compile(
+    r"""
+    \b(show|display|print|give|return|list|get|fetch|read|view|open)
+    \b[^.]{0,40}
+    \b(result|output|endpoint|list|data|info|image|photo|file|content|text)
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_READ_ONLY_TOOLS = frozenset({
+    "app_api", "web_search", "list_served_models", "list_cached_models",
+    "list_downloads", "list_emails", "read_email", "list_sessions",
+    "list_notes", "list_events", "list_gallery", "list_memories",
+    "search_chats", "search_web", "web_fetch", "research_handler",
+    "list_tasks", "list_skills", "list_endpoints", "list_cookbook_servers",
+    "list_email_accounts", "list_models", "manage_endpoints",
+    "manage_skills", "manage_notes", "manage_memory",
+    "manage_tasks", "manage_calendar", "list_generated_images",
+    "list_documents", "read_document", "get_current_user",
+    "list_knowledge_nodes", "list_gnexus_jobs", "list_gnexus_projects",
+})
+
+
+def _detect_read_only_intent(messages: List[Dict]) -> bool:
+    """Return True if the user request appears to be read-only (show/display/get)."""
+    text = _extract_last_user_message(messages)
+    if not text:
+        return False
+    if _READ_ONLY_REQUEST_RE.search(text):
+        return True
+    return False
+
+
+def _is_read_only_tool(tool_type: str) -> bool:
+    """Return True if the tool is read-only / side-effect-free."""
+    return tool_type in _READ_ONLY_TOOLS
+
+
+def _synthesize_read_only_answer(last_result: str, intent_match: re.Match) -> str:
+    """Produce a short final answer from a read-only tool result when the
+    original request used show/display/print/give/return exact result verbs."""
+    if not last_result:
+        return ""
+    text = last_result.strip()
+    if len(text) > 4000:
+        text = text[:4000] + "\n... (truncated)"
+    return text
+
+
 def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_chars: int = 600) -> str:
     """Build the tool-retrieval query from the last few USER turns, not just
     the latest one.
@@ -1730,6 +1779,27 @@ async def stream_agent_loop(
         # Keep <think> blocks so they render in the thinking section on reload
         cleaned_round = strip_tool_blocks(round_response).strip()
         round_texts.append(cleaned_round)
+
+        # ── No-unrequested-document gate ────────────────────────────────────
+        # If the user's request is purely read-only (show/display/give exact result),
+        # and the agent just produced a successful read-only tool result, stop chaining
+        # and answer from the result. Do NOT auto-create a document unless the original
+        # request explicitly asks to create/write/draft/save a document/report.
+        _read_only_intent = _detect_read_only_intent(messages)
+        _read_only_tool_used = _is_read_only_tool(block.tool_type)
+        if (
+            not tool_blocks
+            and _read_only_intent
+            and tool_results
+            and round_num <= 2
+        ):
+            _last_result = tool_results[-1]
+            _synth = _synthesize_read_only_answer(_last_result, _read_only_intent)
+            if _synth:
+                yield f'data: {json.dumps({"delta": _synth})}\n\n'
+                full_response += _synth
+                messages[-1]["content"] = full_response
+                break
 
         if not tool_blocks:
             # ── Completion verifier (mechanism 3a) ────────────────────

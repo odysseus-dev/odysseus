@@ -1,6 +1,7 @@
 """Tests for agent_loop.py — _detect_admin_intent and _compute_final_metrics.
 Uses mock imports to avoid loading the full app stack."""
 
+import re
 import sys
 from unittest.mock import MagicMock
 
@@ -239,3 +240,95 @@ class TestComputeFinalMetrics:
         m = _compute_final_metrics(**self._base_args(tool_events=[], round_texts=[]))
         assert "tool_events" not in m
         assert "round_texts" not in m
+
+
+# ---------------------------------------------------------------------------
+# No-unrequested-document policy
+# ---------------------------------------------------------------------------
+
+from src.agent_loop import (
+    _detect_read_only_intent,
+    _is_read_only_tool,
+    _synthesize_read_only_answer,
+    _extract_last_user_message,
+)
+
+
+class TestReadOnlyIntent:
+    """Test that read-only requests are detected and read-only tools match."""
+
+    def _msgs(self, text: str):
+        return [{"role": "user", "content": text}]
+
+    # --- Detected ---
+
+    def test_show_result(self):
+        assert _detect_read_only_intent(self._msgs("Show me the endpoint list.")) is True
+
+    def test_exact_result_app_api(self):
+        assert _detect_read_only_intent(self._msgs("Call app_api GET /api/cookbook/gpus and show the exact result.")) is True
+
+    def test_display_data(self):
+        assert _detect_read_only_intent(self._msgs("Display the GPU data.")) is True
+
+    def test_return_result(self):
+        assert _detect_read_only_intent(self._msgs("Return the list of emails.")) is True
+
+    def test_give_info(self):
+        assert _detect_read_only_intent(self._msgs("Give me the current user info.")) is True
+
+    # --- NOT detected ---
+
+    def test_create_document_intent(self):
+        assert _detect_read_only_intent(self._msgs("Create a GPU usage report.")) is False
+
+    def test_write_report_intent(self):
+        assert _detect_read_only_intent(self._msgs("Write a report from the endpoint list.")) is False
+
+    def test_plain_greeting(self):
+        assert _detect_read_only_intent(self._msgs("hello")) is False
+
+
+class TestReadOnlyToolClassification:
+    """Test that read-only tools are classified correctly."""
+
+    def test_app_api_is_read_only(self):
+        assert _is_read_only_tool("app_api") is True
+
+    def test_web_search_is_read_only(self):
+        assert _is_read_only_tool("web_search") is True
+
+    def test_list_sessions_is_read_only(self):
+        assert _is_read_only_tool("list_sessions") is True
+
+    def test_create_document_is_not_read_only(self):
+        assert _is_read_only_tool("create_document") is False
+
+    def test_edit_document_is_not_read_only(self):
+        assert _is_read_only_tool("edit_document") is False
+
+    def test_write_file_is_not_read_only(self):
+        assert _is_read_only_tool("write_file") is False
+
+    def test_bash_is_not_read_only(self):
+        assert _is_read_only_tool("bash") is False
+
+
+class TestSynthesizeReadOnlyAnswer:
+    """Test that read-only answers are synthesized from tool results."""
+
+    def test_returns_result_text(self):
+        result = "### app_api\n**output:**\n```\n2 endpoint(s):\n  GET    /api/cookbook/gpus\n```"
+        intent = re.search(r"show", "Show me the endpoint list.")
+        out = _synthesize_read_only_answer(result, intent)
+        assert out is not None
+        assert "endpoint" in out
+
+    def test_empty_result(self):
+        assert _synthesize_read_only_answer(None, None) == ""
+
+    def test_truncates_long_output(self):
+        long_text = "x" * 5000
+        intent = re.search(r"show", "Show x.")
+        out = _synthesize_read_only_answer(long_text, intent)
+        assert len(out) <= 4000 + len("\n... (truncated)")

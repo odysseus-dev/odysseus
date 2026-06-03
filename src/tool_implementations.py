@@ -2520,6 +2520,15 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 # internal token so require_admin lets us through. See core/middleware.py.
 _COOKBOOK_BASE = "http://localhost:7000"
 
+# app_api loopback base URL — the Juniperus app itself, NOT the downstream
+# cookbook/model service.  Reads JUNIPERUS_APP_PORT / JUNIPERUS_APP_BIND
+# from the environment (the same vars the launcher / Docker entrypoint sets).
+# Defaults to 7010 per the runtime contract for this environment.
+_APP_API_BASE = "http://{host}:{port}".format(
+    host=os.environ.get("JUNIPERUS_APP_BIND", "127.0.0.1"),
+    port=os.environ.get("JUNIPERUS_APP_PORT", "7010"),
+)
+
 
 def _internal_headers(owner: Optional[str] = None) -> Dict[str, str]:
     from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
@@ -2757,6 +2766,50 @@ _APP_API_BLOCKLIST_METHOD_PATH = (
 )
 
 
+def _get_app_endpoints():
+    """Return a list of endpoint dicts from the FastAPI app's route registry.
+    Each dict has: method, path, name, summary, tags.
+    """
+    try:
+        from app import app
+    except ImportError:
+        return []
+    endpoints = []
+    for route in app.routes:
+        if not hasattr(route, 'path') or not hasattr(route, 'methods'):
+            continue
+        # Skip non-API routes (docs, openapi, static, etc.)
+        if not route.path.startswith('/api/'):
+            continue
+        # Skip blocked prefixes
+        if any(route.path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
+            continue
+        methods = sorted(route.methods) if hasattr(route, 'methods') else []
+        name = getattr(route, 'name', None) or ''
+        # Try to extract a summary from the endpoint docstring
+        endpoint_func = getattr(route, 'endpoint', None)
+        summary = ''
+        if endpoint_func:
+            doc = getattr(endpoint_func, '__doc__', None)
+            if doc:
+                summary = doc.strip().split('\n')[0][:140]
+        tags = list(getattr(route, 'tags', []) or [])
+        for method in methods:
+            if method.lower() not in ('get', 'post', 'put', 'patch', 'delete'):
+                continue
+            if any(method.upper() == m and route.path.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
+                continue
+            endpoints.append({
+                'method': method.upper(),
+                'path': route.path,
+                'name': name,
+                'summary': summary,
+                'tags': tags,
+            })
+    endpoints.sort(key=lambda r: (r['path'], r['method']))
+    return endpoints
+
+
 async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     """Generic loopback to any internal Juniperus API endpoint. Lets the
     agent reach the full UI-button surface (cookbook, email, notes,
@@ -2780,49 +2833,40 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
 
-    action = (args.get("action") or "call").lower()
-    base = _COOKBOOK_BASE
+    # Default to action="call" when path is present but no action supplied
+    action = (args.get("action") or "").lower()
+    if not action and args.get("path"):
+        action = "call"
+    action = action or "call"
+    base = _APP_API_BASE
 
     if action == "endpoints":
-        # Fetch FastAPI's OpenAPI schema so the agent can discover any
-        # endpoint without us pre-listing them. Filter by an optional
-        # `filter` keyword (substring match on path or summary).
+        # Discover endpoints from the FastAPI app's internal route registry
+        # instead of making an unauthenticated HTTP call to /openapi.json.
         kw = (args.get("filter") or "").lower()
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(f"{base}/openapi.json",
-                                        headers=_internal_headers())
-                data = resp.json()
+            rows = _get_app_endpoints()
         except Exception as e:
-            return {"error": f"OpenAPI fetch failed: {e}", "exit_code": 1}
-        rows: List[Dict[str, Any]] = []
-        for path, methods in (data.get("paths") or {}).items():
-            if not isinstance(methods, dict):
-                continue
-            if any(path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
-                continue
-            for method, op in methods.items():
-                if method.lower() not in ("get", "post", "put", "patch", "delete"):
-                    continue
-                if any(method.upper() == m and path.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
-                    continue
-                summary = (op or {}).get("summary") or (op or {}).get("description") or ""
-                if isinstance(summary, str):
-                    summary = summary.strip().split("\n")[0][:140]
-                if kw and kw not in path.lower() and kw not in (summary or "").lower():
-                    continue
-                rows.append({"method": method.upper(), "path": path, "summary": summary})
-        rows.sort(key=lambda r: (r["path"], r["method"]))
+            return {"error": f"Endpoint discovery failed: {e}", "exit_code": 1}
+        rows = [r for r in rows
+                if not any(r["path"].startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES)
+                and not any(r["method"] == m and r["path"].startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH)]
+        if kw:
+            rows = [r for r in rows
+                    if kw in r["path"].lower()
+                    or kw in (r.get("summary") or "").lower()
+                    or kw in (r.get("name") or "").lower()
+                    or any(kw in t.lower() for t in r.get("tags", []))]
         if not rows:
             return {"output": f"No endpoints match filter {kw!r}." if kw else "No endpoints found.", "exit_code": 0}
         lines = [f"{len(rows)} endpoint(s)" + (f" matching {kw!r}" if kw else "") + ":"]
         for r in rows[:200]:
             line = f"  {r['method']:6s} {r['path']}"
-            if r["summary"]:
-                line += f"  — {r['summary']}"
+            if r.get("summary"):
+                line += f"  \u2014 {r['summary']}"
             lines.append(line)
         if len(rows) > 200:
-            lines.append(f"  ...({len(rows) - 200} more — filter to narrow)")
+            lines.append(f"  ...({len(rows) - 200} more \u2014 filter to narrow)")
         return {"output": "\n".join(lines), "endpoints": rows, "exit_code": 0}
 
     # action == "call"
@@ -2831,6 +2875,9 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
         return {"error": "path is required (e.g. '/api/cookbook/gpus')", "exit_code": 1}
     if not path.startswith("/"):
         path = "/" + path
+    # Only allow paths beginning with /api/ — app_api is internal loopback only
+    if not path.startswith("/api/"):
+        return {"error": f"app_api only allows /api/* paths. Rejected: {path}", "exit_code": 1}
     if any(path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
         return {"error": f"Path blocked for safety: {path}. Auth/user/admin endpoints are off-limits via app_api.", "exit_code": 1}
 
@@ -2876,21 +2923,33 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
         except Exception:
             payload = None
             preview = (resp.text or "")[:4000]
+        attempted_url = f"{base}{path}"
         if resp.status_code >= 400:
-            return {
-                "error": f"{method} {path} -> HTTP {resp.status_code}",
+            error_dict = {
+                "error": f"{method} {base}{path} -> HTTP {resp.status_code}",
                 "status_code": resp.status_code,
+                "attempted_url": attempted_url,
                 "body": preview,
                 "exit_code": 1,
             }
+            if resp.status_code == 401:
+                error_dict.update({
+                    "ok": False,
+                    "reason": "app_api does not yet receive the current user session context from the agent loop",
+                })
+            return error_dict
         return {
-            "output": f"{method} {path} -> {resp.status_code}\n{preview}",
+            "output": f"{method} {base}{path} -> {resp.status_code}\n{preview}",
             "status_code": resp.status_code,
             "json": payload,
             "exit_code": 0,
         }
     except Exception as e:
-        return {"error": f"{method} {path} failed: {e}", "exit_code": 1}
+        return {
+            "error": f"{method} {base}{path} failed: {e}",
+            "attempted_url": f"{base}{path}",
+            "exit_code": 1,
+        }
 
 
 # Patterns for detecting running LLM/diffusion model servers outside
