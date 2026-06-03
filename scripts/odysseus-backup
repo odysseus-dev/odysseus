@@ -133,16 +133,30 @@ def cmd_list(args):
         emit([], args)
         return
     entries = []
-    for p in sorted(_BACKUP_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-        if not p.is_file():
-            continue
-        entries.append({
-            "path": str(p),
-            "name": p.name,
-            "bytes": p.stat().st_size,
-            "modified": datetime.fromtimestamp(p.stat().st_mtime).isoformat(),
-        })
+    for p in _BACKUP_DIR.iterdir():
+        entry = _backup_entry(p)
+        if entry is not None:
+            entries.append(entry)
+    entries.sort(key=lambda entry: entry["_mtime"], reverse=True)
+    for entry in entries:
+        entry.pop("_mtime", None)
     emit(entries, args)
+
+
+def _backup_entry(p):
+    try:
+        if not p.is_file():
+            return None
+        st = p.stat()
+    except OSError:
+        return None
+    return {
+        "path": str(p),
+        "name": p.name,
+        "bytes": st.st_size,
+        "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
+        "_mtime": st.st_mtime,
+    }
 
 
 def cmd_verify(args):
