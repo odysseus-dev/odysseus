@@ -1096,7 +1096,7 @@ body::after {{
     while (walker.nextNode()) {
       var p = walker.currentNode.parentElement;
       if (p && (p.tagName === 'CODE' || p.tagName === 'PRE')) continue;
-      if (/\[([\s\S]*?)\]|\(([\s\S]*?)\)|$$([\s\S]*?)$$|$([^
+      if (/\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|$$([\s\S]*?)$$|$([^
 $]+?)$/.test(walker.currentNode.textContent)) {
         nodes.push(walker.currentNode);
       }
@@ -1105,7 +1105,7 @@ $]+?)$/.test(walker.currentNode.textContent)) {
       var text = node.textContent;
       var frag = document.createDocumentFragment();
       var lastIdx = 0;
-      var re = /\[([\s\S]*?)\]|\(([\s\S]*?)\)|$$([\s\S]*?)$$|$([^
+      var re = /\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|$$([\s\S]*?)$$|$([^
 $]+?)$/g;
       var m;
       while ((m = re.exec(text)) !== null) {
