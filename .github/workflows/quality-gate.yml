@@ -19,7 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v8
+      # setup-uv pinned to an exact tag: since v8.0.0 ("immutable releases and secure
+      # tags") the action no longer publishes a floating `v8` major alias, so `@v8`
+      # does not resolve. Exact-pinning also matches this phase's supply-chain intent.
+      - uses: astral-sh/setup-uv@v8.2.0
         with: { version: "0.11.18", enable-cache: true } # D-04
       - run: uv pip install --system ruff==0.15.15
       - run: ruff check --output-format=github .
@@ -28,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.2.0
         with: { version: "0.11.18", enable-cache: true }
       - run: uv pip install --system ruff==0.15.15
       - run: ruff format --check .
@@ -37,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.2.0
         with: { version: "0.11.18", enable-cache: true }
       # mypy needs the deps installed to resolve imports it does NOT ignore.
       - run: uv pip install --system --require-hashes -r requirements.lock # D-04 (T-05-02)
@@ -48,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.2.0
         with: { version: "0.11.18", enable-cache: true }
       - run: uv pip install --system --require-hashes -r requirements.lock # T-05-02
       - run: uv pip install --system pytest-cov
@@ -58,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.2.0
         with: { version: "0.11.18", enable-cache: true }
       - run: uv pip install --system bandit==1.9.4
       - run: bandit -c pyproject.toml -r app.py src routes core mcp_servers companion services
@@ -67,7 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.2.0
         with: { version: "0.11.18", enable-cache: true }
       - run: uv pip install --system pip-audit==2.10.0
       # Audit the hashed lock on every PR + push:main (T-05-SC). Add
@@ -79,7 +82,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.2.0
         with: { version: "0.11.18", enable-cache: true }
       - run: uv pip install --system --require-hashes -r requirements.lock # T-05-02
       - run: uv pip install --system ruff==0.15.15 mypy==2.1.0 bandit==1.9.4 pytest-cov
