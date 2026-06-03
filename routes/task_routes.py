@@ -19,7 +19,7 @@ from src.task_action_policy import (
     is_admin_only_task_action,
     owner_has_admin_task_privileges,
 )
-from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
+from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS, _resolve_task_timezone
 from routes.prefs_routes import _load_for_user, _save_for_user
 
 logger = logging.getLogger(__name__)
@@ -414,6 +414,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                             task.scheduled_day,
                             task.scheduled_date,
                             cron_expression=task.cron_expression,
+                            tz_name=_resolve_task_timezone(db, task),
                         )
                     resumed += 1
                 db.commit()
@@ -745,6 +746,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                     task.schedule, task.scheduled_time,
                     task.scheduled_day, task.scheduled_date,
                     cron_expression=task.cron_expression,
+                    tz_name=_resolve_task_timezone(db, task),
                 )
 
             db.commit()
@@ -808,6 +810,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                     task.schedule, task.scheduled_time,
                     task.scheduled_day, task.scheduled_date,
                     cron_expression=task.cron_expression,
+                    tz_name=_resolve_task_timezone(db, task),
                 )
             db.commit()
             return {"ok": True, "status": "active", "next_run": task.next_run.isoformat() + "Z" if task.next_run else None}
@@ -847,6 +850,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 task.next_run = compute_next_run(
                     defs["schedule"], defs["scheduled_time"], None, None,
                     cron_expression=defs["cron_expression"],
+                    tz_name=_resolve_task_timezone(db, task),
                 )
             db.commit()
             db.refresh(task)
