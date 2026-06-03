@@ -591,6 +591,48 @@ class DeepResearcher:
             self._last_search_error = str(e)
             return []
 
+
+    def _chunk_text(self, text: str, chunk_size: int = 1500, overlap: int = 200) -> list:
+        # Split into sentences first
+        import re
+        sentences = re.split(r'(?<=[.!?])\s+|\n{2,}', text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+
+        chunks = []
+        current_chunk = []
+        current_len = 0
+
+        for sentence in sentences:
+            sent_len = len(sentence)
+            if sent_len > chunk_size:
+                if current_chunk:
+                    chunks.append(' '.join(current_chunk))
+                    current_chunk = []
+                    current_len = 0
+                for start in range(0, sent_len, chunk_size - overlap):
+                    chunks.append(sentence[start:start + chunk_size])
+                continue
+
+            if current_len + sent_len + 1 > chunk_size and current_chunk:
+                chunks.append(' '.join(current_chunk))
+                overlap_sentences = []
+                overlap_len = 0
+                for s in reversed(current_chunk):
+                    if overlap_len + len(s) > overlap:
+                        break
+                    overlap_sentences.insert(0, s)
+                    overlap_len += len(s) + 1
+                current_chunk = overlap_sentences
+                current_len = sum(len(s) for s in current_chunk) + max(0, len(current_chunk) - 1)
+
+            current_chunk.append(sentence)
+            current_len += sent_len + (1 if current_len > 0 else 0)
+
+        if current_chunk:
+            chunks.append(' '.join(current_chunk))
+
+        return chunks if chunks else [text]
+
     async def _fetch_and_extract(self, url: str, question: str,
                                  title: str) -> Optional[Dict]:
         """Fetch a URL's content and use LLM to extract relevant info."""
@@ -608,6 +650,33 @@ class DeepResearcher:
             return None
 
         content = page["content"]
+
+        # Dense Semantic Filtering: Chunk and retrieve the most relevant sections
+        if len(content) > 3000:
+            try:
+                from src.embeddings import get_embedding_client
+                import numpy as np
+                embed_client = get_embedding_client()
+                if embed_client:
+                    chunks = self._chunk_text(content, chunk_size=1500, overlap=200)
+                    if len(chunks) > 3:
+                        q_emb = await asyncio.to_thread(embed_client.encode, [question])
+                        c_emb = await asyncio.to_thread(embed_client.encode, chunks)
+
+                        if q_emb.size > 0 and c_emb.size > 0:
+                            scores = np.dot(c_emb, q_emb.T).flatten()
+                            # Select top 4 chunks (~6000 chars) instead of full 15000 chars
+                            top_k = min(4, len(chunks))
+                            best_idx = np.argsort(scores)[::-1][:top_k]
+
+                            # Sort by original appearance order to maintain flow
+                            selected_chunks = [chunks[i] for i in sorted(best_idx)]
+                            content = "\n\n...\n\n".join(selected_chunks)
+                            logger.info(f"Dense filtering reduced content from {len(page['content'])} to {len(content)} chars")
+            except Exception as e:
+                logger.warning(f"Dense filtering failed, falling back to truncation: {e}")
+                pass
+
         # Truncate to avoid blowing up context, preferring paragraph boundary
         if len(content) > self.max_content_chars:
             truncated = content[:self.max_content_chars]
