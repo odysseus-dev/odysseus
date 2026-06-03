@@ -37,6 +37,8 @@ def _autolink_urls(md_text: str) -> str:
 
     Skips URLs already inside markdown link syntax [text](url).
     """
+    if not isinstance(md_text, str):
+        return md_text
     # Match bare URLs not already inside ](...)
     return re.sub(
         r'(?<!\]\()(?<!\()(https?://[^\s\)<>]+)',
@@ -67,6 +69,8 @@ def _md_to_html(md_text: str) -> str:
 
 def _extract_headings(md_text: str) -> List[Dict[str, str]]:
     """Pull h2/h3 headings from markdown for table of contents."""
+    if not isinstance(md_text, str):
+        return []
     headings = []
     seen_slugs: Dict[str, int] = {}
 
@@ -1659,6 +1663,20 @@ def _extract_report_title(markdown_text: str, fallback: str):
     return fallback, markdown_text
 
 
+_ICON_LOGO_RE = re.compile(r'/(icon|logo|favicon)([._/-]|$)', re.IGNORECASE)
+
+
+def _is_icon_or_logo_url(url: str) -> bool:
+    """True if a URL path points at an icon/logo/favicon asset.
+
+    Matches the icon/logo/favicon token only at a path-segment or basename
+    boundary, so a real photo whose slug merely CONTAINS the word (e.g.
+    /iconic-moment.jpg, /logos-history.png) is no longer dropped, while
+    /icon.png, /logo.svg and /favicon.ico still are.
+    """
+    return bool(_ICON_LOGO_RE.search(url or ""))
+
+
 def generate_visual_report(
     question: str,
     report_markdown: str,
@@ -1707,9 +1725,7 @@ def generate_visual_report(
             and img not in hidden_images_set
             and not img.endswith((".svg", ".ico", ".gif"))
             and not any(b in img for b in _IMAGE_BLOCKLIST)
-            and "/icon" not in img.lower()
-            and "/logo" not in img.lower()
-            and "/favicon" not in img.lower()):
+            and not _is_icon_or_logo_url(img)):
             _seen_images.add(img)
             all_images.append(img)
 

@@ -751,7 +751,13 @@ def _decode_header(raw):
     decoded = []
     for data, charset in parts:
         if isinstance(data, bytes):
-            decoded.append(data.decode(charset or "utf-8", errors="replace"))
+            try:
+                decoded.append(data.decode(charset or "utf-8", errors="replace"))
+            except (LookupError, ValueError):
+                # Unknown/invalid MIME charset (e.g. a malformed or spam header
+                # like =?x-unknown-charset?B?...?=). errors="replace" only covers
+                # byte-decode errors, not codec lookup, so fall back to utf-8.
+                decoded.append(data.decode("utf-8", errors="replace"))
         else:
             decoded.append(data)
     return " ".join(decoded)

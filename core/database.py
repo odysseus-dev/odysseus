@@ -334,6 +334,7 @@ class ModelEndpoint(TimestampMixin, Base):
     is_enabled = Column(Boolean, default=True)
     hidden_models = Column(Text, nullable=True)    # JSON list of model IDs that failed probing
     cached_models = Column(Text, nullable=True)    # JSON list of last-known model IDs (avoids probe on list)
+    pinned_models = Column(Text, nullable=True)    # JSON list of admin-pinned model IDs (manual, may not appear in /v1/models)
     model_type = Column(String, nullable=True, default="llm")  # "llm" or "image"
     # Whether models on this endpoint accept OpenAI-style function
     # schemas + emit `tool_calls`. Auto-detected at Cookbook auto-
@@ -855,6 +856,24 @@ def _migrate_add_cached_models_column():
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).warning(f"cached_models migration failed: {e}")
+
+def _migrate_add_pinned_models_column():
+    """Add pinned_models column to model_endpoints if it doesn't exist."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(model_endpoints)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "pinned_models" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN pinned_models TEXT")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'pinned_models' column to model_endpoints")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"pinned_models migration failed: {e}")
 
 def _migrate_add_notes_sort_order():
     """Add sort_order, image_url, repeat columns to notes if they don't exist."""
@@ -1511,6 +1530,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     _migrate_add_hidden_models_column()
     _migrate_add_cached_models_column()
+    _migrate_add_pinned_models_column()
     _migrate_add_notes_sort_order()
     _migrate_add_model_type_column()
     _migrate_add_model_endpoint_owner_column()

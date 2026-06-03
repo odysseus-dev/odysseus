@@ -189,6 +189,20 @@ RENDER_GID=989
 
 For NVIDIA/AMD GPU support, also read the comments in the selected overlay file: docker/gpu.nvidia.yml or docker/gpu.amd.yml.
 
+**Stack-management UIs (Portainer, Coolify, Dockhand, etc.).** These tools
+often accept only a single Compose file and do not reliably honor `COMPOSE_FILE`
+or multiple `-f` overlays. CLI users should keep using the `COMPOSE_FILE`
+overlay workflow above. For stack UIs, point the stack at one of the standalone
+files instead, which bundle the base stack plus the GPU settings:
+
+- `docker-compose.gpu-nvidia.yml` — still requires the NVIDIA Container Toolkit
+  on the host.
+- `docker-compose.gpu-amd.yml` — still requires host ROCm/kfd/DRI setup, the
+  `video`/`render` group membership, and `RENDER_GID` when needed.
+
+The base `docker-compose.yml` plus the `docker/gpu.*.yml` overlays remain the
+source of truth; the standalone files mirror them for single-file deployments.
+
 Verify after enabling either overlay:
 
 ```bash

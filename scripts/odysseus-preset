@@ -85,7 +85,8 @@ def cmd_set(args):
     if prompt is None and args.temperature is None:
         fail("nothing to set — pass --prompt, --prompt-file, or --temperature")
     presets = _load()
-    entry = dict(presets.get(args.name) or {})
+    current = presets.get(args.name)
+    entry = dict(current) if isinstance(current, dict) else {}
     entry.setdefault("name", args.name)
     if prompt is not None:
         entry["system_prompt"] = prompt

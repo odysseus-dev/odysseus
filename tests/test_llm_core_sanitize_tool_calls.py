@@ -74,16 +74,16 @@ def test_sanitize_merges_consecutive_user_messages():
     ]
     out = _sanitize_llm_messages(messages)
 
-    # Only consecutive user messages should be merged.
-    # Consecutive system/assistant/tool messages are left as-is.
-    assert len(out) == 7
+    # Consecutive user messages are merged into one.
+    # Consecutive system/assistant messages are left as-is.
+    # Orphan tool messages (no preceding assistant with tool_calls) are
+    # dropped by the adjacency repair pass per the OpenAI spec.
+    assert len(out) == 5
     assert out[0] == {"role": "system", "content": "System message 1"}
     assert out[1] == {"role": "system", "content": "System message 2"}
     assert out[2] == {"role": "user", "content": "User message 1\n\nUser message 2"}
     assert out[3] == {"role": "assistant", "content": "Assistant message 1"}
     assert out[4] == {"role": "assistant", "content": "Assistant message 2"}
-    assert out[5] == {"role": "tool", "content": "Tool output 1", "tool_call_id": "c1"}
-    assert out[6] == {"role": "tool", "content": "Tool output 2", "tool_call_id": "c2"}
 
 
 def test_sanitize_merges_search_results_and_user_query():

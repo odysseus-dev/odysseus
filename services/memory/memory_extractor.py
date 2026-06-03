@@ -34,12 +34,18 @@ def _fingerprint_entries(entries) -> str:
     only on id+text+category. Any add/edit/delete invalidates it."""
     items = sorted(
         (str(e.get("id", "")), e.get("text", ""), e.get("category", ""))
-        for e in entries
+        for e in _memory_dicts(entries)
     )
     h = hashlib.sha256()
     for triple in items:
         h.update(("\x1f".join(triple) + "\x1e").encode("utf-8"))
     return h.hexdigest()
+
+
+def _memory_dicts(entries):
+    for entry in entries or []:
+        if isinstance(entry, dict):
+            yield entry
 
 
 def _load_tidy_state(memory_manager) -> dict:
@@ -211,7 +217,7 @@ def _is_text_duplicate(new_text: str, existing: list, threshold: float = 0.6) ->
     new_tokens = set(new_text.lower().split())
     if not new_tokens:
         return False
-    for entry in existing:
+    for entry in _memory_dicts(existing):
         old_tokens = set(entry.get("text", "").lower().split())
         if not old_tokens:
             continue

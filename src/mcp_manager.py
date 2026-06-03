@@ -89,14 +89,18 @@ class McpManager:
             )
 
             stack = AsyncExitStack()
-            transport = await stack.enter_async_context(stdio_client(server_params))
-            read_stream, write_stream = transport
-            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+            try:
+                transport = await stack.enter_async_context(stdio_client(server_params))
+                read_stream, write_stream = transport
+                session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
 
-            await session.initialize()
+                await session.initialize()
 
-            # Discover tools
-            tools_result = await session.list_tools()
+                # Discover tools
+                tools_result = await session.list_tools()
+            except Exception:
+                await stack.aclose()
+                raise
             tools = []
             for tool in tools_result.tools:
                 tools.append({
@@ -142,14 +146,18 @@ class McpManager:
             from contextlib import AsyncExitStack
 
             stack = AsyncExitStack()
-            transport = await stack.enter_async_context(sse_client(url))
-            read_stream, write_stream = transport
-            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+            try:
+                transport = await stack.enter_async_context(sse_client(url))
+                read_stream, write_stream = transport
+                session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
 
-            await session.initialize()
+                await session.initialize()
 
-            # Discover tools
-            tools_result = await session.list_tools()
+                # Discover tools
+                tools_result = await session.list_tools()
+            except Exception:
+                await stack.aclose()
+                raise
             tools = []
             for tool in tools_result.tools:
                 tools.append({

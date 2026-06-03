@@ -133,7 +133,7 @@ export function _foldSummary(label, iconSvg, meta) {
 // "On <date>, <addr> wrote:". Returns a display string like
 // "Jane Doe · Mon, Apr 18, 2026 at 9:31 AM" or `''`.
 export function _extractQuoteMeta(html) {
-  if (!html) return '';
+  if (typeof html !== 'string' || !html) return '';
   const txt = html
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<[^>]+>/g, ' ')
