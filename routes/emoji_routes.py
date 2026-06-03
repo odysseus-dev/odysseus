@@ -30,7 +30,6 @@ _SVG_HEADERS = {"Cache-Control": "public, max-age=31536000, immutable"}
 # Returned when a codepoint is unknown/unreachable: an empty (transparent) SVG,
 # so the CSS mask renders nothing instead of a solid box. Not cached, so a later
 # request can still pick up the real glyph once the CDN is reachable.
-_BLANK_SVG = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>'
 _BLANK_HEADERS = {"Cache-Control": "no-store"}
 
 
@@ -38,7 +37,9 @@ def setup_emoji_routes() -> APIRouter:
     router = APIRouter(prefix="/api/emoji", tags=["emoji"])
 
     def _blank() -> Response:
-        return Response(_BLANK_SVG, media_type="image/svg+xml", headers=_BLANK_HEADERS)
+        """Return 404 so the CSS mask fails to load and the fallback Unicode
+        emoji text inside the <span> shows through as a native glyph."""
+        return Response(status_code=404, headers=_BLANK_HEADERS)
 
     @router.get("/{code}.svg")
     async def emoji_svg(code: str):

@@ -294,14 +294,33 @@ function _emojiCodepoints(emoji) {
   for (const ch of s) { const c = ch.codePointAt(0); if (c) cps.push(c.toString(16)); }
   return cps.join('-');
 }
+const _emojiOk = new Set();
+const _emojiFail = new Set();
 function _emojiImg(emoji) {
   const code = _emojiCodepoints(emoji);
   if (!code) return emoji;
+  // Known-bad codepoints: show native emoji immediately
+  if (_emojiFail.has(code)) return emoji;
   // Monochrome line icon: the OpenMoji black SVG is used as a CSS mask filled
   // with the surrounding text color (currentColor), so emoji render as a single
-  // theme-tinted line glyph — never colorful (project rule). If the proxy can't
-  // supply the glyph it returns a transparent SVG, so the mask shows nothing.
-  return `<span class="emoji" role="img" aria-label="${emoji}" style="--em:url('/api/emoji/${code}.svg')"></span>`;
+  // theme-tinted line glyph — never colorful (project rule). The original emoji
+  // is kept as fallback text: if the SVG proxy returns 404 for this codepoint
+  // the .emoji-fallback class reveals the native glyph instead of showing nothing.
+  const url = `/api/emoji/${code}.svg`;
+  // Probe once per codepoint; on 404 swap to native emoji
+  if (!_emojiOk.has(code)) {
+    fetch(url, { method: 'HEAD' }).then(r => {
+      if (r.ok) { _emojiOk.add(code); }
+      else {
+        _emojiFail.add(code);
+        document.querySelectorAll(`.emoji[data-code="${code}"]`).forEach(el => el.classList.add('emoji-fallback'));
+      }
+    }).catch(() => {
+      _emojiFail.add(code);
+      document.querySelectorAll(`.emoji[data-code="${code}"]`).forEach(el => el.classList.add('emoji-fallback'));
+    });
+  }
+  return `<span class="emoji" data-code="${code}" role="img" aria-label="${emoji}" style="--em:url('${url}')">${emoji}</span>`;
 }
 function _svgifyText(text) {
   if (!_emojiSeg) return text;
