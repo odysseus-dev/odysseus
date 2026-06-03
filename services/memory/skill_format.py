@@ -101,11 +101,16 @@ def _parse_scalar(raw: str) -> Any:
         return None
     if (raw[0] == raw[-1]) and raw[0] in ("'", '"'):
         return raw[1:-1]
-    # Try number
+    # Try number — but only when it round-trips losslessly, so a version or
+    # identifier-like scalar isn't silently mangled. "1.10" must stay "1.10"
+    # (float("1.10") -> 1.1 -> "1.1" loses the minor version on save); "01"
+    # must stay "01".
     try:
         if "." in raw:
-            return float(raw)
-        return int(raw)
+            f = float(raw)
+            return f if str(f) == raw else raw
+        i = int(raw)
+        return i if str(i) == raw else raw
     except ValueError:
         pass
     return raw
