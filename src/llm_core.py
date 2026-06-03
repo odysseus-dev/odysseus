@@ -1192,9 +1192,13 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                     yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
                     return
                 async for line in r.aiter_lines():
-                    if not line or not line.startswith("data: "):
+                    # SSE allows "data:value" with no space after the colon
+                    # (the space is optional per the spec). Some gateways and
+                    # local servers omit it; gating on "data: " dropped their
+                    # entire stream.
+                    if not line or not line.startswith("data:"):
                         continue
-                    data = line[6:].strip()
+                    data = line[5:].strip()
                     if not data or not data.startswith("{"):
                         continue
                     try:
@@ -1307,8 +1311,11 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                 if not line:
                     continue
 
-                if line.startswith("data: "):
-                    data = line[6:].strip()
+                # SSE allows "data:value" with no space after the colon; gating
+                # on "data: " silently dropped content + usage from providers
+                # that omit it.
+                if line.startswith("data:"):
+                    data = line[5:].strip()
                     if data == "[DONE]":
                         tc_event = _emit_tool_calls()
                         if tc_event:
