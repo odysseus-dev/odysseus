@@ -11,6 +11,7 @@ import markdownModule from './markdown.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { langIcon } from './langIcons.js';
 import { registerMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { forgetDocLanguage } from './docLibraryFacets.js';
 
 // ── Injected references from documentModule ──
 let API_BASE = '';
@@ -1170,9 +1171,14 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         card.addEventListener('transitionend', () => card.remove(), { once: true });
         setTimeout(() => { if (card.parentElement) card.remove(); }, 400);
       }
+      const _gone = _libraryDocs.find(d => d.id === docId);
       _libraryDocs = _libraryDocs.filter(d => d.id !== docId);
       _libraryTotal = Math.max(0, _libraryTotal - 1);
+      // Keep the language facet counts in sync, or the "(N documents)" stat and
+      // the "all (N)" / per-language chips stay stale until the next fetch (#1809).
+      _libraryLanguages = forgetDocLanguage(_libraryLanguages, _gone && _gone.language);
       libraryRenderStats();
+      libraryRenderLangChips();
       if (uiModule) uiModule.showToast('Document deleted');
     } catch (e) {
       if (uiModule) uiModule.showError(`Failed to delete document: ${e.message || e}`);
