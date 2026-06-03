@@ -1,13 +1,8 @@
-FROM python:3.12-slim
+# ============================================================
+# Stage 1: Builder — compiles deps, builds llama.cpp if needed
+# ============================================================
+FROM python:3.12-slim AS builder
 
-# System deps. tmux is required by Cookbook for background downloads/serves.
-# openssh-client is required for Cookbook remote server tests, setup, probes,
-# downloads, and serves from Docker installs.
-# git/cmake are required when Cookbook builds llama.cpp on first llama.cpp
-# launch inside Docker.
-# nodejs/npm provide npx for the optional built-in Browser MCP server.
-# gosu lets the entrypoint drop privileges cleanly so signals still reach
-# uvicorn directly (no extra shell layer like `su`/`sudo` would add).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
@@ -15,34 +10,58 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     nodejs \
     npm \
-    tmux \
-    openssh-client \
-    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install Python deps first (layer cache). Optional extras (PyMuPDF AGPL, etc.)
-# are opt-in so the default image stays MIT-core; see requirements-optional.txt.
+# Install Python deps into a venv so we can copy it to the final stage.
+# Optional extras (PyMuPDF AGPL, etc.) are opt-in so the default image
+# stays MIT-core; see requirements-optional.txt.
 ARG INSTALL_OPTIONAL=false
 COPY requirements.txt requirements-optional.txt ./
-RUN pip install --no-cache-dir -r requirements.txt \
-    && if [ "$INSTALL_OPTIONAL" = "true" ]; then pip install --no-cache-dir -r requirements-optional.txt; fi
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt \
+    && if [ "$INSTALL_OPTIONAL" = "true" ]; then /opt/venv/bin/pip install --no-cache-dir -r requirements-optional.txt; fi
 
-# Copy app code
-COPY . .
+# ============================================================
+# Stage 2: Runtime — slim, no build tools
+# ============================================================
+FROM python:3.12-slim
 
-# Create data directory (mount a volume here for persistence)
+# Runtime-only system deps:
+#   tmux            — Cookbook background downloads/serves
+#   openssh-client  — Cookbook remote server tests/probes
+#   gosu            — privilege-dropping entrypoint
+#   curl            — health checks, MCP server connectivity
+#   nodejs          — optional built-in Browser MCP server (npx)
+# (build-essential, cmake, git, npm moved to builder)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gosu \
+    nodejs \
+    npm \
+    openssh-client \
+    tmux \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Create writable dirs BEFORE copying code (layer cache)
 RUN mkdir -p data logs services/cache/search
 
-# Entrypoint that drops to PUID/PGID (default 1000:1000) and repairs
-# ownership on the bind-mounted /app/data and /app/logs. Without this,
-# the container runs as root and writes root-owned files into host
-# bind mounts — any later non-root run (or a host user trying to
-# update them) silently fails on EPERM, breaking skill extraction,
-# prefs persistence, mail attachments, etc.
+# Copy venv from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy app code (respects .dockerignore)
+COPY . .
+
+# Entrypoint
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:7000/api/health || exit 1
 
 EXPOSE 7000
 
