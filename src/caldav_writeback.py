@@ -161,6 +161,17 @@ async def writeback_event(owner: str, calendar_source: str, calendar_id: str,
         url = (cfg.get("url") or "").strip()
         user = (cfg.get("username") or "").strip()
         pw = cfg.get("password") or ""
+        # The stored password is encrypted (routes/calendar_routes always
+        # encrypt()s it). The pull path sync_caldav and test_connection both
+        # decrypt before use; write-back did not, so it authenticated with the
+        # literal "enc:..." ciphertext, the remote rejected it, and no local
+        # change ever reached the server. decrypt is idempotent on legacy
+        # plaintext.
+        try:
+            from src.secret_storage import decrypt
+            pw = decrypt(pw)
+        except Exception:
+            pass
         if not (url and user and pw):
             return {"skipped": "caldav not configured"}
         result = await asyncio.to_thread(_writeback_blocking, calendar_id, ev, delete, url, user, pw)
