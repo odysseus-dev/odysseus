@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 1 context gathered
-last_updated: "2026-06-03T17:17:10.024Z"
-last_activity: 2026-06-03 — Roadmap and STATE initialized
+stopped_at: Completed 01-01-PLAN.md
+last_updated: "2026-06-03T17:32:00.000Z"
+last_activity: 2026-06-03 -- Completed Plan 01-01 (dependency lockfiles)
 progress:
   total_phases: 5
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_plans: 5
+  completed_plans: 1
+  percent: 20
 ---
 
 # Project State
@@ -21,34 +21,34 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-03)
 
 **Core value:** The application behaves identically after the work — every existing feature and API still works, proven by the existing test suite — while the code is materially easier to change, safer, and enforceably clean
-**Current focus:** Phase 1 — Tooling Foundation & Baseline Scorecard
+**Current focus:** Phase 01 — tooling-foundation-baseline-scorecard
 
 ## Current Position
 
-Phase: 1 of 5 (Tooling Foundation & Baseline Scorecard)
-Plan: 0 of TBD in current phase
-Status: Ready to execute
-Last activity: 2026-06-03 — Roadmap and STATE initialized
+Phase: 01 (tooling-foundation-baseline-scorecard) — EXECUTING
+Plan: 2 of 5
+Status: Executing Phase 01
+Last activity: 2026-06-03 -- Completed Plan 01-01 (dependency lockfiles)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██░░░░░░░░] 20%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 0
-- Average duration: -
-- Total execution time: 0 hours
+- Total plans completed: 1
+- Average duration: 5 min
+- Total execution time: 0.1 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 01 | 1 | 5 min | 5 min |
 
 **Recent Trend:**
 
-- Last 5 plans: -
+- Last 5 plans: 01-01 (5 min)
 - Trend: -
 
 *Updated after each plan completion*
@@ -64,6 +64,9 @@ Recent decisions affecting current work:
 - Roadmap: Coverage before splits is a non-negotiable gate — no split PR merges until direct characterization tests clear the per-file threshold
 - Roadmap: SQLite WAL hardening lands in Phase 2 (correctness fix with confirmed data-loss risk), not Phase 5
 - Roadmap: `tool_implementations.py` must be split before `agent_loop.py` due to `tool_execution.py` coupling — these two must not be split in the same sprint
+- Plan 01-01: Unified core lock — D-06 ML-fallback NOT needed; chromadb-client/fastembed/onnxruntime/numpy resolved together via `uv pip compile --generate-hashes` in python:3.12-slim
+- Plan 01-01: No `[tool.coverage.run] concurrency` needed for Plan 04 — coverage suite stable, no async-cov flakiness (Pitfall 11 cleared)
+- Plan 01-01: Local re-compile on SELinux-enforcing podman hosts requires the `:z` volume relabel flag on the Docker bind mount
 
 ### Pending Todos
 

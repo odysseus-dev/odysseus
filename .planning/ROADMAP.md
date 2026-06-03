@@ -37,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 5 plansPlans:
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — Dependency lockfiles (core/optional/dev .in + Docker-compiled hashed locks) + SC#3 second-env validation + coverage-stability prereq (TOOL-03)
+- [x] 01-01-PLAN.md — Dependency lockfiles (core/optional/dev .in + Docker-compiled hashed locks) + SC#3 second-env validation + coverage-stability prereq (TOOL-03)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
