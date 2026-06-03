@@ -161,10 +161,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 deleted_text = m.get("text", "")
                 deleted_category = m.get("category", "")
                 break
-        original_len = len(memories)
-        memories = [m for m in memories if not m.get("id", "").startswith(memory_id)]
-        if len(memories) == original_len:
+        if not full_id:
             return [TextContent(type="text", text=f"Error: Memory '{memory_id}' not found")]
+        memories = [m for m in memories if m.get("id") != full_id]
         _memory_manager.save(memories)
         if _memory_vector and _memory_vector.healthy and full_id:
             try:

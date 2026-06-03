@@ -93,11 +93,14 @@ def push_event(calendars, local_cal_id: str, ev: dict, *, delete: bool = False) 
     Returns ``{"ok": bool, ...}``. ``calendars`` is the discovered caldav
     calendar list (injected so this is unit-testable with fakes).
     """
+    uid = (ev or {}).get("uid") if isinstance(ev, dict) else None
+    if not uid:
+        return {"ok": False, "error": "event uid is required"}
+
     remote = find_remote_calendar(calendars, local_cal_id)
     if remote is None:
         return {"ok": False, "error": "remote calendar not found"}
 
-    uid = ev["uid"]
     try:
         existing = remote.event_by_uid(uid)
     except Exception:
@@ -154,10 +157,14 @@ async def writeback_event(owner: str, calendar_source: str, calendar_id: str,
         return {"skipped": "not a caldav calendar"}
     try:
         from routes.prefs_routes import _load_for_user
+        from src.secret_storage import decrypt
         cfg = (_load_for_user(owner) or {}).get("caldav", {}) or {}
         url = (cfg.get("url") or "").strip()
         user = (cfg.get("username") or "").strip()
-        pw = cfg.get("password") or ""
+        # Stored encrypted by routes/calendar_routes; decrypt before use so
+        # the remote sees the real password (decrypt is a no-op on legacy
+        # plaintext). The pull path src/caldav_sync.py already does this.
+        pw = decrypt(cfg.get("password") or "")
         if not (url and user and pw):
             return {"skipped": "caldav not configured"}
         result = await asyncio.to_thread(_writeback_blocking, calendar_id, ev, delete, url, user, pw)

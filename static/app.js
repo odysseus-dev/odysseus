@@ -303,7 +303,9 @@ function initializeEventListeners() {
           label = (raw || '').trim() || 'Assistant';
         }
         const body = child.querySelector('.body');
-        const text = body ? (body.innerText || body.textContent || '').trim() : '';
+        // Prefer dataset.raw (original markdown) over innerText (rendered HTML as text)
+        // to avoid extra newlines and formatting artifacts.
+        const text = body ? (body.dataset.raw || body.innerText || body.textContent || '').trim() : '';
         if (text) parts.push(`${label}: ${text}`);
       } else if (child.classList?.contains('agent-thread')) {
         const lines = ['[Tool calls]'];
@@ -532,6 +534,13 @@ function initializeEventListeners() {
         return;
       }
 
+      // Model picker popup — close before opening any modals
+      const modelPickerMenu = document.getElementById('model-picker-menu');
+      if (modelPickerMenu && modelPickerMenu.classList.contains('open')) {
+        modelPickerMenu.classList.remove('open');
+        return;
+      }
+
       // Close one modal at a time (last in DOM = topmost)
       // Map modal id → sidebar list-item id to clear active state
       const modalItemMap = {
@@ -543,7 +552,7 @@ function initializeEventListeners() {
       };
 
       // Dynamic modals (removed from DOM on close)
-      const dynamicModals = ['library-modal', 'archive-modal', 'doclib-modal', 'gallery-modal', 'tasks-modal'];
+      const dynamicModals = ['library-modal', 'archive-modal', 'doclib-modal', 'gallery-modal', 'tasks-modal', 'email-lib-modal'];
       for (const id of dynamicModals) {
         const m = document.getElementById(id);
         if (id === 'gallery-modal') {

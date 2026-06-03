@@ -12,7 +12,8 @@ def _load():
     """Load the raw prefs file (internal use only)."""
     try:
         with open(PREFS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
@@ -40,7 +41,18 @@ def _save_for_user(user: Optional[str], prefs: dict):
     """Save preferences for a specific user."""
     all_prefs = _load()
     if user is None:
-        # Auth disabled — save flat
+        # Auth disabled. If the store is already multi-user (e.g. auth was
+        # turned off on a deployment that previously ran multi-user), writing
+        # `prefs` flat would overwrite the whole `_users` map and destroy every
+        # other user's preferences. Instead write back into the same (first)
+        # slot _load_for_user(None) reads from, preserving the others.
+        if "_users" in all_prefs:
+            users = all_prefs["_users"]
+            first_key = next(iter(users), None)
+            if first_key is not None:
+                users[first_key] = prefs
+                _save(all_prefs)
+                return
         _save(prefs)
         return
     if "_users" not in all_prefs:

@@ -49,8 +49,18 @@ SEARCH_CONFIG: Dict[str, Any] = {
 }
 
 
+def _is_secret_key(name: str) -> bool:
+    """True for config keys that hold a credential (e.g. ``brave_api_key``)."""
+    return name.endswith(("_api_key", "_key", "_token", "_secret"))
+
+
 def get_search_config() -> Dict[str, Any]:
-    """Get current search configuration including active provider info."""
+    """Get current search configuration including active provider info.
+
+    Never returns stored API keys: callers — including the unauthenticated
+    ``GET /api/search/config`` route — only need key *presence* via
+    ``has_api_key``, not the secret itself (#1661).
+    """
     config = SEARCH_CONFIG.copy()
     settings = _get_search_settings()
     provider = settings.get("search_provider", "searxng")
@@ -60,13 +70,27 @@ def get_search_config() -> Dict[str, Any]:
     if provider == "searxng":
         from .providers import _get_search_instance
         config["search_url"] = _get_search_instance()
-    return config
+    # Strip any string-valued credential so secrets never reach the response;
+    # the boolean has_api_key flag (presence only) is preserved.
+    return {
+        k: v for k, v in config.items()
+        if not (isinstance(v, str) and _is_secret_key(k))
+    }
 
 
 def update_search_config(api_key: str = None, **kwargs):
-    """Update search configuration (e.g. Brave API key)."""
-    if api_key:
-        SEARCH_CONFIG["brave_api_key"] = api_key
+    """Merge non-secret search config into SEARCH_CONFIG.
+
+    Provider API keys are intentionally NOT cached here. They are read on demand
+    from settings/env via ``_get_provider_key`` (e.g. ``brave_search``), so the
+    previous ``SEARCH_CONFIG["brave_api_key"] = api_key`` cache was never used
+    for search and only leaked the decrypted key through ``get_search_config`` /
+    ``GET /api/search/config`` (#1661). ``api_key`` is accepted for backward
+    compatibility but no longer stored.
+    """
+    for k, v in kwargs.items():
+        if not _is_secret_key(k):
+            SEARCH_CONFIG[k] = v
 
 
 def _call_provider(provider_name: str, query: str, count: int, time_filter: str = None) -> List[dict]:
@@ -332,6 +356,12 @@ def comprehensive_web_search(
         for r in search_results if r.get("url")
     ]
 
+    # Map each URL to its [i] number in the sources list so fetched content
+    # blocks can be labeled with the SAME index the model cites.
+    _url_index = {
+        r["url"]: i for i, r in enumerate(search_results, 1) if r.get("url")
+    }
+
     # Fetch content in parallel
     fetched_content = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -344,6 +374,10 @@ def comprehensive_web_search(
             try:
                 result = future.result()
                 if result["success"] and result["content"] and len(result["content"]) >= min_content_length:
+                    # Remember which source this fetch belongs to: redirects
+                    # can change result["url"] and completion order is
+                    # arbitrary, so the block label cannot be recomputed later.
+                    result["source_index"] = _url_index.get(url)
                     fetched_content.append(result)
             except Exception as e:
                 logger.error(f"Exception while fetching {url}: {str(e)}")
@@ -384,8 +418,15 @@ def comprehensive_web_search(
         output_parts.append("FETCHED PAGE CONTENT:")
         output_parts.append("-" * 50)
 
-        for i, content in enumerate(fetched_content, 1):
-            output_parts.append(f"\n[CONTENT {i}] From: {content['url']}")
+        # Emit blocks in source order, numbered with the same [i] as the
+        # sources list, so [CONTENT 2] really is content from source [2].
+        # Before this, blocks were numbered 1..N in fetch COMPLETION order,
+        # which matched neither the sources list nor each other run to run.
+        fetched_content.sort(key=lambda c: c.get("source_index") or len(search_results) + 1)
+        for content in fetched_content:
+            _idx = content.get("source_index")
+            _label = f"[CONTENT {_idx}]" if _idx else "[CONTENT]"
+            output_parts.append(f"\n{_label} From: {content['url']}")
             output_parts.append(f"Title: {content['title']}")
             output_parts.append("-" * 30)
 

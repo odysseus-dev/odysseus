@@ -38,7 +38,7 @@ from routes.cookbook_helpers import (
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
-    _ollama_bind_from_cmd, _pip_install_fallback_chain, _venv_safe_local_pip_install_cmd,
+    _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache, _venv_safe_local_pip_install_cmd,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -383,11 +383,15 @@ def setup_cookbook_routes() -> APIRouter:
                 encoding="utf-8",
             )
             argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
+        env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
         proc = subprocess.Popen(
             argv,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
+            env=env,
             **detached_popen_kwargs(),
         )
         pid_path.write_text(str(proc.pid), encoding="utf-8")
@@ -580,7 +584,7 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append("  python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
             runner_lines.append(f'  python3 -c "import os; from huggingface_hub import snapshot_download; snapshot_download(\'{req.repo_id}\'{_dl_pyarg}, max_workers={4 if req.disable_hf_transfer else 8})"')
             runner_lines.append('fi')
-            runner_lines.append('if [ $? -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $?)"; fi')
+            runner_lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
             runner_lines.append(f"rm -f {remote_runner}")
             runner_lines.append('exec "${SHELL:-/bin/bash}"')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
@@ -611,11 +615,11 @@ def setup_cookbook_routes() -> APIRouter:
                 # Detached path: no controlling TTY, so skip `< /dev/null`
                 # (handled by Popen stdin=DEVNULL) and don't keep a shell open.
                 lines.append(hf_cmd)
-                lines.append('if [ $? -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $?)"; fi')
+                lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
             else:
                 # < /dev/null suppresses interactive "update available? [Y/n]" prompt
                 lines.append(f"{hf_cmd} < /dev/null")
-                lines.append('if [ $? -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $?)"; fi')
+                lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
                 lines.append(f"rm -f '{wrapper_script}'")
                 lines.append('exec "${SHELL:-/bin/bash}"')
                 wrapper_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -805,6 +809,80 @@ def setup_cookbook_routes() -> APIRouter:
         finally:
             db.close()
 
+    def _auto_register_llm_endpoint(req: ServeRequest, remote: str | None) -> str | None:
+        """Register a freshly-served LLM as a model endpoint so it appears in the
+        model picker without a manual /setup step — the text-model sibling of
+        _auto_register_image_endpoint.
+
+        Cookbook serve commands launch an OpenAI-compatible server (llama.cpp's
+        llama-server, vLLM, SGLang, or Ollama) on a known port. We point an
+        endpoint at that server's /v1; the picker auto-discovers the model id by
+        probing /v1/models and dims the endpoint until the server is reachable,
+        so registering immediately (before the server finishes loading) is safe.
+        """
+        import re
+        from core.database import SessionLocal, ModelEndpoint
+
+        # Port: an explicit --port wins. Otherwise fall back by backend — Ollama
+        # is the only server in our generated commands that omits --port.
+        port_match = re.search(r'--port\s+(\d+)', req.cmd)
+        if port_match:
+            port = int(port_match.group(1))
+        elif "ollama" in req.cmd:
+            port = 11434
+        else:
+            port = 8080  # llama.cpp's llama-server default — the Apple Silicon path
+
+        # Determine host (mirrors the image path: SSH alias for remote serves).
+        if remote:
+            host = remote.split("@")[-1] if "@" in remote else remote
+        else:
+            host = "localhost"
+
+        base_url = f"http://{host}:{port}/v1"
+
+        short_name = req.repo_id.split("/")[-1] if "/" in req.repo_id else req.repo_id
+        display_name = short_name or "Local model"
+
+        # If the serve command opts models into OpenAI tool-calling, record it so
+        # agent_loop trusts emitted tool_calls instead of the name heuristic.
+        supports_tools = True if "--enable-auto-tool-choice" in req.cmd else None
+
+        db = SessionLocal()
+        try:
+            # Reuse an endpoint already pointed at this URL instead of duplicating.
+            existing = db.query(ModelEndpoint).filter(ModelEndpoint.base_url == base_url).first()
+            if existing:
+                existing.is_enabled = True
+                existing.model_type = "llm"
+                existing.name = display_name
+                if supports_tools is not None:
+                    existing.supports_tools = supports_tools
+                db.commit()
+                logger.info(f"Updated existing local model endpoint: {base_url}")
+                return existing.id
+
+            ep_id = f"local-{uuid.uuid4().hex[:8]}"
+            ep = ModelEndpoint(
+                id=ep_id,
+                name=display_name,
+                base_url=base_url,
+                api_key=None,
+                is_enabled=True,
+                model_type="llm",
+                supports_tools=supports_tools,
+            )
+            db.add(ep)
+            db.commit()
+            logger.info(f"Auto-registered local model endpoint: {display_name} @ {base_url}")
+            return ep_id
+        except Exception as e:
+            logger.error(f"Failed to auto-register local model endpoint: {e}")
+            db.rollback()
+            return None
+        finally:
+            db.close()
+
     @router.post("/api/model/serve")
     async def model_serve(request: Request, req: ServeRequest):
         """Launch a model server in a tmux session (or PowerShell background process on Windows).
@@ -837,6 +915,10 @@ def setup_cookbook_routes() -> APIRouter:
         )
         is_pip_install = bool(req.cmd and "pip install" in req.cmd)
         if is_pip_install:
+            # Keep big dependency wheel builds (vLLM, …) off the home filesystem's
+            # pip cache so they don't fail mid-build with "No space left" (#1219)
+            # and leave the dep installed-but-unusable (#1459).
+            req.cmd = _pip_install_no_cache(req.cmd)
             # PEP-508-style package spec — letters, digits, `.-_` for the
             # name; `[` `]` for extras; `<>=!~,` for version specifiers.
             # v2 review HIGH-14: tightened from the previous regex which
@@ -957,7 +1039,7 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  if ! python3 -c "import llama_cpp" 2>/dev/null; then')
                 runner_lines.append('    pkg install -y cmake 2>/dev/null')
                 runner_lines.append('    pip install numpy diskcache jinja2 2>/dev/null')
-                runner_lines.append('    CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_LLAMAFILE=OFF" pip install llama-cpp-python --no-build-isolation --no-cache-dir 2>&1 || true')
+                runner_lines.append('    CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_LLAMAFILE=OFF" pip install \'llama-cpp-python[server]\' --no-build-isolation --no-cache-dir 2>&1 || true')
                 runner_lines.append('  fi')
                 runner_lines.append('elif ! command -v llama-server &>/dev/null; then')
                 runner_lines.append('  echo "Native llama-server not found — building from source (one-time, may take a few minutes)..."')
@@ -984,7 +1066,7 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  # If the native build failed, fall back to the Python bindings.')
                 runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
                 runner_lines.append('    echo "llama-server build failed — installing Python bindings as fallback..."')
-                runner_lines.append(f"    {_pip_install_fallback_chain('llama-cpp-python', python_cmd='pip')} || true")
+                runner_lines.append(f"    {_pip_install_fallback_chain('llama-cpp-python[server]', python_cmd='pip')} || true")
                 runner_lines.append('  fi')
                 runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
                 runner_lines.append('    echo "ERROR: llama.cpp serving is not available after install/build attempts."')
@@ -1144,11 +1226,16 @@ def setup_cookbook_routes() -> APIRouter:
                 stderr = (await proc.stderr.read()).decode(errors="replace")
                 return {"ok": False, "error": stderr, "session_id": session_id}
 
-        # Auto-register as model endpoint if serving a diffusion model
+        # Auto-register a model endpoint so the served model shows up in the model
+        # picker with no manual /setup step. Diffusion models get an image
+        # endpoint; any other real model serve (i.e. not a pip-install task) gets
+        # a local LLM endpoint pointed at its /v1.
         endpoint_id = None
         is_diffusion = "diffusion_server.py" in req.cmd
         if is_diffusion:
             endpoint_id = _auto_register_image_endpoint(req, remote)
+        elif not is_pip_install:
+            endpoint_id = _auto_register_llm_endpoint(req, remote)
 
         # Log to assistant
         try:
@@ -1682,6 +1769,33 @@ def setup_cookbook_routes() -> APIRouter:
 
             disk_tasks = on_disk.get("tasks") or [] if isinstance(on_disk, dict) else []
             incoming_tasks = data.get("tasks") if isinstance(data.get("tasks"), list) else []
+            # Anti-poisoning guard: a stale browser tab can keep POSTing a
+            # download task as status='done' from before the strict-finish
+            # fix landed, undoing any server-side correction. For each
+            # incoming "done" download, override to "running" if the last
+            # shard pattern says N<total AND no DOWNLOAD_OK/DOWNLOAD_FAILED/
+            # /snapshots/ sentinel is in the output.
+            import re as _re_dl
+            for _it in incoming_tasks:
+                if (not isinstance(_it, dict)) or _it.get("type") != "download" or _it.get("status") != "done":
+                    continue
+                _out = _it.get("output") or ""
+                if ("DOWNLOAD_OK" in _out) or ("DOWNLOAD_FAILED" in _out) or ("/snapshots/" in _out):
+                    continue
+                _shards = _re_dl.findall(r"model-(\d+)-of-(\d+)\.safetensors", _out)
+                if _shards:
+                    _n, _tot = _shards[-1]
+                    if int(_n) < int(_tot):
+                        logger.info(f"cookbook state POST: rejecting stale done for {_it.get('sessionId')} "
+                                    f"(last shard {_n}/{_tot}, no DOWNLOAD_OK)")
+                        _it["status"] = "running"
+                else:
+                    _completed = _out.count("Download complete")
+                    _starts = _out.count("Downloading '")
+                    if _starts > _completed:
+                        logger.info(f"cookbook state POST: rejecting stale done for {_it.get('sessionId')} "
+                                    f"({_completed}/{_starts} files complete, no DOWNLOAD_OK)")
+                        _it["status"] = "running"
             incoming_ids = {t.get("sessionId") for t in incoming_tasks if isinstance(t, dict) and t.get("sessionId")}
             import time as _t
             now_ms = int(_t.time() * 1000)
@@ -1800,10 +1914,14 @@ def setup_cookbook_routes() -> APIRouter:
 
             if vram_gb > 0 and needed_vram is not None and needed_vram > vram_gb:
                 continue
-            # Skip if no size info — without a size we can't tell if it's a real
-            # full-weight model or a tiny adapter, so we'd rather drop it
-            if est_vram is None:
-                continue
+            # Unknown-size models (e.g. MiniMax-M2.7, DeepSeek-V4-Flash) have no
+            # "NB" in the repo id, so the regex above can't extract their
+            # param count. Previously we dropped them entirely, which made
+            # brand-new flagship releases silently vanish from this list even
+            # on rigs with hundreds of GB of VRAM. Adapters/LoRAs are already
+            # filtered by _is_excluded(), so what falls through here is
+            # overwhelmingly full models — keep them, just without a size
+            # badge (the frontend handles needed_vram_gb=null gracefully).
 
             out.append({
                 "repo_id": repo_id,
