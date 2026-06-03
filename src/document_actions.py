@@ -6,6 +6,7 @@ Reusable document actions callable from both REST routes and the task scheduler.
 
 import logging
 import re
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +141,20 @@ async def run_document_tidy(owner: str) -> str:
             # Keep the most complete (longest real content), then most recent.
             def _updated(d):
                 return d.updated_at or d.created_at
-            members.sort(key=lambda d: (_real_len(d.current_content), _updated(d)), reverse=True)
+            # Sort key must be total-order safe: a document with both
+            # updated_at and created_at NULL would otherwise make Python
+            # compare None against a datetime on a real-length tie, raising
+            # TypeError and aborting the whole tidy run. Rank "has a
+            # timestamp" before the timestamp itself so a None is never
+            # compared against a datetime.
+            members.sort(
+                key=lambda d: (
+                    _real_len(d.current_content),
+                    _updated(d) is not None,
+                    _updated(d) or datetime.min,
+                ),
+                reverse=True,
+            )
             keeper = members[0]
             kept += 1
             dupes = members[1:]
