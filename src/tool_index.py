@@ -293,7 +293,11 @@ class ToolIndex:
 
     # Keyword hints: if the query mentions these words, force-include the tools.
     _KEYWORD_HINTS = {
-        frozenset({"email", "mail", "gmail", "googlemail", "message", "send", "reply", "inbox", "unread", "tell"}):
+        # NOTE: "tell" was removed from this set. It fired on any "tell me ..."
+        # request (e.g. "visit <url> and tell me the title"), force-including the
+        # whole email toolset and crowding out the relevant tools — the model then
+        # believed it had only email tools and refused web/other tasks (#1707).
+        frozenset({"email", "mail", "gmail", "googlemail", "message", "send", "reply", "inbox", "unread"}):
             {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
         frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
             {"manage_calendar"},

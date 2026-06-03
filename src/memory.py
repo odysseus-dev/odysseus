@@ -51,6 +51,8 @@ class MemoryManager:
         memories = []
         
         for msg in chat_history:
+            if not isinstance(msg, dict):
+                continue
             if msg.get("role") == "assistant":
                 content = str(msg.get("content", ""))
                 lines = content.split('\n')
@@ -135,6 +137,8 @@ class MemoryManager:
         """Ensure all entries have required fields."""
         validated = []
         for entry in entries:
+            if not isinstance(entry, dict):
+                continue
             if "id" not in entry:
                 entry["id"] = str(uuid.uuid4())
             if "timestamp" not in entry:

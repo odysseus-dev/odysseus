@@ -47,4 +47,6 @@ def _scrub_value(key, value):
 
 def scrub_settings(settings: dict) -> dict:
     """Return a copy of ``settings`` with secret-shaped values masked (deep)."""
+    if not isinstance(settings, dict):
+        return {}
     return {k: _scrub_value(k, v) for k, v in (settings or {}).items()}

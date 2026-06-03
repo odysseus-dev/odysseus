@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 def tokenize(text: str) -> List[str]:
     """Simple tokenizer that splits on whitespace and removes punctuation."""
-    return [word.strip('.,!?";') for word in text.split()]
+    return [cleaned for word in text.split() if (cleaned := word.strip('.,!?";'))]
 
 def get_text_similarity(text1: str, text2: str) -> float:
     """Calculate Jaccard similarity between two texts."""
@@ -59,14 +59,18 @@ class MemoryManager:
                     line = line.strip()
                     # Look for bullet points or numbered lists that might contain memories
                     if re.match(r'^[-*•]|\d+\.', line):
-                        # Extract the text after the bullet/number
-                        text_match = re.match(r'^[-*•]|\d+\.\s*(.*)', line)
+                        # Extract the text after the bullet/number. Group both
+                        # markers so the capture applies to either. The previous
+                        # `^[-*•]|\d+\.\s*(.*)` put the group on the numbered
+                        # branch only, so a bullet line matched with group(1)=None
+                        # and crashed on .strip().
+                        text_match = re.match(r'^(?:[-*•]|\d+\.)\s*(.*)', line)
                         if text_match:
                             text = text_match.group(1).strip()
                             if text:
                                 memories.append({
                                     "text": text,
-                                    "timestamp": int(datetime.now().timestamp()),
+                                    "timestamp": int(time.time()),
                                     "session_id": session_id
                                 })
                     # If we see a heading that suggests memories
@@ -101,6 +105,7 @@ class MemoryManager:
     def ensure_file_exists(self):
         """Create memory file if it doesn't exist."""
         if not os.path.exists(self.memory_file):
+            os.makedirs(os.path.dirname(self.memory_file), exist_ok=True)
             with open(self.memory_file, 'w', encoding='utf-8') as f:
                 json.dump([], f, ensure_ascii=False, indent=2)
     

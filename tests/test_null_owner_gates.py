@@ -24,32 +24,38 @@ from unittest.mock import MagicMock
 # the conftest's `sqlalchemy.*` MagicMock stubs ("metaclass conflict").
 # Stub also a handful of route modules each of these targeted modules
 # happens to drag in at import-time.
-for _stub in [
-    "core.database",
-    "core.auth",
-    "src.endpoint_resolver",
-]:
-    if _stub not in sys.modules:
-        m = types.ModuleType(_stub)
-        # Provide the names the importers will look up.
-        if _stub == "core.database":
-            m.Base = MagicMock()
-            m.SessionLocal = MagicMock()
-            m.CalendarCal = MagicMock()
-            m.CalendarEvent = MagicMock()
-            m.Document = MagicMock()
-            m.DocumentVersion = MagicMock()
-            m.Session = MagicMock()
-            m.ChatMessage = MagicMock()
-            m.GalleryImage = MagicMock()
-            m.GalleryAlbum = MagicMock()
-            m.Note = MagicMock()
-            m.ScheduledTask = MagicMock()
-            m.TaskRun = MagicMock()
-            m.ModelEndpoint = MagicMock()
-        elif _stub == "core.auth":
-            m.AuthManager = MagicMock()
-        sys.modules[_stub] = m
+@pytest.fixture(autouse=True)
+def _null_owner_stubs(monkeypatch):
+    for _stub, _attrs in (
+        ("core.database", (
+            "Base", "SessionLocal", "CalendarCal", "CalendarEvent",
+            "Document", "DocumentVersion", "Session", "ChatMessage",
+            "GalleryImage", "GalleryAlbum", "Note", "ScheduledTask",
+            "TaskRun", "ModelEndpoint", "Webhook",
+        )),
+        ("core.auth", ("AuthManager",)),
+        ("src.endpoint_resolver", ()),
+    ):
+        if _stub not in sys.modules:
+            m = types.ModuleType(_stub)
+            for _name in _attrs:
+                setattr(m, _name, MagicMock())
+            sys.modules[_stub] = m
+        else:
+            m = sys.modules[_stub]
+            for _name in _attrs:
+                if not hasattr(m, _name):
+                    setattr(m, _name, MagicMock())
+        monkeypatch.setitem(sys.modules, _stub, m)
+
+    # src.webhook_manager is only dragged in by _import_webhook_helper().
+    if "src.webhook_manager" not in sys.modules:
+        wm = types.ModuleType("src.webhook_manager")
+        wm.WebhookManager = MagicMock()
+        wm.validate_webhook_url = MagicMock()
+        wm.validate_events = MagicMock()
+        sys.modules["src.webhook_manager"] = wm
+        monkeypatch.setitem(sys.modules, "src.webhook_manager", wm)
 
 from fastapi import HTTPException
 
@@ -179,18 +185,9 @@ def test_gallery_owner_filter_passes_user():
 # calendar/notes/gallery gates above and _verify_session_owner.
 
 def _import_webhook_helper():
-    """Import routes.webhook_routes without dragging in the real webhook
-    manager / database. Stub src.webhook_manager (only referenced by an
-    import line) and ensure core.database exposes the names the import chain
-    (core/__init__ → session_manager) looks up."""
-    for _name in ("Webhook", "ChatMessage"):
-        setattr(sys.modules["core.database"], _name, MagicMock())
-    if "src.webhook_manager" not in sys.modules:
-        wm = types.ModuleType("src.webhook_manager")
-        wm.WebhookManager = MagicMock()
-        wm.validate_webhook_url = MagicMock()
-        wm.validate_events = MagicMock()
-        sys.modules["src.webhook_manager"] = wm
+    """Import routes.webhook_routes. Stubs for core.database (ChatMessage,
+    Webhook) and src.webhook_manager are provided by the _null_owner_stubs
+    autouse fixture."""
     return __import__(
         "routes.webhook_routes", fromlist=["_caller_owns_session"]
     )

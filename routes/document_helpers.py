@@ -152,7 +152,7 @@ def _resolve_user_upload_path(
         owner=owner,
         auth_manager=auth_manager,
     )
-    if not resolved:
+    if not isinstance(resolved, dict) or not resolved:
         return None
     path = resolved.get("path")
     upload_dir = getattr(upload_handler, "upload_dir", None)
@@ -203,6 +203,8 @@ def _assert_pdf_marker_upload_owned(
 def _derive_title(content: str) -> str:
     """Derive a title from document content."""
     import re
+    if not isinstance(content, str):
+        return "Untitled"
     text = content.strip()
     if not text:
         return "Untitled"

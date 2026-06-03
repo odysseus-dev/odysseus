@@ -652,9 +652,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     if (doc.session_id) {
       openItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); libraryOpenInSession(doc); });
     } else {
-      openItem.disabled = true;
-      openItem.style.opacity = '0.35';
-      openItem.title = 'Not linked to a session';
+      // Orphaned doc (closed / session detached) is still openable in the editor
+      // by id — libraryOpenDocument handles the no-session case (#1602).
+      openItem.title = 'Open in the editor';
+      openItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); libraryOpenDocument(doc); });
     }
     dropdown.appendChild(openItem);
 
@@ -772,10 +773,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       openBtn.title = 'Open in original session';
       openBtn.addEventListener('click', (e) => { e.stopPropagation(); libraryOpenInSession(doc); });
     } else {
-      openBtn.disabled = true;
-      openBtn.style.opacity = '0.35';
-      openBtn.style.cursor = 'not-allowed';
-      openBtn.title = 'This document is not linked to a session';
+      // Orphaned doc (closed / session detached) is still openable in the editor
+      // by id — libraryOpenDocument handles the no-session case (#1602).
+      openBtn.title = 'Open in the editor';
+      openBtn.addEventListener('click', (e) => { e.stopPropagation(); libraryOpenDocument(doc); });
     }
 
     const cloneBtn = document.createElement('button');

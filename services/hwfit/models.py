@@ -123,7 +123,13 @@ def params_b(model):
         pc = pc.strip().upper()
         m = re.match(r"^([\d.]+)\s*([BKMGT]?)$", pc)
         if m:
-            val = float(m.group(1))
+            try:
+                val = float(m.group(1))
+            except ValueError:
+                # Malformed count like "1.5.3B" — [\d.]+ matches but float()
+                # rejects it. One bad catalog row must not abort the whole
+                # ranking pass, so treat it as unknown size.
+                return 0.0
             suffix = m.group(2)
             if suffix == "B":
                 return val

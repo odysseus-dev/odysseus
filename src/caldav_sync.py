@@ -63,7 +63,7 @@ def _validate_caldav_ip(host: str) -> None:
 
 def validate_caldav_url(raw_url: str) -> str:
     """Validate and normalize a user-provided CalDAV URL before server-side use."""
-    url = (raw_url or "").strip()
+    url = (raw_url if isinstance(raw_url, str) else "").strip()
     if not url:
         raise ValueError("CalDAV URL is required")
     parsed = urlparse(url)

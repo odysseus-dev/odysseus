@@ -41,11 +41,26 @@ def _manager() -> SkillsManager:
     return _mgr
 
 
+def _preview_text(value, limit: int = 200) -> str:
+    """Truncated preview of a text field, tolerant of non-string values.
+
+    A skill whose ``description`` is a non-string (e.g. a number from a
+    hand-edited/legacy store) would crash ``(value or "")[:200]`` with a
+    TypeError; coerce non-strings to "" instead.
+    """
+    text = value if isinstance(value, str) else ""
+    return text[:limit]
+
+
+def _skill_entries(skills):
+    return [s for s in skills or [] if isinstance(s, dict)]
+
+
 def _summary(skill: dict) -> dict:
     return {
         "name": skill.get("name", ""),
         "category": skill.get("category", "general"),
-        "description": (skill.get("description") or "")[:200],
+        "description": _preview_text(skill.get("description")),
         "status": skill.get("status", ""),
         "uses": skill.get("uses", 0),
         "last_used": skill.get("last_used") or "",
@@ -54,7 +69,7 @@ def _summary(skill: dict) -> dict:
 
 
 def cmd_list(args):
-    out = _manager().load_all()
+    out = _skill_entries(_manager().load_all())
     if args.category:
         out = [s for s in out if (s.get("category") or "general") == args.category]
     out.sort(key=lambda s: (-int(s.get("uses") or 0), s.get("name", "")))
@@ -62,7 +77,7 @@ def cmd_list(args):
 
 
 def cmd_show(args):
-    for s in _manager().load_all():
+    for s in _skill_entries(_manager().load_all()):
         if s.get("name") == args.name:
             emit(s, args)
             return
@@ -71,7 +86,7 @@ def cmd_show(args):
 
 def cmd_categories(args):
     counts: dict[str, int] = {}
-    for s in _manager().load_all():
+    for s in _skill_entries(_manager().load_all()):
         c = s.get("category") or "general"
         counts[c] = counts.get(c, 0) + 1
     emit([{"category": c, "count": n} for c, n in sorted(counts.items())], args)
@@ -80,7 +95,7 @@ def cmd_categories(args):
 def cmd_delete(args):
     # Locate the skill's directory and rm -rf it.
     skills_root = Path(_DATA_DIR) / "skills"
-    for s in _manager().load_all():
+    for s in _skill_entries(_manager().load_all()):
         if s.get("name") != args.name:
             continue
         cat = s.get("category") or "general"
@@ -94,7 +109,7 @@ def cmd_delete(args):
 
 
 def cmd_export(args):
-    for s in _manager().load_all():
+    for s in _skill_entries(_manager().load_all()):
         if s.get("name") != args.name:
             continue
         cat = s.get("category") or "general"

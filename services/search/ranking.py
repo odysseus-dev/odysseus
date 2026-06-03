@@ -13,6 +13,11 @@ _SPORTS_HINTS = {
     "sport", "sports", "soccer", "football", "hockey", "nba", "nfl", "mlb",
     "fifa", "world cup", "championship", "quarterfinal", "eliminates",
 }
+# Word-boundary match so "sport" does not fire inside "transport"/"passport"
+# and a domain like "transport.gov" is not mistaken for a sports site.
+_SPORTS_HINT_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(h) for h in _SPORTS_HINTS) + r")\b"
+)
 _LOW_VALUE_NEWS_DOMAINS = {
     "facebook.com", "www.facebook.com", "sports.yahoo.com", "yahoo.com",
     "www.yahoo.com", "msn.com", "www.msn.com",
@@ -39,7 +44,7 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
     query_terms = [t.lower() for t in re.findall(r"\b\w+\b", query)]
     query_lc = query.lower()
     is_news_query = any(term in _NEWS_HINTS for term in query_terms)
-    is_sports_query = any(hint in query_lc for hint in _SPORTS_HINTS)
+    is_sports_query = bool(_SPORTS_HINT_RE.search(query_lc))
 
     def title_score(title: str) -> float:
         if not title:
@@ -98,7 +103,7 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
             adjustment += 0.4
         if netloc in _LOW_VALUE_NEWS_DOMAINS:
             adjustment -= 0.8
-        if not is_sports_query and any(hint in text or hint in netloc for hint in _SPORTS_HINTS):
+        if not is_sports_query and (_SPORTS_HINT_RE.search(text) or _SPORTS_HINT_RE.search(netloc)):
             adjustment -= 1.5
         # A country/news query should not rank a page whose title/snippet barely
         # mentions the country above actual news pages for that country.
