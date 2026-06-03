@@ -208,15 +208,27 @@ async def _is_npx_package_cached(npx_path, package_spec, timeout_s=5):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            return False
+        return proc.returncode == 0 and bool(stdout.strip())
+    except NotImplementedError:
+        # Fallback for Windows + Python 3.14 in reload-worker context
+        import subprocess
+        try:
+            result = subprocess.run(
+                [npx_path, "--no-install", package_spec, "--version"],
+                capture_output=True,
+                timeout=timeout_s,
+            )
+            return result.returncode == 0 and bool(result.stdout.strip())
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            return False
     except (OSError, ValueError):
         return False
-    try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-            await proc.wait()
-        except Exception:
-            pass
-        return False
-    return proc.returncode == 0 and bool(stdout.strip())
