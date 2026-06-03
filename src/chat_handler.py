@@ -290,11 +290,16 @@ class ChatHandler:
             message
         )
         if is_memory_cmd and memory_text:
-            mem = self.memory_manager.load()
-            if not self.memory_manager.find_duplicates(memory_text, mem):
-                new_entry = self.memory_manager.add_entry(memory_text)
-                mem.append(new_entry)
-                self.memory_manager.save(mem)
+            def _add(entries):
+                # Preserve the duplicate guard: only append when this exact text
+                # isn't already stored. Run it against the FRESH on-disk list so a
+                # concurrent writer's entries are seen (and survive this save).
+                if not self.memory_manager.find_duplicates(memory_text, entries):
+                    entries.append(self.memory_manager.add_entry(memory_text))
+                return entries, None
+
+            # async method: keep the blocking flock off the event loop.
+            await asyncio.to_thread(self.memory_manager.mutate, _add)
 
             session.add_message(ChatMessage("user", message))
             session.add_message(

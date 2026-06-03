@@ -30,6 +30,19 @@ def _setup(monkeypatch, store, user="alice"):
     saved = {}
     mem.save.side_effect = lambda entries: saved.__setitem__("entries", entries)
 
+    # The import route now performs its read-modify-write through the atomic
+    # ``mutate(fn)`` primitive (load fresh -> fn -> save) instead of a bare
+    # load_all()+save(). Make the double honor that contract so the test
+    # exercises the real code path: load a fresh copy of the store, run fn,
+    # persist the returned list, and hand back fn's result.
+    def _mutate(fn):
+        entries = list(store)
+        new_entries, result = fn(entries)
+        saved["entries"] = new_entries
+        return result
+
+    mem.mutate.side_effect = _mutate
+
     skills = MagicMock()
     skills.load_all.return_value = []
     router = br.setup_backup_routes(mem, MagicMock(), skills)

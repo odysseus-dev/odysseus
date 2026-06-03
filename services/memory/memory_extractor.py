@@ -10,6 +10,7 @@ Periodically audits all memories via LLM to consolidate duplicates,
 rewrite vague entries, and remove junk.
 """
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -317,6 +318,12 @@ async def extract_and_store(
         _owner = getattr(session, 'owner', None)
 
         existing = memory_manager.load_all()
+        # New entries are collected separately and merged onto the FRESH on-disk
+        # list under the lock at the end. We still append them to `existing` too
+        # so the in-loop dedup (user_existing / _is_text_duplicate) sees facts
+        # added earlier in this same batch. Saving `existing` wholesale would
+        # re-introduce the lost-update race this migration removes.
+        new_entries = []
         added = 0
 
         for fact in facts:
@@ -367,6 +374,7 @@ async def extract_and_store(
                 entry["session_id"] = session.name
 
             existing.append(entry)
+            new_entries.append(entry)
 
             # Add to vector index. The JSON store (saved below) is the source of
             # truth and the keyword path can still retrieve this entry, so a vector
@@ -380,7 +388,14 @@ async def extract_and_store(
             added += 1
 
         if added > 0:
-            memory_manager.save(existing)
+            # Atomically append the new entries onto the FRESH on-disk list so a
+            # concurrent writer (e.g. a manual add or the audit) during the LLM
+            # call is not clobbered. fn must be fast/in-memory.
+            def _append(entries):
+                entries.extend(new_entries)
+                return entries, None
+
+            await asyncio.to_thread(memory_manager.mutate, _append)
             try:
                 from src.event_bus import fire_event
                 for _ in range(added):
@@ -505,10 +520,22 @@ async def audit_memories(
             logger.error(f"Memory audit returned non-JSON: {text[:300]}")
             return {"before": before_count, "after": before_count, "error": "bad_json"}
 
-        # Build lookup of original entries by ID so we can preserve metadata
-        originals = {m["id"]: m for m in existing}
+        # The LLM ran UNLOCKED against a snapshot (`existing`). Build the
+        # keep/clean/drop decision keyed by id here, then apply it atomically
+        # against the FRESH on-disk list inside one locked mutate(). A blind
+        # save of `final_entries` would silently clobber any memory written
+        # while the (slow) LLM call was in flight — the lost-update bug.
+        #
+        # `audited_ids`   — the ids this run actually scanned (this owner's slice).
+        # `snapshot_text` — the text each id had when we snapshotted it; an id is
+        #                   only dropped/rewritten when the fresh on-disk text
+        #                   still matches, so a concurrent edit survives.
+        # `clean_ops`     — per-id text/category rewrites the model asked for.
+        audited_ids = {m["id"] for m in existing if m.get("id")}
+        snapshot_text = {m["id"]: m.get("text") for m in existing if m.get("id")}
 
-        final_entries = []
+        kept_ids = set()
+        clean_ops = {}
         for item in cleaned:
             if not isinstance(item, dict):
                 continue
@@ -516,21 +543,21 @@ async def audit_memories(
             new_text = item.get("text", "").strip()
             if not new_text:
                 continue
-
-            if mid in originals:
-                # Preserve original metadata, update text + category
-                entry = originals[mid].copy()
-                entry["text"] = new_text
-                if item.get("category"):
-                    entry["category"] = item["category"]
-            else:
-                # ID not found — skip to avoid inventing entries
+            if mid not in audited_ids:
+                # ID not in this audit's scope — skip to avoid inventing entries
                 logger.debug(f"Audit returned unknown id {mid}, skipping")
                 continue
+            kept_ids.add(mid)
+            ops = {}
+            if new_text != snapshot_text.get(mid):
+                ops["text"] = new_text
+            if item.get("category"):
+                ops["category"] = item["category"]
+            if ops:
+                clean_ops[mid] = ops
 
-            final_entries.append(entry)
-
-        after_count = len(final_entries)
+        drop_ids = audited_ids - kept_ids
+        after_count = len(kept_ids)
 
         # Safety net against catastrophic over-deletion. A conservative tidy
         # should never wipe out half the store in one pass — if the model
@@ -544,19 +571,34 @@ async def audit_memories(
             )
             return {"before": before_count, "after": before_count, "error": "unsafe_removal"}
 
-        # Merge audited entries back with other users' entries
-        if owner:
-            all_entries = memory_manager.load_all()
-            audited_ids = {e["id"] for e in final_entries}
-            other_entries = [e for e in all_entries if e.get("owner") != owner and (e.get("owner") is not None)]
-            # Also keep legacy entries that weren't part of this audit
-            for e in all_entries:
-                if e.get("owner") is None and e["id"] not in audited_ids and e["id"] not in {o["id"] for o in other_entries}:
-                    other_entries.append(e)
-            saved_entries = final_entries + other_entries
-        else:
-            saved_entries = final_entries
-        memory_manager.save(saved_entries)
+        # Apply the decision atomically against the fresh on-disk list. Entries
+        # outside this audit's scope (other owners, legacy rows, and anything
+        # added concurrently during the LLM call) are kept verbatim. Within the
+        # scope, drops and rewrites apply ONLY when the fresh text still equals
+        # the snapshot, so a concurrent edit to a would-be-dropped/rewritten id
+        # wins. Returns (new_list, new_list) so rebuild() gets the full saved set.
+        def _merge(entries):
+            out = []
+            survivors = 0
+            for e in entries:
+                mid = e.get("id")
+                if mid not in audited_ids:
+                    out.append(e)
+                    continue
+                fresh_unchanged = e.get("text") == snapshot_text.get(mid)
+                if mid in drop_ids and fresh_unchanged:
+                    continue  # dropped by the audit, no concurrent edit
+                if mid in clean_ops and fresh_unchanged:
+                    ops = clean_ops[mid]
+                    if ops.get("text"):
+                        e["text"] = ops["text"]
+                    if ops.get("category"):
+                        e["category"] = ops["category"]
+                out.append(e)
+                survivors += 1
+            return out, (out, survivors)
+
+        saved_entries, after_count = await asyncio.to_thread(memory_manager.mutate, _merge)
         logger.info(
             f"Memory audit complete: {before_count} -> {after_count} entries "
             f"({before_count - after_count} removed/merged)"
@@ -568,9 +610,18 @@ async def audit_memories(
         if memory_vector and memory_vector.healthy:
             memory_vector.rebuild(saved_entries)
 
-        # Persist the post-tidy fingerprint so the next call short-circuits
-        # if nothing has changed in the meantime.
-        _save_tidy_state(memory_manager, owner, _fingerprint_entries(final_entries))
+        # Persist the post-tidy fingerprint so the next call short-circuits if
+        # nothing has changed. Fingerprint the PERSISTED owner slice so a memory
+        # added concurrently (and merged in above) correctly re-triggers a tidy.
+        _save_tidy_state(
+            memory_manager,
+            owner,
+            _fingerprint_entries(
+                [e for e in saved_entries if e.get("id") in audited_ids]
+                if owner
+                else saved_entries
+            ),
+        )
 
         return {"before": before_count, "after": after_count}
 

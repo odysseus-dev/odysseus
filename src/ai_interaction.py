@@ -8,6 +8,7 @@ These are agent tools — the LLM writes fenced code blocks and they execute
 through the standard agent_tools.py pipeline.
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -975,9 +976,13 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             return {"error": "Memory text cannot be empty"}
 
         entry = _memory_manager.add_entry(text, source="ai_agent", category=category, owner=owner)
-        memories = _memory_manager.load_all()
-        memories.append(entry)
-        _memory_manager.save(memories)
+
+        def _add(memories):
+            memories.append(entry)
+            return memories, None
+
+        # async tool: keep the blocking flock off the event loop.
+        await asyncio.to_thread(_memory_manager.mutate, _add)
 
         # Update vector index if available
         if _memory_vector and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
@@ -1002,21 +1007,20 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         if not new_text:
             return {"error": "New text cannot be empty"}
 
-        memories = _memory_manager.load_all()
-        found = False
-        for m in memories:
-            if m.get("id", "").startswith(memory_id):
-                # Verify ownership
-                if owner and m.get("owner") != owner:
-                    return {"error": f"Memory '{memory_id}' not found"}
-                m["text"] = new_text
-                m["timestamp"] = int(time.time())
-                found = True
-                full_id = m["id"]
-                break
-        if not found:
+        def _edit(memories):
+            for m in memories:
+                if m.get("id", "").startswith(memory_id):
+                    # Verify ownership — no write on a mismatch.
+                    if owner and m.get("owner") != owner:
+                        return memories, ("denied", None)
+                    m["text"] = new_text
+                    m["timestamp"] = int(time.time())
+                    return memories, ("ok", m["id"])
+            return memories, ("not_found", None)
+
+        status, full_id = await asyncio.to_thread(_memory_manager.mutate, _edit)
+        if status != "ok":
             return {"error": f"Memory '{memory_id}' not found"}
-        _memory_manager.save(memories)
 
         # Update vector index
         if _memory_vector and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
@@ -1033,22 +1037,23 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             return {"error": "Delete needs line 2: memory_id"}
         memory_id = lines[1].strip()
 
-        memories = _memory_manager.load_all()
-        original_len = len(memories)
-        full_id = None
-        delete_id = None
-        for m in memories:
-            if m.get("id", "").startswith(memory_id):
-                # Verify ownership
-                if owner and m.get("owner") != owner:
-                    return {"error": f"Memory '{memory_id}' not found"}
-                full_id = m["id"]
-                delete_id = m["id"]
-                break
-        memories = [m for m in memories if m.get("id") != delete_id]
-        if len(memories) == original_len:
+        def _delete(memories):
+            full_id = None
+            for m in memories:
+                if m.get("id", "").startswith(memory_id):
+                    # Verify ownership — no write on a mismatch.
+                    if owner and m.get("owner") != owner:
+                        return memories, ("denied", None)
+                    full_id = m["id"]
+                    break
+            if full_id is None:
+                return memories, ("not_found", None)
+            new_memories = [m for m in memories if m.get("id") != full_id]
+            return new_memories, ("ok", full_id)
+
+        status, full_id = await asyncio.to_thread(_memory_manager.mutate, _delete)
+        if status != "ok":
             return {"error": f"Memory '{memory_id}' not found"}
-        _memory_manager.save(memories)
 
         # Remove from vector index
         if _memory_vector and full_id and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
