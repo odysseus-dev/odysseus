@@ -100,6 +100,7 @@ body:
     attributes:
       label: Are you willing to submit a fix?
       options:
+        - "-- Please Select --"
         - "Yes — I can open a PR"
         - "Partially — I can help but need guidance"
         - "No — I am only filing the report"
