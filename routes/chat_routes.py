@@ -30,7 +30,7 @@ from core.database import SessionLocal, get_session_mode, set_session_mode
 from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
 from routes.research_routes import _resolve_research_endpoint
-from routes.model_routes import _visible_models
+from routes.model_routes import _visible_models, _normalize_model_ids
 from routes.chat_helpers import (
     resolve_session_auth,
     build_chat_context,
@@ -211,11 +211,16 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
             cached = json.loads(ep.cached_models) if isinstance(ep.cached_models, str) else (ep.cached_models or [])
         except Exception:
             cached = []
-        if not cached:
+        # An endpoint may expose only admin-pinned IDs (cloud deployment IDs
+        # that never appear in /v1/models), so cached_models is empty but the
+        # picker still offered the pinned model. Recover from pinned too,
+        # mirroring the dropdown the user actually saw.
+        pinned = getattr(ep, "pinned_models", None)
+        if not cached and not _normalize_model_ids(pinned):
             visible = []
         else:
             try:
-                visible = _visible_models(cached, getattr(ep, "hidden_models", None))
+                visible = _visible_models(cached, getattr(ep, "hidden_models", None), pinned)
             except Exception:
                 visible = cached
         if current_model and current_model in {str(item).strip() for item in visible}:
@@ -238,10 +243,10 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
             # Cached rows are only trusted above to avoid revalidating a model
             # that is already present in the visible picker list.
             cached = live_models
-            if not cached:
+            if not cached and not _normalize_model_ids(pinned):
                 return False
             try:
-                visible = _visible_models(cached, getattr(ep, "hidden_models", None))
+                visible = _visible_models(cached, getattr(ep, "hidden_models", None), pinned)
             except Exception:
                 visible = cached
             if current_model and current_model in {str(item).strip() for item in visible}:
