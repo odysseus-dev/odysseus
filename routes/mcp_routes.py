@@ -442,10 +442,10 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 return HTMLResponse(_oauth_result_page("Error", "No OAuth config."), status_code=400)
 
             oauth_cfg = json.loads(srv.oauth_config)
-            keys_file = os.path.expanduser(oauth_cfg.get("keys_file", ""))
-            token_file = os.path.expanduser(oauth_cfg.get("token_file", ""))
+            keys_file_path = _safe_oauth_path(oauth_cfg.get("keys_file", ""), "keys_file")
+            token_file_path = _safe_oauth_path(oauth_cfg.get("token_file", ""), "token_file")
 
-            with open(keys_file, encoding="utf-8") as f:
+            with open(keys_file_path, encoding="utf-8") as f:
                 keys_data = json.load(f)
             keys = keys_data.get("installed") or keys_data.get("web")
             client_id = keys["client_id"]
