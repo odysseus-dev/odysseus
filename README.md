@@ -193,7 +193,7 @@ For NVIDIA/AMD GPU support, also read the comments in the selected overlay file:
 often accept only a single Compose file and do not reliably honor `COMPOSE_FILE`
 or multiple `-f` overlays. CLI users should keep using the `COMPOSE_FILE`
 overlay workflow above. For stack UIs, point the stack at one of the standalone
-files instead, which bundle the base stack plus the GPU settings:
+files instead, which bundles the base stack plus the GPU settings:
 
 - `docker-compose.gpu-nvidia.yml` — still requires the NVIDIA Container Toolkit
   on the host.
@@ -215,7 +215,7 @@ docker compose exec odysseus sh -lc 'test -e /dev/kfd && test -d /dev/dri && ls 
 > the CUDA Toolkit at runtime. If Cookbook logs show `Unable to find cudart
 > library`, `Could NOT find CUDAToolkit`, `CUDA Toolkit not found`, or
 > tensors/layers assigned to CPU, that is a Cookbook/llama.cpp build issue —
-> not a Docker passthrough failure. Re-install the serve engine via
+> not a Docker passthrough failure. Reinstall the server engine via
 > **Cookbook → Dependencies** to get a CUDA-enabled build.
 >
 > The same split applies to AMD/ROCm: seeing `/dev/kfd` and `/dev/dri` inside
