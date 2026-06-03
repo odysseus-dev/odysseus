@@ -1076,6 +1076,17 @@ var _searchKeyFields = {
   tavily: 'tavily_api_key', serper: 'serper_api_key',
 };
 
+export function resolveSearchResultCount(selectedValue, customValue, currentValue) {
+  var current = parseInt(currentValue, 10);
+  var fallback = (!isNaN(current) && current >= 1 && current <= 100) ? current : 5;
+  if (selectedValue === 'custom') {
+    var custom = parseInt(customValue, 10);
+    return (!isNaN(custom) && custom >= 1 && custom <= 100) ? custom : fallback;
+  }
+  var preset = parseInt(selectedValue, 10);
+  return (!isNaN(preset) && preset >= 1 && preset <= 100) ? preset : fallback;
+}
+
 async function initSearchSettings() {
   var provSel = el('set-searchProvider');
   var countSel = el('set-searchResultCount');
@@ -1135,6 +1146,9 @@ async function initSearchSettings() {
 
   countSel.addEventListener('change', function() {
     if (this.value === 'custom') {
+      if (!countCustomInput.value) {
+        countCustomInput.value = _settings.search_result_count || '';
+      }
       countCustomInput.style.display = 'block';
       countCustomInput.focus();
     } else {
@@ -1169,17 +1183,11 @@ async function initSearchSettings() {
   async function saveSearch() {
     try {
       var prov = provSel.value;
-      var resultCount;
-      if (countSel.value === 'custom') {
-        var customVal = parseInt(countCustomInput.value, 10);
-        if (isNaN(customVal) || customVal < 1 || customVal > 100) {
-          resultCount = _settings.search_result_count || 5;
-        } else {
-          resultCount = customVal;
-        }
-      } else {
-        resultCount = parseInt(countSel.value, 10);
-      }
+      var resultCount = resolveSearchResultCount(
+        countSel.value,
+        countCustomInput.value,
+        _settings.search_result_count
+      );
       var payload = {
         search_provider: prov,
         search_result_count: resultCount,
@@ -1203,6 +1211,7 @@ async function initSearchSettings() {
 
   provSel.addEventListener('change', function() { updateVisibility(); saveSearch(); _syncSearchPicker(); });
   countSel.addEventListener('change', saveSearch);
+  countCustomInput.addEventListener('change', saveSearch);
   urlInput.addEventListener('change', saveSearch);
   keyInput.addEventListener('change', saveSearch);
   cxInput.addEventListener('change', saveSearch);
