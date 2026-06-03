@@ -34,9 +34,12 @@ def _decode_png_data(data_png: str) -> bytes:
     if "," in raw:
         raw = raw.split(",", 1)[1]
     try:
-        return base64.b64decode(raw, validate=True)
+        decoded = base64.b64decode(raw, validate=True)
     except Exception as e:
         fail(f"data_png is not valid base64: {e}")
+    if not decoded.startswith(b"\x89PNG\r\n\x1a\n"):
+        fail("data_png is not a PNG image")
+    return decoded
 
 
 def cmd_list(args):

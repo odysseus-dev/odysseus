@@ -40,12 +40,16 @@ _VISION_MODEL_KEYWORDS = (
     "internvl", "cogvlm", "qwen-vl", "qwen2-vl", "qwen3-vl", "qwen3vl",
     # multimodal families whose names don't contain "vision"/"vl" but DO accept
     # images — without these the image is silently dropped for common Ollama tags
-    # like gemma3:4b (issue #1274). Gemma 3 (4b+), Llama 4 (all), and Mistral
-    # Small 3.1/3.2 are vision-capable; per the err-toward-True policy (#124) a
-    # rare text-only tag (e.g. gemma3:1b) being treated as vision is the safer
-    # failure than dropping a real image.
-    "gemma-3", "gemma3", "llama-4", "llama4",
+    # like gemma3:4b or gemma4:12b (issue #1274). Gemma 3/4 (4b+), Llama 4 (all),
+    # Mistral Small 3.1/3.2, and Phi-4 multimodal are vision-capable; per the
+    # err-toward-True policy (#124) a rare text-only tag being treated as vision is
+    # the safer failure than silently dropping a real image.
+    "gemma-3", "gemma3", "gemma-4", "gemma4",
+    "llama-4", "llama4",
     "mistral-small-3.1", "mistral-small3.1", "mistral-small-3.2", "mistral-small3.2",
+    # Microsoft Phi-4 ships a dedicated multimodal variant ("phi-4-multimodal-instruct")
+    # but users often load it under the bare "phi-4" or "phi4" Ollama tag.
+    "phi-4", "phi4",
     # zhipu / glm (glm-4.5v, glm-4.6v, glm-5v-turbo, etc.)
     "glm-4.5v", "glm-4.6v", "glm-5v",
 )

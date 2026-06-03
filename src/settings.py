@@ -187,7 +187,7 @@ def load_settings() -> dict:
         if not isinstance(saved, dict):
             raise ValueError("settings must be an object")
         merged = {**DEFAULT_SETTINGS, **saved}
-    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+    except (FileNotFoundError, PermissionError, json.JSONDecodeError, ValueError):
         merged = dict(DEFAULT_SETTINGS)
     _settings_cache = (now, merged)
     return merged

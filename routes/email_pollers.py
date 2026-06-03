@@ -99,6 +99,36 @@ async def _run_auto_summarize_once(do_summary: bool = True, do_reply: bool = Tru
         _save_settings(s2)
 
 
+def _latest_inbox_fallback_uids(conn, reconnect):
+    """Latest INBOX UIDs via ``SEARCH ALL``, with a poisoned-socket guard (#1613).
+
+    On a large Gmail mailbox the fallback ``SEARCH ALL`` can time out mid-reply,
+    leaving its enormous ``* SEARCH <uids…>`` line unread on the socket. The next
+    command (the downstream re-select / EXAMINE) then reads those leftover bytes
+    and fails with ``EXAMINE => unexpected response: b'325188 …'``. Reconnecting
+    on failure guarantees the downstream command starts from a clean socket.
+
+    Returns ``(uids, conn)`` — ``conn`` is the live connection to keep using: the
+    same one on success, a fresh one (via ``reconnect()``) if we had to recover.
+    """
+    try:
+        conn.select("INBOX", readonly=True)
+        status, data = conn.uid("SEARCH", None, "ALL")
+        uids = []
+        if status == "OK" and data and data[0]:
+            for u in reversed(data[0].split()[-8:]):
+                uids.append(("INBOX", u))
+            logger.info("Email task SINCE scan found no messages; fell back to latest INBOX messages")
+        return uids, conn
+    except Exception as _e:
+        logger.warning(f"Latest-INBOX fallback scan failed: {_e}")
+        try:
+            conn.logout()
+        except Exception:
+            pass
+        return [], reconnect()
+
+
 async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None, progress_cb=None) -> str:
     """Single pass of the auto-summarize/reply scan.
 
@@ -201,16 +231,12 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         # the latest visible inbox messages so Clear cache -> Run again can
         # actually repopulate AI reply/summary/tag caches.
         if not uid_list:
-            try:
-                conn.select("INBOX", readonly=True)
-                status, data = conn.uid("SEARCH", None, "ALL")
-                if status == "OK" and data and data[0]:
-                    for u in reversed(data[0].split()[-8:]):
-                        uid_list.append(("INBOX", u))
-                    logger.info("Email task SINCE scan found no messages; fell back to latest INBOX messages")
-            except Exception as _e:
-                logger.warning(f"Latest-INBOX fallback scan failed: {_e}")
-        # Re-select INBOX as default for downstream code
+            _fb_uids, conn = _latest_inbox_fallback_uids(
+                conn, lambda: _imap_connect(account_id, owner=account_owner)
+            )
+            uid_list.extend(_fb_uids)
+        # Re-select INBOX as default for downstream code (on a clean socket even
+        # if the SEARCH ALL fallback above failed — see #1613).
         conn.select("INBOX", readonly=True)
         if not uid_list:
             return "No recent emails"

@@ -12,6 +12,9 @@ from src.llm_core import llm_call
 
 logger = logging.getLogger(__name__)
 
+MAX_INLINE_ATTACHMENT_CHARS = 24000
+MIN_INLINE_ATTACHMENT_SLICE = 500
+
 
 def _is_text_file(path: str) -> bool:
     """Check if file has text extension."""
@@ -158,6 +161,41 @@ def _truncate_inline(text: str, limit: int = 15000) -> tuple[str, str]:
     if len(text) > limit:
         return text[:limit], "\n[…truncated for inline context.]"
     return text, ""
+
+
+def _fit_inline_attachment_text(
+    text: str,
+    remaining: int,
+    display_name: str,
+) -> tuple[str, int]:
+    """Fit extracted attachment text into the shared inline attachment budget.
+
+    Individual processors already cap single files, but multi-file batches can
+    still add N capped bodies to one user turn. Keep the first files readable,
+    keep later files visible by name, and mark exactly where inline content was
+    reduced so the model does not silently miss attachments.
+    """
+    text = text or ""
+    if len(text) <= remaining:
+        return text, remaining - len(text)
+
+    name = os.path.basename(display_name or "attachment")
+    if remaining < MIN_INLINE_ATTACHMENT_SLICE:
+        return (
+            f"\n\n[Attachment omitted from inline context: {name}. "
+            f"The {MAX_INLINE_ATTACHMENT_CHARS:,}-character shared inline "
+            "attachment budget was already used by earlier attachments. Ask "
+            "to inspect this file specifically if more detail is needed.]",
+            0,
+        )
+    marker = (
+        f"\n\n[Attachment content truncated: {name}. "
+        f"Only {remaining:,} characters of this attachment fit within "
+        f"the {MAX_INLINE_ATTACHMENT_CHARS:,}-character shared inline "
+        "attachment budget. Ask to inspect this file specifically if more "
+        "detail is needed.]"
+    )
+    return text[:remaining] + marker, 0
 
 
 def _process_office_document(path: str, display_name: str) -> str:
@@ -323,6 +361,7 @@ def build_user_content(
     frontend can switch to the new doc immediately.
     """
     content = [{"type": "text", "text": text}]
+    inline_attachment_remaining = MAX_INLINE_ATTACHMENT_CHARS
 
     for fid in attachment_ids or []:
         upload_info = (resolved_uploads or {}).get(fid)
@@ -394,9 +433,7 @@ def build_user_content(
                         # Pull the PDF prose once — used as either intro_text
                         # (form path) or the doc body (plain path).
                         try:
-                            pdf_body_text = _process_pdf(path).lstrip(
-                                "\n[PDF content]:"
-                            ).strip()
+                            pdf_body_text = strip_pdf_content_marker(_process_pdf(path))
                         except Exception:
                             pdf_body_text = None
 
@@ -485,6 +522,11 @@ def build_user_content(
             else:
                 extracted_text = _process_office_document(path, display_name)
 
+            extracted_text, inline_attachment_remaining = _fit_inline_attachment_text(
+                extracted_text,
+                inline_attachment_remaining,
+                display_name,
+            )
             if content and content[0]["type"] == "text":
                 content[0]["text"] += extracted_text
             else:

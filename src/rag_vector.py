@@ -260,8 +260,11 @@ class VectorRAG:
             for i, doc in enumerate(all_docs["documents"]):
                 meta = all_docs["metadatas"][i]
                 if owner:
-                    doc_owner = meta.get("owner")
-                    if doc_owner and doc_owner != owner:
+                    # Match the primary path's strict where={"owner": owner}
+                    # filter. The old `if doc_owner and doc_owner != owner`
+                    # let docs with a missing/empty owner fall through, leaking
+                    # owner-less documents into another user's results.
+                    if meta.get("owner") != owner:
                         continue
                 doc_lower = doc.lower()
                 score = sum(1 for w in query_words if w in doc_lower)
@@ -380,20 +383,36 @@ class VectorRAG:
             return {'success': False, 'indexed_count': indexed, 'failed_count': failed, 'message': str(e)}
 
     def remove_directory(self, directory: str) -> Dict[str, Any]:
-        """Remove all chunks from a directory. O(1) per chunk via ChromaDB."""
+        """Remove all chunks under ``directory`` (recursively), and nothing else.
+
+        Selection is a Python-side path-boundary match on each chunk's stored
+        ``source`` full path, NOT a Chroma metadata ``where`` filter. No Chroma
+        metadata operator selects a scalar string by path prefix (``$contains``
+        targets document content / list membership, not a ``source`` substring),
+        and a plain substring would over-delete siblings — removing ``/docs``
+        must not touch ``/docs2`` or ``/docs_personal``. We therefore match
+        ``source == directory`` or ``source`` startswith ``directory + os.sep``,
+        the same boundary rule add_directory uses for exclusions. ``directory``
+        is abspath-normalized so it matches the absolute ``source`` that indexing
+        always stores, regardless of how the caller passed it in.
+        """
         if not self.healthy:
             return {"success": False, "message": "Collection not initialized"}
+        directory = os.path.abspath(directory)
         try:
-            # Use ChromaDB where filter to find all docs from this directory
-            results = self._collection.get(
-                where={"source": {"$contains": directory}} if "/" in directory else {"directory": directory},
-                include=["metadatas"],
-            )
-            if not results['ids']:
+            results = self._collection.get(include=["metadatas"])
+            ids = [
+                results["ids"][i]
+                for i, m in enumerate(results["metadatas"])
+                if isinstance(m, dict)
+                and isinstance(m.get("source"), str)
+                and (m["source"] == directory or m["source"].startswith(directory + os.sep))
+            ]
+            if not ids:
                 return {"success": True, "removed_count": 0, "message": "No docs found"}
 
-            self._collection.delete(ids=results['ids'])
-            n = len(results['ids'])
+            self._collection.delete(ids=ids)
+            n = len(ids)
             logger.info(f"Removed {n} chunks from {directory}")
             return {"success": True, "removed_count": n, "message": f"Removed {n} chunks"}
         except Exception as e:
