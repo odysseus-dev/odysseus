@@ -13,6 +13,7 @@ import re
 import time
 import logging
 from typing import AsyncGenerator, List, Dict, Optional, Set
+from urllib.parse import urlparse
 
 from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
 from src.model_context import estimate_tokens
@@ -465,6 +466,64 @@ _API_HOSTS = frozenset([
     # schemas and the agent silently degrades to fenced-block parsing.
     "localhost", "127.0.0.1", "host.docker.internal",
 ])
+
+_TOOL_SCHEMA_MODEL_HINTS = (
+    "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
+    "qwen3", "qwen2.5", "mixtral", "mistral", "llama-3.1", "llama-3.2",
+    "llama-3.3", "llama-4",
+    # Local-served models that follow OpenAI-style function calling via
+    # vLLM's `--enable-auto-tool-choice`. Belt-and-suspenders with the
+    # per-endpoint flag below.
+    "minimax", "kimi", "yi-", "phi-3", "phi-4", "command-r",
+    "glm-4", "internlm", "hermes",
+    # deepseek-v2/v3/chat support tools via the cloud API; deepseek-r1
+    # (reasoning model) does not — handled by the blocklist below.
+    "deepseek-v", "deepseek-chat",
+)
+_NO_TOOL_SCHEMA_MODEL_HINTS = (
+    "deepseek-r1",
+)
+
+
+def _is_ollama_openai_compat_url(endpoint_url: str) -> bool:
+    """Return True for Ollama's local/LAN OpenAI-compatible `/v1` endpoint."""
+    try:
+        parsed = urlparse(endpoint_url or "")
+        port = parsed.port
+    except Exception:
+        return False
+
+    host = (parsed.hostname or "").lower()
+    path = (parsed.path or "").rstrip("/")
+    is_ollama_host = port == 11434 or host == "ollama"
+    return is_ollama_host and (path == "/v1" or path.startswith("/v1/"))
+
+
+def _agent_uses_native_tool_schemas(
+    model: str,
+    endpoint_url: str,
+    endpoint_supports: Optional[bool] = None,
+) -> bool:
+    """Decide whether agent mode should send native function/tool schemas."""
+    if endpoint_supports is True:
+        return True
+    if endpoint_supports is False:
+        return False
+
+    model_lc = (model or "").lower()
+    if any(kw in model_lc for kw in _NO_TOOL_SCHEMA_MODEL_HINTS):
+        return False
+
+    # Ollama native `/api/chat` and local Ollama's OpenAI-compatible `/v1`
+    # endpoint can accept the request shape but many models respond to schemas
+    # with a single tool-call token and no prose. Default these to the text
+    # fenced-block path unless the endpoint is explicitly opted in.
+    if _is_ollama_native_url(endpoint_url or "") or _is_ollama_openai_compat_url(endpoint_url or ""):
+        return False
+
+    model_supports_tools = any(kw in model_lc for kw in _TOOL_SCHEMA_MODEL_HINTS)
+    return any(h in (endpoint_url or "") for h in _API_HOSTS) or model_supports_tools
+
 _MCP_KEYWORDS = frozenset(["browse", "browser", "website", "calendar", "event", "email",
                            "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])
 _ADMIN_SCHEMA_NAMES = frozenset([
@@ -1449,11 +1508,6 @@ async def stream_agent_loop(
     prep_timings["tool_selection"] = time.time() - _t1
 
     _t2 = time.time()
-    # Hosted-API match by URL, OR the model name looks like a recent model
-    # known to follow OpenAI-style function calling (DeepSeek, GPT*, Claude,
-    # Gemini, Qwen3+, Mixtral, Llama 3.1+). Caught the DeepSeek-via-local-
-    # vLLM case where endpoint_url doesn't include a vendor host.
-    _model_lc = (model or "").lower()
     # Step 1: per-endpoint override (set at registration time from the
     # serve command — `--enable-auto-tool-choice` flips it on. UI can
     # also toggle per endpoint). NULL = unknown, fall through to the
@@ -1474,41 +1528,7 @@ async def stream_agent_loop(
             _db.close()
     except Exception as _e:
         logger.debug(f"endpoint supports_tools lookup failed: {_e}")
-    _model_supports_tools = any(kw in _model_lc for kw in (
-        "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
-        "qwen3", "qwen2.5", "mixtral", "mistral", "llama-3.1", "llama-3.2",
-        "llama-3.3", "llama-4",
-        # Local-served models that follow OpenAI-style function calling
-        # via vLLM's `--enable-auto-tool-choice`. Belt-and-suspenders
-        # with the per-endpoint flag above.
-        "minimax", "kimi", "yi-", "phi-3", "phi-4", "command-r",
-        "glm-4", "internlm", "hermes",
-        # deepseek-v2/v3/chat support tools via the cloud API; deepseek-r1
-        # (reasoning model) does not — handled by the blocklist below.
-        "deepseek-v", "deepseek-chat",
-    ))
-    # Models known to reject tool schemas at the Ollama/local level even when
-    # the endpoint URL would otherwise enable native function calling.
-    # The per-endpoint supports_tools flag (True/False) always takes priority
-    # and can override this list for users who know their setup.
-    _model_no_tools = any(kw in _model_lc for kw in (
-        "deepseek-r1",
-    ))
-    # Native Ollama endpoints (/api/chat) handle tool schemas differently from
-    # the OpenAI-compat path. Models like gemma4, qwen3.5, ministral respond to
-    # tool schemas by emitting a single native tool_call token then stopping,
-    # rather than writing a fenced block — the agent loop sees 1 token and no
-    # recognised tool, so the round terminates immediately (issue #1567).
-    # Unless the endpoint is explicitly marked supports_tools=True by the user
-    # (via the endpoint settings toggle), treat Ollama-native as text-only so
-    # the fenced-block path is used instead of native function calling.
-    _is_ollama_native = _is_ollama_native_url(endpoint_url or "")
-    if _endpoint_supports is True:
-        _is_api_model = True
-    elif _endpoint_supports is False or _model_no_tools or _is_ollama_native:
-        _is_api_model = False
-    else:
-        _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
+    _is_api_model = _agent_uses_native_tool_schemas(model, endpoint_url or "", _endpoint_supports)
     messages, mcp_schemas = _build_system_prompt(
         messages, model, active_document, mcp_mgr, disabled_tools,
         needs_admin=_needs_admin, relevant_tools=_relevant_tools,

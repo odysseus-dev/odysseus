@@ -1,39 +1,25 @@
 """Regression tests for the tool-support heuristic in stream_agent_loop.
 
 Verifies two critical cases:
-  1. deepseek-r1 on a local Ollama endpoint must NOT enable native tool schemas
-     (Ollama returns HTTP 400 for these models when tools are sent).
+  1. Ollama's local OpenAI-compatible `/v1` endpoint must NOT enable native
+     tool schemas by default. Some models return a single tool-call token and
+     no prose when schemas are sent.
   2. api.deepseek.com must still be treated as tool-capable via the host
      allow-list (_API_HOSTS), so cloud deepseek users keep working.
 """
-import pytest
-from src.agent_loop import _API_HOSTS
+from src.agent_loop import (
+    _API_HOSTS,
+    _agent_uses_native_tool_schemas,
+    _is_ollama_openai_compat_url,
+)
 
 
 def _compute_is_api_model(model: str, endpoint_url: str, endpoint_supports=None) -> bool:
-    """Replicate the heuristic from stream_agent_loop without side effects."""
-    model_lc = model.lower()
-
-    model_supports_tools = any(kw in model_lc for kw in (
-        "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
-        "qwen3", "qwen2.5", "mixtral", "mistral", "llama-3.1", "llama-3.2",
-        "llama-3.3", "llama-4",
-        "minimax", "kimi", "yi-", "phi-3", "phi-4", "command-r",
-        "glm-4", "internlm", "hermes",
-        "deepseek-v", "deepseek-chat",
-    ))
-    model_no_tools = any(kw in model_lc for kw in (
-        "deepseek-r1",
-    ))
-
-    if endpoint_supports is True:
-        return True
-    if endpoint_supports is False or model_no_tools:
-        return False
-    return any(h in endpoint_url for h in _API_HOSTS) or model_supports_tools
+    """Wrap the production heuristic used by stream_agent_loop."""
+    return _agent_uses_native_tool_schemas(model, endpoint_url, endpoint_supports)
 
 
-class TestDeepSeekToolSupport:
+class TestLocalOllamaToolSupport:
     # --- local Ollama cases (must NOT get tool schemas) ---
 
     def test_deepseek_r1_7b_local_ollama_no_tools(self):
@@ -55,6 +41,20 @@ class TestDeepSeekToolSupport:
         assert _compute_is_api_model(
             "deepseek-r1:7b", "http://host.docker.internal:11434/v1"
         ) is False
+
+    def test_gemma4_local_ollama_v1_no_tools(self):
+        assert _compute_is_api_model("gemma4:e2b", "http://localhost:11434/v1") is False
+
+    def test_qwen_local_ollama_v1_no_tools(self):
+        assert _compute_is_api_model("qwen2.5:14b", "http://localhost:11434/v1") is False
+
+    def test_lan_ollama_v1_no_tools_by_port(self):
+        assert _compute_is_api_model("gemma4:e2b", "http://192.168.1.50:11434/v1") is False
+
+    def test_ollama_openai_compat_url_detector(self):
+        assert _is_ollama_openai_compat_url("http://localhost:11434/v1") is True
+        assert _is_ollama_openai_compat_url("http://localhost:11434/v1/chat/completions") is True
+        assert _is_ollama_openai_compat_url("http://localhost:8000/v1") is False
 
     # --- cloud API cases (must still get tool schemas) ---
 
@@ -82,6 +82,12 @@ class TestDeepSeekToolSupport:
         )
         assert result is True
 
+    def test_endpoint_supports_true_overrides_local_ollama_v1_default(self):
+        result = _compute_is_api_model(
+            "gemma4:e2b", "http://localhost:11434/v1", endpoint_supports=True
+        )
+        assert result is True
+
     def test_endpoint_supports_false_overrides_cloud(self):
         """supports_tools=False on an endpoint gates even cloud APIs."""
         result = _compute_is_api_model(
@@ -89,13 +95,13 @@ class TestDeepSeekToolSupport:
         )
         assert result is False
 
-    # --- other local models unaffected ---
+    # --- other local OpenAI-compatible servers unaffected ---
 
-    def test_qwen_local_still_gets_tools(self):
-        assert _compute_is_api_model("qwen2.5:14b", "http://localhost:11434/v1") is True
+    def test_qwen_local_non_ollama_still_gets_tools(self):
+        assert _compute_is_api_model("qwen2.5:14b", "http://localhost:8000/v1") is True
 
-    def test_llama_local_gets_tools_via_host(self):
-        assert _compute_is_api_model("llama3.2:3b", "http://localhost:11434/v1") is True
+    def test_llama_local_non_ollama_gets_tools_via_host(self):
+        assert _compute_is_api_model("llama3.2:3b", "http://localhost:8000/v1") is True
 
 
 class TestApiHostsContainsDeepSeek:
