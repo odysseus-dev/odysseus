@@ -616,7 +616,10 @@ class SessionManager:
 
         try:
             all_sessions = db.query(DbSession).all()
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=auto_archive_days)
+            # Use naive UTC to match the naive last_accessed column. SQLite
+            # drops tzinfo on round-trip, so comparing an aware cutoff against
+            # a naive last_accessed raises TypeError and silently aborts cleanup.
+            cutoff_date = datetime.utcnow() - timedelta(days=auto_archive_days)
 
             for db_session in all_sessions:
                 stats['total_checked'] += 1
