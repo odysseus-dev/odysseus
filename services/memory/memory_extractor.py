@@ -547,17 +547,20 @@ async def audit_memories(
             for e in all_entries:
                 if e.get("owner") is None and e["id"] not in audited_ids and e["id"] not in {o["id"] for o in other_entries}:
                     other_entries.append(e)
-            memory_manager.save(final_entries + other_entries)
+            saved_entries = final_entries + other_entries
         else:
-            memory_manager.save(final_entries)
+            saved_entries = final_entries
+        memory_manager.save(saved_entries)
         logger.info(
             f"Memory audit complete: {before_count} -> {after_count} entries "
             f"({before_count - after_count} removed/merged)"
         )
 
-        # Rebuild vector index
+        # Rebuild vector index from the full saved set, not just this owner's
+        # slice — otherwise the shared collection is wiped of every other
+        # owner's entries until they happen to run their own audit.
         if memory_vector and memory_vector.healthy:
-            memory_vector.rebuild(final_entries)
+            memory_vector.rebuild(saved_entries)
 
         # Persist the post-tidy fingerprint so the next call short-circuits
         # if nothing has changed in the meantime.
