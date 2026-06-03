@@ -2,6 +2,7 @@
 """MCP (Model Context Protocol) server management routes."""
 import json
 import os
+from pathlib import Path
 import uuid
 import urllib.parse
 import html
@@ -15,6 +16,23 @@ from core.middleware import require_admin
 from src.mcp_manager import McpManager
 
 logger = logging.getLogger(__name__)
+
+# ---- OAuth file containment ----
+OAUTH_DIR = DATA_DIR / "mcp_oauth"
+OAUTH_DIR.mkdir(parents=True, exist_ok=True)
+
+def _safe_oauth_path(path_arg: str, label: str) -> Path:
+    """Resolve *path_arg* and assert it stays inside OAUTH_DIR."""
+    if not path_arg or not path_arg.strip():
+        raise ValueError(f"{label} must not be empty")
+    resolved = Path(path_arg).expanduser().resolve()
+    try:
+        resolved.relative_to(OAUTH_DIR.resolve())
+    except ValueError:
+        raise ValueError(
+            f"{label} escapes OAUTH_DIR: {path_arg!r} -> {resolved}"
+        )
+    return resolved
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
@@ -53,8 +71,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 oauth_cfg = json.loads(srv.oauth_config) if srv.oauth_config else None
                 needs_oauth = False
                 if oauth_cfg:
-                    token_file = os.path.expanduser(oauth_cfg.get("token_file", ""))
-                    needs_oauth = token_file and not os.path.exists(token_file)
+                    token_file_path = _safe_oauth_path(oauth_cfg.get("token_file", ""), "token_file")
+                    needs_oauth = not token_file_path.exists()
                 disabled_list = json.loads(srv.disabled_tools) if srv.disabled_tools else []
                 total_tools = status.get("tool_count", 0)
                 result.append({
@@ -125,7 +143,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
         if oauth_file:
             try:
                 oauth_data = json.loads(oauth_file)
-                oauth_dir = os.path.expanduser(oauth_data.get("dir", ""))
+                oauth_dir = str(_safe_oauth_path(oauth_data.get("dir", ""), "oauth_dir"))
                 oauth_filename = oauth_data.get("filename", "")
                 client_id = oauth_data.get("client_id", "")
                 client_secret = oauth_data.get("client_secret", "")
@@ -171,8 +189,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
         # Check if OAuth token already exists — skip connection attempt if not
         needs_oauth = False
         if parsed_oauth_config:
-            token_file = os.path.expanduser(parsed_oauth_config.get("token_file", ""))
-            if token_file and not os.path.exists(token_file):
+            token_file_path = _safe_oauth_path(parsed_oauth_config.get("token_file", ""), "token_file")
+            if not token_file_path.exists():
                 needs_oauth = True
 
         connected = False
@@ -350,11 +368,11 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 raise HTTPException(400, "Server has no OAuth config")
 
             oauth_cfg = json.loads(srv.oauth_config)
-            keys_file = os.path.expanduser(oauth_cfg.get("keys_file", ""))
-            if not keys_file or not os.path.exists(keys_file):
+            keys_file_path = _safe_oauth_path(oauth_cfg.get("keys_file", ""), "keys_file")
+            if not keys_file_path.exists():
                 raise HTTPException(400, "OAuth keys file not found")
 
-            with open(keys_file, encoding="utf-8") as f:
+            with open(keys_file_path, encoding="utf-8") as f:
                 keys_data = json.load(f)
             keys = keys_data.get("installed") or keys_data.get("web")
             if not keys:
