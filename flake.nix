@@ -603,6 +603,10 @@
               serviceConfig = {
                 KeepAlive = true;
                 RunAtLoad = true;
+                # CWD must be the data dir so the app's relative "data/..." paths
+                # (e.g. the SQLite DB) resolve there instead of "/". Without this
+                # the server fails to open its database and the daemon crash-loops.
+                WorkingDirectory = cfg.dataDir;
                 StandardOutPath = "${cfg.dataDir}/logs/launchd.out.log";
                 StandardErrorPath = "${cfg.dataDir}/logs/launchd.err.log";
                 EnvironmentVariables = {
