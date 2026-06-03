@@ -65,6 +65,9 @@ _TOOL_INTENT_PATTERNS: tuple[Pattern[str], ...] = tuple(
         r"\b(can|could|please|would)\s+you\s+(run|execute|exec)\b",
         r"\b(deploy|build|install|restart|reboot|kill|tail|grep|cat|ls|cd|cp|mv|rm)\b\s+\S+",
         r"\b(check|see)\s+(if|whether|what)\s+.{1,40}\b(running|process|service|port|file|exists?)\b",
+        # Self-analysis requests
+        rf"{_PLEASE}(?:analyze|audit|inspect|map)\b.{{0,120}}\b(?:yourself|your own|juniperus|brain|library|knowledge graph|routes|tools|app|structure)\b",
+        rf"{_PLEASE}(?:what parts|what is wired|what is scaffolded|what is missing)\b",
     )
 )
 
@@ -73,4 +76,25 @@ def message_needs_tools(text: str, patterns: Iterable[Pattern[str]] = _TOOL_INTE
     """Return True when a plain chat message should be promoted to agent mode."""
     if not text:
         return False
+    # GNEXUS_SELF_ANALYSIS_INVENTORY_INLINE_INTENT_PATCH
+    if re.search(
+        r"\bwhat\b.*\b(?:tools|routes|memory\s+structures|brain|library|knowledge\s+graph|skills|endpoints|app\s+structure|parts\s+of\s+this\s+app)\b.*\b(?:do\s+you\s+have|can\s+you\s+see|can\s+you\s+access|are\s+wired|are\s+scaffolded|are\s+missing)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return True
+    # GNEXUS_SELF_ANALYSIS_MAP_STATUS_INLINE_INTENT_PATCH
+    if re.search(
+        r"\b(?:map|audit|analyze|inspect|show|list|identify)\b.*\b(?:wired|scaffolded|missing|partial|unused|unclear)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return True
+    # GNEXUS_SELF_ANALYSIS_POLITE_OBJECT_INLINE_INTENT_PATCH
+    if re.search(
+        r"^\s*(?:please\s+)?(?:can\s+you|could\s+you|would\s+you)?\s*(?:audit|analyze|inspect|map|list|show|identify)\b.*\b(?:your\s+|own\s+)?(?:memories|memory|brain|library|knowledge\s+graph|tools|routes|skills|endpoints|app\s+structure)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return True
     return any(pattern.search(text) for pattern in patterns)

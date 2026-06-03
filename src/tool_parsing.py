@@ -15,6 +15,14 @@ from src.agent_tools import ToolBlock, TOOL_TAGS
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Destructive tool names that must NEVER be executed via JSON-in-text parsing.
+# If the model emits one of these as raw JSON, it is treated as plain text.
+# ---------------------------------------------------------------------------
+_JSON_TOOL_BLOCKLIST = frozenset({
+    "bash", "python", "write_file",
+})
+
+# ---------------------------------------------------------------------------
 # Regex patterns
 # ---------------------------------------------------------------------------
 
@@ -81,6 +89,69 @@ def _normalize_dsml(text: str) -> str:
                r"<parameter name=\1>", t, flags=re.IGNORECASE)
     t = re.sub(rf"<\s*/\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*parameter\s*>", "</parameter>", t, flags=re.IGNORECASE)
     return t
+
+# Pattern 6: JSON-in-text tool calls.
+# Some models (e.g. qwen2.5-coder served via llama.cpp or older vLLM)
+# ignore native tool/function-calling schemas and instead emit the OpenAI
+# function-call shape as plain text:
+#   {"name":"TOOL_NAME","arguments":{...}}
+# We detect these blobs, validate the tool name against TOOL_TAGS, and
+# convert them to ToolBlocks so the existing execution pipeline runs them.
+# The outer regex finds the start of the blob; _parse_json_tool_call uses
+# json.JSONDecoder to extract the full object (handles arbitrary nesting).
+_JSON_TOOL_START_RE = re.compile(
+    r'\{\s*"name"\s*:\s*"(\w+)"\s*,\s*"arguments"\s*:\s*\{',
+    re.DOTALL,
+)
+
+
+def _parse_json_tool_call(m, full_text: str) -> Optional[ToolBlock]:
+    """Parse a JSON-in-text tool call match into a ToolBlock.
+
+    Uses json.JSONDecoder to extract the full JSON object from the match
+    position, handling correctly nested braces in the arguments value.
+    Returns None if the tool name is unknown, blocklisted, or the JSON
+    is malformed.  Unknown tools are silently skipped so that arbitrary
+    JSON objects in model output don't trigger false positives.
+    """
+    tool_name = m.group(1).lower()
+    match_start = m.start()
+
+    # Blocklisted destructive tools must not be executed from JSON text.
+    if tool_name in _JSON_TOOL_BLOCKLIST:
+        logger.info(f"[json-tool] blocked destructive tool in JSON text: {tool_name}")
+        return None
+
+    # Resolve aliases (same map the other parsers use).
+    mapped = _TOOL_NAME_MAP.get(tool_name) or (tool_name if tool_name in TOOL_TAGS else None)
+    if not mapped:
+        return None
+
+    # Also blocklist after mapping (in case an alias resolves to a destructive tool).
+    if mapped in _JSON_TOOL_BLOCKLIST:
+        logger.info(f"[json-tool] blocked destructive tool via alias: {tool_name} -> {mapped}")
+        return None
+
+    # Use json.JSONDecoder to extract the full JSON object (handles nesting properly).
+    decoder = json.JSONDecoder()
+    try:
+        obj, _ = decoder.raw_decode(full_text, match_start)
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning(f"[json-tool] failed to decode JSON tool call for {tool_name}: {e}")
+        return None
+
+    if not isinstance(obj, dict) or "arguments" not in obj:
+        return None
+
+    args = obj["arguments"]
+    if not isinstance(args, dict):
+        return None
+
+    # Delegate to the same converter used for native function calls and XML
+    # invokes so the full tool set and correct per-tool content format apply.
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(mapped, json.dumps(args))
+
 
 # Map model tool names to our tool types
 _TOOL_NAME_MAP = {
@@ -333,6 +404,7 @@ def parse_tool_blocks(text: str) -> List[ToolBlock]:
     3. XML-style <tool_call>/<invoke> blocks
     4. <tool_code> blocks (MiniMax-M2.5 style)
     5. DeepSeek DSML markup (normalized to <invoke> first)
+    6. JSON-in-text: {"name":"TOOL","arguments":{...}} (last resort)
     """
     blocks = []
 
@@ -388,6 +460,19 @@ def parse_tool_blocks(text: str) -> List[ToolBlock]:
             if block:
                 blocks.append(block)
 
+    # Pattern 6: JSON-in-text tool calls
+    # Models like qwen2.5-coder sometimes emit raw OpenAI-style function call
+    # JSON in their text content even when native tool schemas were provided.
+    # We parse these last (after all fenced/XML patterns) so that properly
+    # formatted tool calls are handled by their existing, more precise parsers.
+    if not blocks:
+        for m in _JSON_TOOL_START_RE.finditer(text):
+            block = _parse_json_tool_call(m, text)
+            if block:
+                blocks.append(block)
+        if blocks:
+            logger.info(f"[json-tool] parsed {len(blocks)} JSON-in-text tool call(s)")
+
     return blocks
 
 
@@ -402,5 +487,67 @@ def strip_tool_blocks(text: str) -> str:
     cleaned = _TOOL_CODE_RE.sub('', cleaned)
     # Strip bare <invoke> blocks not wrapped in <tool_call>
     cleaned = re.sub(r'<invoke\s+name=["\'].*?</invoke>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+def _strip_json_tool_calls(text: str) -> str:
+    """Strip JSON-in-text tool calls from text for display.
+
+    Uses the same detection regex as parsing, but removes the entire
+    JSON object by counting brace depth (handles arbitrary nesting).
+    """
+    result = []
+    pos = 0
+    for m in _JSON_TOOL_START_RE.finditer(text):
+        match_start = m.start()
+        # Walk from the opening { to find the matching closing }
+        depth = 0
+        i = match_start
+        found_end = False
+        in_string = False
+        escape_next = False
+        while i < len(text):
+            ch = text[i]
+            if escape_next:
+                escape_next = False
+                i += 1
+                continue
+            if ch == '\\' and in_string:
+                escape_next = True
+                i += 1
+                continue
+            if ch == '"':
+                in_string = not in_string
+            elif not in_string:
+                if ch == '{':
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+                    if depth == 0:
+                        found_end = True
+                        i += 1  # include the closing }
+                        break
+            i += 1
+        if found_end:
+            result.append(text[pos:match_start])
+            pos = i
+        else:
+            # Malformed JSON — keep the text up to where we stopped scanning
+            result.append(text[pos:i])
+            pos = i
+    result.append(text[pos:])
+    return ''.join(result)
+
+
+def strip_tool_blocks(text: str) -> str:
+    """Remove executable tool blocks from text for clean display."""
+    # Normalize DSML first so its markup gets stripped by the <invoke>
+    # / <tool_call> removers below instead of leaking to the user.
+    text = _normalize_dsml(text)
+    cleaned = _TOOL_BLOCK_RE.sub('', text)
+    cleaned = _TOOL_CALL_RE.sub('', cleaned)
+    cleaned = _XML_TOOL_CALL_RE.sub('', cleaned)
+    cleaned = _TOOL_CODE_RE.sub('', cleaned)
+    # Strip bare <invoke> blocks not wrapped in <tool_call>
+    cleaned = re.sub(r'<invoke\s+name=["\'].*?</invoke>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+    # Strip JSON-in-text tool calls: {"name":"TOOL","arguments":{...}}
+    cleaned = _strip_json_tool_calls(cleaned)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()
