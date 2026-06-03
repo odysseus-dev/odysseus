@@ -254,8 +254,11 @@ class VectorRAG:
             for i, doc in enumerate(all_docs["documents"]):
                 meta = all_docs["metadatas"][i]
                 if owner:
-                    doc_owner = meta.get("owner")
-                    if doc_owner and doc_owner != owner:
+                    # Match the primary path's strict where={"owner": owner}
+                    # filter. The old `if doc_owner and doc_owner != owner`
+                    # let docs with a missing/empty owner fall through, leaking
+                    # owner-less documents into another user's results.
+                    if meta.get("owner") != owner:
                         continue
                 doc_lower = doc.lower()
                 score = sum(1 for w in query_words if w in doc_lower)
