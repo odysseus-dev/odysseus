@@ -49,7 +49,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 01-04-PLAN.md — scripts/scorecard.py (7-metric JSON-first generator with --write/--check ratchet) + baseline.json + SCORECARD.md (BASE-01)
+- [x] 01-04-PLAN.md — scripts/scorecard.py (7-metric JSON-first generator with --write/--check ratchet) + baseline.json + SCORECARD.md (BASE-01)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -120,7 +120,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Tooling Foundation & Baseline Scorecard | 2/5 | In progress | - |
+| 1. Tooling Foundation & Baseline Scorecard | 4/5 | In progress | - |
 | 2. Safety Baseline — Coverage & SQLite Hardening | 0/TBD | Not started | - |
 | 3. Backend God-File Decomposition | 0/TBD | Not started | - |
 | 4. Frontend Splits, DI Hardening & Data Layer | 0/TBD | Not started | - |

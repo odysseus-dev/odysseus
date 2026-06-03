@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-06-03T18:05:00.000Z"
-last_activity: 2026-06-03 -- Completed Plan 01-03 (mypy lenient zero baseline + coverage/bandit skeletons)
+stopped_at: Completed 01-04-PLAN.md
+last_updated: "2026-06-03T18:18:20.000Z"
+last_activity: 2026-06-03 -- Completed Plan 01-04 (scorecard.py 7-metric generator + clean baseline.json + ratchet verified)
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 5
-  completed_plans: 3
-  percent: 60
+  completed_plans: 4
+  percent: 80
 ---
 
 # Project State
@@ -26,29 +26,29 @@ See: .planning/PROJECT.md (updated 2026-06-03)
 ## Current Position
 
 Phase: 01 (tooling-foundation-baseline-scorecard) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Executing Phase 01
-Last activity: 2026-06-03 -- Completed Plan 01-03 (mypy lenient zero baseline + coverage/bandit skeletons)
+Last activity: 2026-06-03 -- Completed Plan 01-04 (scorecard.py 7-metric generator + clean baseline.json + ratchet verified)
 
-Progress: [██████░░░░] 60%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 3
-- Average duration: 10 min
-- Total execution time: 0.5 hours
+- Total plans completed: 4
+- Average duration: 11 min
+- Total execution time: 0.7 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01 | 3 | 29 min | 10 min |
+| 01 | 4 | 42 min | 11 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 01-01 (5 min), 01-02 (19 min), 01-03 (5 min)
+- Last 5 plans: 01-01 (5 min), 01-02 (19 min), 01-03 (5 min), 01-04 (13 min)
 - Trend: -
 
 *Updated after each plan completion*
@@ -73,6 +73,9 @@ Recent decisions affecting current work:
 - Plan 01-03: mypy 2.1.0 reaches a zero-error day-1 baseline via `disable_error_code` for SQLAlchemy `Column[T]` + FastAPI `Form`/`UploadFile|str` idiom categories (config-level idiom suppression, mirrors the Plan 01-02 ruff approach) — NOT global `strict`, NOT source edits
 - Plan 01-03: mypy needs `explicit_package_bases=true` + `mypy_path="."` + `namespace_packages=true` because `src/` has no `__init__.py` — otherwise mypy maps `src/*.py` to both bare and `src.`-prefixed module names ("found twice") and aborts
 - Plan 01-03: `warn_unused_ignores` NOT enabled at baseline — conflicts with the pervasive `name = None  # type: ignore` optional-import guard idiom; deferred to Phase 3 (RATCHET-03-A). Per-module strictness tightening also Phase 3 (RATCHET-03-B)
+- Plan 01-04: Baseline scorecard MUST be generated inside `python:3.12-slim` + locked deps — `import app` (needed for perf + auth_endpoints + coverage) fails on the local Py3.14 host; pass the host git SHA via `SCORECARD_GIT_SHA` because the slim image has no `git` binary
+- Plan 01-04: Clean baseline values pinned as ratchet thresholds — max_module_loc=5174 (`src/tool_implementations.py`, NOT RESEARCH's illustrative 4144), typed_pct=0.4962, ruff=0, coverage=45.36%, security high/critical=0; perf is a guardrail (import 1.461s, /api/health 4.03ms), not a gate
+- Plan 01-04: 420 routes / 406 authenticated / 14 public-exempt enumeration emitted in baseline.json — this is the input list for Phase 2 COV-03 and Phase 5 SEC-01; the auth allow-list is mirrored verbatim from app.py:162-194 (T-04-01) and must be kept in sync
 
 ### Pending Todos
 
@@ -95,6 +98,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-03T18:05:00.000Z
-Stopped at: Completed 01-03-PLAN.md (mypy lenient zero baseline + coverage/bandit skeletons)
+Last session: 2026-06-03T18:18:20.000Z
+Stopped at: Completed 01-04-PLAN.md (scorecard.py 7-metric generator + clean baseline.json + ratchet verified)
 Resume file: None

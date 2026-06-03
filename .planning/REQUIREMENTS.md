@@ -14,7 +14,7 @@
 
 ### Baseline & Cleanup (BASE)
 
-- [ ] **BASE-01**: An objective baseline scorecard is captured (per-module line counts, mypy-typed %, ruff finding count, security findings, test-coverage map, startup/key-path perf benchmark) with explicit target thresholds that define milestone "done"
+- [x] **BASE-01**: An objective baseline scorecard is captured (per-module line counts, mypy-typed %, ruff finding count, security findings, test-coverage map, startup/key-path perf benchmark) with explicit target thresholds that define milestone "done"
 - [ ] **BASE-02**: Orphaned/dead code from the two reverts on `main` (`67b63e9` prompt-bar resize, `1f6c5ac` Codex Agent integration) is audited; dangling imports, unreachable config, and stub code removed
 
 ### Tooling & CI Gates (TOOL)
@@ -95,7 +95,7 @@
 
 | REQ-ID | Phase | Status |
 |--------|-------|--------|
-| BASE-01 | Phase 1 | Pending |
+| BASE-01 | Phase 1 | Complete |
 | BASE-02 | Phase 1 | Pending |
 | TOOL-01 | Phase 1 | Complete (01-02) |
 | TOOL-02 | Phase 1 | Complete (01-03) |
