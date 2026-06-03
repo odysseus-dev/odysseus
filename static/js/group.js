@@ -299,13 +299,16 @@ async function _getCharacterList() {
       });
     }
   } catch (e) {}
-  // Load user templates and wait for them before returning
+  // Load user templates and wait for them before returning.
+  // The endpoint returns a JSON array directly (not {templates:[...]}).
+  // All user templates are personas by definition — no isCharacter filter needed.
   try {
     const r = await fetch(API_BASE + '/api/presets/templates', { credentials: 'same-origin' });
     const data = await r.json();
-    (data.templates || []).forEach(t => {
-      if (t.isCharacter && !chars.find(c => c.id === t.id)) {
-        chars.push({ id: t.id, name: t.name, prompt: t.prompt || '' });
+    const templates = Array.isArray(data) ? data : (data.templates || []);
+    templates.forEach(t => {
+      if (t.id && t.name && !chars.find(c => c.id === t.id)) {
+        chars.push({ id: t.id, name: t.name, prompt: t.system_prompt || t.prompt || '' });
       }
     });
   } catch (e) {}

@@ -605,10 +605,10 @@ def _parse_html(html: str) -> list[dict[str, Any]] | None:
 def parse_thread(body_html: str | None, body_text: str | None) -> list[dict[str, Any]] | None:
     """Public entry point. Prefer HTML when available, else plaintext.
     Returns None if no quoted material found (caller renders flat)."""
-    if body_html:
+    if isinstance(body_html, str) and body_html:
         out = _parse_html(body_html)
         if out:
             return out
-    if body_text:
+    if isinstance(body_text, str) and body_text:
         return _parse_plaintext(body_text)
     return None

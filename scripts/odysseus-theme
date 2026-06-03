@@ -36,10 +36,14 @@ def _load_prefs() -> dict:
         return {"_users": {}}
     try:
         data = json.loads(_USER_PREFS_PATH.read_text())
-        data.setdefault("_users", {})
-        return data
     except json.JSONDecodeError as e:
         fail(f"user_prefs.json is corrupt: {e}")
+    if not isinstance(data, dict):
+        fail("user_prefs.json is corrupt: expected an object")
+    users = data.setdefault("_users", {})
+    if not isinstance(users, dict):
+        fail("user_prefs.json is corrupt: _users must be an object")
+    return data
 
 
 def _save_prefs(data: dict) -> None:

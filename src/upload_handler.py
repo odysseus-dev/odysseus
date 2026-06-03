@@ -43,6 +43,20 @@ def is_valid_upload_id(upload_id: str) -> bool:
     return UPLOAD_ID_RE.fullmatch(upload_id or "") is not None
 
 
+def _build_upload_id(safe_filename: str) -> str:
+    """Build a unique upload id whose extension matches UPLOAD_ID_RE.
+
+    secure_filename keeps '_' and '-', so an extension like '.jpg-1' (the
+    suffix browsers append to duplicate downloads) or '.v1_final' produced an
+    id that failed is_valid_upload_id, making the saved file permanently
+    unreadable (every read path gates on validate_upload_id). Sanitize the
+    extension to the single-alnum shape the id contract requires.
+    """
+    _, ext = os.path.splitext(safe_filename or "")
+    ext = re.sub(r"[^A-Za-z0-9]", "", ext)
+    return uuid.uuid4().hex + (("." + ext) if ext else "")
+
+
 def count_recent_uploads(timestamps, now: float, window: float = 10.0) -> int:
     """Number of upload events in *timestamps* within the last *window* seconds.
 
@@ -596,8 +610,7 @@ class UploadHandler:
                 }
         
         # Generate unique ID and determine save location
-        _, ext = os.path.splitext(safe_filename)
-        file_id = f"{uuid.uuid4().hex}{ext}"
+        file_id = _build_upload_id(safe_filename)
         
         # Create date-based directory structure
         upload_dir = self.get_upload_dir()

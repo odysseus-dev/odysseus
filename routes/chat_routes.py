@@ -1266,7 +1266,7 @@ def setup_chat_routes(
                                 db_msg = (
                                     db.query(DBChatMessage)
                                     .filter(DBChatMessage.session_id == session_id, DBChatMessage.role == 'assistant')
-                                    .order_by(DBChatMessage.created_at.desc())
+                                    .order_by(DBChatMessage.timestamp.desc())
                                     .first()
                                 )
                                 if db_msg:

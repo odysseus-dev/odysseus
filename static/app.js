@@ -303,7 +303,9 @@ function initializeEventListeners() {
           label = (raw || '').trim() || 'Assistant';
         }
         const body = child.querySelector('.body');
-        const text = body ? (body.innerText || body.textContent || '').trim() : '';
+        // Prefer dataset.raw (original markdown) over innerText (rendered HTML as text)
+        // to avoid extra newlines and formatting artifacts.
+        const text = body ? (body.dataset.raw || body.innerText || body.textContent || '').trim() : '';
         if (text) parts.push(`${label}: ${text}`);
       } else if (child.classList?.contains('agent-thread')) {
         const lines = ['[Tool calls]'];

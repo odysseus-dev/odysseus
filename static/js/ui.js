@@ -519,20 +519,7 @@ export function getAutoScroll() {
 export function autoResize(textarea) {
   const lineHeight = parseInt(getComputedStyle(textarea).lineHeight);
   const isMobile = window.innerWidth <= 768;
-  const autoMaxHeight = isMobile ? 150 : lineHeight * 8;
-
-  // Keep a height chosen with the native desktop resize handle. Automatic
-  // changes are recorded before the observer runs, so only a real drag
-  // updates the manual floor.
-  if (!textarea._manualResizeObserver && typeof ResizeObserver !== 'undefined') {
-    textarea._manualResizeObserver = new ResizeObserver(() => {
-      const height = textarea.offsetHeight;
-      if (Math.abs(height - (textarea._autoResizeHeight || height)) > 1) {
-        textarea._manualResizeHeight = height;
-      }
-    });
-    textarea._manualResizeObserver.observe(textarea);
-  }
+  const maxHeight = isMobile ? 150 : lineHeight * 8;
 
   // Use a hidden clone to measure without disrupting the real textarea
   let clone = textarea._resizeClone;
@@ -552,12 +539,9 @@ export function autoResize(textarea) {
   clone.style.width = textarea.offsetWidth + 'px';
   clone.value = textarea.value;
   clone.style.height = '0';
-  const manualHeight = textarea._manualResizeHeight || 0;
-  const maxHeight = Math.max(autoMaxHeight, manualHeight);
-  const newHeight = Math.min(Math.max(clone.scrollHeight, lineHeight, manualHeight), maxHeight);
-  textarea._autoResizeHeight = newHeight;
+  const newHeight = Math.min(Math.max(clone.scrollHeight, lineHeight), maxHeight);
   textarea.style.height = newHeight + 'px';
-  textarea.style.overflow = newHeight >= autoMaxHeight ? 'auto' : 'hidden';
+  textarea.style.overflow = newHeight >= maxHeight ? 'auto' : 'hidden';
 }
 
 /**

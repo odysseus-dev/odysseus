@@ -190,7 +190,7 @@ def cmd_read(args) -> None:
         if st != "OK":
             fail(f"select {args.folder!r} failed: {st}")
         st, msg_data = conn.fetch(args.uid.encode(), "(BODY.PEEK[])")
-        if st != "OK":
+        if st != "OK" or not msg_data or not msg_data[0]:
             fail(f"fetch UID {args.uid} failed: {st}")
         raw = msg_data[0][1]
         msg = email_mod.message_from_bytes(raw)

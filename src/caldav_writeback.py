@@ -157,10 +157,14 @@ async def writeback_event(owner: str, calendar_source: str, calendar_id: str,
         return {"skipped": "not a caldav calendar"}
     try:
         from routes.prefs_routes import _load_for_user
+        from src.secret_storage import decrypt
         cfg = (_load_for_user(owner) or {}).get("caldav", {}) or {}
         url = (cfg.get("url") or "").strip()
         user = (cfg.get("username") or "").strip()
-        pw = cfg.get("password") or ""
+        # Stored encrypted by routes/calendar_routes; decrypt before use so
+        # the remote sees the real password (decrypt is a no-op on legacy
+        # plaintext). The pull path src/caldav_sync.py already does this.
+        pw = decrypt(cfg.get("password") or "")
         if not (url and user and pw):
             return {"skipped": "caldav not configured"}
         result = await asyncio.to_thread(_writeback_blocking, calendar_id, ev, delete, url, user, pw)

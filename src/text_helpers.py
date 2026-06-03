@@ -62,16 +62,20 @@ def _strip_reasoning_prose(text: str) -> str:
     paragraphs = re.split(r"\n\s*\n", text.strip())
     if len(paragraphs) <= 1:
         return text
-    last_reasoning_idx = -1
+    # Strip only a LEADING contiguous run of reasoning paragraphs. Keeping the
+    # text after the *last* reasoning paragraph destroyed the real answer when a
+    # reasoning-style sentence trailed it: keep became empty and the function
+    # returned that trailing sentence instead of the answer above it.
+    first_keep = 0
     for i, p in enumerate(paragraphs):
         if _REASONING_PREFIX_RE.match(p):
-            last_reasoning_idx = i
-    if last_reasoning_idx < 0:
+            first_keep = i + 1
+        else:
+            break
+    if first_keep == 0:
         return text
-    keep = paragraphs[last_reasoning_idx + 1:]
-    if not keep:
-        return paragraphs[-1].strip()
-    return "\n\n".join(keep).strip()
+    keep = paragraphs[first_keep:]
+    return "\n\n".join(keep).strip() if keep else text
 
 
 def strip_think(text: str, *, prose: bool = False, prompt_echo: bool = True) -> str:

@@ -27,6 +27,8 @@ def _detect_question_type(query: str) -> Optional[str]:
 
 def _extract_entities(query: str) -> Dict[str, List[str]]:
     """Lightweight entity extraction: capitalized words and date patterns."""
+    if not isinstance(query, str):
+        return {"names": [], "dates": []}
     entities: Dict[str, List[str]] = {"names": [], "dates": []}
     qtype = _detect_question_type(query)
     cleaned = query

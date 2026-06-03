@@ -55,7 +55,7 @@ LOW_QUALITY_MARKERS = [
 def is_low_quality(summary: str) -> bool:
     """Check if a finding summary indicates useless or irrelevant content."""
     try:
-        if not summary:
+        if not isinstance(summary, str) or not summary:
             return True
         low = summary.lower()
         return any(marker in low for marker in LOW_QUALITY_MARKERS)
