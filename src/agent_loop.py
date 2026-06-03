@@ -1371,6 +1371,14 @@ async def stream_agent_loop(
 
     mcp_mgr = get_mcp_manager()
     prep_timings: Dict[str, float] = {}
+
+    import os
+    from src.trace_manager import TRACEManager
+    trace_active = os.getenv("TRACE_AGENT_MEMORY", "true").lower() == "true"
+    trace_session = None
+    if trace_active and owner and session_id:
+        trace_session = await TRACEManager.get_or_create(owner, session_id, model)
+
     disabled_tools = set(disabled_tools or [])
     public_blocked_tools = blocked_tools_for_owner(owner)
     if public_blocked_tools:
@@ -1565,6 +1573,43 @@ async def stream_agent_loop(
     except Exception as e:
         logger.warning("[agent] Soft context trim skipped: %s", e)
     prep_timings["context_trim"] = time.time() - _t3
+
+    if trace_session:
+        _t_trace = time.time()
+        from src.model_context import estimate_tokens
+        
+        # Get the latest user query from messages
+        last_user_msg = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                if isinstance(m["content"], str):
+                    last_user_msg = m["content"]
+                elif isinstance(m["content"], list):
+                    last_user_msg = " ".join(b.get("text", "") for b in m["content"] if isinstance(b, dict))
+                break
+                
+        # Generate the multi-path B+Tree prompt block
+        trace_context = await trace_session.get_system_prompt(last_user_msg)
+        
+        # --- TOKEN LIMIT ENFORCEMENT ---
+        # Odysseus default soft budget is usually 6000. Capping TRACE context to 2500 tokens.
+        trace_token_cap = 2500
+        current_trace_tokens = estimate_tokens([{"role": "system", "content": trace_context}])
+        
+        if current_trace_tokens > trace_token_cap:
+            logger.warning(f"TRACE context exceeded {trace_token_cap} tokens. Truncating.")
+            # Rough ratio: 1 token ~= 4 chars. Crop the text down to fit the budget.
+            char_limit = trace_token_cap * 4
+            trace_context = trace_context[:char_limit] + "\n...[TRACE Context Truncated due to size]..."
+        # -------------------------------
+        
+        # Inject it into the system prompt safely
+        if messages and messages[0]["role"] == "system":
+            messages[0]["content"] = messages[0]["content"] + "\n\n" + trace_context
+        else:
+            messages.insert(0, {"role": "system", "content": trace_context})
+            
+        prep_timings["trace_injection"] = time.time() - _t_trace
 
     # Strip internal metadata keys before sending to the LLM API
     messages = [{k: v for k, v in msg.items() if k != "_protected"} for msg in messages]
@@ -2296,5 +2341,14 @@ async def stream_agent_loop(
                 yield evt
         except Exception as _esc_err:
             logger.warning(f"teacher escalation hook failed: {_esc_err}", exc_info=True)
+
+    if trace_session and full_response:
+        initial_user_msg = _extract_last_user_message(messages)
+        asyncio.create_task(
+            trace_session.add_exchange(
+                user_msg=initial_user_msg, 
+                assistant_msg=full_response
+            )
+        )
 
     yield "data: [DONE]\n\n"
