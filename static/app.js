@@ -128,6 +128,8 @@ function initializeEventListeners() {
   // File attachments (inside overflow menu)
   const _overflowAttach = el('overflow-attach-btn');
   if (_overflowAttach) _overflowAttach.addEventListener('click', fileHandlerModule.openPicker);
+  const _directAttach = el('direct-attach-btn');
+  if (_directAttach) _directAttach.addEventListener('click', fileHandlerModule.openPicker);
   el('file-input').addEventListener('change', (e)=>{
     for (const f of e.target.files) fileHandlerModule.addFiles([f]);
     fileHandlerModule.renderAttachStrip();
@@ -1687,6 +1689,15 @@ function initializeEventListeners() {
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
 
+  // New file button (creates a blank document directly)
+  const newFileBtn = el('new-file-btn');
+  if (newFileBtn) {
+    newFileBtn.addEventListener('click', async () => {
+      if (!documentModule) return;
+      await documentModule.newDocument();
+    });
+  }
+
   // Document editor toggle (special: uses module panel, not a checkbox)
   const overflowDocBtn = el('overflow-doc-btn');
   if (overflowDocBtn) {
@@ -1771,7 +1782,7 @@ function initializeEventListeners() {
     function _flagRefocus(e) {
       if (e.target.closest('textarea, input')) return;
       // Don't refocus for attach — file picker needs full focus control
-      if (e.target.closest('#overflow-attach-btn')) return;
+      if (e.target.closest('#overflow-attach-btn') || e.target.closest('#direct-attach-btn')) return;
       // Don't refocus for model picker button — focus should go to picker search input
       if (e.target.closest('.model-picker-btn')) return;
       // Don't refocus when tapping the +/chevron tools button — the user
@@ -1965,7 +1976,7 @@ function initializeEventListeners() {
     if (!inputLeft || !overflowMenu || !overflowWrapper) return;
 
     // Buttons that can be collapsed (in reverse priority — last collapsed first)
-    const collapsibleIds = ['bash-toggle-btn', 'web-toggle-btn'];
+    const collapsibleIds = ['bash-toggle-btn', 'web-toggle-btn', 'new-file-btn', 'direct-attach-btn'];
     const collapsibleBtns = collapsibleIds.map(id => el(id)).filter(Boolean);
     // Map of toolbar btn id → overflow mirror element (created dynamically)
     const overflowMirrors = new Map();
@@ -2048,6 +2059,7 @@ function initializeEventListeners() {
       // Collapse from lowest priority until it fits
       if (totalWidth > available) {
         for (let i = 0; i < collapsibleBtns.length; i++) {
+          if (collapsibleBtns[i].style.display === 'none') continue;
           collapsibleBtns[i].classList.add('toolbar-collapsed');
           const mirror = overflowMirrors.get(collapsibleBtns[i].id);
           if (mirror) mirror.style.display = '';
@@ -2084,6 +2096,11 @@ function initializeEventListeners() {
     // Re-check when doc panel opens/closes (body.doc-view toggled)
     new MutationObserver(() => requestAnimationFrame(checkToolbarOverflow))
       .observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    // Re-check when inputLeft children change
+    new MutationObserver(() => requestAnimationFrame(checkToolbarOverflow))
+      .observe(inputLeft, { childList: true });
+
+    window.checkToolbarOverflow = checkToolbarOverflow;
     // Re-check when input bar itself resizes (e.g. doc panel drag)
     const inputBottom = inputLeft.parentElement;
     if (inputBottom) {
@@ -2408,7 +2425,7 @@ function initializeEventListeners() {
     'overflow-plus-btn':   '.overflow-wrapper',
     'mode-toggle':         '.mode-toggle',
     'preset-mini-btn':     '#overflow-preset-btn',
-    'attach-btn':          '#overflow-attach-btn',
+    'attach-btn':          '#overflow-attach-btn, #direct-attach-btn',
     'research-btn':        '#overflow-research-btn',
     'rail-new-chat':       '#rail-new-session',
   };
@@ -2449,6 +2466,7 @@ function initializeEventListeners() {
     applyTextEmojis(state['text-emojis'] !== false);
     // Hide thinking sections toggle (show-thinking: checked=show, unchecked=hide)
     document.body.classList.toggle('hide-thinking', state['show-thinking'] === false);
+    if (window.checkToolbarOverflow) window.checkToolbarOverflow();
   }
 
   // Rearrange toggles in session/model sort dropdowns
@@ -3854,6 +3872,9 @@ function startOdysseusApp() {
     
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
+
+    fileHandlerModule.addFiles(files);
+    fileHandlerModule.renderAttachStrip();
 
     uiModule.showToast(`Added ${files.length} file${files.length > 1 ? 's' : ''} to chat`);
 
