@@ -205,6 +205,79 @@ def _detect_amd():
         return None
 
 
+_INTEL_ARC_VRAM_GB: dict[str, tuple[str, float]] = {
+    "0x56a0": ("Intel Arc A770 16GB", 16.0),
+    "0x56a1": ("Intel Arc A770 8GB",   8.0),
+    "0x56a2": ("Intel Arc A750 8GB",   8.0),
+    "0x56a5": ("Intel Arc A380 6GB",   6.0),
+    "0x56a6": ("Intel Arc A310 4GB",   4.0),
+    "0x5690": ("Intel Arc A770M 16GB", 16.0),
+    "0x5691": ("Intel Arc A730M 12GB", 12.0),
+    "0x5692": ("Intel Arc A550M 8GB",   8.0),
+    "0x5693": ("Intel Arc A370M 4GB",   4.0),
+    "0x5694": ("Intel Arc A350M 4GB",   4.0),
+    "0x5695": ("Intel Arc A370M 4GB",   4.0),
+    "0xe202": ("Intel Arc B580 12GB",  12.0),
+    "0xe20b": ("Intel Arc B570 10GB",  10.0),
+}
+
+
+def _detect_intel():
+    """Detect Intel Arc / Xe discrete GPUs via /sys/class/drm (vendor 0x8086).
+    VRAM is looked up from a device-ID table since Intel doesn't expose it in sysfs."""
+    def _read(path):
+        if _remote_host:
+            val = _run(["cat", path])
+            return val.strip() if val else None
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                return f.read().strip()
+        except Exception:
+            return None
+
+    def _list_drm_cards():
+        if _remote_host:
+            out = _run(["ls", "/sys/class/drm"])
+            if not out:
+                return []
+            return [e for e in out.split() if e.startswith("card") and "-" not in e]
+        try:
+            return [e for e in os.listdir("/sys/class/drm") if e.startswith("card") and "-" not in e]
+        except Exception:
+            return []
+
+    try:
+        cards = []
+        for _cidx, entry in enumerate(_list_drm_cards()):
+            base = f"/sys/class/drm/{entry}/device"
+            vendor = _read(f"{base}/vendor")
+            if vendor != "0x8086":
+                continue
+            device_id = _read(f"{base}/device")
+            name, vram_gb = _INTEL_ARC_VRAM_GB.get(device_id or "", (None, 0.0))
+            if not name:
+                name = f"Intel GPU ({device_id or entry})"
+            if vram_gb <= 0:
+                continue
+            cards.append({"index": _cidx, "name": name, "vram_gb": vram_gb})
+
+        if not cards:
+            return None
+        total_vram = sum(c["vram_gb"] for c in cards)
+        groups = _group_gpus(cards)
+        return {
+            "gpu_name": cards[0]["name"],
+            "gpu_vram_gb": round(total_vram, 1),
+            "gpu_count": len(cards),
+            "gpus": cards,
+            "gpu_groups": groups,
+            "homogeneous": len(groups) <= 1,
+            "backend": "xe",
+        }
+    except Exception:
+        return None
+
+
 def _detect_apple_silicon():
     """Detect Apple Silicon (M-series) GPUs.
 
@@ -551,7 +624,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
     cpu_cores = _get_cpu_count()
     cpu_name = _get_cpu_name()
 
-    gpu_info = _detect_apple_silicon() or _detect_nvidia() or _detect_amd()
+    gpu_info = _detect_apple_silicon() or _detect_nvidia() or _detect_amd() or _detect_intel()
 
     if gpu_info:
         result = {

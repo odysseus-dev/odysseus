@@ -1,0 +1,18 @@
+# Intel Arc / integrated GPU overlay. Enable by setting COMPOSE_FILE in .env:
+#   COMPOSE_FILE=docker-compose.yml:docker/gpu.intel.yml
+#
+# Requires the xe or i915 driver on the host and /dev/dri passed through
+# to this container (Proxmox LXC: add cgroup2.devices.allow + mount.entry
+# for /dev/dri; bare-metal Docker: works automatically if drivers are loaded).
+# The host user running Docker must be in the `video` and `render` groups.
+#
+# This overlay only passes the host GPU through to the container.
+# Install OpenCL/oneAPI or ipex-llm / llama-cpp-python (Intel build) via
+# Cookbook -> Dependencies before serving GPU models.
+services:
+  odysseus:
+    devices:
+      - /dev/dri
+    group_add:
+      - video
+      - ${RENDER_GID:-render}

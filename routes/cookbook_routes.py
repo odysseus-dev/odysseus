@@ -1376,6 +1376,53 @@ def setup_cookbook_routes() -> APIRouter:
                 gpus[0]["busy"] = True
         return gpus
 
+    # PCI device ID → (name, vram_mb) for known Intel Arc discrete GPUs.
+    _INTEL_ARC_VRAM: dict[str, tuple[str, int]] = {
+        "0x56a0": ("Intel Arc A770 16GB", 16384),
+        "0x56a1": ("Intel Arc A770 8GB",   8192),
+        "0x56a2": ("Intel Arc A750 8GB",   8192),
+        "0x56a5": ("Intel Arc A380 6GB",   6144),
+        "0x56a6": ("Intel Arc A310 4GB",   4096),
+        "0x5690": ("Intel Arc A770M 16GB", 16384),
+        "0x5691": ("Intel Arc A730M 12GB", 12288),
+        "0x5692": ("Intel Arc A550M 8GB",   8192),
+        "0x5693": ("Intel Arc A370M 4GB",   4096),
+        "0x5694": ("Intel Arc A350M 4GB",   4096),
+        "0x5695": ("Intel Arc A370M 4GB",   4096),
+        "0xe202": ("Intel Arc B580 12GB",  12288),
+        "0xe20b": ("Intel Arc B570 10GB",  10240),
+    }
+
+    async def _probe_intel_sysfs(host: str | None, ssh_port: str | None) -> list[dict]:
+        out, err = await _run_gpu_shell("ls -1 /sys/class/drm 2>/dev/null", host, ssh_port, timeout=4)
+        if err is not None or not out:
+            return []
+        gpus = []
+        for entry in out.split():
+            if not entry.startswith("card") or "-" in entry:
+                continue
+            base = f"/sys/class/drm/{entry}/device"
+            vendor = await _gpu_read_file(f"{base}/vendor", host, ssh_port)
+            if vendor != "0x8086":
+                continue
+            device_id = await _gpu_read_file(f"{base}/device", host, ssh_port)
+            name, total_mb = _INTEL_ARC_VRAM.get(device_id or "", (None, 0))
+            if not name:
+                name = f"Intel GPU {device_id or entry}"
+            gpus.append({
+                "index": len(gpus), "name": name, "uuid": entry,
+                "free_mb": total_mb, "total_mb": total_mb, "used_mb": 0,
+                "util_pct": 0, "busy": False, "processes": [],
+                "backend": "xe", "source": "intel-sysfs",
+                "unified_memory": False,
+            })
+        if gpus:
+            processes = await _probe_gpu_device_processes(host, ssh_port)
+            if processes:
+                gpus[0]["processes"] = processes
+                gpus[0]["busy"] = True
+        return gpus
+
     @router.get("/api/cookbook/gpus")
     async def list_gpus(request: Request, host: str | None = None, ssh_port: str | None = None):
         """Probe GPU memory/process state locally or via SSH.
@@ -1513,6 +1560,17 @@ def setup_cookbook_routes() -> APIRouter:
                 "gpus": amd_gpus,
                 "backend": "rocm",
                 "source": "amd-sysfs",
+                "fallback_from": "nvidia-smi",
+                "nvidia_error": nvidia_error,
+            }
+
+        intel_gpus = await _probe_intel_sysfs(host, ssh_port)
+        if intel_gpus:
+            return {
+                "ok": True,
+                "gpus": intel_gpus,
+                "backend": "xe",
+                "source": "intel-sysfs",
                 "fallback_from": "nvidia-smi",
                 "nvidia_error": nvidia_error,
             }
