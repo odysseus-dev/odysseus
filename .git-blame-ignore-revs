@@ -1,0 +1,13 @@
+# .git-blame-ignore-revs
+#
+# Commits listed here are skipped by `git blame` so that bulk, purely-mechanical
+# reformatting does not obscure the real authorship of each line. GitHub honors
+# this file automatically; locally enable it once with:
+#
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Only add commits that are 100% mechanical (e.g. a whole-repo `ruff format`).
+# One full 40-char commit SHA per line.
+
+# style(01-02): apply ruff format across the repo (D-18.3)
+1e2074f1f613ce1acdbc0f09b9b350602879c180
