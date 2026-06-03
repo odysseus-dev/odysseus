@@ -13,22 +13,55 @@ to their first image endpoint — and spend that owner's API key / quota. Mirror
 the session / research / compare / resolve_session_auth owner-scope fixes.
 """
 
+import contextlib
 import sys
 import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-if "core.database" not in sys.modules:
-    sys.modules["core.database"] = types.ModuleType("core.database")
-_cd = sys.modules["core.database"]
-_cd.Base = MagicMock()
-for _name in (
-    "Session", "SessionLocal", "GalleryImage", "GalleryAlbum", "ModelEndpoint",
-):
-    if not hasattr(_cd, _name):
-        setattr(_cd, _name, MagicMock())
+import pytest
 
-from routes.gallery_routes import _owned_image_endpoint  # noqa: E402
+
+@contextlib.contextmanager
+def _import_time_core_database_stub():
+    """Stub core.database ONLY while importing routes.gallery_routes, then restore.
+
+    routes.gallery_routes imports core.database, which builds a SQLAlchemy engine at
+    import time and blows up under a minimal/stubbed-deps env. We only need
+    `_owned_image_endpoint`, which takes its DB and ModelEndpoint by injection, so a
+    stub suffices for the import. Two rules keep this from polluting sibling tests:
+    never mutate an *already-real* core.database (clobbering its Base/metadata makes
+    every later test that builds tables fail with `no such table`), and restore
+    sys.modules on exit so the real module loads on the next import.
+    """
+    sentinel = object()
+    prev = sys.modules.get("core.database", sentinel)
+    if prev is sentinel:
+        stub = types.ModuleType("core.database")
+        stub.__getattr__ = lambda name: MagicMock()  # type: ignore[attr-defined]
+        sys.modules["core.database"] = stub
+    try:
+        yield
+    finally:
+        if prev is sentinel:
+            sys.modules.pop("core.database", None)
+
+
+with _import_time_core_database_stub():
+    import routes.gallery_routes as _gallery_routes  # noqa: E402
+    from routes.gallery_routes import _owned_image_endpoint  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _restore_gallery_model_endpoint():
+    """Each test swaps a fake ModelEndpoint onto routes.gallery_routes for the
+    URL/owner predicates; restore the real attribute afterwards so the fake never
+    leaks into sibling test modules that exercise the real gallery routes."""
+    saved = getattr(_gallery_routes, "ModelEndpoint", None)
+    try:
+        yield
+    finally:
+        _gallery_routes.ModelEndpoint = saved
 
 
 class _Predicate:
@@ -119,6 +152,19 @@ def test_url_match_normalizes_v1_suffix():
     rows = [_ep("https://images.example.com/v1", "alice")]
     ep = _resolve(rows, "alice", "https://images.example.com")
     assert ep is not None and ep.owner == "alice"
+
+
+def test_url_match_rejects_disabled_endpoint():
+    # The caller owns a row whose URL matches, but it's disabled — its api_key
+    # must not be borrowed (same constraint as the fallback path).
+    rows = [_ep(URL, "alice", is_enabled=False)]
+    assert _resolve(rows, "alice", URL) is None
+
+
+def test_url_match_rejects_non_image_endpoint():
+    # Owned + URL matches, but it's an llm endpoint, not image.
+    rows = [_ep(URL, "alice", model_type="llm")]
+    assert _resolve(rows, "alice", URL) is None
 
 
 # --- first-enabled fallback (no _endpoint) -----------------------------------

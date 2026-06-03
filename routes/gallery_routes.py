@@ -48,27 +48,36 @@ def _owned_image_endpoint(db, owner, target_url=None):
     """A ModelEndpoint VISIBLE to `owner` (their own rows + legacy null-owner
     "shared" rows) for the image edit/inpaint/harmonize proxies; None otherwise.
 
-    With `target_url`, returns the visible endpoint whose normalized base_url
-    matches it (the caller's `_endpoint`); otherwise the caller's first enabled
-    image endpoint. Owner-scoped on purpose: the resolved row's *decrypted*
-    api_key is sent upstream as the request's Bearer credential, so an UNSCOPED
-    lookup would let a (image-privileged) user pass another user's endpoint URL —
-    or fall through to their first image endpoint — and spend that owner's API
-    key / quota. Mirrors session_routes._owned_endpoint. A null/empty owner is a
-    no-op (single-user / legacy mode).
+    Either way the candidate set is restricted to ENABLED, image-type
+    endpoints, matching what the editor's endpoint dropdown actually offers:
+    with `target_url`, returns the visible enabled image endpoint whose
+    normalized base_url matches it (the caller's `_endpoint`); otherwise the
+    caller's first enabled image endpoint. Owner-scoped on purpose: the resolved
+    row's *decrypted* api_key is sent upstream as the request's Bearer
+    credential, so an UNSCOPED lookup would let a (image-privileged) user pass
+    another user's endpoint URL — or fall through to their first image endpoint —
+    and spend that owner's API key / quota. Mirrors
+    session_routes._owned_endpoint. A null/empty owner is a no-op (single-user /
+    legacy mode).
     """
     from src.auth_helpers import owner_filter
+    # Same constraints on both resolution paths: only the caller's enabled
+    # image endpoints are eligible (a disabled or non-image row must never have
+    # its api_key borrowed, even if a caller-supplied _endpoint URL matches it).
+    q = owner_filter(
+        db.query(ModelEndpoint).filter(
+            ModelEndpoint.is_enabled == True,  # noqa: E712
+            ModelEndpoint.model_type == "image",
+        ),
+        ModelEndpoint, owner,
+    )
     if target_url is not None:
         target = _norm_image_endpoint_url(target_url)
-        for ep in owner_filter(db.query(ModelEndpoint), ModelEndpoint, owner).all():
+        for ep in q.all():
             if _norm_image_endpoint_url(ep.base_url) == target:
                 return ep
         return None
-    q = db.query(ModelEndpoint).filter(
-        ModelEndpoint.is_enabled == True,  # noqa: E712
-        ModelEndpoint.model_type == "image",
-    )
-    return owner_filter(q, ModelEndpoint, owner).first()
+    return q.first()
 
 def setup_gallery_routes() -> APIRouter:
     router = APIRouter(tags=["gallery"])
