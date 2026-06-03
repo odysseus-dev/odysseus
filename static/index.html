@@ -253,6 +253,7 @@
           <button class="memory-tab" data-memory-tab="skills"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Skills <span id="skills-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
           <button class="memory-tab" data-memory-tab="add"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Add</button>
           <button class="memory-tab" data-memory-tab="settings"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
+          <button class="memory-tab" data-memory-tab="graph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><circle cx="5" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><line x1="7" y1="12" x2="10" y2="12"/><line x1="14" y1="12" x2="17" y2="12"/></svg>Graph <span id="graph-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
         </div>
         <!-- ── Browse tab ── -->
         <div class="memory-tab-panel" data-memory-panel="browse">
@@ -426,6 +427,34 @@
             </div>
           </div>
         </div>
+         <!-- ── Graph tab ── -->
+         <div class="memory-tab-panel hidden" data-memory-panel="graph">
+           <div class="admin-card" style="display:flex;flex-direction:column;overflow:hidden;flex:1;min-height:0;">
+             <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
+               <h2 style="display:flex;align-items:center;gap:6px;margin:0;padding:0;line-height:1;">Knowledge Graph <span id="graph-count-h2" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+             </div>
+             <p class="memory-desc doclib-desc" style="margin-top:6px;">Connections between memories, skills, documents, and conversations.</p>
+             <div class="memory-toolbar">
+               <div class="memory-toolbar-row">
+                 <select id="graph-sort" class="memory-sort-select">
+                   <option value="recent">Recent</option>
+                   <option value="type">Type</option>
+                 </select>
+                 <button id="graph-refresh-btn" class="memory-toolbar-btn" title="Refresh graph data">Refresh</button>
+               </div>
+               <input type="text" id="graph-search" placeholder="Search nodes…" class="memory-search-input" />
+               <div id="graph-type-filters" class="memory-category-filters">
+                 <button class="memory-cat-chip active" data-type="all">all</button>
+                 <button class="memory-cat-chip" data-type="memory">memories</button>
+                 <button class="memory-cat-chip" data-type="skill">skills</button>
+                 <button class="memory-cat-chip" data-type="document">documents</button>
+                 <button class="memory-cat-chip" data-type="chat">chats</button>
+               </div>
+             </div>
+             <div id="graph-node-list" class="memory-list"></div>
+             <div id="graph-empty-msg" style="padding:20px;text-align:center;opacity:0.5;">No graph nodes yet. Add memories, skills, or documents to populate the graph.</div>
+           </div>
+         </div>
       </div>
     </div>
   </div>

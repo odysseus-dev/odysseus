@@ -17,6 +17,7 @@ import markdownModule from './js/markdown.js';
 import chatRenderer from './js/chatRenderer.js';
 import sessionModule from './js/sessions.js';
 import memoryModule from './js/memory.js';
+import knowledgeGraph from './js/knowledgeGraph.js';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
@@ -3909,6 +3910,7 @@ function startJuniperusApp() {
   // Ensure proper initial state
   voiceRecorderModule.init();
   if (censorModule) censorModule.init();
+  if (knowledgeGraph) knowledgeGraph.init();
 
   // Auto-focus message input on load
   const msgEl = document.getElementById('message');

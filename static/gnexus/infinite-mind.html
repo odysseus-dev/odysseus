@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Infinite Mind - Juniperus / Gnexus Operations Console</title>
+    <link rel="stylesheet" href="/static/gnexus/gnexus-core.css">
+    <style>
+        .metric-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+
+        .metric-card {
+            background: rgba(0, 255, 136, 0.05);
+            border: 1px solid rgba(0, 255, 136, 0.2);
+            padding: 1rem;
+            border-radius: 0.5rem;
+        }
+
+        .metric-card.warning {
+            background: rgba(255, 200, 0, 0.05);
+            border: 1px solid rgba(255, 200, 0, 0.2);
+        }
+
+        .metric-card.error {
+            background: rgba(255, 0, 100, 0.05);
+            border: 1px solid rgba(255, 0, 100, 0.2);
+        }
+
+        .metric-label {
+            font-size: 0.85rem;
+            color: #888;
+            text-transform: uppercase;
+            margin-bottom: 0.5rem;
+        }
+
+        .metric-value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #0f0;
+            font-family: monospace;
+        }
+
+        .search-box {
+            display: flex;
+            gap: 0.5rem;
+            margin: 1.5rem 0;
+        }
+
+        .search-box input {
+            flex: 1;
+            padding: 0.75rem;
+            background: rgba(0, 255, 136, 0.1);
+            border: 1px solid rgba(0, 255, 136, 0.3);
+            color: #fff;
+            border-radius: 0.25rem;
+        }
+
+        .search-box input::placeholder {
+            color: #666;
+        }
+
+        .search-box button {
+            padding: 0.75rem 1.5rem;
+            background: rgba(0, 255, 136, 0.2);
+            border: 1px solid rgba(0, 255, 136, 0.5);
+            color: #0f0;
+            cursor: pointer;
+            border-radius: 0.25rem;
+            font-weight: bold;
+        }
+
+        .search-box button:hover {
+            background: rgba(0, 255, 136, 0.3);
+        }
+
+        .results-list {
+            margin: 1.5rem 0;
+            border: 1px solid rgba(0, 255, 136, 0.2);
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+
+        .result-item {
+            padding: 1rem;
+            border-bottom: 1px solid rgba(0, 255, 136, 0.1);
+            background: rgba(0, 255, 136, 0.02);
+        }
+
+        .result-item:last-child {
+            border-bottom: none;
+        }
+
+        .result-title {
+            font-weight: bold;
+            color: #0f0;
+            margin-bottom: 0.25rem;
+        }
+
+        .result-path {
+            font-size: 0.85rem;
+            color: #666;
+            font-family: monospace;
+            margin-bottom: 0.25rem;
+        }
+
+        .result-snippet {
+            font-size: 0.85rem;
+            color: #999;
+            margin-bottom: 0.25rem;
+            line-height: 1.4;
+        }
+
+        .result-tags {
+            display: flex;
+            gap: 0.25rem;
+            flex-wrap: wrap;
+        }
+
+        .tag {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            background: rgba(0, 255, 136, 0.15);
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            color: #0f0;
+        }
+
+        .pack-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+
+        .pack-card {
+            background: rgba(0, 255, 136, 0.05);
+            border: 1px solid rgba(0, 255, 136, 0.2);
+            padding: 1.5rem;
+            border-radius: 0.5rem;
+        }
+
+        .pack-title {
+            font-weight: bold;
+            color: #0f0;
+            margin-bottom: 0.5rem;
+        }
+
+        .pack-purpose {
+            font-size: 0.9rem;
+            color: #999;
+            margin-bottom: 0.75rem;
+        }
+
+        .pack-file-count {
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            background: rgba(0, 255, 136, 0.2);
+            border-radius: 0.25rem;
+            font-size: 0.85rem;
+            color: #0f0;
+            font-weight: bold;
+            margin-bottom: 1rem;
+        }
+
+        .status-badge.warning {
+            background: rgba(255, 200, 0, 0.2);
+            color: #fc0;
+        }
+
+        .status-badge.locked {
+            background: rgba(255, 0, 100, 0.2);
+            color: #f04;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 1rem;
+            margin: 2rem 0;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            background: rgba(0, 255, 136, 0.2);
+            border: 1px solid rgba(0, 255, 136, 0.5);
+            color: #0f0;
+            cursor: pointer;
+            border-radius: 0.25rem;
+            font-weight: bold;
+        }
+
+        .btn:hover {
+            background: rgba(0, 255, 136, 0.3);
+        }
+
+        .btn.danger {
+            background: rgba(255, 0, 100, 0.2);
+            border: 1px solid rgba(255, 0, 100, 0.5);
+            color: #f04;
+        }
+
+        .btn.danger:hover {
+            background: rgba(255, 0, 100, 0.3);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+
+        .error-box {
+            background: rgba(255, 0, 100, 0.05);
+            border: 1px solid rgba(255, 0, 100, 0.2);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            color: #f04;
+            margin: 1rem 0;
+        }
+
+        .warning-box {
+            background: rgba(255, 200, 0, 0.05);
+            border: 1px solid rgba(255, 200, 0, 0.2);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            color: #fc0;
+            margin: 1rem 0;
+        }
+
+        .section {
+            margin: 2rem 0;
+        }
+
+        .section-title {
+            font-size: 1.3rem;
+            font-weight: bold;
+            color: #0f0;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid rgba(0, 255, 136, 0.2);
+            padding-bottom: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <main class="wrap">
+        <!-- Header -->
+        <section class="top">
+            <div>
+                <div class="brand">Juniperus / Gnexus Operations Console</div>
+                <h1 class="title">Infinite Mind Bridge</h1>
+                <p class="sub">Governed read-only access to 06_INFINITE_BRAIN workspace</p>
+            </div>
+            <a class="pill" href="/gnexus">Back to cockpit</a>
+        </section>
+
+        <!-- Status Section -->
+        <section id="status-section" class="section">
+            <div class="section-title">Bridge Status</div>
+            <div id="status-content" class="loading">Loading bridge state...</div>
+        </section>
+
+        <!-- Binding Status -->
+        <section id="binding-section" class="section" style="display: none;">
+            <div class="section-title">Source Binding</div>
+            <div class="metric-grid">
+                <div class="metric-card">
+                    <div class="metric-label">Source Root</div>
+                    <div class="metric-value" style="font-size: 1.1rem; word-break: break-all;">C:\...\06_INFINITE_BRAIN</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Binding Status</div>
+                    <div class="metric-value" id="binding-status" style="font-size: 1rem;">—</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Indexed Files</div>
+                    <div class="metric-value" id="file-count">0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Context Packs</div>
+                    <div class="metric-value" id="pack-count">0</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Governance Status -->
+        <section id="governance-section" class="section" style="display: none;">
+            <div class="section-title">Governance Boundaries</div>
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                <div class="status-badge locked">Writeback: Locked</div>
+                <div class="status-badge locked">Mutation: Locked</div>
+                <div class="status-badge">External Calls: Disabled</div>
+                <div class="status-badge">Secrets Storage: Disabled</div>
+            </div>
+            <p style="font-size: 0.9rem; color: #999;">
+                This is a read-only bridge. No mutations to 06_INFINITE_BRAIN are allowed.
+                Writeback access is reserved for a future gated implementation (JUNIPERUS120).
+            </p>
+        </section>
+
+        <!-- Search Section -->
+        <section id="search-section" class="section" style="display: none;">
+            <div class="section-title">Search Indexed Files</div>
+            <div class="search-box">
+                <input type="text" id="search-input" placeholder="Search for files, topics, or keywords...">
+                <button onclick="performSearch()">Search</button>
+            </div>
+            <div id="search-results"></div>
+        </section>
+
+        <!-- Context Packs Section -->
+        <section id="packs-section" class="section" style="display: none;">
+            <div class="section-title">Context Packs</div>
+            <p style="color: #999; margin-bottom: 1rem;">
+                Pre-assembled context bundles for common Juniperus operations.
+                Select one or more to assemble an operation context bundle.
+            </p>
+            <div id="packs-grid" class="pack-grid"></div>
+        </section>
+
+        <!-- Action Buttons -->
+        <section id="actions-section" class="section" style="display: none;">
+            <div class="section-title">Actions</div>
+            <div class="action-buttons">
+                <button class="btn" onclick="triggerRescan()">Rescan Infinite Mind</button>
+                <button class="btn" onclick="exportState()">Export Bridge State</button>
+            </div>
+            <p style="font-size: 0.85rem; color: #666;">
+                Rescan will index all safe files in 06_INFINITE_BRAIN without mutating it.
+                This operation is read-only and repeatable.
+            </p>
+        </section>
+
+        <!-- Info Footer -->
+        <div class="footer">
+            Juniperus / Gnexus Operations Console — Infinite Mind Bridge (JUNIPERUS110)
+            — Read-only access to 06_INFINITE_BRAIN — Writeback locked
+        </div>
+    </main>
+
+    <script>
+        const API_BASE = "/api/gnexus/infinite-mind";
+
+        // Load state on page load
+        document.addEventListener("DOMContentLoaded", async () => {
+            await loadBridgeState();
+            await loadContextPacks();
+        });
+
+        async function loadBridgeState() {
+            try {
+                const response = await fetch(`${API_BASE}/state`);
+                const data = await response.json();
+
+                if (data.status === "ok" && data.state) {
+                    const state = data.state;
+
+                    // Show binding section
+                    document.getElementById("binding-section").style.display = "block";
+                    document.getElementById("governance-section").style.display = "block";
+                    document.getElementById("search-section").style.display = "block";
+                    document.getElementById("actions-section").style.display = "block";
+
+                    // Update metrics
+                    document.getElementById("binding-status").textContent = 
+                        state.scanStatus || "unknown";
+                    document.getElementById("file-count").textContent = 
+                        state.fileCount || "0";
+                    document.getElementById("pack-count").textContent = 
+                        state.contextPackCount || "0";
+
+                    // Update status section
+                    let statusHtml = `<div class="status-badge">Status: ${state.scanStatus}</div>`;
+                    if (state.warnings && state.warnings.length > 0) {
+                        statusHtml += '<div class="warning-box">' + 
+                            'Warnings:<br>' + 
+                            state.warnings.map(w => `• ${w}`).join('<br>') + 
+                            '</div>';
+                    }
+                    document.getElementById("status-content").innerHTML = statusHtml;
+                } else {
+                    throw new Error(data.error || "Failed to load state");
+                }
+            } catch (err) {
+                document.getElementById("status-content").innerHTML = 
+                    `<div class="error-box">Error loading bridge state: ${err.message}</div>`;
+            }
+        }
+
+        async function loadContextPacks() {
+            try {
+                const response = await fetch(`${API_BASE}/context-packs`);
+                const data = await response.json();
+
+                if (data.status === "ok" && data.packs) {
+                    let html = "";
+                    for (const pack of data.packs) {
+                        html += `
+                            <div class="pack-card">
+                                <div class="pack-title">${pack.title}</div>
+                                <div class="pack-purpose">${pack.purpose}</div>
+                                <div class="pack-file-count">
+                                    Pack ID: <code>${pack.packId}</code>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    document.getElementById("packs-grid").innerHTML = html || 
+                        "<p style='color: #666;'>No context packs available. Run a rescan to generate them.</p>";
+                }
+            } catch (err) {
+                console.error("Error loading context packs:", err);
+            }
+        }
+
+        async function performSearch() {
+            const query = document.getElementById("search-input").value.trim();
+            if (!query) return;
+
+            const resultsDiv = document.getElementById("search-results");
+            resultsDiv.innerHTML = "<div class='loading'>Searching...</div>";
+
+            try {
+                const response = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
+                const data = await response.json();
+
+                if (data.status === "ok" && data.results) {
+                    let html = "";
+                    if (data.results.length === 0) {
+                        html = "<p style='color: #666;'>No results found.</p>";
+                    } else {
+                        html = '<div class="results-list">';
+                        for (const result of data.results) {
+                            const tags = (result.tags || []).map(t => 
+                                `<span class="tag">${t}</span>`
+                            ).join("");
+                            html += `
+                                <div class="result-item">
+                                    <div class="result-title">${result.titleGuess || result.relativePath}</div>
+                                    <div class="result-path">${result.relativePath}</div>
+                                    <div class="result-snippet">${result.snippet || "(no preview available)"}</div>
+                                    <div class="result-tags">${tags}</div>
+                                </div>
+                            `;
+                        }
+                        html += '</div>';
+                    }
+                    resultsDiv.innerHTML = html;
+                }
+            } catch (err) {
+                resultsDiv.innerHTML = `<div class="error-box">Search error: ${err.message}</div>`;
+            }
+        }
+
+        async function triggerRescan() {
+            if (!confirm("Rescan Infinite Mind? This will reindex all safe files without mutating them.")) return;
+
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = "Rescanning...";
+
+            try {
+                const response = await fetch(`${API_BASE}/rescan`, { method: "POST" });
+                const data = await response.json();
+
+                if (data.status === "ok") {
+                    alert("Rescan completed. Reloading page...");
+                    location.reload();
+                } else {
+                    alert("Rescan error: " + data.error);
+                }
+            } catch (err) {
+                alert("Rescan failed: " + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = "Rescan Infinite Mind";
+            }
+        }
+
+        async function exportState() {
+            try {
+                const response = await fetch(`${API_BASE}/state`);
+                const data = await response.json();
+                
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `infinite-mind-state-${new Date().toISOString().slice(0, 10)}.json`;
+                link.click();
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                alert("Export failed: " + err.message);
+            }
+        }
+
+        // Allow Enter key in search
+        document.addEventListener("DOMContentLoaded", () => {
+            document.getElementById("search-input").addEventListener("keypress", (e) => {
+                if (e.key === "Enter") performSearch();
+            });
+        });
+    </script>
+</body>
+</html>
