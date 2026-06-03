@@ -1709,7 +1709,7 @@ class TaskScheduler:
             llm_model=model,
             llm_headers=headers,
             max_rounds=8,
-            max_time=600,  # 10 min for scheduled research
+            max_time=int(get_setting("research_hard_timeout_seconds", 600)),
             max_report_tokens=max_tokens,
             extraction_timeout=extraction_timeout,
             extraction_concurrency=extraction_concurrency,

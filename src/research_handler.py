@@ -214,7 +214,7 @@ class ResearchHandler:
         llm_endpoint: str,
         llm_model: str,
         max_time: int = 300,
-        hard_timeout: int = None,
+        hard_timeout: int = 0,
         llm_headers: dict = None,
         on_complete: callable = None,
         prior_report: str = "",
@@ -289,7 +289,8 @@ class ResearchHandler:
 
         async def _run():
             # Hard wall-clock timeout — saves partial results if an LLM call hangs
-            # hard_timeout passed from start_research()
+            from src.settings import get_setting
+            _hard = hard_timeout or int(get_setting("research_hard_timeout_seconds", 600))
             try:
                 result = await asyncio.wait_for(
                     self.call_research_service(
@@ -307,7 +308,7 @@ class ResearchHandler:
                         extraction_timeout=extraction_timeout,
                         extraction_concurrency=extraction_concurrency,
                     ),
-                    timeout=hard_timeout,
+                    timeout=_hard,
                 )
                 entry["result"] = result
                 entry["status"] = "done"
@@ -321,14 +322,14 @@ class ResearchHandler:
                 except Exception as cb_err:
                     logger.error(f"on_complete callback failed: {cb_err}")
             except asyncio.TimeoutError:
-                logger.error(f"Research hard timeout ({hard_timeout}s) for session {session_id}")
+                logger.error(f"Research hard timeout ({_hard}s) for session {session_id}")
                 entry["status"] = "error"
                 # If we have partial results, save what we have
                 researcher = entry.get("researcher")
                 if researcher and researcher.evolving_report:
                     entry["result"] = self._format_research_report(
                         query, researcher.evolving_report,
-                        researcher.get_stats(), hard_timeout,
+                        researcher.get_stats(), _hard,
                     )
                     entry["status"] = "done"
                     self._save_result(session_id, entry)
@@ -339,8 +340,8 @@ class ResearchHandler:
                     except Exception as e:
                         logger.warning(f"on_complete callback failed in timeout branch: {e}")
                 else:
-                    entry["result"] = f"Research timed out after {hard_timeout}s. The model may be too slow for deep research."
-                on_progress({"phase": "error", "message": f"Research timed out after {hard_timeout}s"})
+                    entry["result"] = f"Research timed out after {_hard}s. The model may be too slow for deep research."
+                on_progress({"phase": "error", "message": f"Research timed out after {_hard}s"})
             except asyncio.CancelledError:
                 entry["status"] = "cancelled"
                 raise
@@ -714,7 +715,7 @@ class ResearchHandler:
                 extraction_timeout if extraction_timeout is not None else get_setting("research_extraction_timeout_seconds", 90),
                 default=90,
                 minimum=15,
-                maximum=3600,
+                maximum=int(get_setting("research_hard_timeout_seconds", 600)),
             )
             _extraction_concurrency = _bounded_int(
                 extraction_concurrency if extraction_concurrency is not None else get_setting("research_extraction_concurrency", 3),
