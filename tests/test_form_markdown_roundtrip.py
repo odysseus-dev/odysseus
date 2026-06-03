@@ -27,6 +27,27 @@ def test_asterisk_label_value_survives_export_roundtrip():
     assert vals["sign"] == "signature:s1"
 
 
+def test_non_ascii_field_name_survives_export_roundtrip():
+    # AcroForm field names from non-English PDFs (French "Prénom", Spanish
+    # "Año", CJK names) contain non-ASCII letters. _encode_name kept those
+    # letters literal (str.isalnum() is Unicode-aware), but the bullet marker
+    # regex only allows ASCII [A-Za-z0-9_.%-], so the rendered bullet failed to
+    # parse and the field's value was silently dropped on export.
+    fields = [
+        {"name": "Prénom", "label": "Prénom", "type": "text",
+         "value": "Jean", "page": 1},
+        {"name": "Año", "label": "Año", "type": "text",
+         "value": "2026", "page": 1},
+        {"name": "用户名", "label": "用户名", "type": "text",
+         "value": "Li", "page": 1},
+    ]
+    md = render_form_as_markdown(fields, "u", "F")
+    vals = parse_markdown_to_values(md)
+    assert vals["Prénom"] == "Jean"
+    assert vals["Año"] == "2026"
+    assert vals["用户名"] == "Li"
+
+
 def test_plain_labels_and_colon_values_unaffected():
     fields = [
         {"name": "name", "label": "Full Name", "type": "text",

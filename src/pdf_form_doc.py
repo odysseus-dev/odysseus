@@ -114,7 +114,13 @@ def _encode_name(name: str) -> str:
     """
     out = []
     for ch in name or "":
-        if ch.isalnum() or ch in ("_", ".", "-"):
+        # str.isalnum() is Unicode-aware, so a non-ASCII letter (e.g. the 'é'
+        # in a French "Prénom" field, "Año", or a CJK name) would be kept
+        # literal here — but _FIELD_BULLET_RE only allows ASCII [A-Za-z0-9_.%-]
+        # in the field marker, so the bullet failed to parse on read-back and
+        # the field's value was silently dropped on export. Restrict the
+        # keep-literal set to ASCII alphanumerics; percent-encode the rest.
+        if (ord(ch) < 128 and ch.isalnum()) or ch in ("_", ".", "-"):
             out.append(ch)
         else:
             for b in ch.encode("utf-8"):
