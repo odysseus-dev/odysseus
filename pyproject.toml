@@ -128,3 +128,20 @@ module = ["mcp.*", "chromadb.*", "fastembed.*", "caldav.*", "icalendar.*",
           "croniter.*", "qrcode.*", "pyotp.*", "fitz.*", "markitdown.*",
           "duckduckgo_search.*", "faster_whisper.*", "youtube_transcript_api.*"]
 ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["."]
+# concurrency is intentionally LEFT COMMENTED: Plan 01-01's `pytest --cov=.` stability
+# run inside python:3.12-slim was deterministic with NO async-coverage flakiness
+# (Pitfall 11 cleared, 01-01-SUMMARY). Only add `concurrency = ["greenlet", "thread"]`
+# if a later coverage run flakes. Consumed by Plan 04 (scorecard / coverage metric).
+# concurrency = ["greenlet", "thread"]
+
+[tool.bandit]
+# Security-scan config skeleton consumed by Plan 05's CI bandit job. `skips` is
+# deliberately EMPTY at baseline (T-03-03): the documented suppressions are populated
+# in Plan 05 AFTER the audit pass. THREAT_MODEL.md treats shell/file/email subprocess
+# as INTENTIONAL admin features, so B602–B607 will fire heavily and must be triaged
+# per-finding with rationale — never blanket-disabled here.
+exclude_dirs = ["tests", "static", "data", "logs"]
+# skips = []  # populate in Plan 05 with documented per-finding rationale
