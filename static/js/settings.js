@@ -1580,6 +1580,38 @@ async function initAgentSettings() {
   msg.textContent = cur > 0 ? 'Limit: ' + cur + ' tool calls per message' : 'Unlimited';
 }
 
+function initLanguageSelector() {
+  const select = el('set-language');
+  if (!select || select.dataset.bound === '1' || !window.i18n) return;
+  select.dataset.bound = '1';
+
+  function fillOptions() {
+    select.innerHTML = '';
+    window.i18n.getSupportedLanguages().forEach(lang => {
+      const opt = document.createElement('option');
+      opt.value = lang.code;
+      opt.textContent = lang.nativeLabel || lang.label || lang.code;
+      select.appendChild(opt);
+    });
+    select.value = window.i18n.getLanguage();
+  }
+
+  window.i18n.ready.then(fillOptions).catch(fillOptions);
+  select.addEventListener('change', async () => {
+    const next = await window.i18n.setLanguage(select.value);
+    select.value = next;
+    try {
+      await fetch('/api/prefs/language', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: next }) });
+    } catch (_) {}
+    if (uiModule && uiModule.showToast) {
+      uiModule.showToast(window.i18n.t('settings.languageSaved'));
+    }
+  });
+  document.addEventListener('i18n:changed', () => {
+    select.value = window.i18n.getLanguage();
+  });
+}
+
 /* ═══════════════════════════════════════════
    APPEARANCE TAB
    ═══════════════════════════════════════════ */
@@ -2166,6 +2198,7 @@ function initAll() {
   initResearchSearchSettings();
   initAgentSettings();
   initAppearance();
+  initLanguageSelector();
   initShortcuts();
   initAccount();
   initIntegrations();
