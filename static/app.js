@@ -1958,7 +1958,7 @@ function initializeEventListeners() {
     if (!inputLeft || !overflowMenu || !overflowWrapper) return;
 
     // Buttons that can be collapsed (in reverse priority — last collapsed first)
-    const collapsibleIds = ['direct-attach-btn', 'bash-toggle-btn', 'web-toggle-btn'];
+    const collapsibleIds = ['bash-toggle-btn', 'web-toggle-btn', 'direct-attach-btn'];
     const collapsibleBtns = collapsibleIds.map(id => el(id)).filter(Boolean);
     // Map of toolbar btn id → overflow mirror element (created dynamically)
     const overflowMirrors = new Map();
