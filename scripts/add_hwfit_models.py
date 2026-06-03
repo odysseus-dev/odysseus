@@ -19,6 +19,7 @@ Re-runnable: merges by `name`, leaving existing entries untouched unless
 Usage:
     python3 scripts/add_hwfit_models.py
 """
+
 import json
 import os
 import re
@@ -28,26 +29,55 @@ from datetime import datetime
 from huggingface_hub import HfApi, hf_hub_download
 from huggingface_hub.utils import EntryNotFoundError, RepositoryNotFoundError
 
-DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "services", "hwfit", "data", "hf_models.json")
+DATA_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "services", "hwfit", "data", "hf_models.json"
+)
 DATA_PATH = os.path.abspath(DATA_PATH)
 
 AUTHORS = ["cyankiwi"]
 # Specific repos to add (in addition to the authors above). Optional explicit
 # overrides {repo: {field: value}} for things the name/metadata can't convey.
 EXTRA_REPOS = {
-    "deepseek-ai/DeepSeek-V4-Flash":            {"parameter_count": "168B", "quantization": "Q4_K_M"},
-    "MiniMaxAI/MiniMax-M2.7":                   {"parameter_count": "228.7B", "quantization": "Q4_K_M"},
-    "bullerwins/MiniMax-M2.7-REAP-172B-fp8":    {"parameter_count": "172B", "quantization": "FP8"},
-    "cyankiwi/MiniMax-M2.7-AWQ-4bit":           {"parameter_count": "228.7B", "quantization": "AWQ-4bit"},
+    "deepseek-ai/DeepSeek-V4-Flash": {
+        "parameter_count": "168B",
+        "quantization": "Q4_K_M",
+    },
+    "MiniMaxAI/MiniMax-M2.7": {"parameter_count": "228.7B", "quantization": "Q4_K_M"},
+    "bullerwins/MiniMax-M2.7-REAP-172B-fp8": {
+        "parameter_count": "172B",
+        "quantization": "FP8",
+    },
+    "cyankiwi/MiniMax-M2.7-AWQ-4bit": {
+        "parameter_count": "228.7B",
+        "quantization": "AWQ-4bit",
+    },
 }
 
 # Tags that are not architecture names.
 _GENERIC_TAGS = {
-    "transformers", "safetensors", "conversational", "text-generation",
-    "image-text-to-text", "text-generation-inference", "endpoints_compatible",
-    "autotrain_compatible", "compressed-tensors", "gguf", "mlx", "vllm", "4-bit",
-    "8-bit", "awq", "gptq", "fp8", "fp4", "nvfp4", "mxfp4", "nf4",
-    "quantized", "chat",
+    "transformers",
+    "safetensors",
+    "conversational",
+    "text-generation",
+    "image-text-to-text",
+    "text-generation-inference",
+    "endpoints_compatible",
+    "autotrain_compatible",
+    "compressed-tensors",
+    "gguf",
+    "mlx",
+    "vllm",
+    "4-bit",
+    "8-bit",
+    "awq",
+    "gptq",
+    "fp8",
+    "fp4",
+    "nvfp4",
+    "mxfp4",
+    "nf4",
+    "quantized",
+    "chat",
 }
 
 api = HfApi()
@@ -61,7 +91,7 @@ def _parse_params(name):
     m_active = re.search(r"-[Aa](\d+\.?\d*)[Bb](?![a-zA-Z])", base)
     if m_active:
         active = int(float(m_active.group(1)) * 1e9)
-        base_wo = base[:m_active.start()] + base[m_active.end():]
+        base_wo = base[: m_active.start()] + base[m_active.end() :]
     else:
         base_wo = base
     # First "<num>B" token that is a plausible size. Case-insensitive b, but the
@@ -197,7 +227,7 @@ def _fetch_config_json(repo_id):
 
 def _base_model_tag(tags):
     """Return the `base_model:...` repo id from tags, if any."""
-    for t in (tags or []):
+    for t in tags or []:
         if t.startswith("base_model:"):
             return t.split(":")[-1]
     return None
@@ -240,7 +270,7 @@ def _quant_from_name(name):
 
 
 def _arch_from_tags(tags):
-    for t in (tags or []):
+    for t in tags or []:
         if ":" in t or t in _GENERIC_TAGS:
             continue
         if re.fullmatch(r"[a-z0-9_]+", t) and any(c.isalpha() for c in t):
@@ -301,7 +331,11 @@ def _entry_from_modelinfo(mi, overrides):
                 params_by_dtype = getattr(st, "parameters", None) or {}
                 if quant.endswith("4bit") or quant.endswith("Int4"):
                     pack_factor = 8
-                elif quant.endswith("8bit") or quant.endswith("Int8") or quant in ("FP8", "NVFP4"):
+                elif (
+                    quant.endswith("8bit")
+                    or quant.endswith("Int8")
+                    or quant in ("FP8", "NVFP4")
+                ):
                     pack_factor = 4
                 else:
                     pack_factor = 1
@@ -309,8 +343,12 @@ def _entry_from_modelinfo(mi, overrides):
                     # I32/I64 hold the packed quantized weights; everything
                     # else (F16/BF16 scales, zeros, embeddings) is already at
                     # its real element count.
-                    packed = sum(c for d, c in params_by_dtype.items() if d in ("I32", "I64"))
-                    rest = sum(c for d, c in params_by_dtype.items() if d not in ("I32", "I64"))
+                    packed = sum(
+                        c for d, c in params_by_dtype.items() if d in ("I32", "I64")
+                    )
+                    rest = sum(
+                        c for d, c in params_by_dtype.items() if d not in ("I32", "I64")
+                    )
                     total = packed * pack_factor + rest
                 elif getattr(st, "total", None):
                     total = int(st.total) * pack_factor
@@ -320,13 +358,32 @@ def _entry_from_modelinfo(mi, overrides):
         return None  # can't size it — skip
     pb = total / 1e9
     created = getattr(mi, "created_at", None)
-    rel = created.strftime("%Y-%m-%d") if created else datetime.utcnow().strftime("%Y-%m-%d")
+    rel = (
+        created.strftime("%Y-%m-%d")
+        if created
+        else datetime.utcnow().strftime("%Y-%m-%d")
+    )
     # Rough RAM/VRAM hints (fit.py recomputes the real requirement from params+quant).
-    _BPP = {"AWQ-4bit": 0.58, "GPTQ-Int4": 0.58, "mlx-4bit": 0.55, "mlx-6bit": 0.85,
-            "AWQ-8bit": 1.1, "GPTQ-Int8": 1.1, "mlx-8bit": 1.1, "FP8": 1.1,
-            "FP4": 0.58, "NVFP4": 0.58, "MXFP4": 0.58, "NF4": 0.58,
-            "INT4": 0.58, "INT8": 1.1, "W4A16": 0.58, "W8A8": 1.1, "W8A16": 1.1,
-            "Q4_K_M": 0.6}
+    _BPP = {
+        "AWQ-4bit": 0.58,
+        "GPTQ-Int4": 0.58,
+        "mlx-4bit": 0.55,
+        "mlx-6bit": 0.85,
+        "AWQ-8bit": 1.1,
+        "GPTQ-Int8": 1.1,
+        "mlx-8bit": 1.1,
+        "FP8": 1.1,
+        "FP4": 0.58,
+        "NVFP4": 0.58,
+        "MXFP4": 0.58,
+        "NF4": 0.58,
+        "INT4": 0.58,
+        "INT8": 1.1,
+        "W4A16": 0.58,
+        "W8A8": 1.1,
+        "W8A16": 1.1,
+        "Q4_K_M": 0.6,
+    }
     bpp = _BPP.get(quant, 0.6)
     vram = round(pb * bpp + 0.5, 1)
     entry = {
@@ -353,7 +410,11 @@ def _entry_from_modelinfo(mi, overrides):
         entry["active_parameters"] = active
     entry.update(overrides or {})
     # If an override set parameter_count, keep parameters_raw consistent.
-    if overrides and "parameter_count" in overrides and "parameters_raw" not in overrides:
+    if (
+        overrides
+        and "parameter_count" in overrides
+        and "parameters_raw" not in overrides
+    ):
         t2, _ = _parse_params("x/" + overrides["parameter_count"])
         if t2:
             entry["parameters_raw"] = t2
@@ -410,7 +471,9 @@ def main():
     with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(merged, f, indent=2)
 
-    print(f"\nAdded/updated {len(to_add)} models. Catalog now {len(merged)} (was {len(catalog)}).")
+    print(
+        f"\nAdded/updated {len(to_add)} models. Catalog now {len(merged)} (was {len(catalog)})."
+    )
     for n in sorted(to_add)[:20]:
         e = to_add[n]
         print(f"  + {n}  [{e['parameter_count']}, {e['quantization']}]")

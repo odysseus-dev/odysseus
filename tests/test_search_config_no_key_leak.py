@@ -8,6 +8,7 @@ exposed the operator's key. The key is read on demand via `_get_provider_key`
 the global, and `get_search_config` scrubs any credential field from its response
 while preserving the `has_api_key` presence flag.
 """
+
 import os
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
@@ -25,7 +26,9 @@ def test_update_search_config_does_not_cache_secret():
 
 @pytest.fixture
 def stub_settings(monkeypatch):
-    monkeypatch.setattr(core, "_get_search_settings", lambda: {"search_provider": "brave"})
+    monkeypatch.setattr(
+        core, "_get_search_settings", lambda: {"search_provider": "brave"}
+    )
     monkeypatch.setattr(core, "_get_provider_key", lambda provider: "REAL_SECRET_KEY")
     monkeypatch.setattr(core, "_get_result_count", lambda: 10)
 
@@ -37,8 +40,8 @@ def test_get_search_config_never_returns_a_secret(stub_settings, monkeypatch):
     cfg = core.get_search_config()
 
     assert "brave_api_key" not in cfg
-    assert "LEAKED_SECRET" not in cfg.values()       # the cached secret
-    assert "REAL_SECRET_KEY" not in cfg.values()     # the live provider key
+    assert "LEAKED_SECRET" not in cfg.values()  # the cached secret
+    assert "REAL_SECRET_KEY" not in cfg.values()  # the live provider key
     # Presence flag and non-secret fields are preserved.
     assert cfg["has_api_key"] is True
     assert cfg["active_provider"] == "brave"

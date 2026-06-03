@@ -11,6 +11,7 @@ and passes the account owner to do_manage_calendar. This test pins that
 get_upcoming_events scopes to the owner; it fails if the owner filter is
 dropped (the original cross-tenant behavior).
 """
+
 import ast
 import asyncio
 import sys
@@ -27,7 +28,8 @@ def test_get_upcoming_events_is_owner_scoped():
     source = Path("core/database.py").read_text()
     tree = ast.parse(source)
     fn = next(
-        node for node in tree.body
+        node
+        for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "get_upcoming_events"
     )
     body = ast.unparse(fn)
@@ -125,8 +127,10 @@ class _FakeQuery:
         if self.owner_filter is None:
             return list(self.rows)
         return [
-            row for row in self.rows
-            if getattr(getattr(row, "calendar", None), "owner", None) == self.owner_filter
+            row
+            for row in self.rows
+            if getattr(getattr(row, "calendar", None), "owner", None)
+            == self.owner_filter
         ]
 
 
@@ -230,14 +234,16 @@ def test_create_event_rejects_null_owner_calendar_href_at_route_boundary(monkeyp
     create_event = _route_endpoint(calendar_routes, "/events", "POST")
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(create_event(
-            _request(),
-            calendar_routes.EventCreate(
-                summary="blocked",
-                dtstart="2026-06-02T10:00:00",
-                calendar_href="cal-target",
-            ),
-        ))
+        asyncio.run(
+            create_event(
+                _request(),
+                calendar_routes.EventCreate(
+                    summary="blocked",
+                    dtstart="2026-06-02T10:00:00",
+                    calendar_href="cal-target",
+                ),
+            )
+        )
 
     assert exc.value.status_code == 404
     session.add.assert_not_called()
@@ -252,14 +258,16 @@ def test_create_event_rejects_cross_owner_calendar_href_at_route_boundary(monkey
     create_event = _route_endpoint(calendar_routes, "/events", "POST")
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(create_event(
-            _request(),
-            calendar_routes.EventCreate(
-                summary="blocked",
-                dtstart="2026-06-02T10:00:00",
-                calendar_href="cal-target",
-            ),
-        ))
+        asyncio.run(
+            create_event(
+                _request(),
+                calendar_routes.EventCreate(
+                    summary="blocked",
+                    dtstart="2026-06-02T10:00:00",
+                    calendar_href="cal-target",
+                ),
+            )
+        )
 
     assert exc.value.status_code == 404
     session.add.assert_not_called()
@@ -269,11 +277,13 @@ def test_create_event_rejects_cross_owner_calendar_href_at_route_boundary(monkey
 
 def test_list_events_filters_by_calendar_owner_before_output(monkeypatch):
     calendar_routes = _import_calendar_routes(monkeypatch)
-    session = _FakeSession(events=[
-        _event(None, "null-owner"),
-        _event("bob", "bob-event"),
-        _event("alice", "alice-event"),
-    ])
+    session = _FakeSession(
+        events=[
+            _event(None, "null-owner"),
+            _event("bob", "bob-event"),
+            _event("alice", "alice-event"),
+        ]
+    )
     monkeypatch.setattr(calendar_routes, "SessionLocal", lambda: session)
 
     expanded = []
@@ -286,11 +296,13 @@ def test_list_events_filters_by_calendar_owner_before_output(monkeypatch):
     monkeypatch.setattr(calendar_routes, "_expand_rrule", fake_expand)
     list_events = _route_endpoint(calendar_routes, "/events", "GET")
 
-    out = asyncio.run(list_events(
-        _request(),
-        start="2026-06-01T00:00:00",
-        end="2026-06-03T00:00:00",
-    ))
+    out = asyncio.run(
+        list_events(
+            _request(),
+            start="2026-06-01T00:00:00",
+            end="2026-06-03T00:00:00",
+        )
+    )
 
     assert out == {"events": [{"uid": "alice-event", "dtstart": "2026-06-02T10:00:00"}]}
     assert expanded == ["alice-event"]

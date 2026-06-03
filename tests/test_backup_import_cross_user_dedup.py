@@ -6,6 +6,7 @@ memory was silently skipped - the importing user lost their own data. The
 dedup must be scoped to the caller\'s own memories. The full multi-tenant
 store is still saved back.
 """
+
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -48,13 +49,16 @@ def test_user_can_import_memory_matching_another_users_text(monkeypatch):
     asyncio.run(endpoint(_Req(body)))
     texts_by_owner = {(e.get("owner"), e.get("text")) for e in saved["entries"]}
     assert ("alice", "Buy Milk") in texts_by_owner  # not dropped as a "duplicate"
-    assert ("bob", "buy milk") in texts_by_owner     # other tenant preserved
+    assert ("bob", "buy milk") in texts_by_owner  # other tenant preserved
 
 
 def test_users_own_duplicate_is_still_skipped(monkeypatch):
     endpoint, saved = _setup(monkeypatch, [{"text": "buy milk", "owner": "alice"}])
     body = {"memories": [{"text": "Buy Milk"}]}
     asyncio.run(endpoint(_Req(body)))
-    alice_milk = [e for e in saved["entries"]
-                  if e.get("owner") == "alice" and e.get("text", "").lower() == "buy milk"]
+    alice_milk = [
+        e
+        for e in saved["entries"]
+        if e.get("owner") == "alice" and e.get("text", "").lower() == "buy milk"
+    ]
     assert len(alice_milk) == 1  # the real duplicate is still deduped

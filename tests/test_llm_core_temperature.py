@@ -5,6 +5,7 @@ value — even 0.0 — returns HTTP 400 "Only the default (1) value is supported
 The OpenAI-compatible payload builders must omit the temperature field for these
 models so chat (with a non-default preset) and endpoint probing don't break.
 """
+
 import httpx
 import pytest
 
@@ -13,8 +14,17 @@ from src import llm_core
 
 @pytest.mark.parametrize(
     "model",
-    ["o1", "o1-mini", "o3", "o3-mini", "o4-mini", "gpt-5", "gpt-5-mini",
-     "openrouter/openai/o3-mini", "OpenAI/GPT-5"],
+    [
+        "o1",
+        "o1-mini",
+        "o3",
+        "o3-mini",
+        "o4-mini",
+        "gpt-5",
+        "gpt-5-mini",
+        "openrouter/openai/o3-mini",
+        "OpenAI/GPT-5",
+    ],
 )
 def test_reasoning_models_restrict_temperature(model):
     assert llm_core._restricts_temperature(model) is True
@@ -22,8 +32,16 @@ def test_reasoning_models_restrict_temperature(model):
 
 @pytest.mark.parametrize(
     "model",
-    ["gpt-4o", "gpt-4.1", "gpt-3.5-turbo", "gpt-4.5-preview",
-     "claude-3-5-sonnet", "llama3.1", "", None],
+    [
+        "gpt-4o",
+        "gpt-4.1",
+        "gpt-3.5-turbo",
+        "gpt-4.5-preview",
+        "claude-3-5-sonnet",
+        "llama3.1",
+        "",
+        None,
+    ],
 )
 def test_normal_models_allow_temperature(model):
     assert llm_core._restricts_temperature(model) is False

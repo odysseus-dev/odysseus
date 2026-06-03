@@ -7,6 +7,7 @@ plain substring test that wrongly dropped legitimate photos like
 to drop only icon/logo/favicon ASSETS. The boundary-aware
 _is_icon_or_logo_url helper fixes that.
 """
+
 from src.visual_report import _is_icon_or_logo_url
 
 

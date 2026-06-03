@@ -1,6 +1,7 @@
 """
 RAG singleton instance for the application.
 """
+
 import logging
 import os
 import time

@@ -6,7 +6,9 @@ def test_format_transcript_skips_non_dict_segments():
     # a bare string) made seg['timestamp'] raise TypeError and lose the whole
     # timestamped transcript.
     data = {
-        "success": True, "transcript": "full text", "video_id": "x",
+        "success": True,
+        "transcript": "full text",
+        "video_id": "x",
         "segments": [
             {"timestamp": "0:01", "text": "hello"},
             "junk-seg",

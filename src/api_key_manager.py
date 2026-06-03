@@ -6,6 +6,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 logger = logging.getLogger(__name__)
 
+
 class APIKeyManager:
     def __init__(self, data_dir: str):
         self.data_dir = data_dir
@@ -15,11 +16,11 @@ class APIKeyManager:
     def get_or_create_key(self) -> bytes:
         """Get or create encryption key for API keys"""
         if os.path.exists(self.key_file):
-            with open(self.key_file, 'rb') as f:
+            with open(self.key_file, "rb") as f:
                 return f.read()
         else:
             key = Fernet.generate_key()
-            with open(self.key_file, 'wb') as f:
+            with open(self.key_file, "wb") as f:
                 f.write(key)
             return key
 
@@ -41,7 +42,7 @@ class APIKeyManager:
         """Save encrypted API key to file"""
         keys = self.load()
         keys[provider] = self.encrypt_api_key(api_key)
-        with open(self.api_keys_file, 'w', encoding="utf-8") as f:
+        with open(self.api_keys_file, "w", encoding="utf-8") as f:
             json.dump(keys, f)
 
     def load(self) -> dict[str, str]:
@@ -58,7 +59,10 @@ class APIKeyManager:
             return {}
         if not isinstance(encrypted_keys, dict):
             # Legacy/wrong shape (e.g. a list) — .items() would raise. Ignore it.
-            logger.warning("API keys file has unexpected shape (%s); ignoring", type(encrypted_keys).__name__)
+            logger.warning(
+                "API keys file has unexpected shape (%s); ignoring",
+                type(encrypted_keys).__name__,
+            )
             return {}
 
         decrypted = {}
@@ -68,4 +72,3 @@ class APIKeyManager:
             except (InvalidToken, ValueError) as e:
                 logger.warning("Failed to decrypt API key for %s: %s", provider, e)
         return decrypted
-

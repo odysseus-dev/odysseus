@@ -35,9 +35,11 @@ def schedule(tmp_path, monkeypatch):
     endpoint = _route_endpoint(router, "/api/email/schedule", "POST")
 
     def _stored(sid):
-        row = sqlite3.connect(db_path).execute(
-            "SELECT send_at FROM scheduled_emails WHERE id = ?", (sid,)
-        ).fetchone()
+        row = (
+            sqlite3.connect(db_path)
+            .execute("SELECT send_at FROM scheduled_emails WHERE id = ?", (sid,))
+            .fetchone()
+        )
         return row[0]
 
     return endpoint, _stored

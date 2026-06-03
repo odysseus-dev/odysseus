@@ -146,7 +146,7 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     if end < 0:
         return {}, text
     fm_text = text[3:end].lstrip("\n")
-    body = text[end + 4:].lstrip("\n")
+    body = text[end + 4 :].lstrip("\n")
     fm: dict[str, Any] = {}
     pending_key: str | None = None
     for line in fm_text.splitlines():
@@ -181,7 +181,28 @@ def _emit_scalar(v: Any) -> str:
     if isinstance(v, list):
         return "[" + ", ".join(_emit_scalar(x) for x in v) + "]"
     s = str(v)
-    if any(c in s for c in (":", "#", "\n", "[", "]", "{", "}", ",", "&", "*", "!", "|", ">", "'", '"', "%", "@")):
+    if any(
+        c in s
+        for c in (
+            ":",
+            "#",
+            "\n",
+            "[",
+            "]",
+            "{",
+            "}",
+            ",",
+            "&",
+            "*",
+            "!",
+            "|",
+            ">",
+            "'",
+            '"',
+            "%",
+            "@",
+        )
+    ):
         return json.dumps(s)
     return s
 
@@ -318,7 +339,7 @@ def emit_body(sections: dict[str, Any]) -> str:
 
 @dataclass
 class Skill:
-    name: str                                          # slug, dir name
+    name: str  # slug, dir name
     description: str = ""
     version: str = "1.0.0"
     category: str = "general"
@@ -326,12 +347,12 @@ class Skill:
     platforms: list[str] = field(default_factory=list)
     requires_toolsets: list[str] = field(default_factory=list)
     fallback_for_toolsets: list[str] = field(default_factory=list)
-    status: str = "draft"                              # draft | published
+    status: str = "draft"  # draft | published
     confidence: float = 0.8
     source: str = "learned"
     teacher_model: str | None = None
     owner: str | None = None
-    created: str = ""                                  # ISO8601
+    created: str = ""  # ISO8601
     when_to_use: str = ""
     procedure: list[str] = field(default_factory=list)
     pitfalls: list[str] = field(default_factory=list)
@@ -354,21 +375,27 @@ class Skill:
             "version": self.version,
             "category": self.category,
         }
-        if self.tags:                  fm["tags"] = list(self.tags)
-        if self.platforms:             fm["platforms"] = list(self.platforms)
-        if self.requires_toolsets:     fm["requires_toolsets"] = list(self.requires_toolsets)
-        if self.fallback_for_toolsets: fm["fallback_for_toolsets"] = list(self.fallback_for_toolsets)
+        if self.tags:
+            fm["tags"] = list(self.tags)
+        if self.platforms:
+            fm["platforms"] = list(self.platforms)
+        if self.requires_toolsets:
+            fm["requires_toolsets"] = list(self.requires_toolsets)
+        if self.fallback_for_toolsets:
+            fm["fallback_for_toolsets"] = list(self.fallback_for_toolsets)
         fm["status"] = self.status
         fm["confidence"] = round(float(self.confidence), 3)
         fm["source"] = self.source
-        if self.teacher_model: fm["teacher_model"] = self.teacher_model
-        if self.owner:         fm["owner"] = self.owner
+        if self.teacher_model:
+            fm["teacher_model"] = self.teacher_model
+        if self.owner:
+            fm["owner"] = self.owner
         fm["created"] = self.created or _now_iso()
         return fm
 
     def to_dict(self) -> dict[str, Any]:
         d = {
-            "id": self.name,        # slug doubles as id
+            "id": self.name,  # slug doubles as id
             "name": self.name,
             "description": self.description,
             "version": self.version,
@@ -395,7 +422,11 @@ class Skill:
         # Back-compat aliases for the old API/UI
         d["title"] = self.description or self.name.replace("-", " ").title()
         d["problem"] = self.when_to_use
-        d["solution"] = (self.procedure[0] if self.procedure else "") if not self.body_extra else self.body_extra
+        d["solution"] = (
+            (self.procedure[0] if self.procedure else "")
+            if not self.body_extra
+            else self.body_extra
+        )
         d["steps"] = list(self.procedure)
         return d
 
@@ -404,7 +435,10 @@ class Skill:
         fm, body = parse_frontmatter(text)
         sections = parse_body(body)
         raw_name = fm.get("name")
-        name = slugify(raw_name if raw_name not in (None, "") else fm.get("description", ""), fallback="skill")
+        name = slugify(
+            raw_name if raw_name not in (None, "") else fm.get("description", ""),
+            fallback="skill",
+        )
         return cls(
             name=name,
             description=str(fm.get("description", "") or ""),
@@ -417,7 +451,9 @@ class Skill:
             status=str(fm.get("status", "draft") or "draft"),
             confidence=_as_float(fm.get("confidence", 0.8), 0.8),
             source=str(fm.get("source", "learned") or "learned"),
-            teacher_model=str(fm.get("teacher_model")) if fm.get("teacher_model") else None,
+            teacher_model=str(fm.get("teacher_model"))
+            if fm.get("teacher_model")
+            else None,
             owner=str(fm.get("owner")) if fm.get("owner") else None,
             created=str(fm.get("created") or _now_iso()),
             when_to_use=sections["when_to_use"],
@@ -430,13 +466,15 @@ class Skill:
 
     def to_markdown(self) -> str:
         fm = emit_frontmatter(self.to_frontmatter())
-        body = emit_body({
-            "when_to_use": self.when_to_use,
-            "procedure": self.procedure,
-            "pitfalls": self.pitfalls,
-            "verification": self.verification,
-            "body_extra": self.body_extra,
-        })
+        body = emit_body(
+            {
+                "when_to_use": self.when_to_use,
+                "procedure": self.procedure,
+                "pitfalls": self.pitfalls,
+                "verification": self.verification,
+                "body_extra": self.body_extra,
+            }
+        )
         return f"---\n{fm}\n---\n\n{body}"
 
 

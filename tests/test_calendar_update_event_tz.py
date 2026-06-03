@@ -8,6 +8,7 @@ it was created with silently shifted it by the user's UTC offset (9h for a
 Tokyo user) and left is_utc inconsistent. The do_manage_notes update path
 was already fixed for the analogous issue.
 """
+
 import json
 import tempfile
 import uuid
@@ -34,6 +35,7 @@ _TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
 def _bind_temp_db(monkeypatch):
     monkeypatch.setattr(cdb, "SessionLocal", _TS)
     import routes.calendar_routes as cr
+
     monkeypatch.setattr(cr, "SessionLocal", _TS, raising=False)
     yield
 
@@ -41,6 +43,7 @@ def _bind_temp_db(monkeypatch):
 @pytest.fixture
 def tokyo_offset():
     from routes.calendar_routes import set_user_tz_offset
+
     set_user_tz_offset(540)  # Tokyo, UTC+9
     try:
         yield
@@ -54,11 +57,16 @@ async def test_update_event_dtstart_anchored_to_user_tz(tokyo_offset):
     owner = "tz-" + uuid.uuid4().hex[:6]
     naive = "2026-06-10T14:00:00"  # 14:00 Tokyo == 05:00 UTC
 
-    created = await do_manage_calendar(json.dumps({
-        "action": "create_event",
-        "summary": "Standup",
-        "dtstart": naive,
-    }), owner=owner)
+    created = await do_manage_calendar(
+        json.dumps(
+            {
+                "action": "create_event",
+                "summary": "Standup",
+                "dtstart": naive,
+            }
+        ),
+        owner=owner,
+    )
     assert created.get("exit_code", 0) == 0, created
     uid = created["uid"]
 
@@ -70,11 +78,16 @@ async def test_update_event_dtstart_anchored_to_user_tz(tokyo_offset):
         db.close()
 
     # Update the same event to the SAME naive wall-clock value.
-    updated = await do_manage_calendar(json.dumps({
-        "action": "update_event",
-        "uid": uid,
-        "dtstart": naive,
-    }), owner=owner)
+    updated = await do_manage_calendar(
+        json.dumps(
+            {
+                "action": "update_event",
+                "uid": uid,
+                "dtstart": naive,
+            }
+        ),
+        owner=owner,
+    )
     assert updated.get("exit_code", 0) == 0, updated
 
     db = _TS()

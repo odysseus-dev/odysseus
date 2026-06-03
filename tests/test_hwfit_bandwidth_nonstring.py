@@ -3,6 +3,7 @@
 It guarded only falsy values; a truthy non-string (e.g. a number from a
 malformed hardware probe) reached `gpu_name.lower()` and raised AttributeError.
 """
+
 from services.hwfit.fit import _lookup_bandwidth
 
 

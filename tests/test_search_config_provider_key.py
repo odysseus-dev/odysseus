@@ -17,28 +17,37 @@ def _config(monkeypatch, settings):
 
 
 def test_search_config_detects_active_provider_specific_key(monkeypatch):
-    config = _config(monkeypatch, {
-        "search_provider": "tavily",
-        "tavily_api_key": "tavily-key",
-    })
+    config = _config(
+        monkeypatch,
+        {
+            "search_provider": "tavily",
+            "tavily_api_key": "tavily-key",
+        },
+    )
 
     assert config["has_api_key"] is True
 
 
 def test_search_config_ignores_key_for_different_provider(monkeypatch):
-    config = _config(monkeypatch, {
-        "search_provider": "brave",
-        "tavily_api_key": "tavily-key",
-    })
+    config = _config(
+        monkeypatch,
+        {
+            "search_provider": "brave",
+            "tavily_api_key": "tavily-key",
+        },
+    )
 
     assert config["has_api_key"] is False
 
 
 def test_search_config_keeps_legacy_shared_key_fallback(monkeypatch):
-    config = _config(monkeypatch, {
-        "search_provider": "serper",
-        "search_api_key": "legacy-key",
-    })
+    config = _config(
+        monkeypatch,
+        {
+            "search_provider": "serper",
+            "search_api_key": "legacy-key",
+        },
+    )
 
     assert config["has_api_key"] is True
 

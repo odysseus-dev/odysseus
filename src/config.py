@@ -14,51 +14,104 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # files) so they stay easy to integrate with upstream changes.
 IS_WINDOWS = os.name == "nt"
 
+
 class DataConfig(BaseSettings):
     """Configuration for data storage and file handling."""
+
     # Base directory
-    base_dir: Path = Field(default=Path(__file__).parent.parent, description="Base directory for the application")
+    base_dir: Path = Field(
+        default=Path(__file__).parent.parent,
+        description="Base directory for the application",
+    )
 
     # Data paths
     data_dir: Path = Field(default=Path("data"), description="Main data directory")
-    uploads_dir: Path = Field(default=Path("data/uploads"), description="Directory for uploaded files")
-    sessions_file: Path = Field(default=Path("data/sessions.json"), description="Sessions storage file")
-    memory_file: Path = Field(default=Path("data/memory.json"), description="Memory storage file")
-    memory_doc: Path = Field(default=Path("data/memory_doc.md"), description="Memory document file")
-    personal_dir: Path = Field(default=Path("data/personal_docs"), description="Personal documents directory")
-    runbook_dir: Path = Field(default=Path("data/personal_docs/runbook"), description="Runbook directory")
+    uploads_dir: Path = Field(
+        default=Path("data/uploads"), description="Directory for uploaded files"
+    )
+    sessions_file: Path = Field(
+        default=Path("data/sessions.json"), description="Sessions storage file"
+    )
+    memory_file: Path = Field(
+        default=Path("data/memory.json"), description="Memory storage file"
+    )
+    memory_doc: Path = Field(
+        default=Path("data/memory_doc.md"), description="Memory document file"
+    )
+    personal_dir: Path = Field(
+        default=Path("data/personal_docs"), description="Personal documents directory"
+    )
+    runbook_dir: Path = Field(
+        default=Path("data/personal_docs/runbook"), description="Runbook directory"
+    )
 
     # Upload settings
-    max_upload_size: int = Field(default=10 * 1024 * 1024, description="Maximum upload size in bytes (10MB)")
+    max_upload_size: int = Field(
+        default=10 * 1024 * 1024, description="Maximum upload size in bytes (10MB)"
+    )
     allowed_extensions: list[str] = Field(
         default=[
-            '.txt', '.py', '.html', '.md', '.json', '.csv',
-            '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tiff', '.pdf'
+            ".txt",
+            ".py",
+            ".html",
+            ".md",
+            ".json",
+            ".csv",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".bmp",
+            ".webp",
+            ".tiff",
+            ".pdf",
         ],
-        description="Allowed file extensions for uploads"
+        description="Allowed file extensions for uploads",
     )
-    chunk_size: int = Field(default=1000, description="Chunk size for document processing")
-    chunk_overlap: int = Field(default=200, description="Overlap between chunks for document processing")
-    cleanup_days: int = Field(default=30, description="Number of days after which to clean up old uploads")
+    chunk_size: int = Field(
+        default=1000, description="Chunk size for document processing"
+    )
+    chunk_overlap: int = Field(
+        default=200, description="Overlap between chunks for document processing"
+    )
+    cleanup_days: int = Field(
+        default=30, description="Number of days after which to clean up old uploads"
+    )
 
     model_config = SettingsConfigDict(env_prefix="DATA_")
+
 
 class LLMConfig(BaseSettings):
     """Configuration for LLM integration."""
 
     # LLM endpoints
-    default_host: str = Field(default="localhost", description="Default host for LLM services")
-    openai_api_key: str | None = Field(default=None, description="OpenAI API key if using OpenAI")
-    openai_compat_path: str = Field(default="/v1/chat/completions", description="OpenAI compatible API path")
+    default_host: str = Field(
+        default="localhost", description="Default host for LLM services"
+    )
+    openai_api_key: str | None = Field(
+        default=None, description="OpenAI API key if using OpenAI"
+    )
+    openai_compat_path: str = Field(
+        default="/v1/chat/completions", description="OpenAI compatible API path"
+    )
 
     # LLM behavior
-    max_context_messages: int = Field(default=90, description="Maximum number of context messages to keep")
+    max_context_messages: int = Field(
+        default=90, description="Maximum number of context messages to keep"
+    )
     request_timeout: int = Field(default=20, description="Request timeout in seconds")
-    llm_stream_timeout: int = Field(default=30, description="LLM streaming timeout in seconds")
-    llm_max_tokens: int = Field(default=4096, description="Maximum tokens for LLM responses")
-    llm_temperature: float = Field(default=0.3, description="Temperature for LLM responses")
+    llm_stream_timeout: int = Field(
+        default=30, description="LLM streaming timeout in seconds"
+    )
+    llm_max_tokens: int = Field(
+        default=4096, description="Maximum tokens for LLM responses"
+    )
+    llm_temperature: float = Field(
+        default=0.3, description="Temperature for LLM responses"
+    )
 
     model_config = SettingsConfigDict(env_prefix="LLM_")
+
 
 class SearchConfig(BaseSettings):
     """Configuration for search functionality."""
@@ -66,56 +119,98 @@ class SearchConfig(BaseSettings):
     # Web search
     searxng_instance: str = Field(
         default="http://localhost:8080",
-        description="SearXNG instance URL (self-hosted)"
+        description="SearXNG instance URL (self-hosted)",
     )
-    web_search_count: int = Field(default=10, description="Number of search results to retrieve")
-    web_search_max_pages: int = Field(default=6, description="Maximum number of pages to search")
-    web_search_max_workers: int = Field(default=4, description="Maximum number of worker threads for web search")
+    web_search_count: int = Field(
+        default=10, description="Number of search results to retrieve"
+    )
+    web_search_max_pages: int = Field(
+        default=6, description="Maximum number of pages to search"
+    )
+    web_search_max_workers: int = Field(
+        default=4, description="Maximum number of worker threads for web search"
+    )
 
     # Research service
     research_service_url: str = Field(
-        default="http://localhost:8003/research",
-        description="URL for research service"
+        default="http://localhost:8003/research", description="URL for research service"
     )
-    research_timeout: int = Field(default=300, description="Research service timeout in seconds")
+    research_timeout: int = Field(
+        default=300, description="Research service timeout in seconds"
+    )
 
     # API keys (optional)
     serpapi_key: str | None = Field(default=None, description="SerpAPI key if used")
-    google_api_key: str | None = Field(default=None, description="Google API key if used")
-    google_cx: str | None = Field(default=None, description="Google Custom Search Engine ID if used")
+    google_api_key: str | None = Field(
+        default=None, description="Google API key if used"
+    )
+    google_cx: str | None = Field(
+        default=None, description="Google Custom Search Engine ID if used"
+    )
 
     model_config = SettingsConfigDict(env_prefix="SEARCH_")
+
 
 class SecurityConfig(BaseSettings):
     """Configuration for security and rate limiting."""
 
     # Rate limiting
-    max_concurrent_uploads: int = Field(default=3, description="Maximum concurrent uploads per IP")
-    upload_rate_limit: int = Field(default=5, description="Maximum uploads per minute per IP")
-    upload_rate_window: int = Field(default=60, description="Rate limit window in seconds")
-    upload_rate_max_entries: int = Field(default=1000, description="Maximum number of rate limit entries to keep")
+    max_concurrent_uploads: int = Field(
+        default=3, description="Maximum concurrent uploads per IP"
+    )
+    upload_rate_limit: int = Field(
+        default=5, description="Maximum uploads per minute per IP"
+    )
+    upload_rate_window: int = Field(
+        default=60, description="Rate limit window in seconds"
+    )
+    upload_rate_max_entries: int = Field(
+        default=1000, description="Maximum number of rate limit entries to keep"
+    )
 
     # Security settings
-    allowed_origins: list[str] = Field(default=["*"], description="Allowed origins for CORS")
-    max_file_size: int = Field(default=10 * 1024 * 1024, description="Maximum file size in bytes")
+    allowed_origins: list[str] = Field(
+        default=["*"], description="Allowed origins for CORS"
+    )
+    max_file_size: int = Field(
+        default=10 * 1024 * 1024, description="Maximum file size in bytes"
+    )
     dangerous_file_types: list[str] = Field(
         default=[
-            'application/x-executable', 'application/x-sharedlib',
-            'application/x-dll', 'application/x-msdownload',
-            'application/x-sh', 'application/x-bat', 'application/x-vbs',
-            'application/javascript', 'application/x-javascript'
+            "application/x-executable",
+            "application/x-sharedlib",
+            "application/x-dll",
+            "application/x-msdownload",
+            "application/x-sh",
+            "application/x-bat",
+            "application/x-vbs",
+            "application/javascript",
+            "application/x-javascript",
         ],
-        description="Potentially dangerous MIME types to block"
+        description="Potentially dangerous MIME types to block",
     )
     dangerous_extensions: list[str] = Field(
         default=[
-            '.exe', '.dll', '.bat', '.cmd', '.sh', '.bash',
-            '.js', '.vbs', '.ps1', '.py', '.php', '.jsp', '.asp', '.aspx'
+            ".exe",
+            ".dll",
+            ".bat",
+            ".cmd",
+            ".sh",
+            ".bash",
+            ".js",
+            ".vbs",
+            ".ps1",
+            ".py",
+            ".php",
+            ".jsp",
+            ".asp",
+            ".aspx",
         ],
-        description="Potentially dangerous file extensions to block"
+        description="Potentially dangerous file extensions to block",
     )
 
     model_config = SettingsConfigDict(env_prefix="SECURITY_")
+
 
 class AppConfig(BaseSettings):
     """Main application configuration combining all components."""
@@ -142,14 +237,49 @@ class AppConfig(BaseSettings):
         data_dir = base_dir / "data"
 
         # Get values from the input dict or use defaults
-        max_upload_size = v.get("max_upload_size", 10 * 1024 * 1024) if isinstance(v, dict) else 10 * 1024 * 1024
-        allowed_extensions = v.get("allowed_extensions", [
-            '.txt', '.py', '.html', '.md', '.json', '.csv',
-            '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tiff', '.pdf'
-        ]) if isinstance(v, dict) else [
-            '.txt', '.py', '.html', '.md', '.json', '.csv',
-            '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tiff', '.pdf'
-        ]
+        max_upload_size = (
+            v.get("max_upload_size", 10 * 1024 * 1024)
+            if isinstance(v, dict)
+            else 10 * 1024 * 1024
+        )
+        allowed_extensions = (
+            v.get(
+                "allowed_extensions",
+                [
+                    ".txt",
+                    ".py",
+                    ".html",
+                    ".md",
+                    ".json",
+                    ".csv",
+                    ".png",
+                    ".jpg",
+                    ".jpeg",
+                    ".gif",
+                    ".bmp",
+                    ".webp",
+                    ".tiff",
+                    ".pdf",
+                ],
+            )
+            if isinstance(v, dict)
+            else [
+                ".txt",
+                ".py",
+                ".html",
+                ".md",
+                ".json",
+                ".csv",
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".gif",
+                ".bmp",
+                ".webp",
+                ".tiff",
+                ".pdf",
+            ]
+        )
         chunk_size = v.get("chunk_size", 1000) if isinstance(v, dict) else 1000
         chunk_overlap = v.get("chunk_overlap", 200) if isinstance(v, dict) else 200
         cleanup_days = v.get("cleanup_days", 30) if isinstance(v, dict) else 30
@@ -166,13 +296,15 @@ class AppConfig(BaseSettings):
             "allowed_extensions": allowed_extensions,
             "chunk_size": chunk_size,
             "chunk_overlap": chunk_overlap,
-            "cleanup_days": cleanup_days
+            "cleanup_days": cleanup_days,
         }
 
     model_config = SettingsConfigDict()
 
+
 # Create global config instance
 config = AppConfig()
+
 
 # Create directories if they don't exist
 def create_directories():
@@ -181,11 +313,12 @@ def create_directories():
         config.data.data_dir,
         config.data.uploads_dir,
         config.data.personal_dir,
-        config.data.runbook_dir
+        config.data.runbook_dir,
     ]
 
     for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)
+
 
 # Validate configuration on startup
 def validate_config():
@@ -202,6 +335,7 @@ def validate_config():
 
     # Create directories
     create_directories()
+
 
 # Initialize configuration
 validate_config()

@@ -8,6 +8,7 @@ matched and the email / phone were silently dropped — breaking contact search 
 email, the email-composer autocomplete, and vCard/CSV export round-trips for any
 address book synced from Apple.
 """
+
 from routes.contacts_routes import _parse_vcards
 
 

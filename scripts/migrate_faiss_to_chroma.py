@@ -53,7 +53,11 @@ def _rag_docstore(data):
     ids = data.get("ids", [])
     documents = data.get("documents", [])
     metadatas = data.get("metadatas", [])
-    if not isinstance(ids, list) or not isinstance(documents, list) or not isinstance(metadatas, list):
+    if (
+        not isinstance(ids, list)
+        or not isinstance(documents, list)
+        or not isinstance(metadatas, list)
+    ):
         return [], [], []
     count = min(len(ids), len(documents), len(metadatas))
     return ids[:count], documents[:count], metadatas[:count]
@@ -105,16 +109,18 @@ def migrate_memories():
             continue
         batch_ids.append(mid)
         batch_texts.append(text)
-        batch_metas.append({"source": "memory", "category": mem.get("category", "fact")})
+        batch_metas.append(
+            {"source": "memory", "category": mem.get("category", "fact")}
+        )
 
     if batch_texts:
         vecs = embed.encode(batch_texts, normalize_embeddings=True).tolist()
         for i in range(0, len(batch_texts), 100):
             collection.add(
-                ids=batch_ids[i:i+100],
-                embeddings=vecs[i:i+100],
-                documents=batch_texts[i:i+100],
-                metadatas=batch_metas[i:i+100],
+                ids=batch_ids[i : i + 100],
+                embeddings=vecs[i : i + 100],
+                documents=batch_texts[i : i + 100],
+                metadatas=batch_metas[i : i + 100],
             )
         logger.info(f"Migrated {len(batch_texts)} memories to ChromaDB")
     else:
@@ -149,9 +155,9 @@ def migrate_rag():
     )
 
     for i in range(0, len(ids), 100):
-        batch_ids = ids[i:i+100]
-        batch_docs = documents[i:i+100]
-        batch_metas = metadatas[i:i+100]
+        batch_ids = ids[i : i + 100]
+        batch_docs = documents[i : i + 100]
+        batch_metas = metadatas[i : i + 100]
         vecs = embed.encode(batch_docs, normalize_embeddings=True).tolist()
         collection.add(
             ids=batch_ids,
@@ -165,6 +171,7 @@ def migrate_rag():
 
 if __name__ == "__main__":
     from dotenv import load_dotenv
+
     load_dotenv()
 
     logger.info("Starting FAISS -> ChromaDB migration")

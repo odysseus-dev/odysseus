@@ -7,6 +7,7 @@ Docker installs.
 Pin the SearXNG image to a known-good tag so a bad upstream `latest` can't block
 startup. This guards that the pin stays in place.
 """
+
 import re
 from pathlib import Path
 

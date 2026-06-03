@@ -13,9 +13,20 @@ on secret-shaped names.
 """
 
 _SECRET_KEY_PATTERNS = (
-    "_api_key", "_apikey", "_password", "_passwd", "_pass", "_pwd",
-    "_secret", "_client_secret", "_token", "_access_token", "_refresh_token",
-    "_credential", "_credentials", "_key",
+    "_api_key",
+    "_apikey",
+    "_password",
+    "_passwd",
+    "_pass",
+    "_pwd",
+    "_secret",
+    "_client_secret",
+    "_token",
+    "_access_token",
+    "_refresh_token",
+    "_credential",
+    "_credentials",
+    "_key",
 )
 _SECRET_KEY_ALLOW = ("google_pse_cx",)  # public identifiers, not secrets
 
@@ -34,8 +45,11 @@ def _scrub_value(key, value):
     non-empty *string* values are blanked; presence is preserved."""
     if isinstance(value, dict):
         return {
-            k: ("" if (is_secret_key(k) and isinstance(v, str) and v)
-                else _scrub_value(k, v))
+            k: (
+                ""
+                if (is_secret_key(k) and isinstance(v, str) and v)
+                else _scrub_value(k, v)
+            )
             for k, v in value.items()
         }
     if isinstance(value, list):

@@ -1,4 +1,5 @@
 """Tests for endpoint_resolver — pure functions tested directly to avoid import pollution."""
+
 import json
 import re
 from urllib.parse import urlparse
@@ -7,16 +8,24 @@ from urllib.parse import urlparse
 # This avoids module cache conflicts with other test files that mock dependencies.
 
 _NON_CHAT_MODEL = (
-    "text-embedding", "embedding", "tts-", "whisper", "dall-e",
-    "moderation", "rerank", "reranker", "clip", "stable-diffusion",
+    "text-embedding",
+    "embedding",
+    "tts-",
+    "whisper",
+    "dall-e",
+    "moderation",
+    "rerank",
+    "reranker",
+    "clip",
+    "stable-diffusion",
 )
 
 
 def _first_chat_model(models):
-    for m in (models or []):
+    for m in models or []:
         if not any(p in str(m).lower() for p in _NON_CHAT_MODEL):
             return m
-    return (models[0] if models else None)
+    return models[0] if models else None
 
 
 def _endpoint_cached_models(ep) -> list:
@@ -45,6 +54,7 @@ def _endpoint_enabled_models(ep) -> list:
     hidden = _endpoint_hidden_models(ep)
     return [m for m in _endpoint_cached_models(ep) if m not in hidden]
 
+
 def normalize_base(url: str) -> str:
     url = (url or "").strip().rstrip("/")
     for suffix in ["/models", "/chat/completions", "/completions", "/v1/messages"]:
@@ -60,7 +70,9 @@ def _detect_provider(url: str) -> str:
     parsed = urlparse(url or "")
     host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
-    if host.endswith("ollama.com") or (parsed.port == 11434 and (path == "/api" or path.startswith("/api/"))):
+    if host.endswith("ollama.com") or (
+        parsed.port == 11434 and (path == "/api" or path.startswith("/api/"))
+    ):
         return "ollama"
     if "anthropic.com" in (url or ""):
         return "anthropic"
@@ -109,25 +121,41 @@ def build_headers(api_key, base: str) -> dict:
 
 class TestNormalizeBase:
     def test_strips_models(self):
-        assert normalize_base("https://api.openai.com/v1/models") == "https://api.openai.com/v1"
+        assert (
+            normalize_base("https://api.openai.com/v1/models")
+            == "https://api.openai.com/v1"
+        )
 
     def test_strips_chat_completions(self):
-        assert normalize_base("https://api.openai.com/v1/chat/completions") == "https://api.openai.com/v1"
+        assert (
+            normalize_base("https://api.openai.com/v1/chat/completions")
+            == "https://api.openai.com/v1"
+        )
 
     def test_strips_completions(self):
-        assert normalize_base("https://api.openai.com/v1/completions") == "https://api.openai.com/v1"
+        assert (
+            normalize_base("https://api.openai.com/v1/completions")
+            == "https://api.openai.com/v1"
+        )
 
     def test_strips_v1_messages(self):
-        assert normalize_base("https://api.anthropic.com/v1/messages") == "https://api.anthropic.com"
+        assert (
+            normalize_base("https://api.anthropic.com/v1/messages")
+            == "https://api.anthropic.com"
+        )
 
     def test_strips_ollama_native_chat(self):
         assert normalize_base("https://ollama.com/api/chat") == "https://ollama.com/api"
 
     def test_trailing_slash(self):
-        assert normalize_base("https://api.openai.com/v1/") == "https://api.openai.com/v1"
+        assert (
+            normalize_base("https://api.openai.com/v1/") == "https://api.openai.com/v1"
+        )
 
     def test_clean_url_unchanged(self):
-        assert normalize_base("https://api.openai.com/v1") == "https://api.openai.com/v1"
+        assert (
+            normalize_base("https://api.openai.com/v1") == "https://api.openai.com/v1"
+        )
 
     def test_empty_string(self):
         assert normalize_base("") == ""
@@ -138,16 +166,28 @@ class TestNormalizeBase:
 
 class TestBuildChatUrl:
     def test_openai_style(self):
-        assert build_chat_url("https://api.openai.com/v1") == "https://api.openai.com/v1/chat/completions"
+        assert (
+            build_chat_url("https://api.openai.com/v1")
+            == "https://api.openai.com/v1/chat/completions"
+        )
 
     def test_anthropic_style(self):
-        assert build_chat_url("https://api.anthropic.com") == "https://api.anthropic.com/v1/messages"
+        assert (
+            build_chat_url("https://api.anthropic.com")
+            == "https://api.anthropic.com/v1/messages"
+        )
 
     def test_anthropic_v1_base_does_not_double_v1(self):
-        assert build_chat_url("https://api.anthropic.com/v1") == "https://api.anthropic.com/v1/messages"
+        assert (
+            build_chat_url("https://api.anthropic.com/v1")
+            == "https://api.anthropic.com/v1/messages"
+        )
 
     def test_local_endpoint(self):
-        assert build_chat_url("http://localhost:8000/v1") == "http://localhost:8000/v1/chat/completions"
+        assert (
+            build_chat_url("http://localhost:8000/v1")
+            == "http://localhost:8000/v1/chat/completions"
+        )
 
     def test_ollama_cloud_native_api(self):
         assert build_chat_url("https://ollama.com/api") == "https://ollama.com/api/chat"
@@ -158,10 +198,15 @@ class TestBuildChatUrl:
 
 class TestBuildModelsUrl:
     def test_openai_models(self):
-        assert build_models_url("https://api.openai.com/v1") == "https://api.openai.com/v1/models"
+        assert (
+            build_models_url("https://api.openai.com/v1")
+            == "https://api.openai.com/v1/models"
+        )
 
     def test_ollama_tags(self):
-        assert build_models_url("https://ollama.com/api") == "https://ollama.com/api/tags"
+        assert (
+            build_models_url("https://ollama.com/api") == "https://ollama.com/api/tags"
+        )
 
 
 class TestBuildHeaders:
@@ -169,10 +214,15 @@ class TestBuildHeaders:
         assert build_headers(None, "https://api.openai.com/v1") == {}
 
     def test_openai_bearer(self):
-        assert build_headers("sk-abc", "https://api.openai.com/v1") == {"Authorization": "Bearer sk-abc"}
+        assert build_headers("sk-abc", "https://api.openai.com/v1") == {
+            "Authorization": "Bearer sk-abc"
+        }
 
     def test_anthropic_headers(self):
-        assert build_headers("sk-ant-abc", "https://api.anthropic.com") == {"x-api-key": "sk-ant-abc", "anthropic-version": "2023-06-01"}
+        assert build_headers("sk-ant-abc", "https://api.anthropic.com") == {
+            "x-api-key": "sk-ant-abc",
+            "anthropic-version": "2023-06-01",
+        }
 
     def test_empty_key(self):
         assert build_headers("", "https://api.openai.com/v1") == {}
@@ -180,6 +230,7 @@ class TestBuildHeaders:
 
 class _Ep:
     """Minimal ModelEndpoint stand-in for the model-picking helpers."""
+
     def __init__(self, cached=None, hidden=None):
         self.cached_models = json.dumps(cached) if cached is not None else None
         self.hidden_models = json.dumps(hidden) if hidden is not None else None
@@ -201,11 +252,14 @@ class TestEnabledModels:
     def test_excludes_hidden(self):
         # The Groq repro: 16 models, only gpt-oss-120b enabled.
         cached = [
-            "openai/gpt-oss-safeguard-20b", "canopylabs/orpheus-arabic-saudi",
-            "whisper-large-v3", "openai/gpt-oss-120b",
+            "openai/gpt-oss-safeguard-20b",
+            "canopylabs/orpheus-arabic-saudi",
+            "whisper-large-v3",
+            "openai/gpt-oss-120b",
         ]
         hidden = [
-            "openai/gpt-oss-safeguard-20b", "canopylabs/orpheus-arabic-saudi",
+            "openai/gpt-oss-safeguard-20b",
+            "canopylabs/orpheus-arabic-saudi",
             "whisper-large-v3",
         ]
         ep = _Ep(cached=cached, hidden=hidden)

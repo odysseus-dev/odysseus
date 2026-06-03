@@ -31,6 +31,7 @@ def _ensure_init():
 
     try:
         from src.rag_singleton import get_rag_manager
+
         _rag_manager = get_rag_manager()
     except Exception:
         pass
@@ -38,6 +39,7 @@ def _ensure_init():
     try:
         from src.constants import PERSONAL_DIR
         from src.personal_docs import PersonalDocsManager
+
         _personal_docs_manager = PersonalDocsManager(PERSONAL_DIR, _rag_manager)
     except Exception:
         pass
@@ -57,7 +59,10 @@ async def list_tools() -> list[Tool]:
                         "enum": ["list", "add_directory", "remove_directory"],
                         "description": "The action to perform",
                     },
-                    "directory": {"type": "string", "description": "Directory path (for add/remove)"},
+                    "directory": {
+                        "type": "string",
+                        "description": "Directory path (for add/remove)",
+                    },
                 },
                 "required": ["action"],
             },
@@ -75,11 +80,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     if action == "list":
         if not _personal_docs_manager:
-            return [TextContent(type="text", text="Personal docs manager not available. RAG may not be configured.")]
+            return [
+                TextContent(
+                    type="text",
+                    text="Personal docs manager not available. RAG may not be configured.",
+                )
+            ]
         try:
-            files = getattr(_personal_docs_manager, 'index', None) or []
+            files = getattr(_personal_docs_manager, "index", None) or []
             dirs = []
-            if hasattr(_personal_docs_manager, 'get_indexed_directories'):
+            if hasattr(_personal_docs_manager, "get_indexed_directories"):
                 dirs = _personal_docs_manager.get_indexed_directories()
 
             lines = []
@@ -95,7 +105,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 if len(files) > 50:
                     lines.append(f"  ... and {len(files) - 50} more")
             if not lines:
-                return [TextContent(type="text", text="No files or directories indexed in RAG.")]
+                return [
+                    TextContent(
+                        type="text", text="No files or directories indexed in RAG."
+                    )
+                ]
             return [TextContent(type="text", text="\n".join(lines))]
         except Exception as e:
             return [TextContent(type="text", text=f"Error: {e}")]
@@ -104,12 +118,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         _dir = arguments.get("directory")
         directory = _dir.strip() if isinstance(_dir, str) else ""
         if not directory:
-            return [TextContent(type="text", text="Error: add_directory needs a directory path")]
+            return [
+                TextContent(
+                    type="text", text="Error: add_directory needs a directory path"
+                )
+            ]
         # Store an absolute path so indexed `source` metadata is absolute and
         # remove_directory (which abspath-normalizes) can match it later (#1660).
         directory = os.path.abspath(os.path.expanduser(directory))
         if not os.path.isdir(directory):
-            return [TextContent(type="text", text=f"Error: Directory not found: {directory}")]
+            return [
+                TextContent(
+                    type="text", text=f"Error: Directory not found: {directory}"
+                )
+            ]
         if not _rag_manager:
             return [TextContent(type="text", text="Error: RAG manager not available")]
         try:
@@ -119,41 +141,71 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             # Indexing was just done above, so pass index=False to avoid a second
             # (ownerless) pass. Without this the directory was indexed but never
             # tracked in indexed_directories, so it was invisible/unremovable.
-            if _personal_docs_manager and hasattr(_personal_docs_manager, "add_directory"):
+            if _personal_docs_manager and hasattr(
+                _personal_docs_manager, "add_directory"
+            ):
                 try:
                     _personal_docs_manager.add_directory(directory, index=False)
                 except Exception:
                     pass
-            return [TextContent(type="text", text=f"Directory '{directory}' added to RAG index ({indexed} chunks indexed)")]
+            return [
+                TextContent(
+                    type="text",
+                    text=f"Directory '{directory}' added to RAG index ({indexed} chunks indexed)",
+                )
+            ]
         except Exception as e:
-            return [TextContent(type="text", text=f"Error: Failed to index directory: {e}")]
+            return [
+                TextContent(type="text", text=f"Error: Failed to index directory: {e}")
+            ]
 
     elif action == "remove_directory":
         _dir = arguments.get("directory")
         directory = _dir.strip() if isinstance(_dir, str) else ""
         if not directory:
-            return [TextContent(type="text", text="Error: remove_directory needs a directory path")]
+            return [
+                TextContent(
+                    type="text", text="Error: remove_directory needs a directory path"
+                )
+            ]
         # Expand ~ to match add_directory, which indexes the expanded path.
         # Without this, removing "~/docs" never matches the stored absolute path.
         directory = os.path.expanduser(directory)
         if not _personal_docs_manager:
-            return [TextContent(type="text", text="Error: Personal docs manager not available")]
+            return [
+                TextContent(
+                    type="text", text="Error: Personal docs manager not available"
+                )
+            ]
         try:
-            if hasattr(_personal_docs_manager, 'remove_directory'):
+            if hasattr(_personal_docs_manager, "remove_directory"):
                 _personal_docs_manager.remove_directory(directory)
-            if _rag_manager and hasattr(_rag_manager, 'remove_directory'):
+            if _rag_manager and hasattr(_rag_manager, "remove_directory"):
                 _rag_manager.remove_directory(directory)
-            return [TextContent(type="text", text=f"Directory '{directory}' removed from RAG index")]
+            return [
+                TextContent(
+                    type="text", text=f"Directory '{directory}' removed from RAG index"
+                )
+            ]
         except Exception as e:
-            return [TextContent(type="text", text=f"Error: Failed to remove directory: {e}")]
+            return [
+                TextContent(type="text", text=f"Error: Failed to remove directory: {e}")
+            ]
 
     else:
-        return [TextContent(type="text", text=f"Error: Unknown action '{action}'. Use: list, add_directory, remove_directory")]
+        return [
+            TextContent(
+                type="text",
+                text=f"Error: Unknown action '{action}'. Use: list, add_directory, remove_directory",
+            )
+        ]
 
 
 async def run():
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+        await server.run(
+            read_stream, write_stream, server.create_initialization_options()
+        )
 
 
 if __name__ == "__main__":

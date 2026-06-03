@@ -18,6 +18,7 @@ dismissTopMenu() to close the most-recently-opened one. These tests lock in the
 LIFO contract and the "exactly one menu per Escape, never get stuck" guarantees
 the arbiter relies on.
 """
+
 import json
 import shutil
 import subprocess
@@ -36,8 +37,12 @@ def _run(body: str) -> str:
     js = _SRC + "\n" + body
     proc = subprocess.run(
         ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, encoding="utf-8",
-        cwd=str(_REPO), timeout=30,
+        input=js,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=str(_REPO),
+        timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     return proc.stdout.strip()
@@ -62,7 +67,7 @@ def test_dismiss_is_lifo_and_closes_exactly_one():
     console.log(JSON.stringify({ order, r1, r2, r3, left: _openMenuCount() }));
     """
     out = json.loads(_run(body))
-    assert out["order"] == ["B", "A"]            # LIFO
+    assert out["order"] == ["B", "A"]  # LIFO
     assert [out["r1"], out["r2"], out["r3"]] == [True, True, False]
     assert out["left"] == 0
 

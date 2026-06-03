@@ -8,6 +8,7 @@ guard against a close button shipping without an accessible label again.
 Plain text/regex assertions (no bs4 dependency), matching the lightweight style
 of the other tests in this suite.
 """
+
 import re
 from pathlib import Path
 
@@ -20,7 +21,9 @@ def test_static_modals_expose_dialog_role_and_name():
     # Each static tool window must announce itself as a named dialog. These are
     # dockable/tiling windows, so they are role="dialog" WITHOUT aria-modal.
     for name in ("Brain", "Theme", "Prompt", "Rename session", "Cookbook", "Settings"):
-        assert f'role="dialog" aria-label="{name}"' in _INDEX, f"missing dialog role/name for {name!r}"
+        assert f'role="dialog" aria-label="{name}"' in _INDEX, (
+            f"missing dialog role/name for {name!r}"
+        )
 
 
 def test_no_modal_close_button_is_unlabeled():
@@ -35,7 +38,10 @@ def test_no_modal_close_button_is_unlabeled():
 def test_styled_confirm_and_prompt_are_modal_dialogs():
     # The JS-built confirm/prompt overlays ARE blocking modals, so they get
     # role="dialog" + aria-modal="true" and are labelled by their title.
-    assert 'class="modal-content styled-confirm-box" role="dialog" aria-modal="true"' in _UI
+    assert (
+        'class="modal-content styled-confirm-box" role="dialog" aria-modal="true"'
+        in _UI
+    )
     assert 'aria-labelledby="styled-confirm-title"' in _UI
     assert '<h4 id="styled-confirm-title">Confirm</h4>' in _UI
 
@@ -53,4 +59,3 @@ def test_styled_dialogs_manage_focus():
     assert _UI.count("const _prevFocus = document.activeElement;") == 2
     assert _UI.count("_prevFocus && _prevFocus.focus && _prevFocus.focus()") == 2
     assert _UI.count("e.key === 'Tab'") == 2
-

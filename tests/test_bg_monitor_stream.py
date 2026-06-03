@@ -30,10 +30,12 @@ def test_drain_agent_ignores_non_string_deltas(monkeypatch):
     full, events = asyncio.run(bg_monitor._drain_agent(sess, []))
 
     assert full == "ok"
-    assert events == [{
-        "round": 2,
-        "tool": "shell",
-        "command": None,
-        "output": "done",
-        "exit_code": None,
-    }]
+    assert events == [
+        {
+            "round": 2,
+            "tool": "shell",
+            "command": None,
+            "output": "done",
+            "exit_code": None,
+        }
+    ]

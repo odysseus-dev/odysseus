@@ -9,6 +9,7 @@ missing/empty owner fell through the guard and was returned to whichever user
 issued the query — a cross-user leak whenever the primary path errored and fell
 back to keyword search.
 """
+
 from src.rag_vector import VectorRAG
 
 
@@ -35,23 +36,27 @@ def _store(docs):
 
 
 def test_ownerless_doc_not_leaked_to_user():
-    store = _store([
-        ("a", "alice secret project", {"owner": "alice"}),
-        ("b", "bob secret project", {"owner": "bob"}),
-        ("c", "ownerless secret project", {}),          # no owner key
-    ])
+    store = _store(
+        [
+            ("a", "alice secret project", {"owner": "alice"}),
+            ("b", "bob secret project", {"owner": "bob"}),
+            ("c", "ownerless secret project", {}),  # no owner key
+        ]
+    )
     results = store._keyword_search_fallback("secret project", k=10, owner="alice")
     ids = {r["id"] for r in results}
-    assert ids == {"a"}          # only alice's doc
-    assert "b" not in ids        # another user's doc excluded (already was)
-    assert "c" not in ids        # owner-less doc must NOT leak (the fix)
+    assert ids == {"a"}  # only alice's doc
+    assert "b" not in ids  # another user's doc excluded (already was)
+    assert "c" not in ids  # owner-less doc must NOT leak (the fix)
 
 
 def test_no_owner_filter_returns_all():
-    store = _store([
-        ("a", "shared note", {"owner": "alice"}),
-        ("c", "shared note", {}),
-    ])
+    store = _store(
+        [
+            ("a", "shared note", {"owner": "alice"}),
+            ("c", "shared note", {}),
+        ]
+    )
     results = store._keyword_search_fallback("shared note", k=10, owner=None)
     ids = {r["id"] for r in results}
-    assert ids == {"a", "c"}     # no owner requested → no filtering
+    assert ids == {"a", "c"}  # no owner requested → no filtering

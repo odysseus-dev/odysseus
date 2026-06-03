@@ -13,6 +13,7 @@ This test pins three things:
   3. ``routes/history_routes.py`` never orders a ChatMessage query by the
      non-existent ``created_at`` column again.
 """
+
 import os
 from pathlib import Path
 
@@ -30,7 +31,9 @@ HISTORY_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "history_ro
 
 
 def test_chatmessage_model_has_timestamp_not_created_at():
-    assert hasattr(DbChatMessage, "timestamp"), "ChatMessage should expose a `timestamp` column"
+    assert hasattr(DbChatMessage, "timestamp"), (
+        "ChatMessage should expose a `timestamp` column"
+    )
     assert not hasattr(DbChatMessage, "created_at"), (
         "ChatMessage does not inherit TimestampMixin; ordering by `created_at` "
         "raises AttributeError -> HTTP 500 (#1659)"
@@ -45,8 +48,12 @@ def test_order_by_timestamp_query_executes():
         sid = "sess1234"
         # FK enforcement is on (PRAGMA foreign_keys), so seed the parent session.
         db.add(DbSession(id=sid, name="t", endpoint_url="http://x", model="m"))
-        db.add(DbChatMessage(id="m1", session_id=sid, role="assistant", content="first"))
-        db.add(DbChatMessage(id="m2", session_id=sid, role="assistant", content="second"))
+        db.add(
+            DbChatMessage(id="m1", session_id=sid, role="assistant", content="first")
+        )
+        db.add(
+            DbChatMessage(id="m2", session_id=sid, role="assistant", content="second")
+        )
         db.commit()
 
         # Mirrors mark_stopped / update_last_meta (descending, .first()).

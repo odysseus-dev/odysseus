@@ -1,4 +1,5 @@
 """Tests for og:image extraction (src/search/content.py)."""
+
 import pytest
 
 pytest.importorskip("bs4")

@@ -13,6 +13,7 @@ These tests lock in two things:
   2. _compute_final_metrics prefers the backend gen speed over wall-clock when
      present, tags tps_source accordingly, and surfaces prefill_tps.
 """
+
 import asyncio
 import json
 
@@ -20,6 +21,7 @@ from src import llm_core
 from src.agent_loop import _compute_final_metrics
 
 # --- captured-stream harness (mirrors test_llm_core_streaming.py) -----------
+
 
 class _FakeResp:
     def __init__(self, lines):
@@ -85,16 +87,22 @@ def _usage_event(monkeypatch, lines):
 # sibling `timings` block. The decode speed here (78.91) is far above the
 # wall-clock figure the old code would have shown.
 _LLAMACPP_TIMINGS_STREAM = [
-    'data: ' + json.dumps({"choices": [{"index": 0, "delta": {"content": "Hi there"}}]}),
-    'data: ' + json.dumps({
-        "choices": [],
-        "object": "chat.completion.chunk",
-        "usage": {"prompt_tokens": 15, "completion_tokens": 42},
-        "timings": {
-            "prompt_n": 15, "prompt_per_second": 512.34,
-            "predicted_n": 42, "predicted_per_second": 78.91,
-        },
-    }),
+    "data: "
+    + json.dumps({"choices": [{"index": 0, "delta": {"content": "Hi there"}}]}),
+    "data: "
+    + json.dumps(
+        {
+            "choices": [],
+            "object": "chat.completion.chunk",
+            "usage": {"prompt_tokens": 15, "completion_tokens": 42},
+            "timings": {
+                "prompt_n": 15,
+                "prompt_per_second": 512.34,
+                "predicted_n": 42,
+                "predicted_per_second": 78.91,
+            },
+        }
+    ),
     "data: [DONE]",
 ]
 
@@ -113,11 +121,14 @@ def test_stream_llm_omits_tps_when_backend_has_no_timings(monkeypatch):
     # A backend (e.g. a cloud API) that reports usage but no `timings` block must
     # not invent gen_tps/prefill_tps — the caller then falls back to wall-clock.
     no_timings = [
-        'data: ' + json.dumps({"choices": [{"index": 0, "delta": {"content": "Hi"}}]}),
-        'data: ' + json.dumps({
-            "choices": [],
-            "usage": {"prompt_tokens": 8, "completion_tokens": 5},
-        }),
+        "data: " + json.dumps({"choices": [{"index": 0, "delta": {"content": "Hi"}}]}),
+        "data: "
+        + json.dumps(
+            {
+                "choices": [],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 5},
+            }
+        ),
         "data: [DONE]",
     ]
     usage = _usage_event(monkeypatch, no_timings)
@@ -128,11 +139,12 @@ def test_stream_llm_omits_tps_when_backend_has_no_timings(monkeypatch):
 
 # --- _compute_final_metrics preference logic --------------------------------
 
+
 def _metrics(**overrides):
     kwargs = dict(
         messages=[{"role": "user", "content": "hi"}],
         full_response="hello world",
-        total_duration=10.0,           # wall-clock: 42/10 = 4.2 t/s (reads low)
+        total_duration=10.0,  # wall-clock: 42/10 = 4.2 t/s (reads low)
         time_to_first_token=0.5,
         context_length=4096,
         real_input_tokens=15,

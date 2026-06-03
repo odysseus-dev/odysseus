@@ -36,4 +36,7 @@ def test_image_generation_endpoints_require_image_privilege():
 
 
 def test_gallery_routes_imports_privilege_helper():
-    assert "from src.auth_helpers import get_current_user, require_privilege" in _gallery_source()
+    assert (
+        "from src.auth_helpers import get_current_user, require_privilege"
+        in _gallery_source()
+    )

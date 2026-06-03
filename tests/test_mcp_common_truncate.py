@@ -1,4 +1,5 @@
 """Regression: the shared MCP truncate() must tolerate non-string input."""
+
 import importlib.machinery
 import importlib.util
 from pathlib import Path

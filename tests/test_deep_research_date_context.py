@@ -7,6 +7,7 @@ research had no equivalent. These tests pin that the current year now reaches
 the LLM at both the planning and query-generation steps, without needing a live
 LLM or DB.
 """
+
 import asyncio
 from datetime import datetime
 

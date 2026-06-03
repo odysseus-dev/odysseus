@@ -1,5 +1,6 @@
 # src/app_initializer.py
 """Initialize all application components and dependencies."""
+
 import logging
 import os
 from typing import Any
@@ -29,10 +30,12 @@ from src.upload_handler import UploadHandler
 
 logger = logging.getLogger(__name__)
 
+
 def create_directories():
     """Create necessary directories if they don't exist."""
     for directory in (DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR):
         os.makedirs(directory, exist_ok=True)
+
 
 def initialize_managers(base_dir: str, rag_manager=None) -> dict[str, Any]:
     """
@@ -61,7 +64,8 @@ def initialize_managers(base_dir: str, rag_manager=None) -> dict[str, Any]:
     memory_vector = None
     try:
         from src.memory_vector import MemoryVectorStore
-        embedding_model = getattr(rag_manager, '_model', None) if rag_manager else None
+
+        embedding_model = getattr(rag_manager, "_model", None) if rag_manager else None
         memory_vector = MemoryVectorStore(DATA_DIR, embedding_model=embedding_model)
         if memory_vector.healthy:
             # Rebuild index from existing memories if empty
@@ -69,17 +73,26 @@ def initialize_managers(base_dir: str, rag_manager=None) -> dict[str, Any]:
                 existing = memory_manager.load()
                 if existing:
                     memory_vector.rebuild(existing)
-                    logger.info(f"Rebuilt memory vector index from {len(existing)} existing entries")
+                    logger.info(
+                        f"Rebuilt memory vector index from {len(existing)} existing entries"
+                    )
             logger.info("MemoryVectorStore initialized")
         else:
-            logger.warning("MemoryVectorStore DEGRADED: ChromaDB vector memory unavailable")
+            logger.warning(
+                "MemoryVectorStore DEGRADED: ChromaDB vector memory unavailable"
+            )
             memory_vector = None
     except Exception as e:
         logger.warning(f"MemoryVectorStore DEGRADED: {e}")
         memory_vector = None
 
     # Initialize processors
-    chat_processor = ChatProcessor(memory_manager, personal_docs_manager, memory_vector=memory_vector, skills_manager=skills_manager)
+    chat_processor = ChatProcessor(
+        memory_manager,
+        personal_docs_manager,
+        memory_vector=memory_vector,
+        skills_manager=skills_manager,
+    )
     research_handler = ResearchHandler()
 
     # Initialize chat handler with all dependencies
@@ -115,5 +128,5 @@ def initialize_managers(base_dir: str, rag_manager=None) -> dict[str, Any]:
         "chat_handler": chat_handler,
         "model_discovery": model_discovery,
         "current_presets": preset_manager.presets,
-        "PERSONAL_INDEX": personal_docs_manager.index
+        "PERSONAL_INDEX": personal_docs_manager.index,
     }

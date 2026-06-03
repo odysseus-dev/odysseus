@@ -47,7 +47,9 @@ def _load_mail_cli(monkeypatch):
     monkeypatch.setitem(sys.modules, "core", core_mod)
     monkeypatch.setitem(sys.modules, "core.database", database_mod)
     path = Path(__file__).resolve().parent.parent / "scripts" / "odysseus-mail"
-    loader = importlib.machinery.SourceFileLoader("odysseus_mail_cli_read_test", str(path))
+    loader = importlib.machinery.SourceFileLoader(
+        "odysseus_mail_cli_read_test", str(path)
+    )
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)

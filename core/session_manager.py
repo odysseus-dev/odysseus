@@ -36,7 +36,7 @@ def _parse_msg_content(raw):
     (multimodal content with image/audio attachments)."""
     if isinstance(raw, list):
         return raw
-    if isinstance(raw, str) and raw.startswith('[{') and '"type"' in raw:
+    if isinstance(raw, str) and raw.startswith("[{") and '"type"' in raw:
         try:
             parsed = json.loads(raw)
             if isinstance(parsed, list) and all(isinstance(p, dict) for p in parsed):
@@ -75,10 +75,16 @@ class SessionManager:
         """
         db = SessionLocal()
         try:
-            db_sessions = db.query(DbSession).filter(
-                DbSession.archived == False,
-                DbSession.message_count > 0,
-            ).order_by(DbSession.last_accessed.desc()).limit(100).all()
+            db_sessions = (
+                db.query(DbSession)
+                .filter(
+                    DbSession.archived == False,
+                    DbSession.message_count > 0,
+                )
+                .order_by(DbSession.last_accessed.desc())
+                .limit(100)
+                .all()
+            )
 
             loaded_count = 0
             for db_session in db_sessions:
@@ -131,29 +137,38 @@ class SessionManager:
         if db_session.messages:
             for db_msg in db_session.messages:
                 meta = json.loads(db_msg.meta_data) if db_msg.meta_data else {}
-                if meta is None: meta = {}
-                meta['_db_id'] = db_msg.id
-                meta.setdefault('timestamp', _message_timestamp_iso(db_msg.timestamp))
-                history.append(ChatMessage(
-                    role=db_msg.role,
-                    content=_parse_msg_content(db_msg.content),
-                    metadata=meta,
-                ))
+                if meta is None:
+                    meta = {}
+                meta["_db_id"] = db_msg.id
+                meta.setdefault("timestamp", _message_timestamp_iso(db_msg.timestamp))
+                history.append(
+                    ChatMessage(
+                        role=db_msg.role,
+                        content=_parse_msg_content(db_msg.content),
+                        metadata=meta,
+                    )
+                )
         else:
-            db_messages = db.query(DbChatMessage).filter(
-                DbChatMessage.session_id == db_session.id
-            ).order_by(DbChatMessage.timestamp).all()
+            db_messages = (
+                db.query(DbChatMessage)
+                .filter(DbChatMessage.session_id == db_session.id)
+                .order_by(DbChatMessage.timestamp)
+                .all()
+            )
 
             for db_msg in db_messages:
                 meta = json.loads(db_msg.meta_data) if db_msg.meta_data else {}
-                if meta is None: meta = {}
-                meta['_db_id'] = db_msg.id
-                meta.setdefault('timestamp', _message_timestamp_iso(db_msg.timestamp))
-                history.append(ChatMessage(
-                    role=db_msg.role,
-                    content=_parse_msg_content(db_msg.content),
-                    metadata=meta,
-                ))
+                if meta is None:
+                    meta = {}
+                meta["_db_id"] = db_msg.id
+                meta.setdefault("timestamp", _message_timestamp_iso(db_msg.timestamp))
+                history.append(
+                    ChatMessage(
+                        role=db_msg.role,
+                        content=_parse_msg_content(db_msg.content),
+                        metadata=meta,
+                    )
+                )
 
         if not history:
             return None
@@ -175,11 +190,11 @@ class SessionManager:
             archived=db_session.archived,
             headers=headers,
             history=history,
-            owner=getattr(db_session, 'owner', None),
-            is_important=getattr(db_session, 'is_important', False) or False,
+            owner=getattr(db_session, "owner", None),
+            is_important=getattr(db_session, "is_important", False) or False,
         )
 
-        session.message_count = getattr(db_session, 'message_count', len(history))
+        session.message_count = getattr(db_session, "message_count", len(history))
         return session
 
     # ------------------------------------------------------------------
@@ -217,7 +232,7 @@ class SessionManager:
             msg_time = datetime.utcnow()
             if message.metadata is None:
                 message.metadata = {}
-            message.metadata.setdefault('timestamp', _message_timestamp_iso(msg_time))
+            message.metadata.setdefault("timestamp", _message_timestamp_iso(msg_time))
             # Multimodal content (image/audio attachments) is a list — serialize
             # to JSON so the Text column can store it.  On reload, _db_to_session
             # detects the JSON-array prefix and parses it back.
@@ -234,7 +249,11 @@ class SessionManager:
             )
             db.add(db_message)
 
-            db_session.message_count = len(self.sessions.get(session_id, {}).history) if session_id in self.sessions else 0
+            db_session.message_count = (
+                len(self.sessions.get(session_id, {}).history)
+                if session_id in self.sessions
+                else 0
+            )
             _now = datetime.now(UTC)
             db_session.last_accessed = _now
             # Clean "last conversation" timestamp — only bumped here on a
@@ -245,7 +264,7 @@ class SessionManager:
             db.commit()
 
             # Store DB ID on the in-memory message for edit/delete by ID
-            message.metadata['_db_id'] = msg_id
+            message.metadata["_db_id"] = msg_id
 
             logger.debug(f"Persisted message to session {session_id}")
 
@@ -264,9 +283,12 @@ class SessionManager:
 
         db = SessionLocal()
         try:
-            db_messages = db.query(DbChatMessage).filter(
-                DbChatMessage.session_id == session_id
-            ).order_by(DbChatMessage.timestamp).all()
+            db_messages = (
+                db.query(DbChatMessage)
+                .filter(DbChatMessage.session_id == session_id)
+                .order_by(DbChatMessage.timestamp)
+                .all()
+            )
 
             deleted = 0
             for msg in db_messages[keep_count:]:
@@ -298,7 +320,9 @@ class SessionManager:
         session = self.get_session(session_id)
         db = SessionLocal()
         try:
-            db.query(DbChatMessage).filter(DbChatMessage.session_id == session_id).delete()
+            db.query(DbChatMessage).filter(
+                DbChatMessage.session_id == session_id
+            ).delete()
             now = datetime.now(UTC)
             for i, message in enumerate(messages):
                 msg_id = str(uuid.uuid4())
@@ -312,10 +336,14 @@ class SessionManager:
                     # bind its single-quoted repr, which _parse_msg_content
                     # cannot parse (it looks for double-quoted "type"), so the
                     # attachment was destroyed on reload. Mirrors _persist_message.
-                    content=(json.dumps(message.content)
-                             if isinstance(message.content, list)
-                             else message.content),
-                    meta_data=json.dumps(message.metadata) if message.metadata else None,
+                    content=(
+                        json.dumps(message.content)
+                        if isinstance(message.content, list)
+                        else message.content
+                    ),
+                    meta_data=json.dumps(message.metadata)
+                    if message.metadata
+                    else None,
                     timestamp=now + timedelta(microseconds=i),
                 )
                 db.add(db_message)
@@ -333,7 +361,11 @@ class SessionManager:
             db.commit()
             session.history = list(messages)
             session.message_count = len(messages)
-            logger.info("Replaced session %s history with %d messages", session_id, len(messages))
+            logger.info(
+                "Replaced session %s history with %d messages",
+                session_id,
+                len(messages),
+            )
             return True
         except Exception as e:
             logger.error("Error replacing session history: %s", e)
@@ -393,7 +425,9 @@ class SessionManager:
             session.archived = db_session.archived
             session.owner = getattr(db_session, "owner", None)
             session.is_important = getattr(db_session, "is_important", False) or False
-            session.message_count = getattr(db_session, "message_count", session.message_count) or 0
+            session.message_count = (
+                getattr(db_session, "message_count", session.message_count) or 0
+            )
             return True
         except Exception as e:
             logger.error(f"Error syncing session metadata {session_id}: {e}")
@@ -449,7 +483,7 @@ class SessionManager:
         endpoint_url: str,
         model: str,
         rag: bool = False,
-        owner: str = None
+        owner: str = None,
     ) -> Session:
         """Create a new session and save to database."""
         db = SessionLocal()
@@ -463,7 +497,7 @@ class SessionManager:
                 headers={},
                 owner=owner,
                 created_at=datetime.now(UTC),
-                updated_at=datetime.now(UTC)
+                updated_at=datetime.now(UTC),
             )
             db.add(db_session)
             db.commit()
@@ -498,7 +532,9 @@ class SessionManager:
             )
 
             # Delete messages
-            db.query(DbChatMessage).filter(DbChatMessage.session_id == session_id).delete()
+            db.query(DbChatMessage).filter(
+                DbChatMessage.session_id == session_id
+            ).delete()
 
             # Delete session
             db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
@@ -599,10 +635,7 @@ class SessionManager:
         """Return sessions for a specific user (or all if username is None)."""
         if username is None:
             return self.sessions
-        return {
-            sid: s for sid, s in self.sessions.items()
-            if s.owner == username
-        }
+        return {sid: s for sid, s in self.sessions.items() if s.owner == username}
 
     def save_sessions(self):
         """No-op for DB compatibility."""
@@ -614,33 +647,37 @@ class SessionManager:
     def cleanup_empty_sessions(self, auto_archive_days: int = 30) -> dict:
         """Clean up empty and old sessions."""
         db = SessionLocal()
-        stats = {'deleted_empty': 0, 'archived_old': 0, 'total_checked': 0}
+        stats = {"deleted_empty": 0, "archived_old": 0, "total_checked": 0}
 
         try:
             all_sessions = db.query(DbSession).all()
             cutoff_date = datetime.now(UTC) - timedelta(days=auto_archive_days)
 
             for db_session in all_sessions:
-                stats['total_checked'] += 1
+                stats["total_checked"] += 1
 
                 # Delete empty sessions
                 if db_session.message_count == 0:
                     if db_session.id in self.sessions:
                         del self.sessions[db_session.id]
                     db.delete(db_session)
-                    stats['deleted_empty'] += 1
+                    stats["deleted_empty"] += 1
 
                 # Archive old sessions
-                elif (not db_session.archived and
-                      db_session.last_accessed and
-                      db_session.last_accessed < cutoff_date and
-                      db_session.message_count > 0 and
-                      not getattr(db_session, 'is_important', False)):
+                elif (
+                    not db_session.archived
+                    and db_session.last_accessed
+                    and db_session.last_accessed < cutoff_date
+                    and db_session.message_count > 0
+                    and not getattr(db_session, "is_important", False)
+                ):
                     db_session.archived = True
-                    stats['archived_old'] += 1
+                    stats["archived_old"] += 1
 
             db.commit()
-            logger.info(f"Cleanup: {stats['deleted_empty']} deleted, {stats['archived_old']} archived")
+            logger.info(
+                f"Cleanup: {stats['deleted_empty']} deleted, {stats['archived_old']} archived"
+            )
 
         except Exception as e:
             logger.error(f"Cleanup error: {e}")

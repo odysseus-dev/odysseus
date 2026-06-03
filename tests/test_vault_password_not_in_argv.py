@@ -71,8 +71,9 @@ def _patch_exec(monkeypatch):
 async def test_run_bw_passwordenv_does_not_put_password_in_argv(monkeypatch):
     captured = _patch_exec(monkeypatch)
     secret = "correct horse battery staple"
-    await vr._run_bw(["unlock", "--passwordenv", "BW_PASSWORD", "--raw"],
-                     bw_password=secret)
+    await vr._run_bw(
+        ["unlock", "--passwordenv", "BW_PASSWORD", "--raw"], bw_password=secret
+    )
     # The secret must reach bw through the environment...
     assert captured["env"].get("BW_PASSWORD") == secret
     # ...and must NOT appear anywhere in the argv (which `ps` exposes).
@@ -95,9 +96,9 @@ def test_unlock_handler_feeds_password_on_stdin_not_argv():
         text = fh.read()
     # The old, vulnerable call shape must be gone.
     assert 'req.master_password, "--raw"' not in text
-    assert "[\"unlock\", req.master_password" not in text
+    assert '["unlock", req.master_password' not in text
     # And the safer stdin shape must be present.
-    assert "[\"unlock\", \"--raw\"]" in text
+    assert '["unlock", "--raw"]' in text
     assert re.search(r'input_text\s*=\s*req\.master_password\s*\+\s*"\\n"', text)
 
 
@@ -111,7 +112,9 @@ def test_tool_vault_unlock_feeds_password_on_stdin_not_argv():
 
 def test_load_config_ignores_non_object_json(tmp_path, monkeypatch):
     vault_file = tmp_path / "vault.json"
-    vault_file.write_text(json.dumps(["not", "a", "config", "object"]), encoding="utf-8")
+    vault_file.write_text(
+        json.dumps(["not", "a", "config", "object"]), encoding="utf-8"
+    )
     monkeypatch.setattr(vr, "VAULT_FILE", vault_file)
 
     assert vr._load_config() == {}

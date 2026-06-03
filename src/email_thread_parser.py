@@ -64,7 +64,9 @@ _ORIG_RE = re.compile(
     r"\s*[-_=]{3,}",
     re.IGNORECASE,
 )
-_WROTE_LINE_RE = re.compile(rf"^\s*On\s.+?\s{_WROTE}\s*:\s*$", re.IGNORECASE | re.MULTILINE)
+_WROTE_LINE_RE = re.compile(
+    rf"^\s*On\s.+?\s{_WROTE}\s*:\s*$", re.IGNORECASE | re.MULTILINE
+)
 # CJK-style attribution lines — Japanese Gmail / Yahoo Mail JP / etc.
 # Examples (all valid):
 #   2026年5月11日(月) 21:28 <alice@example.com>:
@@ -75,21 +77,21 @@ _WROTE_LINE_RE = re.compile(rf"^\s*On\s.+?\s{_WROTE}\s*:\s*$", re.IGNORECASE | r
 #   Alice さんは 2026/05/11 21:28 に書きました:
 _CJK_ATTRIB_LINE_RE = re.compile(
     r"^\s*(?:"
-        # date(weekday) time <email>:    (Gmail JP default)
-        r"\d{4}[年/.-]\d{1,2}[月/.-]\d{1,2}日?(?:\s*[\(\(].+?[\)\)])?"
-        r"\s+\d{1,2}:\d{2}(?:\s*[ＡＰAP][ＭM])?"
-        r"(?:に|、|,)?\s*(?:.+?\s+)?[<＜]?[\w.+\-]+@[\w.\-]+\.[A-Za-z]{2,}[>＞]?"
-        r"\s*(?:のメッセージ|さんは(?:書|お?書き)きました|wrote)?\s*[:：]\s*$"
-        r"|"
-        # 何々さんは 2026/05/11 21:28 に書きました:
-        r".+?(?:さん|様)\s*(?:は|が)\s+\d{4}[年/.-]\d{1,2}[月/.-]\d{1,2}日?"
-        r"(?:\s*[\(\(].+?[\)\)])?\s+\d{1,2}:\d{2}\s*(?:に)?\s*(?:書|お?書き)きました\s*[:：]\s*$"
-        r"|"
-        # Chinese "XXX 写道:" preceded by a date or address
-        r".+?\s*写道\s*[:：]\s*$"
-        r"|"
-        # Korean "님이 작성:"
-        r".+?\s*님이\s*작성(?:한\s*내용)?\s*[:：]\s*$"
+    # date(weekday) time <email>:    (Gmail JP default)
+    r"\d{4}[年/.-]\d{1,2}[月/.-]\d{1,2}日?(?:\s*[\(\(].+?[\)\)])?"
+    r"\s+\d{1,2}:\d{2}(?:\s*[ＡＰAP][ＭM])?"
+    r"(?:に|、|,)?\s*(?:.+?\s+)?[<＜]?[\w.+\-]+@[\w.\-]+\.[A-Za-z]{2,}[>＞]?"
+    r"\s*(?:のメッセージ|さんは(?:書|お?書き)きました|wrote)?\s*[:：]\s*$"
+    r"|"
+    # 何々さんは 2026/05/11 21:28 に書きました:
+    r".+?(?:さん|様)\s*(?:は|が)\s+\d{4}[年/.-]\d{1,2}[月/.-]\d{1,2}日?"
+    r"(?:\s*[\(\(].+?[\)\)])?\s+\d{1,2}:\d{2}\s*(?:に)?\s*(?:書|お?書き)きました\s*[:：]\s*$"
+    r"|"
+    # Chinese "XXX 写道:" preceded by a date or address
+    r".+?\s*写道\s*[:：]\s*$"
+    r"|"
+    # Korean "님이 작성:"
+    r".+?\s*님이\s*작성(?:한\s*내용)?\s*[:：]\s*$"
     r")",
     re.MULTILINE,
 )
@@ -129,7 +131,12 @@ def _extract_quote_meta(text_or_html: str) -> str | None:
     # sender's address that downstream consumers (bubble renderer) need.
     plain = re.sub(r"<(?![^@>\s]+@[^@>\s]+>)[^>]+>", " ", plain)
     plain = re.sub(r"&nbsp;", " ", plain, flags=re.IGNORECASE)
-    plain = plain.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
+    plain = (
+        plain.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+    )
     plain = re.sub(r"\s+", " ", plain).strip()[:1500]
 
     f = _QUOTE_META_FROM.search(plain)
@@ -144,13 +151,13 @@ def _extract_quote_meta(text_or_html: str) -> str | None:
     cjk = re.search(
         r"(\d{4}[年/.-]\d{1,2}[月/.-]\d{1,2}日?(?:\s*[\(\(][^\)\)]+?[\)\)])?\s+\d{1,2}:\d{2}(?:\s*[ＡＰAP][ＭM])?)"
         r"\s*(?:に|、|,)?\s*"
-        r"(?:(.+?)\s+)?"           # optional display name
+        r"(?:(.+?)\s+)?"  # optional display name
         r"[<＜]?([\w.+\-]+@[\w.\-]+\.[A-Za-z]{2,})[>＞]?",
         plain,
     )
     if cjk:
         date = cjk.group(1).strip()
-        who = (cjk.group(2) or cjk.group(3) or '').strip()
+        who = (cjk.group(2) or cjk.group(3) or "").strip()
         return f"{who} · {date}" if who else date
     if f:
         return f.group(1).strip()
@@ -169,13 +176,13 @@ def _extract_quote_meta(text_or_html: str) -> str | None:
 #   "alice@example.comThursday, May 7, 2026 3:06 PM"
 # Same info already lives in the envelope, so strip it.
 _MASHED_HDR_RE = re.compile(
-    r"^\s*[\w.+\-]+@[\w.\-]+\.[A-Za-z]{2,}"          # email address
+    r"^\s*[\w.+\-]+@[\w.\-]+\.[A-Za-z]{2,}"  # email address
     r"\s*"
-    r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+"    # day name
-    r"\S+\s+\d+,?\s*\d{4}\s+\d{1,2}:\d{2}"           # date + time
-    r"(?:\s*[AP]M)?"                                  # optional AM/PM
+    r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+"  # day name
+    r"\S+\s+\d+,?\s*\d{4}\s+\d{1,2}:\d{2}"  # date + time
+    r"(?:\s*[AP]M)?"  # optional AM/PM
     rf"(?:\s+{_TO}\s*:\s*[^\n]+(?:\s+{_SUBJ}\s*:\s*[^\n]*)?)?"  # optional To:/Subject:
-    r"\s*(?:\n|$)",                                   # end of line
+    r"\s*(?:\n|$)",  # end of line
     re.IGNORECASE,
 )
 
@@ -186,7 +193,7 @@ def _strip_mashed_header(text: str) -> str:
     m = _MASHED_HDR_RE.match(text)
     if not m:
         return text
-    rest = text[m.end():]
+    rest = text[m.end() :]
     # Skip any blank lines that immediately follow the strip.
     rest = re.sub(r"^\s*\n+", "", rest)
     return rest
@@ -214,7 +221,9 @@ def _normalize_body(text: str) -> str:
     return text
 
 
-def _outlook_header_block_end(stripped: list[str], levels: list[int], start: int) -> int:
+def _outlook_header_block_end(
+    stripped: list[str], levels: list[int], start: int
+) -> int:
     """If lines[start..N] form an Outlook From/Sent/To/Subject header block
     at the same base level, return N (exclusive end). Otherwise return start.
     Requires a From: line followed within 5 lines by a Sent:/Date: line."""
@@ -279,8 +288,10 @@ def _parse_plaintext(text: str) -> list[dict[str, Any]] | None:
 
     has_quotes = any(l > 0 for l in base_levels)
     has_attrib = bool(
-        _WROTE_LINE_RE.search(text) or _ORIG_RE.search(text)
-        or _OUTLOOK_HEADER_RE.search(text) or _CJK_ATTRIB_LINE_RE.search(text)
+        _WROTE_LINE_RE.search(text)
+        or _ORIG_RE.search(text)
+        or _OUTLOOK_HEADER_RE.search(text)
+        or _CJK_ATTRIB_LINE_RE.search(text)
     )
     if not has_quotes and not has_attrib:
         return None
@@ -310,11 +321,13 @@ def _parse_plaintext(text: str) -> list[dict[str, Any]] | None:
             return
         body = "\n".join(buf).rstrip()
         if body or cur_level > 0:
-            turns.append({
-                "level": cur_level,
-                "body_html": _escape_to_html(body),
-                "meta": pending_meta,
-            })
+            turns.append(
+                {
+                    "level": cur_level,
+                    "body_html": _escape_to_html(body),
+                    "meta": pending_meta,
+                }
+            )
         buf.clear()
         pending_meta = None
 
@@ -339,7 +352,9 @@ def _parse_plaintext(text: str) -> list[dict[str, Any]] | None:
             cur_level = depth
         prev_base = base
 
-        is_gmail = bool(re.match(rf"^\s*On\s.+?\s{_WROTE}\s*:\s*$", stripped, re.IGNORECASE))
+        is_gmail = bool(
+            re.match(rf"^\s*On\s.+?\s{_WROTE}\s*:\s*$", stripped, re.IGNORECASE)
+        )
         is_cjk = bool(_CJK_ATTRIB_LINE_RE.match(stripped))
         is_orig = bool(_ORIG_RE.search("\n" + stripped))
         outlook_end = _outlook_header_block_end(stripped_lines, base_levels, i)
@@ -355,7 +370,11 @@ def _parse_plaintext(text: str) -> list[dict[str, Any]] | None:
             # the SAME attribution event so we don't double-bump.
             if is_orig:
                 j = attrib_end
-                while j < len(lines) and base_levels[j] == base and not stripped_lines[j].strip():
+                while (
+                    j < len(lines)
+                    and base_levels[j] == base
+                    and not stripped_lines[j].strip()
+                ):
                     j += 1
                 if j < len(lines) and base_levels[j] == base:
                     oe2 = _outlook_header_block_end(stripped_lines, base_levels, j)
@@ -370,12 +389,16 @@ def _parse_plaintext(text: str) -> list[dict[str, Any]] | None:
             next_base = lookahead_content_base(attrib_end)
             flush()
             if next_base is not None and next_base > base:
-                pending_meta = _extract_quote_meta(meta_text) or meta_text.strip().splitlines()[0]
+                pending_meta = (
+                    _extract_quote_meta(meta_text) or meta_text.strip().splitlines()[0]
+                )
             else:
                 depth += 1
                 depth_at_base[base] = depth
                 cur_level = depth
-                pending_meta = _extract_quote_meta(meta_text) or meta_text.strip().splitlines()[0]
+                pending_meta = (
+                    _extract_quote_meta(meta_text) or meta_text.strip().splitlines()[0]
+                )
             i = attrib_end
             continue
 
@@ -397,13 +420,16 @@ def _escape_to_html(text: str) -> str:
     out = _html.escape(text)
     out = re.sub(
         r"(https?://[^\s<>\"]+)",
-        lambda m: f'<a href="{m.group(1)}" target="_blank" rel="noopener">{m.group(1)}</a>',
+        lambda m: (
+            f'<a href="{m.group(1)}" target="_blank" rel="noopener">{m.group(1)}</a>'
+        ),
         out,
     )
     return out.replace("\n", "<br>")
 
 
 # ── HTML path (BeautifulSoup) ──
+
 
 def _is_quote_container(tag) -> bool:
     """Return True if a BeautifulSoup tag is a known quote-container element.
@@ -495,7 +521,11 @@ def _parse_html(html: str) -> list[dict[str, Any]] | None:
 
     def _strip_trailing_attribution(html_chunk: str) -> str:
         text = re.sub(r"<[^>]+>", " ", html_chunk)
-        if not (_WROTE_LINE_RE.search(text) or _ORIG_RE.search(text) or _CJK_ATTRIB_LINE_RE.search(text)):
+        if not (
+            _WROTE_LINE_RE.search(text)
+            or _ORIG_RE.search(text)
+            or _CJK_ATTRIB_LINE_RE.search(text)
+        ):
             return html_chunk
         html_chunk = re.sub(
             rf"(?:<br\s*/?>|</p>|</div>|\n)?\s*On\s.+?\s{_WROTE}\s*:\s*(?:</[^>]+>)*\s*$",
@@ -523,20 +553,27 @@ def _parse_html(html: str) -> list[dict[str, Any]] | None:
     # that's the most-recent / most-relevant content; head (which may just
     # be empty or a forwarded preamble) follows.
     parts = []
-    if tail_html.strip(): parts.append(tail_html.strip())
-    if head_html.strip(): parts.append(head_html.strip())
+    if tail_html.strip():
+        parts.append(tail_html.strip())
+    if head_html.strip():
+        parts.append(head_html.strip())
     if parts:
-        turns.append({
-            "level": 0,
-            "body_html": "<br><br>".join(parts) if len(parts) > 1 else parts[0],
-            "meta": None,
-        })
+        turns.append(
+            {
+                "level": 0,
+                "body_html": "<br><br>".join(parts) if len(parts) > 1 else parts[0],
+                "meta": None,
+            }
+        )
 
     def _walk(node, level: int):
         meta_from_node = _extract_quote_meta(str(node))
         # Recurse into nested quote containers inside this one, then strip
         # them so the body of THIS turn doesn't include them.
-        nested = [t for t in node.find_all(True, recursive=True) if _is_quote_container(t)]
+        nested = [
+            t for t in node.find_all(True, recursive=True) if _is_quote_container(t)
+        ]
+
         # Keep only direct-quote descendants (no other quote container between)
         def has_quote_between(child, ancestor) -> bool:
             p = child.parent
@@ -545,6 +582,7 @@ def _parse_html(html: str) -> list[dict[str, Any]] | None:
                     return True
                 p = p.parent
             return False
+
         direct_nested = [n for n in nested if not has_quote_between(n, node)]
         for n in list(direct_nested):
             n.extract()
@@ -561,7 +599,9 @@ def _parse_html(html: str) -> list[dict[str, Any]] | None:
         body_text_collapsed = re.sub(r"\s+", " ", body_text).strip()
         is_attrib_only = bool(body_text_collapsed) and (
             _CJK_ATTRIB_LINE_RE.match(body_text_collapsed)
-            or re.match(rf"^\s*On\s.+?\s{_WROTE}\s*:\s*$", body_text_collapsed, re.IGNORECASE)
+            or re.match(
+                rf"^\s*On\s.+?\s{_WROTE}\s*:\s*$", body_text_collapsed, re.IGNORECASE
+            )
             or _OUTLOOK_HEADER_RE.match(body_text_collapsed)
         )
         if is_attrib_only and len(direct_nested) == 1:
@@ -578,7 +618,10 @@ def _parse_html(html: str) -> list[dict[str, Any]] | None:
     def _walk_with_meta(node, level: int, forced_meta: str):
         """Variant that uses a passed-in meta when the node's own meta is empty."""
         meta_from_node = _extract_quote_meta(str(node)) or forced_meta
-        nested = [t for t in node.find_all(True, recursive=True) if _is_quote_container(t)]
+        nested = [
+            t for t in node.find_all(True, recursive=True) if _is_quote_container(t)
+        ]
+
         def has_quote_between(child, ancestor) -> bool:
             p = child.parent
             while p is not None and p is not ancestor:
@@ -586,6 +629,7 @@ def _parse_html(html: str) -> list[dict[str, Any]] | None:
                     return True
                 p = p.parent
             return False
+
         direct_nested = [n for n in nested if not has_quote_between(n, node)]
         for n in list(direct_nested):
             n.extract()
@@ -602,7 +646,9 @@ def _parse_html(html: str) -> list[dict[str, Any]] | None:
     return turns
 
 
-def parse_thread(body_html: str | None, body_text: str | None) -> list[dict[str, Any]] | None:
+def parse_thread(
+    body_html: str | None, body_text: str | None
+) -> list[dict[str, Any]] | None:
     """Public entry point. Prefer HTML when available, else plaintext.
     Returns None if no quoted material found (caller renders flat)."""
     if isinstance(body_html, str) and body_html:

@@ -36,8 +36,8 @@ def test_big_moe_on_small_card_offloads_not_fails():
     q = next(p for p in profs if p["key"] == "quality")
     assert q["n_cpu_moe"] > 0
     assert q["offloads"] is True
-    assert q["cache_type"] == "q8_0"          # quality uses the sharp KV cache
-    assert q["est_vram_gb"] <= 16.0           # never exceeds the card
+    assert q["cache_type"] == "q8_0"  # quality uses the sharp KV cache
+    assert q["est_vram_gb"] <= 16.0  # never exceeds the card
 
 
 def test_profiles_never_exceed_vram():
@@ -83,7 +83,10 @@ def test_context_capped_at_model_limit():
 
 def test_no_gpu_returns_empty():
     """No VRAM detected → no GPU profiles (caller falls back to manual flags)."""
-    assert compute_serve_profiles({"backend": "cpu_x86", "gpu_vram_gb": 0}, _QWEN_35B_MOE) == []
+    assert (
+        compute_serve_profiles({"backend": "cpu_x86", "gpu_vram_gb": 0}, _QWEN_35B_MOE)
+        == []
+    )
 
 
 def test_vision_model_leaves_encoder_headroom():
@@ -98,8 +101,9 @@ def test_serve_mode_keeps_fixed_quant():
     """Serving a specific GGUF file: the quant is fixed (the file's), so every
     profile must keep it and vary only the serving knobs (KV/ctx/offload) — not
     propose a different quant (which makes no sense for an on-disk file)."""
-    profs = compute_serve_profiles(_sys(15.9), _QWEN_35B_MOE,
-                                   serve_weights_gb=20.6, serve_quant="Q4_K_M")
+    profs = compute_serve_profiles(
+        _sys(15.9), _QWEN_35B_MOE, serve_weights_gb=20.6, serve_quant="Q4_K_M"
+    )
     assert profs
     assert all(p["quant"] == "Q4_K_M" for p in profs), [p["quant"] for p in profs]
     # The knobs should still differ across profiles (KV type and/or context).

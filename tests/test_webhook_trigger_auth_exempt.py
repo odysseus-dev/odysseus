@@ -55,9 +55,7 @@ def test_webhook_trigger_path_is_in_exempt_patterns():
     body = src[lb + 1 : end]
     # Pull each compiled regex literal: _re.compile(r"...").
     patterns = re.findall(r'_re\.compile\(\s*r"([^"]+)"\s*\)', body)
-    assert patterns, (
-        "expected at least one compiled regex in AUTH_EXEMPT_PATTERNS"
-    )
+    assert patterns, "expected at least one compiled regex in AUTH_EXEMPT_PATTERNS"
     compiled = [re.compile(p) for p in patterns]
 
     sample = "/api/tasks/abc123/webhook/" + "x" * 43

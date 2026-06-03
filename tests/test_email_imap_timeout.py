@@ -32,7 +32,9 @@ class _FakeIMAP:
         self.timeout = timeout
         self.sock = _FakeSock()
         self.starttls_called = False
-        _FakeIMAP.calls.append(("connect", self.__class__.__name__, host, port, timeout))
+        _FakeIMAP.calls.append(
+            ("connect", self.__class__.__name__, host, port, timeout)
+        )
 
     def starttls(self):
         self.starttls_called = True
@@ -116,7 +118,11 @@ async def test_account_config_uses_shared_imap_timeout(monkeypatch):
     monkeypatch.setattr(email_routes, "_open_imap_connection", fake_open)
 
     router = email_routes.setup_email_routes()
-    endpoint = next(route.endpoint for route in router.routes if route.path == "/api/email/accounts/test")
+    endpoint = next(
+        route.endpoint
+        for route in router.routes
+        if route.path == "/api/email/accounts/test"
+    )
 
     result = await endpoint(_Req(), owner="")
 

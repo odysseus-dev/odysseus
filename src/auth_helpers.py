@@ -7,7 +7,7 @@ from fastapi import HTTPException, Request
 
 def get_current_user(request: Request) -> str | None:
     """Get current username from request state (set by auth middleware)."""
-    return getattr(request.state, 'current_user', None)
+    return getattr(request.state, "current_user", None)
 
 
 def effective_user(request: Request):
@@ -112,7 +112,9 @@ def require_privilege(request: Request, key: str) -> str:
     # True = permitted; missing key defaults to permitted (unknown privileges
     # fail open — the UI gates display-side).
     if not privs.get(key, True):
-        raise HTTPException(403, f"Your account is not allowed to {key.replace('_', ' ')}.")
+        raise HTTPException(
+            403, f"Your account is not allowed to {key.replace('_', ' ')}."
+        )
     return user
 
 

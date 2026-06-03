@@ -30,7 +30,7 @@ def test_gb10_unified_memory_detected_not_dropped(monkeypatch):
     assert info["backend"] == "cuda"
     assert info["gpu_count"] == 1
     assert info["unified_memory"] is True
-    assert info["gpu_vram_gb"] == 128.0          # backed by the unified RAM pool
+    assert info["gpu_vram_gb"] == 128.0  # backed by the unified RAM pool
     assert hardware._last_gpu_error is None
 
 
@@ -60,7 +60,9 @@ def test_discrete_gpu_unchanged_and_not_unified(monkeypatch):
 def test_discrete_takes_precedence_over_unified_row(monkeypatch):
     """A box with a real discrete-VRAM GPU keeps the discrete path; the
     N/A-memory row is not conflated into a unified pool."""
-    monkeypatch.setattr(hardware, "_run", lambda cmd: "24576, NVIDIA RTX 4090\n[N/A], NVIDIA GB10")
+    monkeypatch.setattr(
+        hardware, "_run", lambda cmd: "24576, NVIDIA RTX 4090\n[N/A], NVIDIA GB10"
+    )
     info = hardware._detect_nvidia()
     assert info["gpu_name"] == "NVIDIA RTX 4090"
     assert info["gpu_count"] == 1

@@ -20,37 +20,59 @@ logger = logging.getLogger(__name__)
 
 # Tools that are ALWAYS included regardless of retrieval results.
 # These are the most commonly needed and should never be missing.
-ALWAYS_AVAILABLE = frozenset({
-    "bash", "python", "web_search", "web_fetch", "read_file",
-    "api_call",  # For configured integrations (Miniflux, Gitea, Linkding, etc.)
-    # The two genuinely AMBIENT cookbook tools — "what's running" and
-    # "kill it" can be asked any time without prior cookbook context,
-    # and need to survive typos. The other cookbook tools (downloads,
-    # presets, serve, cached, servers) are CONTEXTUAL — they fire via
-    # keyword hints when the user is actually talking about cookbook.
-    # Keeping the always-on set small leaves room in the ~16-tool
-    # budget for manage_tasks / manage_calendar / etc.
-    "list_served_models", "stop_served_model",
-    # Generic API loopback — the catch-all when no named tool fits.
-    "app_api",
-})
+ALWAYS_AVAILABLE = frozenset(
+    {
+        "bash",
+        "python",
+        "web_search",
+        "web_fetch",
+        "read_file",
+        "api_call",  # For configured integrations (Miniflux, Gitea, Linkding, etc.)
+        # The two genuinely AMBIENT cookbook tools — "what's running" and
+        # "kill it" can be asked any time without prior cookbook context,
+        # and need to survive typos. The other cookbook tools (downloads,
+        # presets, serve, cached, servers) are CONTEXTUAL — they fire via
+        # keyword hints when the user is actually talking about cookbook.
+        # Keeping the always-on set small leaves room in the ~16-tool
+        # budget for manage_tasks / manage_calendar / etc.
+        "list_served_models",
+        "stop_served_model",
+        # Generic API loopback — the catch-all when no named tool fits.
+        "app_api",
+    }
+)
 
 # Tools that the Personal Assistant always has access to during scheduled
 # check-ins and proactive tasks, in addition to RAG-selected tools.
-ASSISTANT_ALWAYS_AVAILABLE = frozenset({
-    "list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email",
-    "bulk_email", "archive_email", "delete_email", "mark_email_read",
-    "manage_calendar", "manage_notes", "manage_tasks",
-    "manage_memory", "web_search", "read_file",
-    "create_document", "update_document",
-    "resolve_contact", "search_chats",
-    "api_call",  # For Miniflux/Gitea/Linkding/etc. integrations
-    # Core UI control (toggles, open panels, switch model/mode, themes).
-    # Always available so vague follow-ups ("now make it playful", "make it
-    # darker") that don't repeat a theme/UI keyword still keep the tool in
-    # reach — without it the model narrates instead of acting.
-    "ui_control",
-})
+ASSISTANT_ALWAYS_AVAILABLE = frozenset(
+    {
+        "list_email_accounts",
+        "list_emails",
+        "read_email",
+        "send_email",
+        "reply_to_email",
+        "bulk_email",
+        "archive_email",
+        "delete_email",
+        "mark_email_read",
+        "manage_calendar",
+        "manage_notes",
+        "manage_tasks",
+        "manage_memory",
+        "web_search",
+        "read_file",
+        "create_document",
+        "update_document",
+        "resolve_contact",
+        "search_chats",
+        "api_call",  # For Miniflux/Gitea/Linkding/etc. integrations
+        # Core UI control (toggles, open panels, switch model/mode, themes).
+        # Always available so vague follow-ups ("now make it playful", "make it
+        # darker") that don't repeat a theme/UI keyword still keep the tool in
+        # reach — without it the model narrates instead of acting.
+        "ui_control",
+    }
+)
 
 COLLECTION_NAME = "odysseus_tool_index"
 
@@ -176,7 +198,9 @@ class ToolIndex:
             stale = [i for i in existing_ids if i not in set(ids)]
             if stale:
                 self._collection.delete(ids=stale)
-                logger.info(f"Pruned {len(stale)} stale builtin tool entries from index")
+                logger.info(
+                    f"Pruned {len(stale)} stale builtin tool entries from index"
+                )
         except Exception as e:
             logger.debug(f"Stale-pruning skipped: {e}")
 
@@ -198,7 +222,7 @@ class ToolIndex:
             return
 
         # Get current MCP generation to avoid redundant reindexing
-        gen = getattr(mcp_mgr, '_generation', 0)
+        gen = getattr(mcp_mgr, "_generation", 0)
         if gen == self._mcp_generation:
             return
         self._mcp_generation = gen
@@ -238,7 +262,9 @@ class ToolIndex:
                     desc = name_desc[1].strip()
                     # Include server identity in the indexed text so RAG can
                     # distinguish "list_emails for server-a" from "list_emails for server-b"
-                    server_ctx = f" (server: {current_server})" if current_server else ""
+                    server_ctx = (
+                        f" (server: {current_server})" if current_server else ""
+                    )
                     doc_text = f"Tool: {name}{server_ctx}\n{desc}"
                     docs.append(doc_text)
                     ids.append(f"mcp_{name}")
@@ -283,7 +309,7 @@ class ToolIndex:
     # via "every <word>"), and catches bare clock times ("at 7:30 am", "7am").
     # Used in addition to the literal keyword hints below.
     _SCHEDULE_RE = re.compile(
-        r"\bevery\s+\w+"                                       # every day / dya / morning / monday / 2 hours
+        r"\bevery\s+\w+"  # every day / dya / morning / monday / 2 hours
         r"|\b(?:daily|nightly|hourly|weekly|monthly)\b"
         r"|\beach\s+(?:day|morning|night|week|hour|evening)\b"
         r"|\bat\s+\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b",  # at 7:30 am / at 7am
@@ -296,135 +322,432 @@ class ToolIndex:
         # request (e.g. "visit <url> and tell me the title"), force-including the
         # whole email toolset and crowding out the relevant tools — the model then
         # believed it had only email tools and refused web/other tasks (#1707).
-        frozenset({"email", "mail", "gmail", "googlemail", "message", "send", "reply", "inbox", "unread"}):
-            {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
-        frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
-            {"manage_calendar"},
-        frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):
-            {"manage_notes"},
+        frozenset(
+            {
+                "email",
+                "mail",
+                "gmail",
+                "googlemail",
+                "message",
+                "send",
+                "reply",
+                "inbox",
+                "unread",
+            }
+        ): {
+            "list_email_accounts",
+            "list_emails",
+            "read_email",
+            "send_email",
+            "reply_to_email",
+            "bulk_email",
+            "delete_email",
+            "archive_email",
+            "mark_email_read",
+            "resolve_contact",
+            "ui_control",
+        },
+        frozenset({"calendar", "event", "meeting", "schedule", "appointment"}): {
+            "manage_calendar"
+        },
+        frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}): {
+            "manage_notes"
+        },
         # Chat/session management. "rename" alone maps to documents below, so a
         # request like "rename the last 12 sessions/chats" needs these session
         # keywords to surface the right tools (NOT app_api — /api/sessions is
         # owner-filtered and returns empty for tool calls).
-        frozenset({"sessions", "my chats", "these chats", "those chats",
-                   "chat history", "rename chat", "rename session",
-                   "rename the chat", "rename my chat", "rename the session",
-                   "archive chat", "archive session", "delete chat",
-                   "delete session", "fork chat", "fork session",
-                   "name the chats", "name my chats", "rename them"}):
-            {"list_sessions", "manage_session"},
-        frozenset({"recurring", "every day", "every hour", "every morning",
-                   "every evening", "every night", "every week", "each morning",
-                   "daily task", "background task", "scheduled task", "schedule a",
-                   "automatically", "auto-summarize", "auto summarize",
-                   "cron", "periodically", "on a schedule", "set up a task",
-                   "create a task", "summarize my inbox every", "remind me every"}):
-            {"manage_tasks"},
-        frozenset({"contact", "address", "phone", "who is"}):
-            {"resolve_contact", "manage_contact"},
-        frozenset({"save contact", "add contact", "new contact", "update contact",
-                   "edit contact", "delete contact", "remove contact",
-                   "save this person", "add to contacts", "save to contacts"}):
-            {"manage_contact"},
+        frozenset(
+            {
+                "sessions",
+                "my chats",
+                "these chats",
+                "those chats",
+                "chat history",
+                "rename chat",
+                "rename session",
+                "rename the chat",
+                "rename my chat",
+                "rename the session",
+                "archive chat",
+                "archive session",
+                "delete chat",
+                "delete session",
+                "fork chat",
+                "fork session",
+                "name the chats",
+                "name my chats",
+                "rename them",
+            }
+        ): {"list_sessions", "manage_session"},
+        frozenset(
+            {
+                "recurring",
+                "every day",
+                "every hour",
+                "every morning",
+                "every evening",
+                "every night",
+                "every week",
+                "each morning",
+                "daily task",
+                "background task",
+                "scheduled task",
+                "schedule a",
+                "automatically",
+                "auto-summarize",
+                "auto summarize",
+                "cron",
+                "periodically",
+                "on a schedule",
+                "set up a task",
+                "create a task",
+                "summarize my inbox every",
+                "remind me every",
+            }
+        ): {"manage_tasks"},
+        frozenset({"contact", "address", "phone", "who is"}): {
+            "resolve_contact",
+            "manage_contact",
+        },
+        frozenset(
+            {
+                "save contact",
+                "add contact",
+                "new contact",
+                "update contact",
+                "edit contact",
+                "delete contact",
+                "remove contact",
+                "save this person",
+                "add to contacts",
+                "save to contacts",
+            }
+        ): {"manage_contact"},
         # "Ask another model" intent → chat_with_model relays to a
         # different model and returns its answer. ask_teacher escalates
         # to the configured teacher. (second_opinion was removed.)
-        frozenset({"ask gpt", "ask claude", "ask gemini", "ask deepseek",
-                   "ask minimax", "ask qwen", "ask the", "ask another model",
-                   "what does", "what would", "second opinion", "other model",
-                   "different model", "compare answers", "compare models",
-                   "delegate to", "have model"}):
-            {"chat_with_model", "ask_teacher", "list_models"},
+        frozenset(
+            {
+                "ask gpt",
+                "ask claude",
+                "ask gemini",
+                "ask deepseek",
+                "ask minimax",
+                "ask qwen",
+                "ask the",
+                "ask another model",
+                "what does",
+                "what would",
+                "second opinion",
+                "other model",
+                "different model",
+                "compare answers",
+                "compare models",
+                "delegate to",
+                "have model",
+            }
+        ): {"chat_with_model", "ask_teacher", "list_models"},
         # Deep research intent (incl. common typo "reserach")
-        frozenset({"research", "reserach", "reasearch", "look into", "investigate",
-                   "deep dive", "deep research", "find out about", "study up on",
-                   "report on", "do research", "look up everything"}):
-            {"trigger_research"},
+        frozenset(
+            {
+                "research",
+                "reserach",
+                "reasearch",
+                "look into",
+                "investigate",
+                "deep dive",
+                "deep research",
+                "find out about",
+                "study up on",
+                "report on",
+                "do research",
+                "look up everything",
+            }
+        ): {"trigger_research"},
         # Settings-change intent — "change my…/set my…/use X for…/turn on…".
-        frozenset({"change my", "set my", "use the voice", "change the voice",
-                   "my voice", "tts voice", "search engine", "default model",
-                   "teacher model", "task model", "background model", "image quality",
-                   "reminder channel", "send reminders to", "remind me by",
-                   "speak faster", "speak slower", "agent timeout", "token budget",
-                   "max tool calls", "use this model for", "use that model for",
-                   "my settings", "change setting", "change a setting", "set setting",
-                   "preference", "preferences", "configure"}):
-            {"manage_settings", "ui_control"},
+        frozenset(
+            {
+                "change my",
+                "set my",
+                "use the voice",
+                "change the voice",
+                "my voice",
+                "tts voice",
+                "search engine",
+                "default model",
+                "teacher model",
+                "task model",
+                "background model",
+                "image quality",
+                "reminder channel",
+                "send reminders to",
+                "remind me by",
+                "speak faster",
+                "speak slower",
+                "agent timeout",
+                "token budget",
+                "max tool calls",
+                "use this model for",
+                "use that model for",
+                "my settings",
+                "change setting",
+                "change a setting",
+                "set setting",
+                "preference",
+                "preferences",
+                "configure",
+            }
+        ): {"manage_settings", "ui_control"},
         # Managing EXISTING research in the Library — open/read/find/delete.
-        frozenset({"my research", "the research", "research on", "open research",
-                   "read research", "find research", "delete research",
-                   "remove research", "list research", "my reports", "the report",
-                   "saved research", "research library", "past research",
-                   "research i did", "research about"}):
-            {"manage_research", "trigger_research"},
+        frozenset(
+            {
+                "my research",
+                "the research",
+                "research on",
+                "open research",
+                "read research",
+                "find research",
+                "delete research",
+                "remove research",
+                "list research",
+                "my reports",
+                "the report",
+                "saved research",
+                "research library",
+                "past research",
+                "research i did",
+                "research about",
+            }
+        ): {"manage_research", "trigger_research"},
         # Document edit/update intent
-        frozenset({"edit", "change", "fix", "rewrite", "update",
-                   "replace", "add a", "tweak", "modify", "rename", "paragraph",
-                   "section", "line", "the doc", "the document", "in the doc"}):
-            {"edit_document", "update_document", "create_document", "suggest_document"},
+        frozenset(
+            {
+                "edit",
+                "change",
+                "fix",
+                "rewrite",
+                "update",
+                "replace",
+                "add a",
+                "tweak",
+                "modify",
+                "rename",
+                "paragraph",
+                "section",
+                "line",
+                "the doc",
+                "the document",
+                "in the doc",
+            }
+        ): {"edit_document", "update_document", "create_document", "suggest_document"},
         # Document deletion / management — include generic open/find/read/show
         # verbs + file/doc synonyms so "open my <X>", "find the <X>", "delete
         # <X>" reach manage_documents even without the literal word "document".
-        frozenset({"delete this doc", "delete the doc", "delete document",
-                   "remove document", "remove the doc", "trash", "list documents",
-                   "list docs", "all my docs", "my documents", "my docs", "my files",
-                   "open the", "open my", "open document", "open doc", "find the",
-                   "find my", "find document", "read the", "read my", "show me the",
-                   "show my", "the file", "my file", "the report", "the write-up",
-                   "the writeup", "saved document", "in my library", "in the library"}):
-            {"manage_documents", "edit_document"},
+        frozenset(
+            {
+                "delete this doc",
+                "delete the doc",
+                "delete document",
+                "remove document",
+                "remove the doc",
+                "trash",
+                "list documents",
+                "list docs",
+                "all my docs",
+                "my documents",
+                "my docs",
+                "my files",
+                "open the",
+                "open my",
+                "open document",
+                "open doc",
+                "find the",
+                "find my",
+                "find document",
+                "read the",
+                "read my",
+                "show me the",
+                "show my",
+                "the file",
+                "my file",
+                "the report",
+                "the write-up",
+                "the writeup",
+                "saved document",
+                "in my library",
+                "in the library",
+            }
+        ): {"manage_documents", "edit_document"},
         # Theme / UI control intent
-        frozenset({"theme", "color scheme", "colors of the ui", "make it dark",
-                   "make it light", "make the ui", "switch theme", "change theme",
-                   "dark mode", "light mode", "toggle"}):
-            {"ui_control"},
+        frozenset(
+            {
+                "theme",
+                "color scheme",
+                "colors of the ui",
+                "make it dark",
+                "make it light",
+                "make the ui",
+                "switch theme",
+                "change theme",
+                "dark mode",
+                "light mode",
+                "toggle",
+            }
+        ): {"ui_control"},
         # Cookbook / model serving intent — user says "kill cookbook",
         # "stop the model", "what's running", etc.
-        frozenset({"cookbook", "kill cookbook", "stop cookbook",
-                   "stop the model", "kill the model", "kill my model",
-                   "what's running", "what is running", "whats running",
-                   "running models", "running model", "running server",
-                   "shut down vllm", "shutdown vllm", "stop vllm",
-                   "stop serving", "kill serve", "cancel serve"}):
-            {"list_served_models", "stop_served_model"},
+        frozenset(
+            {
+                "cookbook",
+                "kill cookbook",
+                "stop cookbook",
+                "stop the model",
+                "kill the model",
+                "kill my model",
+                "what's running",
+                "what is running",
+                "whats running",
+                "running models",
+                "running model",
+                "running server",
+                "shut down vllm",
+                "shutdown vllm",
+                "stop vllm",
+                "stop serving",
+                "kill serve",
+                "cancel serve",
+            }
+        ): {"list_served_models", "stop_served_model"},
         # Cookbook serve / launch / preset / server selection
-        frozenset({"serve", "launch", "spin up", "start the model", "run the model",
-                   "preset", "presets", "which server", "what servers",
-                   "gpu box", "cookbook server", "vllm", "on the server", "on the gpu"}):
-            {"serve_preset", "serve_model", "list_serve_presets",
-             "list_cookbook_servers", "list_cached_models"},
+        frozenset(
+            {
+                "serve",
+                "launch",
+                "spin up",
+                "start the model",
+                "run the model",
+                "preset",
+                "presets",
+                "which server",
+                "what servers",
+                "gpu box",
+                "cookbook server",
+                "vllm",
+                "on the server",
+                "on the gpu",
+            }
+        ): {
+            "serve_preset",
+            "serve_model",
+            "list_serve_presets",
+            "list_cookbook_servers",
+            "list_cached_models",
+        },
         # Cookbook downloads
-        frozenset({"download", "downloading", "downloads",
-                   "cancel download", "stop download", "kill download",
-                   "what's downloading", "download progress", "pull model", "grab model"}):
-            {"list_downloads", "cancel_download", "download_model",
-             "list_cookbook_servers"},
+        frozenset(
+            {
+                "download",
+                "downloading",
+                "downloads",
+                "cancel download",
+                "stop download",
+                "kill download",
+                "what's downloading",
+                "download progress",
+                "pull model",
+                "grab model",
+            }
+        ): {
+            "list_downloads",
+            "cancel_download",
+            "download_model",
+            "list_cookbook_servers",
+        },
         # HuggingFace search + cached model browse
-        frozenset({"huggingface", "hugging face", "hf search",
-                   "find a model", "search models", "search for a model",
-                   "models for", "best model for"}):
-            {"search_hf_models", "list_cached_models"},
-        frozenset({"cached models", "list models", "my models",
-                   "what models do i have", "is it downloaded",
-                   "do i have", "already downloaded", "on disk"}):
-            {"list_cached_models", "search_hf_models"},
+        frozenset(
+            {
+                "huggingface",
+                "hugging face",
+                "hf search",
+                "find a model",
+                "search models",
+                "search for a model",
+                "models for",
+                "best model for",
+            }
+        ): {"search_hf_models", "list_cached_models"},
+        frozenset(
+            {
+                "cached models",
+                "list models",
+                "my models",
+                "what models do i have",
+                "is it downloaded",
+                "do i have",
+                "already downloaded",
+                "on disk",
+            }
+        ): {"list_cached_models", "search_hf_models"},
         # Tool on/off / panel open intent — user says "turn off shell",
         # "disable search", "open library", "show gallery", etc.
-        frozenset({"turn off", "turn on", "disable", "enable",
-                   "shell off", "shell on", "search off", "search on",
-                   "research off", "research on", "incognito",
-                   "switch model", "change model", "set mode", "agent mode", "chat mode",
-                   "open library", "open documents", "open gallery", "open email",
-                   "open inbox", "open settings", "open memories", "open memory",
-                   "open skills", "open notes", "open chats", "open sessions",
-                   "show library", "show gallery", "show inbox", "show settings",
-                   "show memory", "show memories", "show skills", "show notes",
-                   "show chats", "show sessions", "show documents"}):
-            {"ui_control"},
+        frozenset(
+            {
+                "turn off",
+                "turn on",
+                "disable",
+                "enable",
+                "shell off",
+                "shell on",
+                "search off",
+                "search on",
+                "research off",
+                "research on",
+                "incognito",
+                "switch model",
+                "change model",
+                "set mode",
+                "agent mode",
+                "chat mode",
+                "open library",
+                "open documents",
+                "open gallery",
+                "open email",
+                "open inbox",
+                "open settings",
+                "open memories",
+                "open memory",
+                "open skills",
+                "open notes",
+                "open chats",
+                "open sessions",
+                "show library",
+                "show gallery",
+                "show inbox",
+                "show settings",
+                "show memory",
+                "show memories",
+                "show skills",
+                "show notes",
+                "show chats",
+                "show sessions",
+                "show documents",
+            }
+        ): {"ui_control"},
         # Document creation intent
-        frozenset({"write a", "create a doc", "draft", "compose", "poem", "story",
-                   "essay", "outline", "letter"}):
-            {"create_document", "edit_document", "update_document"},
+        frozenset(
+            {
+                "write a",
+                "create a doc",
+                "draft",
+                "compose",
+                "poem",
+                "story",
+                "essay",
+                "outline",
+                "letter",
+            }
+        ): {"create_document", "edit_document", "update_document"},
     }
 
     def get_tools_for_query(

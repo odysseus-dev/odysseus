@@ -14,7 +14,10 @@ class _FakeHandler:
 def test_resolve_user_upload_path_handles_non_dict_resolution():
     # resolve_upload normally returns a dict or None; a corrupt store could
     # hand back a list/str, and the old resolved.get(...) then crashed.
-    assert _resolve_user_upload_path(_FakeHandler(["not", "a", "dict"]), "id1", None) is None
+    assert (
+        _resolve_user_upload_path(_FakeHandler(["not", "a", "dict"]), "id1", None)
+        is None
+    )
     assert _resolve_user_upload_path(_FakeHandler("oops"), "id1", None) is None
 
 

@@ -23,8 +23,10 @@ def _load_cli(monkeypatch):
 def test_memory_entries_skips_invalid_rows(monkeypatch):
     cli = _load_cli(monkeypatch)
 
-    assert cli._memory_entries([
-        {"id": "m1", "text": "ok"},
-        "bad-row",
-        None,
-    ]) == [{"id": "m1", "text": "ok"}]
+    assert cli._memory_entries(
+        [
+            {"id": "m1", "text": "ok"},
+            "bad-row",
+            None,
+        ]
+    ) == [{"id": "m1", "text": "ok"}]

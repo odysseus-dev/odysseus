@@ -27,7 +27,7 @@ def test_discovery_ignores_invalid_tailscale_ip_shapes(monkeypatch):
             '"Peer":{'
             '"string_ips":{"Online":true,"HostName":"bad","OS":"linux","TailscaleIPs":"100.1.1.2"},'
             '"mixed_ips":{"Online":true,"HostName":"ok","OS":"linux","TailscaleIPs":[null,123,"100.1.1.3"]}'
-            '}}'
+            "}}"
         )
 
     monkeypatch.setattr(model_discovery.subprocess, "run", lambda *a, **k: Result())

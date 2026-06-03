@@ -61,7 +61,9 @@ def setup_emoji_routes() -> APIRouter:
                     fp.write_bytes(r.content)
                 except Exception:
                     pass  # cache write is best-effort
-                return Response(r.content, media_type="image/svg+xml", headers=_SVG_HEADERS)
+                return Response(
+                    r.content, media_type="image/svg+xml", headers=_SVG_HEADERS
+                )
         except Exception as e:
             logger.warning("emoji fetch %s failed: %s", code, e)
 

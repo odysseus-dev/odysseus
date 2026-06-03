@@ -10,6 +10,7 @@ back as a corrupted string blob - the attachment was destroyed. The
 sibling _persist_message json.dumps-es list content; replace_messages did
 not.
 """
+
 import tempfile
 import uuid
 
@@ -35,6 +36,7 @@ _TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
 @pytest.fixture
 def manager(monkeypatch):
     import core.session_manager as sm
+
     monkeypatch.setattr(sm, "SessionLocal", _TS)
     mgr = sm.SessionManager.__new__(sm.SessionManager)
     mgr.sessions = {}
@@ -44,8 +46,16 @@ def manager(monkeypatch):
 def _make_session(sid, owner="alice"):
     db = _TS()
     try:
-        db.add(DbSession(id=sid, owner=owner, name="chat", model="gpt-4o",
-                         archived=False, message_count=1))
+        db.add(
+            DbSession(
+                id=sid,
+                owner=owner,
+                name="chat",
+                model="gpt-4o",
+                archived=False,
+                message_count=1,
+            )
+        )
         db.commit()
     finally:
         db.close()

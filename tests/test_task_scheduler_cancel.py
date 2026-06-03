@@ -44,13 +44,15 @@ def test_stop_task_cleans_up_queued_handle_and_run(tmp_path, monkeypatch):
     session_local, ScheduledTask, TaskRun = _setup_db(tmp_path, monkeypatch)
 
     db = session_local()
-    db.add(ScheduledTask(
-        id="queued-task",
-        owner="alice",
-        name="Queued Task",
-        task_type="llm",
-        status="active",
-    ))
+    db.add(
+        ScheduledTask(
+            id="queued-task",
+            owner="alice",
+            name="Queued Task",
+            task_type="llm",
+            status="active",
+        )
+    )
     db.commit()
     db.close()
 
@@ -72,7 +74,11 @@ def test_stop_task_cleans_up_queued_handle_and_run(tmp_path, monkeypatch):
                 if "queued-task" in scheduler._task_handles:
                     db2 = session_local()
                     try:
-                        run = db2.query(TaskRun).filter(TaskRun.task_id == "queued-task").first()
+                        run = (
+                            db2.query(TaskRun)
+                            .filter(TaskRun.task_id == "queued-task")
+                            .first()
+                        )
                         if run:
                             break
                     finally:

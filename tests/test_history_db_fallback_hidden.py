@@ -13,6 +13,7 @@ get_session_history depends on the DB, the session manager and a FastAPI
 request, so this pins the regression at the source level (as other route tests
 in this repo do).
 """
+
 import ast
 from pathlib import Path
 
@@ -22,7 +23,10 @@ SRC = Path(__file__).resolve().parent.parent / "routes" / "history_routes.py"
 def _function_source(src_text, name):
     tree = ast.parse(src_text)
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             return ast.get_source_segment(src_text, node)
     raise AssertionError(f"{name} not found in {SRC}")
 

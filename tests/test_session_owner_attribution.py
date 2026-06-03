@@ -22,8 +22,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # under conftest's sqlalchemy/* MagicMock stubs (declarative classes). Stub them
 # so we can import the module and exercise _verify_session_owner with a mock DB.
 _STUBS = {
-    "core.database": {"Session": MagicMock(), "SessionLocal": MagicMock(),
-                      "Document": MagicMock(), "GalleryImage": MagicMock()},
+    "core.database": {
+        "Session": MagicMock(),
+        "SessionLocal": MagicMock(),
+        "Document": MagicMock(),
+        "GalleryImage": MagicMock(),
+    },
     "core.session_manager": {"SessionManager": MagicMock()},
     "core.models": {"ChatMessage": MagicMock()},
     "src.request_models": {"SessionResponse": MagicMock()},
@@ -47,6 +51,7 @@ def _req(**state):
 
 # --- effective_user: who a request is attributed to ------------------------
 
+
 def test_cookie_user_is_unchanged():
     # The whole point: browser/cookie callers behave exactly as before.
     assert effective_user(_req(api_token=False, current_user="alice")) == "alice"
@@ -54,15 +59,24 @@ def test_cookie_user_is_unchanged():
 
 def test_bearer_token_attributes_to_its_owner():
     # A paired phone runs as the "api" pseudo-user but must act as the token owner.
-    assert effective_user(_req(api_token=True, api_token_owner="alice", current_user="api")) == "alice"
+    assert (
+        effective_user(
+            _req(api_token=True, api_token_owner="alice", current_user="api")
+        )
+        == "alice"
+    )
 
 
 def test_bearer_token_without_owner_does_not_escalate():
     # No owner on the token -> falls back to current_user ("api"), never another user.
-    assert effective_user(_req(api_token=True, api_token_owner=None, current_user="api")) == "api"
+    assert (
+        effective_user(_req(api_token=True, api_token_owner=None, current_user="api"))
+        == "api"
+    )
 
 
 # --- _verify_session_owner: bearer tokens cannot cross owners ---------------
+
 
 def _session_local_returning(owner_value):
     """Mock SessionLocal whose query(...).filter(...).first() yields a row with

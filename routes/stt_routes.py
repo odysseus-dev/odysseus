@@ -28,18 +28,21 @@ def setup_stt_routes(stt_service):
             if not stt_service.available:
                 raise HTTPException(
                     status_code=503,
-                    detail={"message": "STT service not available or set to browser mode"}
+                    detail={
+                        "message": "STT service not available or set to browser mode"
+                    },
                 )
 
             audio_bytes = await file.read()
             if not audio_bytes:
-                raise HTTPException(status_code=400, detail={"message": "Empty audio file"})
+                raise HTTPException(
+                    status_code=400, detail={"message": "Empty audio file"}
+                )
 
             text = stt_service.transcribe(audio_bytes)
             if text is None:
                 raise HTTPException(
-                    status_code=500,
-                    detail={"message": "Transcription failed"}
+                    status_code=500, detail={"message": "Transcription failed"}
                 )
 
             return {"text": text}
@@ -49,8 +52,7 @@ def setup_stt_routes(stt_service):
         except Exception as e:
             logger.error(f"Transcription error: {e}", exc_info=True)
             raise HTTPException(
-                status_code=500,
-                detail={"message": f"Transcription failed: {str(e)}"}
+                status_code=500, detail={"message": f"Transcription failed: {str(e)}"}
             )
 
     return router

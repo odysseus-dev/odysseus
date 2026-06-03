@@ -4,6 +4,7 @@
 (e.g. None) raised TypeError once any *.log file existed. Non-strings now
 return None (no match).
 """
+
 import importlib.machinery
 import importlib.util
 from pathlib import Path
@@ -12,7 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load():
-    loader = importlib.machinery.SourceFileLoader("odysseus_logs_cli", str(ROOT / "scripts" / "odysseus-logs"))
+    loader = importlib.machinery.SourceFileLoader(
+        "odysseus_logs_cli", str(ROOT / "scripts" / "odysseus-logs")
+    )
     spec = importlib.util.spec_from_loader(loader.name, loader)
     m = importlib.util.module_from_spec(spec)
     loader.exec_module(m)

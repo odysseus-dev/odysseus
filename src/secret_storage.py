@@ -72,7 +72,9 @@ def decrypt(value: str) -> str:
     if not value.startswith(_PREFIX):
         return value
     try:
-        return _get_fernet().decrypt(value[len(_PREFIX):].encode("ascii")).decode("utf-8")
+        return (
+            _get_fernet().decrypt(value[len(_PREFIX) :].encode("ascii")).decode("utf-8")
+        )
     except InvalidToken:
         logger.error("Failed to decrypt stored secret — wrong key or corrupt token")
         return ""

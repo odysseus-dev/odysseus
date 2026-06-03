@@ -6,6 +6,7 @@ double space after "Re:" on every non-ASCII subject, a spurious space in
 "Name <addr>" senders, and violated RFC 2047 6.2 which requires whitespace
 between two adjacent encoded-words to be dropped.
 """
+
 import pytest
 
 pytest.importorskip("mcp")

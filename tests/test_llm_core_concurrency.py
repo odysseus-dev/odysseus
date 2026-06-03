@@ -11,6 +11,7 @@ preempts the short critical sections), so each test deterministically widens the
 vulnerable window: one injects a phantom snapshot key, the other forces every
 thread to read the counter before any writes it back.
 """
+
 import threading
 import time
 
@@ -23,6 +24,7 @@ def test_cache_eviction_tolerates_already_removed_key():
     Models a concurrent evictor removing the same key: the old `del` raised
     KeyError mid-loop, `pop(key, None)` does not.
     """
+
     class PhantomKeysCache(dict):
         def keys(self):
             # First key is absent from the dict — as if another thread evicted
@@ -61,8 +63,9 @@ def test_host_fail_counter_has_no_lost_updates():
     original_fails = llm_core._host_fails
     original_threshold = llm_core._HOST_FAIL_THRESHOLD
     llm_core._host_fails = SlowGetDict()
-    llm_core._HOST_FAIL_THRESHOLD = 10 ** 9  # never cool: every call is a pure +1
+    llm_core._HOST_FAIL_THRESHOLD = 10**9  # never cool: every call is a pure +1
     try:
+
         def worker():
             barrier.wait()  # all threads enter the read window together
             llm_core._mark_host_dead(url)

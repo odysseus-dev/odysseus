@@ -10,7 +10,14 @@ from fastapi import APIRouter
 _MANUAL_BACKENDS = {"cuda", "rocm", "metal", "cpu_x86", "cpu_arm"}
 
 
-def _apply_manual_hardware(system, manual_mode="", manual_gpu_count="", manual_vram_gb="", manual_ram_gb="", manual_backend=""):
+def _apply_manual_hardware(
+    system,
+    manual_mode="",
+    manual_gpu_count="",
+    manual_vram_gb="",
+    manual_ram_gb="",
+    manual_backend="",
+):
     """Manual hardware is a "what if I had this setup" simulator —
     REPLACES the detected hardware entirely instead of adding to it.
 
@@ -69,20 +76,21 @@ def _apply_manual_hardware(system, manual_mode="", manual_gpu_count="", manual_v
     system["gpu_vram_gb"] = total_vram
     system["gpu_count"] = count
     system["gpus"] = [
-        {"index": i, "name": gpu_name, "vram_gb": vram_each}
-        for i in range(count)
+        {"index": i, "name": gpu_name, "vram_gb": vram_each} for i in range(count)
     ]
     # Single homogeneous pool — vram_each here is the ACTUAL per-GPU
     # VRAM the user entered, not an average. That's the whole point:
     # raising vram_each lifts the per-GPU cap (GGUF, tensor-parallel
     # math) all the way up, not just by a small fraction.
-    system["gpu_groups"] = [{
-        "name": gpu_name,
-        "vram_each": vram_each,
-        "count": count,
-        "indices": list(range(count)),
-        "vram_total": total_vram,
-    }]
+    system["gpu_groups"] = [
+        {
+            "name": gpu_name,
+            "vram_each": vram_each,
+            "count": count,
+            "indices": list(range(count)),
+            "vram_total": total_vram,
+        }
+    ]
     system["homogeneous"] = True
     system["backend"] = backend
     # Apple Silicon shares one unified memory pool with the GPU; flag it so
@@ -100,14 +108,40 @@ def setup_hwfit_routes():
     router = APIRouter(prefix="/api/hwfit", tags=["hwfit"])
 
     @router.get("/system")
-    def get_system(host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False):
+    def get_system(
+        host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False
+    ):
         """Detect and return current system hardware info. Pass host=user@server for remote.
         fresh=true bypasses the per-host cache (the Rescan button)."""
         from services.hwfit.hardware import detect_system
-        return detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh)
+
+        return detect_system(
+            host=host, ssh_port=ssh_port, platform=platform, fresh=fresh
+        )
 
     @router.get("/models")
-    def get_models(use_case: str = "", sort: str = "score", limit: int = 50, search: str = "", host: str = "", quant: str = "", ctx: str = "", gpu_count: str = "", gpu_group: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False, fit_only: bool = False):
+    def get_models(
+        use_case: str = "",
+        sort: str = "score",
+        limit: int = 50,
+        search: str = "",
+        host: str = "",
+        quant: str = "",
+        ctx: str = "",
+        gpu_count: str = "",
+        gpu_group: str = "",
+        ssh_port: str = "",
+        platform: str = "",
+        fresh: bool = False,
+        manual_mode: str = "",
+        manual_gpu_count: str = "",
+        manual_vram_gb: str = "",
+        manual_ram_gb: str = "",
+        manual_backend: str = "",
+        ignore_detected_gpu: bool = False,
+        ignore_detected_ram: bool = False,
+        fit_only: bool = False,
+    ):
         """Rank LLM models against detected hardware and return scored results.
         gpu_count: override GPU count (0 = CPU only, 1-N = simulate N GPUs of the
             active group). gpu_group: index into system.gpu_groups (the homogeneous
@@ -117,7 +151,10 @@ def setup_hwfit_routes():
         from services.hwfit.fit import rank_models
         from services.hwfit.hardware import detect_system
         from services.hwfit.models import get_models, model_catalog_path
-        system = deepcopy(detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh))
+
+        system = deepcopy(
+            detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh)
+        )
         if system.get("error"):
             return {"system": system, "models": [], "error": system["error"]}
         if not get_models():
@@ -138,7 +175,14 @@ def setup_hwfit_routes():
             system["available_ram_gb"] = 0
             system["total_ram_gb"] = 0
 
-        system = _apply_manual_hardware(system, manual_mode, manual_gpu_count, manual_vram_gb, manual_ram_gb, manual_backend)
+        system = _apply_manual_hardware(
+            system,
+            manual_mode,
+            manual_gpu_count,
+            manual_vram_gb,
+            manual_ram_gb,
+            manual_backend,
+        )
 
         # Keep the raw detection around so the UI can still show the box's full
         # GPU complement even while we rank against one homogeneous pool.
@@ -178,7 +222,9 @@ def setup_hwfit_routes():
                 system["gpu_only"] = True
             else:
                 # No per-GPU detail (older detection) — assume uniform split.
-                single_vram = (system.get("gpu_vram_gb") or 0) / (system.get("gpu_count") or 1)
+                single_vram = (system.get("gpu_vram_gb") or 0) / (
+                    system.get("gpu_count") or 1
+                )
                 system["gpu_count"] = max(1, n)
                 system["gpu_vram_gb"] = round(single_vram * max(1, n), 1)
                 system["gpu_only"] = True
@@ -195,11 +241,28 @@ def setup_hwfit_routes():
         if target_context is not None:
             target_context = max(1024, min(target_context, 1000000))
 
-        results = rank_models(system, use_case=use_case or None, limit=limit, search=search or None, sort=sort, quant=quant or None, target_context=target_context, fit_only=fit_only)
+        results = rank_models(
+            system,
+            use_case=use_case or None,
+            limit=limit,
+            search=search or None,
+            sort=sort,
+            quant=quant or None,
+            target_context=target_context,
+            fit_only=fit_only,
+        )
         return {"system": system, "models": results}
 
     @router.get("/profiles")
-    def get_serve_profiles(model: str = "", host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, serve_weights_gb: float = 0.0, serve_quant: str = ""):
+    def get_serve_profiles(
+        model: str = "",
+        host: str = "",
+        ssh_port: str = "",
+        platform: str = "",
+        fresh: bool = False,
+        serve_weights_gb: float = 0.0,
+        serve_quant: str = "",
+    ):
         """Compute llama.cpp serve profiles (Quality/Balanced/Speed) for `model`
         against the detected hardware on `host` (or local). Returns concrete
         flags (n_gpu_layers, n_cpu_moe, cache_type, ctx) the serve UI can apply.
@@ -211,7 +274,10 @@ def setup_hwfit_routes():
         from services.hwfit.hardware import detect_system
         from services.hwfit.models import get_models
         from services.hwfit.profiles import compute_serve_profiles
-        system = detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh)
+
+        system = detect_system(
+            host=host, ssh_port=ssh_port, platform=platform, fresh=fresh
+        )
         if system.get("error"):
             return {"system": system, "profiles": [], "error": system["error"]}
         catalog = {m.get("name"): m for m in (get_models() or [])}
@@ -222,9 +288,11 @@ def setup_hwfit_routes():
             # Instruct-GGUF" (a local folder name) matches catalog entry
             # "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct".
             s = (s or "").lower().strip()
-            s = s.split("/")[-1]                     # drop org prefix
-            s = re.sub(r"[-_.]?gguf$", "", s)        # drop trailing gguf marker
-            s = re.sub(r"[-_.](q\d[^/]*|iq\d[^/]*|fp8|bf16|f16|awq[^/]*|gptq[^/]*)$", "", s)
+            s = s.split("/")[-1]  # drop org prefix
+            s = re.sub(r"[-_.]?gguf$", "", s)  # drop trailing gguf marker
+            s = re.sub(
+                r"[-_.](q\d[^/]*|iq\d[^/]*|fp8|bf16|f16|awq[^/]*|gptq[^/]*)$", "", s
+            )
             return s
 
         m = catalog.get(model)
@@ -241,7 +309,12 @@ def setup_hwfit_routes():
         # user-typed context down to it (asking for ctx > n_ctx_train overflows
         # and, with a quantized KV cache, can crash the GPU).
         model_ctx_max = 0
-        for k in ("context_length", "max_position_embeddings", "n_ctx_train", "context"):
+        for k in (
+            "context_length",
+            "max_position_embeddings",
+            "n_ctx_train",
+            "context",
+        ):
             v = m.get(k)
             if isinstance(v, (int, float)) and v > 0:
                 model_ctx_max = int(v)
@@ -249,7 +322,8 @@ def setup_hwfit_routes():
         return {
             "system": system,
             "profiles": compute_serve_profiles(
-                system, m,
+                system,
+                m,
                 serve_weights_gb=(serve_weights_gb or None),
                 serve_quant=(serve_quant or None),
             ),
@@ -257,11 +331,29 @@ def setup_hwfit_routes():
         }
 
     @router.get("/image-models")
-    def get_image_models(sort: str = "fit", search: str = "", host: str = "", gpu_count: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False):
+    def get_image_models(
+        sort: str = "fit",
+        search: str = "",
+        host: str = "",
+        gpu_count: str = "",
+        ssh_port: str = "",
+        platform: str = "",
+        fresh: bool = False,
+        manual_mode: str = "",
+        manual_gpu_count: str = "",
+        manual_vram_gb: str = "",
+        manual_ram_gb: str = "",
+        manual_backend: str = "",
+        ignore_detected_gpu: bool = False,
+        ignore_detected_ram: bool = False,
+    ):
         """Rank image generation models against detected hardware."""
         from services.hwfit.hardware import detect_system
         from services.hwfit.image_models import rank_image_models
-        system = deepcopy(detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh))
+
+        system = deepcopy(
+            detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh)
+        )
         if system.get("error"):
             return {"system": system, "models": [], "error": system["error"]}
         if ignore_detected_gpu:
@@ -274,10 +366,27 @@ def setup_hwfit_routes():
         if ignore_detected_ram:
             system["available_ram_gb"] = 0
             system["total_ram_gb"] = 0
-        system = _apply_manual_hardware(system, manual_mode, manual_gpu_count, manual_vram_gb, manual_ram_gb, manual_backend)
+        system = _apply_manual_hardware(
+            system,
+            manual_mode,
+            manual_gpu_count,
+            manual_vram_gb,
+            manual_ram_gb,
+            manual_backend,
+        )
         # Image models use a single GPU — always use per-GPU VRAM
-        gpu_vrams = [float(g.get("vram_gb") or 0) for g in (system.get("gpus") or []) if isinstance(g, dict)]
-        single_vram = max(gpu_vrams) if gpu_vrams else ((system.get("gpu_vram_gb") or 0) / max(system.get("gpu_count") or 1, 1))
+        gpu_vrams = [
+            float(g.get("vram_gb") or 0)
+            for g in (system.get("gpus") or [])
+            if isinstance(g, dict)
+        ]
+        single_vram = (
+            max(gpu_vrams)
+            if gpu_vrams
+            else (
+                (system.get("gpu_vram_gb") or 0) / max(system.get("gpu_count") or 1, 1)
+            )
+        )
         system["gpu_vram_gb"] = single_vram
         system["gpu_count"] = 1 if single_vram > 0 else 0
         results = rank_image_models(system, search=search or None, sort=sort)

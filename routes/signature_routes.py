@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 _DATA_URL_RE = re.compile(
-    r'^data:image/(?P<fmt>png|jpeg|jpg);base64,(?P<data>.+)$',
+    r"^data:image/(?P<fmt>png|jpeg|jpg);base64,(?P<data>.+)$",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -65,7 +65,9 @@ def setup_signature_routes() -> APIRouter:
             db.close()
 
     @router.post("/api/signatures")
-    async def create_signature(request: Request, req: SignatureCreate) -> dict[str, Any]:
+    async def create_signature(
+        request: Request, req: SignatureCreate
+    ) -> dict[str, Any]:
         user = get_current_user(request)
         raw = (req.data or "").strip()
         m = _DATA_URL_RE.match(raw)

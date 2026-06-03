@@ -18,15 +18,18 @@ logger = logging.getLogger(__name__)
 
 # ---- Request schemas ----
 
+
 class DocumentCreate(BaseModel):
     session_id: str | None = None
     title: str = "Untitled"
     language: str | None = None
     content: str = ""
 
+
 class DocumentUpdate(BaseModel):
     content: str
     summary: str | None = None
+
 
 class DocumentPatch(BaseModel):
     title: str | None = None
@@ -35,6 +38,7 @@ class DocumentPatch(BaseModel):
 
 
 # ---- Helpers ----
+
 
 def _doc_to_dict(doc: Document) -> dict[str, Any]:
     return {
@@ -50,11 +54,12 @@ def _doc_to_dict(doc: Document) -> dict[str, Any]:
         "updated_at": (doc.updated_at.isoformat() + "Z") if doc.updated_at else None,
         # Source-email provenance (set when doc was created from an email
         # attachment) — drives the "Send signed reply" menu item.
-        "source_email_uid":        getattr(doc, "source_email_uid", None),
-        "source_email_folder":     getattr(doc, "source_email_folder", None),
+        "source_email_uid": getattr(doc, "source_email_uid", None),
+        "source_email_folder": getattr(doc, "source_email_folder", None),
         "source_email_account_id": getattr(doc, "source_email_account_id", None),
         "source_email_message_id": getattr(doc, "source_email_message_id", None),
     }
+
 
 def _version_to_dict(v: DocumentVersion) -> dict[str, Any]:
     return {
@@ -107,7 +112,6 @@ def _owner_session_filter(q, user):
     return q.filter(Document.owner == user)
 
 
-
 def _slug(name: str) -> str:
     """Filesystem-friendly version of a document title.
 
@@ -115,12 +119,13 @@ def _slug(name: str) -> str:
     Preserves letters, digits, dot, hyphen, underscore. Idempotent.
     """
     import re as _re
+
     s = (name or "").strip()
     # Drop the trailing extension if the title happens to include one
-    s = _re.sub(r'\.pdf$', '', s, flags=_re.IGNORECASE)
-    s = _re.sub(r'\s+', '_', s)
-    s = _re.sub(r'[^A-Za-z0-9._-]', '', s)
-    s = _re.sub(r'_+', '_', s).strip('_')
+    s = _re.sub(r"\.pdf$", "", s, flags=_re.IGNORECASE)
+    s = _re.sub(r"\s+", "_", s)
+    s = _re.sub(r"[^A-Za-z0-9._-]", "", s)
+    s = _re.sub(r"_+", "_", s).strip("_")
     return s or "form"
 
 
@@ -208,7 +213,7 @@ def _derive_title(content: str) -> str:
         return "Untitled"
 
     # Markdown header
-    md = re.match(r'^#{1,3}\s+(.+)', text, re.MULTILINE)
+    md = re.match(r"^#{1,3}\s+(.+)", text, re.MULTILINE)
     if md:
         title = md.group(1).strip()
         if len(title) > 50:
@@ -216,7 +221,7 @@ def _derive_title(content: str) -> str:
         return title
 
     # HTML heading
-    html = re.search(r'<h[1-3][^>]*>([^<]+)</h[1-3]>', text, re.IGNORECASE)
+    html = re.search(r"<h[1-3][^>]*>([^<]+)</h[1-3]>", text, re.IGNORECASE)
     if html:
         title = html.group(1).strip()
         if len(title) > 50:
@@ -224,10 +229,10 @@ def _derive_title(content: str) -> str:
         return title
 
     # First non-empty line (if short enough)
-    for line in text.split('\n'):
+    for line in text.split("\n"):
         line = line.strip()
         if line and 2 <= len(line) <= 60:
-            title = re.sub(r'[:#*`]+$', '', line).strip()
+            title = re.sub(r"[:#*`]+$", "", line).strip()
             if title and len(title) > 50:
                 title = title[:48] + "…"
             return title or "Untitled"

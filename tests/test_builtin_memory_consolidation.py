@@ -27,22 +27,49 @@ def _read_memories(data_dir):
 
 
 @pytest.mark.asyncio
-async def test_consolidate_memory_empty_owner_treats_each_owner_separately(monkeypatch, tmp_path):
+async def test_consolidate_memory_empty_owner_treats_each_owner_separately(
+    monkeypatch, tmp_path
+):
     from src import constants, endpoint_resolver, llm_core
+
     action_consolidate_memory = _import_consolidate_action()
 
     long_alice_text = "Alice private project context. " + ("A" * 2200)
     data_dir = _write_memories(
         tmp_path,
         [
-            {"id": "alice-long", "owner": "alice", "text": long_alice_text, "category": "project"},
-            {"id": "alice-short", "owner": "alice", "text": "Alice likes quiet summaries.", "category": "preference"},
-            {"id": "bob-keep", "owner": "bob", "text": "Bob secret deployment note.", "category": "project"},
-            {"id": "bob-drop", "owner": "bob", "text": "Bob secret deployment note duplicate.", "category": "project"},
+            {
+                "id": "alice-long",
+                "owner": "alice",
+                "text": long_alice_text,
+                "category": "project",
+            },
+            {
+                "id": "alice-short",
+                "owner": "alice",
+                "text": "Alice likes quiet summaries.",
+                "category": "preference",
+            },
+            {
+                "id": "bob-keep",
+                "owner": "bob",
+                "text": "Bob secret deployment note.",
+                "category": "project",
+            },
+            {
+                "id": "bob-drop",
+                "owner": "bob",
+                "text": "Bob secret deployment note duplicate.",
+                "category": "project",
+            },
         ],
     )
     monkeypatch.setattr(constants, "DATA_DIR", str(data_dir))
-    monkeypatch.setattr(endpoint_resolver, "resolve_endpoint", lambda *args, **kwargs: ("http://llm", "model", {}))
+    monkeypatch.setattr(
+        endpoint_resolver,
+        "resolve_endpoint",
+        lambda *args, **kwargs: ("http://llm", "model", {}),
+    )
 
     prompts = []
 
@@ -54,8 +81,16 @@ async def test_consolidate_memory_empty_owner_treats_each_owner_separately(monke
             return json.dumps(
                 {
                     "keep": [
-                        {"id": "alice-long", "text": "TRUNCATED REWRITE", "category": "project"},
-                        {"id": "alice-short", "text": "Alice likes concise summaries.", "category": "preference"},
+                        {
+                            "id": "alice-long",
+                            "text": "TRUNCATED REWRITE",
+                            "category": "project",
+                        },
+                        {
+                            "id": "alice-short",
+                            "text": "Alice likes concise summaries.",
+                            "category": "preference",
+                        },
                     ],
                     "drop": [],
                 }
@@ -64,7 +99,13 @@ async def test_consolidate_memory_empty_owner_treats_each_owner_separately(monke
         assert "alice-long" not in prompt
         return json.dumps(
             {
-                "keep": [{"id": "bob-keep", "text": "Bob secret deployment note.", "category": "project"}],
+                "keep": [
+                    {
+                        "id": "bob-keep",
+                        "text": "Bob secret deployment note.",
+                        "category": "project",
+                    }
+                ],
                 "drop": [{"id": "bob-drop", "reason": "duplicate"}],
             }
         )
@@ -83,21 +124,45 @@ async def test_consolidate_memory_empty_owner_treats_each_owner_separately(monke
 
 
 @pytest.mark.asyncio
-async def test_consolidate_memory_specific_owner_does_not_absorb_ownerless_rows(monkeypatch, tmp_path):
+async def test_consolidate_memory_specific_owner_does_not_absorb_ownerless_rows(
+    monkeypatch, tmp_path
+):
     from src import constants, endpoint_resolver
+
     action_consolidate_memory = _import_consolidate_action()
 
     data_dir = _write_memories(
         tmp_path,
         [
-            {"id": "alice-1", "owner": "alice", "text": "Alice likes local models.", "category": "preference"},
-            {"id": "alice-2", "owner": "alice", "text": "Alice likes local models.", "category": "preference"},
-            {"id": "legacy", "text": "Alice likes local models.", "category": "preference"},
-            {"id": "bob-1", "owner": "bob", "text": "Bob likes hosted models.", "category": "preference"},
+            {
+                "id": "alice-1",
+                "owner": "alice",
+                "text": "Alice likes local models.",
+                "category": "preference",
+            },
+            {
+                "id": "alice-2",
+                "owner": "alice",
+                "text": "Alice likes local models.",
+                "category": "preference",
+            },
+            {
+                "id": "legacy",
+                "text": "Alice likes local models.",
+                "category": "preference",
+            },
+            {
+                "id": "bob-1",
+                "owner": "bob",
+                "text": "Bob likes hosted models.",
+                "category": "preference",
+            },
         ],
     )
     monkeypatch.setattr(constants, "DATA_DIR", str(data_dir))
-    monkeypatch.setattr(endpoint_resolver, "resolve_endpoint", lambda *args, **kwargs: ("", "", {}))
+    monkeypatch.setattr(
+        endpoint_resolver, "resolve_endpoint", lambda *args, **kwargs: ("", "", {})
+    )
 
     message, ok = await action_consolidate_memory("alice")
 

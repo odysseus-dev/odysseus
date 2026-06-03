@@ -14,6 +14,7 @@ Two compounding defects were fixed:
 These tests are hermetic — no chromadb; VectorRAG is exercised against a fake
 collection, PersonalDocsManager against a fake rag manager.
 """
+
 import os
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
@@ -54,10 +55,13 @@ def _make_vectorrag(rows):
 def test_vectorrag_remove_is_path_bounded():
     rows = [
         ("a", {"source": "/a/docs/f1.md"}),
-        ("b", {"source": "/a/docs/sub/f2.md"}),   # nested -> must be removed
-        ("c", {"source": "/a/docs2/f3.md"}),       # sibling prefix -> must survive
+        ("b", {"source": "/a/docs/sub/f2.md"}),  # nested -> must be removed
+        ("c", {"source": "/a/docs2/f3.md"}),  # sibling prefix -> must survive
         ("d", {"source": "/a/docs_personal/f4.md"}),  # sibling prefix -> must survive
-        ("e", {"filename": "no-source.md"}),       # sourceless dict -> must not crash/survive
+        (
+            "e",
+            {"filename": "no-source.md"},
+        ),  # sourceless dict -> must not crash/survive
     ]
     rag = _make_vectorrag(rows)
     res = rag.remove_directory("/a/docs")
@@ -99,7 +103,8 @@ class _FakeRag:
     def remove_directory(self, directory):
         directory = os.path.abspath(directory)
         doomed = [
-            i for i, m in self.store.items()
+            i
+            for i, m in self.store.items()
             if isinstance(m.get("source"), str)
             and (m["source"] == directory or m["source"].startswith(directory + os.sep))
         ]

@@ -31,6 +31,7 @@ This test pins the data flow by:
 If the test FAILS, the bug is REAL. If the test PASSES, the claim
 is a FALSE POSITIVE.
 """
+
 import os
 import sys
 import types
@@ -82,15 +83,18 @@ def test_analyze_topics_with_owner_none_does_not_leak_across_owners():
 
     sessions = {
         "s-alice-1": _make_session(
-            "s-alice-1", "alice",
+            "s-alice-1",
+            "alice",
             [{"role": "user", "content": "Let's discuss AI safety."}],
         ),
         "s-bob-1": _make_session(
-            "s-bob-1", "bob",
+            "s-bob-1",
+            "bob",
             [{"role": "user", "content": "I need to fix a python bug today."}],
         ),
         "s-carol-1": _make_session(
-            "s-carol-1", "carol",
+            "s-carol-1",
+            "carol",
             [{"role": "user", "content": "Family dinner planning and health."}],
         ),
     }
@@ -124,7 +128,8 @@ def test_analyze_topics_with_owner_none_no_owner_attribute_session_also_safe():
 
     # Legacy-shape session: no `owner` key, ownerless topic-rich history.
     legacy = _make_session(
-        "s-legacy-1", None,
+        "s-legacy-1",
+        None,
         [{"role": "user", "content": "Work meeting about a project deadline."}],
     )
     del legacy["owner"]  # truly ownerless dict
@@ -204,15 +209,18 @@ def test_route_rejects_or_scopes_under_loopback_bypass():
 
     sessions = {
         "s-alice-1": _make_session(
-            "s-alice-1", "alice",
+            "s-alice-1",
+            "alice",
             [{"role": "user", "content": "AI safety is a fascinating topic."}],
         ),
         "s-bob-1": _make_session(
-            "s-bob-1", "bob",
+            "s-bob-1",
+            "bob",
             [{"role": "user", "content": "I need to fix a python bug."}],
         ),
         "s-carol-1": _make_session(
-            "s-carol-1", "carol",
+            "s-carol-1",
+            "carol",
             [{"role": "user", "content": "Family dinner planning tonight."}],
         ),
     }
@@ -266,12 +274,16 @@ def test_route_data_flow_on_paper():
     # sessions. The previous behavior was a cross-tenant data leak; the
     # fix returns an empty result. If this assertion is inverted in a
     # future regression, A3.1 is back.
-    sm = _stub_session_manager({
-        "s1": _make_session("s1", "alice",
-                            [{"role": "user", "content": "AI safety."}]),
-        "s2": _make_session("s2", "bob",
-                            [{"role": "user", "content": "Python bug."}]),
-    })
+    sm = _stub_session_manager(
+        {
+            "s1": _make_session(
+                "s1", "alice", [{"role": "user", "content": "AI safety."}]
+            ),
+            "s2": _make_session(
+                "s2", "bob", [{"role": "user", "content": "Python bug."}]
+            ),
+        }
+    )
     res = analyze_topics(sm, owner=None)
     assert res["topics"] == [], (
         "analyze_topics(owner=None) returned cross-tenant data — "

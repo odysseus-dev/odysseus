@@ -3,6 +3,7 @@
 `_serialize_image` did `(i.prompt or "")[:200]`. A non-string prompt is truthy,
 so `123[:200]` raised TypeError. `_preview_text` coerces non-strings to "".
 """
+
 import importlib.machinery
 import importlib.util
 import sys
@@ -38,9 +39,22 @@ def test_preview_text_ignores_non_string(monkeypatch):
 def test_serialize_image_does_not_crash_on_non_string_prompt(monkeypatch):
     cli = _load_cli(monkeypatch)
     img = SimpleNamespace(
-        id="i1", filename="a.png", prompt=123, model=None, size=None, tags=None,
-        favorite=0, album_id=None, session_id=None, width=1, height=1, file_size=1,
-        taken_at=None, camera_make=None, camera_model=None, created_at=None,
+        id="i1",
+        filename="a.png",
+        prompt=123,
+        model=None,
+        size=None,
+        tags=None,
+        favorite=0,
+        album_id=None,
+        session_id=None,
+        width=1,
+        height=1,
+        file_size=1,
+        taken_at=None,
+        camera_make=None,
+        camera_model=None,
+        created_at=None,
     )
     out = cli._serialize_image(img)
     assert out["prompt"] == ""

@@ -8,18 +8,22 @@ could store "fast"/"" and then GET /api/tts/stats and POST /api/tts/synthesize
 both 500 with ValueError until the JSON is fixed by hand. The settings layer
 tolerates corrupt config; this consumer now does too.
 """
+
 from services.tts.tts_service import TTSService
 
 _BAD_SETTINGS = {
-    "tts_enabled": True, "tts_provider": "browser",
-    "tts_model": "tts-1", "tts_voice": "alloy", "tts_speed": "fast",
+    "tts_enabled": True,
+    "tts_provider": "browser",
+    "tts_model": "tts-1",
+    "tts_voice": "alloy",
+    "tts_speed": "fast",
 }
 
 
 def test_get_stats_does_not_crash_on_malformed_speed(monkeypatch, tmp_path):
     service = TTSService(cache_dir=str(tmp_path))
     monkeypatch.setattr(service, "_load_settings", lambda: dict(_BAD_SETTINGS))
-    stats = service.get_stats()          # raised ValueError before the fix
+    stats = service.get_stats()  # raised ValueError before the fix
     assert stats["speed"] == 1.0
 
 

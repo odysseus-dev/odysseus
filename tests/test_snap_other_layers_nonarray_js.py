@@ -1,6 +1,7 @@
 """Pin computeSnap (static/js/editor/snap.js) against a non-array otherLayers.
 Driven through `node --input-type=module`; skips without node.
 """
+
 import json
 import shutil
 import subprocess
@@ -22,7 +23,11 @@ def _snap(other_layers):
     """
     proc = subprocess.run(
         ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+        input=js,
+        capture_output=True,
+        text=True,
+        cwd=str(_REPO),
+        timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout.strip())
@@ -38,7 +43,13 @@ def test_compute_snap_tolerates_non_array_other_layers():
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_compute_snap_still_snaps_to_a_layer_edge():
-    other = [{"id": "L2", "visible": True, "offset": {"x": 12, "y": 300},
-              "canvas": {"width": 100, "height": 50}}]
+    other = [
+        {
+            "id": "L2",
+            "visible": True,
+            "offset": {"x": 12, "y": 300},
+            "canvas": {"width": 100, "height": 50},
+        }
+    ]
     r = _snap(other)
     assert r["x"] == 12

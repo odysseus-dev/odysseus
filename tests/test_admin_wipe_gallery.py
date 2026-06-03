@@ -29,6 +29,7 @@ def test_wipe_gallery_clears_albums(monkeypatch):
 
     # 4. Patch SessionLocal in routes/admin_wipe_routes.py to use our in-memory DB
     import routes.admin_wipe_routes
+
     monkeypatch.setattr(routes.admin_wipe_routes, "SessionLocal", TestSessionLocal)
 
     # Mock require_admin to bypass auth check (using standard pytest monkeypatch)

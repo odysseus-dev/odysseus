@@ -10,6 +10,7 @@ TWO (after the weekday and after the day-of-month). The match failed, so the
 collapsed "Earlier thread"/"Earlier reply" fold rendered without its
 sender/date headline for the most common Gmail reply format.
 """
+
 import json
 import shutil
 import subprocess
@@ -34,7 +35,11 @@ def _meta(html: str) -> str:
     )
     proc = subprocess.run(
         ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+        input=js,
+        capture_output=True,
+        text=True,
+        cwd=str(_REPO),
+        timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout.strip())
@@ -42,7 +47,9 @@ def _meta(html: str) -> str:
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_us_gmail_attribution_with_weekday_extracts_sender_and_date():
-    meta = _meta("On Mon, Apr 18, 2026 at 9:31 AM, Jane Doe &lt;jane@example.com&gt; wrote:")
+    meta = _meta(
+        "On Mon, Apr 18, 2026 at 9:31 AM, Jane Doe &lt;jane@example.com&gt; wrote:"
+    )
     # date is clamped to 28 chars by the helper; sender must be present.
     assert meta.startswith("Jane Doe jane@example.com")
     assert "Mon, Apr 18, 2026" in meta
@@ -60,5 +67,7 @@ def test_previously_working_formats_still_match():
     meta = _meta("On Apr 18, 2026 at 9:31 AM, Jane Doe wrote:")
     assert meta.startswith("Jane Doe · Apr 18, 2026")
     # UK/intl day-before-month order.
-    meta = _meta("On Mon, 18 Apr 2026 at 09:31, Jane Doe &lt;jane@example.com&gt; wrote:")
+    meta = _meta(
+        "On Mon, 18 Apr 2026 at 09:31, Jane Doe &lt;jane@example.com&gt; wrote:"
+    )
     assert meta.startswith("Jane Doe jane@example.com")

@@ -5,6 +5,7 @@ two duplicates tie on real length and one has both timestamps NULL, Python
 compared None against a datetime and raised TypeError, aborting the entire
 tidy run. The sort key is now total-order safe.
 """
+
 import asyncio
 import tempfile
 import uuid
@@ -22,7 +23,11 @@ from core.database import Document
 @pytest.fixture
 def db_factory(monkeypatch):
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-    engine = create_engine(f"sqlite:///{tmp.name}", connect_args={"check_same_thread": False}, poolclass=NullPool)
+    engine = create_engine(
+        f"sqlite:///{tmp.name}",
+        connect_args={"check_same_thread": False},
+        poolclass=NullPool,
+    )
     cdb.Base.metadata.create_all(engine)
     TS = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     monkeypatch.setattr(cdb, "SessionLocal", TS)
@@ -34,11 +39,26 @@ def test_tidy_survives_duplicate_with_null_timestamps(db_factory):
     db = db_factory()
     try:
         # Same title + content => same dedup group, equal real length.
-        db.add(Document(id=str(uuid.uuid4()), owner="alice", title="My Report",
-                        current_content=content, updated_at=None, created_at=None))
-        db.add(Document(id=str(uuid.uuid4()), owner="alice", title="My Report",
-                        current_content=content,
-                        updated_at=datetime(2026, 6, 1, 9, 0), created_at=datetime(2026, 6, 1, 9, 0)))
+        db.add(
+            Document(
+                id=str(uuid.uuid4()),
+                owner="alice",
+                title="My Report",
+                current_content=content,
+                updated_at=None,
+                created_at=None,
+            )
+        )
+        db.add(
+            Document(
+                id=str(uuid.uuid4()),
+                owner="alice",
+                title="My Report",
+                current_content=content,
+                updated_at=datetime(2026, 6, 1, 9, 0),
+                created_at=datetime(2026, 6, 1, 9, 0),
+            )
+        )
         db.commit()
     finally:
         db.close()
@@ -57,4 +77,5 @@ def test_tidy_survives_duplicate_with_null_timestamps(db_factory):
 
 async def run_tidy():
     from src.document_actions import run_document_tidy
+
     return await run_document_tidy("alice")

@@ -5,6 +5,7 @@ It did `(raw_url or "").strip()`, so a non-string scalar (e.g. an int from a
 mis-typed config) reached `.strip()` and raised TypeError instead of the
 function\'s own ValueError.
 """
+
 import pytest
 
 from src.caldav_sync import validate_caldav_url

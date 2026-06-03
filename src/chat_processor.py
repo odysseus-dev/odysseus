@@ -36,14 +36,21 @@ _STOPWORDS = frozenset(
     "that's there's here's what's who's how's let's can't".split()
 )
 
+
 def _content_tokens(text: str) -> list:
     """Extract meaningful content words: no stopwords, min 3 chars, lowercase."""
-    words = re.findall(r'[a-z0-9]+(?:[-_][a-z0-9]+)*', text.lower())
+    words = re.findall(r"[a-z0-9]+(?:[-_][a-z0-9]+)*", text.lower())
     return [w for w in words if len(w) >= 3 and w not in _STOPWORDS]
 
 
 class ChatProcessor:
-    def __init__(self, memory_manager, personal_docs_manager, memory_vector=None, skills_manager=None):
+    def __init__(
+        self,
+        memory_manager,
+        personal_docs_manager,
+        memory_vector=None,
+        skills_manager=None,
+    ):
         self.memory_manager = memory_manager
         self.personal_docs_manager = personal_docs_manager
         self.memory_vector = memory_vector
@@ -125,7 +132,9 @@ class ChatProcessor:
             mem_lower = mem["text"].lower()
             cat_boost = 1.0
             if any(w in msg_lower for w in ["name", "who am i", "my name"]):
-                if category == "identity" or any(w in mem_lower for w in ["name is", "i am", "called"]):
+                if category == "identity" or any(
+                    w in mem_lower for w in ["name is", "i am", "called"]
+                ):
                     cat_boost = 1.4
             elif any(w in msg_lower for w in ["phone", "email", "address", "contact"]):
                 if category == "contact" or "@" in mem_lower:
@@ -182,14 +191,13 @@ class ChatProcessor:
 
         # Add preset system prompt if specified
         if preset_system_prompt:
-            preface.append({
+            preface.append({"role": "system", "content": preset_system_prompt})
+        preface.append(
+            {
                 "role": "system",
-                "content": preset_system_prompt
-            })
-        preface.append({
-            "role": "system",
-            "content": UNTRUSTED_CONTEXT_POLICY,
-        })
+                "content": UNTRUSTED_CONTEXT_POLICY,
+            }
+        )
 
         # Memory: pinned (always included) + extended (RAG-retrieved when relevant)
         self._last_used_memories = []  # track what was injected
@@ -202,12 +210,20 @@ class ChatProcessor:
             _used_ids: list = []
             if pinned:
                 pinned_text = "\n- ".join([m["text"] for m in pinned])
-                preface.append(untrusted_context_message(
-                    "saved memory: pinned user facts",
-                    f"Core facts about the user:\n- {pinned_text}",
-                ))
+                preface.append(
+                    untrusted_context_message(
+                        "saved memory: pinned user facts",
+                        f"Core facts about the user:\n- {pinned_text}",
+                    )
+                )
                 for m in pinned:
-                    self._last_used_memories.append({"text": m["text"], "category": m.get("category", "fact"), "type": "pinned"})
+                    self._last_used_memories.append(
+                        {
+                            "text": m["text"],
+                            "category": m.get("category", "fact"),
+                            "type": "pinned",
+                        }
+                    )
                     if m.get("id"):
                         _used_ids.append(m["id"])
 
@@ -215,15 +231,23 @@ class ChatProcessor:
                 relevant = self._hybrid_retrieve(message, extended, k=3)
                 if relevant:
                     ext_text = "\n".join([f"- {m['text']}" for m in relevant])
-                    preface.append(untrusted_context_message(
-                        "saved memory: retrieved context",
-                        (
-                            "Memory context. Do not reference unless the user asks "
-                            f"about these topics.\n{ext_text}"
-                        ),
-                    ))
+                    preface.append(
+                        untrusted_context_message(
+                            "saved memory: retrieved context",
+                            (
+                                "Memory context. Do not reference unless the user asks "
+                                f"about these topics.\n{ext_text}"
+                            ),
+                        )
+                    )
                     for m in relevant:
-                        self._last_used_memories.append({"text": m["text"], "category": m.get("category", "fact"), "type": "recalled"})
+                        self._last_used_memories.append(
+                            {
+                                "text": m["text"],
+                                "category": m.get("category", "fact"),
+                                "type": "recalled",
+                            }
+                        )
                         if m.get("id"):
                             _used_ids.append(m["id"])
 
@@ -240,27 +264,40 @@ class ChatProcessor:
         # RAG: search if enabled and rag_manager available, inject only above threshold
         if use_rag:
             try:
-                rag_manager = getattr(self.personal_docs_manager, 'rag_manager', None)
+                rag_manager = getattr(self.personal_docs_manager, "rag_manager", None)
                 if rag_manager:
                     results = rag_manager.search(message, k=5, owner=owner)
                     # Filter by similarity threshold
-                    relevant = [r for r in results if r.get("similarity", 0) >= self.RAG_SIMILARITY_THRESHOLD]
+                    relevant = [
+                        r
+                        for r in results
+                        if r.get("similarity", 0) >= self.RAG_SIMILARITY_THRESHOLD
+                    ]
                     if relevant:
-                        logger.info(f"RAG: {len(relevant)}/{len(results)} results above threshold {self.RAG_SIMILARITY_THRESHOLD}")
+                        logger.info(
+                            f"RAG: {len(relevant)}/{len(results)} results above threshold {self.RAG_SIMILARITY_THRESHOLD}"
+                        )
                         rag_sources = [
                             {
-                                "filename": r["metadata"].get("filename", r["metadata"].get("source", "unknown")),
+                                "filename": r["metadata"].get(
+                                    "filename", r["metadata"].get("source", "unknown")
+                                ),
                                 "snippet": r["document"][:200],
-                                "similarity": round(r.get("similarity", 0), 3)
+                                "similarity": round(r.get("similarity", 0), 3),
                             }
                             for r in relevant
                         ]
                         rag_content = "Relevant documents:\n\n" + "\n\n---\n\n".join(
-                            f"[{s['filename']}]\n{r['document']}" for s, r in zip(rag_sources, relevant)
+                            f"[{s['filename']}]\n{r['document']}"
+                            for s, r in zip(rag_sources, relevant)
                         )
                         if len(rag_content) > 10000:
                             rag_content = rag_content[:10000] + "\n[Truncated]"
-                        preface.append(untrusted_context_message("retrieved documents", rag_content))
+                        preface.append(
+                            untrusted_context_message(
+                                "retrieved documents", rag_content
+                            )
+                        )
             except Exception as e:
                 logger.warning(f"RAG retrieval failed: {e}")
 
@@ -271,10 +308,17 @@ class ChatProcessor:
                 web_context, web_sources = comprehensive_web_search(
                     message, time_filter=time_filter, return_sources=True
                 )
-                preface.append(untrusted_context_message("web search results", web_context))
+                preface.append(
+                    untrusted_context_message("web search results", web_context)
+                )
             except Exception as e:
                 logger.error(f"Web search failed: {e}")
-                preface.append({"role": "system", "content": "Web search encountered an error and could not retrieve results."})
+                preface.append(
+                    {
+                        "role": "system",
+                        "content": "Web search encountered an error and could not retrieve results.",
+                    }
+                )
 
         # Process non-YouTube URLs in message (YouTube handled by preprocess_message)
         # Skip auto-fetch for long pastes (the user already pasted the content —
@@ -288,12 +332,14 @@ class ChatProcessor:
         if not skip_url_fetch:
             for url in non_yt_urls:
                 result = fetch_webpage_content(url)
-                if result.get('success'):
-                    content = result.get('content', '')[:10000]
-                    preface.append(untrusted_context_message(
-                        f"web page: {url}",
-                        f"Content from {url}:\n\n{content}",
-                    ))
+                if result.get("success"):
+                    content = result.get("content", "")[:10000]
+                    preface.append(
+                        untrusted_context_message(
+                            f"web page: {url}",
+                            f"Content from {url}:\n\n{content}",
+                        )
+                    )
 
         # Skills index — progressive disclosure. Only injected when the
         # model has the `manage_skills` tool available (agent_mode), and
@@ -310,12 +356,22 @@ class ChatProcessor:
                 by_cat: dict[str, list] = {}
                 for s in idx:
                     by_cat.setdefault(s.get("category") or "general", []).append(s)
-                lines = ["[Available skills — call manage_skills(action='view', name='...') to load one when relevant]"]
+                lines = [
+                    "[Available skills — call manage_skills(action='view', name='...') to load one when relevant]"
+                ]
                 for cat in sorted(by_cat):
                     lines.append(f"  {cat}:")
                     for s in sorted(by_cat[cat], key=lambda x: x["name"]):
                         desc = s.get("description") or ""
-                        lines.append(f"    - {s['name']}: {desc}" if desc else f"    - {s['name']}")
-                preface.append(untrusted_context_message("available skills index", "\n".join(lines)))
+                        lines.append(
+                            f"    - {s['name']}: {desc}"
+                            if desc
+                            else f"    - {s['name']}"
+                        )
+                preface.append(
+                    untrusted_context_message(
+                        "available skills index", "\n".join(lines)
+                    )
+                )
 
         return preface, rag_sources, web_sources

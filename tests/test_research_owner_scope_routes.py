@@ -40,21 +40,27 @@ def _research_handler():
 def test_library_returns_only_caller_owned_unarchived_reports(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     data_dir = tmp_path / "data" / "deep_research"
-    _write_research(data_dir, "alice-live", owner="alice", query="Alice", completed_at=30)
-    _write_research(data_dir, "alice-archived", owner="alice", query="Archived", archived=True)
+    _write_research(
+        data_dir, "alice-live", owner="alice", query="Alice", completed_at=30
+    )
+    _write_research(
+        data_dir, "alice-archived", owner="alice", query="Archived", archived=True
+    )
     _write_research(data_dir, "bob-live", owner="bob", query="Bob", completed_at=40)
     _write_research(data_dir, "legacy-null", query="Legacy", completed_at=50)
 
     router = setup_research_routes(_research_handler())
     target = _route(router, "/api/research/library", "GET")
 
-    out = asyncio.run(target(
-        request=_request("alice"),
-        search=None,
-        sort="recent",
-        limit=50,
-        archived=False,
-    ))
+    out = asyncio.run(
+        target(
+            request=_request("alice"),
+            search=None,
+            sort="recent",
+            limit=50,
+            archived=False,
+        )
+    )
 
     assert [item["id"] for item in out["research"]] == ["alice-live"]
     assert out["total"] == 1
@@ -100,7 +106,9 @@ def test_archive_rejects_cross_owner_without_mutating_report(tmp_path, monkeypat
     target = _route(router, "/api/research/{session_id}/archive", "POST")
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(target(session_id="bob-report", request=_request("alice"), archived=True))
+        asyncio.run(
+            target(session_id="bob-report", request=_request("alice"), archived=True)
+        )
 
     assert exc.value.status_code == 404
     assert json.loads(path.read_text(encoding="utf-8"))["archived"] is False

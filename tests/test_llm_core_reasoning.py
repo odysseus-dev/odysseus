@@ -2,6 +2,7 @@
 as a thinking chunk, while a `content` delta still streams as normal content. Also
 covers the older `reasoning_content` field name for backward compatibility.
 """
+
 import asyncio
 import json
 
@@ -79,8 +80,12 @@ def test_reasoning_field_emits_thinking_chunk(monkeypatch):
         ],
         monkeypatch,
     )
-    assert any(d.get("thinking") and "weighing options" in d["delta"] for d in deltas), deltas
-    assert any((not d.get("thinking")) and d["delta"] == "Hello" for d in deltas), deltas
+    assert any(
+        d.get("thinking") and "weighing options" in d["delta"] for d in deltas
+    ), deltas
+    assert any((not d.get("thinking")) and d["delta"] == "Hello" for d in deltas), (
+        deltas
+    )
 
 
 def test_reasoning_content_field_still_supported(monkeypatch):
@@ -94,5 +99,9 @@ def test_reasoning_content_field_still_supported(monkeypatch):
         ],
         monkeypatch,
     )
-    assert any(d.get("thinking") and "older field" in d["delta"] for d in deltas), deltas
-    assert any((not d.get("thinking")) and d["delta"] == "Answer" for d in deltas), deltas
+    assert any(d.get("thinking") and "older field" in d["delta"] for d in deltas), (
+        deltas
+    )
+    assert any((not d.get("thinking")) and d["delta"] == "Answer" for d in deltas), (
+        deltas
+    )

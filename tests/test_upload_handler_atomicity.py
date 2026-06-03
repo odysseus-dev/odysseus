@@ -15,6 +15,7 @@ These tests exercise:
 * Smoke tests: normal upload, duplicate detection, info lookup after
   a backup-recovery scenario.
 """
+
 import concurrent.futures
 import io
 import json
@@ -33,6 +34,7 @@ if str(PROJECT_ROOT) not in sys.path:
 try:
     from fastapi import HTTPException  # type: ignore
 except Exception:  # pragma: no cover
+
     class HTTPException(Exception):
         def __init__(self, status_code: int, detail: str = ""):
             self.status_code = status_code
@@ -175,7 +177,9 @@ async def test_duplicate_vs_insert_race_preserves_both(tmp_path):
             json.dump({}, f)
 
         # Seed: one upload (new entry) so the index has a real row to dedupe against.
-        fake_seed = SimpleNamespace(filename="seed.txt", file=io.BytesIO(shared_content))
+        fake_seed = SimpleNamespace(
+            filename="seed.txt", file=io.BytesIO(shared_content)
+        )
         seed_result = handler.save_upload(fake_seed, "127.0.0.1", "owner_a")
         original_id = seed_result["id"]
 
@@ -184,18 +188,16 @@ async def test_duplicate_vs_insert_race_preserves_both(tmp_path):
         # The post-fix code must preserve both entries in uploads.json
         # and flag the duplicate as ``is_duplicate=True`` with the
         # original's id.
-        fake_dup = SimpleNamespace(filename="shared.txt", file=io.BytesIO(shared_content))
+        fake_dup = SimpleNamespace(
+            filename="shared.txt", file=io.BytesIO(shared_content)
+        )
         fake_new = SimpleNamespace(
             filename="other.txt", file=io.BytesIO(b"different-content")
         )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            f_dup = pool.submit(
-                handler.save_upload, fake_dup, "127.0.0.1", "owner_a"
-            )
-            f_new = pool.submit(
-                handler.save_upload, fake_new, "127.0.0.1", "owner_a"
-            )
+            f_dup = pool.submit(handler.save_upload, fake_dup, "127.0.0.1", "owner_a")
+            f_new = pool.submit(handler.save_upload, fake_new, "127.0.0.1", "owner_a")
             dup_result = f_dup.result()
             new_result = f_new.result()
 
@@ -334,7 +336,9 @@ def test_smoke_duplicate_upload(tmp_path):
 
     with open(_db_path(handler), encoding="utf-8") as f:
         final = json.load(f)
-    assert len(final) == 1, f"Duplicate upload should not add a new row, got {len(final)}"
+    assert len(final) == 1, (
+        f"Duplicate upload should not add a new row, got {len(final)}"
+    )
 
 
 def test_duplicate_upload_ignores_stale_missing_file(tmp_path):

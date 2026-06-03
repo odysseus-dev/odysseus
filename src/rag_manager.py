@@ -18,6 +18,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
 class RAGManager:
     """
     A manager class that wraps VectorRAG for backward compatibility.

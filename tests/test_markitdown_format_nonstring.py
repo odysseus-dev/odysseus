@@ -2,6 +2,7 @@
 
 It did `os.path.splitext(path)`, which raises TypeError on None / non-string.
 """
+
 from src.markitdown_runtime import is_markitdown_format
 
 

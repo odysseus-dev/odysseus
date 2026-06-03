@@ -6,21 +6,25 @@ downloads, or "doc.v1_final") produced an id like "<hex>.jpg-1" that fails
 is_valid_upload_id. Since every read path (download, resolve, vision)
 validates the id first, the saved bytes became permanently unreachable.
 """
+
 import pytest
 
 from src.upload_handler import _build_upload_id, is_valid_upload_id
 
 
-@pytest.mark.parametrize("name", [
-    "photo.jpg-1",
-    "doc.v1_final",
-    "invoice.2024-01",
-    "file.JPG_backup",
-    "report.pdf",
-    "image.png",
-    "noextension",
-    "",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "photo.jpg-1",
+        "doc.v1_final",
+        "invoice.2024-01",
+        "file.JPG_backup",
+        "report.pdf",
+        "image.png",
+        "noextension",
+        "",
+    ],
+)
 def test_built_id_is_always_valid(name):
     fid = _build_upload_id(name)
     assert is_valid_upload_id(fid), (name, fid)

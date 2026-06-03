@@ -4,6 +4,7 @@
 `if redact_env and env_obj:` then called `env_obj.items()` -> AttributeError.
 Guard with isinstance(dict).
 """
+
 import importlib.machinery
 import importlib.util
 import sys
@@ -20,7 +21,9 @@ def _load(monkeypatch):
     db.SessionLocal = MagicMock()
     db.McpServer = MagicMock()
     monkeypatch.setitem(sys.modules, "core.database", db)
-    loader = importlib.machinery.SourceFileLoader("odysseus_mcp_cli", str(ROOT / "scripts" / "odysseus-mcp"))
+    loader = importlib.machinery.SourceFileLoader(
+        "odysseus_mcp_cli", str(ROOT / "scripts" / "odysseus-mcp")
+    )
     spec = importlib.util.spec_from_loader(loader.name, loader)
     m = importlib.util.module_from_spec(spec)
     loader.exec_module(m)
@@ -28,8 +31,18 @@ def _load(monkeypatch):
 
 
 def _srv(env):
-    return SimpleNamespace(id="s1", name="n", transport="stdio", command="c", args="[]",
-                           env=env, url=None, is_enabled=1, oauth_config=None, created_at=None)
+    return SimpleNamespace(
+        id="s1",
+        name="n",
+        transport="stdio",
+        command="c",
+        args="[]",
+        env=env,
+        url=None,
+        is_enabled=1,
+        oauth_config=None,
+        created_at=None,
+    )
 
 
 def test_serialize_handles_list_env(monkeypatch):

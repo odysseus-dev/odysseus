@@ -92,8 +92,14 @@ def _resolve_model(spec: str) -> tuple[str, str, dict]:
         endpoints = query.all()
 
         if not endpoints:
-            raise ValueError("No enabled endpoints found" +
-                             (f" matching '{target_endpoint_name}'" if target_endpoint_name else ""))
+            raise ValueError(
+                "No enabled endpoints found"
+                + (
+                    f" matching '{target_endpoint_name}'"
+                    if target_endpoint_name
+                    else ""
+                )
+            )
 
         for ep in endpoints:
             base = _normalize_base(ep.base_url)
@@ -104,7 +110,10 @@ def _resolve_model(spec: str) -> tuple[str, str, dict]:
                 # Anthropic: match against hardcoded model list
                 matched = None
                 for am in ANTHROPIC_MODELS:
-                    if model_name.lower() in am.lower() or am.lower() in model_name.lower():
+                    if (
+                        model_name.lower() in am.lower()
+                        or am.lower() in model_name.lower()
+                    ):
                         matched = am
                         break
                 if matched:
@@ -115,7 +124,9 @@ def _resolve_model(spec: str) -> tuple[str, str, dict]:
                     r = httpx.get(build_models_url(base), headers=headers, timeout=5)
                     r.raise_for_status()
                     data = r.json()
-                    model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+                    model_ids = [
+                        m.get("id") for m in (data.get("data") or []) if m.get("id")
+                    ]
                     if not model_ids:
                         model_ids = [
                             m.get("name") or m.get("model")
@@ -132,7 +143,10 @@ def _resolve_model(spec: str) -> tuple[str, str, dict]:
 
                 # Partial match
                 for mid in model_ids:
-                    if model_name.lower() in mid.lower() or mid.lower() in model_name.lower():
+                    if (
+                        model_name.lower() in mid.lower()
+                        or mid.lower() in model_name.lower()
+                    ):
                         return build_chat_url(base), mid, headers
 
         raise ValueError(f"Model '{spec}' not found on any configured endpoint")
@@ -143,6 +157,7 @@ def _resolve_model(spec: str) -> tuple[str, str, dict]:
 # ---------------------------------------------------------------------------
 # Tool implementations
 # ---------------------------------------------------------------------------
+
 
 async def do_chat_with_model(content: str, session_id: str | None = None) -> dict:
     """Send a message to a specific model and return its response.
@@ -169,7 +184,8 @@ async def do_chat_with_model(content: str, session_id: str | None = None) -> dic
 
     try:
         response = await llm_call_async(
-            url, model,
+            url,
+            model,
             [{"role": "user", "content": message}],
             headers=headers,
             timeout=AI_CHAT_TIMEOUT,
@@ -213,7 +229,9 @@ async def do_ask_teacher(content: str, session_id: str | None = None) -> dict:
     if model_spec.lower() in ("auto", ""):
         model_spec = get_setting("teacher_model", "")
         if not model_spec:
-            return {"error": "No teacher model configured. Specify a model name or set teacher_model in settings."}
+            return {
+                "error": "No teacher model configured. Specify a model name or set teacher_model in settings."
+            }
 
     try:
         url, model, headers = _resolve_model(model_spec)
@@ -222,7 +240,8 @@ async def do_ask_teacher(content: str, session_id: str | None = None) -> dict:
 
     try:
         response = await llm_call_async(
-            url, model,
+            url,
+            model,
             [
                 {"role": "system", "content": _TEACHER_SYSTEM_PROMPT},
                 {"role": "user", "content": f"Problem:\n{problem}"},
@@ -307,11 +326,14 @@ async def do_second_opinion(content: str, session_id: str | None = None) -> dict
     if focus:
         reviewer_message += f"\n\n---\nSpecifically, I want your take on: {focus}"
     else:
-        reviewer_message += "\n\n---\nGive me your honest second opinion on what's being discussed."
+        reviewer_message += (
+            "\n\n---\nGive me your honest second opinion on what's being discussed."
+        )
 
     try:
         review = await llm_call_async(
-            reviewer_url, reviewer_model,
+            reviewer_url,
+            reviewer_model,
             [
                 {"role": "system", "content": reviewer_system},
                 {"role": "user", "content": reviewer_message},
@@ -354,7 +376,8 @@ async def do_second_opinion(content: str, session_id: str | None = None) -> dict
 
         try:
             unified = await llm_call_async(
-                original_url, original_model,
+                original_url,
+                original_model,
                 [
                     {"role": "system", "content": unify_system},
                     {"role": "user", "content": unify_message},
@@ -382,7 +405,9 @@ async def do_second_opinion(content: str, session_id: str | None = None) -> dict
     }
 
 
-async def do_create_session(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
+async def do_create_session(
+    content: str, session_id: str | None = None, owner: str | None = None
+) -> dict:
     """Create a new chat session.
 
     Content format:
@@ -423,6 +448,7 @@ async def do_create_session(content: str, session_id: str | None = None, owner: 
             sess.headers = headers
         try:
             from src.event_bus import fire_event
+
             fire_event("session_created", owner)
         except Exception:
             logger.debug("session_created event dispatch failed", exc_info=True)
@@ -433,7 +459,9 @@ async def do_create_session(content: str, session_id: str | None = None, owner: 
         return {"error": f"Failed to create session: {e}"}
 
 
-async def do_list_sessions(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
+async def do_list_sessions(
+    content: str, session_id: str | None = None, owner: str | None = None
+) -> dict:
     """List sessions sorted by most-recently-active first.
 
     Output includes a relative "last active" timestamp per row so the
@@ -474,7 +502,11 @@ async def do_list_sessions(content: str, session_id: str | None = None, owner: s
             # Prefer last_accessed; fall back to updated_at, then created_at.
             ts = None
             if db_row:
-                ts = getattr(db_row, 'last_accessed', None) or getattr(db_row, 'updated_at', None) or getattr(db_row, 'created_at', None)
+                ts = (
+                    getattr(db_row, "last_accessed", None)
+                    or getattr(db_row, "updated_at", None)
+                    or getattr(db_row, "created_at", None)
+                )
             rows.append((ts, sid, sess))
 
         # Sort by timestamp DESC; rows without a timestamp sink to the bottom.
@@ -482,33 +514,45 @@ async def do_list_sessions(content: str, session_id: str | None = None, owner: s
 
         def _rel(ts):
             if not ts:
-                return 'never'
+                return "never"
             now = datetime.utcnow()
             try:
                 if ts.tzinfo is not None:
                     now = datetime.now(UTC)
                 diff = (now - ts).total_seconds()
             except Exception:
-                return 'unknown'
-            if diff < 60: return 'just now'
-            if diff < 3600: return f'{int(diff / 60)}m ago'
-            if diff < 86400: return f'{int(diff / 3600)}h ago'
-            if diff < 86400 * 7: return f'{int(diff / 86400)}d ago'
-            return ts.strftime('%Y-%m-%d')
+                return "unknown"
+            if diff < 60:
+                return "just now"
+            if diff < 3600:
+                return f"{int(diff / 60)}m ago"
+            if diff < 86400:
+                return f"{int(diff / 3600)}h ago"
+            if diff < 86400 * 7:
+                return f"{int(diff / 86400)}d ago"
+            return ts.strftime("%Y-%m-%d")
 
         lines = []
         for i, (ts, sid, sess) in enumerate(rows):
             if i >= 50:
                 lines.append(f"... and {len(rows) - 50} more (showing first 50)")
                 break
-            safe_name = (sess.name or "Untitled").replace("[", "\\[").replace("]", "\\]")
+            safe_name = (
+                (sess.name or "Untitled").replace("[", "\\[").replace("]", "\\]")
+            )
             msg_count = getattr(sess, "message_count", 0) or 0
             model = getattr(sess, "model", "unknown")
             marker = " ← most recent" if i == 0 else ""
-            lines.append(f"- **[{safe_name}](#session-{sid})** (id: `{sid}`, model: {model}, {msg_count} msgs, last active {_rel(ts)}){marker}")
+            lines.append(
+                f"- **[{safe_name}](#session-{sid})** (id: `{sid}`, model: {model}, {msg_count} msgs, last active {_rel(ts)}){marker}"
+            )
 
         if not lines:
-            return {"results": "No sessions found" + (f" matching '{keyword}'" if keyword else "") + "."}
+            return {
+                "results": "No sessions found"
+                + (f" matching '{keyword}'" if keyword else "")
+                + "."
+            }
 
         return {
             "results": (
@@ -522,7 +566,9 @@ async def do_list_sessions(content: str, session_id: str | None = None, owner: s
         return {"error": str(e)}
 
 
-async def do_send_to_session(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
+async def do_send_to_session(
+    content: str, session_id: str | None = None, owner: str | None = None
+) -> dict:
     """Send a message to an existing session and get a response.
 
     Content format:
@@ -559,7 +605,9 @@ async def do_send_to_session(content: str, session_id: str | None = None, owner:
         context.append({"role": "user", "content": message})
 
         response = await llm_call_async(
-            sess.endpoint_url, sess.model, context,
+            sess.endpoint_url,
+            sess.model,
+            context,
             headers=sess.headers,
             timeout=AI_CHAT_TIMEOUT,
         )
@@ -582,7 +630,9 @@ async def do_send_to_session(content: str, session_id: str | None = None, owner:
         return {"error": f"Failed to send to session: {e}"}
 
 
-async def stream_ai_tool(tool: str, content: str, session_id: str | None = None, owner: str | None = None):
+async def stream_ai_tool(
+    tool: str, content: str, session_id: str | None = None, owner: str | None = None
+):
     """Dispatcher for streaming AI tools. Yields events as async generator."""
     # Fallback: run non-streaming and yield final result
     desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
@@ -626,9 +676,13 @@ async def do_pipeline(content: str, session_id: str | None = None) -> dict:
                 continue
             if "|" in line:
                 parts = line.split("|", 1)
-                steps.append({"model": parts[0].strip(), "instruction": parts[1].strip()})
+                steps.append(
+                    {"model": parts[0].strip(), "instruction": parts[1].strip()}
+                )
             else:
-                return {"error": "Each line must be: model | instruction (or use JSON format)"}
+                return {
+                    "error": "Each line must be: model | instruction (or use JSON format)"
+                }
 
     if not steps:
         return {"error": "No pipeline steps provided"}
@@ -641,7 +695,9 @@ async def do_pipeline(content: str, session_id: str | None = None) -> dict:
         model_spec = step.get("model", "").strip()
         instruction = step.get("instruction", "").strip()
         if not model_spec or not instruction:
-            return {"error": f"Step {i + 1}: both 'model' and 'instruction' are required"}
+            return {
+                "error": f"Step {i + 1}: both 'model' and 'instruction' are required"
+            }
         try:
             url, model, headers = _resolve_model(model_spec)
             resolved.append((url, model, headers, instruction))
@@ -663,7 +719,10 @@ async def do_pipeline(content: str, session_id: str | None = None) -> dict:
                 user_content = instruction
 
             messages = [
-                {"role": "system", "content": f"You are step {i + 1} in a processing pipeline. {instruction}"},
+                {
+                    "role": "system",
+                    "content": f"You are step {i + 1} in a processing pipeline. {instruction}",
+                },
                 {"role": "user", "content": user_content},
             ]
 
@@ -671,12 +730,14 @@ async def do_pipeline(content: str, session_id: str | None = None) -> dict:
                 url, model, messages, headers=headers, timeout=AI_CHAT_TIMEOUT
             )
 
-            step_outputs.append({
-                "step": i + 1,
-                "model": model,
-                "instruction": instruction,
-                "output": response[:5000] if len(response) > 5000 else response,
-            })
+            step_outputs.append(
+                {
+                    "step": i + 1,
+                    "model": model,
+                    "instruction": instruction,
+                    "output": response[:5000] if len(response) > 5000 else response,
+                }
+            )
 
             previous_output = response
 
@@ -702,7 +763,10 @@ async def do_pipeline(content: str, session_id: str | None = None) -> dict:
 # Session management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_session(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
+
+async def do_manage_session(
+    content: str, session_id: str | None = None, owner: str | None = None
+) -> dict:
     """Manage sessions: rename, archive, delete, important, truncate, fork.
 
     Content format:
@@ -725,7 +789,7 @@ async def do_manage_session(content: str, session_id: str | None = None, owner: 
     _raw = (content or "").strip()
     action = ""
     target_sid = ""
-    value = None      # the action param: new name (rename) / keep_count (truncate, fork)
+    value = None  # the action param: new name (rename) / keep_count (truncate, fork)
     _list_filter = ""
     _parsed = None
     if _raw.startswith("{"):
@@ -735,24 +799,37 @@ async def do_manage_session(content: str, session_id: str | None = None, owner: 
             _parsed = None
     if isinstance(_parsed, dict):
         action = str(_parsed.get("action") or "").strip().lower()
-        target_sid = str(_parsed.get("session_id") or _parsed.get("session") or _parsed.get("id") or "").strip()
+        target_sid = str(
+            _parsed.get("session_id")
+            or _parsed.get("session")
+            or _parsed.get("id")
+            or ""
+        ).strip()
         _v = _parsed.get("value")
         if _v is None:
-            _v = (_parsed.get("name") or _parsed.get("new_name")
-                  or _parsed.get("title") or _parsed.get("keep_count"))
+            _v = (
+                _parsed.get("name")
+                or _parsed.get("new_name")
+                or _parsed.get("title")
+                or _parsed.get("keep_count")
+            )
         value = None if _v is None else str(_v).strip()
         _list_filter = str(_parsed.get("filter") or "").strip()
     else:
         lines = _raw.split("\n")
         if not lines or not lines[0].strip():
-            return {"error": "Missing action (rename|archive|delete|important|truncate|fork|list|switch)"}
+            return {
+                "error": "Missing action (rename|archive|delete|important|truncate|fork|list|switch)"
+            }
         action = lines[0].strip().lower()
         target_sid = lines[1].strip() if len(lines) >= 2 else ""
         value = lines[2].strip() if len(lines) >= 3 else None
         _list_filter = "\n".join(lines[1:]).strip()
 
     if not action:
-        return {"error": "Missing action (rename|archive|delete|important|truncate|fork|list|switch)"}
+        return {
+            "error": "Missing action (rename|archive|delete|important|truncate|fork|list|switch)"
+        }
 
     # `list` alias — dispatch to do_list_sessions so the agent's natural
     # first guess (every other manage_* tool has a `list` action) works.
@@ -784,7 +861,9 @@ async def do_manage_session(content: str, session_id: str | None = None, owner: 
         try:
             db_sess = _session_query(db).first()
             if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+                return {
+                    "error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."
+                }
             name = db_sess.name or target_sid
         finally:
             db.close()
@@ -799,49 +878,78 @@ async def do_manage_session(content: str, session_id: str | None = None, owner: 
     try:
         if action == "rename":
             if not value:
-                return {"error": "rename needs a new name (the `value` arg, or line 3 in the legacy format)"}
+                return {
+                    "error": "rename needs a new name (the `value` arg, or line 3 in the legacy format)"
+                }
             new_name = value
             db_sess = _session_query(db).first()
             if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+                return {
+                    "error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."
+                }
             db_sess.name = new_name
             db.commit()
             _session_manager.update_session_name(target_sid, new_name)
-            return {"action": "rename", "session_id": target_sid, "name": new_name,
-                    "results": f"Session renamed to '{new_name}'"}
+            return {
+                "action": "rename",
+                "session_id": target_sid,
+                "name": new_name,
+                "results": f"Session renamed to '{new_name}'",
+            }
 
         elif action == "archive":
             db_sess = _session_query(db).first()
             if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+                return {
+                    "error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."
+                }
             db_sess.archived = True
             db.commit()
-            return {"action": "archive", "session_id": target_sid,
-                    "results": f"Session '{db_sess.name}' archived"}
+            return {
+                "action": "archive",
+                "session_id": target_sid,
+                "results": f"Session '{db_sess.name}' archived",
+            }
 
         elif action == "unarchive":
             db_sess = _session_query(db).first()
             if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+                return {
+                    "error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."
+                }
             db_sess.archived = False
             db.commit()
-            return {"action": "unarchive", "session_id": target_sid,
-                    "results": f"Session '{db_sess.name}' unarchived"}
+            return {
+                "action": "unarchive",
+                "session_id": target_sid,
+                "results": f"Session '{db_sess.name}' unarchived",
+            }
 
         elif action == "delete":
             if target_sid == session_id:
-                return {"error": "Cannot delete the current session while chatting in it. Delete other sessions first."}
+                return {
+                    "error": "Cannot delete the current session while chatting in it. Delete other sessions first."
+                }
             db_sess = _session_query(db).first()
             if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Refusing to delete an unknown chat id; use the exact id from list_sessions."}
+                return {
+                    "error": f"Session '{target_sid}' not found. Refusing to delete an unknown chat id; use the exact id from list_sessions."
+                }
             if db_sess and db_sess.is_important:
-                return {"error": f"Session '{db_sess.name}' is starred/favorited. Unstar it first before deleting."}
+                return {
+                    "error": f"Session '{db_sess.name}' is starred/favorited. Unstar it first before deleting."
+                }
             try:
                 ok = _session_manager.delete_session(target_sid)
                 if not ok:
-                    return {"error": f"Session '{target_sid}' was not deleted because it no longer exists."}
-                return {"action": "delete", "session_id": target_sid,
-                        "results": f"Session '{db_sess.name or target_sid}' deleted"}
+                    return {
+                        "error": f"Session '{target_sid}' was not deleted because it no longer exists."
+                    }
+                return {
+                    "action": "delete",
+                    "session_id": target_sid,
+                    "results": f"Session '{db_sess.name or target_sid}' deleted",
+                }
             except Exception as e:
                 return {"error": f"Failed to delete session: {e}"}
 
@@ -849,20 +957,29 @@ async def do_manage_session(content: str, session_id: str | None = None, owner: 
             is_important = action == "important"
             db_sess = _session_query(db).first()
             if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+                return {
+                    "error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."
+                }
             # Prevent AI from unstarring sessions — only the user can do that manually
             if not is_important and db_sess.is_important:
-                return {"error": f"Session '{db_sess.name}' is starred by the user. Only the user can unstar sessions manually."}
+                return {
+                    "error": f"Session '{db_sess.name}' is starred by the user. Only the user can unstar sessions manually."
+                }
             db_sess.is_important = is_important
             db.commit()
             status = "marked as important" if is_important else "unmarked as important"
-            return {"action": action, "session_id": target_sid,
-                    "results": f"Session '{db_sess.name}' {status}"}
+            return {
+                "action": action,
+                "session_id": target_sid,
+                "results": f"Session '{db_sess.name}' {status}",
+            }
 
         elif action == "truncate":
             db_sess = _session_query(db).first()
             if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+                return {
+                    "error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."
+                }
             keep_count = 10
             if value:
                 try:
@@ -871,14 +988,19 @@ async def do_manage_session(content: str, session_id: str | None = None, owner: 
                     pass
             success = _session_manager.truncate_messages(target_sid, keep_count)
             if success:
-                return {"action": "truncate", "session_id": target_sid,
-                        "results": f"Session truncated to last {keep_count} messages"}
+                return {
+                    "action": "truncate",
+                    "session_id": target_sid,
+                    "results": f"Session truncated to last {keep_count} messages",
+                }
             return {"error": f"Failed to truncate session '{target_sid}'"}
 
         elif action == "fork":
             db_sess = _session_query(db).first()
             if not db_sess:
-                return {"error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."}
+                return {
+                    "error": f"Session '{target_sid}' not found. Use list_sessions and pass the exact id it returned."
+                }
             keep_count = 0  # 0 = all messages
             if value:
                 try:
@@ -904,21 +1026,29 @@ async def do_manage_session(content: str, session_id: str | None = None, owner: 
             if keep_count > 0:
                 history = history[:keep_count]
             from core.models import ChatMessage as InMemoryMsg
+
             new_sess = _session_manager.get_session(new_sid)
             for msg in history:
                 new_sess.add_message(InMemoryMsg(msg["role"], msg["content"]))
             try:
                 from src.event_bus import fire_event
+
                 fire_event("session_created", owner)
             except Exception:
                 logger.debug("session_created event dispatch failed", exc_info=True)
 
-            return {"action": "fork", "session_id": new_sid,
-                    "source_session": target_sid, "messages_copied": len(history),
-                    "results": f"Forked session '{source.name}' -> new session {new_sid} ({len(history)} messages)"}
+            return {
+                "action": "fork",
+                "session_id": new_sid,
+                "source_session": target_sid,
+                "messages_copied": len(history),
+                "results": f"Forked session '{source.name}' -> new session {new_sid} ({len(history)} messages)",
+            }
 
         else:
-            return {"error": f"Unknown action '{action}'. Use: list, switch, rename, archive, unarchive, delete, important, unimportant, truncate, fork"}
+            return {
+                "error": f"Unknown action '{action}'. Use: list, switch, rename, archive, unarchive, delete, important, unimportant, truncate, fork"
+            }
     except Exception as e:
         logger.error(f"manage_session failed: {e}")
         return {"error": str(e)}
@@ -930,7 +1060,10 @@ async def do_manage_session(content: str, session_id: str | None = None, owner: 
 # Memory management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_memory(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
+
+async def do_manage_memory(
+    content: str, session_id: str | None = None, owner: str | None = None
+) -> dict:
     """Manage memories: list, add, edit, delete, search.
 
     Content format:
@@ -954,12 +1087,20 @@ async def do_manage_memory(content: str, session_id: str | None = None, owner: s
     action = lines[0].strip().lower()
 
     if action == "list":
-        category_filter = lines[1].strip().lower() if len(lines) > 1 and lines[1].strip() else None
+        category_filter = (
+            lines[1].strip().lower() if len(lines) > 1 and lines[1].strip() else None
+        )
         memories = _memory_manager.load(owner=owner)
         if category_filter:
-            memories = [m for m in memories if m.get("category", "").lower() == category_filter]
+            memories = [
+                m for m in memories if m.get("category", "").lower() == category_filter
+            ]
         if not memories:
-            return {"results": "No memories found" + (f" in category '{category_filter}'" if category_filter else "") + "."}
+            return {
+                "results": "No memories found"
+                + (f" in category '{category_filter}'" if category_filter else "")
+                + "."
+            }
         result_lines = [f"Found {len(memories)} memory entries:\n"]
         for m in memories[:100]:
             cat = m.get("category", "fact")
@@ -976,29 +1117,41 @@ async def do_manage_memory(content: str, session_id: str | None = None, owner: s
         if len(lines) < 2:
             return {"error": "Add needs line 2: memory text"}
         text = lines[1].strip()
-        category = lines[2].strip().lower() if len(lines) > 2 and lines[2].strip() else "fact"
+        category = (
+            lines[2].strip().lower() if len(lines) > 2 and lines[2].strip() else "fact"
+        )
         if not text:
             return {"error": "Memory text cannot be empty"}
 
-        entry = _memory_manager.add_entry(text, source="ai_agent", category=category, owner=owner)
+        entry = _memory_manager.add_entry(
+            text, source="ai_agent", category=category, owner=owner
+        )
         memories = _memory_manager.load_all()
         memories.append(entry)
         _memory_manager.save(memories)
 
         # Update vector index if available
-        if _memory_vector and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
+        if (
+            _memory_vector
+            and hasattr(_memory_vector, "healthy")
+            and _memory_vector.healthy
+        ):
             try:
                 _memory_vector.add(entry["id"], text)
             except Exception:
                 pass
         try:
             from src.event_bus import fire_event
+
             fire_event("memory_added", owner)
         except Exception:
             logger.debug("memory_added event dispatch failed", exc_info=True)
 
-        return {"action": "add", "memory_id": entry["id"],
-                "results": f"Memory added: [{category}] {text}"}
+        return {
+            "action": "add",
+            "memory_id": entry["id"],
+            "results": f"Memory added: [{category}] {text}",
+        }
 
     elif action == "edit":
         if len(lines) < 3:
@@ -1025,14 +1178,21 @@ async def do_manage_memory(content: str, session_id: str | None = None, owner: s
         _memory_manager.save(memories)
 
         # Update vector index
-        if _memory_vector and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
+        if (
+            _memory_vector
+            and hasattr(_memory_vector, "healthy")
+            and _memory_vector.healthy
+        ):
             try:
                 _memory_vector.add(full_id, new_text)
             except Exception:
                 pass
 
-        return {"action": "edit", "memory_id": memory_id,
-                "results": f"Memory updated: {new_text}"}
+        return {
+            "action": "edit",
+            "memory_id": memory_id,
+            "results": f"Memory updated: {new_text}",
+        }
 
     elif action == "delete":
         if len(lines) < 2:
@@ -1057,14 +1217,22 @@ async def do_manage_memory(content: str, session_id: str | None = None, owner: s
         _memory_manager.save(memories)
 
         # Remove from vector index
-        if _memory_vector and full_id and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
+        if (
+            _memory_vector
+            and full_id
+            and hasattr(_memory_vector, "healthy")
+            and _memory_vector.healthy
+        ):
             try:
                 _memory_vector.remove(full_id)
             except Exception:
                 pass
 
-        return {"action": "delete", "memory_id": memory_id,
-                "results": f"Memory '{memory_id}' deleted"}
+        return {
+            "action": "delete",
+            "memory_id": memory_id,
+            "results": f"Memory '{memory_id}' deleted",
+        }
 
     elif action == "search":
         if len(lines) < 2:
@@ -1072,12 +1240,16 @@ async def do_manage_memory(content: str, session_id: str | None = None, owner: s
         query = lines[1].strip()
         memories = _memory_manager.load(owner=owner)
 
-        if hasattr(_memory_manager, 'get_relevant_memories'):
-            results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=20)
+        if hasattr(_memory_manager, "get_relevant_memories"):
+            results = _memory_manager.get_relevant_memories(
+                query, memories, threshold=0.05, max_items=20
+            )
         else:
             # Fallback: simple text search
             query_lower = query.lower()
-            results = [m for m in memories if query_lower in m.get("text", "").lower()][:20]
+            results = [m for m in memories if query_lower in m.get("text", "").lower()][
+                :20
+            ]
 
         if not results:
             return {"results": f"No memories found matching '{query}'."}
@@ -1090,12 +1262,15 @@ async def do_manage_memory(content: str, session_id: str | None = None, owner: s
         return {"results": "\n".join(result_lines)}
 
     else:
-        return {"error": f"Unknown action '{action}'. Use: list, add, edit, delete, search"}
+        return {
+            "error": f"Unknown action '{action}'. Use: list, add, edit, delete, search"
+        }
 
 
 # ---------------------------------------------------------------------------
 # List models tool
 # ---------------------------------------------------------------------------
+
 
 async def do_list_models(content: str, session_id: str | None = None) -> dict:
     """List all available models across configured endpoints.
@@ -1111,7 +1286,9 @@ async def do_list_models(content: str, session_id: str | None = None) -> dict:
 
     db = SessionLocal()
     try:
-        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        endpoints = (
+            db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        )
         if not endpoints:
             return {"results": "No enabled model endpoints configured."}
 
@@ -1131,7 +1308,9 @@ async def do_list_models(content: str, session_id: str | None = None) -> dict:
                     r = httpx.get(build_models_url(base), headers=headers, timeout=5)
                     r.raise_for_status()
                     data = r.json()
-                    model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+                    model_ids = [
+                        m.get("id") for m in (data.get("data") or []) if m.get("id")
+                    ]
                     if not model_ids:
                         model_ids = [
                             m.get("name") or m.get("model")
@@ -1142,7 +1321,11 @@ async def do_list_models(content: str, session_id: str | None = None) -> dict:
                     model_ids = ["(endpoint offline)"]
 
             if keyword:
-                model_ids = [m for m in model_ids if keyword in m.lower() or keyword in (ep.name or "").lower()]
+                model_ids = [
+                    m
+                    for m in model_ids
+                    if keyword in m.lower() or keyword in (ep.name or "").lower()
+                ]
 
             if model_ids:
                 result_lines.append(f"\n**{ep.name or base}** ({provider}):")
@@ -1151,7 +1334,11 @@ async def do_list_models(content: str, session_id: str | None = None) -> dict:
                     total_models += 1
 
         if not result_lines:
-            return {"results": "No models found" + (f" matching '{keyword}'" if keyword else "") + "."}
+            return {
+                "results": "No models found"
+                + (f" matching '{keyword}'" if keyword else "")
+                + "."
+            }
 
         header = f"Available models ({total_models} total):"
         return {"results": header + "\n".join(result_lines)}
@@ -1165,6 +1352,7 @@ async def do_list_models(content: str, session_id: str | None = None) -> dict:
 # ---------------------------------------------------------------------------
 # RAG management tool
 # ---------------------------------------------------------------------------
+
 
 async def do_manage_rag(content: str, session_id: str | None = None) -> dict:
     """Manage RAG indexed documents: list, add_directory, remove_directory.
@@ -1180,13 +1368,15 @@ async def do_manage_rag(content: str, session_id: str | None = None) -> dict:
 
     if action == "list":
         if not _personal_docs_manager:
-            return {"results": "Personal docs manager not available. RAG may not be configured."}
+            return {
+                "results": "Personal docs manager not available. RAG may not be configured."
+            }
         try:
             files = []
-            if hasattr(_personal_docs_manager, 'index'):
+            if hasattr(_personal_docs_manager, "index"):
                 files = _personal_docs_manager.index or []
             dirs = []
-            if hasattr(_personal_docs_manager, 'get_indexed_directories'):
+            if hasattr(_personal_docs_manager, "get_indexed_directories"):
                 dirs = _personal_docs_manager.get_indexed_directories()
 
             result_lines = []
@@ -1214,6 +1404,7 @@ async def do_manage_rag(content: str, session_id: str | None = None) -> dict:
         directory = lines[1].strip()
 
         import os
+
         directory = os.path.expanduser(directory)
         if not os.path.isdir(directory):
             return {"error": f"Directory not found: {directory}"}
@@ -1224,8 +1415,11 @@ async def do_manage_rag(content: str, session_id: str | None = None) -> dict:
         try:
             result = _rag_manager.index_personal_documents(directory)
             indexed = result.get("indexed", 0) if isinstance(result, dict) else 0
-            return {"action": "add_directory", "directory": directory,
-                    "results": f"Directory '{directory}' added to RAG index ({indexed} files indexed)"}
+            return {
+                "action": "add_directory",
+                "directory": directory,
+                "results": f"Directory '{directory}' added to RAG index ({indexed} files indexed)",
+            }
         except Exception as e:
             return {"error": f"Failed to index directory: {e}"}
 
@@ -1238,24 +1432,30 @@ async def do_manage_rag(content: str, session_id: str | None = None) -> dict:
             return {"error": "Personal docs manager not available"}
 
         try:
-            if hasattr(_personal_docs_manager, 'remove_directory'):
+            if hasattr(_personal_docs_manager, "remove_directory"):
                 # Performs a targeted per-directory delete (#1660). The previous
                 # unconditional _rag_manager.rebuild_index() here wiped the whole
                 # collection on every remove (even for untracked dirs) and has
                 # been removed.
                 _personal_docs_manager.remove_directory(directory)
-            return {"action": "remove_directory", "directory": directory,
-                    "results": f"Directory '{directory}' removed from RAG index"}
+            return {
+                "action": "remove_directory",
+                "directory": directory,
+                "results": f"Directory '{directory}' removed from RAG index",
+            }
         except Exception as e:
             return {"error": f"Failed to remove directory: {e}"}
 
     else:
-        return {"error": f"Unknown action '{action}'. Use: list, add_directory, remove_directory"}
+        return {
+            "error": f"Unknown action '{action}'. Use: list, add_directory, remove_directory"
+        }
 
 
 # ---------------------------------------------------------------------------
 # UI control tool (returns events for frontend to apply)
 # ---------------------------------------------------------------------------
+
 
 async def do_ui_control(content: str, session_id: str | None = None) -> dict:
     """Control frontend UI: toggle settings, switch model, change theme.
@@ -1301,9 +1501,18 @@ async def do_ui_control(content: str, session_id: str | None = None) -> dict:
             "private": "incognito",
         }
         toggle_name = _toggle_aliases.get(toggle_name, toggle_name)
-        valid_toggles = {"web", "bash", "rag", "research", "incognito", "document_editor"}
+        valid_toggles = {
+            "web",
+            "bash",
+            "rag",
+            "research",
+            "incognito",
+            "document_editor",
+        }
         if toggle_name not in valid_toggles:
-            return {"error": f"Unknown toggle '{toggle_name}'. Valid: {', '.join(sorted(valid_toggles))}"}
+            return {
+                "error": f"Unknown toggle '{toggle_name}'. Valid: {', '.join(sorted(valid_toggles))}"
+            }
         return {
             "ui_event": "toggle",
             "toggle_name": toggle_name,
@@ -1340,6 +1549,7 @@ async def do_ui_control(content: str, session_id: str | None = None) -> dict:
         if session_id and _session_manager:
             from src.database import Session as DbSess2
             from src.database import SessionLocal as SL2
+
             db2 = SL2()
             try:
                 db_s = db2.query(DbSess2).filter(DbSess2.id == session_id).first()
@@ -1371,20 +1581,40 @@ async def do_ui_control(content: str, session_id: str | None = None) -> dict:
         # Also check user's custom themes stored in prefs.
         # Must match the THEMES keys in static/js/theme.js.
         known_presets = [
-            "dark", "light", "midnight", "paper", "cyberpunk", "retrowave",
-            "forest", "ocean", "ume", "copper", "terminal", "organs",
-            "lavender", "gpt", "claude", "cute",
+            "dark",
+            "light",
+            "midnight",
+            "paper",
+            "cyberpunk",
+            "retrowave",
+            "forest",
+            "ocean",
+            "ume",
+            "copper",
+            "terminal",
+            "organs",
+            "lavender",
+            "gpt",
+            "claude",
+            "cute",
         ]
         custom_themes = {}
         try:
             from routes.prefs_routes import _load as _load_prefs
+
             custom_themes = _load_prefs().get("custom-themes", {}) or {}
         except Exception:
             pass
         all_known = set(known_presets) | set(custom_themes.keys())
         if theme_name not in all_known:
-            custom_label = f" | Custom: {', '.join(sorted(custom_themes.keys()))}" if custom_themes else ""
-            return {"error": f"Unknown theme '{theme_name}'. Available: {', '.join(sorted(known_presets))}{custom_label}"}
+            custom_label = (
+                f" | Custom: {', '.join(sorted(custom_themes.keys()))}"
+                if custom_themes
+                else ""
+            )
+            return {
+                "error": f"Unknown theme '{theme_name}'. Available: {', '.join(sorted(known_presets))}{custom_label}"
+            }
         return {
             "ui_event": "set_theme",
             "theme_name": theme_name,
@@ -1396,46 +1626,86 @@ async def do_ui_control(content: str, session_id: str | None = None) -> dict:
         parts = lines[0].strip().split()
         # create_theme <name> <bg> <fg> <panel> <border> <accent> [key=value ...]
         if len(parts) < 7:
-            return {"error": "create_theme needs: create_theme <name> <bg> <fg> <panel> <border> <accent> (all hex colors). Optional advanced color key=value pairs (userBubbleBg, aiBubbleBg, bubbleBorder, sidebarBg, sectionAccent, brandColor, inputBg, inputBorder, sendBtnBg, sendBtnHover, codeBg, codeFg, toggleBg, toggleActive, accentPrimary, accentError). Optional background EFFECTS: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num e.g. 1>, bgEffectSize=<num e.g. 1>, frosted=true|false"}
+            return {
+                "error": "create_theme needs: create_theme <name> <bg> <fg> <panel> <border> <accent> (all hex colors). Optional advanced color key=value pairs (userBubbleBg, aiBubbleBg, bubbleBorder, sidebarBg, sectionAccent, brandColor, inputBg, inputBorder, sendBtnBg, sendBtnHover, codeBg, codeFg, toggleBg, toggleActive, accentPrimary, accentError). Optional background EFFECTS: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num e.g. 1>, bgEffectSize=<num e.g. 1>, frosted=true|false"
+            }
         name = parts[1].lower().replace(" ", "-")
-        colors = {"bg": parts[2], "fg": parts[3], "panel": parts[4], "border": parts[5], "red": parts[6]}
+        colors = {
+            "bg": parts[2],
+            "fg": parts[3],
+            "panel": parts[4],
+            "border": parts[5],
+            "red": parts[6],
+        }
         # Validate base hex colors
         import re as _re
+
         for k, v in colors.items():
-            if not _re.match(r'^#[0-9a-fA-F]{6}$', v):
-                return {"error": f"Invalid hex color for {k}: '{v}'. Use format #RRGGBB"}
+            if not _re.match(r"^#[0-9a-fA-F]{6}$", v):
+                return {
+                    "error": f"Invalid hex color for {k}: '{v}'. Use format #RRGGBB"
+                }
         # Parse optional advanced key=value pairs
         adv_keys = {
-            "userBubbleBg", "aiBubbleBg", "bubbleBorder", "sidebarBg",
-            "sectionAccent", "brandColor", "inputBg", "inputBorder",
-            "sendBtnBg", "sendBtnHover", "codeBg", "codeFg",
-            "toggleBg", "toggleActive", "accentPrimary", "accentError",
+            "userBubbleBg",
+            "aiBubbleBg",
+            "bubbleBorder",
+            "sidebarBg",
+            "sectionAccent",
+            "brandColor",
+            "inputBg",
+            "inputBorder",
+            "sendBtnBg",
+            "sendBtnHover",
+            "codeBg",
+            "codeFg",
+            "toggleBg",
+            "toggleActive",
+            "accentPrimary",
+            "accentError",
         }
         advanced = {}
         # Background-effect fields (animated pattern + frosted glass). Different
         # value types than the hex-only advanced keys, so parse separately.
-        _BG_PATTERNS = {"none", "dots", "synapse", "rain", "constellations",
-                        "perlin-flow", "petals", "sparkles", "embers"}
+        _BG_PATTERNS = {
+            "none",
+            "dots",
+            "synapse",
+            "rain",
+            "constellations",
+            "perlin-flow",
+            "petals",
+            "sparkles",
+            "embers",
+        }
         bg = {}
         for part in parts[7:]:
             if "=" not in part:
                 continue
             ak, av = part.split("=", 1)
             if ak in adv_keys:
-                if not _re.match(r'^#[0-9a-fA-F]{6}$', av):
-                    return {"error": f"Invalid hex color for advanced key {ak}: '{av}'. Use format #RRGGBB"}
+                if not _re.match(r"^#[0-9a-fA-F]{6}$", av):
+                    return {
+                        "error": f"Invalid hex color for advanced key {ak}: '{av}'. Use format #RRGGBB"
+                    }
                 advanced[ak] = av
             elif ak == "bgPattern":
                 if av not in _BG_PATTERNS:
-                    return {"error": f"Invalid bgPattern '{av}'. Use one of: {', '.join(sorted(_BG_PATTERNS))}"}
+                    return {
+                        "error": f"Invalid bgPattern '{av}'. Use one of: {', '.join(sorted(_BG_PATTERNS))}"
+                    }
                 bg["pattern"] = av
             elif ak == "bgEffectColor":
-                if not _re.match(r'^#[0-9a-fA-F]{6}$', av):
-                    return {"error": f"Invalid hex color for bgEffectColor: '{av}'. Use format #RRGGBB"}
+                if not _re.match(r"^#[0-9a-fA-F]{6}$", av):
+                    return {
+                        "error": f"Invalid hex color for bgEffectColor: '{av}'. Use format #RRGGBB"
+                    }
                 bg["effectColor"] = av
             elif ak in ("bgEffectIntensity", "bgEffectSize"):
                 try:
-                    bg["effectIntensity" if ak == "bgEffectIntensity" else "effectSize"] = float(av)
+                    bg[
+                        "effectIntensity" if ak == "bgEffectIntensity" else "effectSize"
+                    ] = float(av)
                 except ValueError:
                     return {"error": f"Invalid number for {ak}: '{av}'"}
             elif ak == "frosted":
@@ -1448,8 +1718,12 @@ async def do_ui_control(content: str, session_id: str | None = None) -> dict:
             "colors": colors,
             "bg": bg or None,
             "results": f"Custom theme '{name}' created and applied"
-                       + (f" with {len(advanced)} advanced overrides" if advanced else "")
-                       + (f" + background effect ({bg.get('pattern', 'frosted' if bg.get('frosted') else 'custom')})" if bg else ""),
+            + (f" with {len(advanced)} advanced overrides" if advanced else "")
+            + (
+                f" + background effect ({bg.get('pattern', 'frosted' if bg.get('frosted') else 'custom')})"
+                if bg
+                else ""
+            ),
         }
 
     elif action == "highlight":
@@ -1508,7 +1782,9 @@ async def do_ui_control(content: str, session_id: str | None = None) -> dict:
         }
         target = _panel_aliases.get(panel)
         if not target:
-            return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, email, sessions, notes, memories, skills, settings, cookbook."}
+            return {
+                "error": f"Unknown panel '{panel}'. Valid: documents, gallery, email, sessions, notes, memories, skills, settings, cookbook."
+            }
         return {
             "ui_event": "open_panel",
             "panel": target,
@@ -1521,7 +1797,9 @@ async def do_ui_control(content: str, session_id: str | None = None) -> dict:
         folder = reply_parts[2].strip() if len(reply_parts) > 2 else "INBOX"
         mode = reply_parts[3].strip().lower() if len(reply_parts) > 3 else "reply"
         if not uid:
-            return {"error": "open_email_reply needs: open_email_reply <uid> [folder] [reply|reply-all|ai-reply]"}
+            return {
+                "error": "open_email_reply needs: open_email_reply <uid> [folder] [reply|reply-all|ai-reply]"
+            }
         if mode not in ("reply", "reply-all", "ai-reply"):
             mode = "reply"
         return {
@@ -1542,14 +1820,19 @@ async def do_ui_control(content: str, session_id: str | None = None) -> dict:
         }
 
     else:
-        return {"error": f"Unknown action '{action}'. Use: toggle, set_mode, switch_model, set_theme, highlight, clear_highlight, get_toggles"}
+        return {
+            "error": f"Unknown action '{action}'. Use: toggle, set_mode, switch_model, set_theme, highlight, clear_highlight, get_toggles"
+        }
 
 
 # ---------------------------------------------------------------------------
 # Image generation
 # ---------------------------------------------------------------------------
 
-async def do_generate_image(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
+
+async def do_generate_image(
+    content: str, session_id: str | None = None, owner: str | None = None
+) -> dict:
     """Generate an image using an image-capable model (e.g. gpt-image-1).
 
     Content format:
@@ -1575,6 +1858,7 @@ async def do_generate_image(content: str, session_id: str | None = None, owner: 
     # Load admin settings for defaults
     try:
         from src.settings import load_settings
+
         _settings = load_settings()
     except Exception:
         _settings = {}
@@ -1600,12 +1884,17 @@ async def do_generate_image(content: str, session_id: str | None = None, owner: 
                 import httpx as _req
 
                 from src.database import ModelEndpoint, SessionLocal
+
                 _idb = SessionLocal()
                 try:
-                    _img_eps = _idb.query(ModelEndpoint).filter(
-                        ModelEndpoint.is_enabled == True,
-                        ModelEndpoint.model_type == "image",
-                    ).all()
+                    _img_eps = (
+                        _idb.query(ModelEndpoint)
+                        .filter(
+                            ModelEndpoint.is_enabled == True,
+                            ModelEndpoint.model_type == "image",
+                        )
+                        .all()
+                    )
                     for _iep in _img_eps:
                         _ibase = _iep.base_url.rstrip("/")
                         if not _ibase.endswith("/v1"):
@@ -1613,7 +1902,11 @@ async def do_generate_image(content: str, session_id: str | None = None, owner: 
                         try:
                             _r = _req.get(_ibase + "/models", timeout=3)
                             _r.raise_for_status()
-                            _mids = [m.get("id") for m in (_r.json().get("data") or []) if m.get("id")]
+                            _mids = [
+                                m.get("id")
+                                for m in (_r.json().get("data") or [])
+                                if m.get("id")
+                            ]
                             if _mids:
                                 model_spec = _mids[0]
                                 break
@@ -1624,14 +1917,18 @@ async def do_generate_image(content: str, session_id: str | None = None, owner: 
             except Exception:
                 pass
         if not model_spec:
-            return {"error": "No image model found. Configure one in Admin → Image Generation."}
+            return {
+                "error": "No image model found. Configure one in Admin → Image Generation."
+            }
 
     # Resolve the model to find the right endpoint
     try:
         url, model_id, headers = _resolve_model(model_spec)
     except ValueError:
-        return {"error": f"No endpoint found with image model '{model_spec}'. "
-                "Configure an OpenAI-compatible endpoint with image generation support."}
+        return {
+            "error": f"No endpoint found with image model '{model_spec}'. "
+            "Configure an OpenAI-compatible endpoint with image generation support."
+        }
 
     # Detect if this is a GPT image model vs DALL-E vs local diffusion
     is_gpt_image = "gpt-image" in model_id.lower()
@@ -1639,7 +1936,9 @@ async def do_generate_image(content: str, session_id: str | None = None, owner: 
     is_local_diffusion = not is_gpt_image and not is_dalle
 
     # Build the images endpoint URL from the chat completions URL
-    base_url = url.replace("/chat/completions", "").replace("/v1/messages", "").rstrip("/")
+    base_url = (
+        url.replace("/chat/completions", "").replace("/v1/messages", "").rstrip("/")
+    )
     images_url = base_url + "/images/generations"
 
     # Validate size for cloud image models (local diffusion accepts any WxH)
@@ -1664,21 +1963,31 @@ async def do_generate_image(content: str, session_id: str | None = None, owner: 
         else:
             payload["quality"] = "medium"
 
-    logger.info(f"Image generation: model={model_id}, size={size}, quality={quality}, prompt={prompt[:80]}")
+    logger.info(
+        f"Image generation: model={model_id}, size={size}, quality={quality}, prompt={prompt[:80]}"
+    )
 
     try:
         # GPT image models can take 30-120s+ depending on quality
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)) as client:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)
+        ) as client:
             resp = await client.post(images_url, json=payload, headers=headers)
 
             if resp.status_code != 200:
                 error_text = resp.text[:500]
                 try:
                     err_json = resp.json()
-                    error_text = err_json.get("error", {}).get("message", error_text) if isinstance(err_json.get("error"), dict) else str(err_json.get("error", error_text))
+                    error_text = (
+                        err_json.get("error", {}).get("message", error_text)
+                        if isinstance(err_json.get("error"), dict)
+                        else str(err_json.get("error", error_text))
+                    )
                 except Exception:
                     pass
-                return {"error": f"Image generation failed ({resp.status_code}): {error_text}"}
+                return {
+                    "error": f"Image generation failed ({resp.status_code}): {error_text}"
+                }
 
             data = resp.json()
             images = data.get("data", [])
@@ -1694,18 +2003,21 @@ async def do_generate_image(content: str, session_id: str | None = None, owner: 
                 try:
                     from src.database import GalleryImage
                     from src.database import SessionLocal as _GallerySL
+
                     new_id = str(uuid.uuid4())
                     _gdb = _GallerySL()
-                    _gdb.add(GalleryImage(
-                        id=new_id,
-                        filename=filename,
-                        prompt=prompt,
-                        model=model_id,
-                        size=size,
-                        quality=payload.get("quality", "medium"),
-                        session_id=session_id,
-                        owner=owner,
-                    ))
+                    _gdb.add(
+                        GalleryImage(
+                            id=new_id,
+                            filename=filename,
+                            prompt=prompt,
+                            model=model_id,
+                            size=size,
+                            quality=payload.get("quality", "medium"),
+                            session_id=session_id,
+                            owner=owner,
+                        )
+                    )
                     _gdb.commit()
                     _gdb.close()
                     return new_id
@@ -1741,7 +2053,9 @@ async def do_generate_image(content: str, session_id: str | None = None, owner: 
                     logger.warning(f"Failed to download DALL-E image: {_dl_e}")
                     image_url = img["url"]  # fallback to external URL
             else:
-                return {"error": "Image API returned unexpected format (no b64_json or url)"}
+                return {
+                    "error": "Image API returned unexpected format (no b64_json or url)"
+                }
 
             return {
                 "results": f"Generated image for: {prompt[:100]}",
@@ -1754,7 +2068,9 @@ async def do_generate_image(content: str, session_id: str | None = None, owner: 
             }
 
     except httpx.TimeoutException:
-        return {"error": "Image generation timed out (300s). The model may be overloaded — try again or use quality=low."}
+        return {
+            "error": "Image generation timed out (300s). The model may be overloaded — try again or use quality=low."
+        }
     except Exception as e:
         return {"error": f"Image generation error: {str(e)}"}
 
@@ -1762,6 +2078,7 @@ async def do_generate_image(content: str, session_id: str | None = None, owner: 
 # ---------------------------------------------------------------------------
 # Dispatcher (called from agent_tools.execute_tool_block)
 # ---------------------------------------------------------------------------
+
 
 async def dispatch_ai_tool(
     tool: str, content: str, session_id: str | None = None, owner: str | None = None

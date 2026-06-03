@@ -83,8 +83,9 @@ def _cpu_moe_for_budget(model, quant, kv_gb, vram_budget_gb, fixed_gb=None):
     per_layer = weights / max(layers, 1)
     overflow = needed - vram_budget_gb
     import math
+
     n = math.ceil(overflow / max(per_layer, 1e-6))
-    n = max(0, min(n, layers))   # clamp
+    n = max(0, min(n, layers))  # clamp
     return n, False
 
 
@@ -124,7 +125,9 @@ def compute_serve_profiles(system, model, serve_weights_gb=None, serve_quant=Non
 
     # Vision models need headroom for the image encoder (~1 GB on top of weights).
     is_vision = bool(
-        model.get("is_multimodal") or model.get("vision") or model.get("mmproj")
+        model.get("is_multimodal")
+        or model.get("vision")
+        or model.get("mmproj")
         or "vl" in str(model.get("name", "")).lower()
     )
     headroom = 1.1 if is_vision else 0.4
@@ -163,22 +166,64 @@ def compute_serve_profiles(system, model, serve_weights_gb=None, serve_quant=Non
         fq = serve_quant or model.get("quantization") or "GGUF"
         specs = [
             # key, label, prefer_quant, full_fit, kv_type, ctx, note
-            ("quality", "Quality", fq, False, "q8_0", 131072,
-             "Sharp q8 KV cache + full context. Best long-context accuracy; offloads MoE layers to CPU if needed."),
-            ("balanced", "Balanced", fq, False, "q4_0", 131072,
-             "Compact q4 KV at full context — good speed/quality mix."),
-            ("speed", "Speed", fq, False, "q4_0", 32768,
-             "Trimmed context + light KV for the fastest tokens/s."),
+            (
+                "quality",
+                "Quality",
+                fq,
+                False,
+                "q8_0",
+                131072,
+                "Sharp q8 KV cache + full context. Best long-context accuracy; offloads MoE layers to CPU if needed.",
+            ),
+            (
+                "balanced",
+                "Balanced",
+                fq,
+                False,
+                "q4_0",
+                131072,
+                "Compact q4 KV at full context — good speed/quality mix.",
+            ),
+            (
+                "speed",
+                "Speed",
+                fq,
+                False,
+                "q4_0",
+                32768,
+                "Trimmed context + light KV for the fastest tokens/s.",
+            ),
         ]
     else:
         specs = [
             # key, label, prefer_quant, full_fit, kv_type, ctx, note
-            ("quality", "Quality", "Q6_K", False, "q8_0", 131072,
-             "Biggest quant + sharp q8 KV cache. Best answers; offloads MoE layers to CPU if needed."),
-            ("balanced", "Balanced", "Q4_K_M", False, "q4_0", 131072,
-             "Q4 weights + compact q4 KV. Good speed/quality mix at full context."),
-            ("speed", "Speed", "Q4_K_M", True, "q4_0", 32768,
-             "Smallest offload + trimmed context for the fastest tokens/s."),
+            (
+                "quality",
+                "Quality",
+                "Q6_K",
+                False,
+                "q8_0",
+                131072,
+                "Biggest quant + sharp q8 KV cache. Best answers; offloads MoE layers to CPU if needed.",
+            ),
+            (
+                "balanced",
+                "Balanced",
+                "Q4_K_M",
+                False,
+                "q4_0",
+                131072,
+                "Q4 weights + compact q4 KV. Good speed/quality mix at full context.",
+            ),
+            (
+                "speed",
+                "Speed",
+                "Q4_K_M",
+                True,
+                "q4_0",
+                32768,
+                "Smallest offload + trimmed context for the fastest tokens/s.",
+            ),
         ]
 
     profiles = []
@@ -190,29 +235,33 @@ def compute_serve_profiles(system, model, serve_weights_gb=None, serve_quant=Non
         cur_ctx = min(ctx, model_ctx_max)
         while cur_ctx >= 8192:
             kv = _kv_gb(model, cur_ctx, kv_type)
-            n_cpu_moe, fits = _cpu_moe_for_budget(model, quant, kv, budget, fixed_gb=serve_weights_gb)
+            n_cpu_moe, fits = _cpu_moe_for_budget(
+                model, quant, kv, budget, fixed_gb=serve_weights_gb
+            )
             est = _weights_gb(model, quant, serve_weights_gb) + kv + 0.6
             # If a non-MoE model can't fit even fully offloaded, try less context.
             if model.get("is_moe") or fits or cur_ctx <= 8192:
-                profiles.append({
-                    "key": key,
-                    "label": label,
-                    "quant": quant,
-                    "n_gpu_layers": 999,
-                    "n_cpu_moe": n_cpu_moe,
-                    "cache_type": kv_type,
-                    "ctx": cur_ctx,
-                    # When experts offload, GPU-resident VRAM tops out at the
-                    # budget (weights beyond it live in system RAM), so cap the
-                    # estimate at `budget`, not the full card — this also leaves
-                    # the vision-encoder headroom visible in the number.
-                    "est_vram_gb": round(min(est, budget), 1),
-                    # For MoE we treat it as fitting via offload; report whether
-                    # it fit WITHOUT offload as the "clean" flag.
-                    "fits": fits or bool(model.get("is_moe")),
-                    "offloads": n_cpu_moe > 0,
-                    "note": note,
-                })
+                profiles.append(
+                    {
+                        "key": key,
+                        "label": label,
+                        "quant": quant,
+                        "n_gpu_layers": 999,
+                        "n_cpu_moe": n_cpu_moe,
+                        "cache_type": kv_type,
+                        "ctx": cur_ctx,
+                        # When experts offload, GPU-resident VRAM tops out at the
+                        # budget (weights beyond it live in system RAM), so cap the
+                        # estimate at `budget`, not the full card — this also leaves
+                        # the vision-encoder headroom visible in the number.
+                        "est_vram_gb": round(min(est, budget), 1),
+                        # For MoE we treat it as fitting via offload; report whether
+                        # it fit WITHOUT offload as the "clean" flag.
+                        "fits": fits or bool(model.get("is_moe")),
+                        "offloads": n_cpu_moe > 0,
+                        "note": note,
+                    }
+                )
                 break
             cur_ctx //= 2
 

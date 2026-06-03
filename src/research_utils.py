@@ -9,6 +9,7 @@ used across deep_research.py, research_handler.py, and visual_report.py.
 # Thinking / reasoning block stripping
 # ---------------------------------------------------------------------------
 
+
 def strip_thinking(text):
     """Strip thinking / reasoning patterns from LLM output.
 
@@ -20,6 +21,7 @@ def strip_thinking(text):
     if text is None:
         return None
     from src.text_helpers import strip_think
+
     return strip_think(text, prose=False, prompt_echo=True)
 
 

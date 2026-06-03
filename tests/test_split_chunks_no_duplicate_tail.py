@@ -5,6 +5,7 @@ so any text longer than (size - overlap) got an extra final chunk duplicating
 the last `overlap` characters. That duplicate is indexed and keyword-scored
 twice, so retrieve_personal_keyword returns the same tail content twice.
 """
+
 from src.personal_docs import split_chunks
 
 

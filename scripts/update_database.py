@@ -26,9 +26,12 @@ def check_column_exists(engine, table_name, column_name):
     """Check if a column exists in a table."""
     inspector = inspect(engine)
     columns = inspector.get_columns(table_name)
-    return any(col['name'] == column_name for col in columns)
+    return any(col["name"] == column_name for col in columns)
 
-def add_column_sqlite(db_path, table_name, column_name, column_type, default_value=None):
+
+def add_column_sqlite(
+    db_path, table_name, column_name, column_type, default_value=None
+):
     """
     Add a column to a SQLite table by creating a new table, copying data, and renaming.
     This is necessary because SQLite has limited ALTER TABLE support.
@@ -72,6 +75,7 @@ def add_column_sqlite(db_path, table_name, column_name, column_type, default_val
     conn.commit()
     conn.close()
 
+
 def update_database():
     """Update the database schema and populate new columns."""
     # Create engine from DATABASE_URL
@@ -91,53 +95,67 @@ def update_database():
     db = SessionLocal()
     try:
         # Add last_accessed column if it doesn't exist
-        if not check_column_exists(engine, 'sessions', 'last_accessed'):
+        if not check_column_exists(engine, "sessions", "last_accessed"):
             print("Adding last_accessed column...")
             if db_path:  # SQLite
-                add_column_sqlite(db_path, 'sessions', 'last_accessed', 'DATETIME')
+                add_column_sqlite(db_path, "sessions", "last_accessed", "DATETIME")
             else:  # Other databases
                 with engine.connect() as conn:
-                    conn.execute(text("ALTER TABLE sessions ADD COLUMN last_accessed DATETIME"))
+                    conn.execute(
+                        text("ALTER TABLE sessions ADD COLUMN last_accessed DATETIME")
+                    )
                     conn.commit()
 
         # Add is_important column if it doesn't exist
-        if not check_column_exists(engine, 'sessions', 'is_important'):
+        if not check_column_exists(engine, "sessions", "is_important"):
             print("Adding is_important column...")
             if db_path:  # SQLite
-                add_column_sqlite(db_path, 'sessions', 'is_important', 'BOOLEAN', '0')
+                add_column_sqlite(db_path, "sessions", "is_important", "BOOLEAN", "0")
             else:  # Other databases
                 with engine.connect() as conn:
-                    conn.execute(text("ALTER TABLE sessions ADD COLUMN is_important BOOLEAN DEFAULT FALSE"))
+                    conn.execute(
+                        text(
+                            "ALTER TABLE sessions ADD COLUMN is_important BOOLEAN DEFAULT FALSE"
+                        )
+                    )
                     conn.commit()
 
         # Add message_count column if it doesn't exist
-        if not check_column_exists(engine, 'sessions', 'message_count'):
+        if not check_column_exists(engine, "sessions", "message_count"):
             print("Adding message_count column...")
             if db_path:  # SQLite
-                add_column_sqlite(db_path, 'sessions', 'message_count', 'INTEGER', '0')
+                add_column_sqlite(db_path, "sessions", "message_count", "INTEGER", "0")
             else:  # Other databases
                 with engine.connect() as conn:
-                    conn.execute(text("ALTER TABLE sessions ADD COLUMN message_count INTEGER DEFAULT 0"))
+                    conn.execute(
+                        text(
+                            "ALTER TABLE sessions ADD COLUMN message_count INTEGER DEFAULT 0"
+                        )
+                    )
                     conn.commit()
 
         # Populate last_accessed with created_at for existing records where last_accessed is NULL
         print("Populating last_accessed column...")
         with engine.connect() as conn:
-            conn.execute(text("""
+            conn.execute(
+                text("""
                 UPDATE sessions 
                 SET last_accessed = created_at 
                 WHERE last_accessed IS NULL
-            """))
+            """)
+            )
             conn.commit()
 
         # Populate is_important with FALSE for existing records where is_important is NULL
         print("Populating is_important column...")
         with engine.connect() as conn:
-            conn.execute(text("""
+            conn.execute(
+                text("""
                 UPDATE sessions 
                 SET is_important = 0 
                 WHERE is_important IS NULL
-            """))
+            """)
+            )
             conn.commit()
 
         # Calculate and populate message_count from chat_messages table
@@ -147,14 +165,16 @@ def update_database():
             conn.execute(text("UPDATE sessions SET message_count = 0"))
 
             # Then, count messages for each session and update
-            conn.execute(text("""
+            conn.execute(
+                text("""
                 UPDATE sessions 
                 SET message_count = (
                     SELECT COUNT(*) 
                     FROM chat_messages 
                     WHERE chat_messages.session_id = sessions.id
                 )
-            """))
+            """)
+            )
             conn.commit()
 
         print("Database update completed successfully!")
@@ -165,6 +185,7 @@ def update_database():
         raise
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     update_database()

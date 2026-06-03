@@ -12,6 +12,7 @@ from .memory_vector import MemoryVectorStore
 @dataclass
 class Memory:
     """A stored memory."""
+
     id: str
     text: str
     timestamp: int
@@ -22,6 +23,7 @@ class Memory:
 @dataclass
 class MemorySearchResult:
     """Result of memory search."""
+
     memories: list[Memory]
     query: str
     total: int
@@ -39,9 +41,11 @@ class MemoryService:
 
     def __init__(self, data_dir: str = "data"):
         self.manager = MemoryManager(data_dir)
-        self.vector_store = MemoryVectorStore(data_dir) if os.path.exists(
-            os.path.join(data_dir, "memory_vectors")
-        ) else None
+        self.vector_store = (
+            MemoryVectorStore(data_dir)
+            if os.path.exists(os.path.join(data_dir, "memory_vectors"))
+            else None
+        )
 
     async def remember(self, text: str, session_id: str | None = None) -> Memory:
         """
@@ -105,7 +109,9 @@ class MemoryService:
                 for r in results
                 if isinstance(r, dict)
             ]
-            return MemorySearchResult(memories=memories, query=query, total=len(memories))
+            return MemorySearchResult(
+                memories=memories, query=query, total=len(memories)
+            )
 
         # Fallback to keyword search
         results = self.manager.search_memories(query, limit=top_k)

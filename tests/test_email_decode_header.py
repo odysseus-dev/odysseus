@@ -10,6 +10,7 @@ so one bad message could take down the whole inbox render / poller loop.
 
 These pin the fallback so a bogus charset degrades gracefully to utf-8.
 """
+
 import os
 import tempfile
 from pathlib import Path

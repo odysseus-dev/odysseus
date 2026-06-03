@@ -68,14 +68,16 @@ def test_extraction_persists_facts_when_vector_store_fails_at_runtime(monkeypatc
     with tempfile.TemporaryDirectory() as data_dir:
         mgr = MemoryManager(data_dir)
 
-        _run(extract_and_store(
-            _FakeSession(),
-            mgr,
-            _BrokenVectorStore(),
-            endpoint_url="http://x",
-            model="m",
-            headers=None,
-        ))
+        _run(
+            extract_and_store(
+                _FakeSession(),
+                mgr,
+                _BrokenVectorStore(),
+                endpoint_url="http://x",
+                model="m",
+                headers=None,
+            )
+        )
 
         stored = mgr.load(owner="alice")
         texts = {e["text"] for e in stored}
@@ -106,8 +108,14 @@ def test_healthy_vector_store_still_dedups_normally(monkeypatch):
 
     with tempfile.TemporaryDirectory() as data_dir:
         mgr = MemoryManager(data_dir)
-        _run(extract_and_store(
-            _FakeSession(), mgr, _DedupVectorStore(),
-            endpoint_url="http://x", model="m", headers=None,
-        ))
+        _run(
+            extract_and_store(
+                _FakeSession(),
+                mgr,
+                _DedupVectorStore(),
+                endpoint_url="http://x",
+                model="m",
+                headers=None,
+            )
+        )
         assert mgr.load(owner="alice") == []

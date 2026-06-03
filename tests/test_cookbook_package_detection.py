@@ -22,17 +22,24 @@ def test_llama_cpp_maps_to_llama_cpp_python_distribution():
 
 
 def test_extras_and_version_markers_are_stripped():
-    assert _pip_dist_name({"name": "diffusers", "pip": "diffusers[torch]"}) == "diffusers"
+    assert (
+        _pip_dist_name({"name": "diffusers", "pip": "diffusers[torch]"}) == "diffusers"
+    )
     assert _pip_dist_name({"name": "sglang", "pip": "sglang[all]"}) == "sglang"
     assert _pip_dist_name({"name": "rembg", "pip": "rembg[gpu]"}) == "rembg"
     assert _pip_dist_name({"name": "x", "pip": "foo>=1.2,<2"}) == "foo"
-    assert _pip_dist_name({"name": "y", "pip": "bar==1.0 ; python_version>='3.9'"}) == "bar"
+    assert (
+        _pip_dist_name({"name": "y", "pip": "bar==1.0 ; python_version>='3.9'"})
+        == "bar"
+    )
 
 
 def test_plain_names_pass_through():
     assert _pip_dist_name({"name": "vllm", "pip": "vllm"}) == "vllm"
     assert _pip_dist_name({"name": "playwright", "pip": "playwright"}) == "playwright"
-    assert _pip_dist_name({"name": "hf_transfer", "pip": "hf_transfer"}) == "hf_transfer"
+    assert (
+        _pip_dist_name({"name": "hf_transfer", "pip": "hf_transfer"}) == "hf_transfer"
+    )
 
 
 def test_falls_back_to_import_name_when_no_pip_spec():
@@ -45,6 +52,8 @@ def test_route_uses_dist_name_helper_not_munged_import_name():
     """Lock the wiring: the local package check must look up metadata by the
     derived distribution name, not the old `name.replace('_','-')` (the exact
     bug that hid llama-cpp-python)."""
-    src = (Path(__file__).resolve().parents[1] / "routes" / "shell_routes.py").read_text(encoding="utf-8")
+    src = (
+        Path(__file__).resolve().parents[1] / "routes" / "shell_routes.py"
+    ).read_text(encoding="utf-8")
     assert "importlib_metadata.version(_pip_dist_name(pkg))" in src
     assert 'importlib_metadata.version(pkg["name"].replace("_", "-"))' not in src

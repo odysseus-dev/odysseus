@@ -7,6 +7,7 @@ pre-quantized GPTQ/AWQ model fell back to the default BPP (0.58 instead of
 0.50) and a zero quality penalty, over-estimating VRAM and inflating the
 score. The label is also shown in the UI and disagreed with the catalog.
 """
+
 from services.hwfit.fit import _native_quant
 from services.hwfit.models import QUANT_BPP, QUANT_QUALITY_PENALTY
 

@@ -10,6 +10,7 @@ full overwrite, no leftover tmp) and the two failure paths the implementation
 guarantees: the target file is preserved when serialization fails before the
 replace, and when ``os.replace`` itself fails.
 """
+
 import importlib.util
 import json
 from pathlib import Path

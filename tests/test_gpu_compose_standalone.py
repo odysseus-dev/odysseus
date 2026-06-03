@@ -120,9 +120,7 @@ def test_nvidia_odysseus_adds_only_overlay(base):
     # deploy block is new and matches the overlay's GPU reservation exactly.
     assert "deploy" not in base_svc
     devices = svc["deploy"]["resources"]["reservations"]["devices"]
-    assert devices == [
-        {"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}
-    ]
+    assert devices == [{"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}]
 
     # No AMD-only keys leaked in.
     assert "devices" not in svc

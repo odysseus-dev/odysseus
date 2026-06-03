@@ -33,10 +33,12 @@ def _ensure_init():
 
     from src.constants import DATA_DIR
     from src.memory import MemoryManager
+
     _memory_manager = MemoryManager(DATA_DIR)
 
     try:
         from src.memory_vector import MemoryVectorStore
+
         _memory_vector = MemoryVectorStore(DATA_DIR)
         if not _memory_vector.healthy:
             _memory_vector = None
@@ -58,8 +60,14 @@ async def list_tools() -> list[Tool]:
                         "enum": ["list", "add", "edit", "delete", "search"],
                         "description": "The action to perform",
                     },
-                    "text": {"type": "string", "description": "Memory text (add/edit) or search query (search)"},
-                    "memory_id": {"type": "string", "description": "Memory ID (edit/delete)"},
+                    "text": {
+                        "type": "string",
+                        "description": "Memory text (add/edit) or search query (search)",
+                    },
+                    "memory_id": {
+                        "type": "string",
+                        "description": "Memory ID (edit/delete)",
+                    },
                     "category": {
                         "type": "string",
                         "enum": ["fact", "event", "contact", "preference"],
@@ -87,7 +95,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         category_filter = arguments.get("category", "")
         memories = _memory_manager.load()
         if category_filter:
-            memories = [m for m in memories if m.get("category", "").lower() == category_filter.lower()]
+            memories = [
+                m
+                for m in memories
+                if m.get("category", "").lower() == category_filter.lower()
+            ]
         if not memories:
             msg = "No memories found"
             if category_filter:
@@ -119,13 +131,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 _memory_vector.add(entry["id"], text)
             except Exception:
                 pass
-        return [TextContent(type="text", text=f"Memory added: [{category}] {text} (id: {entry['id'][:8]})")]
+        return [
+            TextContent(
+                type="text",
+                text=f"Memory added: [{category}] {text} (id: {entry['id'][:8]})",
+            )
+        ]
 
     elif action == "edit":
         memory_id = arguments.get("memory_id", "")
         new_text = arguments.get("text", "")
         if not memory_id or not new_text:
-            return [TextContent(type="text", text="Error: edit needs memory_id and text")]
+            return [
+                TextContent(type="text", text="Error: edit needs memory_id and text")
+            ]
         memories = _memory_manager.load_all()
         found = False
         full_id = None
@@ -137,7 +156,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 full_id = m["id"]
                 break
         if not found:
-            return [TextContent(type="text", text=f"Error: Memory '{memory_id}' not found")]
+            return [
+                TextContent(type="text", text=f"Error: Memory '{memory_id}' not found")
+            ]
         _memory_manager.save(memories)
         if _memory_vector and _memory_vector.healthy and full_id:
             try:
@@ -162,7 +183,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 deleted_category = m.get("category", "")
                 break
         if not full_id:
-            return [TextContent(type="text", text=f"Error: Memory '{memory_id}' not found")]
+            return [
+                TextContent(type="text", text=f"Error: Memory '{memory_id}' not found")
+            ]
         memories = [m for m in memories if m.get("id") != full_id]
         _memory_manager.save(memories)
         if _memory_vector and _memory_vector.healthy and full_id:
@@ -171,21 +194,33 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             except Exception:
                 pass
         cat = f"[{deleted_category}] " if deleted_category else ""
-        snippet = deleted_text if len(deleted_text) <= 120 else deleted_text[:117] + "..."
-        return [TextContent(type="text", text=f"Memory deleted: {cat}{snippet} (id: {memory_id})")]
+        snippet = (
+            deleted_text if len(deleted_text) <= 120 else deleted_text[:117] + "..."
+        )
+        return [
+            TextContent(
+                type="text", text=f"Memory deleted: {cat}{snippet} (id: {memory_id})"
+            )
+        ]
 
     elif action == "search":
         query = arguments.get("text", "")
         if not query:
             return [TextContent(type="text", text="Error: search needs text (query)")]
         memories = _memory_manager.load()
-        if hasattr(_memory_manager, 'get_relevant_memories'):
-            results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=20)
+        if hasattr(_memory_manager, "get_relevant_memories"):
+            results = _memory_manager.get_relevant_memories(
+                query, memories, threshold=0.05, max_items=20
+            )
         else:
             query_lower = query.lower()
-            results = [m for m in memories if query_lower in m.get("text", "").lower()][:20]
+            results = [m for m in memories if query_lower in m.get("text", "").lower()][
+                :20
+            ]
         if not results:
-            return [TextContent(type="text", text=f"No memories found matching '{query}'.")]
+            return [
+                TextContent(type="text", text=f"No memories found matching '{query}'.")
+            ]
         lines = [f"Found {len(results)} matching memories:\n"]
         for m in results:
             cat = m.get("category", "fact")
@@ -195,12 +230,19 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text="\n".join(lines))]
 
     else:
-        return [TextContent(type="text", text=f"Error: Unknown action '{action}'. Use: list, add, edit, delete, search")]
+        return [
+            TextContent(
+                type="text",
+                text=f"Error: Unknown action '{action}'. Use: list, add, edit, delete, search",
+            )
+        ]
 
 
 async def run():
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+        await server.run(
+            read_stream, write_stream, server.create_initialization_options()
+        )
 
 
 if __name__ == "__main__":

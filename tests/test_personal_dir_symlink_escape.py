@@ -10,6 +10,7 @@ _resolve_allowed_personal_dir is a closure inside setup_personal_routes, so the
 source-level test pins the fix and the behavioural test proves the underlying
 confinement principle.
 """
+
 import ast
 import os
 from pathlib import Path
@@ -20,7 +21,10 @@ SRC = Path(__file__).resolve().parent.parent / "routes" / "personal_routes.py"
 def _function_source(src_text, name):
     tree = ast.parse(src_text)
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             return ast.get_source_segment(src_text, node)
     raise AssertionError(f"{name} not found in {SRC}")
 
@@ -49,6 +53,8 @@ def test_realpath_catches_symlink_escape(tmp_path):
 
     base_abs = os.path.realpath(base)  # base itself may live under a symlinked tmp
     # abspath: the symlink still looks inside base -> escape not detected
-    assert os.path.commonpath([os.path.abspath(base / "escape"), os.path.abspath(base)]) == os.path.abspath(base)
+    assert os.path.commonpath(
+        [os.path.abspath(base / "escape"), os.path.abspath(base)]
+    ) == os.path.abspath(base)
     # realpath: the symlink resolves to `outside` -> escape detected
     assert os.path.commonpath([os.path.realpath(link), base_abs]) != base_abs

@@ -5,6 +5,7 @@ The old call sites used ``str.lstrip("\\n[PDF content]:")``, which treats the
 argument as a *set of characters* and keeps stripping leading characters that
 happen to be in that set — corrupting the start of the extracted document.
 """
+
 from src.document_processor import _PDF_CONTENT_MARKER, strip_pdf_content_marker
 
 

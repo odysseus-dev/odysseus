@@ -77,20 +77,29 @@ def _md_named(name: str) -> str:
 
 
 def _request(user: str, body: dict | None = None) -> Request:
-    scope = {"type": "http", "app": type("App", (), {"state": State()})(),
-             "state": {"current_user": user}, "headers": []}
+    scope = {
+        "type": "http",
+        "app": type("App", (), {"state": State()})(),
+        "state": {"current_user": user},
+        "headers": [],
+    }
     if body is None:
         return Request(scope=scope)
 
     async def _receive():
-        return {"type": "http.request", "body": json.dumps(body).encode(), "more_body": False}
+        return {
+            "type": "http.request",
+            "body": json.dumps(body).encode(),
+            "more_body": False,
+        }
 
     return Request(scope=scope, receive=_receive)
 
 
 def _handler(router, path: str, method: str):
-    return next(r.endpoint for r in router.routes
-               if r.path == path and method in r.methods)
+    return next(
+        r.endpoint for r in router.routes if r.path == path and method in r.methods
+    )
 
 
 @pytest.mark.asyncio
@@ -106,7 +115,9 @@ async def test_markdown_save_does_not_rename_then_delete_works(tmp_path):
 
     # Save markdown whose frontmatter renames the skill. The save must keep the
     # original name (no rename), so the returned name is unchanged.
-    res = await save(_request("alice", {"markdown": _md_named("renamed-skill")}), "test-skill")
+    res = await save(
+        _request("alice", {"markdown": _md_named("renamed-skill")}), "test-skill"
+    )
     assert res["name"] == "test-skill", f"save renamed the skill to {res.get('name')!r}"
 
     # The skill still lives under its original id (the edit DID apply).

@@ -1,9 +1,15 @@
 """Regression: skill retrieval must match tags as whole tokens, not substrings."""
+
 import sys
 from unittest.mock import MagicMock
 
 # Stub heavy deps so importing the skills manager doesn't pull DB / FastAPI.
-for _mod in ("sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext", "sqlalchemy.ext.declarative"):
+for _mod in (
+    "sqlalchemy",
+    "sqlalchemy.orm",
+    "sqlalchemy.ext",
+    "sqlalchemy.ext.declarative",
+):
     if _mod not in sys.modules:
         try:
             __import__(_mod)
@@ -16,8 +22,14 @@ from services.memory.skills import SkillsManager  # noqa: E402
 def _skill(name, description, tags):
     # status must be published/draft or get_relevant_skills filters the skill
     # out before the tag-scoring path runs.
-    return {"name": name, "description": description, "when_to_use": "",
-            "tags": tags, "procedure": [], "status": "published"}
+    return {
+        "name": name,
+        "description": description,
+        "when_to_use": "",
+        "tags": tags,
+        "procedure": [],
+        "status": "published",
+    }
 
 
 def test_tag_substring_does_not_boost(tmp_path):

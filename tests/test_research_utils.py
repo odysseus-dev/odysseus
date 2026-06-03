@@ -84,13 +84,28 @@ class TestIsLowQuality:
     # legitimate findings that merely discuss them as their subject were
     # discarded. They must now be kept.
     def test_keeps_finding_about_copyright_law(self):
-        assert is_low_quality("This article explains the new EU copyright directive reforms.") is False
+        assert (
+            is_low_quality(
+                "This article explains the new EU copyright directive reforms."
+            )
+            is False
+        )
 
     def test_keeps_finding_about_cookies(self):
-        assert is_low_quality("A technical guide to how tracking cookies and session cookies work.") is False
+        assert (
+            is_low_quality(
+                "A technical guide to how tracking cookies and session cookies work."
+            )
+            is False
+        )
 
     def test_keeps_recipe_mentioning_cookies(self):
-        assert is_low_quality("Recipe: the best chocolate chip cookies you will ever bake.") is False
+        assert (
+            is_low_quality(
+                "Recipe: the best chocolate chip cookies you will ever bake."
+            )
+            is False
+        )
 
     # Boilerplate is still caught via phrases.
     def test_cookie_consent_banner_still_filtered(self):

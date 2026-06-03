@@ -102,7 +102,9 @@ def test_manage_documents_read_filters_to_calling_owner(monkeypatch):
     _install_database_stub(monkeypatch, "core.database", query)
 
     result = asyncio.run(
-        tools.do_manage_documents('{"action":"read","document_id":"doc-bob"}', owner="alice")
+        tools.do_manage_documents(
+            '{"action":"read","document_id":"doc-bob"}', owner="alice"
+        )
     )
 
     assert result["exit_code"] == 1
@@ -129,10 +131,12 @@ def test_suggest_document_active_id_filters_to_calling_owner(monkeypatch):
     _install_database_stub(monkeypatch, "src.database", query)
     tools.set_active_document("doc-bob")
     try:
-        result = asyncio.run(tools.do_suggest_document(
-            "<<<FIND>>>\nold\n<<<SUGGEST>>>\nnew\n<<<REASON>>>\nbetter\n<<<END>>>",
-            owner="alice",
-        ))
+        result = asyncio.run(
+            tools.do_suggest_document(
+                "<<<FIND>>>\nold\n<<<SUGGEST>>>\nnew\n<<<REASON>>>\nbetter\n<<<END>>>",
+                owner="alice",
+            )
+        )
     finally:
         tools.set_active_document(None)
 

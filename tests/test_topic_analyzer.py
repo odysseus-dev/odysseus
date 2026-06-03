@@ -1,4 +1,5 @@
 """Tests for topic keyword matching (src/topic_analyzer.py)."""
+
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -15,7 +16,9 @@ from src.topic_analyzer import analyze_topics
 
 def _sm(*messages):
     history = [{"role": "user", "content": c} for c in messages]
-    return SimpleNamespace(sessions={"s1": {"owner": "alice", "name": "S", "history": history}})
+    return SimpleNamespace(
+        sessions={"s1": {"owner": "alice", "name": "S", "history": history}}
+    )
 
 
 def _freq(result):
@@ -25,12 +28,17 @@ def _freq(result):
 def test_substring_does_not_false_match_technology():
     # Regression: "ai" matched inside "email"/"again"/"rain"/"wait", flagging
     # Technology for messages with no technical content at all.
-    result = analyze_topics(_sm("Can you send me an email again about the rain? I will wait."), owner="alice")
+    result = analyze_topics(
+        _sm("Can you send me an email again about the rain? I will wait."),
+        owner="alice",
+    )
     assert "Technology" not in _freq(result)
 
 
 def test_real_keywords_still_match():
-    result = analyze_topics(_sm("I wrote some Python code to test the algorithm."), owner="alice")
+    result = analyze_topics(
+        _sm("I wrote some Python code to test the algorithm."), owner="alice"
+    )
     assert _freq(result).get("Technology", 0) >= 1
 
 
@@ -59,14 +67,14 @@ def test_topic_analyzer_hydrates_sessions(monkeypatch):
         owner="alice",
         message_count=1,
         created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
+        updated_at=datetime.utcnow(),
     )
     m = DbChatMessage(
         id="msg-1",
         session_id=session_id,
         role="user",
         content="I love writing python code.",
-        timestamp=datetime.utcnow()
+        timestamp=datetime.utcnow(),
     )
 
     db.add(s)
@@ -77,6 +85,7 @@ def test_topic_analyzer_hydrates_sessions(monkeypatch):
     # 4. Patch SessionLocal to use our in-memory DB
     import core.database
     import core.session_manager
+
     monkeypatch.setattr(core.session_manager, "SessionLocal", TestSessionLocal)
     monkeypatch.setattr(core.database, "SessionLocal", TestSessionLocal)
 

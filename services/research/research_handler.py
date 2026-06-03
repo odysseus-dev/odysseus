@@ -7,6 +7,7 @@ if needed.
 
 Includes a task registry so research survives page refreshes and can be cancelled.
 """
+
 import asyncio
 import json
 import logging
@@ -33,6 +34,7 @@ class ResearchHandler:
         """Initialize the legacy research engine as a fallback."""
         try:
             from research_engine import Config, ResearchOrchestrator
+
             config = Config(max_searches=12, max_content_per_page=15000)
             self._legacy_engine = ResearchOrchestrator(config)
             logger.info("Legacy ResearchOrchestrator initialized (fallback)")
@@ -80,7 +82,9 @@ class ResearchHandler:
         async def _run():
             try:
                 result = await self.call_research_service(
-                    query, llm_endpoint, llm_model,
+                    query,
+                    llm_endpoint,
+                    llm_model,
                     max_time=max_time,
                     progress_callback=on_progress,
                     _task_entry=entry,
@@ -280,24 +284,34 @@ class ResearchHandler:
                 logger.info(f"  {key}: {value}")
 
             return self._format_research_report(
-                query, report, stats, elapsed,
+                query,
+                report,
+                stats,
+                elapsed,
                 findings=researcher.findings,
                 evolving_report=researcher.evolving_report,
             )
 
         except Exception as e:
             logger.error(f"DeepResearcher failed: {e}", exc_info=True)
-            return await self._fallback_research(query, llm_endpoint, llm_model, max_time, str(e))
+            return await self._fallback_research(
+                query, llm_endpoint, llm_model, max_time, str(e)
+            )
 
     async def _fallback_research(
-        self, query: str, llm_endpoint: str, llm_model: str,
-        max_time: int, primary_error: str,
+        self,
+        query: str,
+        llm_endpoint: str,
+        llm_model: str,
+        max_time: int,
+        primary_error: str,
     ) -> str:
         """Fall back to legacy engine, then to basic web search."""
         # Try legacy orchestrator
         if self._legacy_engine:
             try:
                 import asyncio
+
                 logger.info("Falling back to legacy ResearchOrchestrator...")
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(
@@ -321,15 +335,20 @@ class ResearchHandler:
             return {
                 "Findings": len(self._legacy_engine.findings),
                 "Sources": len(self._legacy_engine.source_reports),
-                "Searches": tracker.counters['searches_executed'],
-                "URLs": tracker.counters['urls_processed'],
+                "Searches": tracker.counters["searches_executed"],
+                "URLs": tracker.counters["urls_processed"],
             }
         except Exception:
             return {}
 
     def _format_research_report(
-        self, query: str, full_report: str, stats: dict, elapsed: float,
-        findings: list = None, evolving_report: str = None,
+        self,
+        query: str,
+        full_report: str,
+        stats: dict,
+        elapsed: float,
+        findings: list = None,
+        evolving_report: str = None,
     ) -> str:
         """Format research report with sources list and expandable raw findings."""
         summary_lines = [
@@ -364,7 +383,11 @@ class ResearchHandler:
                 title = f.get("title", "") or "Untitled"
                 summary = f.get("summary", "")
                 evidence = f.get("evidence", "")
-                content = summary if summary else (evidence[:2000] if evidence else "(no content)")
+                content = (
+                    summary
+                    if summary
+                    else (evidence[:2000] if evidence else "(no content)")
+                )
                 parts.append(f"**{i}. [{title}]({url})**\n\n{content}")
             raw_findings_section = "\n\n".join(parts)
 

@@ -29,7 +29,9 @@ def _load_mail_cli(monkeypatch):
     monkeypatch.setitem(sys.modules, "core.database", database_mod)
 
     path = Path(__file__).resolve().parent.parent / "scripts" / "odysseus-mail"
-    loader = importlib.machinery.SourceFileLoader("odysseus_mail_cli_under_test", str(path))
+    loader = importlib.machinery.SourceFileLoader(
+        "odysseus_mail_cli_under_test", str(path)
+    )
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
@@ -39,7 +41,9 @@ def _load_mail_cli(monkeypatch):
 def test_recipient_list_trims_to_cc_and_bcc(monkeypatch):
     cli = _load_mail_cli(monkeypatch)
 
-    assert cli._recipient_list(" a@example.com, ", "b@example.com", " c@example.com ") == [
+    assert cli._recipient_list(
+        " a@example.com, ", "b@example.com", " c@example.com "
+    ) == [
         "a@example.com",
         "b@example.com",
         "c@example.com",

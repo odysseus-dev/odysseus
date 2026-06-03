@@ -6,6 +6,7 @@ raises ValueError. params_b is called for every model in analyze_model/
 rank_models, so one bad catalog row aborted the entire ranking request. A
 malformed count is now treated as unknown size (0.0) instead of raising.
 """
+
 from services.hwfit.models import params_b
 
 

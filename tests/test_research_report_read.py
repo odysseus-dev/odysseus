@@ -13,6 +13,7 @@ These tests pin both halves:
 2. the agent instructions steer to `manage_research read` and away from
    web_fetching the HTML report.
 """
+
 import json
 from pathlib import Path
 
@@ -29,12 +30,17 @@ def saved_report():
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
     rid = "rp-testreport1363"
     path = _DATA_DIR / f"{rid}.json"
-    path.write_text(json.dumps({
-        "query": "trending blender video ideas",
-        "result": "## Findings\nShort-form Geometry Nodes tutorials are trending.",
-        "sources": [{"title": "Example", "url": "https://example.com"}],
-        "completed_at": 123,
-    }), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "query": "trending blender video ideas",
+                "result": "## Findings\nShort-form Geometry Nodes tutorials are trending.",
+                "sources": [{"title": "Example", "url": "https://example.com"}],
+                "completed_at": 123,
+            }
+        ),
+        encoding="utf-8",
+    )
     try:
         yield rid
     finally:

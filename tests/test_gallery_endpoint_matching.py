@@ -15,11 +15,17 @@ def test_gallery_url_normalization_bug():
     for node in ast.walk(tree):
         if isinstance(node, ast.Compare):
             segment = ast.get_source_segment(source, node) or ""
-            if "ep.base_url" in segment and "base" in segment and "_norm_url" not in segment:
+            if (
+                "ep.base_url" in segment
+                and "base" in segment
+                and "_norm_url" not in segment
+            ):
                 compare_node = node
                 break
 
-    assert compare_node is not None, "Could not find the ep.base_url vs base comparison inside gallery_routes.py"
+    assert compare_node is not None, (
+        "Could not find the ep.base_url vs base comparison inside gallery_routes.py"
+    )
 
     # Compile the compare node into an expression
     expr = ast.Expression(body=compare_node)
@@ -29,12 +35,15 @@ def test_gallery_url_normalization_bug():
         class MockEP:
             def __init__(self, url):
                 self.base_url = url
+
         return eval(compiled_code, {}, {"ep": MockEP(ep_url), "base": base_url})
 
     # Test cases that SHOULD NOT match under a correct implementation
     # (Buggy rstrip('/v1') logic incorrectly treats these as equal)
     assert check_match("http://localhost:8000/v11", "http://localhost:8000") is False
-    assert check_match("http://localhost:8000/dev1", "http://localhost:8000/dev") is False
+    assert (
+        check_match("http://localhost:8000/dev1", "http://localhost:8000/dev") is False
+    )
 
     # Test cases that SHOULD match under a correct implementation
     assert check_match("http://localhost:8000/v1", "http://localhost:8000") is True

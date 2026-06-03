@@ -41,12 +41,17 @@ async def test_create_event_with_rrule_persists_recurrence():
 
     owner = "tester-" + uuid.uuid4().hex[:6]
     rrule = "FREQ=WEEKLY;BYDAY=MO"
-    res = await do_manage_calendar(json.dumps({
-        "action": "create_event",
-        "summary": "Standup",
-        "dtstart": "2026-06-08T09:00:00Z",
-        "rrule": rrule,
-    }), owner=owner)
+    res = await do_manage_calendar(
+        json.dumps(
+            {
+                "action": "create_event",
+                "summary": "Standup",
+                "dtstart": "2026-06-08T09:00:00Z",
+                "rrule": rrule,
+            }
+        ),
+        owner=owner,
+    )
     assert res.get("exit_code", 0) == 0, res
     uid = res.get("uid")
     assert uid, res
@@ -65,11 +70,16 @@ async def test_create_event_without_rrule_is_single():
     from src.tool_implementations import do_manage_calendar
 
     owner = "tester-" + uuid.uuid4().hex[:6]
-    res = await do_manage_calendar(json.dumps({
-        "action": "create_event",
-        "summary": "One-off",
-        "dtstart": "2026-06-09T10:00:00Z",
-    }), owner=owner)
+    res = await do_manage_calendar(
+        json.dumps(
+            {
+                "action": "create_event",
+                "summary": "One-off",
+                "dtstart": "2026-06-09T10:00:00Z",
+            }
+        ),
+        owner=owner,
+    )
     assert res.get("exit_code", 0) == 0, res
     db = _TS()
     try:

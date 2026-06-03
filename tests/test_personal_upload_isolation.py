@@ -14,13 +14,17 @@ def test_personal_upload_paths_are_owner_scoped_and_unique(tmp_path, monkeypatch
     assert Path(bob_dir).parent == tmp_path
     assert alice_dir != bob_dir
 
-    first_path, first_stored, first_display = personal_routes._unique_personal_upload_path(
-        alice_dir,
-        "notes.txt",
+    first_path, first_stored, first_display = (
+        personal_routes._unique_personal_upload_path(
+            alice_dir,
+            "notes.txt",
+        )
     )
-    second_path, second_stored, second_display = personal_routes._unique_personal_upload_path(
-        alice_dir,
-        "notes.txt",
+    second_path, second_stored, second_display = (
+        personal_routes._unique_personal_upload_path(
+            alice_dir,
+            "notes.txt",
+        )
     )
 
     assert first_display == second_display == "notes.txt"

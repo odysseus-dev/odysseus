@@ -10,7 +10,9 @@ import pytest
 
 def _load_backup_cli():
     path = Path(__file__).resolve().parent.parent / "scripts" / "odysseus-backup"
-    loader = importlib.machinery.SourceFileLoader("odysseus_backup_under_test", str(path))
+    loader = importlib.machinery.SourceFileLoader(
+        "odysseus_backup_under_test", str(path)
+    )
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)

@@ -10,7 +10,9 @@ from services.search import providers
 
 
 def test_service_safesearch_values_match_provider_contract(monkeypatch):
-    monkeypatch.setattr(providers, "_get_search_settings", lambda: {"search_safesearch": "strict"})
+    monkeypatch.setattr(
+        providers, "_get_search_settings", lambda: {"search_safesearch": "strict"}
+    )
     assert providers._safesearch_for("searxng") == "2"
     assert providers._safesearch_for("brave") == "strict"
     assert providers._safesearch_for("duckduckgo_lib") == "on"
@@ -18,7 +20,9 @@ def test_service_safesearch_values_match_provider_contract(monkeypatch):
     assert providers._safesearch_for("google_pse") == "active"
     assert providers._safesearch_for("serper") == "active"
 
-    monkeypatch.setattr(providers, "_get_search_settings", lambda: {"search_safesearch": "off"})
+    monkeypatch.setattr(
+        providers, "_get_search_settings", lambda: {"search_safesearch": "off"}
+    )
     assert providers._safesearch_for("searxng") == "0"
     assert providers._safesearch_for("brave") == "off"
     assert providers._safesearch_for("duckduckgo_lib") == "off"
@@ -37,7 +41,11 @@ def test_service_searxng_json_sends_safesearch(monkeypatch):
         def json(self):
             return {
                 "results": [
-                    {"title": "Result", "url": "https://example.com", "content": "Snippet"}
+                    {
+                        "title": "Result",
+                        "url": "https://example.com",
+                        "content": "Snippet",
+                    }
                 ]
             }
 
@@ -47,7 +55,9 @@ def test_service_searxng_json_sends_safesearch(monkeypatch):
         return _Response()
 
     monkeypatch.setattr(providers, "_get_search_instance", lambda: "http://searx.test")
-    monkeypatch.setattr(providers, "_get_search_settings", lambda: {"search_safesearch": "moderate"})
+    monkeypatch.setattr(
+        providers, "_get_search_settings", lambda: {"search_safesearch": "moderate"}
+    )
     monkeypatch.setattr(providers.httpx, "get", fake_get)
 
     results = providers.searxng_search_api("odysseus", count=1)
@@ -62,9 +72,12 @@ def test_service_ddg_redirect_ignores_lookalike_hosts():
         url = f"https://{host}/l/?uddg=https%3A%2F%2Fexample.com"
         assert providers._resolve_ddg_redirect(url) == url
 
-    assert providers._resolve_ddg_redirect(
-        "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com"
-    ) == "https://example.com"
+    assert (
+        providers._resolve_ddg_redirect(
+            "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com"
+        )
+        == "https://example.com"
+    )
 
 
 def test_service_ddg_html_fallback_sends_safesearch(monkeypatch):
@@ -91,7 +104,9 @@ def test_service_ddg_html_fallback_sends_safesearch(monkeypatch):
         return _Response()
 
     monkeypatch.setitem(sys.modules, "duckduckgo_search", None)
-    monkeypatch.setattr(providers, "_get_search_settings", lambda: {"search_safesearch": "off"})
+    monkeypatch.setattr(
+        providers, "_get_search_settings", lambda: {"search_safesearch": "off"}
+    )
     monkeypatch.setattr(providers.httpx, "get", fake_get)
 
     results = providers.duckduckgo_search("odysseus", count=1)

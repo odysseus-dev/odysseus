@@ -1,5 +1,6 @@
 # src/chat_handler.py
 """Handler for chat endpoint operations."""
+
 import asyncio
 import logging
 import os
@@ -145,9 +146,12 @@ class ChatHandler:
 
         # Analyze images — skip if vision disabled, or if main model is vision-capable
         from src.settings import get_setting
+
         vision_enabled = get_setting("vision_enabled", True)
         main_is_vision = await asyncio.to_thread(
-            model_supports_vision, sess.model or "", getattr(sess, "endpoint_url", "") or ""
+            model_supports_vision,
+            sess.model or "",
+            getattr(sess, "endpoint_url", "") or "",
         )
 
         # Resolve uploads once with the session owner. Attachment IDs are
@@ -163,14 +167,18 @@ class ChatHandler:
             for att_id in att_ids:
                 fi = files_by_id.get(att_id)
                 if fi:
-                    attachment_meta.append({
-                        "id": fi["id"],
-                        "name": fi.get("name") or fi.get("original_name") or fi["id"],
-                        "mime": fi.get("mime", ""),
-                        "size": fi.get("size", 0),
-                        "width": fi.get("width"),
-                        "height": fi.get("height"),
-                    })
+                    attachment_meta.append(
+                        {
+                            "id": fi["id"],
+                            "name": fi.get("name")
+                            or fi.get("original_name")
+                            or fi["id"],
+                            "mime": fi.get("mime", ""),
+                            "size": fi.get("size", 0),
+                            "width": fi.get("width"),
+                            "height": fi.get("height"),
+                        }
+                    )
 
         if att_ids and vision_enabled:
             meta_by_id = {m["id"]: m for m in attachment_meta}
@@ -224,7 +232,10 @@ class ChatHandler:
                             vl_model = vl_result.get("model", "")
                             if vl_desc and not vl_desc.startswith("["):
                                 try:
-                                    os.makedirs(os.path.join(UPLOAD_DIR, ".vision"), exist_ok=True)
+                                    os.makedirs(
+                                        os.path.join(UPLOAD_DIR, ".vision"),
+                                        exist_ok=True,
+                                    )
                                     with open(_vcache, "w", encoding="utf-8") as _vf:
                                         _vf.write(vl_desc)
                                 except Exception:
@@ -239,7 +250,10 @@ class ChatHandler:
                             _m["vision_model"] = vl_model
 
         user_content = build_user_content(
-            enhanced_message, att_ids, UPLOAD_DIR, self.upload_handler,
+            enhanced_message,
+            att_ids,
+            UPLOAD_DIR,
+            self.upload_handler,
             session_id=getattr(sess, "id", None),
             auto_opened_docs=auto_opened_docs,
             owner=owner,
@@ -249,16 +263,22 @@ class ChatHandler:
         # Strip image_url entries for text-only models (VL description is already in the text)
         if not vision_enabled and isinstance(user_content, list):
             text_parts = [
-                item.get("text", "") for item in user_content
+                item.get("text", "")
+                for item in user_content
                 if isinstance(item, dict) and item.get("type") == "text"
             ]
-            user_content = "\n".join(text_parts).strip() if text_parts else enhanced_message
+            user_content = (
+                "\n".join(text_parts).strip() if text_parts else enhanced_message
+            )
         elif not main_is_vision and isinstance(user_content, list):
             text_parts = [
-                item.get("text", "") for item in user_content
+                item.get("text", "")
+                for item in user_content
                 if isinstance(item, dict) and item.get("type") == "text"
             ]
-            user_content = "\n".join(text_parts).strip() if text_parts else enhanced_message
+            user_content = (
+                "\n".join(text_parts).strip() if text_parts else enhanced_message
+            )
 
         # Extract text portion for naming / context
         if isinstance(user_content, list):
@@ -269,7 +289,13 @@ class ChatHandler:
         else:
             text_for_context = user_content
 
-        return enhanced_message, user_content, text_for_context, youtube_transcripts, attachment_meta
+        return (
+            enhanced_message,
+            user_content,
+            text_for_context,
+            youtube_transcripts,
+            attachment_meta,
+        )
 
     # ------------------------------------------------------------------
     # Session helpers

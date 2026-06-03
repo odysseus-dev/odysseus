@@ -1,4 +1,5 @@
 """Tests for extract_quotes (src/search/content.py)."""
+
 import pytest
 
 pytest.importorskip("bs4")  # content.py imports BeautifulSoup at module load

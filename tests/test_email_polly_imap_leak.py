@@ -93,7 +93,8 @@ async def test_auto_summarize_pass_logs_out_imap_on_select_failure(monkeypatch):
     monkeypatch.setattr(email_pollers, "_load_settings", fake_load_settings)
 
     result = await email_pollers._auto_summarize_pass_single(
-        account_id="acct-1", progress_cb=None,
+        account_id="acct-1",
+        progress_cb=None,
     )
 
     assert captured.get("connect_called") is True, (

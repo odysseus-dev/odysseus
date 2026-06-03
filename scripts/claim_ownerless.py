@@ -51,6 +51,7 @@ def main():
 
     # 2. Database tables (sessions, gallery, comparisons, documents)
     from core.database import Document, Session, SessionLocal
+
     try:
         from core.database import GalleryImage
     except ImportError:
@@ -70,17 +71,27 @@ def main():
         # mirroring the sessions/gallery/comparisons blocks). The old query set
         # session_id to itself — a no-op — and never set owner, so ownerless
         # documents stayed ownerless and invisible in the user's Library.
-        count = db.query(Document).filter(Document.owner == None).update({"owner": owner})
+        count = (
+            db.query(Document).filter(Document.owner == None).update({"owner": owner})
+        )
         print(f"  documents: claimed {count}")
 
         # Gallery
         if GalleryImage:
-            count = db.query(GalleryImage).filter(GalleryImage.owner == None).update({"owner": owner})
+            count = (
+                db.query(GalleryImage)
+                .filter(GalleryImage.owner == None)
+                .update({"owner": owner})
+            )
             print(f"  gallery: claimed {count}")
 
         # Comparisons
         if Comparison:
-            count = db.query(Comparison).filter(Comparison.owner == None).update({"owner": owner})
+            count = (
+                db.query(Comparison)
+                .filter(Comparison.owner == None)
+                .update({"owner": owner})
+            )
             print(f"  comparisons: claimed {count}")
 
         db.commit()

@@ -11,8 +11,9 @@ from services.memory.skill_format import slugify
 from services.memory.skills import SkillsManager
 
 
-def _write_skill_md(skills_root: Path, category: str, name: str,
-                    owner: str, description: str) -> Path:
+def _write_skill_md(
+    skills_root: Path, category: str, name: str, owner: str, description: str
+) -> Path:
     """Drop a real SKILL.md on disk for the given owner."""
     skill_dir = skills_root / slugify(category or "general", fallback="general") / name
     skill_dir.mkdir(parents=True, exist_ok=True)
@@ -84,22 +85,20 @@ async def test_delete_skill_route_handler_scoping(tmp_path):
 
     # Find the delete route handler endpoint
     delete_route_handler = next(
-        route.endpoint for route in router.routes
+        route.endpoint
+        for route in router.routes
         if route.path == "/api/skills/{skill_id}" and "DELETE" in route.methods
     )
 
     # Construct a mock FastAPI Request
     class DummyApp:
         state = State()
+
     app = DummyApp()
 
-    request = Request(scope={
-        "type": "http",
-        "app": app,
-        "state": {
-            "current_user": "alice"
-        }
-    })
+    request = Request(
+        scope={"type": "http", "app": app, "state": {"current_user": "alice"}}
+    )
 
     # Before the fix, this raises HTTPException 404 because delete_skill was called without owner.
     # After the fix, it deletes successfully and returns {"ok": True}.

@@ -45,6 +45,7 @@ class TTSService:
 
     def _load_settings(self) -> dict:
         from src.settings import load_settings
+
         saved = load_settings()
         return {
             "tts_enabled": saved.get("tts_enabled", True),
@@ -73,7 +74,9 @@ class TTSService:
 
     # ── Cache ──
 
-    def _cache_key(self, text: str, provider: str, model: str, voice: str, speed: float = 1.0) -> str:
+    def _cache_key(
+        self, text: str, provider: str, model: str, voice: str, speed: float = 1.0
+    ) -> str:
         raw = f"{provider}|{model}|{voice}|{speed}|{text}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
@@ -85,7 +88,16 @@ class TTSService:
         return None
 
     def _put_cache(self, key: str, data: bytes):
-        ext = ".mp3" if (len(data) >= 3 and (data[:3] == b'ID3' or (data[0] == 0xff and (data[1] & 0xe0) == 0xe0))) else ".wav"
+        ext = (
+            ".mp3"
+            if (
+                len(data) >= 3
+                and (
+                    data[:3] == b"ID3" or (data[0] == 0xFF and (data[1] & 0xE0) == 0xE0)
+                )
+            )
+            else ".wav"
+        )
         (self.cache_dir / f"{key}{ext}").write_bytes(data)
 
     def clear_cache(self):
@@ -104,7 +116,9 @@ class TTSService:
 
     # ── API endpoint ──
 
-    def _synthesize_api(self, text: str, endpoint_id: str, model: str, voice: str, speed: float = 1.0) -> bytes | None:
+    def _synthesize_api(
+        self, text: str, endpoint_id: str, model: str, voice: str, speed: float = 1.0
+    ) -> bytes | None:
         from src.database import ModelEndpoint, SessionLocal
 
         db = SessionLocal()
@@ -188,6 +202,7 @@ class TTSService:
 
     def synthesize_to_base64(self, text: str) -> str | None:
         import base64
+
         audio = self.synthesize(text)
         if audio:
             return base64.b64encode(audio).decode("utf-8")
@@ -201,7 +216,9 @@ class TTSService:
         provider = settings["tts_provider"]
         tts_enabled = settings.get("tts_enabled", True)
 
-        cache_files = list(self.cache_dir.glob("*.wav")) + list(self.cache_dir.glob("*.mp3"))
+        cache_files = list(self.cache_dir.glob("*.wav")) + list(
+            self.cache_dir.glob("*.mp3")
+        )
         cache_size = sum(f.stat().st_size for f in cache_files)
 
         is_available = self.available and tts_enabled
@@ -218,7 +235,11 @@ class TTSService:
 
         if provider == "local":
             kokoro = self._get_kokoro()
-            stats["model"] = "Kokoro-82M (GPU)" if (kokoro and kokoro.available) else "Kokoro (not loaded)"
+            stats["model"] = (
+                "Kokoro-82M (GPU)"
+                if (kokoro and kokoro.available)
+                else "Kokoro (not loaded)"
+            )
         elif provider == "browser":
             stats["model"] = "Browser (Web Speech API)"
         elif provider.startswith("endpoint:"):
@@ -288,6 +309,7 @@ class _KokoroPipeline:
 
 # Module-level singleton
 _tts_service = None
+
 
 def get_tts_service() -> TTSService:
     global _tts_service

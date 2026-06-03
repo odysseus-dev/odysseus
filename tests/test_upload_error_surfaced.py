@@ -9,6 +9,7 @@ and shows a toast on failure, keeping the pending files for a retry.
 fileHandler.js pulls in browser globals so it can't run under node; guard the
 fix at the source level.
 """
+
 import re
 from pathlib import Path
 
@@ -26,6 +27,8 @@ def _upload_pending_body() -> str:
 def test_upload_pending_checks_response_and_surfaces_error():
     body = _upload_pending_body()
     # Must guard on the HTTP status before trusting the body...
-    assert re.search(r"if\s*\(\s*!res\.ok\s*\)", body), "uploadPending must check res.ok"
+    assert re.search(r"if\s*\(\s*!res\.ok\s*\)", body), (
+        "uploadPending must check res.ok"
+    )
     # ...and tell the user the upload failed (not swallow it).
     assert "Upload failed" in body

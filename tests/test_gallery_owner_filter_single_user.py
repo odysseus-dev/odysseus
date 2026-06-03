@@ -7,6 +7,7 @@ model filter chips were always empty and clear-user-tags / clear-ai-tags /
 dedupe-tags silently no-oped. _owner_filter must match the main list: no
 filter when user is None, owner-scoped otherwise.
 """
+
 import tempfile
 import uuid
 
@@ -20,7 +21,11 @@ from core.database import GalleryImage
 from routes.gallery_helpers import _owner_filter
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-_ENGINE = create_engine(f"sqlite:///{_TMPDB.name}", connect_args={"check_same_thread": False}, poolclass=NullPool)
+_ENGINE = create_engine(
+    f"sqlite:///{_TMPDB.name}",
+    connect_args={"check_same_thread": False},
+    poolclass=NullPool,
+)
 cdb.Base.metadata.create_all(_ENGINE)
 _TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
 
@@ -30,7 +35,11 @@ def _seed(*owners):
     try:
         db.query(GalleryImage).delete()
         for o in owners:
-            db.add(GalleryImage(id=str(uuid.uuid4()), filename=f"{uuid.uuid4().hex}.png", owner=o))
+            db.add(
+                GalleryImage(
+                    id=str(uuid.uuid4()), filename=f"{uuid.uuid4().hex}.png", owner=o
+                )
+            )
         db.commit()
     finally:
         db.close()

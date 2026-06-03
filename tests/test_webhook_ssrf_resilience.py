@@ -84,7 +84,9 @@ async def test_webhook_delivery_uses_naive_utc_timestamps(monkeypatch):
     await manager._client.aclose()
     manager._client = client
 
-    await manager._deliver("hook-1", "http://93.184.216.34/", None, "webhook.test", {"ok": True})
+    await manager._deliver(
+        "hook-1", "http://93.184.216.34/", None, "webhook.test", {"ok": True}
+    )
 
     body = json.loads(client.content)
     payload_timestamp = datetime.fromisoformat(body["timestamp"])

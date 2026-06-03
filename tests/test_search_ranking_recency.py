@@ -64,8 +64,18 @@ def test_live_rank_path_prefers_newer_result(monkeypatch):
     # apart from age, isolating recency as the only differentiator.
     monkeypatch.setattr(live_ranking, "_utcnow_naive", lambda: datetime(2026, 1, 31))
     results = [
-        {"title": "Report", "url": "https://example.org/a", "snippet": "x", "age": "2026-01-01"},
-        {"title": "Report", "url": "https://example.org/b", "snippet": "x", "age": "2026-01-29"},
+        {
+            "title": "Report",
+            "url": "https://example.org/a",
+            "snippet": "x",
+            "age": "2026-01-01",
+        },
+        {
+            "title": "Report",
+            "url": "https://example.org/b",
+            "snippet": "x",
+            "age": "2026-01-29",
+        },
     ]
 
     ranked = rank_search_results("report", results)

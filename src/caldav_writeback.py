@@ -27,6 +27,7 @@ def _stable_cal_id(remote_url: str) -> str:
     # Reuse the sync module's hashing so a local CalDAV calendar id maps back to
     # the same remote URL it was pulled from.
     from src.caldav_sync import _stable_cal_id as _sync_id
+
     return _sync_id(remote_url)
 
 
@@ -71,7 +72,9 @@ def build_event_ical(ev: dict) -> str:
         try:
             ve.add("rrule", vRecur.from_ical(ev["rrule"]))
         except Exception:
-            logger.debug("CalDAV write-back: skipping unparseable rrule %r", ev.get("rrule"))
+            logger.debug(
+                "CalDAV write-back: skipping unparseable rrule %r", ev.get("rrule")
+            )
 
     cal.add_component(ve)
     return cal.to_ical().decode("utf-8")
@@ -126,6 +129,7 @@ def _discover_calendars(client):
     """Discover the principal's calendars, falling back to the URL itself —
     same strategy as the pull path."""
     from caldav.lib.error import AuthorizationError, NotFoundError
+
     try:
         return client.principal().calendars()
     except (AuthorizationError, NotFoundError):
@@ -139,6 +143,7 @@ def _discover_calendars(client):
 
 def _writeback_blocking(local_cal_id, ev, delete, url, username, password) -> dict:
     import caldav
+
     client = caldav.DAVClient(url=url, username=username, password=password)
     calendars = _discover_calendars(client)
     if not calendars:
@@ -146,8 +151,14 @@ def _writeback_blocking(local_cal_id, ev, delete, url, username, password) -> di
     return push_event(calendars, local_cal_id, ev, delete=delete)
 
 
-async def writeback_event(owner: str, calendar_source: str, calendar_id: str,
-                          ev: dict, *, delete: bool = False) -> dict:
+async def writeback_event(
+    owner: str,
+    calendar_source: str,
+    calendar_id: str,
+    ev: dict,
+    *,
+    delete: bool = False,
+) -> dict:
     """Best-effort push of a local change to the remote CalDAV server.
 
     No-ops (``{"skipped": ...}``) when the calendar isn't CalDAV-backed or no
@@ -159,6 +170,7 @@ async def writeback_event(owner: str, calendar_source: str, calendar_id: str,
     try:
         from routes.prefs_routes import _load_for_user
         from src.secret_storage import decrypt
+
         cfg = (_load_for_user(owner) or {}).get("caldav", {}) or {}
         url = (cfg.get("url") or "").strip()
         user = (cfg.get("username") or "").strip()
@@ -168,9 +180,13 @@ async def writeback_event(owner: str, calendar_source: str, calendar_id: str,
         pw = decrypt(cfg.get("password") or "")
         if not (url and user and pw):
             return {"skipped": "caldav not configured"}
-        result = await asyncio.to_thread(_writeback_blocking, calendar_id, ev, delete, url, user, pw)
+        result = await asyncio.to_thread(
+            _writeback_blocking, calendar_id, ev, delete, url, user, pw
+        )
         if not result.get("ok"):
-            logger.warning("CalDAV write-back did not apply: %s", result.get("error") or result)
+            logger.warning(
+                "CalDAV write-back did not apply: %s", result.get("error") or result
+            )
         return result
     except Exception as e:
         logger.exception("CalDAV write-back raised")

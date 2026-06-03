@@ -4,6 +4,7 @@ Importing src.cleanup_service is cheap and dependency-free: its only module-leve
 imports are logging/datetime/typing, and the `from src.database import ...` calls are
 lazy (inside the functions), so no DB/sqlalchemy stack is pulled in here.
 """
+
 from datetime import UTC, datetime, timedelta, timezone
 
 from src.cleanup_service import _utcnow

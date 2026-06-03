@@ -1,4 +1,5 @@
 """Tests for upload id validation (src/upload_handler.py)."""
+
 import uuid
 
 from src.upload_handler import is_valid_upload_id

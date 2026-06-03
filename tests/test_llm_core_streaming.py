@@ -7,6 +7,7 @@ The accumulator must give each parallel call its own slot (otherwise they
 collide into slot 0, overwriting the first call's name and concatenating —
 corrupting — its arguments) and must preserve extra_content per call.
 """
+
 import asyncio
 import json
 
@@ -82,15 +83,34 @@ def test_parallel_calls_with_null_index_do_not_collide(monkeypatch):
     # (exactly what Gemini's OpenAI-compat layer emits). Only the first carries
     # a thought_signature.
     lines = [
-        _sse({"tool_calls": [{
-            "index": None, "id": "call_a", "type": "function",
-            "function": {"name": "get_memory", "arguments": "{}"},
-            "extra_content": {"google": {"thought_signature": "SIG0"}},
-        }]}),
-        _sse({"tool_calls": [{
-            "index": None, "id": "call_b", "type": "function",
-            "function": {"name": "bash", "arguments": '{"command":"echo hi"}'},
-        }]}),
+        _sse(
+            {
+                "tool_calls": [
+                    {
+                        "index": None,
+                        "id": "call_a",
+                        "type": "function",
+                        "function": {"name": "get_memory", "arguments": "{}"},
+                        "extra_content": {"google": {"thought_signature": "SIG0"}},
+                    }
+                ]
+            }
+        ),
+        _sse(
+            {
+                "tool_calls": [
+                    {
+                        "index": None,
+                        "id": "call_b",
+                        "type": "function",
+                        "function": {
+                            "name": "bash",
+                            "arguments": '{"command":"echo hi"}',
+                        },
+                    }
+                ]
+            }
+        ),
         "data: [DONE]",
     ]
     events = _drive(monkeypatch, lines)
@@ -102,15 +122,27 @@ def test_parallel_calls_with_null_index_do_not_collide(monkeypatch):
     assert by_name["get_memory"]["arguments"] == "{}"
     assert by_name["bash"]["arguments"] == '{"command":"echo hi"}'
     # signature preserved on the first call only, exactly as received
-    assert by_name["get_memory"]["extra_content"] == {"google": {"thought_signature": "SIG0"}}
+    assert by_name["get_memory"]["extra_content"] == {
+        "google": {"thought_signature": "SIG0"}
+    }
     assert "extra_content" not in by_name["bash"]
 
 
 def test_single_call_chunked_arguments_still_accumulate(monkeypatch):
     # Conformant OpenAI style: index present, arguments streamed in pieces.
     lines = [
-        _sse({"tool_calls": [{"index": 0, "id": "c", "type": "function",
-                              "function": {"name": "search", "arguments": '{"q":"'}}]}),
+        _sse(
+            {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "c",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": '{"q":"'},
+                    }
+                ]
+            }
+        ),
         _sse({"tool_calls": [{"index": 0, "function": {"arguments": 'cats"}'}}]}),
         "data: [DONE]",
     ]
@@ -125,8 +157,18 @@ def test_null_index_chunked_arguments_attach_to_last_call(monkeypatch):
     # index=None where the name arrives first, then an arg-only continuation:
     # the continuation must attach to the just-started call, not open a new one.
     lines = [
-        _sse({"tool_calls": [{"index": None, "id": "c", "type": "function",
-                              "function": {"name": "search", "arguments": '{"q":'}}]}),
+        _sse(
+            {
+                "tool_calls": [
+                    {
+                        "index": None,
+                        "id": "c",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": '{"q":'},
+                    }
+                ]
+            }
+        ),
         _sse({"tool_calls": [{"index": None, "function": {"arguments": '"dogs"}'}}]}),
         "data: [DONE]",
     ]
@@ -141,9 +183,39 @@ def test_sparse_integer_indices_then_null_do_not_collide(monkeypatch):
     # a null-index call must allocate ABOVE the max key, not at len()==2 (which
     # would overwrite slot 2). Three distinct calls must survive.
     lines = [
-        _sse({"tool_calls": [{"index": 0, "id": "a", "function": {"name": "f0", "arguments": "{}"}}]}),
-        _sse({"tool_calls": [{"index": 2, "id": "b", "function": {"name": "f2", "arguments": "{}"}}]}),
-        _sse({"tool_calls": [{"index": None, "id": "c", "function": {"name": "fn", "arguments": "{}"}}]}),
+        _sse(
+            {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "a",
+                        "function": {"name": "f0", "arguments": "{}"},
+                    }
+                ]
+            }
+        ),
+        _sse(
+            {
+                "tool_calls": [
+                    {
+                        "index": 2,
+                        "id": "b",
+                        "function": {"name": "f2", "arguments": "{}"},
+                    }
+                ]
+            }
+        ),
+        _sse(
+            {
+                "tool_calls": [
+                    {
+                        "index": None,
+                        "id": "c",
+                        "function": {"name": "fn", "arguments": "{}"},
+                    }
+                ]
+            }
+        ),
         "data: [DONE]",
     ]
     events = _drive(monkeypatch, lines)

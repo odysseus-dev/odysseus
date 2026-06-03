@@ -14,6 +14,7 @@ from tests.test_null_owner_gates import _import_calendar_helpers
 
 # ── _resolve_base_uid ──────────────────────────────────────────────────
 
+
 def test_resolve_base_uid_plain_passthrough():
     cal = _import_calendar_helpers()
     assert cal._resolve_base_uid("evt-123") == "evt-123"
@@ -253,7 +254,9 @@ def test_expand_exclusive_end_boundary():
     results = cal._expand_rrule(ev, datetime(2026, 6, 1), datetime(2026, 6, 5))
     uids = [r["uid"] for r in results]
     assert len(results) == 4, f"Expected 4 (Jun 1-4), got {len(results)}: {uids}"
-    assert "evt-daily::2026-06-05T09:00" not in uids, "Jun 5 is at end boundary, must be excluded"
+    assert "evt-daily::2026-06-05T09:00" not in uids, (
+        "Jun 5 is at end boundary, must be excluded"
+    )
 
 
 def test_expand_multi_day_crossing_range_start():
@@ -263,8 +266,8 @@ def test_expand_multi_day_crossing_range_start():
     ev = _make_event(
         uid="evt-weekly-multi",
         summary="Weekend Trip",
-        dtstart=datetime(2026, 5, 29, 18, 0),   # Friday evening
-        dtend=datetime(2026, 6, 1, 12, 0),       # Monday noon
+        dtstart=datetime(2026, 5, 29, 18, 0),  # Friday evening
+        dtend=datetime(2026, 6, 1, 12, 0),  # Monday noon
         rrule="FREQ=WEEKLY",
     )
     # Query the Monday window — the occurrence starts Fri but ends Mon,
@@ -288,7 +291,7 @@ def test_expand_multi_day_fully_before_window():
     ev = _make_event(
         uid="evt-multi",
         dtstart=datetime(2026, 5, 29, 18, 0),
-        dtend=datetime(2026, 6, 1, 0, 0),   # ends at midnight Jun 1
+        dtend=datetime(2026, 6, 1, 0, 0),  # ends at midnight Jun 1
         rrule="FREQ=WEEKLY",
     )
     # Query starting Jun 1 midnight — occ_end <= start, excluded

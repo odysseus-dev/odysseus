@@ -12,6 +12,7 @@ and silently failed to invalidate anything — a contract violation of its own
 docstring ("invalidate ... just the given query"). The fix derives the count
 from ``_get_result_count()`` so invalidation matches the stored default entry.
 """
+
 import pytest
 
 from src.search import core

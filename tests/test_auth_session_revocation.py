@@ -102,12 +102,16 @@ def test_change_password_route_revokes_other_sessions_after_success(monkeypatch)
         lambda fn, *args, **kwargs: _immediate_to_thread(fn, *args, **kwargs),
     )
     request = SimpleNamespace(cookies={"odysseus_session": "current-token"})
-    body = ChangePasswordRequest(current_password="old-password", new_password="new-password")
+    body = ChangePasswordRequest(
+        current_password="old-password", new_password="new-password"
+    )
 
     result = asyncio.run(endpoint(body=body, request=request))
 
     assert result == {"ok": True}
-    auth.change_password.assert_called_once_with("alice", "old-password", "new-password")
+    auth.change_password.assert_called_once_with(
+        "alice", "old-password", "new-password"
+    )
     auth.revoke_user_sessions.assert_called_once_with("alice", "current-token")
 
 
@@ -121,7 +125,9 @@ def test_change_password_route_wrong_password_does_not_revoke(monkeypatch):
         lambda fn, *args, **kwargs: _immediate_to_thread(fn, *args, **kwargs),
     )
     request = SimpleNamespace(cookies={"odysseus_session": "current-token"})
-    body = ChangePasswordRequest(current_password="wrong-password", new_password="new-password")
+    body = ChangePasswordRequest(
+        current_password="wrong-password", new_password="new-password"
+    )
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(endpoint(body=body, request=request))

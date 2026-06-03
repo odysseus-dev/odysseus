@@ -31,7 +31,9 @@ def _text_upload(tmp_path: Path, fid: str, body: str):
     }
 
 
-def test_multifile_inline_attachment_budget_keeps_later_files_visible(tmp_path, monkeypatch):
+def test_multifile_inline_attachment_budget_keeps_later_files_visible(
+    tmp_path, monkeypatch
+):
     import src.document_processor as dp
 
     monkeypatch.setattr(dp, "MAX_INLINE_ATTACHMENT_CHARS", 1200)
@@ -58,7 +60,9 @@ def test_multifile_inline_attachment_budget_keeps_later_files_visible(tmp_path, 
     assert len(content) < 2200
 
 
-def test_inline_attachment_budget_does_not_truncate_small_batches(tmp_path, monkeypatch):
+def test_inline_attachment_budget_does_not_truncate_small_batches(
+    tmp_path, monkeypatch
+):
     import src.document_processor as dp
 
     monkeypatch.setattr(dp, "MAX_INLINE_ATTACHMENT_CHARS", 5000)

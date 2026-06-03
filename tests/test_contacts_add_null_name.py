@@ -5,6 +5,7 @@ only when the key is ABSENT; a body like {"name": null, "email": "x@y.com"}
 gives name=None, so None.strip() raised AttributeError -> 500. Now guarded with
 `(data.get("name") or "")`.
 """
+
 import asyncio
 
 import pytest
@@ -15,7 +16,9 @@ import routes.contacts_routes as cr
 def _add_handler():
     router = cr.setup_contacts_routes()
     for r in router.routes:
-        if getattr(r, "path", "").endswith("/add") and "POST" in getattr(r, "methods", set()):
+        if getattr(r, "path", "").endswith("/add") and "POST" in getattr(
+            r, "methods", set()
+        ):
             return r.endpoint
     raise AssertionError("add_contact route not found")
 
@@ -24,7 +27,9 @@ def _add_handler():
 def _stub_store(monkeypatch):
     created = []
     monkeypatch.setattr(cr, "_fetch_contacts", lambda *a, **k: [])
-    monkeypatch.setattr(cr, "_create_contact", lambda name, email: created.append((name, email)) or True)
+    monkeypatch.setattr(
+        cr, "_create_contact", lambda name, email: created.append((name, email)) or True
+    )
     return created
 
 

@@ -14,4 +14,6 @@ def test_both_minimized_window_docks_clear_the_composer():
 def test_composer_clearance_tracks_input_and_attachment_height():
     assert "const chatBar = document.querySelector('.chat-input-bar');" in INIT_JS
     assert "const attachStrip = document.getElementById('attach-strip');" in INIT_JS
-    assert "root.style.setProperty('--composer-clearance', clearance + 'px');" in INIT_JS
+    assert (
+        "root.style.setProperty('--composer-clearance', clearance + 'px');" in INIT_JS
+    )

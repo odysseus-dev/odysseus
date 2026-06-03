@@ -7,6 +7,7 @@ on a deployment that previously ran multi-user). It must preserve the other
 users and round-trip the change into the same (first) slot _load_for_user
 reads from.
 """
+
 import json
 
 import routes.prefs_routes as pr
@@ -14,10 +15,17 @@ import routes.prefs_routes as pr
 
 def test_single_user_save_preserves_other_users(tmp_path, monkeypatch):
     f = tmp_path / "user_prefs.json"
-    f.write_text(json.dumps({"_users": {
-        "alice": {"theme": "light"},
-        "bob": {"theme": "paper"},
-    }}), encoding="utf-8")
+    f.write_text(
+        json.dumps(
+            {
+                "_users": {
+                    "alice": {"theme": "light"},
+                    "bob": {"theme": "paper"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(pr, "PREFS_FILE", str(f))
 
     # auth disabled: load (first user) -> modify -> save
@@ -44,7 +52,9 @@ def test_legacy_flat_store_still_saved_flat(tmp_path, monkeypatch):
 
 def test_named_user_save_unaffected(tmp_path, monkeypatch):
     f = tmp_path / "user_prefs.json"
-    f.write_text(json.dumps({"_users": {"alice": {"theme": "light"}}}), encoding="utf-8")
+    f.write_text(
+        json.dumps({"_users": {"alice": {"theme": "light"}}}), encoding="utf-8"
+    )
     monkeypatch.setattr(pr, "PREFS_FILE", str(f))
 
     pr._save_for_user("bob", {"theme": "dark"})

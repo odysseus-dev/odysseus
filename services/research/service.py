@@ -15,6 +15,7 @@ _SOURCE_LINK_RE = re.compile(r"^\s*-\s*\[(?P<title>[^\]]*)\]\((?P<url>[^)]+)\)\s
 @dataclass
 class ResearchSource:
     """A source found during research."""
+
     url: str
     title: str
     snippet: str
@@ -24,6 +25,7 @@ class ResearchSource:
 @dataclass
 class ResearchResult:
     """Result of a deep research query."""
+
     query: str
     summary: str
     sources: list[ResearchSource] = field(default_factory=list)
@@ -68,6 +70,7 @@ class ResearchService:
             ResearchResult with findings
         """
         import time
+
         start = time.time()
 
         result = await self.handler.call_research_service(

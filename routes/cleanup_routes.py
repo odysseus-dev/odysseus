@@ -1,5 +1,6 @@
 # routes/cleanup_routes.py
 """Routes for cleanup operations."""
+
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -8,6 +9,7 @@ from src.auth_helpers import get_current_user
 from src.cleanup_service import cleanup_sessions, get_cleanup_preview
 
 logger = logging.getLogger(__name__)
+
 
 def setup_cleanup_routes(session_manager):
     """
@@ -49,11 +51,13 @@ def setup_cleanup_routes(session_manager):
         """
         user = get_current_user(request)
         try:
-            archived_count, deleted_count, space_freed_mb = await cleanup_sessions(session_manager, owner=user)
+            archived_count, deleted_count, space_freed_mb = await cleanup_sessions(
+                session_manager, owner=user
+            )
             return {
                 "archived_count": archived_count,
                 "deleted_count": deleted_count,
-                "space_freed_mb": round(space_freed_mb, 2)
+                "space_freed_mb": round(space_freed_mb, 2),
             }
         except Exception as e:
             logger.error(f"Cleanup failed: {e}")

@@ -21,7 +21,7 @@ def extract_urls(text: str) -> list[str]:
     urls = re.findall(url_pattern, text)
     cleaned_urls = []
     for url in urls:
-        url = re.sub(r'[.,;:!?\)]+$', '', url)
+        url = re.sub(r"[.,;:!?\)]+$", "", url)
         cleaned_urls.append(url)
     return cleaned_urls
 
@@ -32,29 +32,57 @@ def extract_urls(text: str) -> list[str]:
 # models (Ollama/llama.cpp) that ship under many names. See issue #124.
 _VISION_MODEL_KEYWORDS = (
     # hosted
-    "gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-4-turbo", "gpt-4-vision",
-    "claude-sonnet", "claude-opus", "claude-haiku", "gemini",
+    "gpt-4o",
+    "gpt-4.1",
+    "gpt-4.5",
+    "gpt-4-turbo",
+    "gpt-4-vision",
+    "claude-sonnet",
+    "claude-opus",
+    "claude-haiku",
+    "gemini",
     # open / local
-    "vision", "multimodal", "llava", "bakllava", "moondream", "pixtral", "minicpm",
-    "internvl", "cogvlm", "qwen-vl", "qwen2-vl", "qwen3-vl", "qwen3vl",
+    "vision",
+    "multimodal",
+    "llava",
+    "bakllava",
+    "moondream",
+    "pixtral",
+    "minicpm",
+    "internvl",
+    "cogvlm",
+    "qwen-vl",
+    "qwen2-vl",
+    "qwen3-vl",
+    "qwen3vl",
     # multimodal families whose names don't contain "vision"/"vl" but DO accept
     # images — without these the image is silently dropped for common Ollama tags
     # like gemma3:4b or gemma4:12b (issue #1274). Gemma 3/4 (4b+), Llama 4 (all),
     # Mistral Small 3.1/3.2, and Phi-4 multimodal are vision-capable; per the
     # err-toward-True policy (#124) a rare text-only tag being treated as vision is
     # the safer failure than silently dropping a real image.
-    "gemma-3", "gemma3", "gemma-4", "gemma4",
-    "llama-4", "llama4",
-    "mistral-small-3.1", "mistral-small3.1", "mistral-small-3.2", "mistral-small3.2",
+    "gemma-3",
+    "gemma3",
+    "gemma-4",
+    "gemma4",
+    "llama-4",
+    "llama4",
+    "mistral-small-3.1",
+    "mistral-small3.1",
+    "mistral-small-3.2",
+    "mistral-small3.2",
     # Microsoft Phi-4 ships a dedicated multimodal variant ("phi-4-multimodal-instruct")
     # but users often load it under the bare "phi-4" or "phi4" Ollama tag.
-    "phi-4", "phi4",
+    "phi-4",
+    "phi4",
     # zhipu / glm (glm-4.5v, glm-4.6v, glm-5v-turbo, etc.)
-    "glm-4.5v", "glm-4.6v", "glm-5v",
+    "glm-4.5v",
+    "glm-4.6v",
+    "glm-5v",
 )
 # Catches the "*-VL-*" / "*VL*" family not covered by a literal keyword above
 # (e.g. Qwen2.5-VL and various tags): a standalone "vl" token, plus "vlm".
-_VISION_VL_RE = re.compile(r'(?<![a-z])vl(?![a-z])|vlm')
+_VISION_VL_RE = re.compile(r"(?<![a-z])vl(?![a-z])|vlm")
 
 
 def is_vision_model(model_name: str) -> bool:
@@ -113,9 +141,11 @@ def _probe_lmstudio_models(url: str) -> list | None:
         data = {}
     models = data.get("models")
     valid = (
-        isinstance(models, list) and bool(models)
+        isinstance(models, list)
+        and bool(models)
         and isinstance(models[0], dict)
-        and "key" in models[0] and "architecture" in models[0]
+        and "key" in models[0]
+        and "architecture" in models[0]
     )
     models = models if valid else None
     _lmstudio_models_cache[key] = (models, now + _PROVIDER_FINGERPRINT_TTL)
@@ -182,8 +212,8 @@ def validate_file_upload(file: UploadFile) -> UploadFile:
             status_code=400,
             detail={
                 "error": "INVALID_FILE",
-                "message": "No file uploaded or invalid filename"
-            }
+                "message": "No file uploaded or invalid filename",
+            },
         )
 
     try:
@@ -194,10 +224,7 @@ def validate_file_upload(file: UploadFile) -> UploadFile:
         if file_size == 0:
             raise HTTPException(
                 status_code=400,
-                detail={
-                    "error": "EMPTY_FILE",
-                    "message": "File is empty"
-                }
+                detail={"error": "EMPTY_FILE", "message": "File is empty"},
             )
 
         if file_size > 10 * 1024 * 1024:
@@ -205,8 +232,8 @@ def validate_file_upload(file: UploadFile) -> UploadFile:
                 status_code=400,
                 detail={
                     "error": "FILE_TOO_LARGE",
-                    "message": "File size exceeds 10MB limit"
-                }
+                    "message": "File size exceeds 10MB limit",
+                },
             )
     except OSError as e:
         logger.error(f"Error reading file size for {file.filename}: {e}")
@@ -214,13 +241,31 @@ def validate_file_upload(file: UploadFile) -> UploadFile:
             status_code=500,
             detail={
                 "error": "FILE_READ_ERROR",
-                "message": "Error reading uploaded file"
-            }
+                "message": "Error reading uploaded file",
+            },
         )
 
-    allowed_extensions = {'.txt', '.py', '.html', '.md', '.json', '.csv', '.js',
-                         '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.pdf',
-                         '.webm', '.wav', '.mp3', '.m4a', '.ogg'}
+    allowed_extensions = {
+        ".txt",
+        ".py",
+        ".html",
+        ".md",
+        ".json",
+        ".csv",
+        ".js",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".webp",
+        ".pdf",
+        ".webm",
+        ".wav",
+        ".mp3",
+        ".m4a",
+        ".ogg",
+    }
 
     _, ext = os.path.splitext(file.filename.lower())
 
@@ -230,16 +275,20 @@ def validate_file_upload(file: UploadFile) -> UploadFile:
             detail={
                 "error": "UNSUPPORTED_FILE_TYPE",
                 "message": f"File type '{ext}' not allowed",
-                "allowed_types": sorted(allowed_extensions)
-            }
+                "allowed_types": sorted(allowed_extensions),
+            },
         )
 
     return file
 
 
-def coerce_message_and_session(req_json: dict | None, message: str | None,
-                               session: str | None, session_manager,
-                               allow_empty: bool = False):
+def coerce_message_and_session(
+    req_json: dict | None,
+    message: str | None,
+    session: str | None,
+    session_manager,
+    allow_empty: bool = False,
+):
     """Extract message and session from request, with validation.
 
     If allow_empty=True (e.g. attachment-only sends), the message-required
@@ -252,8 +301,8 @@ def coerce_message_and_session(req_json: dict | None, message: str | None,
                     status_code=400,
                     detail={
                         "error": "MISSING_PARAMETERS",
-                        "message": "Missing 'message' and/or 'session' in request"
-                    }
+                        "message": "Missing 'message' and/or 'session' in request",
+                    },
                 )
             message = message or req_json.get("message")
             session = session or req_json.get("session")
@@ -268,8 +317,8 @@ def coerce_message_and_session(req_json: dict | None, message: str | None,
                 status_code=400,
                 detail={
                     "error": "VALIDATION_ERROR",
-                    "message": "Session ID is required"
-                }
+                    "message": "Session ID is required",
+                },
             )
         try:
             session_manager.get_session(session)
@@ -278,8 +327,8 @@ def coerce_message_and_session(req_json: dict | None, message: str | None,
                 status_code=404,
                 detail={
                     "error": "SESSION_NOT_FOUND",
-                    "message": f"Session '{session}' not found"
-                }
+                    "message": f"Session '{session}' not found",
+                },
             )
 
         return message, session
@@ -289,10 +338,7 @@ def coerce_message_and_session(req_json: dict | None, message: str | None,
         logger.error(f"JSON decode error: {e}")
         raise HTTPException(
             status_code=400,
-            detail={
-                "error": "INVALID_JSON",
-                "message": "Invalid JSON in request body"
-            }
+            detail={"error": "INVALID_JSON", "message": "Invalid JSON in request body"},
         )
     except Exception as e:
         logger.error(f"Unexpected error in coerce_message_and_session: {e}")
@@ -300,6 +346,6 @@ def coerce_message_and_session(req_json: dict | None, message: str | None,
             status_code=400,
             detail={
                 "error": "REQUEST_PROCESSING_ERROR",
-                "message": "Error processing request"
-            }
+                "message": "Error processing request",
+            },
         )

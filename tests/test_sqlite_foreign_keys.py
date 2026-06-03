@@ -8,7 +8,9 @@ from core.database import Base, ChatMessage, Session
 
 
 def test_sqlite_foreign_keys_cascade():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
     Base.metadata.create_all(bind=engine)
 
     TestSessionLocal = sessionmaker(bind=engine)
@@ -21,9 +23,11 @@ def test_sqlite_foreign_keys_cascade():
         endpoint_url="http://localhost:8000",
         model="gpt-4",
         created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
+        updated_at=datetime.utcnow(),
     )
-    m = ChatMessage(id="test-msg-123", session_id=session_id, role="user", content="test message")
+    m = ChatMessage(
+        id="test-msg-123", session_id=session_id, role="user", content="test message"
+    )
 
     db.add(s)
     db.add(m)
@@ -38,4 +42,3 @@ def test_sqlite_foreign_keys_cascade():
     assert db.query(ChatMessage).count() == 0
 
     db.close()
-

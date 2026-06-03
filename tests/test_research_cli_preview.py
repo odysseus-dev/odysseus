@@ -3,6 +3,7 @@
 `_summarize` did `(data.get("query") or "")[:200]`. A non-string query from a
 legacy/corrupt research JSON is truthy, so `123[:200]` raised TypeError.
 """
+
 import importlib.machinery
 import importlib.util
 from pathlib import Path

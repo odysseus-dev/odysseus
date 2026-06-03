@@ -14,6 +14,7 @@ The fix first landed only in ``src.memory`` while the live route path kept the
 broken copy, and this test imported ``src.memory`` so it stayed green. It now
 exercises both copies so the two cannot drift back apart.
 """
+
 import pytest
 
 from services.memory.memory import MemoryManager as ServiceMemoryManager
@@ -23,14 +24,16 @@ from src.memory import MemoryManager as SrcMemoryManager
 @pytest.mark.parametrize("manager_cls", [SrcMemoryManager, ServiceMemoryManager])
 def test_extract_memory_from_chat_handles_bullets(manager_cls, tmp_path):
     mgr = manager_cls(str(tmp_path))
-    chat = [{
-        "role": "assistant",
-        "content": "- User likes coffee\n* Prefers tea in winter\n1. Wakes at 6am",
-    }]
+    chat = [
+        {
+            "role": "assistant",
+            "content": "- User likes coffee\n* Prefers tea in winter\n1. Wakes at 6am",
+        }
+    ]
 
     out = mgr.extract_memory_from_chat(chat)
     texts = [m["text"] for m in out]
 
-    assert "User likes coffee" in texts       # '-' bullet (used to crash)
-    assert "Prefers tea in winter" in texts   # '*' bullet (used to crash)
-    assert "Wakes at 6am" in texts            # numbered list (already worked)
+    assert "User likes coffee" in texts  # '-' bullet (used to crash)
+    assert "Prefers tea in winter" in texts  # '*' bullet (used to crash)
+    assert "Wakes at 6am" in texts  # numbered list (already worked)

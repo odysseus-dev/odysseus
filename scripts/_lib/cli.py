@@ -29,6 +29,7 @@ parents-parser pattern. Usage:
 The `--pretty` flag, repo-root-on-sys.path, and clean exit on
 KeyboardInterrupt / unexpected exception are all handled centrally.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -64,7 +65,8 @@ def emit(obj, args) -> None:
     serialize cleanly."""
     pretty = getattr(args, "pretty", False) or sys.stdout.isatty()
     json.dump(
-        obj, sys.stdout,
+        obj,
+        sys.stdout,
         indent=2 if pretty else None,
         default=str,
         ensure_ascii=False,
@@ -87,8 +89,9 @@ def common_parser(prog: str, description: str = "") -> argparse.ArgumentParser:
     reuse via `parents=[...]` so the same flag works before AND after
     the subcommand name."""
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--pretty", action="store_true",
-                        help="Pretty-print JSON output")
+    common.add_argument(
+        "--pretty", action="store_true", help="Pretty-print JSON output"
+    )
 
     p = argparse.ArgumentParser(prog=prog, description=description, parents=[common])
     p.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")

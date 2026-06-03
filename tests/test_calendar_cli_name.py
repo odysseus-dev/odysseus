@@ -28,4 +28,7 @@ def test_calendar_name_handles_missing_relation(monkeypatch):
 
     assert cli._calendar_name(SimpleNamespace(calendar=None)) == ""
     assert cli._calendar_name(SimpleNamespace(calendar=SimpleNamespace(name=123))) == ""
-    assert cli._calendar_name(SimpleNamespace(calendar=SimpleNamespace(name="Work"))) == "Work"
+    assert (
+        cli._calendar_name(SimpleNamespace(calendar=SimpleNamespace(name="Work")))
+        == "Work"
+    )

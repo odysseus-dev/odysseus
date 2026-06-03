@@ -4,6 +4,7 @@
 description (e.g. a number from a hand-edited/legacy skill store) is truthy, so
 `123[:200]` raised TypeError. `_preview_text` coerces non-strings to "".
 """
+
 import importlib.machinery
 import importlib.util
 import sys

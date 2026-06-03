@@ -25,8 +25,10 @@ def _load_cli(monkeypatch):
 def test_contact_rows_skips_invalid_rows(monkeypatch):
     cli = _load_cli(monkeypatch)
 
-    assert cli._contact_rows([
-        {"name": "Ada", "email": "ada@example.test"},
-        "bad-row",
-        None,
-    ]) == [{"name": "Ada", "email": "ada@example.test"}]
+    assert cli._contact_rows(
+        [
+            {"name": "Ada", "email": "ada@example.test"},
+            "bad-row",
+            None,
+        ]
+    ) == [{"name": "Ada", "email": "ada@example.test"}]

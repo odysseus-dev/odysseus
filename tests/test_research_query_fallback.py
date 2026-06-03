@@ -5,6 +5,7 @@ bare affirmation ("yes", "ok", "go ahead"), that follow-up must not become the
 research topic — we fall back to the original substantive ask. A short but
 meaningful answer ("UK", "C++", "Rust") is a real topic and must be preserved.
 """
+
 import pytest
 
 from core.models import ChatMessage, Session
@@ -13,7 +14,10 @@ from src.research_handler import ResearchHandler
 
 def _session(history):
     return Session(
-        id="s1", name="t", endpoint_url="http://local.test", model="m",
+        id="s1",
+        name="t",
+        endpoint_url="http://local.test",
+        model="m",
         history=[ChatMessage(role, content) for role, content in history],
     )
 
@@ -31,10 +35,12 @@ async def _raise(*args, **kwargs):
 async def test_bare_yes_falls_back_to_original_ask(handler, monkeypatch):
     # original ask + assistant clarification + user "yes" => original ask
     monkeypatch.setattr("src.llm_core.llm_call_async", _raise)
-    sess = _session([
-        ("user", "What is the best electric car for a cold climate?"),
-        ("assistant", "Happy to research that — should I go ahead?"),
-    ])
+    sess = _session(
+        [
+            ("user", "What is the best electric car for a cold climate?"),
+            ("assistant", "Happy to research that — should I go ahead?"),
+        ]
+    )
     result = await handler.synthesize_query(sess, "yes", "http://local.test", "m")
     assert result == "What is the best electric car for a cold climate?"
 
@@ -42,10 +48,12 @@ async def test_bare_yes_falls_back_to_original_ask(handler, monkeypatch):
 @pytest.mark.asyncio
 async def test_continuation_phrase_falls_back_to_original_ask(handler, monkeypatch):
     monkeypatch.setattr("src.llm_core.llm_call_async", _raise)
-    sess = _session([
-        ("user", "Summarize recent advances in fusion energy."),
-        ("assistant", "Want me to go ahead and research this?"),
-    ])
+    sess = _session(
+        [
+            ("user", "Summarize recent advances in fusion energy."),
+            ("assistant", "Want me to go ahead and research this?"),
+        ]
+    )
     result = await handler.synthesize_query(sess, "Go ahead!", "http://local.test", "m")
     assert result == "Summarize recent advances in fusion energy."
 
@@ -54,10 +62,12 @@ async def test_continuation_phrase_falls_back_to_original_ask(handler, monkeypat
 async def test_short_country_answer_is_kept(handler, monkeypatch):
     # original ask + assistant asks "which country?" + user "UK" => "UK"
     monkeypatch.setattr("src.llm_core.llm_call_async", _raise)
-    sess = _session([
-        ("user", "Compare national healthcare systems."),
-        ("assistant", "Which country should I focus on?"),
-    ])
+    sess = _session(
+        [
+            ("user", "Compare national healthcare systems."),
+            ("assistant", "Which country should I focus on?"),
+        ]
+    )
     result = await handler.synthesize_query(sess, "UK", "http://local.test", "m")
     assert result == "UK"
 
@@ -66,10 +76,12 @@ async def test_short_country_answer_is_kept(handler, monkeypatch):
 async def test_short_language_answer_is_kept(handler, monkeypatch):
     # original ask + assistant asks "which language?" + user "C++" => "C++"
     monkeypatch.setattr("src.llm_core.llm_call_async", _raise)
-    sess = _session([
-        ("user", "Find the fastest sorting library."),
-        ("assistant", "Which language are you targeting?"),
-    ])
+    sess = _session(
+        [
+            ("user", "Find the fastest sorting library."),
+            ("assistant", "Which language are you targeting?"),
+        ]
+    )
     result = await handler.synthesize_query(sess, "C++", "http://local.test", "m")
     assert result == "C++"
 
@@ -91,11 +103,16 @@ async def test_multiword_followup_uses_synthesis(handler, monkeypatch):
         return synthesized
 
     monkeypatch.setattr("src.llm_core.llm_call_async", _synth)
-    sess = _session([
-        ("user", "What is the best electric car for a cold climate?"),
-        ("assistant", "Any constraints on range or charging?"),
-    ])
+    sess = _session(
+        [
+            ("user", "What is the best electric car for a cold climate?"),
+            ("assistant", "Any constraints on range or charging?"),
+        ]
+    )
     result = await handler.synthesize_query(
-        sess, "focus on long range and fast charging", "http://local.test", "m",
+        sess,
+        "focus on long range and fast charging",
+        "http://local.test",
+        "m",
     )
     assert result == synthesized

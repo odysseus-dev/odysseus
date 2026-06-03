@@ -12,6 +12,7 @@ goes through ``check_outbound_url``; these two routes were missing the same
 guard. This test pins the guard in place and confirms the validator rejects the
 metadata range.
 """
+
 import ast
 from pathlib import Path
 
@@ -21,7 +22,10 @@ SRC = Path(__file__).resolve().parent.parent / "routes" / "gallery_routes.py"
 def _function_source(src_text: str, func_name: str) -> str:
     tree = ast.parse(src_text)
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == func_name
+        ):
             return ast.get_source_segment(src_text, node)
     raise AssertionError(f"{func_name} not found in {SRC}")
 
@@ -40,5 +44,6 @@ def test_url_safety_blocks_metadata_endpoint():
     # The guard is only as strong as the checker: confirm the link-local cloud
     # metadata address is rejected even with private IPs otherwise allowed.
     from src.url_safety import check_outbound_url
+
     ok, _ = check_outbound_url("http://169.254.169.254/latest/meta-data")
     assert ok is False

@@ -4,6 +4,7 @@ _autolink_urls did `re.sub(..., md_text)` and _extract_headings did
 `re.finditer(..., md_text)`; a None/non-string raised TypeError. They now
 return the input / [] respectively.
 """
+
 from src.visual_report import _autolink_urls, _extract_headings
 
 

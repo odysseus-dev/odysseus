@@ -20,12 +20,11 @@ from pathlib import Path
 # Configure logging for the script
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
+
 
 def main():
     """Main function to index documents from personal_docs directory."""
@@ -33,6 +32,7 @@ def main():
     # Import RAGManager
     try:
         from src.rag_manager import RAGManager
+
         logger.info("Successfully imported RAGManager")
     except ImportError as e:
         logger.error(f"Failed to import RAGManager: {e}")
@@ -49,12 +49,16 @@ def main():
     # Check if directory exists
     if not directory_path.exists():
         logger.error(f"Directory '{docs_directory}' not found!")
-        logger.info(f"Please create the directory and add your documents: mkdir {docs_directory}")
+        logger.info(
+            f"Please create the directory and add your documents: mkdir {docs_directory}"
+        )
         return
 
     # Supported file extensions
-    supported_extensions = {'.txt', '.md', '.json'}
-    logger.info(f"Scanning '{docs_directory}' for {', '.join(sorted(supported_extensions))} files...")
+    supported_extensions = {".txt", ".md", ".json"}
+    logger.info(
+        f"Scanning '{docs_directory}' for {', '.join(sorted(supported_extensions))} files..."
+    )
 
     # Find all supported files
     files_to_index = []
@@ -66,7 +70,9 @@ def main():
 
     if not files_to_index:
         logger.warning(f"No supported files found in '{docs_directory}' directory.")
-        logger.info("Add .txt, .md, or .json files to the directory and run this script again.")
+        logger.info(
+            "Add .txt, .md, or .json files to the directory and run this script again."
+        )
         return
 
     logger.info(f"Found {len(files_to_index)} files to index:")
@@ -80,7 +86,7 @@ def main():
         result = rag_manager.index_personal_documents(docs_directory)
 
         # Display results
-        logger.info("\n" + "="*50)
+        logger.info("\n" + "=" * 50)
         if result["success"]:
             logger.info("✅ Document indexing completed successfully!")
             logger.info(f"   Indexed {result['indexed_count']} document chunks")
@@ -92,7 +98,7 @@ def main():
                 logger.error(f"   Error: {result['message']}")
 
         # Show final statistics
-        logger.info("\n" + "-"*30)
+        logger.info("\n" + "-" * 30)
         logger.info("Database Statistics:")
 
         stats = rag_manager.get_stats()
@@ -102,11 +108,12 @@ def main():
         else:
             logger.error(f"   Failed to retrieve statistics: {stats['error']}")
 
-        logger.info("="*50)
+        logger.info("=" * 50)
 
     except Exception as e:
         logger.error(f"Failed to index documents: {e}")
         return
+
 
 if __name__ == "__main__":
     main()

@@ -6,6 +6,7 @@ and `<br />` (what Apple Mail and many clients emit), even though the very
 next matcher in the same function already uses `<br\\s*/?>`. So a plain-text
 signature delimiter with self-closing breaks was never folded.
 """
+
 import json
 import shutil
 import subprocess
@@ -26,8 +27,14 @@ def _folds(html):
     const out = mod._foldSignature(html, null);
     console.log(JSON.stringify(out.includes('email-sig-fold')));
     """
-    proc = subprocess.run(["node", "--input-type=module"], input=js,
-                          capture_output=True, text=True, cwd=str(_REPO), timeout=30)
+    proc = subprocess.run(
+        ["node", "--input-type=module"],
+        input=js,
+        capture_output=True,
+        text=True,
+        cwd=str(_REPO),
+        timeout=30,
+    )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout.strip())
 
@@ -37,7 +44,10 @@ _SIG = "X" * 250  # long enough to be a "bloated" foldable signature
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_self_closing_br_delimiter_folds():
-    assert _folds(f"Hello, please review.<br />-- <br />John Smith<br />Acme<br />{_SIG}") is True
+    assert (
+        _folds(f"Hello, please review.<br />-- <br />John Smith<br />Acme<br />{_SIG}")
+        is True
+    )
     assert _folds(f"Hi.<br/>-- <br/>Jane Doe<br/>{_SIG}") is True
 
 

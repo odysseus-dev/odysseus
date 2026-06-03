@@ -5,6 +5,7 @@ These helpers did `query.strip()`, `query.lower()`, `re.split(..., query)`,
 caller that didn't coerce) raised TypeError/AttributeError. They now return a
 safe default for non-strings.
 """
+
 import importlib.machinery
 import importlib.util
 from pathlib import Path

@@ -25,7 +25,9 @@ def _tidy_state_path(memory_manager) -> str:
     circuit when nothing has changed since the previous tidy — running
     the LLM again on an already-clean list was wasting 30-120s per call
     and occasionally timing out on the second pass."""
-    return os.path.join(os.path.dirname(memory_manager.memory_file), "memory_tidy_state.json")
+    return os.path.join(
+        os.path.dirname(memory_manager.memory_file), "memory_tidy_state.json"
+    )
 
 
 def _fingerprint_entries(entries) -> str:
@@ -66,6 +68,7 @@ def _save_tidy_state(memory_manager, owner: str | None, fingerprint: str) -> Non
             json.dump(state, f, indent=2)
     except OSError as e:
         logger.warning(f"Could not persist tidy fingerprint: {e}")
+
 
 EXTRACT_SYSTEM_PROMPT = (
     "You are a memory extraction assistant. Analyze the conversation and extract ONLY "
@@ -191,7 +194,11 @@ def _fallback_memory_candidates(messages) -> list[dict]:
             if place:
                 add(f"User lives in {place}.", "identity")
 
-        m = re.search(r"\bi (?:prefer|like|love|hate|do not like|don't like)\s+([^.!?\n]{4,100})", text, re.I)
+        m = re.search(
+            r"\bi (?:prefer|like|love|hate|do not like|don't like)\s+([^.!?\n]{4,100})",
+            text,
+            re.I,
+        )
         if m:
             preference = _clean_memory_value(m.group(1), 100)
             if preference:
@@ -249,7 +256,9 @@ async def extract_and_store(
 
         # Get last N messages from session
         messages = session.get_context_messages()
-        recent = messages[-CONTEXT_WINDOW:] if len(messages) > CONTEXT_WINDOW else messages
+        recent = (
+            messages[-CONTEXT_WINDOW:] if len(messages) > CONTEXT_WINDOW else messages
+        )
 
         if len(recent) < 2:
             return  # Need at least a user message and assistant response
@@ -264,7 +273,11 @@ async def extract_and_store(
             content = msg.get("content", "")
             if isinstance(content, list):
                 # Filter out multimodal blocks that aren't text
-                text_only = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                text_only = [
+                    b
+                    for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                ]
                 if not text_only and content:
                     continue
                 content = text_only
@@ -300,7 +313,9 @@ async def extract_and_store(
             except json.JSONDecodeError:
                 logger.debug("Memory extraction returned non-JSON")
         except Exception as e:
-            logger.warning(f"LLM memory extraction failed; using fallback candidates if available: {e}")
+            logger.warning(
+                f"LLM memory extraction failed; using fallback candidates if available: {e}"
+            )
 
         if not isinstance(facts, list):
             facts = []
@@ -313,7 +328,7 @@ async def extract_and_store(
             return
 
         # Get owner from session
-        _owner = getattr(session, 'owner', None)
+        _owner = getattr(session, "owner", None)
 
         existing = memory_manager.load_all()
         added = 0
@@ -341,22 +356,38 @@ async def extract_and_store(
                 try:
                     existing_id = memory_vector.find_similar(fact_text, threshold=0.72)
                 except Exception as e:
-                    logger.warning(f"Memory dedup (vector) unavailable, using text fallback: {e}")
+                    logger.warning(
+                        f"Memory dedup (vector) unavailable, using text fallback: {e}"
+                    )
                     existing_id = None
                 if existing_id:
-                    logger.debug(f"Memory dedup (vector): '{fact_text[:50]}' matches {existing_id}")
+                    logger.debug(
+                        f"Memory dedup (vector): '{fact_text[:50]}' matches {existing_id}"
+                    )
                     continue
 
             # Text dedup fallback: exact match + fuzzy similarity
-            user_existing = [e for e in existing if e.get("owner") == _owner or e.get("owner") is None] if _owner else existing
+            user_existing = (
+                [
+                    e
+                    for e in existing
+                    if e.get("owner") == _owner or e.get("owner") is None
+                ]
+                if _owner
+                else existing
+            )
             if memory_manager.find_duplicates(fact_text, user_existing):
                 continue
             # Fuzzy text similarity check (catches rephrased duplicates when vector index is unavailable)
             if _is_text_duplicate(fact_text, user_existing):
-                logger.debug(f"Memory dedup (fuzzy): '{fact_text[:50]}' too similar to existing")
+                logger.debug(
+                    f"Memory dedup (fuzzy): '{fact_text[:50]}' too similar to existing"
+                )
                 continue
 
-            entry = memory_manager.add_entry(fact_text, source="auto", category=category, owner=_owner)
+            entry = memory_manager.add_entry(
+                fact_text, source="auto", category=category, owner=_owner
+            )
             # Auto-pin identity facts (name, job, location) — core context
             if category == "identity":
                 entry["pinned"] = True
@@ -382,6 +413,7 @@ async def extract_and_store(
             memory_manager.save(existing)
             try:
                 from src.event_bus import fire_event
+
                 for _ in range(added):
                     fire_event("memory_added", _owner)
             except Exception:
@@ -394,7 +426,12 @@ async def extract_and_store(
                 _extractions_since_audit = 0
                 logger.info("Audit threshold reached, running memory audit")
                 await audit_memories(
-                    memory_manager, memory_vector, endpoint_url, model, headers, owner=_owner
+                    memory_manager,
+                    memory_vector,
+                    endpoint_url,
+                    model,
+                    headers,
+                    owner=_owner,
                 )
         else:
             logger.info("Auto memory extraction ran: 0 added")
@@ -476,13 +513,16 @@ async def audit_memories(
         # Parse the JSON list, tolerating reasoning-model noise: <think> blocks,
         # markdown fences, leading prose, and trailing commas.
         import re as _re
+
         text = (raw or "").strip()
-        text = _re.sub(r'<think(?:ing)?>[\s\S]*?</think(?:ing)?>', '', text, flags=_re.I).strip()
+        text = _re.sub(
+            r"<think(?:ing)?>[\s\S]*?</think(?:ing)?>", "", text, flags=_re.I
+        ).strip()
 
         def _loads_list(s):
             if not s:
                 return None
-            for cand in (s, _re.sub(r',(\s*[}\]])', r'\1', s)):
+            for cand in (s, _re.sub(r",(\s*[}\]])", r"\1", s)):
                 try:
                     v = json.loads(cand)
                     if isinstance(v, list):
@@ -493,13 +533,13 @@ async def audit_memories(
 
         cleaned = _loads_list(text)
         if cleaned is None:
-            _m = _re.search(r'```(?:json)?\s*\n?([\s\S]*?)```', text)
+            _m = _re.search(r"```(?:json)?\s*\n?([\s\S]*?)```", text)
             if _m:
                 cleaned = _loads_list(_m.group(1).strip())
         if cleaned is None:
-            _a, _b = text.find('['), text.rfind(']')
+            _a, _b = text.find("["), text.rfind("]")
             if _a >= 0 and _b > _a:
-                cleaned = _loads_list(text[_a:_b + 1])
+                cleaned = _loads_list(text[_a : _b + 1])
         if cleaned is None:
             logger.error(f"Memory audit returned non-JSON: {text[:300]}")
             return {"before": before_count, "after": before_count, "error": "bad_json"}
@@ -541,16 +581,28 @@ async def audit_memories(
                 f"Memory audit would cut {before_count} -> {after_count} "
                 f"(>50% removed) — refusing as unsafe, keeping originals"
             )
-            return {"before": before_count, "after": before_count, "error": "unsafe_removal"}
+            return {
+                "before": before_count,
+                "after": before_count,
+                "error": "unsafe_removal",
+            }
 
         # Merge audited entries back with other users' entries
         if owner:
             all_entries = memory_manager.load_all()
             audited_ids = {e["id"] for e in final_entries}
-            other_entries = [e for e in all_entries if e.get("owner") != owner and (e.get("owner") is not None)]
+            other_entries = [
+                e
+                for e in all_entries
+                if e.get("owner") != owner and (e.get("owner") is not None)
+            ]
             # Also keep legacy entries that weren't part of this audit
             for e in all_entries:
-                if e.get("owner") is None and e["id"] not in audited_ids and e["id"] not in {o["id"] for o in other_entries}:
+                if (
+                    e.get("owner") is None
+                    and e["id"] not in audited_ids
+                    and e["id"] not in {o["id"] for o in other_entries}
+                ):
                     other_entries.append(e)
             saved_entries = final_entries + other_entries
         else:

@@ -4,6 +4,7 @@ The pattern was /mistral/i, which does not match "mixtral" (note the x) or
 "ministral" -- Mistral AI's flagship MoE and edge families -- so those models
 rendered with no provider logo unless they carried a "mistralai/" prefix.
 """
+
 import json
 import shutil
 import subprocess
@@ -21,7 +22,14 @@ def _has_logo(model):
         f"import {{ providerLogo }} from '{_HELPER.as_posix()}';"
         f"console.log(JSON.stringify(providerLogo({json.dumps(model)}) !== null));"
     )
-    p = subprocess.run(["node", "--input-type=module"], input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30)
+    p = subprocess.run(
+        ["node", "--input-type=module"],
+        input=js,
+        capture_output=True,
+        text=True,
+        cwd=str(_REPO),
+        timeout=30,
+    )
     assert p.returncode == 0, p.stderr
     return json.loads(p.stdout.strip())
 

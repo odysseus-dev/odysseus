@@ -8,6 +8,7 @@ is no delete path for the built-in keys (only `user_templates` entries can be
 deleted), and presets are hidden via an `enabled: False` flag, not removal — so
 filling them back in is safe.
 """
+
 import json
 import os
 import tempfile
@@ -24,12 +25,22 @@ def _write_presets(data: dict) -> str:
 
 def test_missing_builtin_presets_are_filled_in():
     # Partial file: has code_analyze + brainstorm, missing reason + custom.
-    data_dir = _write_presets({
-        "code_analyze": {"name": "Code Analyze", "temperature": 0.2,
-                         "max_tokens": 8000, "system_prompt": "analyze"},
-        "brainstorm": {"name": "Brainstorm", "temperature": 0.9,
-                       "max_tokens": 4096, "system_prompt": "ideate"},
-    })
+    data_dir = _write_presets(
+        {
+            "code_analyze": {
+                "name": "Code Analyze",
+                "temperature": 0.2,
+                "max_tokens": 8000,
+                "system_prompt": "analyze",
+            },
+            "brainstorm": {
+                "name": "Brainstorm",
+                "temperature": 0.9,
+                "max_tokens": 4096,
+                "system_prompt": "ideate",
+            },
+        }
+    )
     pm = PresetManager(data_dir)
     for key in PresetManager.DEFAULT_PRESETS:
         assert key in pm.presets, f"built-in preset {key!r} should be present"
@@ -51,15 +62,25 @@ def test_fill_does_not_clobber_user_edits():
         "inject_suffix": "SUF",
         "enabled": True,
     }
-    data_dir = _write_presets({
-        "code_analyze": {"name": "Code Analyze", "temperature": 0.2,
-                         "max_tokens": 8000, "system_prompt": "analyze"},
-        "brainstorm": {"name": "Brainstorm", "temperature": 0.9,
-                       "max_tokens": 4096, "system_prompt": "ideate"},
-        "custom": edited_custom,
-        "user_templates": [{"id": "t1", "name": "Tmpl"}],
-        # missing: reason
-    })
+    data_dir = _write_presets(
+        {
+            "code_analyze": {
+                "name": "Code Analyze",
+                "temperature": 0.2,
+                "max_tokens": 8000,
+                "system_prompt": "analyze",
+            },
+            "brainstorm": {
+                "name": "Brainstorm",
+                "temperature": 0.9,
+                "max_tokens": 4096,
+                "system_prompt": "ideate",
+            },
+            "custom": edited_custom,
+            "user_templates": [{"id": "t1", "name": "Tmpl"}],
+            # missing: reason
+        }
+    )
     pm = PresetManager(data_dir)
     # reason was filled...
     assert "reason" in pm.presets

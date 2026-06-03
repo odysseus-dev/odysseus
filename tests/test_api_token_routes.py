@@ -59,6 +59,7 @@ def token_routes_mod(monkeypatch):
     monkeypatch.delitem(sys.modules, "routes.api_token_routes", raising=False)
 
     import routes.api_token_routes as mod  # noqa: PLC0415
+
     return mod
 
 
@@ -103,7 +104,9 @@ def _db_ctx(session):
 # ---------------------------------------------------------------------------
 
 
-def test_api_token_routes_require_admin_for_list_create_delete(monkeypatch, token_routes_mod):
+def test_api_token_routes_require_admin_for_list_create_delete(
+    monkeypatch, token_routes_mod
+):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     mod = token_routes_mod
 
@@ -128,7 +131,9 @@ def test_api_token_routes_require_admin_for_list_create_delete(monkeypatch, toke
 # ---------------------------------------------------------------------------
 
 
-def test_create_token_attributes_owner_hashes_secret_and_returns_raw_once(monkeypatch, token_routes_mod):
+def test_create_token_attributes_owner_hashes_secret_and_returns_raw_once(
+    monkeypatch, token_routes_mod
+):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     mod = token_routes_mod
 
@@ -233,7 +238,16 @@ def test_list_tokens_returns_safe_display_fields_only(monkeypatch, token_routes_
 
     assert len(result) == 2
 
-    safe_fields = {"id", "name", "owner", "token_prefix", "scopes", "is_active", "last_used_at", "created_at"}
+    safe_fields = {
+        "id",
+        "name",
+        "owner",
+        "token_prefix",
+        "scopes",
+        "is_active",
+        "last_used_at",
+        "created_at",
+    }
     for item in result:
         assert set(item.keys()) == safe_fields
         assert "token" not in item
@@ -272,7 +286,9 @@ def test_delete_token_deletes_and_invalidates_cache(monkeypatch, token_routes_mo
 # ---------------------------------------------------------------------------
 
 
-def test_delete_missing_token_returns_404_without_invalidating_cache(monkeypatch, token_routes_mod):
+def test_delete_missing_token_returns_404_without_invalidating_cache(
+    monkeypatch, token_routes_mod
+):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     mod = token_routes_mod
     monkeypatch.setattr(mod, "get_current_user", lambda req: req.state.current_user)

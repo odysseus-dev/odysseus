@@ -17,11 +17,12 @@ def _utcnow() -> datetime:
 
 class CleanupConfig:
     """Configuration constants for cleanup operations."""
+
     ARCHIVE_AFTER_DAYS = 7
     DELETE_AFTER_DAYS = 14
     MIN_MESSAGES_TO_KEEP = 20
     PRESERVE_RECENT_COUNT = 10
-    PROTECTED_KEYWORDS = ['important', 'remember', 'save this', 'keep', 'bookmark']
+    PROTECTED_KEYWORDS = ["important", "remember", "save this", "keep", "bookmark"]
     ESTIMATED_MESSAGE_SIZE_BYTES = 512
 
 
@@ -53,11 +54,11 @@ async def archive_inactive_sessions(session_manager, owner: str | None = None) -
 
     from src.database import Session as DbSession
     from src.database import SessionLocal
+
     db = SessionLocal()
     try:
         q = db.query(DbSession).filter(
-            DbSession.last_accessed < cutoff_date,
-            DbSession.archived == False
+            DbSession.last_accessed < cutoff_date, DbSession.archived == False
         )
         q = _apply_owner_filter(q, DbSession, owner)
         sessions_to_archive = q.all()
@@ -79,7 +80,10 @@ async def archive_inactive_sessions(session_manager, owner: str | None = None) -
 
     return archived_count
 
-async def cleanup_old_sessions(session_manager, owner: str | None = None) -> tuple[int, float]:
+
+async def cleanup_old_sessions(
+    session_manager, owner: str | None = None
+) -> tuple[int, float]:
     """
     Delete old sessions based on specific criteria.
 
@@ -97,18 +101,22 @@ async def cleanup_old_sessions(session_manager, owner: str | None = None) -> tup
     from src.database import ChatMessage as DbChatMessage
     from src.database import Session as DbSession
     from src.database import SessionLocal
+
     db = SessionLocal()
     try:
         recent_q = db.query(DbSession).order_by(DbSession.created_at.desc())
         recent_q = _apply_owner_filter(recent_q, DbSession, owner)
         all_sessions = recent_q.all()
-        recent_session_ids = {session.id for session in all_sessions[:CleanupConfig.PRESERVE_RECENT_COUNT]}
+        recent_session_ids = {
+            session.id
+            for session in all_sessions[: CleanupConfig.PRESERVE_RECENT_COUNT]
+        }
 
         base_query = db.query(DbSession).filter(
             DbSession.archived == True,
             DbSession.last_accessed < cutoff_date,
             DbSession.is_important == False,
-            DbSession.message_count < CleanupConfig.MIN_MESSAGES_TO_KEEP
+            DbSession.message_count < CleanupConfig.MIN_MESSAGES_TO_KEEP,
         )
         base_query = _apply_owner_filter(base_query, DbSession, owner)
 
@@ -126,21 +134,28 @@ async def cleanup_old_sessions(session_manager, owner: str | None = None) -> tup
                 continue
 
             session_name_lower = session.name.lower() if session.name else ""
-            if any(keyword in session_name_lower for keyword in CleanupConfig.PROTECTED_KEYWORDS):
+            if any(
+                keyword in session_name_lower
+                for keyword in CleanupConfig.PROTECTED_KEYWORDS
+            ):
                 preserved_count += 1
                 continue
 
             sessions_to_delete.append(session)
 
         for session in sessions_to_delete:
-            message_count = db.query(DbChatMessage).filter(
-                DbChatMessage.session_id == session.id
-            ).count()
+            message_count = (
+                db.query(DbChatMessage)
+                .filter(DbChatMessage.session_id == session.id)
+                .count()
+            )
             space_freed += message_count * CleanupConfig.ESTIMATED_MESSAGE_SIZE_BYTES
 
         session_ids = [session.id for session in sessions_to_delete]
         if session_ids:
-            db.query(DbSession).filter(DbSession.id.in_(session_ids)).delete(synchronize_session=False)
+            db.query(DbSession).filter(DbSession.id.in_(session_ids)).delete(
+                synchronize_session=False
+            )
             deleted_count = len(session_ids)
             db.commit()
 
@@ -150,7 +165,9 @@ async def cleanup_old_sessions(session_manager, owner: str | None = None) -> tup
 
         if deleted_count > 0:
             space_freed_mb = space_freed / (1024 * 1024)
-            logger.info(f"Deleted {deleted_count} old sessions, freeing approximately {space_freed_mb:.2f} MB")
+            logger.info(
+                f"Deleted {deleted_count} old sessions, freeing approximately {space_freed_mb:.2f} MB"
+            )
             return deleted_count, space_freed_mb
 
     except Exception as e:
@@ -160,6 +177,7 @@ async def cleanup_old_sessions(session_manager, owner: str | None = None) -> tup
         db.close()
 
     return deleted_count, 0.0
+
 
 async def get_cleanup_preview(owner: str | None = None) -> dict[str, Any]:
     """
@@ -181,33 +199,40 @@ async def get_cleanup_preview(owner: str | None = None) -> dict[str, Any]:
 
     from src.database import Session as DbSession
     from src.database import SessionLocal
+
     db = SessionLocal()
     try:
         archive_q = db.query(DbSession).filter(
-            DbSession.last_accessed < cutoff_archive,
-            DbSession.archived == False
+            DbSession.last_accessed < cutoff_archive, DbSession.archived == False
         )
         archive_q = _apply_owner_filter(archive_q, DbSession, owner)
         archive_candidates = archive_q.all()
 
         for session in archive_candidates:
-            sessions_to_archive.append({
-                "id": session.id,
-                "name": session.name,
-                "last_accessed": session.last_accessed.isoformat() if session.last_accessed else "Unknown",
-                "message_count": session.message_count
-            })
+            sessions_to_archive.append(
+                {
+                    "id": session.id,
+                    "name": session.name,
+                    "last_accessed": session.last_accessed.isoformat()
+                    if session.last_accessed
+                    else "Unknown",
+                    "message_count": session.message_count,
+                }
+            )
 
         recent_q = db.query(DbSession).order_by(DbSession.created_at.desc())
         recent_q = _apply_owner_filter(recent_q, DbSession, owner)
         all_sessions = recent_q.all()
-        recent_session_ids = {session.id for session in all_sessions[:CleanupConfig.PRESERVE_RECENT_COUNT]}
+        recent_session_ids = {
+            session.id
+            for session in all_sessions[: CleanupConfig.PRESERVE_RECENT_COUNT]
+        }
 
         base_query = db.query(DbSession).filter(
             DbSession.archived == True,
             DbSession.last_accessed < cutoff_delete,
             DbSession.is_important == False,
-            DbSession.message_count < CleanupConfig.MIN_MESSAGES_TO_KEEP
+            DbSession.message_count < CleanupConfig.MIN_MESSAGES_TO_KEEP,
         )
         base_query = _apply_owner_filter(base_query, DbSession, owner)
 
@@ -215,47 +240,69 @@ async def get_cleanup_preview(owner: str | None = None) -> dict[str, Any]:
 
         for session in candidate_sessions:
             if session.id in recent_session_ids:
-                preserved_sessions.append({
-                    "id": session.id,
-                    "name": session.name,
-                    "reason": f"part of last {CleanupConfig.PRESERVE_RECENT_COUNT} sessions",
-                    "last_accessed": session.last_accessed.isoformat() if session.last_accessed else "Unknown",
-                    "message_count": session.message_count
-                })
+                preserved_sessions.append(
+                    {
+                        "id": session.id,
+                        "name": session.name,
+                        "reason": f"part of last {CleanupConfig.PRESERVE_RECENT_COUNT} sessions",
+                        "last_accessed": session.last_accessed.isoformat()
+                        if session.last_accessed
+                        else "Unknown",
+                        "message_count": session.message_count,
+                    }
+                )
                 continue
 
             if session.message_count >= CleanupConfig.MIN_MESSAGES_TO_KEEP:
-                preserved_sessions.append({
-                    "id": session.id,
-                    "name": session.name,
-                    "reason": f"has {CleanupConfig.MIN_MESSAGES_TO_KEEP}+ messages",
-                    "last_accessed": session.last_accessed.isoformat() if session.last_accessed else "Unknown",
-                    "message_count": session.message_count
-                })
+                preserved_sessions.append(
+                    {
+                        "id": session.id,
+                        "name": session.name,
+                        "reason": f"has {CleanupConfig.MIN_MESSAGES_TO_KEEP}+ messages",
+                        "last_accessed": session.last_accessed.isoformat()
+                        if session.last_accessed
+                        else "Unknown",
+                        "message_count": session.message_count,
+                    }
+                )
                 continue
 
             session_name_lower = session.name.lower() if session.name else ""
-            matching_keywords = [keyword for keyword in CleanupConfig.PROTECTED_KEYWORDS if keyword in session_name_lower]
+            matching_keywords = [
+                keyword
+                for keyword in CleanupConfig.PROTECTED_KEYWORDS
+                if keyword in session_name_lower
+            ]
             if matching_keywords:
-                preserved_sessions.append({
-                    "id": session.id,
-                    "name": session.name,
-                    "reason": f"contains keyword: {matching_keywords[0]}",
-                    "last_accessed": session.last_accessed.isoformat() if session.last_accessed else "Unknown",
-                    "message_count": session.message_count
-                })
+                preserved_sessions.append(
+                    {
+                        "id": session.id,
+                        "name": session.name,
+                        "reason": f"contains keyword: {matching_keywords[0]}",
+                        "last_accessed": session.last_accessed.isoformat()
+                        if session.last_accessed
+                        else "Unknown",
+                        "message_count": session.message_count,
+                    }
+                )
                 continue
 
-            session_space = session.message_count * CleanupConfig.ESTIMATED_MESSAGE_SIZE_BYTES
+            session_space = (
+                session.message_count * CleanupConfig.ESTIMATED_MESSAGE_SIZE_BYTES
+            )
             estimated_space_freed += session_space
 
-            sessions_to_delete.append({
-                "id": session.id,
-                "name": session.name,
-                "last_accessed": session.last_accessed.isoformat() if session.last_accessed else "Unknown",
-                "message_count": session.message_count,
-                "estimated_size_kb": round(session_space / 1024, 2)
-            })
+            sessions_to_delete.append(
+                {
+                    "id": session.id,
+                    "name": session.name,
+                    "last_accessed": session.last_accessed.isoformat()
+                    if session.last_accessed
+                    else "Unknown",
+                    "message_count": session.message_count,
+                    "estimated_size_kb": round(session_space / 1024, 2),
+                }
+            )
 
     except Exception as e:
         logger.error(f"Error generating cleanup preview: {e}")
@@ -266,10 +313,13 @@ async def get_cleanup_preview(owner: str | None = None) -> dict[str, Any]:
         "sessions_to_archive": sessions_to_archive,
         "sessions_to_delete": sessions_to_delete,
         "preserved_sessions": preserved_sessions,
-        "estimated_space_freed_mb": round(estimated_space_freed / (1024 * 1024), 2)
+        "estimated_space_freed_mb": round(estimated_space_freed / (1024 * 1024), 2),
     }
 
-async def cleanup_sessions(session_manager, owner: str | None = None) -> tuple[int, int, float]:
+
+async def cleanup_sessions(
+    session_manager, owner: str | None = None
+) -> tuple[int, int, float]:
     """
     Perform complete cleanup operations with error recovery.
 
@@ -290,7 +340,9 @@ async def cleanup_sessions(session_manager, owner: str | None = None) -> tuple[i
         logger.error(f"Archive operation failed: {e}")
 
     try:
-        deleted_count, space_freed_mb = await cleanup_old_sessions(session_manager, owner=owner)
+        deleted_count, space_freed_mb = await cleanup_old_sessions(
+            session_manager, owner=owner
+        )
     except Exception as e:
         logger.error(f"Delete operation failed: {e}")
 

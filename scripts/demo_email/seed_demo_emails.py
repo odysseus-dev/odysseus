@@ -19,6 +19,7 @@ Usage:
 Connection mirrors the app's local-Dovecot account (localhost:31143, STARTTLS).
 Override via env: DEMO_IMAP_HOST/PORT/USER/PASSWORD.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -85,8 +86,10 @@ def _tiny_pdf(title: str) -> bytes:
     out += b"0000000000 65535 f \n"
     for off in offsets:
         out += b"%010d 00000 n \n" % off
-    out += (b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF"
-            % (len(objs) + 1, xref_pos))
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF" % (
+        len(objs) + 1,
+        xref_pos,
+    )
     return bytes(out)
 
 
@@ -106,9 +109,22 @@ def _ics(summary: str, start: datetime, mins: int) -> str:
     )
 
 
-def _msg(*, frm, to=None, subject, text, html=None, days_ago=0, hours_ago=0,
-         in_reply_to=None, references=None, msg_id=None,
-         pdf=None, pdf_name="invoice.pdf", ics=None) -> tuple[EmailMessage, datetime]:
+def _msg(
+    *,
+    frm,
+    to=None,
+    subject,
+    text,
+    html=None,
+    days_ago=0,
+    hours_ago=0,
+    in_reply_to=None,
+    references=None,
+    msg_id=None,
+    pdf=None,
+    pdf_name="invoice.pdf",
+    ics=None,
+) -> tuple[EmailMessage, datetime]:
     m = EmailMessage()
     m["From"] = frm
     m["To"] = to or f"You <{DEMO_OWNER_ADDR}>"
@@ -126,8 +142,13 @@ def _msg(*, frm, to=None, subject, text, html=None, days_ago=0, hours_ago=0,
     if pdf is not None:
         m.add_attachment(pdf, maintype="application", subtype="pdf", filename=pdf_name)
     if ics is not None:
-        m.add_attachment(ics.encode("utf-8"), maintype="text", subtype="calendar",
-                         filename="invite.ics", params={"method": "REQUEST"})
+        m.add_attachment(
+            ics.encode("utf-8"),
+            maintype="text",
+            subtype="calendar",
+            filename="invite.ics",
+            params={"method": "REQUEST"},
+        )
     return m, when
 
 
@@ -140,113 +161,199 @@ def build_dataset() -> list[dict]:
         items.append({"mailbox": mailbox, "flags": flags, "msg": msg, "when": when})
 
     # 1. Recruiter — unread. (Subject has an emoji to also show the mono-emoji render.)
-    add("INBOX", "", _msg(
-        frm="Brogan O'Hara <talent@northstar-labs.example>",
-        subject="We want you on the Northstar AI team 🚀",
-        days_ago=0, hours_ago=2,
-        text=("Hey,\n\nSaw your work on the Odysseus stack — seriously impressive. "
-              "We're building an agentic AI platform and your name keeps coming up.\n\n"
-              "Any chance you're open to a quick chat this week? Comp is competitive and "
-              "the team is fully remote.\n\nCheers,\nBrogan\nHead of Talent, Northstar Labs"),
-        html=("<p>Hey,</p><p>Saw your work on the <b>Odysseus</b> stack — seriously "
-              "impressive. We're building an agentic AI platform and your name keeps coming "
-              "up.</p><p>Any chance you're open to a quick chat this week? Comp is competitive "
-              "and the team is fully remote.</p><p>Cheers,<br>Brogan<br><i>Head of Talent, "
-              "Northstar Labs</i></p>")))
+    add(
+        "INBOX",
+        "",
+        _msg(
+            frm="Brogan O'Hara <talent@northstar-labs.example>",
+            subject="We want you on the Northstar AI team 🚀",
+            days_ago=0,
+            hours_ago=2,
+            text=(
+                "Hey,\n\nSaw your work on the Odysseus stack — seriously impressive. "
+                "We're building an agentic AI platform and your name keeps coming up.\n\n"
+                "Any chance you're open to a quick chat this week? Comp is competitive and "
+                "the team is fully remote.\n\nCheers,\nBrogan\nHead of Talent, Northstar Labs"
+            ),
+            html=(
+                "<p>Hey,</p><p>Saw your work on the <b>Odysseus</b> stack — seriously "
+                "impressive. We're building an agentic AI platform and your name keeps coming "
+                "up.</p><p>Any chance you're open to a quick chat this week? Comp is competitive "
+                "and the team is fully remote.</p><p>Cheers,<br>Brogan<br><i>Head of Talent, "
+                "Northstar Labs</i></p>"
+            ),
+        ),
+    )
 
     # 1b. The "could've just been a search" email — unread, newest (top of inbox).
     #     Fixed Message-ID so we can pre-seed the agent's researched reply.
-    add("INBOX", "", _msg(
-        frm="Greg <greg@odysseus-demo.example>",
-        subject="quick q for the slide — DeepSeek-V3 param count?",
-        msg_id=LOOKUP_MSGID, days_ago=0, hours_ago=0,
-        text=("hey! sorry to bug you — in a meeting and someone asked and i'm "
-              "blanking: how many parameters does DeepSeek-V3 actually have, total "
-              "vs active? need it for the comparison slide. could you look it up real "
-              "quick? 🙏\n\nty!\nGreg"),
-        html=("<p>hey! sorry to bug you — in a meeting and someone asked and i'm "
-              "blanking: <b>how many parameters does DeepSeek-V3 actually have, total "
-              "vs active?</b> need it for the comparison slide. could you look it up "
-              "real quick? 🙏</p><p>ty!<br>Greg</p>")))
+    add(
+        "INBOX",
+        "",
+        _msg(
+            frm="Greg <greg@odysseus-demo.example>",
+            subject="quick q for the slide — DeepSeek-V3 param count?",
+            msg_id=LOOKUP_MSGID,
+            days_ago=0,
+            hours_ago=0,
+            text=(
+                "hey! sorry to bug you — in a meeting and someone asked and i'm "
+                "blanking: how many parameters does DeepSeek-V3 actually have, total "
+                "vs active? need it for the comparison slide. could you look it up real "
+                "quick? 🙏\n\nty!\nGreg"
+            ),
+            html=(
+                "<p>hey! sorry to bug you — in a meeting and someone asked and i'm "
+                "blanking: <b>how many parameters does DeepSeek-V3 actually have, total "
+                "vs active?</b> need it for the comparison slide. could you look it up "
+                "real quick? 🙏</p><p>ty!<br>Greg</p>"
+            ),
+        ),
+    )
 
     # 2. Newsletter — unread.
-    add("INBOX", "", _msg(
-        frm="Local Models Weekly <news@localmodels.example>",
-        subject="This week in local AI: tiny models, big benchmarks",
-        days_ago=1,
-        text=("LOCAL MODELS WEEKLY — Issue #142\n\n"
-              "• Local LLMs that fit in a shoebox GPU\n"
-              "• Why your RAG pipeline needs evaluation\n"
-              "• Cave of the week: someone ran 8x4090D in a closet\n\n"
-              "Unsubscribe any time.")))
+    add(
+        "INBOX",
+        "",
+        _msg(
+            frm="Local Models Weekly <news@localmodels.example>",
+            subject="This week in local AI: tiny models, big benchmarks",
+            days_ago=1,
+            text=(
+                "LOCAL MODELS WEEKLY — Issue #142\n\n"
+                "• Local LLMs that fit in a shoebox GPU\n"
+                "• Why your RAG pipeline needs evaluation\n"
+                "• Cave of the week: someone ran 8x4090D in a closet\n\n"
+                "Unsubscribe any time."
+            ),
+        ),
+    )
 
     # 3. Reply thread — original is in Sent, the reply lands unread in INBOX.
     orig_id = make_msgid(domain="odysseus.local")
-    add("Sent", "(\\Seen)", _msg(
-        frm=f"You <{DEMO_OWNER_ADDR}>",
-        to="Alex <alex@creator.example>",
-        subject="stream setup for Saturday",
-        msg_id=orig_id, days_ago=2,
-        text=("Yo — for Saturday's stream, are we doing the dual-PC setup or just the "
-              "one rig? Need to know before I cable everything.\n\n- You")))
-    add("INBOX", "", _msg(
-        frm="Alex <alex@creator.example>",
-        subject="Re: stream setup for Saturday",
-        in_reply_to=orig_id, references=orig_id,
-        days_ago=0, hours_ago=5,
-        text=("Dual-PC, definitely. Last time the single rig choked when we ran the "
-              "AI overlay + OBS + the game. Bring the capture card too.\n\n"
-              "Thanks,\nAlex")))
+    add(
+        "Sent",
+        "(\\Seen)",
+        _msg(
+            frm=f"You <{DEMO_OWNER_ADDR}>",
+            to="Alex <alex@creator.example>",
+            subject="stream setup for Saturday",
+            msg_id=orig_id,
+            days_ago=2,
+            text=(
+                "Yo — for Saturday's stream, are we doing the dual-PC setup or just the "
+                "one rig? Need to know before I cable everything.\n\n- You"
+            ),
+        ),
+    )
+    add(
+        "INBOX",
+        "",
+        _msg(
+            frm="Alex <alex@creator.example>",
+            subject="Re: stream setup for Saturday",
+            in_reply_to=orig_id,
+            references=orig_id,
+            days_ago=0,
+            hours_ago=5,
+            text=(
+                "Dual-PC, definitely. Last time the single rig choked when we ran the "
+                "AI overlay + OBS + the game. Bring the capture card too.\n\n"
+                "Thanks,\nAlex"
+            ),
+        ),
+    )
 
     # 4. Invoice with a real PDF attachment.
-    add("INBOX", "(\\Seen)", _msg(
-        frm="CloudCompute Billing <billing@cloudcompute.example>",
-        subject="Your invoice #DFX-2042 is ready",
-        days_ago=3,
-        text=("Hi,\n\nYour CloudCompute invoice #DFX-2042 for $42.00 is attached "
-              "(GPU minutes, May).\n\nNo action needed — auto-charged to your card on "
-              "the 1st.\n\n— CloudCompute"),
-        pdf=_tiny_pdf("Invoice #DFX-2042 - $42.00"), pdf_name="invoice_DFX-2042.pdf"))
+    add(
+        "INBOX",
+        "(\\Seen)",
+        _msg(
+            frm="CloudCompute Billing <billing@cloudcompute.example>",
+            subject="Your invoice #DFX-2042 is ready",
+            days_ago=3,
+            text=(
+                "Hi,\n\nYour CloudCompute invoice #DFX-2042 for $42.00 is attached "
+                "(GPU minutes, May).\n\nNo action needed — auto-charged to your card on "
+                "the 1st.\n\n— CloudCompute"
+            ),
+            pdf=_tiny_pdf("Invoice #DFX-2042 - $42.00"),
+            pdf_name="invoice_DFX-2042.pdf",
+        ),
+    )
 
     # 5. Calendar invite (ICS attachment + explicit time in body).
-    nextmon = datetime.now(UTC) + timedelta(days=(7 - datetime.now().weekday()) % 7 or 7)
+    nextmon = datetime.now(UTC) + timedelta(
+        days=(7 - datetime.now().weekday()) % 7 or 7
+    )
     nextmon = nextmon.replace(hour=10, minute=0, second=0, microsecond=0)
-    add("INBOX", "", _msg(
-        frm="Demo Team <calendar@dfx522.example>",
-        subject="Invitation: Demo Team sync — Monday 10:00",
-        days_ago=0, hours_ago=20,
-        text=("You're invited to the weekly Demo Team sync.\n\n"
-              f"When: Monday {nextmon:%b %d} at 10:00 UTC (30 min)\n"
-              "Where: Video call\n\n"
-              "Agenda: stall-detector rollout, emoji icons, demo prep."),
-        ics=_ics("Demo Team sync", nextmon, 30)))
+    add(
+        "INBOX",
+        "",
+        _msg(
+            frm="Demo Team <calendar@dfx522.example>",
+            subject="Invitation: Demo Team sync — Monday 10:00",
+            days_ago=0,
+            hours_ago=20,
+            text=(
+                "You're invited to the weekly Demo Team sync.\n\n"
+                f"When: Monday {nextmon:%b %d} at 10:00 UTC (30 min)\n"
+                "Where: Video call\n\n"
+                "Agenda: stall-detector rollout, emoji icons, demo prep."
+            ),
+            ics=_ics("Demo Team sync", nextmon, 30),
+        ),
+    )
 
     # 6. Urgent — flagged + unread.
-    add("INBOX", "(\\Flagged)", _msg(
-        frm="Ops Bot <ops@odysseus-demo.example>",
-        subject="[URGENT] prod is on fire 🔥 — odysseus-ui 502s",
-        days_ago=0, hours_ago=1,
-        text=("PAGE: odysseus-ui is returning 502s on the /api/chat endpoint.\n"
-              "Error rate 38% over the last 5 min. Last deploy was 12 min ago.\n\n"
-              "Need eyes ASAP. Reply here or join the incident call.")))
+    add(
+        "INBOX",
+        "(\\Flagged)",
+        _msg(
+            frm="Ops Bot <ops@odysseus-demo.example>",
+            subject="[URGENT] prod is on fire 🔥 — odysseus-ui 502s",
+            days_ago=0,
+            hours_ago=1,
+            text=(
+                "PAGE: odysseus-ui is returning 502s on the /api/chat endpoint.\n"
+                "Error rate 38% over the last 5 min. Last deploy was 12 min ago.\n\n"
+                "Need eyes ASAP. Reply here or join the incident call."
+            ),
+        ),
+    )
 
     # 7. Spammy — obvious, for the spam verdict.
-    add("INBOX", "", _msg(
-        frm="Prize Department <winner@totally-legit-prizes.example>",
-        subject="CONGRATULATIONS!!! You have WON 1,000,000 GOLD COINS!!!",
-        days_ago=4,
-        text=("Dear Lucky Winner,\n\nYou have been SELECTED to receive ONE MILLION "
-              "gold coins!!! To claim, simply reply with your bank details and "
-              "a small processing fee of 50 coins.\n\nACT NOW — offer expires in 3 hours!!!\n\n"
-              "Totally Legit Prizes Inc.")))
+    add(
+        "INBOX",
+        "",
+        _msg(
+            frm="Prize Department <winner@totally-legit-prizes.example>",
+            subject="CONGRATULATIONS!!! You have WON 1,000,000 GOLD COINS!!!",
+            days_ago=4,
+            text=(
+                "Dear Lucky Winner,\n\nYou have been SELECTED to receive ONE MILLION "
+                "gold coins!!! To claim, simply reply with your bank details and "
+                "a small processing fee of 50 coins.\n\nACT NOW — offer expires in 3 hours!!!\n\n"
+                "Totally Legit Prizes Inc."
+            ),
+        ),
+    )
 
     # 8. A normal, already-read personal one.
-    add("INBOX", "(\\Seen)", _msg(
-        frm="Mom <mom@family.example>",
-        subject="did you eat??",
-        days_ago=1, hours_ago=3,
-        text=("hi sweetie just checking did you eat today. you work too much on the "
-              "computer. call me. love mom xoxo")))
+    add(
+        "INBOX",
+        "(\\Seen)",
+        _msg(
+            frm="Mom <mom@family.example>",
+            subject="did you eat??",
+            days_ago=1,
+            hours_ago=3,
+            text=(
+                "hi sweetie just checking did you eat today. you work too much on the "
+                "computer. call me. love mom xoxo"
+            ),
+        ),
+    )
 
     return items
 
@@ -267,8 +374,10 @@ def _seed_cache() -> None:
         "Hope that unblocks the slide!\n\n"
         "— drafted for you by your Odysseus assistant"
     )
-    summary = ("Greg needs the DeepSeek-V3 parameter count (total vs active) for a "
-               "comparison slide. Quick factual lookup — answerable with a search.")
+    summary = (
+        "Greg needs the DeepSeek-V3 parameter count (total vs active) for a "
+        "comparison slide. Quick factual lookup — answerable with a search."
+    )
     now = datetime.now(UTC).isoformat()
     con = sqlite3.connect(str(CACHE_DB))
     try:
@@ -281,13 +390,23 @@ def _seed_cache() -> None:
         con.execute(
             "INSERT OR REPLACE INTO email_ai_replies "
             "(message_id, uid, folder, reply, model_used, created_at) VALUES (?,?,?,?,?,?)",
-            (LOOKUP_MSGID, "", "INBOX", reply, "demo", now))
+            (LOOKUP_MSGID, "", "INBOX", reply, "demo", now),
+        )
         con.execute(
             "INSERT OR REPLACE INTO email_summaries "
             "(message_id, uid, folder, subject, sender, summary, model_used, created_at) "
             "VALUES (?,?,?,?,?,?,?,?)",
-            (LOOKUP_MSGID, "", "INBOX", "quick q for the slide — DeepSeek-V3 param count?",
-             "greg@odysseus-demo.example", summary, "demo", now))
+            (
+                LOOKUP_MSGID,
+                "",
+                "INBOX",
+                "quick q for the slide — DeepSeek-V3 param count?",
+                "greg@odysseus-demo.example",
+                summary,
+                "demo",
+                now,
+            ),
+        )
         con.commit()
         print("  pre-seeded cached AI reply + summary for the lookup email.")
     finally:
@@ -326,11 +445,16 @@ def _wipe(conn: imaplib.IMAP4) -> int:
     account — otherwise a misconfigured DEMO_IMAP_USER/HOST could irreversibly
     wipe a real mailbox. Override only with DEMO_ALLOW_WIPE=1 (you must mean it).
     """
-    safe_target = USER.endswith("@odysseus.local") or HOST in ("localhost", "127.0.0.1", "::1")
+    safe_target = USER.endswith("@odysseus.local") or HOST in (
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    )
     if not safe_target and os.getenv("DEMO_ALLOW_WIPE") != "1":
         raise SystemExit(
             f"refusing to wipe non-demo target {USER}@{HOST}:{PORT} — "
-            f"set DEMO_ALLOW_WIPE=1 to override")
+            f"set DEMO_ALLOW_WIPE=1 to override"
+        )
     typ, boxes = conn.list()
     n = 0
     names = []
@@ -355,14 +479,18 @@ def _wipe(conn: imaplib.IMAP4) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--reset", action="store_true", help="wipe the account before seeding")
+    ap.add_argument(
+        "--reset", action="store_true", help="wipe the account before seeding"
+    )
     ap.add_argument("--wipe-only", action="store_true", help="only wipe, don't seed")
     args = ap.parse_args()
 
     try:
         conn = _connect()
     except Exception as e:
-        print(f"ERROR: could not connect to {USER}@{HOST}:{PORT} — {e}", file=sys.stderr)
+        print(
+            f"ERROR: could not connect to {USER}@{HOST}:{PORT} — {e}", file=sys.stderr
+        )
         print("Is the Dovecot user created + Dovecot reloaded?", file=sys.stderr)
         return 1
 
@@ -380,8 +508,10 @@ def main() -> int:
             dt = imaplib.Time2Internaldate(it["when"].timestamp())
             conn.append(it["mailbox"], it["flags"], dt, it["msg"].as_bytes())
         _seed_cache()
-        print(f"seeded {len(items)} demo message(s) into {USER} "
-              f"(INBOX + Sent). Switch to the 'Demo' account in Odysseus to view.")
+        print(
+            f"seeded {len(items)} demo message(s) into {USER} "
+            f"(INBOX + Sent). Switch to the 'Demo' account in Odysseus to view."
+        )
         return 0
     finally:
         try:

@@ -1,6 +1,7 @@
 """Pin langIcon (static/js/langIcons.js) against an explicit null opts.
 Driven through `node --input-type=module`; skips without node.
 """
+
 import json
 import shutil
 import subprocess
@@ -20,7 +21,11 @@ def _icon(lang, size, opts):
     """
     proc = subprocess.run(
         ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+        input=js,
+        capture_output=True,
+        text=True,
+        cwd=str(_REPO),
+        timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     return proc.stdout.strip()

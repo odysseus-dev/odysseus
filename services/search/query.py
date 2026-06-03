@@ -100,7 +100,7 @@ def enhance_query(original_query: str) -> tuple[str, str | None]:
         entities = _extract_entities(sub)
         boosted = _boost_entities_in_query(sub, entities)
         if boost_keywords:
-            boosted = f'({boosted}) OR ({" OR ".join(boost_keywords)})'
+            boosted = f"({boosted}) OR ({' OR '.join(boost_keywords)})"
         enhanced_subs.append(boosted)
 
     final_query = " AND ".join(f"({s})" for s in enhanced_subs)
@@ -128,7 +128,16 @@ def build_enhanced_query(query: str, time_filter: str = None) -> str:
 # ----------------------------------------------------------------------
 def _is_news_query(query: str) -> bool:
     """Lightweight heuristic to decide if a query is news-oriented."""
-    news_terms = {"news", "latest", "breaking", "today", "today's", "current", "updates", "happening"}
+    news_terms = {
+        "news",
+        "latest",
+        "breaking",
+        "today",
+        "today's",
+        "current",
+        "updates",
+        "happening",
+    }
     if not isinstance(query, str):
         return False
     tokens = set(re.findall(r"\b\w+\b", query.lower()))

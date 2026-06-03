@@ -92,15 +92,17 @@ def mint_token(owner: str, name: str = "companion") -> tuple[str, str]:
     token_id = str(uuid.uuid4())[:8]
 
     with get_db_session() as db:
-        db.add(ApiToken(
-            id=token_id,
-            owner=owner,
-            name=name,
-            token_hash=token_hash,
-            token_prefix=raw_token[:8],
-            scopes=COMPANION_SCOPE,
-            is_active=True,
-        ))
+        db.add(
+            ApiToken(
+                id=token_id,
+                owner=owner,
+                name=name,
+                token_hash=token_hash,
+                token_prefix=raw_token[:8],
+                scopes=COMPANION_SCOPE,
+                is_active=True,
+            )
+        )
     return token_id, raw_token
 
 

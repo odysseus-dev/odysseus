@@ -8,6 +8,7 @@ DOM removal when there's no session / no DB ids.
 
 chat.js pulls in browser globals so it can't run under node; guard at the source.
 """
+
 import re
 from pathlib import Path
 

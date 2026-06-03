@@ -27,8 +27,12 @@ def _src() -> str:
 def test_orphaned_doc_open_controls_are_not_disabled():
     text = _src()
     # Neither Open control may hard-disable itself for a session-less doc anymore.
-    assert "openItem.disabled = true" not in text, "dropdown Open must not be disabled for orphaned docs (#1602)"
-    assert "openBtn.disabled = true" not in text, "card Open button must not be disabled for orphaned docs (#1602)"
+    assert "openItem.disabled = true" not in text, (
+        "dropdown Open must not be disabled for orphaned docs (#1602)"
+    )
+    assert "openBtn.disabled = true" not in text, (
+        "card Open button must not be disabled for orphaned docs (#1602)"
+    )
     # The old 'not linked to a session' dead-end titles are gone.
     assert "not linked to a session" not in text.lower()
 
@@ -38,10 +42,12 @@ def test_orphaned_doc_open_routes_to_editor_load():
     function that opens an orphaned doc directly in the editor by id."""
     text = _src()
     # definition + two wirings (dropdown item + card button)
-    assert text.count("libraryOpenDocument(doc)") >= 3, \
+    assert text.count("libraryOpenDocument(doc)") >= 3, (
         "both Open controls must route the no-session case to libraryOpenDocument"
+    )
     # libraryOpenDocument genuinely handles the orphaned case.
-    body = text[text.index("async function libraryOpenDocument(doc)"):]
+    body = text[text.index("async function libraryOpenDocument(doc)") :]
     body = body[: body.index("async function libraryOpenInSession")]
-    assert "if (!doc.session_id)" in body and "_loadDocument(doc.id)" in body, \
+    assert "if (!doc.session_id)" in body and "_loadDocument(doc.id)" in body, (
         "libraryOpenDocument must open a session-less doc by id"
+    )

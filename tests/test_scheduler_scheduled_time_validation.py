@@ -10,6 +10,7 @@ recomputing next_run for an already-stored bad row.
 
 Now it fails closed (returns None) like an invalid cron expression does.
 """
+
 from datetime import datetime
 
 from src.task_scheduler import compute_next_run

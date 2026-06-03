@@ -10,7 +10,9 @@ def test_personal_index_includes_office_uploads(tmp_path, monkeypatch):
     monkeypatch.setattr(
         personal_docs,
         "extract_office_text",
-        lambda path: "# Report\n\nreadable office text" if Path(path) == docx_path else "",
+        lambda path: (
+            "# Report\n\nreadable office text" if Path(path) == docx_path else ""
+        ),
     )
 
     files = personal_docs.load_personal_index(str(tmp_path))

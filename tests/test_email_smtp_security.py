@@ -33,7 +33,9 @@ class _FakeSMTP:
         _FakeSMTP.calls.append(("login", user, password))
 
     def sendmail(self, from_addr, recipients, message):
-        _FakeSMTP.calls.append(("sendmail", from_addr, tuple(recipients), message, self.starttls_called))
+        _FakeSMTP.calls.append(
+            ("sendmail", from_addr, tuple(recipients), message, self.starttls_called)
+        )
 
 
 class _FakeSMTPSSL(_FakeSMTP):
@@ -61,7 +63,13 @@ def test_send_smtp_message_supports_plain_smtp(monkeypatch):
 
     assert _FakeSMTP.calls[0] == ("connect", "_FakeSMTP", "smtp.local", 2525)
     assert not any(call[0] == "starttls" for call in _FakeSMTP.calls)
-    assert _FakeSMTP.calls[-1] == ("sendmail", "from@example.com", ("to@example.com",), "hello", False)
+    assert _FakeSMTP.calls[-1] == (
+        "sendmail",
+        "from@example.com",
+        ("to@example.com",),
+        "hello",
+        False,
+    )
 
 
 def test_send_smtp_message_supports_explicit_starttls(monkeypatch):
@@ -71,11 +79,19 @@ def test_send_smtp_message_supports_explicit_starttls(monkeypatch):
     monkeypatch.setattr(helpers.smtplib, "SMTP", _FakeSMTP)
     monkeypatch.setattr(helpers.smtplib, "SMTP_SSL", _FakeSMTPSSL)
 
-    _send_smtp_message(_cfg("starttls", port=2525), "from@example.com", ["to@example.com"], "hello")
+    _send_smtp_message(
+        _cfg("starttls", port=2525), "from@example.com", ["to@example.com"], "hello"
+    )
 
     assert _FakeSMTP.calls[0] == ("connect", "_FakeSMTP", "smtp.local", 2525)
     assert ("starttls", "smtp.local", 2525) in _FakeSMTP.calls
-    assert _FakeSMTP.calls[-1] == ("sendmail", "from@example.com", ("to@example.com",), "hello", True)
+    assert _FakeSMTP.calls[-1] == (
+        "sendmail",
+        "from@example.com",
+        ("to@example.com",),
+        "hello",
+        True,
+    )
 
 
 def test_send_smtp_message_defaults_587_to_starttls(monkeypatch):
@@ -99,7 +115,9 @@ def test_send_smtp_message_uses_ssl_when_configured(monkeypatch):
     monkeypatch.setattr(helpers.smtplib, "SMTP", _FakeSMTP)
     monkeypatch.setattr(helpers.smtplib, "SMTP_SSL", _FakeSMTPSSL)
 
-    _send_smtp_message(_cfg("ssl", port=465), "from@example.com", ["to@example.com"], "hello")
+    _send_smtp_message(
+        _cfg("ssl", port=465), "from@example.com", ["to@example.com"], "hello"
+    )
 
     assert _FakeSMTP.calls[0] == ("connect", "_FakeSMTPSSL", "smtp.local", 465)
     assert not any(call[0] == "starttls" for call in _FakeSMTP.calls)

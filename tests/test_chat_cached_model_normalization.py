@@ -15,5 +15,5 @@ def test_cached_model_match_keeps_basename_normalization():
     source = (ROOT / "routes" / "chat_helpers.py").read_text()
 
     assert "def _match_cached_model_id" in source
-    assert "os.path.basename(requested.rstrip(\"/\"))" in source
-    assert "os.path.basename(model_id.rstrip(\"/\")) == req_base" in source
+    assert 'os.path.basename(requested.rstrip("/"))' in source
+    assert 'os.path.basename(model_id.rstrip("/")) == req_base' in source

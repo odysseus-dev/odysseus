@@ -21,7 +21,9 @@ def test_src_search_providers_aliases_services_providers():
     service_providers = importlib.import_module("services.search.providers")
 
     assert src_providers is service_providers
-    assert src_providers._resolve_ddg_redirect is service_providers._resolve_ddg_redirect
+    assert (
+        src_providers._resolve_ddg_redirect is service_providers._resolve_ddg_redirect
+    )
     assert src_providers._safesearch_for is service_providers._safesearch_for
 
 

@@ -6,6 +6,7 @@ durations; the download-failure toasts now match.
 cookbookDownload.js pulls in browser globals so it can't run under node; this
 guards the durations at the source level.
 """
+
 import re
 from pathlib import Path
 
@@ -17,7 +18,8 @@ def test_download_failure_toasts_stay_visible():
     # Each download-failure toast is a single line; assert each carries an
     # explicit duration >= _MIN_MS so the actionable error stays readable.
     lines = [
-        ln for ln in SRC.read_text(encoding="utf-8").splitlines()
+        ln
+        for ln in SRC.read_text(encoding="utf-8").splitlines()
         if "showToast(" in ln and "Download failed:" in ln
     ]
     assert lines, "expected at least one 'Download failed' showToast call"

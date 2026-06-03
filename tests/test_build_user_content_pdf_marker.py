@@ -7,6 +7,7 @@ set of characters and keeps eating leading body characters (so a page that
 begins "Page 1 text]: to the board" lost its "P"/"to"). The other call sites
 were switched to `strip_pdf_content_marker` (str.removeprefix); this one wasn't.
 """
+
 import os
 import tempfile
 
@@ -37,9 +38,13 @@ def test_pdf_body_marker_stripped_without_eating_text(monkeypatch, tmp_path):
     raw = "\n\n[PDF content]:\n\n[Page 1 text]:\nto the board, the agenda is set"
     monkeypatch.setattr(dp, "_process_pdf", lambda path: raw)
     monkeypatch.setattr(pdf_forms, "has_form_fields", lambda path: False)
-    monkeypatch.setattr(pdf_form_doc, "create_plain_pdf_document", lambda **kw: "doc-123")
+    monkeypatch.setattr(
+        pdf_form_doc, "create_plain_pdf_document", lambda **kw: "doc-123"
+    )
 
-    resolved = {"fid1": {"path": str(pdf_path), "mime": "application/pdf", "name": "doc.pdf"}}
+    resolved = {
+        "fid1": {"path": str(pdf_path), "mime": "application/pdf", "name": "doc.pdf"}
+    }
     content = dp.build_user_content(
         text="here is a pdf",
         attachment_ids=["fid1"],

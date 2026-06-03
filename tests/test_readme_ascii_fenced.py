@@ -4,6 +4,7 @@ box-drawing rules, rendering it misaligned instead of monospace-as-typed.
 
 This pins that the decorative banner stays inside a ``` code fence.
 """
+
 from pathlib import Path
 
 README = Path(__file__).resolve().parent.parent / "README.md"

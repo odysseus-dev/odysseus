@@ -6,6 +6,7 @@ AttributeError/TypeError. Because this is a public-execution security gate, a
 malformed (non-string) identifier must be treated as BLOCKED, not silently
 allowed. None/empty mean there is no tool to gate.
 """
+
 from src.tool_security import is_public_blocked_tool
 
 

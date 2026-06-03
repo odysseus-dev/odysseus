@@ -11,8 +11,9 @@ from services.memory.skill_format import slugify
 from services.memory.skills import SkillsManager
 
 
-def _write_skill_md(skills_root: Path, category: str, name: str,
-                    owner: str, description: str = "test") -> Path:
+def _write_skill_md(
+    skills_root: Path, category: str, name: str, owner: str, description: str = "test"
+) -> Path:
     skill_dir = skills_root / slugify(category or "general", fallback="general") / name
     skill_dir.mkdir(parents=True, exist_ok=True)
     md = textwrap.dedent(f"""\
@@ -54,18 +55,24 @@ def _request(user: str, body=None) -> Request:
         sent = True
         return {"type": "http.request", "body": payload, "more_body": False}
 
-    return Request(scope={
-        "type": "http",
-        "method": "POST" if body is not None else "PUT",
-        "headers": [(b"content-type", b"application/json")] if body is not None else [],
-        "app": DummyApp(),
-        "state": {"current_user": user},
-    }, receive=receive)
+    return Request(
+        scope={
+            "type": "http",
+            "method": "POST" if body is not None else "PUT",
+            "headers": [(b"content-type", b"application/json")]
+            if body is not None
+            else [],
+            "app": DummyApp(),
+            "state": {"current_user": user},
+        },
+        receive=receive,
+    )
 
 
 def _route_handler(router, path: str, method: str):
     return next(
-        route.endpoint for route in router.routes
+        route.endpoint
+        for route in router.routes
         if route.path == path and method in route.methods
     )
 
@@ -73,8 +80,12 @@ def _route_handler(router, path: str, method: str):
 @pytest.mark.asyncio
 async def test_update_skill_route_passes_owner_to_manager(tmp_path):
     skills_root = tmp_path / "skills"
-    alice_path = _write_skill_md(skills_root, "alice-cat", "caveman-mode", "alice", "alice original")
-    bob_path = _write_skill_md(skills_root, "bob-cat", "caveman-mode", "bob", "bob original")
+    alice_path = _write_skill_md(
+        skills_root, "alice-cat", "caveman-mode", "alice", "alice original"
+    )
+    bob_path = _write_skill_md(
+        skills_root, "bob-cat", "caveman-mode", "bob", "bob original"
+    )
 
     sm = SkillsManager(str(tmp_path))
     router = setup_skills_routes(sm)
@@ -98,7 +109,9 @@ async def test_update_skill_route_passes_owner_to_manager(tmp_path):
 @pytest.mark.asyncio
 async def test_save_skill_markdown_route_passes_owner_to_manager(tmp_path):
     skills_root = tmp_path / "skills"
-    skill_path = _write_skill_md(skills_root, "general", "caveman-mode", "alice", "before")
+    skill_path = _write_skill_md(
+        skills_root, "general", "caveman-mode", "alice", "before"
+    )
 
     sm = SkillsManager(str(tmp_path))
     router = setup_skills_routes(sm)

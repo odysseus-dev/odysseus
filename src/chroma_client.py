@@ -22,7 +22,9 @@ _CONNECT_TIMEOUT = float(os.getenv("CHROMADB_CONNECT_TIMEOUT", "2.0"))
 def _port_open(host: str, port: int, timeout: float = None) -> bool:
     """Return True if a TCP connection to host:port succeeds within timeout."""
     try:
-        with socket.create_connection((host, port), timeout=timeout or _CONNECT_TIMEOUT):
+        with socket.create_connection(
+            (host, port), timeout=timeout or _CONNECT_TIMEOUT
+        ):
             return True
     except OSError:
         return False

@@ -8,6 +8,7 @@ referenced by no tracked text file. The intended doc assets (the README hero
 image and the feature preview clips) are referenced, so they pass; a stray
 screenshot dropped in by a future PR would not.
 """
+
 import subprocess
 from pathlib import Path
 
@@ -16,8 +17,20 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 # Files a referenced image name could legitimately appear in.
-TEXT_EXTS = {".md", ".html", ".htm", ".js", ".ts", ".css", ".py", ".sh",
-             ".json", ".yml", ".yaml", ".txt"}
+TEXT_EXTS = {
+    ".md",
+    ".html",
+    ".htm",
+    ".js",
+    ".ts",
+    ".css",
+    ".py",
+    ".sh",
+    ".json",
+    ".yml",
+    ".yaml",
+    ".txt",
+}
 
 
 def _tracked(paths_under):
@@ -25,7 +38,10 @@ def _tracked(paths_under):
     try:
         out = subprocess.run(
             ["git", "ls-files", paths_under],
-            cwd=REPO, capture_output=True, text=True, timeout=30,
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -54,9 +70,7 @@ def test_no_orphan_images_in_docs():
     blob = "\n".join(haystack)
 
     orphans = [
-        str(img.relative_to(REPO))
-        for img in docs_images
-        if img.name not in blob
+        str(img.relative_to(REPO)) for img in docs_images if img.name not in blob
     ]
     assert not orphans, (
         "unreferenced image(s) committed under docs/ — likely PR screenshots "

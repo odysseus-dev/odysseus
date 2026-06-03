@@ -7,6 +7,7 @@ Regression: theme.js parsed hex with fixed substring(0,2)/(2,4)/(4,6) slices, so
 a 3-digit shorthand like "#abc" produced NaN channels (the color picker already
 expanded shorthand correctly — theme parsing did not).
 """
+
 import json
 import shutil
 import subprocess
@@ -26,7 +27,11 @@ def _rgb(hex_str: str):
     )
     proc = subprocess.run(
         ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+        input=js,
+        capture_output=True,
+        text=True,
+        cwd=str(_REPO),
+        timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout.strip())

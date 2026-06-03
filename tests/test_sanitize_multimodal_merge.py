@@ -4,10 +4,13 @@ from src.llm_core import _sanitize_llm_messages
 
 
 def test_multimodal_user_message_keeps_image_block_when_merged():
-    image_msg = {"role": "user", "content": [
-        {"type": "text", "text": "look at this"},
-        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
-    ]}
+    image_msg = {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "look at this"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ],
+    }
     tool_result = {"role": "user", "content": "Tool result: 42"}
     out = _sanitize_llm_messages([image_msg, tool_result])
 

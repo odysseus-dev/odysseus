@@ -36,7 +36,10 @@ def node_available():
 def _run_node(script: str) -> dict:
     res = subprocess.run(
         ["node", "--input-type=module", "-e", script],
-        cwd=_REPO, capture_output=True, timeout=15, text=True,
+        cwd=_REPO,
+        capture_output=True,
+        timeout=15,
+        text=True,
     )
     if res.returncode != 0:
         raise AssertionError(f"node failed:\n{res.stderr}")
@@ -61,7 +64,9 @@ def test_download_phase_uses_byte_counter_and_ignores_animated_tail(node_availab
     """)
     out = _run_node(script)
     assert out["a"] == "1.81G"
-    assert out["stuck_same"] is True, "a stuck download (only ETA animating) must stay the same signal"
+    assert out["stuck_same"] is True, (
+        "a stuck download (only ETA animating) must stay the same signal"
+    )
     assert out["climbed_diff"] is True, "climbing bytes must change the signal"
 
 
@@ -81,5 +86,9 @@ def test_build_phase_progresses_on_new_output(node_available):
         }));
     """)
     out = _run_node(script)
-    assert out["build_progresses"] is True, "new build output must count as progress (#1568)"
-    assert out["true_hang_stays"] is True, "a genuinely frozen tail must still read as stalled"
+    assert out["build_progresses"] is True, (
+        "new build output must count as progress (#1568)"
+    )
+    assert out["true_hang_stays"] is True, (
+        "a genuinely frozen tail must still read as stalled"
+    )

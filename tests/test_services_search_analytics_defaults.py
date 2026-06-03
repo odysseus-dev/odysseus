@@ -9,6 +9,7 @@ write) raises KeyError and breaks comprehensive_web_search.
 
 Mirrors tests/test_search_analytics_defaults.py which covers the src copy.
 """
+
 import json
 
 import services.search.analytics as analytics

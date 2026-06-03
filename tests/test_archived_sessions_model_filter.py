@@ -6,6 +6,7 @@ silently DROPPED "gpt-4o" (contains but does not end with the value), and
 over-matched models that merely share the suffix. The sibling name filter
 already uses a wildcard-escaped contains match.
 """
+
 import tempfile
 import uuid
 
@@ -51,8 +52,15 @@ def _seed(owner, *models):
     try:
         db.query(DbSession).delete()
         for m in models:
-            db.add(DbSession(id=str(uuid.uuid4()), owner=owner, name=f"chat {m}",
-                             model=m, archived=True))
+            db.add(
+                DbSession(
+                    id=str(uuid.uuid4()),
+                    owner=owner,
+                    name=f"chat {m}",
+                    model=m,
+                    archived=True,
+                )
+            )
         db.commit()
     finally:
         db.close()

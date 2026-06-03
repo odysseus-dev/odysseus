@@ -78,7 +78,9 @@ def test_utility_uses_default_when_utility_endpoint_unset(monkeypatch):
         "default_endpoint_id": "default",
         "default_model": "default-chat",
     }
-    _install_resolver_fakes(monkeypatch, settings, [_endpoint("default", "default-chat")])
+    _install_resolver_fakes(
+        monkeypatch, settings, [_endpoint("default", "default-chat")]
+    )
 
     url, model, headers = resolve_endpoint("utility")
 
@@ -118,7 +120,9 @@ def test_research_uses_default_when_research_and_utility_unset(monkeypatch):
         "default_endpoint_id": "default",
         "default_model": "default-chat",
     }
-    _install_resolver_fakes(monkeypatch, settings, [_endpoint("default", "default-chat")])
+    _install_resolver_fakes(
+        monkeypatch, settings, [_endpoint("default", "default-chat")]
+    )
 
     url, model, headers = resolve_endpoint("research")
 
@@ -136,15 +140,22 @@ def test_returns_explicit_fallback_when_no_endpoint_id_configured(monkeypatch):
         "default_endpoint_id": "",
         "default_model": "",
     }
-    fallback = ("https://fallback.example/chat", "fallback-chat", {"X-Test": "fallback"})
+    fallback = (
+        "https://fallback.example/chat",
+        "fallback-chat",
+        {"X-Test": "fallback"},
+    )
     _install_resolver_fakes(monkeypatch, settings, [])
 
-    assert resolve_endpoint(
-        "task",
-        fallback_url=fallback[0],
-        fallback_model=fallback[1],
-        fallback_headers=fallback[2],
-    ) == fallback
+    assert (
+        resolve_endpoint(
+            "task",
+            fallback_url=fallback[0],
+            fallback_model=fallback[1],
+            fallback_headers=fallback[2],
+        )
+        == fallback
+    )
 
 
 def test_hidden_configured_model_selects_first_enabled_chat_model(monkeypatch):
@@ -156,11 +167,13 @@ def test_hidden_configured_model_selects_first_enabled_chat_model(monkeypatch):
         id="default",
         base_url="https://default.example/v1",
         api_key="key-default",
-        cached_models=json.dumps([
-            "hidden-chat",
-            "text-embedding-3-small",
-            "enabled-chat",
-        ]),
+        cached_models=json.dumps(
+            [
+                "hidden-chat",
+                "text-embedding-3-small",
+                "enabled-chat",
+            ]
+        ),
         hidden_models=json.dumps(["hidden-chat"]),
         is_enabled=True,
     )

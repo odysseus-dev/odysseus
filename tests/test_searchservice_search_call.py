@@ -18,6 +18,7 @@ SearchService.search is exported via services/search/__init__.py and
 services/__init__.py (with a usage example in its own docstring), so this is a
 broken public API method. This test drives it with a stubbed search backend.
 """
+
 import asyncio
 
 from services.search import service as search_service

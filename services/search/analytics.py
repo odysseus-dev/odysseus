@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 _error_log_path = Path(__file__).resolve().parent.parent / "search_engine_error.log"
 _error_handler = logging.FileHandler(_error_log_path, encoding="utf-8")
 _error_handler.setLevel(logging.WARNING)
-_error_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+_error_handler.setFormatter(
+    logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+)
 error_logger = logging.getLogger("search_engine_error")
 error_logger.addHandler(_error_handler)
 error_logger.propagate = False
@@ -120,9 +122,9 @@ def get_search_stats() -> dict[str, Any]:
     cache_total = analytics.get("cache_hits", 0) + analytics.get("cache_misses", 0) or 1
     cache_hit_rate = analytics.get("cache_hits", 0) / cache_total
 
-    pattern_counter = Counter({
-        q: data["count"] for q, data in analytics.get("query_patterns", {}).items()
-    })
+    pattern_counter = Counter(
+        {q: data["count"] for q, data in analytics.get("query_patterns", {}).items()}
+    )
     most_common = [q for q, _ in pattern_counter.most_common(5)]
 
     return {

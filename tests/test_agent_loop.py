@@ -6,11 +6,17 @@ from unittest.mock import MagicMock
 
 # Mock heavy dependencies before importing
 for mod in [
-    'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
-    'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
-    'src.database',
-    'src.agent_tools',
-    'core.models', 'core.database',
+    "sqlalchemy",
+    "sqlalchemy.orm",
+    "sqlalchemy.ext",
+    "sqlalchemy.ext.declarative",
+    "sqlalchemy.ext.hybrid",
+    "sqlalchemy.sql",
+    "sqlalchemy.sql.expression",
+    "src.database",
+    "src.agent_tools",
+    "core.models",
+    "core.database",
 ]:
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
@@ -24,6 +30,7 @@ from src.agent_loop import (
 # ---------------------------------------------------------------------------
 # _detect_admin_intent
 # ---------------------------------------------------------------------------
+
 
 class TestDetectAdminIntent:
     """Test admin-intent detection from the last user message."""
@@ -82,10 +89,14 @@ class TestDetectAdminIntent:
         assert _detect_admin_intent(self._msgs("write some python code")) is False
 
     def test_explain_concept(self):
-        assert _detect_admin_intent(self._msgs("explain how transformers work")) is False
+        assert (
+            _detect_admin_intent(self._msgs("explain how transformers work")) is False
+        )
 
     def test_general_question(self):
-        assert _detect_admin_intent(self._msgs("what is the capital of France?")) is False
+        assert (
+            _detect_admin_intent(self._msgs("what is the capital of France?")) is False
+        )
 
     # --- Edge cases ---
 
@@ -97,15 +108,25 @@ class TestDetectAdminIntent:
 
     def test_multimodal_content(self):
         """Content as a list of blocks (vision messages)."""
-        msgs = [{"role": "user", "content": [
-            {"type": "text", "text": "rename this session please"},
-        ]}]
+        msgs = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "rename this session please"},
+                ],
+            }
+        ]
         assert _detect_admin_intent(msgs) is True
 
     def test_multimodal_no_admin(self):
-        msgs = [{"role": "user", "content": [
-            {"type": "text", "text": "describe this image"},
-        ]}]
+        msgs = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "describe this image"},
+                ],
+            }
+        ]
         assert _detect_admin_intent(msgs) is False
 
     def test_uses_last_user_message(self):
@@ -121,6 +142,7 @@ class TestDetectAdminIntent:
 # ---------------------------------------------------------------------------
 # _compute_final_metrics
 # ---------------------------------------------------------------------------
+
 
 class TestComputeFinalMetrics:
     """Test metric computation with real and estimated usage."""
@@ -152,20 +174,24 @@ class TestComputeFinalMetrics:
         assert m["usage_source"] == "real"
 
     def test_estimated_usage_tokens(self):
-        m = _compute_final_metrics(**self._base_args(
-            has_real_usage=False,
-            real_input_tokens=0,
-            real_output_tokens=0,
-        ))
+        m = _compute_final_metrics(
+            **self._base_args(
+                has_real_usage=False,
+                real_input_tokens=0,
+                real_output_tokens=0,
+            )
+        )
         # Estimated: len("hello world\n") // 4 = 3
         assert m["input_tokens"] == 3
         assert m["usage_source"] == "estimated"
 
     def test_tps_calculation(self):
-        m = _compute_final_metrics(**self._base_args(
-            real_output_tokens=100,
-            total_duration=2.0,
-        ))
+        m = _compute_final_metrics(
+            **self._base_args(
+                real_output_tokens=100,
+                total_duration=2.0,
+            )
+        )
         assert m["tokens_per_second"] == 50.0
 
     def test_tps_zero_duration(self):
@@ -173,17 +199,21 @@ class TestComputeFinalMetrics:
         assert m["tokens_per_second"] == 0
 
     def test_context_percent(self):
-        m = _compute_final_metrics(**self._base_args(
-            real_input_tokens=4096,
-            context_length=8192,
-        ))
+        m = _compute_final_metrics(
+            **self._base_args(
+                real_input_tokens=4096,
+                context_length=8192,
+            )
+        )
         assert m["context_percent"] == 50.0
 
     def test_context_percent_capped_at_100(self):
-        m = _compute_final_metrics(**self._base_args(
-            real_input_tokens=10000,
-            context_length=8192,
-        ))
+        m = _compute_final_metrics(
+            **self._base_args(
+                real_input_tokens=10000,
+                context_length=8192,
+            )
+        )
         assert m["context_percent"] == 100.0
 
     def test_context_percent_zero_context_length(self):
@@ -192,11 +222,13 @@ class TestComputeFinalMetrics:
 
     def test_last_round_input_tokens_used_for_context_pct(self):
         """When last_round_input_tokens > 0, it should be used for context %."""
-        m = _compute_final_metrics(**self._base_args(
-            real_input_tokens=100,
-            last_round_input_tokens=4096,
-            context_length=8192,
-        ))
+        m = _compute_final_metrics(
+            **self._base_args(
+                real_input_tokens=100,
+                last_round_input_tokens=4096,
+                context_length=8192,
+            )
+        )
         assert m["context_percent"] == 50.0
 
     def test_response_time(self):
@@ -216,10 +248,16 @@ class TestComputeFinalMetrics:
         assert m["model"] == "gpt-4o"
 
     def test_prep_timings_included(self):
-        m = _compute_final_metrics(**self._base_args(
-            time_to_first_token=1.25,
-            prep_timings={"request_setup": 0.2, "tool_selection": 0.3, "prompt_build": 0.15},
-        ))
+        m = _compute_final_metrics(
+            **self._base_args(
+                time_to_first_token=1.25,
+                prep_timings={
+                    "request_setup": 0.2,
+                    "tool_selection": 0.3,
+                    "prompt_build": 0.15,
+                },
+            )
+        )
         assert m["agent_prep_time"] == 0.65
         assert m["agent_model_wait_time"] == 0.6
         assert m["agent_prep_breakdown"] == {
@@ -231,10 +269,12 @@ class TestComputeFinalMetrics:
     def test_tool_events_included(self):
         events = [{"tool": "bash", "duration": 1.0}]
         texts = ["round 1 text"]
-        m = _compute_final_metrics(**self._base_args(
-            tool_events=events,
-            round_texts=texts,
-        ))
+        m = _compute_final_metrics(
+            **self._base_args(
+                tool_events=events,
+                round_texts=texts,
+            )
+        )
         assert m["tool_events"] == events
         assert m["round_texts"] == texts
 
@@ -248,6 +288,7 @@ class TestComputeFinalMetrics:
 # _append_tool_results — native tool-call message shaping
 # ---------------------------------------------------------------------------
 
+
 class TestAppendToolResultsNativeContent:
     """After a native tool call with no prose, the assistant message's content
     must be JSON null (None), not an empty string. Google Gemini's
@@ -255,13 +296,24 @@ class TestAppendToolResultsNativeContent:
     content with HTTP 400, which breaks every tool-using turn."""
 
     def _native(self):
-        return [{"id": "call_abc", "name": "web_fetch", "arguments": '{"url": "https://example.com"}'}]
+        return [
+            {
+                "id": "call_abc",
+                "name": "web_fetch",
+                "arguments": '{"url": "https://example.com"}',
+            }
+        ]
 
     def test_empty_text_yields_null_content(self):
         messages = []
         _append_tool_results(
-            messages, "", self._native(), [{}], ["page text"],
-            used_native=True, round_num=1,
+            messages,
+            "",
+            self._native(),
+            [{}],
+            ["page text"],
+            used_native=True,
+            round_num=1,
         )
         assistant = messages[0]
         assert assistant["role"] == "assistant"
@@ -276,16 +328,26 @@ class TestAppendToolResultsNativeContent:
     def test_whitespace_only_text_yields_null_content(self):
         messages = []
         _append_tool_results(
-            messages, "   \n\t  ", self._native(), [{}], ["r"],
-            used_native=True, round_num=2,
+            messages,
+            "   \n\t  ",
+            self._native(),
+            [{}],
+            ["r"],
+            used_native=True,
+            round_num=2,
         )
         assert messages[0]["content"] is None
 
     def test_real_prose_is_preserved(self):
         messages = []
         _append_tool_results(
-            messages, "Let me check that page.", self._native(), [{}], ["r"],
-            used_native=True, round_num=1,
+            messages,
+            "Let me check that page.",
+            self._native(),
+            [{}],
+            ["r"],
+            used_native=True,
+            round_num=1,
         )
         assert messages[0]["content"] == "Let me check that page."
 
@@ -293,8 +355,13 @@ class TestAppendToolResultsNativeContent:
         # The text-block fallback path still wraps results in a user message.
         messages = []
         _append_tool_results(
-            messages, "thinking...", [], ["tool output"], [],
-            used_native=False, round_num=1,
+            messages,
+            "thinking...",
+            [],
+            ["tool output"],
+            [],
+            used_native=False,
+            round_num=1,
         )
         assert messages[0]["role"] == "assistant"
         assert messages[0]["content"] == "thinking..."
@@ -310,16 +377,23 @@ class TestAppendToolResultsThoughtSignature:
     send it)."""
 
     def test_extra_content_is_replayed_when_present(self):
-        native = [{
-            "id": "call_g",
-            "name": "app_api",
-            "arguments": '{"action": "get_memory"}',
-            "extra_content": {"google": {"thought_signature": "EuIDCt8DAQ=="}},
-        }]
+        native = [
+            {
+                "id": "call_g",
+                "name": "app_api",
+                "arguments": '{"action": "get_memory"}',
+                "extra_content": {"google": {"thought_signature": "EuIDCt8DAQ=="}},
+            }
+        ]
         messages = []
         _append_tool_results(
-            messages, "", native, [{}], ["mem"],
-            used_native=True, round_num=1,
+            messages,
+            "",
+            native,
+            [{}],
+            ["mem"],
+            used_native=True,
+            round_num=1,
         )
         tc = messages[0]["tool_calls"][0]
         assert tc["extra_content"] == {"google": {"thought_signature": "EuIDCt8DAQ=="}}
@@ -331,8 +405,13 @@ class TestAppendToolResultsThoughtSignature:
         native = [{"id": "call_o", "name": "app_api", "arguments": "{}"}]
         messages = []
         _append_tool_results(
-            messages, "", native, [{}], ["r"],
-            used_native=True, round_num=1,
+            messages,
+            "",
+            native,
+            [{}],
+            ["r"],
+            used_native=True,
+            round_num=1,
         )
         # No empty/None extra_content leaks onto non-Gemini tool calls.
         assert "extra_content" not in messages[0]["tool_calls"][0]
@@ -373,7 +452,9 @@ class TestWebSearchSourcesKeyLookup:
     def test_fixed_lookup_finds_output_key(self):
         """After the fix, "output" is checked first so _src_text is non-empty."""
         result = self._make_result("output")
-        src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+        src_text = (
+            result.get("output") or result.get("results") or result.get("stdout") or ""
+        )
         assert src_text != ""
         assert "SOURCES" in src_text
 
@@ -381,18 +462,22 @@ class TestWebSearchSourcesKeyLookup:
 
     def test_sources_extracted_from_output(self):
         result = self._make_result("output")
-        src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+        src_text = (
+            result.get("output") or result.get("results") or result.get("stdout") or ""
+        )
         marker = "<!-- SOURCES:"
         idx = src_text.find(marker)
         end = src_text.find(" -->", idx)
-        extracted = _json.loads(src_text[idx + len(marker):end])
+        extracted = _json.loads(src_text[idx + len(marker) : end])
         assert extracted == self._SOURCES
 
     def test_marker_stripped_from_output_key(self):
         """After extraction the "output" value is cleaned so the LLM never
         sees the raw JSON blob in its round-2 context."""
         result = self._make_result("output")
-        src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+        src_text = (
+            result.get("output") or result.get("results") or result.get("stdout") or ""
+        )
         marker = "<!-- SOURCES:"
         idx = src_text.find(marker)
         clean = src_text[:idx].rstrip()
@@ -406,12 +491,16 @@ class TestWebSearchSourcesKeyLookup:
 
     def test_results_key_still_works(self):
         result = self._make_result("results")
-        src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+        src_text = (
+            result.get("output") or result.get("results") or result.get("stdout") or ""
+        )
         assert src_text != ""
         assert "SOURCES" in src_text
 
     def test_stdout_key_still_works(self):
         result = self._make_result("stdout")
-        src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
+        src_text = (
+            result.get("output") or result.get("results") or result.get("stdout") or ""
+        )
         assert src_text != ""
         assert "SOURCES" in src_text

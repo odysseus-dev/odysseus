@@ -6,6 +6,7 @@ for yt-dlp to finish). A hung yt-dlp would therefore block forever and the
 ``except asyncio.TimeoutError`` handler was unreachable. The wait must be bound
 to communicate(), and the child killed when it overruns.
 """
+
 import asyncio
 
 from src import youtube_handler
@@ -32,13 +33,9 @@ def test_comment_fetch_honours_timeout(monkeypatch):
     async def fake_create_subprocess_exec(*args, **kwargs):
         return HangingProc()
 
-    monkeypatch.setattr(
-        asyncio, "create_subprocess_exec", fake_create_subprocess_exec
-    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
-    result = asyncio.run(
-        youtube_handler.fetch_youtube_comments("vid123", timeout=0.1)
-    )
+    result = asyncio.run(youtube_handler.fetch_youtube_comments("vid123", timeout=0.1))
 
     assert result["success"] is False
     assert "timed out" in result["error"].lower()

@@ -7,6 +7,7 @@ English "Forwarded message" one, so forwarded mail produced by Odysseus itself
 leaked the divider into the level-0 reply bubble — or, with no Outlook header
 block to fall back on, was not split into turns at all.
 """
+
 from src.email_thread_parser import parse_thread
 
 

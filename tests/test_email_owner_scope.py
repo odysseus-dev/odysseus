@@ -12,7 +12,9 @@ def _route_endpoint(router, path: str, method: str):
     raise AssertionError(f"route not found: {method} {path}")
 
 
-def test_email_tag_clause_excludes_legacy_owner_rows_for_authenticated_owner(monkeypatch):
+def test_email_tag_clause_excludes_legacy_owner_rows_for_authenticated_owner(
+    monkeypatch,
+):
     import routes.email_routes as email_routes
 
     monkeypatch.setattr(
@@ -142,10 +144,18 @@ def test_scheduled_poller_resolves_config_with_row_owner(tmp_path, monkeypatch):
             calls.append(("append", folder))
 
     monkeypatch.setattr(email_pollers, "_get_email_config", fake_get_email_config)
-    monkeypatch.setattr(email_pollers, "_send_smtp_message", lambda *args, **kwargs: calls.append(("send", args[1], args[2])))
+    monkeypatch.setattr(
+        email_pollers,
+        "_send_smtp_message",
+        lambda *args, **kwargs: calls.append(("send", args[1], args[2])),
+    )
     monkeypatch.setattr(email_pollers, "_imap", FakeImap)
     monkeypatch.setattr(email_pollers, "_detect_sent_folder", lambda imap: "Sent")
-    monkeypatch.setattr(email_pollers, "_cleanup_compose_uploads", lambda attachments: calls.append(("cleanup", attachments)))
+    monkeypatch.setattr(
+        email_pollers,
+        "_cleanup_compose_uploads",
+        lambda attachments: calls.append(("cleanup", attachments)),
+    )
 
     result = email_pollers._scheduled_poll_once()
 

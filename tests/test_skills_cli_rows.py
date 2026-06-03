@@ -23,8 +23,10 @@ def _load_cli(monkeypatch):
 def test_skill_entries_skips_invalid_rows(monkeypatch):
     cli = _load_cli(monkeypatch)
 
-    assert cli._skill_entries([
-        {"name": "deploy", "category": "ops"},
-        "bad-row",
-        None,
-    ]) == [{"name": "deploy", "category": "ops"}]
+    assert cli._skill_entries(
+        [
+            {"name": "deploy", "category": "ops"},
+            "bad-row",
+            None,
+        ]
+    ) == [{"name": "deploy", "category": "ops"}]

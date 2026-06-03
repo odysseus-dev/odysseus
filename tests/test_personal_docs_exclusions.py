@@ -6,6 +6,7 @@ sibling directories sharing a name prefix — so adding ``/docs`` would silently
 drop exclusions for files under ``/docs2``. The match must respect a path
 boundary.
 """
+
 import os
 
 from src import personal_docs

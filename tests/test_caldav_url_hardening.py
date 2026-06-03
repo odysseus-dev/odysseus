@@ -39,7 +39,10 @@ def test_validate_caldav_url_blocks_private_ips_unless_explicitly_allowed(monkey
         caldav_sync.validate_caldav_url("http://10.0.0.5:5232/dav")
 
     monkeypatch.setenv("ODYSSEUS_ALLOW_PRIVATE_CALDAV", "1")
-    assert caldav_sync.validate_caldav_url("http://10.0.0.5:5232/dav") == "http://10.0.0.5:5232/dav"
+    assert (
+        caldav_sync.validate_caldav_url("http://10.0.0.5:5232/dav")
+        == "http://10.0.0.5:5232/dav"
+    )
 
 
 def test_sync_caldav_decrypts_stored_password_and_validates_url(monkeypatch):
@@ -54,7 +57,9 @@ def test_sync_caldav_decrypts_stored_password_and_validates_url(monkeypatch):
     monkeypatch.setitem(sys.modules, "routes.prefs_routes", prefs_mod)
 
     secret_mod = types.ModuleType("src.secret_storage")
-    secret_mod.decrypt = lambda value: "decrypted-password" if value == "enc:stored" else value
+    secret_mod.decrypt = lambda value: (
+        "decrypted-password" if value == "enc:stored" else value
+    )
     monkeypatch.setitem(sys.modules, "src.secret_storage", secret_mod)
 
     captured = {}
@@ -90,8 +95,8 @@ def test_sync_caldav_decrypts_stored_password_and_validates_url(monkeypatch):
 def test_calendar_routes_use_hardened_caldav_client_and_secret_storage():
     text = Path("routes/calendar_routes.py").read_text(encoding="utf-8")
 
-    assert "validate_caldav_url(body.get(\"url\", \"\"))" in text
-    assert "cfg[\"password\"] = encrypt(body[\"password\"])" in text
+    assert 'validate_caldav_url(body.get("url", ""))' in text
+    assert 'cfg["password"] = encrypt(body["password"])' in text
     assert "pw = decrypt(pw)" in text
     assert "follow_redirects=False, trust_env=False" in text
     assert "Redirects are not followed for CalDAV safety" in text

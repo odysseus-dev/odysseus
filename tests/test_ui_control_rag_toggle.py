@@ -6,6 +6,7 @@ fully wires it (chatStream.js maps rag -> rag-toggle / rag-indicator-btn).
 But valid_toggles omitted "rag", so `toggle rag on` returned an "Unknown
 toggle" error - the advertised capability was dead.
 """
+
 import asyncio
 
 from src.ai_interaction import do_ui_control

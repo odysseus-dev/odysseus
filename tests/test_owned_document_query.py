@@ -1,4 +1,5 @@
 """Tests for _owned_document_query owner scoping (src/tool_implementations.py)."""
+
 from src.tool_implementations import _owned_document_query
 
 

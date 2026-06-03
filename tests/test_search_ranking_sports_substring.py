@@ -13,6 +13,7 @@ The same ranking module exists in two live copies: `services/search/ranking.py`
 `web_search` tool path via `src/search/core.py`). Both are fixed and both are
 covered here.
 """
+
 import pytest
 
 import services.search.ranking as services_ranking
@@ -40,10 +41,18 @@ def test_transport_news_result_outranks_one_with_standalone_sport(ranking):
     query = "latest transport news"
     results = [
         # B first in input; identical except B carries a standalone "sport" word.
-        {"title": "City transport plan", "snippet": "the transport plan details and sport",
-         "url": "https://example.org/b", "age": "1 day"},
-        {"title": "City transport plan", "snippet": "the transport plan details",
-         "url": "https://example.org/a", "age": "1 day"},
+        {
+            "title": "City transport plan",
+            "snippet": "the transport plan details and sport",
+            "url": "https://example.org/b",
+            "age": "1 day",
+        },
+        {
+            "title": "City transport plan",
+            "snippet": "the transport plan details",
+            "url": "https://example.org/a",
+            "age": "1 day",
+        },
     ]
     ranked = ranking.rank_search_results(query, results)
     # With word-boundary matching only B (standalone "sport") is penalized, so the

@@ -7,6 +7,7 @@ as a single bucket ((language == None) | (language == "text")), so the
 facet count must add them, otherwise clicking the facet returns more docs
 than the count promised.
 """
+
 from routes.document_routes import _aggregate_language_facets
 
 

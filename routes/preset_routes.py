@@ -29,7 +29,9 @@ def setup_preset_routes(preset_manager) -> APIRouter:
         return preset_manager.presets
 
     @router.post("/api/presets/custom")
-    async def update_custom_preset(preset_update: PresetUpdateRequest, _admin: None = Depends(require_admin)) -> dict[str, Any]:
+    async def update_custom_preset(
+        preset_update: PresetUpdateRequest, _admin: None = Depends(require_admin)
+    ) -> dict[str, Any]:
         try:
             success = preset_manager.update_custom(
                 preset_update.temperature,
@@ -52,7 +54,9 @@ def setup_preset_routes(preset_manager) -> APIRouter:
         return preset_manager.get_user_templates()
 
     @router.post("/api/presets/templates")
-    async def save_user_template(req: UserTemplateRequest, _admin: None = Depends(require_admin)) -> dict[str, Any]:
+    async def save_user_template(
+        req: UserTemplateRequest, _admin: None = Depends(require_admin)
+    ) -> dict[str, Any]:
         template = req.model_dump()
         if not template["id"]:
             template["id"] = f"user-{uuid.uuid4().hex[:8]}"
@@ -62,7 +66,9 @@ def setup_preset_routes(preset_manager) -> APIRouter:
         return {"success": False, "message": "Failed to save template"}
 
     @router.delete("/api/presets/templates/{template_id}")
-    async def delete_user_template(template_id: str, _admin: None = Depends(require_admin)) -> dict[str, Any]:
+    async def delete_user_template(
+        template_id: str, _admin: None = Depends(require_admin)
+    ) -> dict[str, Any]:
         success = preset_manager.delete_user_template(template_id)
         if success:
             return {"success": True}
@@ -88,20 +94,25 @@ def setup_preset_routes(preset_manager) -> APIRouter:
             user_input += f"Notes: {draft}\n"
 
         messages = [
-            {"role": "system", "content": (
-                "You are an expert at writing character system prompts for AI assistants. "
-                "The user will give you a character name and/or rough notes. "
-                "Write a concise, effective system prompt (3-6 sentences) that captures the character's personality, "
-                "speaking style, knowledge areas, and behavioral guidelines. "
-                "Output ONLY the system prompt text — no quotes, no preamble, no explanation."
-            )},
+            {
+                "role": "system",
+                "content": (
+                    "You are an expert at writing character system prompts for AI assistants. "
+                    "The user will give you a character name and/or rough notes. "
+                    "Write a concise, effective system prompt (3-6 sentences) that captures the character's personality, "
+                    "speaking style, knowledge areas, and behavioral guidelines. "
+                    "Output ONLY the system prompt text — no quotes, no preamble, no explanation."
+                ),
+            },
             {"role": "user", "content": user_input},
         ]
 
         try:
             model_spec = data.get("model") or ""
             url, model, headers = _resolve_model(model_spec)
-            result = await llm_call_async(url, model, messages, temperature=0.8, max_tokens=500, headers=headers)
+            result = await llm_call_async(
+                url, model, messages, temperature=0.8, max_tokens=500, headers=headers
+            )
             return {"success": True, "prompt": result.strip()}
         except Exception as e:
             logger.error(f"Expand prompt failed: {e}")
@@ -114,7 +125,9 @@ def setup_preset_routes(preset_manager) -> APIRouter:
         return {"groups": preset_manager.get_group_presets()}
 
     @router.post("/api/presets/groups")
-    async def save_group_presets(request: Request, _admin: None = Depends(require_admin)):
+    async def save_group_presets(
+        request: Request, _admin: None = Depends(require_admin)
+    ):
         """Save group chat presets."""
         data = await request.json()
         preset_manager.save_group_presets(data.get("groups", []))

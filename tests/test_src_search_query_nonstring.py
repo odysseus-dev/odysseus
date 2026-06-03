@@ -6,7 +6,9 @@ _PATH = Path(__file__).resolve().parents[1] / "src" / "search" / "query.py"
 
 
 def _load():
-    loader = importlib.machinery.SourceFileLoader("odysseus_src_search_query", str(_PATH))
+    loader = importlib.machinery.SourceFileLoader(
+        "odysseus_src_search_query", str(_PATH)
+    )
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)

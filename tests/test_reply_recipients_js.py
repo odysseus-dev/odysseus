@@ -8,6 +8,7 @@ Regression for issue #360: reply-all dropped every Cc recipient when the user's
 own address was unknown, because the old filter used `includes("")` (always
 true) instead of an exact-email comparison.
 """
+
 import json
 import shutil
 import subprocess
@@ -23,7 +24,11 @@ _HAS_NODE = shutil.which("node") is not None
 def _run(js: str) -> str:
     proc = subprocess.run(
         ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+        input=js,
+        capture_output=True,
+        text=True,
+        cwd=str(_REPO),
+        timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     return proc.stdout.strip()
@@ -57,7 +62,10 @@ def test_reply_all_excludes_only_self_exactly():
 def test_reply_all_excludes_all_of_my_addresses():
     # Multi-account user: every one of their own addresses must be excluded,
     # not just the active one.
-    data = {"to": "Alice <alice@x.com>, me@work.com", "cc": "me@personal.com, bob@x.com"}
+    data = {
+        "to": "Alice <alice@x.com>, me@work.com",
+        "cc": "me@personal.com, bob@x.com",
+    }
     js = f"""
     import {{ buildReplyAllCc }} from '{_HELPER.as_posix()}';
     console.log(JSON.stringify(buildReplyAllCc({json.dumps(data)}, ["me@work.com", "me@personal.com"])));

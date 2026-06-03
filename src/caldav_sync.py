@@ -47,7 +47,11 @@ _BLOCKED_HOSTS = {
 
 
 def _private_caldav_allowed() -> bool:
-    return os.environ.get("ODYSSEUS_ALLOW_PRIVATE_CALDAV", "0").lower() in {"1", "true", "yes"}
+    return os.environ.get("ODYSSEUS_ALLOW_PRIVATE_CALDAV", "0").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
 
 def _validate_caldav_ip(host: str) -> None:
@@ -72,7 +76,9 @@ def validate_caldav_url(raw_url: str) -> str:
     if not parsed.hostname:
         raise ValueError("CalDAV URL must include a host")
     if parsed.username or parsed.password:
-        raise ValueError("Put CalDAV credentials in the username/password fields, not the URL")
+        raise ValueError(
+            "Put CalDAV credentials in the username/password fields, not the URL"
+        )
     if parsed.fragment:
         raise ValueError("CalDAV URL fragments are not allowed")
     try:
@@ -155,10 +161,14 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                 cal_id = _stable_cal_id(remote_url)
                 display_name = (remote_cal.name or "").strip() or "CalDAV"
 
-                local_cal = db.query(CalendarCal).filter(
-                    CalendarCal.id == cal_id,
-                    CalendarCal.owner == owner,
-                ).first()
+                local_cal = (
+                    db.query(CalendarCal)
+                    .filter(
+                        CalendarCal.id == cal_id,
+                        CalendarCal.owner == owner,
+                    )
+                    .first()
+                )
                 if not local_cal:
                     local_cal = CalendarCal(
                         id=cal_id,
@@ -236,9 +246,14 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                             else ""
                         )
 
-                        existing = pending.get(uid_val) or db.query(CalendarEvent).filter(
-                            CalendarEvent.uid == uid_val,
-                        ).first()
+                        existing = (
+                            pending.get(uid_val)
+                            or db.query(CalendarEvent)
+                            .filter(
+                                CalendarEvent.uid == uid_val,
+                            )
+                            .first()
+                        )
                         if existing:
                             existing.calendar_id = local_cal.id
                             existing.summary = summary
@@ -270,12 +285,18 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                 # Prune locally-cached CalDAV events that vanished
                 # upstream (only within our sync window — events outside
                 # the window aren't in `objs`, so we'd false-delete them).
-                stale = db.query(CalendarEvent).filter(
-                    CalendarEvent.calendar_id == local_cal.id,
-                    CalendarEvent.dtstart >= start,
-                    CalendarEvent.dtstart <= end,
-                    ~CalendarEvent.uid.in_(seen_uids) if seen_uids else CalendarEvent.uid.isnot(None),
-                ).all()
+                stale = (
+                    db.query(CalendarEvent)
+                    .filter(
+                        CalendarEvent.calendar_id == local_cal.id,
+                        CalendarEvent.dtstart >= start,
+                        CalendarEvent.dtstart <= end,
+                        ~CalendarEvent.uid.in_(seen_uids)
+                        if seen_uids
+                        else CalendarEvent.uid.isnot(None),
+                    )
+                    .all()
+                )
                 for ev in stale:
                     db.delete(ev)
                 result["deleted"] += len(stale)
@@ -302,12 +323,15 @@ async def sync_caldav(owner: str) -> dict:
     pw = cfg.get("password") or ""
     try:
         from src.secret_storage import decrypt
+
         pw = decrypt(pw)
     except Exception:
         pass
     if not (url and user and pw):
         return {
-            "calendars": 0, "events": 0, "deleted": 0,
+            "calendars": 0,
+            "events": 0,
+            "deleted": 0,
             "errors": ["CalDAV is not configured"],
         }
     try:

@@ -6,6 +6,7 @@ action stored the raw value verbatim, so a reminder edited with natural language
 was saved as an unparseable literal the frontend's `new Date()` can't read — and
 the reminder never fired. Both actions must route due_date through the parser.
 """
+
 import asyncio
 import json
 import sys
@@ -70,14 +71,24 @@ def _install_fakes(monkeypatch, note, parse=None):
 
 
 def _run_update(args):
-    return asyncio.run(tool_implementations.do_manage_notes(json.dumps(args), owner=None))
+    return asyncio.run(
+        tool_implementations.do_manage_notes(json.dumps(args), owner=None)
+    )
 
 
 def test_update_parses_natural_language_due_date(monkeypatch):
     note = SimpleNamespace(
-        id="abc12345-existing", owner=None, title="Dentist", content=None,
-        note_type="note", color=None, label=None, items=None,
-        pinned=False, archived=False, due_date=None,
+        id="abc12345-existing",
+        owner=None,
+        title="Dentist",
+        content=None,
+        note_type="note",
+        color=None,
+        label=None,
+        items=None,
+        pinned=False,
+        archived=False,
+        due_date=None,
     )
     calls = _install_fakes(monkeypatch, note)
 
@@ -93,9 +104,17 @@ def test_update_parses_natural_language_due_date(monkeypatch):
 
 def test_update_still_sets_other_fields_without_parsing_them(monkeypatch):
     note = SimpleNamespace(
-        id="abc12345-existing", owner=None, title="Old", content=None,
-        note_type="note", color=None, label=None, items=None,
-        pinned=False, archived=False, due_date=None,
+        id="abc12345-existing",
+        owner=None,
+        title="Old",
+        content=None,
+        note_type="note",
+        color=None,
+        label=None,
+        items=None,
+        pinned=False,
+        archived=False,
+        due_date=None,
     )
     calls = _install_fakes(monkeypatch, note)
 

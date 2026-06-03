@@ -9,10 +9,16 @@ import pytest
 
 # Mock heavy dependencies before importing
 for mod in [
-    'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
-    'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
-    'src.database',
-    'core.models', 'core.database',
+    "sqlalchemy",
+    "sqlalchemy.orm",
+    "sqlalchemy.ext",
+    "sqlalchemy.ext.declarative",
+    "sqlalchemy.ext.hybrid",
+    "sqlalchemy.sql",
+    "sqlalchemy.sql.expression",
+    "src.database",
+    "core.models",
+    "core.database",
 ]:
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
@@ -82,7 +88,9 @@ class TestTrimForContext:
     def test_drops_older_messages_before_latest_user_paste(self):
         huge = "B" * 12000
         messages = [{"role": "system", "content": "You are helpful."}]
-        messages.extend({"role": "user", "content": f"old-{i} " + ("x" * 1000)} for i in range(8))
+        messages.extend(
+            {"role": "user", "content": f"old-{i} " + ("x" * 1000)} for i in range(8)
+        )
         messages.append({"role": "user", "content": huge})
 
         trimmed = trim_for_context(messages, context_length=2048, reserve_tokens=512)
@@ -159,9 +167,17 @@ class TestMaybeCompactFourthMessage:
             {"role": "system", "content": "You are a helpful agent. " * 200},
             {"role": "user", "content": "turn 1: search the web"},
             # Native tool call → content is None (matches agent_loop persistence)
-            {"role": "assistant", "content": None,
-             "tool_calls": [{"id": "c1", "type": "function",
-                             "function": {"name": "web_search", "arguments": "{}"}}]},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "web_search", "arguments": "{}"},
+                    }
+                ],
+            },
             {"role": "tool", "tool_call_id": "c1", "content": "search results"},
             {"role": "assistant", "content": "Here is what I found."},
             {"role": "user", "content": "turn 2"},
@@ -180,15 +196,22 @@ class TestMaybeCompactFourthMessage:
         assert was_compacted is True
         # The summary the model produced is present and a system message.
         assert any(
-            m.get("role") == "system" and "compact summary text" in (m.get("content") or "")
+            m.get("role") == "system"
+            and "compact summary text" in (m.get("content") or "")
             for m in compacted_messages
         )
 
     def test_handles_multimodal_list_content(self):
         messages = self._four_turn_history_with_tool_call()
-        messages[1] = {"role": "user", "content": [
-            {"type": "text", "text": "look at this image"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,xxxx"}},
-        ]}
+        messages[1] = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look at this image"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,xxxx"},
+                },
+            ],
+        }
         result = self._run(messages)
         assert len(result) == 3 and result[2] is True

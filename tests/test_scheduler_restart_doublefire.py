@@ -10,6 +10,7 @@ After the fix (start() advances overdue next_run to now + 60s), the regression
 test asserts the opposite: the task fires at most once across two consecutive
 polls.
 """
+
 import asyncio
 import sys
 import types
@@ -26,14 +27,18 @@ def _test_utcnow():
 
 def _stub_heavy():
     for name in [
-        "src.builtin_actions", "src.ai_interaction", "src.endpoint_resolver",
-        "src.agent_loop", "src.session_manager",
+        "src.builtin_actions",
+        "src.ai_interaction",
+        "src.endpoint_resolver",
+        "src.agent_loop",
+        "src.session_manager",
     ]:
         sys.modules.setdefault(name, types.ModuleType(name))
 
 
 def _setup_isolated_db():
     import core.database as cd
+
     B = declarative_base()
 
     class ScheduledTask(B):
@@ -81,6 +86,7 @@ def _drive_scheduler(monkeypatch, pre_start_setup=None):
     cd, ScheduledTask, TaskRun = _setup_isolated_db()
 
     from src.task_scheduler import TaskScheduler
+
     sch = TaskScheduler.__new__(TaskScheduler)
     sch._executing = set()
     sch._executing_lock = asyncio.Lock()
@@ -97,15 +103,21 @@ def _drive_scheduler(monkeypatch, pre_start_setup=None):
 
     async def _never():
         await asyncio.sleep(3600)
+
     monkeypatch.setattr(sch, "_loop", _never)
     monkeypatch.setattr(sch, "_note_pings_loop", _never)
 
     dispatched = []
+
     def _fake_create_task(coro):
         dispatched.append(coro)
+
         class _T:
-            def cancel(self): pass
+            def cancel(self):
+                pass
+
         return _T()
+
     monkeypatch.setattr("src.task_scheduler.asyncio.create_task", _fake_create_task)
 
     async def _drive():
@@ -126,14 +138,19 @@ def test_restart_does_not_re_dispatch_overdue_task(monkeypatch):
     """After restart, an overdue active task should fire at most once across
     two consecutive polls (the first poll re-fires it, but next_run is then
     advanced so the second poll does not)."""
+
     def _setup(cd, ScheduledTask, TaskRun):
         db = cd.SessionLocal()
-        db.add(ScheduledTask(
-            id="t_due_1", owner="alice", name="overdue",
-            task_type="llm",
-            next_run=_test_utcnow() - timedelta(hours=1),
-            status="active",
-        ))
+        db.add(
+            ScheduledTask(
+                id="t_due_1",
+                owner="alice",
+                name="overdue",
+                task_type="llm",
+                next_run=_test_utcnow() - timedelta(hours=1),
+                status="active",
+            )
+        )
         db.commit()
         db.close()
 
@@ -157,12 +174,19 @@ def test_startup_does_not_advance_fresh_tasks(monkeypatch):
     """Tasks whose next_run is in the future must be untouched by the startup
     sweep — only overdue ones get pushed forward."""
     future = _test_utcnow() + timedelta(hours=2)
+
     def _setup(cd, ScheduledTask, TaskRun):
         db = cd.SessionLocal()
-        db.add(ScheduledTask(
-            id="t_fresh", owner="alice", name="fresh",
-            task_type="llm", next_run=future, status="active",
-        ))
+        db.add(
+            ScheduledTask(
+                id="t_fresh",
+                owner="alice",
+                name="fresh",
+                task_type="llm",
+                next_run=future,
+                status="active",
+            )
+        )
         db.commit()
         db.close()
 
@@ -180,14 +204,19 @@ def test_startup_does_not_advance_fresh_tasks(monkeypatch):
 def test_startup_does_not_advance_paused_tasks(monkeypatch):
     """A paused task with an old next_run is not overdue for execution —
     it should not be advanced by the startup sweep."""
+
     def _setup(cd, ScheduledTask, TaskRun):
         db = cd.SessionLocal()
-        db.add(ScheduledTask(
-            id="t_paused", owner="alice", name="paused",
-            task_type="llm",
-            next_run=_test_utcnow() - timedelta(hours=1),
-            status="paused",
-        ))
+        db.add(
+            ScheduledTask(
+                id="t_paused",
+                owner="alice",
+                name="paused",
+                task_type="llm",
+                next_run=_test_utcnow() - timedelta(hours=1),
+                status="paused",
+            )
+        )
         db.commit()
         db.close()
 

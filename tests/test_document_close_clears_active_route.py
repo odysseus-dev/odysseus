@@ -55,11 +55,20 @@ def _make_doc():
     sid = "s-" + uuid.uuid4().hex[:8]
     db = _TS()
     try:
-        db.add(DbSession(id=sid, owner="tester", name="s", model="m", endpoint_url="http://x"))
+        db.add(
+            DbSession(
+                id=sid, owner="tester", name="s", model="m", endpoint_url="http://x"
+            )
+        )
         doc = Document(
-            id=str(uuid.uuid4()), session_id=sid, title="t",
-            language="markdown", current_content="hi", version_count=1,
-            is_active=True, owner="tester",
+            id=str(uuid.uuid4()),
+            session_id=sid,
+            title="t",
+            language="markdown",
+            current_content="hi",
+            version_count=1,
+            is_active=True,
+            owner="tester",
         )
         db.add(doc)
         db.commit()

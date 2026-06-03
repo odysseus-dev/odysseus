@@ -23,8 +23,10 @@ def _load_cli(monkeypatch):
 def test_file_rows_skips_invalid_rows(monkeypatch):
     cli = _load_cli(monkeypatch)
 
-    assert cli._file_rows([
-        {"name": "notes.txt", "path": "/tmp/notes.txt"},
-        "bad-row",
-        None,
-    ]) == [{"name": "notes.txt", "path": "/tmp/notes.txt"}]
+    assert cli._file_rows(
+        [
+            {"name": "notes.txt", "path": "/tmp/notes.txt"},
+            "bad-row",
+            None,
+        ]
+    ) == [{"name": "notes.txt", "path": "/tmp/notes.txt"}]

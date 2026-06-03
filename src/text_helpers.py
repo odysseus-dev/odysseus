@@ -17,7 +17,9 @@ import re
 
 # Closed reasoning blocks. Multi-pass loop in `strip_think` handles nested
 # `<think><think>...</think></think>` patterns some models emit.
-_THINK_CLOSED_RE = re.compile(r"<think(?:ing)?>[\s\S]*?</think(?:ing)?>\s*", re.IGNORECASE)
+_THINK_CLOSED_RE = re.compile(
+    r"<think(?:ing)?>[\s\S]*?</think(?:ing)?>\s*", re.IGNORECASE
+)
 # Orphan opening or closing tags that survive after the closed-pass.
 _THINK_TAG_RE = re.compile(r"</?think(?:ing)?[^>]*>\s*", re.IGNORECASE)
 # Dangling opener anywhere in the response with no closer — strip everything

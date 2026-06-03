@@ -21,7 +21,9 @@ class _FakeResponse:
 
 
 @pytest.mark.parametrize("module", [src_content, service_content])
-def test_content_fetcher_extracts_og_image_and_body_fallback(module, tmp_path, monkeypatch):
+def test_content_fetcher_extracts_og_image_and_body_fallback(
+    module, tmp_path, monkeypatch
+):
     html = """
     <html>
       <head>
@@ -42,7 +44,9 @@ def test_content_fetcher_extracts_og_image_and_body_fallback(module, tmp_path, m
 
     monkeypatch.setattr(module, "CONTENT_CACHE_DIR", tmp_path)
     module.content_cache_index.clear()
-    monkeypatch.setattr(module, "_get_public_url", lambda url, headers, timeout: _FakeResponse(html))
+    monkeypatch.setattr(
+        module, "_get_public_url", lambda url, headers, timeout: _FakeResponse(html)
+    )
 
     result = module.fetch_webpage_content("https://example.com/parity-test")
 

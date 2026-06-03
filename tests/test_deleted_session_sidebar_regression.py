@@ -6,10 +6,13 @@ SESSIONS_JS = Path("static/js/sessions.js")
 
 def test_rail_delete_uses_hard_delete_endpoint():
     source = APP_JS.read_text()
-    rail_block = source[source.index("const railDelete = el('rail-delete-session');"):]
-    rail_block = rail_block[:rail_block.index("// Textarea auto-resize")]
+    rail_block = source[source.index("const railDelete = el('rail-delete-session');") :]
+    rail_block = rail_block[: rail_block.index("// Textarea auto-resize")]
 
-    assert "fetch(`${API_BASE}/api/session/${currentId}`, { method: 'DELETE' })" in rail_block
+    assert (
+        "fetch(`${API_BASE}/api/session/${currentId}`, { method: 'DELETE' })"
+        in rail_block
+    )
     assert "api/session/${currentId}/archive" not in rail_block
 
 
@@ -18,7 +21,10 @@ def test_deleted_sessions_are_pruned_from_local_sidebar_state():
 
     assert "function _removeSessionFromLocalState(sid)" in source
     assert "sessions = sessions.filter(s => String(s.id) !== id);" in source
-    assert "Storage.set('session-order', JSON.stringify(orderIds.filter(x => String(x) !== id)))" in source
+    assert (
+        "Storage.set('session-order', JSON.stringify(orderIds.filter(x => String(x) !== id)))"
+        in source
+    )
     assert "_removeSessionFromLocalState(s.id);" in source
 
 

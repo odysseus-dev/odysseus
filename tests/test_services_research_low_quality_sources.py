@@ -41,13 +41,21 @@ JUNK = "The page does not contain relevant information"
 
 
 def test_low_quality_summary_is_not_a_source(handler_cls):
-    out = handler_cls._extract_sources([{"url": "http://a", "title": "T", "summary": JUNK}])
+    out = handler_cls._extract_sources(
+        [{"url": "http://a", "title": "T", "summary": JUNK}]
+    )
     assert out == []
 
 
 def test_good_summary_is_kept(handler_cls):
     out = handler_cls._extract_sources(
-        [{"url": "http://a", "title": "T", "summary": "Detailed statistics about the topic"}]
+        [
+            {
+                "url": "http://a",
+                "title": "T",
+                "summary": "Detailed statistics about the topic",
+            }
+        ]
     )
     assert out == [{"url": "http://a", "title": "T"}]
 
@@ -56,7 +64,11 @@ def test_junk_first_no_longer_suppresses_the_good_finding(handler_cls):
     out = handler_cls._extract_sources(
         [
             {"url": "http://a", "title": "Bad", "summary": JUNK},
-            {"url": "http://a", "title": "Good", "summary": "Real data about the topic"},
+            {
+                "url": "http://a",
+                "title": "Good",
+                "summary": "Real data about the topic",
+            },
         ]
     )
     assert out == [{"url": "http://a", "title": "Good"}]

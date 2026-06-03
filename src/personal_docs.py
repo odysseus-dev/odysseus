@@ -15,6 +15,7 @@ def extract_pdf_text(file_path: str) -> str:
     """Extract text from a PDF file using pypdf (permissive, BSD)."""
     try:
         from pypdf import PdfReader
+
         reader = PdfReader(file_path)
         text = "".join((page.extract_text() or "") for page in reader.pages)
         return text
@@ -33,30 +34,44 @@ def extract_office_text(file_path: str) -> str:
     extract_pdf_text — the indexer then simply skips the file's content.
     """
     from src.markitdown_runtime import convert_to_markdown
+
     return convert_to_markdown(file_path) or ""
 
 
 @dataclass
 class PersonalDocsConfig:
     """Configuration for personal documents management."""
+
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
     DEFAULT_EXTENSIONS: tuple[str, ...] = (
-        ".txt", ".md", ".json", ".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".epub",
+        ".txt",
+        ".md",
+        ".json",
+        ".pdf",
+        ".docx",
+        ".pptx",
+        ".xlsx",
+        ".xls",
+        ".epub",
     )
     DEFAULT_K: int = 5
     STOP_WORDS: set[str] = None
 
     def __post_init__(self):
         if self.STOP_WORDS is None:
-            self.STOP_WORDS = set("""
+            self.STOP_WORDS = set(
+                """
             the a an is are was were be been being to of in for on at by with from 
             and or if then else when while as it this that those these i you he she 
             we they my your our their me him her us them
-            """.split())
+            """.split()
+            )
+
 
 # Initialize configuration
 config = PersonalDocsConfig()
+
 
 def read_text_file(path: str) -> str:
     """Read a text file with error handling."""
@@ -66,7 +81,10 @@ def read_text_file(path: str) -> str:
     except Exception:
         return ""
 
-def split_chunks(text: str, size: int = config.CHUNK_SIZE, overlap: int = config.CHUNK_OVERLAP) -> list[str]:
+
+def split_chunks(
+    text: str, size: int = config.CHUNK_SIZE, overlap: int = config.CHUNK_OVERLAP
+) -> list[str]:
     """Split text into overlapping chunks."""
     text = text.strip()
     if not text:
@@ -85,14 +103,15 @@ def split_chunks(text: str, size: int = config.CHUNK_SIZE, overlap: int = config
         i = j - overlap if j - overlap > i else j
     return chunks
 
+
 def tokenize(s: str) -> set[str]:
     """Tokenize string into words, excluding stop words."""
     tokens = re.findall(r"[A-Za-z0-9_\-]+", (s or "").lower())
     return set(t for t in tokens if t not in config.STOP_WORDS and len(t) > 1)
 
+
 def load_personal_index(
-    personal_dir: str,
-    extensions: tuple[str, ...] = config.DEFAULT_EXTENSIONS
+    personal_dir: str, extensions: tuple[str, ...] = config.DEFAULT_EXTENSIONS
 ) -> list[dict[str, Any]]:
     """Load and index personal documents."""
     files = []
@@ -116,7 +135,10 @@ def load_personal_index(
             files.append({"name": display, "path": p, "size": size, "chunks": chunks})
     return files
 
-def retrieve_personal_keyword(personal_index: list[dict], query: str, k: int = 5) -> list[str]:
+
+def retrieve_personal_keyword(
+    personal_index: list[dict], query: str, k: int = 5
+) -> list[str]:
     """
     Retrieve relevant documents using keyword search.
 
@@ -144,11 +166,13 @@ def retrieve_personal_keyword(personal_index: list[dict], query: str, k: int = 5
 
     out = []
     for s, fname, idx, ch in scored[:k]:
-        out.append(f"[{fname} :: chunk {idx+1}]\n{ch}")
+        out.append(f"[{fname} :: chunk {idx + 1}]\n{ch}")
     return out
 
-def retrieve_personal(personal_index: list[dict], query: str, k: int = 5,
-                     rag_manager=None) -> list[str]:
+
+def retrieve_personal(
+    personal_index: list[dict], query: str, k: int = 5, rag_manager=None
+) -> list[str]:
     """
     Retrieve relevant personal documents using vector search first, falling back to keyword search.
 
@@ -215,7 +239,9 @@ class PersonalDocsManager:
                 if not isinstance(directories, list):
                     raise ValueError("indexed directories must be a list")
                 self.indexed_directories = _string_list(directories)
-                logger.info(f"Loaded {len(self.indexed_directories)} indexed directories")
+                logger.info(
+                    f"Loaded {len(self.indexed_directories)} indexed directories"
+                )
             else:
                 self.indexed_directories = []
         except Exception as e:
@@ -225,7 +251,7 @@ class PersonalDocsManager:
     def save_directories(self):
         """Save the list of indexed directories to persistent storage."""
         try:
-            with open(self.directories_file, 'w', encoding="utf-8") as f:
+            with open(self.directories_file, "w", encoding="utf-8") as f:
                 json.dump(_string_list(self.indexed_directories), f, indent=2)
             logger.info(f"Saved {len(self.indexed_directories)} indexed directories")
         except Exception as e:
@@ -248,7 +274,7 @@ class PersonalDocsManager:
 
     def _save_excluded(self):
         try:
-            with open(self._excluded_file, 'w', encoding="utf-8") as f:
+            with open(self._excluded_file, "w", encoding="utf-8") as f:
                 json.dump(_string_list(self.excluded_files), f)
         except Exception as e:
             logger.error(f"Error saving excluded files: {e}")
@@ -257,7 +283,11 @@ class PersonalDocsManager:
         """Exclude a file from the listing. Persists across restarts."""
         self.excluded_files.add(os.path.abspath(filepath))
         self._save_excluded()
-        self.index = [f for f in self.index if os.path.abspath(f.get("path", "")) != os.path.abspath(filepath)]
+        self.index = [
+            f
+            for f in self.index
+            if os.path.abspath(f.get("path", "")) != os.path.abspath(filepath)
+        ]
 
     def add_directory(self, directory: str, *, index: bool = True, owner: str = None):
         """Add a directory to the tracking list and optionally index it."""
@@ -270,7 +300,8 @@ class PersonalDocsManager:
         # directories that merely share a name prefix (e.g. adding ``/docs``
         # would wrongly un-exclude files under ``/docs2``).
         self.excluded_files = {
-            p for p in self.excluded_files
+            p
+            for p in self.excluded_files
             if not (p == directory or p.startswith(directory + os.sep))
         }
         self._save_excluded()
@@ -285,8 +316,12 @@ class PersonalDocsManager:
             # index=False so we do not create a second ownerless copy.
             if index and self.rag_manager:
                 try:
-                    result = self.rag_manager.index_personal_documents(directory, owner=owner)
-                    logger.info(f"Indexed {result.get('indexed_count', 0)} chunks from {directory}")
+                    result = self.rag_manager.index_personal_documents(
+                        directory, owner=owner
+                    )
+                    logger.info(
+                        f"Indexed {result.get('indexed_count', 0)} chunks from {directory}"
+                    )
                 except Exception as e:
                     logger.error(f"Failed to index directory {directory}: {e}")
 
@@ -335,7 +370,7 @@ class PersonalDocsManager:
         for f in base_files:
             if os.path.abspath(f.get("path", "")) in self.excluded_files:
                 continue
-            f['source_dir'] = self.personal_dir
+            f["source_dir"] = self.personal_dir
             self.index.append(f)
 
         # Index additional directories
@@ -354,11 +389,13 @@ class PersonalDocsManager:
                 if os.path.abspath(f.get("path", "")) in self.excluded_files:
                     continue
                 # Update the name to include the directory for clarity
-                f['source_dir'] = directory
-                f['name'] = f"{os.path.basename(directory)}/{f['name']}"
+                f["source_dir"] = directory
+                f["name"] = f"{os.path.basename(directory)}/{f['name']}"
                 self.index.append(f)
 
-        logger.info(f"Refreshed index: {len(self.index)} documents from {len(self.indexed_directories) + 1} directories")
+        logger.info(
+            f"Refreshed index: {len(self.index)} documents from {len(self.indexed_directories) + 1} directories"
+        )
 
     def retrieve(self, query: str, k: int = 5) -> list[str]:
         """Retrieve relevant documents for a query."""
@@ -371,23 +408,23 @@ class PersonalDocsManager:
     def get_stats(self) -> dict[str, Any]:
         """Get statistics about indexed documents."""
         total_docs = len(self.index)
-        total_chunks = sum(len(doc.get('chunks', [])) for doc in self.index)
-        total_size = sum(doc.get('size', 0) for doc in self.index)
+        total_chunks = sum(len(doc.get("chunks", [])) for doc in self.index)
+        total_size = sum(doc.get("size", 0) for doc in self.index)
 
         extensions = {}
         for doc in self.index:
-            ext = os.path.splitext(doc['path'])[1]
+            ext = os.path.splitext(doc["path"])[1]
             extensions[ext] = extensions.get(ext, 0) + 1
 
         return {
-            'total_documents': total_docs,
-            'total_chunks': total_chunks,
-            'total_size_bytes': total_size,
-            'total_size_mb': round(total_size / (1024 * 1024), 2),
-            'file_types': extensions,
-            'directories_count': len(self.indexed_directories) + 1,
-            'base_directory': self.personal_dir,
-            'additional_directories': self.indexed_directories
+            "total_documents": total_docs,
+            "total_chunks": total_chunks,
+            "total_size_bytes": total_size,
+            "total_size_mb": round(total_size / (1024 * 1024), 2),
+            "file_types": extensions,
+            "directories_count": len(self.indexed_directories) + 1,
+            "base_directory": self.personal_dir,
+            "additional_directories": self.indexed_directories,
         }
 
     def index_all_directories(self):
@@ -402,7 +439,7 @@ class PersonalDocsManager:
         # Index the base personal directory
         try:
             result = self.rag_manager.index_personal_documents(self.personal_dir)
-            if result.get('success'):
+            if result.get("success"):
                 success_count += 1
                 logger.info(f"Indexed base directory: {self.personal_dir}")
         except Exception as e:
@@ -418,15 +455,19 @@ class PersonalDocsManager:
 
             try:
                 result = self.rag_manager.index_personal_documents(directory)
-                if result.get('success'):
+                if result.get("success"):
                     success_count += 1
                     logger.info(f"Indexed directory: {directory}")
                 else:
                     failure_count += 1
-                    logger.error(f"Failed to index directory {directory}: {result.get('message')}")
+                    logger.error(
+                        f"Failed to index directory {directory}: {result.get('message')}"
+                    )
             except Exception as e:
                 failure_count += 1
                 logger.error(f"Failed to index directory {directory}: {e}")
 
-        logger.info(f"Indexing complete: {success_count} succeeded, {failure_count} failed")
+        logger.info(
+            f"Indexing complete: {success_count} succeeded, {failure_count} failed"
+        )
         return {"success": success_count, "failed": failure_count}

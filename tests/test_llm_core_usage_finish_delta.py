@@ -6,6 +6,7 @@ streamed chunk, whose delta also carries role / finish_reason (e.g.
 stream_llm only captured usage when the delta was exactly None / {} /
 {"content": None}, so those providers\' token accounting read zero.
 """
+
 import asyncio
 import json
 
@@ -49,13 +50,16 @@ def _drive(monkeypatch, lines, model="gpt-4o-test"):
     monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
     monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
     monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
-    monkeypatch.setattr(llm_core, "_mark_host_dead", lambda *a, **k: False, raising=False)
+    monkeypatch.setattr(
+        llm_core, "_mark_host_dead", lambda *a, **k: False, raising=False
+    )
 
     async def run():
         out = []
         async for chunk in llm_core.stream_llm(
             "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-            model, [{"role": "user", "content": "hi"}],
+            model,
+            [{"role": "user", "content": "hi"}],
             headers={"Authorization": "Bearer k"},
         ):
             out.append(chunk)
@@ -80,12 +84,20 @@ def _usage_events(blob):
 
 def test_usage_on_finish_delta_with_role_is_captured(monkeypatch):
     lines = [
-        'data: ' + json.dumps({"choices": [{"delta": {"content": "Hello"}}]}),
-        'data: ' + json.dumps({
-            "choices": [{"delta": {"role": "assistant", "content": None}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 9, "completion_tokens": 1},
-        }),
-        'data: [DONE]',
+        "data: " + json.dumps({"choices": [{"delta": {"content": "Hello"}}]}),
+        "data: "
+        + json.dumps(
+            {
+                "choices": [
+                    {
+                        "delta": {"role": "assistant", "content": None},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 9, "completion_tokens": 1},
+            }
+        ),
+        "data: [DONE]",
     ]
     usage = _usage_events(_drive(monkeypatch, lines))
     assert usage, "usage on a non-empty finish delta was dropped"
@@ -95,9 +107,12 @@ def test_usage_on_finish_delta_with_role_is_captured(monkeypatch):
 def test_usage_on_empty_choices_chunk_still_captured(monkeypatch):
     # canonical OpenAI include_usage: final chunk has empty choices + usage
     lines = [
-        'data: ' + json.dumps({"choices": [{"delta": {"content": "Hi"}}]}),
-        'data: ' + json.dumps({"choices": [], "usage": {"prompt_tokens": 4, "completion_tokens": 2}}),
-        'data: [DONE]',
+        "data: " + json.dumps({"choices": [{"delta": {"content": "Hi"}}]}),
+        "data: "
+        + json.dumps(
+            {"choices": [], "usage": {"prompt_tokens": 4, "completion_tokens": 2}}
+        ),
+        "data: [DONE]",
     ]
     usage = _usage_events(_drive(monkeypatch, lines))
     assert usage and usage[-1] == {"input_tokens": 4, "output_tokens": 2}

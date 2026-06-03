@@ -64,8 +64,7 @@ class _Query:
 
     def filter(self, *predicates):
         self._rows = [
-            row for row in self._rows
-            if all(predicate(row) for predicate in predicates)
+            row for row in self._rows if all(predicate(row) for predicate in predicates)
         ]
         return self
 
@@ -150,6 +149,7 @@ def _endpoint_names(endpoints):
 
 # --- token_owner: who a request is attributed to ---------------------------
 
+
 def test_token_owner_bearer_resolves_to_token_owner():
     # A paired bearer caller runs as the "api" pseudo-user, but must attribute
     # to the token's real owner.
@@ -168,6 +168,7 @@ def test_token_owner_none_when_unresolved():
 
 
 # --- owner_can_see: the read-scope rule ------------------------------------
+
 
 def test_owner_sees_their_own_rows():
     assert owner_can_see("alice", "alice") is True
@@ -196,6 +197,7 @@ def test_unauthenticated_owner_sees_only_shared_rows():
 
 
 # --- GET /api/companion/models: route-level scoping -----------------------
+
 
 def test_models_route_scopes_cookie_user_to_owned_and_shared_rows(monkeypatch):
     rows = [
@@ -269,13 +271,15 @@ def test_models_route_filters_hidden_models_and_secret_fields(monkeypatch):
         _request(api_token=False, current_user="alice"),
     )
 
-    assert endpoints == [{
-        "endpoint_id": 1,
-        "name": "alice-endpoint",
-        "endpoint_url": "https://alice.example/v1/chat/completions",
-        "models": ["visible-model"],
-        "supports_tools": True,
-    }]
+    assert endpoints == [
+        {
+            "endpoint_id": 1,
+            "name": "alice-endpoint",
+            "endpoint_url": "https://alice.example/v1/chat/completions",
+            "models": ["visible-model"],
+            "supports_tools": True,
+        }
+    ]
     returned = endpoints[0]
     assert "hidden-model" not in returned["models"]
     assert set(returned) == {

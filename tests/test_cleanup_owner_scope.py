@@ -19,6 +19,7 @@ Security invariant under test:
          service layer; they do not hardcode a value or drop the parameter
          (tests 4–5).
 """
+
 import sys
 from unittest.mock import AsyncMock, MagicMock
 
@@ -29,8 +30,10 @@ import pytest
 # Mirrors the pattern in test_document_tool_owner_scope.py.
 # ---------------------------------------------------------------------------
 
+
 class _Column:
     """Records equality comparisons so filter clauses can be inspected."""
+
     def __init__(self, name):
         self.name = name
 
@@ -67,6 +70,7 @@ class _Query:
 # Fixture: isolate cleanup module imports per-test
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def cleanup_imports(monkeypatch):
     """Return (_apply_owner_filter, setup_cleanup_routes) from a clean import.
@@ -80,12 +84,14 @@ def cleanup_imports(monkeypatch):
 
     import routes.cleanup_routes as rts
     import src.cleanup_service as svc
+
     return svc._apply_owner_filter, rts.setup_cleanup_routes
 
 
 # ---------------------------------------------------------------------------
 # 1–3. _apply_owner_filter unit tests
 # ---------------------------------------------------------------------------
+
 
 def test_apply_owner_filter_strict_equality_no_null_predicate(cleanup_imports):
     """Authenticated caller gets strict owner equality — null-owner rows excluded.
@@ -138,6 +144,7 @@ def test_apply_owner_filter_none_bypasses_filter_for_single_user_mode(cleanup_im
 # 4–5. Route boundary: both routes forward caller identity as owner=
 # ---------------------------------------------------------------------------
 
+
 def test_preview_route_passes_caller_identity_as_owner(monkeypatch, cleanup_imports):
     """GET /api/cleanup/preview must call get_cleanup_preview(owner=<caller>)."""
     from fastapi import FastAPI
@@ -145,12 +152,14 @@ def test_preview_route_passes_caller_identity_as_owner(monkeypatch, cleanup_impo
 
     _, setup_cleanup_routes = cleanup_imports
 
-    mock_preview = AsyncMock(return_value={
-        "sessions_to_archive": [],
-        "sessions_to_delete": [],
-        "preserved_sessions": [],
-        "estimated_space_freed_mb": 0.0,
-    })
+    mock_preview = AsyncMock(
+        return_value={
+            "sessions_to_archive": [],
+            "sessions_to_delete": [],
+            "preserved_sessions": [],
+            "estimated_space_freed_mb": 0.0,
+        }
+    )
     monkeypatch.setattr("routes.cleanup_routes.get_cleanup_preview", mock_preview)
     monkeypatch.setattr("routes.cleanup_routes.get_current_user", lambda _req: "alice")
 

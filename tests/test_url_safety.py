@@ -11,6 +11,7 @@ def _resolver(mapping):
         if host in mapping:
             return mapping[host]
         raise OSError(f"unresolvable: {host}")
+
     return resolve
 
 
@@ -34,13 +35,17 @@ def test_missing_host_or_empty_blocked():
 
 
 def test_public_url_allowed():
-    ok, reason = check_outbound_url("https://example.com/v1/embeddings", resolver=PUBLIC)
+    ok, reason = check_outbound_url(
+        "https://example.com/v1/embeddings", resolver=PUBLIC
+    )
     assert ok is True, reason
 
 
 def test_cloud_metadata_blocked_even_when_private_allowed():
     # The headline SSRF vector must be blocked regardless of block_private.
-    ok, reason = check_outbound_url("http://evil.example/latest/meta-data/", resolver=METADATA)
+    ok, reason = check_outbound_url(
+        "http://evil.example/latest/meta-data/", resolver=METADATA
+    )
     assert ok is False
     assert "link-local" in reason
 
@@ -58,9 +63,13 @@ def test_loopback_and_lan_allowed_by_default_local_first():
 
 
 def test_strict_mode_blocks_private_and_loopback():
-    ok, reason = check_outbound_url("http://localhost:8080", block_private=True, resolver=LOOPBACK)
+    ok, reason = check_outbound_url(
+        "http://localhost:8080", block_private=True, resolver=LOOPBACK
+    )
     assert ok is False and "private" in reason
-    ok, reason = check_outbound_url("http://nas.local", block_private=True, resolver=LAN)
+    ok, reason = check_outbound_url(
+        "http://nas.local", block_private=True, resolver=LAN
+    )
     assert ok is False and "private" in reason
 
 

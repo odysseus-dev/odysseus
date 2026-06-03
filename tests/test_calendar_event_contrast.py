@@ -10,7 +10,9 @@ CALENDAR_JS = ROOT / "static" / "js" / "calendar.js"
 STYLE_CSS = ROOT / "static" / "style.css"
 UTILS_JS = ROOT / "static" / "js" / "calendar" / "utils.js"
 
-pytestmark = pytest.mark.skipif(not shutil.which("node"), reason="node binary not on PATH")
+pytestmark = pytest.mark.skipif(
+    not shutil.which("node"), reason="node binary not on PATH"
+)
 
 
 def _node_eval(source: str):

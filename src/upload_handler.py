@@ -18,6 +18,7 @@ from fastapi import HTTPException, UploadFile
 def secure_filename(filename: str) -> str:
     """Sanitize a filename (replaces werkzeug.utils.secure_filename)."""
     import unicodedata
+
     filename = unicodedata.normalize("NFKD", filename)
     filename = filename.encode("ascii", "ignore").decode("ascii")
     # Replace path separators with underscores
@@ -30,6 +31,8 @@ def secure_filename(filename: str) -> str:
     # Don't allow dotfiles
     filename = filename.lstrip(".")
     return filename or "unnamed"
+
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -107,10 +110,13 @@ class UploadHandler:
         # Initialize file detector
         try:
             import magic
+
             self.file_detector = magic.Magic(mime=True)
         except Exception:
             self.file_detector = None
-            logger.warning("python-magic not available, falling back to basic detection")
+            logger.warning(
+                "python-magic not available, falling back to basic detection"
+            )
 
     def inside_base_dir(self, path: str) -> bool:
         """Check if path is inside base directory"""
@@ -124,7 +130,9 @@ class UploadHandler:
     def get_upload_dir(self):
         """Get date-based upload directory"""
         now = datetime.now()
-        upload_dir = os.path.join(self.upload_dir, now.strftime("%Y"), now.strftime("%m"), now.strftime("%d"))
+        upload_dir = os.path.join(
+            self.upload_dir, now.strftime("%Y"), now.strftime("%m"), now.strftime("%d")
+        )
         os.makedirs(upload_dir, exist_ok=True)
         return upload_dir
 
@@ -151,15 +159,21 @@ class UploadHandler:
         if not content_type or content_type == "application/octet-stream":
             _, ext = os.path.splitext(original_filename.lower())
             if ext:
-                content_type = mimetypes.guess_type(original_filename)[0] or content_type
+                content_type = (
+                    mimetypes.guess_type(original_filename)[0] or content_type
+                )
 
         return content_type
 
     def is_image_file(self, filename: str, content_type: str = None) -> bool:
         """Check if a file is an image based on extension or content type."""
-        image_extensions = {'.png', '.jpg', '.jpeg', '.webp', '.gif'}
+        image_extensions = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
         image_mime_types = {
-            'image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'
+            "image/png",
+            "image/jpeg",
+            "image/jpg",
+            "image/webp",
+            "image/gif",
         }
 
         # Check by extension
@@ -176,20 +190,48 @@ class UploadHandler:
     def is_document_file(self, filename: str, content_type: str = None) -> bool:
         """Check if a file is a document based on extension or content type."""
         document_extensions = {
-            '.pdf', '.docx', '.xlsx', '.pptx', '.xls', '.epub',
-            '.txt', '.py', '.js', '.html', '.htm',
-            '.css', '.json', '.md', '.csv', '.log', '.xml', '.yml',
-            '.yaml', '.sql', '.sh', '.bash', '.c', '.cpp', '.h',
-            '.java', '.go', '.rs', '.php', '.rb', '.ts', '.jsx', '.tsx'
+            ".pdf",
+            ".docx",
+            ".xlsx",
+            ".pptx",
+            ".xls",
+            ".epub",
+            ".txt",
+            ".py",
+            ".js",
+            ".html",
+            ".htm",
+            ".css",
+            ".json",
+            ".md",
+            ".csv",
+            ".log",
+            ".xml",
+            ".yml",
+            ".yaml",
+            ".sql",
+            ".sh",
+            ".bash",
+            ".c",
+            ".cpp",
+            ".h",
+            ".java",
+            ".go",
+            ".rs",
+            ".php",
+            ".rb",
+            ".ts",
+            ".jsx",
+            ".tsx",
         }
         document_mime_types = {
-            'application/pdf',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            'application/vnd.ms-excel',
-            'application/epub+zip',
-            'text/plain'
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.ms-excel",
+            "application/epub+zip",
+            "text/plain",
         }
 
         # Check by extension
@@ -205,9 +247,13 @@ class UploadHandler:
 
     def is_audio_file(self, filename: str, content_type: str = None) -> bool:
         """Check if a file is an audio file based on extension or content type."""
-        audio_extensions = {'.webm', '.wav', '.mp3', '.m4a', '.ogg'}
+        audio_extensions = {".webm", ".wav", ".mp3", ".m4a", ".ogg"}
         audio_mime_types = {
-            'audio/webm', 'audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg'
+            "audio/webm",
+            "audio/wav",
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/ogg",
         }
 
         # Check by extension
@@ -224,15 +270,27 @@ class UploadHandler:
     def is_safe_file_type(self, content_type: str, filename: str) -> bool:
         """Check if file type is safe to store and serve."""
         dangerous_types = {
-            'application/x-executable', 'application/x-sharedlib',
-            'application/x-dll', 'application/x-msdownload',
-            'application/x-sh', 'application/x-bat', 'application/x-vbs',
-            'application/javascript', 'application/x-javascript'
+            "application/x-executable",
+            "application/x-sharedlib",
+            "application/x-dll",
+            "application/x-msdownload",
+            "application/x-sh",
+            "application/x-bat",
+            "application/x-vbs",
+            "application/javascript",
+            "application/x-javascript",
         }
 
         dangerous_extensions = {
-            '.exe', '.dll', '.bat', '.cmd', '.vbs',
-            '.ps1', '.jsp', '.asp', '.aspx'
+            ".exe",
+            ".dll",
+            ".bat",
+            ".cmd",
+            ".vbs",
+            ".ps1",
+            ".jsp",
+            ".asp",
+            ".aspx",
         }
 
         if content_type in dangerous_types:
@@ -257,7 +315,11 @@ class UploadHandler:
                 path_parts = root.split(os.sep)
                 if len(path_parts) >= 4:
                     try:
-                        dir_date = datetime(int(path_parts[-3]), int(path_parts[-2]), int(path_parts[-1]))
+                        dir_date = datetime(
+                            int(path_parts[-3]),
+                            int(path_parts[-2]),
+                            int(path_parts[-1]),
+                        )
                         if dir_date < cutoff_date:
                             for file in files:
                                 file_path = os.path.join(root, file)
@@ -272,7 +334,9 @@ class UploadHandler:
                                 os.rmdir(root)
                                 logger.info(f"Removed empty upload directory: {root}")
                             except Exception as e:
-                                logger.warning(f"Failed to remove directory {root}: {e}")
+                                logger.warning(
+                                    f"Failed to remove directory {root}: {e}"
+                                )
                     except (ValueError, IndexError):
                         continue
 
@@ -384,7 +448,9 @@ class UploadHandler:
             logger.warning(f"Invalid upload ID format: {upload_id}")
             return None
 
-        auth_configured = bool(auth_manager and getattr(auth_manager, "is_configured", False))
+        auth_configured = bool(
+            auth_manager and getattr(auth_manager, "is_configured", False)
+        )
         if auth_configured and not owner:
             return None
 
@@ -418,7 +484,9 @@ class UploadHandler:
         resolved["path"] = path
         resolved.setdefault("name", os.path.basename(path))
         resolved.setdefault("original_name", resolved["name"])
-        resolved.setdefault("mime", mimetypes.guess_type(path)[0] or "application/octet-stream")
+        resolved.setdefault(
+            "mime", mimetypes.guess_type(path)[0] or "application/octet-stream"
+        )
         return resolved
 
     def cleanup_rate_limits(self):
@@ -446,14 +514,18 @@ class UploadHandler:
                 sorted_ips = sorted(
                     self.upload_rate_log.items(),
                     key=lambda item: max(item[1]) if item[1] else 0,
-                    reverse=True
+                    reverse=True,
                 )
-                keep = dict(sorted_ips[:self._upload_rate_max_entries])
+                keep = dict(sorted_ips[: self._upload_rate_max_entries])
                 dropped = len(self.upload_rate_log) - len(keep)
                 self.upload_rate_log = keep
-                logger.info(f"Rate-limit dict size exceeded. Dropped {dropped} oldest IP entries.")
+                logger.info(
+                    f"Rate-limit dict size exceeded. Dropped {dropped} oldest IP entries."
+                )
 
-        logger.info(f"Rate-limit cleanup: removed {removed_ips} IPs, {removed_timestamps} timestamps.")
+        logger.info(
+            f"Rate-limit cleanup: removed {removed_ips} IPs, {removed_timestamps} timestamps."
+        )
 
     def get_upload_stats(self) -> dict[str, Any]:
         """Get statistics about uploaded files."""
@@ -478,7 +550,7 @@ class UploadHandler:
                 "total_size": total_size,
                 "total_size_mb": round(total_size / (1024 * 1024), 2),
                 "file_types": file_types,
-                "cleanup_days": self.cleanup_days
+                "cleanup_days": self.cleanup_days,
             }
         except Exception as e:
             logger.error(f"Failed to get upload stats: {e}")
@@ -493,14 +565,15 @@ class UploadHandler:
                 self.upload_rate_log[client_ip] = []
 
             self.upload_rate_log[client_ip] = [
-                timestamp for timestamp in self.upload_rate_log[client_ip]
+                timestamp
+                for timestamp in self.upload_rate_log[client_ip]
                 if now - timestamp < self.upload_rate_window
             ]
 
             if len(self.upload_rate_log[client_ip]) >= self.upload_rate_limit:
                 raise HTTPException(
                     status_code=429,
-                    detail="Upload rate limit exceeded. Please try again later."
+                    detail="Upload rate limit exceeded. Please try again later.",
                 )
 
             self.upload_rate_log[client_ip].append(now)
@@ -521,7 +594,7 @@ class UploadHandler:
         if file_size > self.max_upload_size:
             raise HTTPException(
                 status_code=400,
-                detail=f"File size exceeds {self.max_upload_size/1024/1024}MB limit"
+                detail=f"File size exceeds {self.max_upload_size / 1024 / 1024}MB limit",
             )
 
         # Get original filename and sanitize it
@@ -534,8 +607,7 @@ class UploadHandler:
         # Check if file type is safe
         if not self.is_safe_file_type(content_type, safe_filename):
             raise HTTPException(
-                status_code=400,
-                detail=f"File type not allowed: {content_type}"
+                status_code=400, detail=f"File type not allowed: {content_type}"
             )
 
         # Calculate file hash for deduplication
@@ -555,7 +627,11 @@ class UploadHandler:
             for key, info in existing_files.items():
                 if info.get("hash") == file_hash and info.get("owner") == owner:
                     stored_path = info.get("path")
-                    if stored_path and os.path.exists(stored_path) and self._inside_upload_dir(stored_path):
+                    if (
+                        stored_path
+                        and os.path.exists(stored_path)
+                        and self._inside_upload_dir(stored_path)
+                    ):
                         existing_key = key
                         existing_file = info
                         break
@@ -565,11 +641,16 @@ class UploadHandler:
                     existing_files.pop(key, None)
                 try:
                     self._atomic_write_json(uploads_db_path, existing_files)
-                    logger.info("Removed %d stale upload index entries for missing duplicates", len(stale_keys))
+                    logger.info(
+                        "Removed %d stale upload index entries for missing duplicates",
+                        len(stale_keys),
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to remove stale upload index entries: {e}")
         if existing_file:
-            logger.info(f"Duplicate file upload detected: {original_filename} -> {existing_file['id']}")
+            logger.info(
+                f"Duplicate file upload detected: {original_filename} -> {existing_file['id']}"
+            )
 
             existing_file["last_accessed"] = datetime.now().isoformat()
             with self._index_lock:
@@ -609,7 +690,7 @@ class UploadHandler:
                     "owner": existing_file.get("owner"),
                     "width": existing_file.get("width"),
                     "height": existing_file.get("height"),
-                    "is_duplicate": True
+                    "is_duplicate": True,
                 }
 
         # Generate unique ID and determine save location
@@ -625,7 +706,9 @@ class UploadHandler:
                 while chunk := file_obj.read(8192):
                     f.write(chunk)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail=f"Failed to save file: {str(e)}"
+            )
 
         # Create file metadata
         file_metadata = {
@@ -646,6 +729,7 @@ class UploadHandler:
         if content_type.startswith("image/"):
             try:
                 from PIL import Image, ImageOps
+
                 with Image.open(file_path) as _im:
                     _im = ImageOps.exif_transpose(_im)
                     file_metadata["width"] = _im.width
@@ -656,12 +740,16 @@ class UploadHandler:
         # Update uploads database
         with self._index_lock:
             try:
-                current = self._load_upload_index() if os.path.exists(uploads_db_path) else {}
+                current = (
+                    self._load_upload_index() if os.path.exists(uploads_db_path) else {}
+                )
                 storage_key = f"{owner}:{file_hash}" if owner else file_hash
                 current[storage_key] = file_metadata
                 self._atomic_write_json(uploads_db_path, current)
             except Exception as e:
                 logger.warning(f"Failed to update uploads database: {e}")
 
-        logger.info(f"File uploaded successfully: {original_filename} ({file_size} bytes)")
+        logger.info(
+            f"File uploaded successfully: {original_filename} ({file_size} bytes)"
+        )
         return file_metadata

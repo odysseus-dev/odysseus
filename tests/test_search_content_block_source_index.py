@@ -19,9 +19,13 @@ def core(monkeypatch):
         {"url": "http://one.example/a", "title": "One", "snippet": "s1"},
         {"url": "http://two.example/b", "title": "Two", "snippet": "s2"},
     ]
-    monkeypatch.setattr(mod, "_get_search_settings", lambda: {"search_provider": "searxng"})
+    monkeypatch.setattr(
+        mod, "_get_search_settings", lambda: {"search_provider": "searxng"}
+    )
     monkeypatch.setattr(mod, "_get_result_count", lambda: 2)
-    monkeypatch.setattr(mod, "_call_provider", lambda *a, **k: [dict(r) for r in results])
+    monkeypatch.setattr(
+        mod, "_call_provider", lambda *a, **k: [dict(r) for r in results]
+    )
     monkeypatch.setattr(mod, "rank_search_results", lambda q, r: r)
     return mod
 

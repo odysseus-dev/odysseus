@@ -32,6 +32,8 @@ def test_find_bash_checks_local_app_data_git_install(monkeypatch):
     monkeypatch.setenv("LocalAppData", r"C:\Users\alice\AppData\Local")
 
     expected = r"C:\Users\alice\AppData\Local\Git\bin\bash.exe"
-    monkeypatch.setattr(platform_compat.os.path, "exists", lambda path: path == expected)
+    monkeypatch.setattr(
+        platform_compat.os.path, "exists", lambda path: path == expected
+    )
 
     assert platform_compat.find_bash() == expected

@@ -12,6 +12,7 @@ the chat message with no attachments.
 The fix counts genuine recent upload *events*, independent of the current
 batch's file count. save_upload still enforces the per-minute rate limit.
 """
+
 import io
 import re
 import types
@@ -66,7 +67,9 @@ _NOW = 5_000.0
 
 def _endpoint(router):
     for r in router.routes:
-        if getattr(r, "path", None) == "/api/upload" and "POST" in getattr(r, "methods", set()):
+        if getattr(r, "path", None) == "/api/upload" and "POST" in getattr(
+            r, "methods", set()
+        ):
             return r.endpoint
     raise AssertionError("upload endpoint not found")
 
@@ -131,6 +134,7 @@ async def test_genuine_recent_volume_still_throttled():
 # save_upload() counts each file against upload_rate_limit, which was 5 while
 # the composer allows MAX_FILES=10. ──────────────────────────────────────────
 
+
 def _max_files_from_frontend() -> int:
     src = (_REPO / "static/js/fileHandler.js").read_text(encoding="utf-8")
     m = re.search(r"MAX_FILES\s*=\s*(\d+)", src)
@@ -142,7 +146,9 @@ def test_rate_limit_accommodates_a_full_batch():
     # The per-minute file cap must comfortably exceed the frontend batch cap,
     # or a single legitimate multi-file attach trips it (issue #1346).
     h = UploadHandler.__new__(UploadHandler)
-    UploadHandler.__init__(h, base_dir="/tmp", upload_dir="/tmp/_odysseus_test_uploads_cfg")
+    UploadHandler.__init__(
+        h, base_dir="/tmp", upload_dir="/tmp/_odysseus_test_uploads_cfg"
+    )
     assert h.upload_rate_limit >= _max_files_from_frontend()
 
 

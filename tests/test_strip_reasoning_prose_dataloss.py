@@ -5,6 +5,7 @@ sentence trailed the real answer, `keep` became empty and the function returned
 that trailing sentence (`paragraphs[-1]`), discarding the actual answer above
 it. It now strips only a leading contiguous run of reasoning paragraphs.
 """
+
 from src.text_helpers import strip_think
 
 
@@ -14,8 +15,10 @@ def test_leading_reasoning_is_stripped():
 
 
 def test_trailing_reasoning_does_not_destroy_answer():
-    text = ("Dear Alice,\n\nI will send the report by Friday.\n\nBest, Bob"
-            "\n\nI need to keep this reply concise and professional.")
+    text = (
+        "Dear Alice,\n\nI will send the report by Friday.\n\nBest, Bob"
+        "\n\nI need to keep this reply concise and professional."
+    )
     out = strip_think(text, prose=True)
     assert "send the report by Friday" in out
     assert "Dear Alice" in out

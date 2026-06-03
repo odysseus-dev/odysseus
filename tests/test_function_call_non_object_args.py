@@ -2,14 +2,27 @@ import sys
 from unittest.mock import MagicMock
 
 # Clean up any mocks from previous tests to ensure we load real modules
-for mod in ['src.agent_tools', 'src.tool_parsing', 'src.tool_schemas', 'src.tool_execution']:
+for mod in [
+    "src.agent_tools",
+    "src.tool_parsing",
+    "src.tool_schemas",
+    "src.tool_execution",
+]:
     sys.modules.pop(mod, None)
 
 # Mock heavy database/model dependencies before importing
 for mod in [
-    'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
-    'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
-    'src.database', 'core.models', 'core.database', 'core.auth'
+    "sqlalchemy",
+    "sqlalchemy.orm",
+    "sqlalchemy.ext",
+    "sqlalchemy.ext.declarative",
+    "sqlalchemy.ext.hybrid",
+    "sqlalchemy.sql",
+    "sqlalchemy.sql.expression",
+    "src.database",
+    "core.models",
+    "core.database",
+    "core.auth",
 ]:
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
@@ -20,13 +33,16 @@ import src.agent_tools  # noqa: F401
 from src.tool_schemas import function_call_to_tool_block
 
 
-@pytest.mark.parametrize("arguments", [
-    '["ls -la"]',   # JSON array
-    '"ls -la"',     # bare JSON string
-    '42',            # JSON number
-    'true',          # JSON bool
-    'null',          # JSON null
-])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        '["ls -la"]',  # JSON array
+        '"ls -la"',  # bare JSON string
+        "42",  # JSON number
+        "true",  # JSON bool
+        "null",  # JSON null
+    ],
+)
 def test_non_object_arguments_do_not_crash(arguments):
     """A native function call whose arguments are valid JSON but not an object
     must not raise (it used to throw AttributeError: 'list' object has no

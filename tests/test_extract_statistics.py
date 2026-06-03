@@ -1,4 +1,5 @@
 """Tests for extract_statistics (src/search/content.py)."""
+
 import pytest
 
 pytest.importorskip("bs4")  # content.py imports BeautifulSoup at module load
@@ -18,7 +19,10 @@ def test_keeps_percent_sign():
 
 
 def test_comma_grouped_number():
-    assert any(s.startswith("1,000,000") for s in extract_statistics("revenue of 1,000,000 dollars"))
+    assert any(
+        s.startswith("1,000,000")
+        for s in extract_statistics("revenue of 1,000,000 dollars")
+    )
 
 
 def test_four_digit_year_captured():

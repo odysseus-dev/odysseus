@@ -5,15 +5,21 @@ import shutil
 import subprocess
 import time
 
-CACHE_TTL = 24 * 3600  # 24 h — hardware probes are user-initiated via the Rescan button; bumped
-                       # from 30 min so changing filters doesn't keep re-probing the rig every
-                       # half-hour during a long session.
+CACHE_TTL = (
+    24 * 3600
+)  # 24 h — hardware probes are user-initiated via the Rescan button; bumped
+# from 30 min so changing filters doesn't keep re-probing the rig every
+# half-hour during a long session.
 
 
 _remote_host = None  # set by detect_system(host=...)
 _remote_port = None  # set by detect_system(ssh_port=...)
-_remote_platform = None  # set by detect_system(platform=...): "windows", "linux", "termux"
-_last_gpu_error = None  # set by _detect_nvidia() when nvidia-smi errors (driver mismatch, etc.)
+_remote_platform = (
+    None  # set by detect_system(platform=...): "windows", "linux", "termux"
+)
+_last_gpu_error = (
+    None  # set by _detect_nvidia() when nvidia-smi errors (driver mismatch, etc.)
+)
 
 
 def _run(cmd):
@@ -24,13 +30,21 @@ def _run(cmd):
                 cmd_str = " ".join(cmd)
             else:
                 cmd_str = cmd
-            ssh_cmd = ["ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no"]
+            ssh_cmd = [
+                "ssh",
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "StrictHostKeyChecking=no",
+            ]
             if _remote_port and _remote_port != "22":
                 ssh_cmd += ["-p", _remote_port]
             ssh_cmd += [_remote_host, cmd_str]
             r = subprocess.run(
                 ssh_cmd,
-                capture_output=True, text=True, timeout=15,
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
         else:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -75,22 +89,30 @@ def _group_gpus(gpus):
 def _detect_nvidia():
     global _last_gpu_error
     _last_gpu_error = None
-    out = _run(["nvidia-smi", "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
+    out = _run(
+        ["nvidia-smi", "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"]
+    )
     # Remote fallback: a non-interactive SSH shell often has a minimal PATH
     # that omits where nvidia-smi lives (/usr/bin, /usr/local/cuda/bin), so the
     # first call silently returns nothing → "No GPU" on hosts that DO have GPUs.
     # Retry through a login shell with the common CUDA bin dirs on PATH.
     if not out and _remote_host:
         out = _run(
-            "bash -lc 'export PATH=\"$PATH:/usr/bin:/usr/local/bin:/usr/local/cuda/bin\"; "
+            'bash -lc \'export PATH="$PATH:/usr/bin:/usr/local/bin:/usr/local/cuda/bin"; '
             "nvidia-smi --query-gpu=memory.total,name --format=csv,noheader,nounits'"
         )
     # Last resort: call nvidia-smi by absolute path. Some hosts have a login
     # shell that isn't bash (or a profile that errors), so the bash -lc retry
     # above still comes back empty even though the binary is right there.
     if not out and _remote_host:
-        for _p in ("/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi", "/usr/local/cuda/bin/nvidia-smi"):
-            out = _run(f"{_p} --query-gpu=memory.total,name --format=csv,noheader,nounits")
+        for _p in (
+            "/usr/bin/nvidia-smi",
+            "/usr/local/bin/nvidia-smi",
+            "/usr/local/cuda/bin/nvidia-smi",
+        ):
+            out = _run(
+                f"{_p} --query-gpu=memory.total,name --format=csv,noheader,nounits"
+            )
             if out:
                 break
     if not out:
@@ -100,9 +122,13 @@ def _detect_nvidia():
     # without a reboot). It prints an error and no GPU rows — surface that as a
     # driver error rather than the misleading "No GPU".
     _low = out.lower()
-    if ("nvml" in _low or "driver/library version mismatch" in _low
-            or "couldn't communicate" in _low or "no devices were found" in _low
-            or "failed to initialize" in _low):
+    if (
+        "nvml" in _low
+        or "driver/library version mismatch" in _low
+        or "couldn't communicate" in _low
+        or "no devices were found" in _low
+        or "failed to initialize" in _low
+    ):
         _last_gpu_error = out.strip().split("\n")[0][:140] or "NVIDIA driver error"
         return None
 
@@ -116,7 +142,9 @@ def _detect_nvidia():
         if len(parts) >= 2:
             try:
                 vram_mb = float(parts[0])
-                gpus.append({"index": idx, "name": parts[1], "vram_gb": vram_mb / 1024.0})
+                gpus.append(
+                    {"index": idx, "name": parts[1], "vram_gb": vram_mb / 1024.0}
+                )
             except ValueError:
                 # Grace Blackwell GB10 / DGX Spark and other unified-memory
                 # NVIDIA parts report memory.total as "[N/A]"/"Not Supported"
@@ -133,7 +161,10 @@ def _detect_nvidia():
             # Cookbook recommends models and serving works. The pool is shared
             # (not per-GPU discrete VRAM), so report the RAM total once.
             ram_gb = round(_get_ram_gb(), 1)
-            gpus = [{"index": g["index"], "name": g["name"], "vram_gb": ram_gb} for g in unified]
+            gpus = [
+                {"index": g["index"], "name": g["name"], "vram_gb": ram_gb}
+                for g in unified
+            ]
             return {
                 "gpu_name": gpus[0]["name"],
                 "gpu_vram_gb": ram_gb,
@@ -189,6 +220,7 @@ def _detect_amd():
     """Detect AMD GPUs. Handles both discrete cards (with mem_info_vram_total)
     and APUs / unified-memory SoCs like Strix Halo (which expose
     mem_info_vis_vram_total instead, or only mem_info_gtt_total)."""
+
     def _read(path):
         if _remote_host:
             val = _run(["cat", path])
@@ -206,7 +238,11 @@ def _detect_amd():
                 return []
             return [e for e in out.split() if e.startswith("card") and "-" not in e]
         try:
-            return [e for e in os.listdir("/sys/class/drm") if e.startswith("card") and "-" not in e]
+            return [
+                e
+                for e in os.listdir("/sys/class/drm")
+                if e.startswith("card") and "-" not in e
+            ]
         except Exception:
             return []
 
@@ -247,7 +283,9 @@ def _detect_amd():
             if vram_bytes <= 0:
                 continue
             name = _read(f"{base}/product_name") or f"AMD GPU ({entry})"
-            cards.append({"index": _cidx, "name": name, "vram_gb": vram_bytes / (1024**3)})
+            cards.append(
+                {"index": _cidx, "name": name, "vram_gb": vram_bytes / (1024**3)}
+            )
 
         if not cards:
             return None
@@ -308,7 +346,9 @@ def _detect_apple_silicon():
 
     # Chip name, e.g. "Apple M4 Max" — carries the Pro/Max/Ultra variant that
     # the fit bandwidth table keys off of.
-    brand = (_run(["sysctl", "-n", "machdep.cpu.brand_string"]) or "Apple Silicon").strip()
+    brand = (
+        _run(["sysctl", "-n", "machdep.cpu.brand_string"]) or "Apple Silicon"
+    ).strip()
 
     # Total unified memory in bytes.
     memsize = _run(["sysctl", "-n", "hw.memsize"])
@@ -391,7 +431,11 @@ def _get_ram_gb():
 
     # os.sysconf only exists on Unix; on Windows it's absent (AttributeError)
     # and these constants aren't defined — guard so this never raises there.
-    if not _remote_host and hasattr(os, "sysconf") and "SC_PHYS_PAGES" in getattr(os, "sysconf_names", {}):
+    if (
+        not _remote_host
+        and hasattr(os, "sysconf")
+        and "SC_PHYS_PAGES" in getattr(os, "sysconf_names", {})
+    ):
         try:
             pages = os.sysconf("SC_PHYS_PAGES")
             page_size = os.sysconf("SC_PAGE_SIZE")
@@ -481,7 +525,7 @@ def _detect_windows():
         "  $nv = nvidia-smi --query-gpu=memory.total,name --format=csv,noheader,nounits 2>$null; "
         "  if ($LASTEXITCODE -eq 0 -and $nv) { "
         "    $gpus = @(); "
-        "    foreach ($line in $nv -split \"`n\") { "
+        '    foreach ($line in $nv -split "`n") { '
         "      $p = $line -split ','; "
         "      if ($p.Count -ge 2) { $gpus += [pscustomobject]@{name=$p[1].Trim(); vram_mb=[double]$p[0].Trim()} } "
         "    }; "
@@ -510,12 +554,16 @@ def _detect_windows():
         # Local: pass a LIST argv straight to subprocess so the OS hands ps_cmd
         # to PowerShell verbatim — no fragile string-level quote escaping. Prefer
         # pwsh (PS7), else Windows PowerShell 5.1.
-        out = _run([_powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", ps_cmd])
+        out = _run(
+            [_powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", ps_cmd]
+        )
     if not out:
         return None
     import json as _json
+
     try:
         d = _json.loads(out)
+
         # PowerShell's Measure-Object .Sum / .Count come back as JSON numbers and
         # decode to float; the Linux path returns plain ints for these — coerce
         # so the dict shape (and downstream int math) matches across platforms.
@@ -524,7 +572,8 @@ def _detect_windows():
                 return int(v)
             except (TypeError, ValueError):
                 return default
-        _cpu_name = (d.get("cpu_name") or "unknown")
+
+        _cpu_name = d.get("cpu_name") or "unknown"
         if isinstance(_cpu_name, str):
             _cpu_name = _cpu_name.strip() or "unknown"
         result = {
@@ -547,15 +596,18 @@ def _detect_windows():
         if result["has_gpu"] and _n > 0:
             _each = round((result["gpu_vram_gb"] or 0) / _n, 1)
             result["gpus"] = [
-                {"index": i, "name": result["gpu_name"], "vram_gb": _each} for i in range(_n)
+                {"index": i, "name": result["gpu_name"], "vram_gb": _each}
+                for i in range(_n)
             ]
-            result["gpu_groups"] = [{
-                "name": result["gpu_name"],
-                "vram_each": _each,
-                "count": _n,
-                "indices": list(range(_n)),
-                "vram_total": result["gpu_vram_gb"],
-            }]
+            result["gpu_groups"] = [
+                {
+                    "name": result["gpu_name"],
+                    "vram_each": _each,
+                    "count": _n,
+                    "indices": list(range(_n)),
+                    "vram_total": result["gpu_vram_gb"],
+                }
+            ]
             result["homogeneous"] = True
         return result
     except Exception:
@@ -650,6 +702,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             arch_out = _run(["uname", "-m"]) or ""
         else:
             import platform as _platform
+
             arch_out = _platform.machine().lower()
         backend = "cpu_arm" if "aarch64" in arch_out or "arm" in arch_out else "cpu_x86"
         result = {

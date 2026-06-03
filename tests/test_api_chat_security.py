@@ -7,20 +7,23 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("url", [
-    "http://127.0.0.1:8000/v1",
-    "http://localhost:8000/v1",
-    "http://10.0.0.5/v1",
-    "http://172.16.0.1/v1",
-    "http://192.168.1.2/v1",
-    "http://169.254.169.254/latest/meta-data/",
-    "http://metadata.google.internal/",
-    "http://[::1]:8000/v1",
-    "http://[fc00::1]/v1",
-    "http://224.0.0.1/v1",
-    "http://0.0.0.0/v1",
-    "file:///etc/passwd",
-])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8000/v1",
+        "http://localhost:8000/v1",
+        "http://10.0.0.5/v1",
+        "http://172.16.0.1/v1",
+        "http://192.168.1.2/v1",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://metadata.google.internal/",
+        "http://[::1]:8000/v1",
+        "http://[fc00::1]/v1",
+        "http://224.0.0.1/v1",
+        "http://0.0.0.0/v1",
+        "file:///etc/passwd",
+    ],
+)
 def test_public_url_validator_blocks_internal_targets(url):
     from src.url_security import is_public_http_url
 
@@ -36,7 +39,10 @@ def test_public_url_validator_allows_public_endpoint(monkeypatch):
         lambda host: [ipaddress.ip_address("93.184.216.34")],
     )
 
-    assert url_security.validate_public_http_url("https://api.example.com/v1") == "https://api.example.com/v1"
+    assert (
+        url_security.validate_public_http_url("https://api.example.com/v1")
+        == "https://api.example.com/v1"
+    )
 
 
 def test_public_url_validator_blocks_dns_to_private(monkeypatch):
@@ -155,7 +161,9 @@ class _EndpointQuery:
             if isinstance(order, tuple) and order[0] == "desc":
                 reverse = True
                 name = order[1]
-            rows = sorted(rows, key=lambda row: getattr(row, name) is not None, reverse=reverse)
+            rows = sorted(
+                rows, key=lambda row: getattr(row, name) is not None, reverse=reverse
+            )
             if name != "owner":
                 rows = sorted(rows, key=lambda row: getattr(row, name), reverse=reverse)
         return rows[0] if rows else None
@@ -192,14 +200,16 @@ class _SessionManager:
 
     def create_session(self, *, session_id, name, endpoint_url, model, owner):
         session = _ChatSession(endpoint_url, model)
-        self.created.append({
-            "session_id": session_id,
-            "name": name,
-            "endpoint_url": endpoint_url,
-            "model": model,
-            "owner": owner,
-            "session": session,
-        })
+        self.created.append(
+            {
+                "session_id": session_id,
+                "name": name,
+                "endpoint_url": endpoint_url,
+                "model": model,
+                "owner": owner,
+                "session": session,
+            }
+        )
         return session
 
     def save_sessions(self):
@@ -232,14 +242,18 @@ def _install_sync_chat_stubs(monkeypatch):
             self.role = role
             self.content = content
 
-    async def _llm_call_async(endpoint_url, model, messages, headers=None, timeout=None):
+    async def _llm_call_async(
+        endpoint_url, model, messages, headers=None, timeout=None
+    ):
         return "mocked response"
 
     endpoint_resolver = types.ModuleType("src.endpoint_resolver")
     endpoint_resolver.normalize_base = lambda url: (url or "").strip().rstrip("/")
     endpoint_resolver.build_chat_url = lambda base_url: f"{base_url}/chat/completions"
     endpoint_resolver.build_models_url = lambda base_url: f"{base_url}/models"
-    endpoint_resolver.build_headers = lambda api_key, base_url: {"Authorization": f"Bearer {api_key}"}
+    endpoint_resolver.build_headers = lambda api_key, base_url: {
+        "Authorization": f"Bearer {api_key}"
+    }
 
     llm_core = types.ModuleType("src.llm_core")
     llm_core.llm_call_async = _llm_call_async
@@ -263,14 +277,19 @@ def _sync_chat_endpoint(webhook_routes, session_manager):
     raise AssertionError("sync chat route not found")
 
 
-@pytest.mark.parametrize("base_url", [
-    "http://127.0.0.1:11434/v1",
-    "http://localhost:11434/v1",
-    "http://10.0.0.5/v1",
-    "http://169.254.169.254/latest/meta-data/",
-])
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://127.0.0.1:11434/v1",
+        "http://localhost:11434/v1",
+        "http://10.0.0.5/v1",
+        "http://169.254.169.254/latest/meta-data/",
+    ],
+)
 @pytest.mark.asyncio
-async def test_api_chat_direct_base_url_rejects_local_private_targets(monkeypatch, base_url):
+async def test_api_chat_direct_base_url_rejects_local_private_targets(
+    monkeypatch, base_url
+):
     webhook_routes = _load_webhook_routes_for_test(monkeypatch)
     _install_sync_chat_stubs(monkeypatch)
     session_manager = _SessionManager()
@@ -321,7 +340,10 @@ async def test_api_chat_direct_base_url_allows_mocked_public_endpoint(monkeypatc
 
     assert response["response"] == "mocked response"
     assert response["model"] == "test-model"
-    assert session_manager.created[0]["endpoint_url"] == "https://api.example.com/v1/chat/completions"
+    assert (
+        session_manager.created[0]["endpoint_url"]
+        == "https://api.example.com/v1/chat/completions"
+    )
 
 
 def test_api_chat_fallback_endpoint_selection_for_owned_token(monkeypatch):
@@ -376,11 +398,15 @@ async def test_api_chat_fallback_trusts_configured_local_endpoint(monkeypatch):
 
     def _validate_public_http_url(url, *, max_length=2048):
         calls.append(url)
-        raise AssertionError("configured fallback endpoint should not be publicly validated")
+        raise AssertionError(
+            "configured fallback endpoint should not be publicly validated"
+        )
 
     monkeypatch.setattr(webhook_routes, "ModelEndpoint", _ModelEndpoint)
     monkeypatch.setattr(webhook_routes, "SessionLocal", _session_local)
-    monkeypatch.setattr(webhook_routes, "validate_public_http_url", _validate_public_http_url)
+    monkeypatch.setattr(
+        webhook_routes, "validate_public_http_url", _validate_public_http_url
+    )
 
     session_manager = _SessionManager()
     sync_chat = _sync_chat_endpoint(webhook_routes, session_manager)
@@ -397,5 +423,8 @@ async def test_api_chat_fallback_trusts_configured_local_endpoint(monkeypatch):
 
     assert response["response"] == "mocked response"
     assert response["model"] == "local-model"
-    assert session_manager.created[0]["endpoint_url"] == "http://localhost:11434/v1/chat/completions"
+    assert (
+        session_manager.created[0]["endpoint_url"]
+        == "http://localhost:11434/v1/chat/completions"
+    )
     assert calls == []
