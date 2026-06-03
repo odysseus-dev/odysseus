@@ -1,0 +1,53 @@
+{
+  "common": {
+    "save": "保存",
+    "cancel": "取消",
+    "close": "关闭",
+    "settings": "设置",
+    "search": "搜索",
+    "new": "新建",
+    "delete": "删除",
+    "rename": "重命名",
+    "copy": "复制",
+    "loading": "加载中..."
+  },
+  "auth": {
+    "username": "用户名",
+    "password": "密码",
+    "rememberMe": "记住我",
+    "showPassword": "显示密码",
+    "signIn": "登录"
+  },
+  "chat": {
+    "title": "Odysseus",
+    "subtitle": "Odysseus 聊天",
+    "placeholder": "给 Odysseus 发消息...",
+    "setupHint": "输入 /setup 开始配置。",
+    "endpointHint": "在侧边栏的设置中添加 AI 端点，或把端点/API Key 粘贴到聊天里。",
+    "selectModel": "选择模型",
+    "moreTools": "更多工具",
+    "webSearch": "联网搜索",
+    "shellAccess": "Shell 权限",
+    "agent": "代理",
+    "chat": "聊天",
+    "newChat": "新建聊天"
+  },
+  "sidebar": {
+    "tools": "工具",
+    "email": "邮件",
+    "brain": "大脑",
+    "calendar": "日历",
+    "compare": "对比",
+    "cookbook": "Cookbook",
+    "deepResearch": "深度研究",
+    "gallery": "图库",
+    "library": "资料库",
+    "notes": "笔记",
+    "tasks": "任务",
+    "theme": "主题"
+  },
+  "settings": {
+    "language": "语言",
+    "languageHelp": "选择界面语言。"
+  }
+}

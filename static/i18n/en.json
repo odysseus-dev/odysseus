@@ -1,0 +1,53 @@
+{
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "close": "Close",
+    "settings": "Settings",
+    "search": "Search",
+    "new": "New",
+    "delete": "Delete",
+    "rename": "Rename",
+    "copy": "Copy",
+    "loading": "Loading..."
+  },
+  "auth": {
+    "username": "Username",
+    "password": "Password",
+    "rememberMe": "Remember me",
+    "showPassword": "Show password",
+    "signIn": "Sign In"
+  },
+  "chat": {
+    "title": "Odysseus",
+    "subtitle": "Odysseus Chat",
+    "placeholder": "Message Odysseus...",
+    "setupHint": "Type /setup to get started.",
+    "endpointHint": "Add an AI endpoint from Settings in the sidebar, or paste an endpoint/API key into the chat.",
+    "selectModel": "Select model",
+    "moreTools": "More tools",
+    "webSearch": "Web search",
+    "shellAccess": "Shell access",
+    "agent": "Agent",
+    "chat": "Chat",
+    "newChat": "New chat"
+  },
+  "sidebar": {
+    "tools": "Tools",
+    "email": "Email",
+    "brain": "Brain",
+    "calendar": "Calendar",
+    "compare": "Compare",
+    "cookbook": "Cookbook",
+    "deepResearch": "Deep Research",
+    "gallery": "Gallery",
+    "library": "Library",
+    "notes": "Notes",
+    "tasks": "Tasks",
+    "theme": "Theme"
+  },
+  "settings": {
+    "language": "Language",
+    "languageHelp": "Choose the interface language."
+  }
+}
