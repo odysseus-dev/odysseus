@@ -66,7 +66,7 @@ class TTSService:
         if provider == "local":
             kokoro = self._get_kokoro()
             return kokoro is not None and kokoro.available
-        if provider.startswith("endpoint:"):
+        if isinstance(provider, str) and provider.startswith("endpoint:"):
             return True  # assume reachable; errors surface at synthesis time
         return False
 
