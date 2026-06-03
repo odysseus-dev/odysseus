@@ -62,8 +62,8 @@ function resetWindowPlacement() {
   if (hadLeft) clearDockSide('left', modalEl);
   if (hadRight) clearDockSide('right', modalEl);
   if (content._leftDockNavObs) {
-    try { content._leftDockNavObs.navObs && content._leftDockNavObs.navObs.disconnect(); } catch (_) {}
-    try { window.removeEventListener('resize', content._leftDockNavObs.reanchor); } catch (_) {}
+    try { content._leftDockNavObs.navObs && content._leftDockNavObs.navObs.disconnect(); } catch (_) { }
+    try { window.removeEventListener('resize', content._leftDockNavObs.reanchor); } catch (_) { }
     delete content._leftDockNavObs;
   }
   delete content._preDockSnapshot;
@@ -189,14 +189,14 @@ function _fillEndpointSelect(selectEl, endpoints, selected, keepBlank) {
     blank.textContent = blankText;
     selectEl.appendChild(blank);
   }
-  (endpoints || []).forEach(function(ep) {
+  (endpoints || []).forEach(function (ep) {
     if (!ep.is_enabled) return;
     const opt = document.createElement('option');
     opt.value = ep.id;
     opt.textContent = _endpointLabel(ep);
     selectEl.appendChild(opt);
   });
-  if (previous && Array.from(selectEl.options).some(function(o) { return o.value === previous; })) {
+  if (previous && Array.from(selectEl.options).some(function (o) { return o.value === previous; })) {
     selectEl.value = previous;
   } else if (blankText !== null) {
     selectEl.value = '';
@@ -216,13 +216,13 @@ function _fillModelSelect(selectEl, models, selected, keepBlank) {
     blank.textContent = blankText;
     selectEl.appendChild(blank);
   }
-  sortModelIds(models).forEach(function(m) {
+  sortModelIds(models).forEach(function (m) {
     const opt = document.createElement('option');
     opt.value = m;
     opt.textContent = String(m).split('/').pop();
     selectEl.appendChild(opt);
   });
-  if (previous && Array.from(selectEl.options).some(function(o) { return o.value === previous; })) {
+  if (previous && Array.from(selectEl.options).some(function (o) { return o.value === previous; })) {
     selectEl.value = previous;
   } else if (blankText !== null) {
     selectEl.value = '';
@@ -235,10 +235,10 @@ function _registerAiEndpointRefresh(fn) {
 
 export async function refreshAiModelEndpoints() {
   if (_aiEndpointRefreshInFlight) return _aiEndpointRefreshInFlight;
-  _aiEndpointRefreshInFlight = (async function() {
+  _aiEndpointRefreshInFlight = (async function () {
     try {
       const endpoints = await _fetchModelEndpoints();
-      _aiEndpointRefreshers.forEach(function(fn) {
+      _aiEndpointRefreshers.forEach(function (fn) {
         try { fn(endpoints); } catch (e) { console.warn('[settings] endpoint refresh handler failed', e); }
       });
     } catch (e) {
@@ -259,19 +259,19 @@ function _bindFallbackWidget(opts) {
   var fbContainer = el(opts.containerId);
   var addBtn = el(opts.addBtnId);
   var endpointsRef = opts.endpoints;       // mutable list reference
-  var modelsFilter = opts.modelsFilter || function() { return true; };
+  var modelsFilter = opts.modelsFilter || function () { return true; };
   var settingKey = opts.settingKey;
   var current = opts.initial || [];        // [{endpoint_id, model}]
 
-  if (!fbContainer || !addBtn) return { setEndpoints: function() {}, setInitial: function() {} };
+  if (!fbContainer || !addBtn) return { setEndpoints: function () { }, setInitial: function () { } };
 
-  function enabledEps() { return (endpointsRef() || []).filter(function(e) { return e.is_enabled; }); }
+  function enabledEps() { return (endpointsRef() || []).filter(function (e) { return e.is_enabled; }); }
 
   function fillModels(selectEl, epId, selected) {
     while (selectEl.options.length) selectEl.remove(0);
-    var ep = (endpointsRef() || []).find(function(e) { return e.id === epId; });
+    var ep = (endpointsRef() || []).find(function (e) { return e.id === epId; });
     if (ep && ep.models) {
-      sortModelIds(ep.models).forEach(function(m) {
+      sortModelIds(ep.models).forEach(function (m) {
         if (!modelsFilter(m, ep)) return;
         var o = document.createElement('option');
         o.value = m;
@@ -283,11 +283,12 @@ function _bindFallbackWidget(opts) {
   }
 
   async function save() {
-    var clean = current.filter(function(f) { return f.endpoint_id && f.model; });
+    var clean = current.filter(function (f) { return f.endpoint_id && f.model; });
     var body = {};
     body[settingKey] = clean;
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+      await fetch('/api/auth/settings', {
+        method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
@@ -296,7 +297,7 @@ function _bindFallbackWidget(opts) {
 
   function render() {
     fbContainer.innerHTML = '';
-    current.forEach(function(fb, idx) {
+    current.forEach(function (fb, idx) {
       var row = document.createElement('div');
       row.className = 'settings-fallback-row';
 
@@ -306,7 +307,7 @@ function _bindFallbackWidget(opts) {
 
       var epS = document.createElement('select');
       epS.className = 'settings-select';
-      enabledEps().forEach(function(ep) {
+      enabledEps().forEach(function (ep) {
         var o = document.createElement('option');
         o.value = ep.id;
         o.textContent = ep.name + (ep.online ? '' : ' (offline)');
@@ -322,20 +323,20 @@ function _bindFallbackWidget(opts) {
       fb.endpoint_id = epS.value;
       fb.model = mS.value;
 
-      epS.addEventListener('change', function() {
+      epS.addEventListener('change', function () {
         fb.endpoint_id = epS.value;
         fillModels(mS, epS.value, '');
         fb.model = mS.value;
         save();
       });
-      mS.addEventListener('change', function() { fb.model = mS.value; save(); });
+      mS.addEventListener('change', function () { fb.model = mS.value; save(); });
 
       var rm = document.createElement('button');
       rm.type = 'button';
       rm.className = 'settings-fallback-remove';
       rm.title = 'Remove fallback';
       rm.innerHTML = '&times;';
-      rm.addEventListener('click', function() {
+      rm.addEventListener('click', function () {
         current.splice(idx, 1);
         render();
         save();
@@ -349,7 +350,7 @@ function _bindFallbackWidget(opts) {
     });
   }
 
-  addBtn.addEventListener('click', function() {
+  addBtn.addEventListener('click', function () {
     var first = enabledEps()[0];
     current.push({ endpoint_id: first ? first.id : '', model: '' });
     render();
@@ -359,7 +360,7 @@ function _bindFallbackWidget(opts) {
   render();
 
   return {
-    setInitial: function(list) { current = (list || []).slice(); render(); },
+    setInitial: function (list) { current = (list || []).slice(); render(); },
     refresh: render,
   };
 }
@@ -375,12 +376,12 @@ async function initDefaultChat() {
   var _fallbacks = []; // [{endpoint_id, model}] — tried in order if primary fails
 
   function enabledEndpoints() {
-    return _endpoints.filter(function(e) { return e.is_enabled; });
+    return _endpoints.filter(function (e) { return e.is_enabled; });
   }
 
   // Fill any <select> with the models for a given endpoint id.
   function fillModels(selectEl, epId, selected) {
-    var ep = _endpoints.find(function(e) { return e.id === epId; });
+    var ep = _endpoints.find(function (e) { return e.id === epId; });
     _fillModelSelect(selectEl, ep ? ep.models : [], selected, false);
   }
 
@@ -399,7 +400,7 @@ async function initDefaultChat() {
   // Render the fallback chain. Each row is endpoint + model + remove.
   function renderFallbacks() {
     fbContainer.innerHTML = '';
-    _fallbacks.forEach(function(fb, idx) {
+    _fallbacks.forEach(function (fb, idx) {
       var row = document.createElement('div');
       row.className = 'settings-fallback-row';
 
@@ -409,7 +410,7 @@ async function initDefaultChat() {
 
       var epS = document.createElement('select');
       epS.className = 'settings-select';
-      enabledEndpoints().forEach(function(ep) {
+      enabledEndpoints().forEach(function (ep) {
         var o = document.createElement('option');
         o.value = ep.id;
         o.textContent = ep.name + (ep.online ? '' : ' (offline)');
@@ -426,20 +427,20 @@ async function initDefaultChat() {
       fb.endpoint_id = epS.value;
       fb.model = mS.value;
 
-      epS.addEventListener('change', function() {
+      epS.addEventListener('change', function () {
         fb.endpoint_id = epS.value;
         fillModels(mS, epS.value, '');
         fb.model = mS.value;
         saveDefault();
       });
-      mS.addEventListener('change', function() { fb.model = mS.value; saveDefault(); });
+      mS.addEventListener('change', function () { fb.model = mS.value; saveDefault(); });
 
       var rm = document.createElement('button');
       rm.type = 'button';
       rm.className = 'settings-fallback-remove';
       rm.title = 'Remove fallback';
       rm.innerHTML = '&times;';
-      rm.addEventListener('click', function() {
+      rm.addEventListener('click', function () {
         _fallbacks.splice(idx, 1);
         renderFallbacks();
         saveDefault();
@@ -459,17 +460,18 @@ async function initDefaultChat() {
     if (settings.default_endpoint_id) epSel.value = settings.default_endpoint_id;
     refreshModels(settings.default_model || '');
     _fallbacks = Array.isArray(settings.default_model_fallbacks)
-      ? settings.default_model_fallbacks.map(function(f) {
-          return { endpoint_id: (f && f.endpoint_id) || '', model: (f && f.model) || '' };
-        })
+      ? settings.default_model_fallbacks.map(function (f) {
+        return { endpoint_id: (f && f.endpoint_id) || '', model: (f && f.model) || '' };
+      })
       : [];
     renderFallbacks();
   } catch (e) { console.warn('Failed to load default chat settings', e); }
 
   async function saveDefault() {
     try {
-      var clean = _fallbacks.filter(function(f) { return f.endpoint_id && f.model; });
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+      var clean = _fallbacks.filter(function (f) { return f.endpoint_id && f.model; });
+      await fetch('/api/auth/settings', {
+        method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           default_endpoint_id: epSel.value,
@@ -478,20 +480,20 @@ async function initDefaultChat() {
         })
       });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
-      setTimeout(function() { msg.textContent = ''; }, 2000);
+      setTimeout(function () { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
-  epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
+  epSel.addEventListener('change', function () { refreshModels(''); saveDefault(); });
   modelSel.addEventListener('change', saveDefault);
-  if (addFbBtn) addFbBtn.addEventListener('click', function() {
+  if (addFbBtn) addFbBtn.addEventListener('click', function () {
     var first = enabledEndpoints()[0];
     _fallbacks.push({ endpoint_id: first ? first.id : '', model: '' });
     renderFallbacks();
     saveDefault();
   });
 
-  _registerAiEndpointRefresh(function(endpoints) {
+  _registerAiEndpointRefresh(function (endpoints) {
     _endpoints = endpoints;
     refreshEndpointOptions(epSel.value, modelSel.value);
   });
@@ -514,7 +516,7 @@ async function initUtilityModel() {
 
   function refreshModels(selectedModel) {
     var epId = epSel.value;
-    var ep = _endpoints.find(function(e) { return e.id === epId; });
+    var ep = _endpoints.find(function (e) { return e.id === epId; });
     _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
   }
 
@@ -526,10 +528,10 @@ async function initUtilityModel() {
     fallbackWidget = _bindFallbackWidget({
       containerId: 'set-utilityFallbacks',
       addBtnId: 'set-utilityAddFallback',
-      endpoints: function() { return _endpoints; },
+      endpoints: function () { return _endpoints; },
       settingKey: 'utility_model_fallbacks',
       initial: Array.isArray(settings.utility_model_fallbacks)
-        ? settings.utility_model_fallbacks.map(function(f) { return { endpoint_id: (f && f.endpoint_id) || '', model: (f && f.model) || '' }; })
+        ? settings.utility_model_fallbacks.map(function (f) { return { endpoint_id: (f && f.endpoint_id) || '', model: (f && f.model) || '' }; })
         : [],
     });
   } catch (e) { console.warn('Failed to load utility model settings', e); }
@@ -539,7 +541,8 @@ async function initUtilityModel() {
   // no toggle, "—" means "unset, use chat").
   async function saveUtility() {
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+      await fetch('/api/auth/settings', {
+        method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           utility_endpoint_id: epSel.value || '',
@@ -547,14 +550,14 @@ async function initUtilityModel() {
         })
       });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
-      setTimeout(function() { msg.textContent = ''; }, 1500);
+      setTimeout(function () { msg.textContent = ''; }, 1500);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
-  epSel.addEventListener('change', function() { refreshModels(''); saveUtility(); });
+  epSel.addEventListener('change', function () { refreshModels(''); saveUtility(); });
   modelSel.addEventListener('change', saveUtility);
 
-  _registerAiEndpointRefresh(function(endpoints) {
+  _registerAiEndpointRefresh(function (endpoints) {
     _endpoints = endpoints;
     _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
     refreshModels(modelSel.value);
@@ -584,7 +587,7 @@ async function initTeacherModel() {
 
   function refreshModels(selectedModel) {
     var epId = epSel.value;
-    var ep = _endpoints.find(function(e) { return e.id === epId; });
+    var ep = _endpoints.find(function (e) { return e.id === epId; });
     _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
   }
 
@@ -620,7 +623,7 @@ async function initTeacherModel() {
       savedEpName = spec.slice(at + 1);
     }
     if (savedEpName) {
-      var match = _endpoints.find(function(ep) {
+      var match = _endpoints.find(function (ep) {
         return ep.name && ep.name.toLowerCase().indexOf(savedEpName.toLowerCase()) >= 0;
       });
       if (match) epSel.value = match.id;
@@ -633,30 +636,31 @@ async function initTeacherModel() {
     try {
       var spec = '';
       if (epSel.value && modelSel.value) {
-        var ep = _endpoints.find(function(e) { return e.id === epSel.value; });
+        var ep = _endpoints.find(function (e) { return e.id === epSel.value; });
         spec = ep ? (modelSel.value + '@' + ep.name) : modelSel.value;
       }
       var enabled = enabledToggle ? !!enabledToggle.checked : false;
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+      await fetch('/api/auth/settings', {
+        method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ teacher_enabled: enabled, teacher_model: spec })
       });
       msg.textContent = enabled ? (spec ? 'Saved' : 'Pick an endpoint + model') : 'Disabled';
       msg.style.color = enabled && !spec ? 'var(--red)' : 'var(--fg)';
-      setTimeout(function() { msg.textContent = ''; }, 2000);
+      setTimeout(function () { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
   if (enabledToggle) {
-    enabledToggle.addEventListener('change', function() {
+    enabledToggle.addEventListener('change', function () {
       syncEnabled();
       saveTeacher();
     });
   }
-  epSel.addEventListener('change', function() { refreshModels(''); saveTeacher(); });
+  epSel.addEventListener('change', function () { refreshModels(''); saveTeacher(); });
   modelSel.addEventListener('change', saveTeacher);
 
-  _registerAiEndpointRefresh(function(endpoints) {
+  _registerAiEndpointRefresh(function (endpoints) {
     _endpoints = endpoints;
     _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
     refreshModels(modelSel.value);
@@ -715,14 +719,16 @@ async function initImageSettings() {
 
   async function saveSettings() {
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_gen_enabled: enabledToggle ? enabledToggle.checked : true, image_model: modelSel.value, image_quality: qualSel.value }) });
+      await fetch('/api/auth/settings', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_gen_enabled: enabledToggle ? enabledToggle.checked : true, image_model: modelSel.value, image_quality: qualSel.value })
+      });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
   modelSel.addEventListener('change', saveSettings);
   qualSel.addEventListener('change', saveSettings);
-  if (enabledToggle) enabledToggle.addEventListener('change', function() { syncImgDisabled(); saveSettings(); });
+  if (enabledToggle) enabledToggle.addEventListener('change', function () { syncImgDisabled(); saveSettings(); });
 }
 
 /* ── Vision ── */
@@ -736,7 +742,7 @@ async function initVisionSettings() {
   var _vlExclude = ['audio', 'realtime', 'tts', 'dall-e', 'embedding', 'search', 'whisper'];
   function _isVisionModel(mid) {
     var lower = String(mid || '').toLowerCase();
-    return !_vlExclude.some(function(kw) { return lower.includes(kw); });
+    return !_vlExclude.some(function (kw) { return lower.includes(kw); });
   }
   try {
     const modelsRes = await fetch('/api/models', { credentials: 'same-origin' });
@@ -767,13 +773,13 @@ async function initVisionSettings() {
     visionFallbackWidget = _bindFallbackWidget({
       containerId: 'set-visionFallbacks',
       addBtnId: 'set-visionAddFallback',
-      endpoints: function() { return _visionEndpoints; },
+      endpoints: function () { return _visionEndpoints; },
       // Vision fallback list filters to vision-capable models (same heuristic
       // as the primary select above — exclude audio/tts/embedding/etc.).
-      modelsFilter: function(mid) { return _isVisionModel(mid); },
+      modelsFilter: function (mid) { return _isVisionModel(mid); },
       settingKey: 'vision_model_fallbacks',
       initial: Array.isArray(settings.vision_model_fallbacks)
-        ? settings.vision_model_fallbacks.map(function(f) { return { endpoint_id: (f && f.endpoint_id) || '', model: (f && f.model) || '' }; })
+        ? settings.vision_model_fallbacks.map(function (f) { return { endpoint_id: (f && f.endpoint_id) || '', model: (f && f.model) || '' }; })
         : [],
     });
   } catch (e) { console.warn('Failed to load vision settings', e); }
@@ -788,15 +794,17 @@ async function initVisionSettings() {
 
   async function saveSettings() {
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vision_enabled: enabledToggle ? enabledToggle.checked : true, vision_model: vlSel.value }) });
+      await fetch('/api/auth/settings', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vision_enabled: enabledToggle ? enabledToggle.checked : true, vision_model: vlSel.value })
+      });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
   vlSel.addEventListener('change', saveSettings);
-  if (enabledToggle) enabledToggle.addEventListener('change', function() { syncVisionDisabled(); saveSettings(); });
+  if (enabledToggle) enabledToggle.addEventListener('change', function () { syncVisionDisabled(); saveSettings(); });
 
-  _registerAiEndpointRefresh(function(endpoints) {
+  _registerAiEndpointRefresh(function (endpoints) {
     _visionEndpoints = endpoints;
     if (visionFallbackWidget && visionFallbackWidget.refresh) visionFallbackWidget.refresh();
   });
@@ -841,7 +849,7 @@ async function initTtsSettings() {
   try {
     var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
     var endpoints = await epRes.json();
-    endpoints.forEach(function(ep) {
+    endpoints.forEach(function (ep) {
       if (!ep.is_enabled) return;
       var hasTTS = (ep.models || []).some(m => ttsKeywords.some(kw => m.toLowerCase().includes(kw)));
       if (!hasTTS) return;
@@ -870,8 +878,10 @@ async function initTtsSettings() {
 
   async function saveTTS() {
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1' }) });
+      await fetch('/api/auth/settings', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1' })
+      });
       ttsMsg.textContent = 'Saved'; ttsMsg.style.color = 'var(--fg)'; setTimeout(() => { ttsMsg.textContent = ''; }, 2000);
       if (window.aiTTSManager) window.aiTTSManager.checkAvailability();
     } catch (e) { ttsMsg.textContent = 'Failed to save'; ttsMsg.style.color = 'var(--red)'; }
@@ -879,10 +889,10 @@ async function initTtsSettings() {
 
   async function saveAndClearCache() {
     await saveTTS();
-    fetch('/api/tts/clear-cache', { method: 'POST', credentials: 'same-origin' }).catch(function(){});
+    fetch('/api/tts/clear-cache', { method: 'POST', credentials: 'same-origin' }).catch(function () { });
   }
 
-  provSel.addEventListener('change', function() {
+  provSel.addEventListener('change', function () {
     var prov = provSel.value;
     if (prov === 'local') voiceInput.value = 'af_heart';
     else if (isEndpoint()) { voiceSelect.value = 'alloy'; modelSelect.value = 'tts-1'; }
@@ -895,7 +905,7 @@ async function initTtsSettings() {
   voiceSelect.addEventListener('change', saveAndClearCache);
   voiceInput.addEventListener('change', saveTTS);
   speedSelect.addEventListener('change', saveAndClearCache);
-  if (ttsEnabledToggle) ttsEnabledToggle.addEventListener('change', function() { syncTtsDisabled(); saveTTS(); });
+  if (ttsEnabledToggle) ttsEnabledToggle.addEventListener('change', function () { syncTtsDisabled(); saveTTS(); });
 
   // Preview / test button
   var previewBtn = el('set-ttsPreviewBtn');
@@ -904,7 +914,7 @@ async function initTtsSettings() {
     var previewPlaying = false;
     function resetPreview() { previewPlaying = false; previewBtn.textContent = 'Preview'; previewBtn.style.borderColor = ''; }
 
-    previewBtn.addEventListener('click', async function() {
+    previewBtn.addEventListener('click', async function () {
       if (previewPlaying) {
         if (previewAudio) { previewAudio.pause(); previewAudio = null; }
         window.speechSynthesis.cancel();
@@ -913,7 +923,7 @@ async function initTtsSettings() {
       var prov = provSel.value;
       if (prov === 'disabled') {
         ttsMsg.textContent = 'Select a provider first'; ttsMsg.style.color = 'var(--red, #e55)';
-        setTimeout(function() { ttsMsg.textContent = ''; }, 2000); return;
+        setTimeout(function () { ttsMsg.textContent = ''; }, 2000); return;
       }
       var testText = 'Hello, this is a test of text to speech.';
       previewPlaying = true; previewBtn.textContent = 'Loading...';
@@ -925,15 +935,15 @@ async function initTtsSettings() {
           if (voiceVal) {
             var voices = window.speechSynthesis.getVoices();
             var target = voiceVal.toLowerCase();
-            var match = voices.find(function(v) { return v.name.toLowerCase() === target; }) ||
-                        voices.find(function(v) { return v.name.toLowerCase().includes(target); });
+            var match = voices.find(function (v) { return v.name.toLowerCase() === target; }) ||
+              voices.find(function (v) { return v.name.toLowerCase().includes(target); });
             if (match) utt.voice = match;
           }
           utt.rate = parseFloat(speedSelect.value) || 1;
           previewBtn.textContent = 'Stop'; previewBtn.style.borderColor = 'var(--red, #e55)';
-          await new Promise(function(resolve, reject) {
+          await new Promise(function (resolve, reject) {
             utt.onend = resolve;
-            utt.onerror = function(e) { reject(new Error('Browser TTS: ' + e.error)); };
+            utt.onerror = function (e) { reject(new Error('Browser TTS: ' + e.error)); };
             window.speechSynthesis.speak(utt);
           });
         } else {
@@ -942,20 +952,20 @@ async function initTtsSettings() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: testText, format: 'audio' })
           });
-          if (!res.ok) { var err = await res.json().catch(function() { return {}; }); throw new Error(err.detail?.message || 'Synthesis failed'); }
+          if (!res.ok) { var err = await res.json().catch(function () { return {}; }); throw new Error(err.detail?.message || 'Synthesis failed'); }
           var blob = await res.blob();
           var url = URL.createObjectURL(blob);
           previewAudio = new Audio(url);
           previewBtn.textContent = 'Stop'; previewBtn.style.borderColor = 'var(--red, #e55)';
-          await new Promise(function(resolve, reject) {
-            previewAudio.onended = function() { URL.revokeObjectURL(url); previewAudio = null; resolve(); };
-            previewAudio.onerror = function() { URL.revokeObjectURL(url); previewAudio = null; reject(new Error('Playback failed')); };
+          await new Promise(function (resolve, reject) {
+            previewAudio.onended = function () { URL.revokeObjectURL(url); previewAudio = null; resolve(); };
+            previewAudio.onerror = function () { URL.revokeObjectURL(url); previewAudio = null; reject(new Error('Playback failed')); };
             previewAudio.play().catch(reject);
           });
         }
       } catch (e) {
         ttsMsg.textContent = 'Preview failed: ' + e.message; ttsMsg.style.color = 'var(--red, #e55)';
-        setTimeout(function() { ttsMsg.textContent = ''; }, 3000);
+        setTimeout(function () { ttsMsg.textContent = ''; }, 3000);
       } finally {
         resetPreview();
       }
@@ -1010,7 +1020,7 @@ async function initSttSettings() {
   try {
     var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
     var endpoints = await epRes.json();
-    endpoints.forEach(function(ep) {
+    endpoints.forEach(function (ep) {
       if (!ep.is_enabled) return;
       var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; provSel.appendChild(opt);
     });
@@ -1032,9 +1042,11 @@ async function initSttSettings() {
   async function saveSTT() {
     try {
       var enabled = sttEnabledToggle ? sttEnabledToggle.checked : false;
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+      await fetch('/api/auth/settings', {
+        method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim() }) });
+        body: JSON.stringify({ stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim() })
+      });
       sttMsg.textContent = 'Saved'; sttMsg.style.color = 'var(--fg)'; setTimeout(() => { sttMsg.textContent = ''; }, 2000);
       // Notify voiceRecorder of effective provider and update send button icon
       if (window.voiceRecorderModule) window.voiceRecorderModule._sttProvider = effectiveProvider();
@@ -1042,11 +1054,11 @@ async function initSttSettings() {
     } catch (e) { sttMsg.textContent = 'Failed to save'; sttMsg.style.color = 'var(--red)'; }
   }
 
-  provSel.addEventListener('change', function() { updateVisibility(); saveSTT(); });
+  provSel.addEventListener('change', function () { updateVisibility(); saveSTT(); });
   modelSelect.addEventListener('change', saveSTT);
   modelInput.addEventListener('change', saveSTT);
   langInput.addEventListener('change', saveSTT);
-  if (sttEnabledToggle) sttEnabledToggle.addEventListener('change', function() { syncSttDisabled(); saveSTT(); });
+  if (sttEnabledToggle) sttEnabledToggle.addEventListener('change', function () { syncSttDisabled(); saveSTT(); });
 }
 
 /* ═══════════════════════════════════════════
@@ -1129,7 +1141,7 @@ async function initSearchSettings() {
     if (_settings.google_pse_cx) cxInput.value = _settings.google_pse_cx;
   } catch (e) { console.warn('Failed to load search settings', e); }
 
-  countSel.addEventListener('change', function() {
+  countSel.addEventListener('change', function () {
     if (this.value === 'custom') {
       countCustomInput.style.display = 'block';
       countCustomInput.focus();
@@ -1187,7 +1199,8 @@ async function initSearchSettings() {
         payload[kf] = keyInput.value.trim();
         _settings[kf] = keyInput.value.trim();
       }
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+      await fetch('/api/auth/settings', {
+        method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
@@ -1197,7 +1210,7 @@ async function initSearchSettings() {
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
-  provSel.addEventListener('change', function() { updateVisibility(); saveSearch(); _syncSearchPicker(); });
+  provSel.addEventListener('change', function () { updateVisibility(); saveSearch(); _syncSearchPicker(); });
   countSel.addEventListener('change', saveSearch);
   urlInput.addEventListener('change', saveSearch);
   keyInput.addEventListener('change', saveSearch);
@@ -1213,13 +1226,13 @@ async function initSearchSettings() {
   }
   function _renderSearchPickerMenu() {
     if (!pickerMenu) return;
-    pickerMenu.innerHTML = Array.from(provSel.options).map(function(o) {
+    pickerMenu.innerHTML = Array.from(provSel.options).map(function (o) {
       var logo = _searchProviderLogoSvg(o.dataset.searchLogo);
       var active = o.value === provSel.value ? ' active' : '';
       return '<div class="adm-provider-item' + active + '" role="option" data-value="' + o.value.replace(/"/g, '&quot;') + '">' +
         '<span class="adm-provider-logo">' + logo + '</span>' +
         '<span>' + o.textContent + '</span>' +
-      '</div>';
+        '</div>';
     }).join('');
   }
   function _syncSearchPicker() {
@@ -1232,11 +1245,11 @@ async function initSearchSettings() {
   if (picker && pickerBtn && pickerMenu && pickerCurrent) {
     _renderSearchPickerMenu();
     _syncSearchPicker();
-    pickerBtn.addEventListener('click', function(e) {
+    pickerBtn.addEventListener('click', function (e) {
       e.stopPropagation();
       pickerMenu.classList.toggle('hidden');
     });
-    pickerMenu.addEventListener('click', function(e) {
+    pickerMenu.addEventListener('click', function (e) {
       var item = e.target.closest('.adm-provider-item');
       if (!item) return;
       provSel.value = item.dataset.value;
@@ -1244,7 +1257,7 @@ async function initSearchSettings() {
       pickerMenu.classList.add('hidden');
       _renderSearchPickerMenu();
     });
-    document.addEventListener('click', function(e) {
+    document.addEventListener('click', function (e) {
       if (!picker.contains(e.target)) pickerMenu.classList.add('hidden');
     });
   }
@@ -1259,14 +1272,14 @@ async function initSearchSettings() {
     var chain = _settings.search_fallback_chain || [];
     var inChain = new Set(chain.concat([primary, 'disabled']));
     return Array.from(provSel.options)
-      .map(function(o) { return { value: o.value, label: o.textContent, logo: o.dataset.searchLogo }; })
-      .filter(function(o) { return !inChain.has(o.value); });
+      .map(function (o) { return { value: o.value, label: o.textContent, logo: o.dataset.searchLogo }; })
+      .filter(function (o) { return !inChain.has(o.value); });
   }
   function _renderFallbackChain() {
     if (!fbWrap) return;
     var chain = (_settings.search_fallback_chain || []).slice();
-    var esc = function(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); };
-    var chipsHtml = chain.map(function(p, i) {
+    var esc = function (s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); };
+    var chipsHtml = chain.map(function (p, i) {
       var label = _searchLabels[p] || p;
       var logo = _SEARCH_PROVIDER_LOGOS[p] || '';
       return '<span class="search-fb-chip" draggable="true" data-idx="' + i + '" data-value="' + esc(p) + '">' +
@@ -1274,25 +1287,25 @@ async function initSearchSettings() {
         '<span class="search-fb-logo">' + logo + '</span>' +
         '<span>' + esc(label) + '</span>' +
         '<button type="button" class="search-fb-remove" data-value="' + esc(p) + '" title="Remove">&times;</button>' +
-      '</span>';
+        '</span>';
     }).join('');
     var addOptions = _availableFallbackOptions();
     var addSelect = addOptions.length
       ? '<select class="search-fb-add" id="search-fb-add"><option value="">+ Add</option>' +
-          addOptions.map(function(o) { return '<option value="' + esc(o.value) + '">' + esc(o.label) + '</option>'; }).join('') +
-        '</select>'
+      addOptions.map(function (o) { return '<option value="' + esc(o.value) + '">' + esc(o.label) + '</option>'; }).join('') +
+      '</select>'
       : '';
     fbWrap.innerHTML = chipsHtml + addSelect;
     // Wire chip remove + drag-reorder + add
-    fbWrap.querySelectorAll('.search-fb-remove').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        var next = (_settings.search_fallback_chain || []).filter(function(p) { return p !== btn.dataset.value; });
+    fbWrap.querySelectorAll('.search-fb-remove').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var next = (_settings.search_fallback_chain || []).filter(function (p) { return p !== btn.dataset.value; });
         _saveFallbackChain(next);
       });
     });
     var addSel = el('search-fb-add');
     if (addSel) {
-      addSel.addEventListener('change', function() {
+      addSel.addEventListener('change', function () {
         if (!addSel.value) return;
         var next = (_settings.search_fallback_chain || []).slice();
         if (!next.includes(addSel.value)) next.push(addSel.value);
@@ -1301,18 +1314,18 @@ async function initSearchSettings() {
     }
     // Drag-reorder
     var dragging = null;
-    fbWrap.querySelectorAll('.search-fb-chip').forEach(function(chip) {
-      chip.addEventListener('dragstart', function() {
+    fbWrap.querySelectorAll('.search-fb-chip').forEach(function (chip) {
+      chip.addEventListener('dragstart', function () {
         dragging = chip; chip.classList.add('dragging');
       });
-      chip.addEventListener('dragend', function() {
+      chip.addEventListener('dragend', function () {
         if (dragging) dragging.classList.remove('dragging');
         dragging = null;
         // Persist new order
-        var order = Array.from(fbWrap.querySelectorAll('.search-fb-chip')).map(function(c) { return c.dataset.value; });
+        var order = Array.from(fbWrap.querySelectorAll('.search-fb-chip')).map(function (c) { return c.dataset.value; });
         _saveFallbackChain(order);
       });
-      chip.addEventListener('dragover', function(e) {
+      chip.addEventListener('dragover', function (e) {
         e.preventDefault();
         if (!dragging || dragging === chip) return;
         var rect = chip.getBoundingClientRect();
@@ -1341,7 +1354,7 @@ async function initSearchSettings() {
   // ── Test button ── runs a one-off query against the configured provider.
   var testBtn = el('set-searchTestBtn');
   if (testBtn) {
-    testBtn.addEventListener('click', async function() {
+    testBtn.addEventListener('click', async function () {
       var prov = provSel.value;
       if (!prov || prov === 'disabled') {
         msg.textContent = 'Pick a provider first';
@@ -1386,13 +1399,13 @@ async function initSearchSettings() {
 
 // SVG logos for each search provider (16×16 viewBox normalised to 24×24).
 var _SEARCH_PROVIDER_LOGOS = {
-  searxng:   '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm0-2a8 8 0 1 1-4.93 14.32l-3.4 3.4a1 1 0 1 1-1.4-1.4l3.4-3.4A8 8 0 0 1 10 2zM13 8.5L11.5 10 13 11.5l-1 1L10.5 11 9 12.5l-1-1L9.5 10 8 8.5l1-1L10.5 9 12 7.5z"/></svg>',
-  duckduckgo:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.5 5.5a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4zm5 0a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4zM12 13c-1.5 0-3.6.8-3.6 2.5C8.4 17.2 10.4 18 12 18s3.6-.8 3.6-2.5C15.6 13.8 13.5 13 12 13z"/></svg>',
-  brave:     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 4l-1.5 1L15 3l-3 .5L9 3 6.5 5 5 4 3 7l1.5 2L4 12l3 5 4 3 1 1 1-1 4-3 3-5-.5-3L21 7l-2-3zM12 17l-2.5-2 .5-3-2-1.5 2-1.5L11 7l3-1 3 1-.5 2 2 1.5-2 1.5.5 3L14.5 17 12 17z"/></svg>',
-  google_pse:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.35 11.1H12v3.2h5.35c-.5 2.4-2.55 4-5.35 4-3.25 0-5.9-2.65-5.9-5.9s2.65-5.9 5.9-5.9c1.55 0 2.95.55 4.05 1.55l2.4-2.4C16.85 4.05 14.55 3 12 3 7 3 3 7 3 12s4 9 9 9c5.2 0 8.65-3.65 8.65-8.8 0-.4-.05-.7-.3-1.1z"/></svg>',
-  tavily:    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 8.5l4 2.5v6l6 3.5 6-3.5v-6l4-2.5L12 2zm-4 9.5L12 14l4-2.5V16l-4 2.5L8 16v-4.5z"/></svg>',
-  serper:    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 4a7 7 0 1 0 4.2 12.6l4.5 4.5 1.4-1.4-4.5-4.5A7 7 0 0 0 11 4zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm-1 2v2H8v2h2v2h2v-2h2V10h-2V8h-2z"/></svg>',
-  disabled:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  searxng: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm0-2a8 8 0 1 1-4.93 14.32l-3.4 3.4a1 1 0 1 1-1.4-1.4l3.4-3.4A8 8 0 0 1 10 2zM13 8.5L11.5 10 13 11.5l-1 1L10.5 11 9 12.5l-1-1L9.5 10 8 8.5l1-1L10.5 9 12 7.5z"/></svg>',
+  duckduckgo: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.5 5.5a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4zm5 0a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4zM12 13c-1.5 0-3.6.8-3.6 2.5C8.4 17.2 10.4 18 12 18s3.6-.8 3.6-2.5C15.6 13.8 13.5 13 12 13z"/></svg>',
+  brave: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 4l-1.5 1L15 3l-3 .5L9 3 6.5 5 5 4 3 7l1.5 2L4 12l3 5 4 3 1 1 1-1 4-3 3-5-.5-3L21 7l-2-3zM12 17l-2.5-2 .5-3-2-1.5 2-1.5L11 7l3-1 3 1-.5 2 2 1.5-2 1.5.5 3L14.5 17 12 17z"/></svg>',
+  google_pse: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.35 11.1H12v3.2h5.35c-.5 2.4-2.55 4-5.35 4-3.25 0-5.9-2.65-5.9-5.9s2.65-5.9 5.9-5.9c1.55 0 2.95.55 4.05 1.55l2.4-2.4C16.85 4.05 14.55 3 12 3 7 3 3 7 3 12s4 9 9 9c5.2 0 8.65-3.65 8.65-8.8 0-.4-.05-.7-.3-1.1z"/></svg>',
+  tavily: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 8.5l4 2.5v6l6 3.5 6-3.5v-6l4-2.5L12 2zm-4 9.5L12 14l4-2.5V16l-4 2.5L8 16v-4.5z"/></svg>',
+  serper: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 4a7 7 0 1 0 4.2 12.6l4.5 4.5 1.4-1.4-4.5-4.5A7 7 0 0 0 11 4zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm-1 2v2H8v2h2v2h2v-2h2V10h-2V8h-2z"/></svg>',
+  disabled: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
 };
 
 /* ── Deep Research Model (AI tab) ── */
@@ -1413,7 +1426,7 @@ async function initResearchSettings() {
 
   function refreshModels(selectedModel) {
     var epId = epSel.value;
-    var ep = endpoints.find(function(e) { return e.id === epId; });
+    var ep = endpoints.find(function (e) { return e.id === epId; });
     _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
   }
 
@@ -1481,7 +1494,8 @@ async function initResearchSettings() {
       }
     }
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+      await fetch('/api/auth/settings', {
+        method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
@@ -1490,7 +1504,7 @@ async function initResearchSettings() {
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
-  epSel.addEventListener('change', async function() {
+  epSel.addEventListener('change', async function () {
     refreshModels('');
     saveResearch();
   });
@@ -1500,7 +1514,7 @@ async function initResearchSettings() {
   extractConcurrencyInput.addEventListener('change', saveResearch);
   runTimeoutInput.addEventListener('change', saveResearch);
 
-  _registerAiEndpointRefresh(function(nextEndpoints) {
+  _registerAiEndpointRefresh(function (nextEndpoints) {
     endpoints = nextEndpoints;
     _fillEndpointSelect(epSel, endpoints, epSel.value, true);
     refreshModels(modelSel.value);
@@ -1514,7 +1528,7 @@ async function initResearchSearchSettings() {
 
   function updateSearchOptions(settings) {
     var options = searchSel.querySelectorAll('option');
-    options.forEach(function(opt) {
+    options.forEach(function (opt) {
       var prov = opt.value;
       if (!prov) return;
       var kf = _searchKeyFields[prov];
@@ -1539,12 +1553,13 @@ async function initResearchSearchSettings() {
 
   async function saveResearchSearch() {
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+      await fetch('/api/auth/settings', {
+        method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ research_search_provider: searchSel.value })
       });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
-      setTimeout(function() { msg.textContent = ''; }, 2000);
+      setTimeout(function () { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
@@ -1561,12 +1576,13 @@ async function initAgentSettings() {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
     if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
-  } catch (e) {}
+  } catch (e) { }
 
   async function save() {
     var val = parseInt(toolsInput.value, 10) || 0;
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+      await fetch('/api/auth/settings', {
+        method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent_max_tool_calls: val })
       });
@@ -1587,8 +1603,8 @@ function initAppearance() {
   syncAppearanceCheckboxes();
   syncPrivacyCheckboxes();
 
-  modalEl.querySelectorAll('[data-ui-key]').forEach(function(chk) {
-    chk.addEventListener('change', async function() {
+  modalEl.querySelectorAll('[data-ui-key]').forEach(function (chk) {
+    chk.addEventListener('change', async function () {
       var key = chk.dataset.uiKey;
 
       if (window.UI_VIS_ADMIN_ONLY && window.UI_VIS_ADMIN_ONLY.has(key) && !chk.checked && !window._isAdmin) {
@@ -1607,9 +1623,9 @@ function initAppearance() {
         try {
           ok = await (uiModule && uiModule.styledConfirm
             ? uiModule.styledConfirm(
-                'Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.',
-                { confirmText: 'Hide', cancelText: 'Cancel' }
-              )
+              'Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.',
+              { confirmText: 'Hide', cancelText: 'Cancel' }
+            )
             : Promise.resolve(window.confirm('Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.')));
         } catch (_) { ok = false; }
         if (!ok) {
@@ -1628,8 +1644,8 @@ function initAppearance() {
     });
   });
 
-  modalEl.querySelectorAll('[data-privacy-key]').forEach(function(chk) {
-    chk.addEventListener('change', function() {
+  modalEl.querySelectorAll('[data-privacy-key]').forEach(function (chk) {
+    chk.addEventListener('change', function () {
       if (chk.dataset.privacyKey !== 'sensitive-blur') return;
       localStorage.setItem('odysseus-sensitive-blur', chk.checked ? 'on' : 'off');
       window.dispatchEvent(new CustomEvent('odysseus-sensitive-blur-change', {
@@ -1640,7 +1656,7 @@ function initAppearance() {
 
   var resetBtn = el('set-uiVisResetBtn');
   if (resetBtn) {
-    resetBtn.addEventListener('click', function() {
+    resetBtn.addEventListener('click', function () {
       localStorage.removeItem('odysseus-ui-visibility');
       syncAppearanceCheckboxes();
       syncPrivacyCheckboxes();
@@ -1652,14 +1668,14 @@ function initAppearance() {
 function syncAppearanceCheckboxes() {
   var s = window.loadUIVis ? window.loadUIVis() : {};
   var defaultOff = window.UI_VIS_DEFAULT_OFF || new Set();
-  modalEl.querySelectorAll('[data-ui-key]').forEach(function(chk) {
+  modalEl.querySelectorAll('[data-ui-key]').forEach(function (chk) {
     var key = chk.dataset.uiKey;
     chk.checked = key in s ? s[key] !== false : !defaultOff.has(key);
   });
 }
 
 function syncPrivacyCheckboxes() {
-  modalEl.querySelectorAll('[data-privacy-key="sensitive-blur"]').forEach(function(chk) {
+  modalEl.querySelectorAll('[data-privacy-key="sensitive-blur"]').forEach(function (chk) {
     chk.checked = localStorage.getItem('odysseus-sensitive-blur') === 'on';
   });
 }
@@ -1669,74 +1685,74 @@ function syncPrivacyCheckboxes() {
    ═══════════════════════════════════════════ */
 
 const SHORTCUT_DEFAULTS = {
-  search:         'ctrl+k',
+  search: 'ctrl+k',
   toggle_sidebar: 'ctrl+b',
-  new_session:    'ctrl+alt+n',
-  fav_session:    'ctrl+alt+f',
+  new_session: 'ctrl+alt+n',
+  fav_session: 'ctrl+alt+f',
   delete_session: 'ctrl+alt+d',
-  cancel:         'escape',
-  tts:            'alt+shift+t',
-  incognito:      'ctrl+alt+i',
-  settings:       'ctrl+,',
-  focus_input:    'ctrl+/',
+  cancel: 'escape',
+  tts: 'alt+shift+t',
+  incognito: 'ctrl+alt+i',
+  settings: 'ctrl+,',
+  focus_input: 'ctrl+/',
   // Open-tool shortcuts. Calendar is bound by default; the rest are
   // unbound (empty) so the user can assign their own in the panel.
-  open_calendar:  'ctrl+alt+c',
-  open_compare:   '',
-  open_cookbook:  '',
-  open_research:  '',
-  open_gallery:   '',
-  open_library:   '',
-  open_memory:    '',
-  open_notes:     '',
-  open_tasks:     '',
-  open_theme:     '',
+  open_calendar: 'ctrl+alt+c',
+  open_compare: '',
+  open_cookbook: '',
+  open_research: '',
+  open_gallery: '',
+  open_library: '',
+  open_memory: '',
+  open_notes: '',
+  open_tasks: '',
+  open_theme: '',
 };
 
 const SHORTCUT_ICONS = {
-  search:         '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M21 21l-4.35-4.35"/></svg>',
+  search: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M21 21l-4.35-4.35"/></svg>',
   toggle_sidebar: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>',
-  new_session:    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
-  fav_session:    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
+  new_session: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  fav_session: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
   delete_session: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
-  cancel:         '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
-  tts:            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>',
-  incognito:      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>',
-  settings:       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
-  focus_input:    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
-  open_calendar:  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
-  open_compare:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/></svg>',
-  open_cookbook:  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
-  open_research:  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>',
-  open_gallery:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>',
-  open_library:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
-  open_memory:    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg>',
-  open_notes:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg>',
-  open_tasks:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg>',
-  open_theme:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg>',
+  cancel: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  tts: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>',
+  incognito: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>',
+  settings: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  focus_input: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+  open_calendar: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
+  open_compare: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/></svg>',
+  open_cookbook: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+  open_research: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>',
+  open_gallery: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>',
+  open_library: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+  open_memory: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg>',
+  open_notes: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg>',
+  open_tasks: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg>',
+  open_theme: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg>',
 };
 
 const SHORTCUT_LABELS = {
-  search:         'Search conversations',
+  search: 'Search conversations',
   toggle_sidebar: 'Toggle sidebar',
-  new_session:    'New session',
-  fav_session:    'Favorite session',
+  new_session: 'New session',
+  fav_session: 'Favorite session',
   delete_session: 'Delete session',
-  cancel:         'Cancel / close',
-  tts:            'Play/stop TTS',
-  incognito:      'Toggle incognito',
-  settings:       'Toggle Window',
-  focus_input:    'Focus chat input',
-  open_calendar:  'Open Calendar',
-  open_compare:   'Open Compare',
-  open_cookbook:  'Open Cookbook',
-  open_research:  'Open Deep Research',
-  open_gallery:   'Open Gallery',
-  open_library:   'Open Library',
-  open_memory:    'Open Memory',
-  open_notes:     'Open Notes',
-  open_tasks:     'Open Tasks',
-  open_theme:     'Open Theme',
+  cancel: 'Cancel / close',
+  tts: 'Play/stop TTS',
+  incognito: 'Toggle incognito',
+  settings: 'Toggle Window',
+  focus_input: 'Focus chat input',
+  open_calendar: 'Open Calendar',
+  open_compare: 'Open Compare',
+  open_cookbook: 'Open Cookbook',
+  open_research: 'Open Deep Research',
+  open_gallery: 'Open Gallery',
+  open_library: 'Open Library',
+  open_memory: 'Open Memory',
+  open_notes: 'Open Notes',
+  open_tasks: 'Open Tasks',
+  open_theme: 'Open Theme',
 };
 
 const SHORTCUT_CATEGORIES = [
@@ -1789,7 +1805,7 @@ async function initShortcuts() {
     const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     const settings = await res.json();
     if (settings.keybinds) keybinds = { ...keybinds, ...settings.keybinds };
-  } catch (e) {}
+  } catch (e) { }
 
   function _findConflicts() {
     const comboMap = {};
@@ -1986,7 +2002,7 @@ function initAccount() {
         const initial = (d.username || '?')[0].toUpperCase();
         avatarEl.textContent = initial;
       }
-    }).catch(() => {});
+    }).catch(() => { });
 
   // Change password
   const saveBtn = el('settings-pw-save');
@@ -2124,7 +2140,7 @@ function initAccount() {
     logoutBtn.addEventListener('mouseenter', () => { logoutBtn.style.opacity = '1'; logoutBtn.style.borderColor = 'var(--red)'; logoutBtn.style.color = 'var(--red)'; });
     logoutBtn.addEventListener('mouseleave', () => { logoutBtn.style.opacity = ''; logoutBtn.style.borderColor = ''; logoutBtn.style.color = ''; });
     logoutBtn.addEventListener('click', async () => {
-      try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (_) {}
+      try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (_) { }
       // SECURITY: wipe all client-side state on logout so the next user that
       // signs in on this browser doesn't inherit the previous account's
       // session id, last-used model, draft chat input, or any cached lists.
@@ -2141,7 +2157,7 @@ function initAccount() {
         }
         _toRemove.forEach(k => localStorage.removeItem(k));
         sessionStorage.clear();
-      } catch (_) {}
+      } catch (_) { }
       window.location.href = '/login';
     });
   }
@@ -2178,7 +2194,7 @@ function initAll() {
 function notifyIntegrationsChanged() {
   try {
     window.dispatchEvent(new CustomEvent('odysseus-integrations-changed'));
-  } catch (_) {}
+  } catch (_) { }
 }
 
 async function initReminderSettings() {
@@ -2193,7 +2209,7 @@ async function initReminderSettings() {
       const r = await fetch('/api/auth/settings', { credentials: 'same-origin' });
       const s = await r.json();
       pubUrlIn.value = s.app_public_url || '';
-    } catch (_) {}
+    } catch (_) { }
     let pubDebounce;
     pubUrlIn.addEventListener('input', () => {
       clearTimeout(pubDebounce);
@@ -2248,7 +2264,7 @@ async function initReminderSettings() {
       const d = await res.json();
       emailAccounts = (d.accounts || []).filter(a => a.smtp_host && a.smtp_user && a.has_smtp_password);
     }
-  } catch (_) {}
+  } catch (_) { }
   let smtpConfigured = emailAccounts.length > 0;
 
   if (!smtpConfigured && emailOpt) {
@@ -2267,14 +2283,14 @@ async function initReminderSettings() {
         i => (i.preset === 'ntfy' || (i.name || '').toLowerCase() === 'ntfy') && i.enabled !== false && i.base_url
       );
     }
-  } catch (_) {}
+  } catch (_) { }
   // If admin check failed, check if ntfy was previously selected (trust the saved setting)
   if (!ntfyConfigured) {
     try {
       const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
       const s = await res.json();
       if (s.reminder_channel === 'ntfy') ntfyConfigured = true;
-    } catch (_) {}
+    } catch (_) { }
   }
 
   if (!ntfyConfigured && ntfyOpt) {
@@ -2318,7 +2334,7 @@ async function initReminderSettings() {
         const d = await res.json();
         emailAccounts = (d.accounts || []).filter(a => a.smtp_host && a.smtp_user && a.has_smtp_password);
       }
-    } catch (_) {}
+    } catch (_) { }
     smtpConfigured = emailAccounts.length > 0;
 
     ntfyConfigured = false;
@@ -2330,13 +2346,13 @@ async function initReminderSettings() {
           i => (i.preset === 'ntfy' || (i.name || '').toLowerCase() === 'ntfy') && i.enabled !== false && i.base_url
         );
       }
-    } catch (_) {}
+    } catch (_) { }
     if (!ntfyConfigured) {
       try {
         const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
         const s = await res.json();
         if (s.reminder_channel === 'ntfy') ntfyConfigured = true;
-      } catch (_) {}
+      } catch (_) { }
     }
 
     applyReminderChannelAvailability();
@@ -2460,8 +2476,8 @@ async function initReminderSettings() {
         _testSpin = _sp.createWhirlpool(14);
         _testSpin.element.style.cssText = 'width:14px;height:14px;margin:0 0 0 7px;display:inline-block;vertical-align:middle;';
         (testMsg || testBtn).insertAdjacentElement('afterend', _testSpin.element);
-      } catch (_) {}
-      const _stopTestSpin = () => { try { _testSpin && _testSpin.stop(); _testSpin && _testSpin.element.remove(); } catch (_) {} };
+      } catch (_) { }
+      const _stopTestSpin = () => { try { _testSpin && _testSpin.stop(); _testSpin && _testSpin.element.remove(); } catch (_) { } };
       try {
         const res = await fetch('/api/notes/fire-reminder', {
           method: 'POST',
@@ -2494,7 +2510,7 @@ async function initReminderSettings() {
               tag: 'reminder-test',
               icon: '/static/favicon.ico',
             });
-          } catch {}
+          } catch { }
         }
       } catch (e) {
         if (testMsg) { testMsg.textContent = 'Failed: ' + e.message; testMsg.style.color = 'var(--red)'; }
@@ -2601,13 +2617,13 @@ async function initEmailAccountsSettings() {
     // IMAP and SMTP. Dovecot is IMAP-only here; the host is intentionally
     // blank because it may live on another machine (DNS, LAN, Tailscale).
     const PROVIDERS = {
-      gmail:    { label: 'Gmail',                  imap: { host: 'imap.gmail.com',           port: 993, starttls: false }, smtp: { host: 'smtp.gmail.com',            port: 465 } },
-      migadu:   { label: 'Migadu',                 imap: { host: 'imap.migadu.com',          port: 993, starttls: false }, smtp: { host: 'smtp.migadu.com',           port: 465 } },
-      icloud:   { label: 'iCloud',                 imap: { host: 'imap.mail.me.com',         port: 993, starttls: false }, smtp: { host: 'smtp.mail.me.com',          port: 587 } },
-      outlook:  { label: 'Outlook / Office 365',   imap: { host: 'outlook.office365.com',    port: 993, starttls: false }, smtp: { host: 'smtp.office365.com',        port: 587 } },
-      fastmail: { label: 'Fastmail',               imap: { host: 'imap.fastmail.com',        port: 993, starttls: false }, smtp: { host: 'smtp.fastmail.com',         port: 465 } },
-      yahoo:    { label: 'Yahoo',                  imap: { host: 'imap.mail.yahoo.com',      port: 993, starttls: false }, smtp: { host: 'smtp.mail.yahoo.com',       port: 465 } },
-      dovecot:  { label: 'Dovecot IMAP (no SMTP)',  imap: { host: '',                        port: 31143, starttls: false }, smtp: { host: '',                          port: 465 } },
+      gmail: { label: 'Gmail', imap: { host: 'imap.gmail.com', port: 993, starttls: false }, smtp: { host: 'smtp.gmail.com', port: 465 } },
+      migadu: { label: 'Migadu', imap: { host: 'imap.migadu.com', port: 993, starttls: false }, smtp: { host: 'smtp.migadu.com', port: 465 } },
+      icloud: { label: 'iCloud', imap: { host: 'imap.mail.me.com', port: 993, starttls: false }, smtp: { host: 'smtp.mail.me.com', port: 587 } },
+      outlook: { label: 'Outlook / Office 365', imap: { host: 'outlook.office365.com', port: 993, starttls: false }, smtp: { host: 'smtp.office365.com', port: 587 } },
+      fastmail: { label: 'Fastmail', imap: { host: 'imap.fastmail.com', port: 993, starttls: false }, smtp: { host: 'smtp.fastmail.com', port: 465 } },
+      yahoo: { label: 'Yahoo', imap: { host: 'imap.mail.yahoo.com', port: 993, starttls: false }, smtp: { host: 'smtp.mail.yahoo.com', port: 465 } },
+      dovecot: { label: 'Dovecot IMAP (no SMTP)', imap: { host: '', port: 31143, starttls: false }, smtp: { host: '', port: 465 } },
     };
     const _providerOptions = Object.entries(PROVIDERS)
       .map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`)
@@ -2767,7 +2783,7 @@ async function initEmailSettings() {
     if (el('set-email-smtp-user')) el('set-email-smtp-user').value = cfg.smtp_user || '';
     if (el('set-email-smtp-pass')) el('set-email-smtp-pass').value = '';
     if (el('set-email-from')) el('set-email-from').value = cfg.from_address || '';
-  } catch (_) {}
+  } catch (_) { }
 
   // Load contacts config
   try {
@@ -2776,14 +2792,14 @@ async function initEmailSettings() {
     if (el('set-carddav-url')) el('set-carddav-url').value = cfg.url || '';
     if (el('set-carddav-user')) el('set-carddav-user').value = cfg.username || '';
     if (el('set-carddav-pass')) el('set-carddav-pass').value = '';
-  } catch (_) {}
+  } catch (_) { }
 
   // Load writing style
   try {
     const res = await fetch('/api/email/style');
     const data = await res.json();
     if (el('set-email-style')) el('set-email-style').value = data.style || '';
-  } catch (_) {}
+  } catch (_) { }
 
   // Save email config
   el('set-email-save')?.addEventListener('click', async () => {
@@ -2883,7 +2899,7 @@ async function initEmailSettings() {
     } catch (e) {
       if (msg) msg.textContent = 'Failed to extract';
     } finally {
-      if (wp && wp.destroy) { try { wp.destroy(); } catch (_) {} }
+      if (wp && wp.destroy) { try { wp.destroy(); } catch (_) { } }
       btn.disabled = false;
       setTimeout(() => { if (msg) msg.textContent = ''; }, 5000);
     }
@@ -2953,7 +2969,7 @@ async function initIntegrations() {
         presetSel.appendChild(opt);
       }
     }
-  } catch (e) {}
+  } catch (e) { }
 
   // Preset auto-fill
   presetSel.addEventListener('change', () => {
@@ -3016,7 +3032,7 @@ async function initIntegrations() {
       descIn.value = item.description || '';
       syncAuthRow();
       formCard.style.display = '';
-    } catch (e) {}
+    } catch (e) { }
   }
 
   // Show add form
@@ -3100,7 +3116,7 @@ async function initIntegrations() {
       if (editingId === id) { formCard.style.display = 'none'; editingId = null; }
       await renderList();
       notifyIntegrationsChanged();
-    } catch (e) {}
+    } catch (e) { }
   }
 
   syncAuthRow();
@@ -3110,8 +3126,8 @@ async function initIntegrations() {
 /* ══ Unified Integrations ══ */
 
 const INTG_TYPES = {
-  api:     { label: 'API',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>' },
-  caldav:  { label: 'CalDAV',  icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' },
+  api: { label: 'API', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>' },
+  caldav: { label: 'CalDAV', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' },
   contacts: { label: 'Contacts', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
   carddav: { label: 'CardDAV', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
   email:   { label: 'Email',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>' },
@@ -3336,7 +3352,7 @@ async function initUnifiedIntegrations() {
           else if (type === 'mcp') await fetch(`/api/mcp/servers/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'codex' || type === 'claude') await fetch(`/api/tokens/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'vault') await fetch('/api/vault/logout', { method: 'POST', credentials: 'same-origin' });
-        } catch (_) {}
+        } catch (_) { }
         formEl.style.display = 'none';
         await renderList();
         notifyIntegrationsChanged();
@@ -3362,7 +3378,7 @@ async function initUnifiedIntegrations() {
     try {
       const r = await fetch('/api/auth/integrations/presets', { credentials: 'same-origin' });
       if (r.ok) { const d = await r.json(); presets = d.presets || {}; }
-    } catch (_) {}
+    } catch (_) { }
     const presetEntries = Object.entries(presets);
     // Same `?` hint helper as the email form. Native title tooltip,
     // tabbable for keyboard users. Inline-styled so it doesn't need
@@ -3477,7 +3493,7 @@ async function initUnifiedIntegrations() {
         const d = await r.json();
         const item = (d.integrations || []).find(i => i.id === _editId);
         if (item) { name.value = item.name || ''; url.value = item.base_url || ''; auth.value = item.auth_type || 'none'; header.value = item.auth_header || ''; }
-      } catch (_) {}
+      } catch (_) { }
     }
     // Native <select>: the option `value` is the preset key directly, so
     // no typed-name → key lookup is needed (datalist-era leftover).
@@ -3554,7 +3570,7 @@ async function initUnifiedIntegrations() {
     try {
       const r = await fetch('/api/calendar/config', { credentials: 'same-origin' }); const d = await r.json();
       el('uf-caldav-url').value = d.url || ''; el('uf-caldav-user').value = d.username || '';
-    } catch (_) {}
+    } catch (_) { }
     el('uf-caldav-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
 
     // Run a PROPFIND with the form's current url+user+pass. Used by
@@ -3662,7 +3678,7 @@ async function initUnifiedIntegrations() {
     try {
       const r = await fetch('/api/contacts/config', { credentials: 'same-origin' }); const d = await r.json();
       el('uf-carddav-url').value = d.url || ''; el('uf-carddav-user').value = d.username || '';
-    } catch (_) {}
+    } catch (_) { }
     el('uf-carddav-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
     el('uf-carddav-save').addEventListener('click', async () => {
       const body = { carddav_url: el('uf-carddav-url').value, carddav_username: el('uf-carddav-user').value };
@@ -3695,7 +3711,7 @@ async function initUnifiedIntegrations() {
       if (!email) { el('cm-add-email').focus(); return; }
       try {
         await fetch('/api/contacts/add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, email }) });
-      } catch (_) {}
+      } catch (_) { }
       el('cm-add-name').value = ''; el('cm-add-email').value = '';
       el('cm-add-row').style.display = 'none';
       await _renderContactsManager();
@@ -3843,7 +3859,7 @@ async function initUnifiedIntegrations() {
         };
         try {
           await fetch('/api/contacts/' + encodeURIComponent(uid), { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        } catch (_) {}
+        } catch (_) { }
         await _renderContactsManager();
       });
       row.querySelector('.contact-del')?.addEventListener('click', async () => {
@@ -3853,7 +3869,7 @@ async function initUnifiedIntegrations() {
         if (!ok) return;
         try {
           await fetch('/api/contacts/' + encodeURIComponent(uid), { method: 'DELETE', credentials: 'same-origin' });
-        } catch (_) {}
+        } catch (_) { }
         await _renderContactsManager();
       });
     });
@@ -3871,7 +3887,7 @@ async function initUnifiedIntegrations() {
         const r = await fetch('/api/email/accounts', { credentials: 'same-origin' });
         const d = await r.json();
         existing = (d.accounts || []).find(a => a.id === editId) || null;
-      } catch (_) {}
+      } catch (_) { }
     }
     const placeholderPass = (isEdit && existing) ? '(leave blank to keep current)' : '';
     // Small `?` indicator next to each label (native title tooltip).
@@ -3884,13 +3900,13 @@ async function initUnifiedIntegrations() {
     // Dovecot is IMAP-only here; the host is intentionally blank because
     // it may be remote (DNS, LAN, Tailscale), not localhost.
     const PROVIDERS = {
-      gmail:    { label: 'Gmail',                   emailEx: 'you@gmail.com',     imap: { host: 'imap.gmail.com',           port: 993, starttls: false }, smtp: { host: 'smtp.gmail.com',     port: 465 } },
-      migadu:   { label: 'Migadu',                  emailEx: 'you@yourdomain.com', imap: { host: 'imap.migadu.com',          port: 993, starttls: false }, smtp: { host: 'smtp.migadu.com',    port: 465 } },
-      icloud:   { label: 'iCloud',                  emailEx: 'you@icloud.com',    imap: { host: 'imap.mail.me.com',         port: 993, starttls: false }, smtp: { host: 'smtp.mail.me.com',   port: 587 } },
-      outlook:  { label: 'Outlook / Office 365',    emailEx: 'you@outlook.com',   imap: { host: 'outlook.office365.com',    port: 993, starttls: false }, smtp: { host: 'smtp.office365.com', port: 587 } },
-      fastmail: { label: 'Fastmail',                emailEx: 'you@fastmail.com',  imap: { host: 'imap.fastmail.com',        port: 993, starttls: false }, smtp: { host: 'smtp.fastmail.com',  port: 465 } },
-      yahoo:    { label: 'Yahoo',                   emailEx: 'you@yahoo.com',     imap: { host: 'imap.mail.yahoo.com',      port: 993, starttls: false }, smtp: { host: 'smtp.mail.yahoo.com', port: 465 } },
-      dovecot:  { label: 'Dovecot IMAP (no SMTP)',  emailEx: 'you@example.com',   imap: { host: '',                         port: 31143, starttls: false }, smtp: { host: '',                   port: 465 } },
+      gmail: { label: 'Gmail', emailEx: 'you@gmail.com', imap: { host: 'imap.gmail.com', port: 993, starttls: false }, smtp: { host: 'smtp.gmail.com', port: 465 } },
+      migadu: { label: 'Migadu', emailEx: 'you@yourdomain.com', imap: { host: 'imap.migadu.com', port: 993, starttls: false }, smtp: { host: 'smtp.migadu.com', port: 465 } },
+      icloud: { label: 'iCloud', emailEx: 'you@icloud.com', imap: { host: 'imap.mail.me.com', port: 993, starttls: false }, smtp: { host: 'smtp.mail.me.com', port: 587 } },
+      outlook: { label: 'Outlook / Office 365', emailEx: 'you@outlook.com', imap: { host: 'outlook.office365.com', port: 993, starttls: false }, smtp: { host: 'smtp.office365.com', port: 587 } },
+      fastmail: { label: 'Fastmail', emailEx: 'you@fastmail.com', imap: { host: 'imap.fastmail.com', port: 993, starttls: false }, smtp: { host: 'smtp.fastmail.com', port: 465 } },
+      yahoo: { label: 'Yahoo', emailEx: 'you@yahoo.com', imap: { host: 'imap.mail.yahoo.com', port: 993, starttls: false }, smtp: { host: 'smtp.mail.yahoo.com', port: 465 } },
+      dovecot: { label: 'Dovecot IMAP (no SMTP)', emailEx: 'you@example.com', imap: { host: '', port: 31143, starttls: false }, smtp: { host: '', port: 465 } },
     };
     const _providerOptions = Object.entries(PROVIDERS)
       .map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
@@ -3944,6 +3960,11 @@ async function initUnifiedIntegrations() {
           <div class="settings-row uf-smtp-creds"><label class="settings-label">Username${_hint('Usually the same as your IMAP username (your email address).')}</label><input id="uf-smtp-user" class="settings-input"></div>
           <div class="settings-row uf-smtp-creds"><label class="settings-label">Password${_hint('Your SMTP password — often the same as your IMAP password.')}</label><input id="uf-smtp-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
           <div class="settings-row" style="margin-top:4px"><label class="settings-label">Default${_hint('Use this account whenever no specific account is chosen.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-email-default"><span class="admin-slider"></span></label><span style="font-size:10px;opacity:0.5;margin-left:6px">Used when nothing else is selected</span></div>
+          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">OAuth2 (XOAUTH2) <span style="font-weight:normal;opacity:0.7">— optional, for Gmail / Outlook instead of a password</span></div>
+          <div class="settings-row" id="uf-oauth-provider-row"><label class="settings-label">Provider${_hint('Pick Google or Microsoft to sign in with OAuth2 instead of an app password. Needs your own OAuth client from the provider console; redirect URI is <your Odysseus URL>/api/email/oauth/callback.')}</label><select id="uf-oauth-provider" class="settings-select"><option value="">— none —</option><option value="gmail">Google (Gmail)</option><option value="outlook">Microsoft (Outlook / Office 365)</option></select></div>
+          <div class="settings-row uf-oauth-fields" style="display:none"><label class="settings-label">Client ID${_hint('OAuth client_id from your Google Cloud or Microsoft Entra app.')}</label><input id="uf-oauth-client-id" class="settings-input" value=""></div>
+          <div class="settings-row uf-oauth-fields" style="display:none"><label class="settings-label">Client Secret${_hint('OAuth client_secret. Stored encrypted. Leave blank to keep the existing one.')}</label><input id="uf-oauth-client-secret" class="settings-input" type="password" placeholder="${isEdit ? '(leave blank to keep current)' : ''}"></div>
+          <div class="settings-row uf-oauth-fields" style="display:none"><label class="settings-label">Connect${_hint('Saves the client credentials, then redirects you to the provider to grant access.')}</label><button class="admin-btn-add" id="uf-oauth-connect" type="button" style="display:inline-flex;align-items:center;gap:5px;">Connect with OAuth</button><span id="uf-oauth-status" style="font-size:11px;margin-left:8px;opacity:0.7"></span></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;">
             <button class="admin-btn-add" id="uf-email-save" style="background:var(--red);border-color:var(--red);color:#fff;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
               <span class="uf-email-save-ico" style="display:inline-flex;width:11px;height:11px;align-items:center;justify-content:center;">
@@ -4133,6 +4154,48 @@ async function initUnifiedIntegrations() {
     };
     el('uf-smtp-same').addEventListener('change', _syncSmtpSame);
     _syncSmtpSame();
+    // OAuth2 — show/hide fields when provider changes
+    const _syncOauthFields = () => {
+      const provider = el('uf-oauth-provider').value;
+      formEl.querySelectorAll('.uf-oauth-fields').forEach(r => {
+        r.style.display = provider ? '' : 'none';
+      });
+    };
+    el('uf-oauth-provider').addEventListener('change', _syncOauthFields);
+    _syncOauthFields();
+
+    // OAuth2 Connect button
+    el('uf-oauth-connect').addEventListener('click', async () => {
+      if (!editId || editId === 'new') {
+        el('uf-oauth-status').textContent = 'Save the account first, then Connect.';
+        el('uf-oauth-status').style.color = 'var(--red)';
+        return;
+      }
+      const provider = el('uf-oauth-provider').value;
+      const clientId = el('uf-oauth-client-id').value.trim();
+      if (!provider || !clientId) {
+        el('uf-oauth-status').textContent = 'Provider and Client ID are required.';
+        el('uf-oauth-status').style.color = 'var(--red)';
+        return;
+      }
+      const fd = new FormData();
+      fd.append('account_id', editId);
+      fd.append('provider', provider);
+      fd.append('client_id', clientId);
+      fd.append('client_secret', el('uf-oauth-client-secret').value.trim());
+      try {
+        const r = await fetch('/api/email/oauth/authorize', { method: 'POST', credentials: 'same-origin', body: fd });
+        const d = await r.json();
+        if (r.ok && d.authorize_url) { window.location.href = d.authorize_url; }
+        else {
+          el('uf-oauth-status').textContent = d.detail || 'Authorize failed.';
+          el('uf-oauth-status').style.color = 'var(--red)';
+        }
+      } catch (e) {
+        el('uf-oauth-status').textContent = 'Network error.';
+        el('uf-oauth-status').style.color = 'var(--red)';
+      }
+    });
     if (existing) {
       el('uf-email-name').value = existing.name || '';
       el('uf-email-from').value = existing.from_address || '';
@@ -4244,7 +4307,7 @@ async function initUnifiedIntegrations() {
           btn.style.color = '#0b0';
           btn.style.boxShadow =
             '0 0 0 2px color-mix(in srgb, var(--green, #50fa7b) 25%, transparent),'
-          + ' 0 0 10px 2px color-mix(in srgb, var(--green, #50fa7b) 55%, transparent)';
+            + ' 0 0 10px 2px color-mix(in srgb, var(--green, #50fa7b) 55%, transparent)';
           btn.style.animation = 'cookbook-srv-glow-ok 2.4s ease-in-out infinite';
           ico.innerHTML = _checkIcon;
         } else {
@@ -4255,7 +4318,7 @@ async function initUnifiedIntegrations() {
           btn.style.color = '#fff';
           btn.style.boxShadow =
             '0 0 0 2px color-mix(in srgb, var(--red) 25%, transparent),'
-          + ' 0 0 10px 2px color-mix(in srgb, var(--red) 55%, transparent)';
+            + ' 0 0 10px 2px color-mix(in srgb, var(--red) 55%, transparent)';
           ico.innerHTML = btn.dataset.origIco;
           const imap = d.imap?.ok ? 'IMAP ok' : `IMAP: ${d.imap?.error || 'fail'}`;
           const smtp = d.smtp ? (d.smtp.ok ? ' · SMTP ok' : ` · SMTP: ${d.smtp.error || 'fail'}`) : '';
@@ -4360,7 +4423,7 @@ async function initUnifiedIntegrations() {
         const parts = [];
         parts.push(installed ? 'bw CLI: installed' : 'bw CLI: NOT installed (install nodejs-bitwarden-cli)');
         parts.push(d.unlocked ? 'Status: UNLOCKED' : 'Status: locked');
-        if (d.unlocked_at) parts.push(`Last unlock: ${d.unlocked_at.replace('T',' ').slice(0,19)}`);
+        if (d.unlocked_at) parts.push(`Last unlock: ${d.unlocked_at.replace('T', ' ').slice(0, 19)}`);
         const statusEl = el('uf-vault-status');
         statusEl.textContent = parts.join(' — ');
         statusEl.style.color = !installed ? 'var(--red)' : d.unlocked ? 'var(--green,#50fa7b)' : '';
@@ -4455,7 +4518,7 @@ async function initUnifiedIntegrations() {
         const servers = await res.json();
         const srv = servers.find(s => (s.id || s.name) === editId);
         if (!srv) { formEl.innerHTML = '<div class="admin-card" style="margin-top:8px">Server not found</div>'; return; }
-        const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+        const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
         const statusColor = srv.needs_oauth ? '#e5a33a' : srv.status === 'connected' ? 'var(--green,#50fa7b)' : srv.status === 'error' ? 'var(--red)' : 'var(--fg)';
         const toolInfo = srv.status === 'connected' ? `${srv.enabled_tool_count}/${srv.tool_count} tools` : '';
         const statusText = srv.needs_oauth ? 'Needs authorization' : srv.status === 'connected' ? `Connected (${toolInfo})` : srv.status === 'error' ? `Error: ${esc(srv.error || 'unknown')}` : 'Disconnected';
@@ -4502,7 +4565,7 @@ async function initUnifiedIntegrations() {
             const tools = await tr.json();
             if (tools.length) {
               const disabled = new Set(tools.filter(t => t.is_disabled).map(t => t.name));
-              panel.innerHTML = `<div class="mcp-tools-header"><span>Tools</span><span style="display:flex;gap:8px;align-items:center"><span class="mcp-tools-count">${tools.length - disabled.size}/${tools.length} enabled</span><a href="#" id="uf-mcp-all">All</a> <a href="#" id="uf-mcp-none">None</a></span></div><div class="mcp-tools-list">${tools.map(t => `<label title="${esc(t.description)}"><input type="checkbox" data-mcp-tool-name="${esc(t.name)}" ${!t.is_disabled ? 'checked' : ''}><span><strong>${esc(t.name)}</strong> <span style="opacity:0.5">— ${esc((t.description||'').slice(0,80))}</span></span></label>`).join('')}</div>`;
+              panel.innerHTML = `<div class="mcp-tools-header"><span>Tools</span><span style="display:flex;gap:8px;align-items:center"><span class="mcp-tools-count">${tools.length - disabled.size}/${tools.length} enabled</span><a href="#" id="uf-mcp-all">All</a> <a href="#" id="uf-mcp-none">None</a></span></div><div class="mcp-tools-list">${tools.map(t => `<label title="${esc(t.description)}"><input type="checkbox" data-mcp-tool-name="${esc(t.name)}" ${!t.is_disabled ? 'checked' : ''}><span><strong>${esc(t.name)}</strong> <span style="opacity:0.5">— ${esc((t.description || '').slice(0, 80))}</span></span></label>`).join('')}</div>`;
               const saveFn = async () => {
                 const dis = [];
                 panel.querySelectorAll('input[type=checkbox]').forEach(cb => { if (!cb.checked) dis.push(cb.dataset.mcpToolName); });
@@ -4550,8 +4613,8 @@ async function initUnifiedIntegrations() {
         fd.append('transport', transport);
         if (transport === 'stdio') {
           fd.append('command', el('uf-mcp-cmd').value);
-          let args = '[]'; try { args = JSON.stringify(JSON.parse(el('uf-mcp-args').value || '[]')); } catch (_) {}
-          let env  = '{}'; try { env  = JSON.stringify(JSON.parse(el('uf-mcp-env').value  || '{}')); } catch (_) {}
+          let args = '[]'; try { args = JSON.stringify(JSON.parse(el('uf-mcp-args').value || '[]')); } catch (_) { }
+          let env = '{}'; try { env = JSON.stringify(JSON.parse(el('uf-mcp-env').value || '{}')); } catch (_) { }
           fd.append('args', args);
           fd.append('env', env);
         } else {
