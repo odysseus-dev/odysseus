@@ -68,12 +68,15 @@ async def action_tidy_documents(owner: str, **kwargs) -> Tuple[str, bool]:
 async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
     """Consolidate/deduplicate memories for the owner."""
     try:
+        import asyncio
         import json
         import re
         from src.constants import DATA_DIR
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
         from src.memory import MemoryManager
+
+        memory_vector = kwargs.get("memory_vector")
 
         manager = MemoryManager(DATA_DIR)
         all_memories = manager.load_all()
@@ -106,8 +109,16 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         ai_reasons = []
         ai_used = False
 
+        # Decisions accumulated during the (lock-free) LLM phase, keyed by memory id,
+        # then applied at the end inside ONE locked mutate() against the FRESH on-disk
+        # list. The old code mutated a pre-LLM snapshot and saved it wholesale, which
+        # silently clobbered any memory written while the LLM call was running.
+        drop_ids = set()
+        clean_ops = {}        # id -> {"text"?: str, "category"?: str}
+        snapshot_text = {}    # id -> text this run saw (concurrent-edit conflict guard)
+
         async def _try_ai_tidy_group(group_owner: str, group_memories: list) -> bool:
-            nonlocal all_memories, total_removed, total_cleaned, total_scanned, ai_used
+            nonlocal total_removed, total_cleaned, total_scanned, ai_used
             if len(group_memories) < 2:
                 return False
 
@@ -189,29 +200,24 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
 
                         if keep_ids:
                             changed_text = 0
-                            group_ref_ids = {id(m) for m in group_memories}
-                            kept_all = []
-                            for mem in all_memories:
-                                if id(mem) not in group_ref_ids:
-                                    kept_all.append(mem)
-                                    continue
-                                mid = mem.get("id")
+                            for mid, mem in by_id.items():
+                                snapshot_text[mid] = mem.get("text")
                                 if mid not in keep_ids:
+                                    drop_ids.add(mid)
                                     continue
-                                cleaned = cleaned_by_id.get(mid) or {}
+                                cleaned = dict(cleaned_by_id.get(mid) or {})
                                 if mid in truncated_ids:
                                     cleaned.pop("text", None)
-                                if cleaned.get("text") and cleaned["text"] != mem.get("text"):
-                                    mem["text"] = cleaned["text"]
+                                new_text = cleaned.get("text")
+                                if new_text and new_text != mem.get("text"):
+                                    clean_ops.setdefault(mid, {})["text"] = new_text
                                     changed_text += 1
                                 if cleaned.get("category"):
-                                    mem["category"] = cleaned["category"]
-                                kept_all.append(mem)
+                                    clean_ops.setdefault(mid, {})["category"] = cleaned["category"]
 
                             removed = len(group_memories) - len(keep_ids)
                             total_scanned += len(group_memories)
                             if removed or changed_text:
-                                all_memories = kept_all
                                 total_removed += removed
                                 total_cleaned += changed_text
                                 ai_used = True
@@ -229,36 +235,75 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
             if await _try_ai_tidy_group(group_owner, group_memories):
                 continue
 
-            seen = {}
-            keep_refs = set()
+            seen = set()
             total_scanned += len(group_memories)
+            group_drop = []
             for mem in group_memories:
+                mid = mem.get("id")
+                if mid is not None:
+                    snapshot_text[mid] = mem.get("text")
                 text = (mem.get("text") or "").strip()
                 key = " ".join(text.lower().split())
                 if not key:
+                    if mid is not None:
+                        group_drop.append(mid)
                     if len(removed_examples) < 3:
                         removed_examples.append("(empty)")
                     continue
                 if key in seen:
+                    if mid is not None:
+                        group_drop.append(mid)
                     if len(removed_examples) < 3:
                         removed_examples.append(text[:60] + ("..." if len(text) > 60 else ""))
                     continue
-                seen[key] = mem
-                keep_refs.add(id(mem))
+                seen.add(key)
 
-            group_removed = len(group_memories) - len(keep_refs)
-            if group_removed == 0:
-                continue
-
-            group_ref_ids = {id(m) for m in group_memories}
-            all_memories = [
-                m for m in all_memories
-                if id(m) not in group_ref_ids or id(m) in keep_refs
-            ]
-            total_removed += group_removed
+            if group_drop:
+                drop_ids.update(group_drop)
+                total_removed += len(group_drop)
 
         if total_removed or total_cleaned:
-            manager.save(all_memories)
+            # Apply every decision atomically against the FRESH on-disk list. Drops and
+            # cleans are keyed by id and applied ONLY when the current on-disk text still
+            # equals what this run saw — so a memory edited concurrently during the LLM
+            # call is left intact, and memories added during the call (ids absent from
+            # our snapshot) survive. This replaces the old blind save of a stale pre-LLM
+            # snapshot, which silently clobbered concurrent writes.
+            def _apply(entries):
+                out = []
+                for e in entries:
+                    mid = e.get("id")
+                    snap = snapshot_text.get(mid)
+                    if mid in drop_ids and e.get("text") == snap:
+                        continue
+                    if mid in clean_ops and e.get("text") == snap:
+                        ops = clean_ops[mid]
+                        if ops.get("text"):
+                            e["text"] = ops["text"]
+                        if ops.get("category"):
+                            e["category"] = ops["category"]
+                    out.append(e)
+                return out, out
+
+            saved = await asyncio.to_thread(manager.mutate, _apply)
+
+            # Keep the vector index consistent with the just-saved set; the old code
+            # never synced it, so dropped memories lingered in semantic search. Rebuild
+            # over the FULL saved set (owner-safe, mirrors audit_memories / PR #1747)
+            # under the healthy guard. memory_vector may be injected (tests / callers);
+            # fall back to a lazily-constructed store, degrading silently on any error.
+            if memory_vector is None:
+                try:
+                    from src.memory_vector import MemoryVectorStore
+                    memory_vector = MemoryVectorStore(DATA_DIR)
+                except Exception:
+                    memory_vector = None
+            if memory_vector is not None and getattr(memory_vector, "healthy", False):
+                try:
+                    await asyncio.to_thread(memory_vector.rebuild, saved)
+                except Exception as ve:
+                    logger.warning("memory consolidation: vector rebuild failed: %s", ve)
+
             if ai_used:
                 reasons = ai_reasons[:3]
                 reason_text = f": {'; '.join(reasons)}" if reasons else ""
