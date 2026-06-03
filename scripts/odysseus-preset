@@ -68,7 +68,7 @@ def cmd_list(args):
             "id": key,
             "name": val.get("name") or key,
             "temperature": val.get("temperature"),
-            "prompt_length": len(val.get("system_prompt") or ""),
+            "prompt_length": len(val.get("system_prompt")) if isinstance(val.get("system_prompt"), str) else 0,
         })
     emit(rows, args)
 
