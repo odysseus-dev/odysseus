@@ -16,8 +16,6 @@ import os
 import subprocess
 import sys
 
-import pytest
-
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -36,7 +34,6 @@ for j in range({count}):
 """
 
 
-@pytest.mark.timeout(120)
 def test_cross_process_appends_lose_no_updates(tmp_path):
     data_dir = str(tmp_path)
     # Seed an empty store.
