@@ -6,6 +6,7 @@ __pycache__/
 dist/
 build/
 !static/js/editor/build/
+env/
 venv/
 .venv/
 *.egg
