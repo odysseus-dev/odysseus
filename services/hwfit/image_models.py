@@ -280,6 +280,8 @@ def rank_image_models(system, search=None, sort="fit"):
 
     Returns list of models with fit info (vram needed, fits, recommended quant).
     """
+    if not isinstance(system, dict):
+        system = {}
     gpu_vram = system.get("gpu_vram_gb", 0) or 0
     has_gpu = system.get("has_gpu", False)
     results = []
