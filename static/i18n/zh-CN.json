@@ -87,10 +87,57 @@
     "tasks": "任务",
     "theme": "主题"
   },
+  "models": {
+    "noModelsMatch": "没有匹配 \"{{query}}\" 的模型",
+    "noModelsFound": "未找到模型",
+    "noModelsAvailable": "暂无可用模型",
+    "openAdmin": "打开管理员面板添加端点",
+    "setupHint": "输入 /setup 配置本地模型或 API。",
+    "askAdmin": "请管理员配置模型端点",
+    "launchSetup": "点击启动配置",
+    "setupStart": "输入 {{command}} 开始配置。",
+    "readyMessage": "准备启航。",
+    "loadingProviders": "正在加载服务商...",
+    "openAiKeyMissing": "(服务器未设置 OPENAI_API_KEY)",
+    "tips": {
+      "mobile": {
+        "longPress": "提示：长按会话可重命名、删除或提取记忆。",
+        "nobody": "提示：点击眼睛图标进入无痕模式，不保存历史。",
+        "agent": "提示：需要工具时切换到代理模式。",
+        "attach": "提示：用输入框旁边的 + 按钮添加图片或文件。"
+      },
+      "desktop": {
+        "search": "提示：按 Ctrl+K 搜索所有会话。",
+        "sidebar": "提示：按 Ctrl+B 快速切换侧边栏。",
+        "swapSidebar": "提示：Shift 点击侧边栏按钮可切换侧边栏位置。",
+        "dragDrop": "提示：把文件拖到聊天窗口即可添加附件。",
+        "sessionMenu": "提示：右键会话可重命名、删除或提取记忆。"
+      }
+    }
+  },
   "settings": {
     "interface": "界面",
     "language": "语言",
     "languageHelp": "选择界面语言。",
-    "languageSaved": "语言已更新"
+    "languageSaved": "语言已更新",
+    "peek": "预览",
+    "peekTitle": "淡化此窗口以预览背后的页面",
+    "closeSettings": "关闭设置",
+    "visibilityHelp": "控制工具和模块在界面中的显示或隐藏。",
+    "tabs": {
+      "addModels": "添加模型",
+      "aiDefaults": "AI 默认项",
+      "search": "搜索",
+      "integrations": "集成",
+      "email": "邮件",
+      "reminders": "提醒",
+      "appearance": "外观",
+      "shortcuts": "快捷键",
+      "account": "账号",
+      "admin": "管理员",
+      "agentTools": "代理工具",
+      "users": "用户",
+      "system": "系统"
+    }
   }
 }

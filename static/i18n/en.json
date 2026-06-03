@@ -87,10 +87,57 @@
     "tasks": "Tasks",
     "theme": "Theme"
   },
+  "models": {
+    "noModelsMatch": "No models match \"{{query}}\"",
+    "noModelsFound": "No models found",
+    "noModelsAvailable": "No models available",
+    "openAdmin": "Open Admin to add endpoints",
+    "setupHint": "Type /setup for Local models or API setup.",
+    "askAdmin": "Ask an admin to configure model endpoints",
+    "launchSetup": "Click to launch setup",
+    "setupStart": "Type {{command}} to get started.",
+    "readyMessage": "Yours for the voyage.",
+    "loadingProviders": "Loading providers...",
+    "openAiKeyMissing": "(OPENAI_API_KEY not set on server)",
+    "tips": {
+      "mobile": {
+        "longPress": "Tip: Long-press a session for rename, delete, and memory options.",
+        "nobody": "Tip: Tap the eye icon for Nobody mode - no history saved.",
+        "agent": "Tip: Switch to Agent mode when you want tools.",
+        "attach": "Tip: Attach images or files using the + button next to the input."
+      },
+      "desktop": {
+        "search": "Tip: Press Ctrl+K to search across all your conversations.",
+        "sidebar": "Tip: Press Ctrl+B to quickly toggle the sidebar.",
+        "swapSidebar": "Tip: Shift-click the sidebar toggle to swap it to the other side.",
+        "dragDrop": "Tip: Drag and drop files onto the chat to attach them.",
+        "sessionMenu": "Tip: Right-click a session for rename, delete, and memory options."
+      }
+    }
+  },
   "settings": {
     "interface": "Interface",
     "language": "Language",
     "languageHelp": "Choose the interface language.",
-    "languageSaved": "Language updated"
+    "languageSaved": "Language updated",
+    "peek": "Peek",
+    "peekTitle": "Fade this window to preview the page behind it",
+    "closeSettings": "Close settings",
+    "visibilityHelp": "Toggle on/off visibility of tools and modules across the interface.",
+    "tabs": {
+      "addModels": "Add Models",
+      "aiDefaults": "AI Defaults",
+      "search": "Search",
+      "integrations": "Integrations",
+      "email": "Email",
+      "reminders": "Reminders",
+      "appearance": "Appearance",
+      "shortcuts": "Shortcuts",
+      "account": "Account",
+      "admin": "Admin",
+      "agentTools": "Agent Tools",
+      "users": "Users",
+      "system": "System"
+    }
   }
 }

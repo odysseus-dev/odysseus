@@ -41,3 +41,19 @@ def test_settings_language_selector_is_present_and_persists_choice():
     assert "function initLanguageSelector()" in settings_js
     assert "window.i18n.setLanguage" in settings_js
     assert "fetch('/api/prefs/language', { method: 'PUT'" in settings_js
+
+
+def test_settings_navigation_and_dynamic_shell_writers_are_localized():
+    html = _read("static/index.html")
+    models_js = _read("static/js/models.js")
+    sessions_js = _read("static/js/sessions.js")
+
+    assert 'data-i18n="settings.tabs.addModels"' in html
+    assert 'data-i18n="settings.tabs.appearance"' in html
+    assert 'data-i18n="settings.tabs.account"' in html
+    assert "function tr(key, params)" in models_js
+    assert "tr('models.noModelsMatch'" in models_js
+    assert "tr('models.setupStart'" in models_js
+    assert "function tr(key, params)" in sessions_js
+    assert "tr('chat.subtitle')" in sessions_js
+    assert "tr('chat.newChat')" in sessions_js

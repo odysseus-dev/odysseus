@@ -22,6 +22,10 @@ const FAVORITES_KEY = 'odysseus-model-favorites';
 const USAGE_KEY = 'odysseus-model-usage';
 const SORT_KEY = 'odysseus-model-sort';
 
+function tr(key, params) {
+  return window.i18n ? window.i18n.t(key, params) : key;
+}
+
 export function init(apiBase) {
   API_BASE = apiBase;
 }
@@ -533,7 +537,7 @@ export async function refreshModels(force = false) {
         if (searchResults.children.length === 0) {
           const empty = document.createElement('div');
           empty.style.cssText = 'text-align:center;padding:12px;opacity:0.4;';
-          empty.textContent = 'No models match "' + searchBox.value.trim() + '"';
+          empty.textContent = tr('models.noModelsMatch', { query: searchBox.value.trim() });
           searchResults.appendChild(empty);
         }
       });
@@ -544,38 +548,41 @@ export async function refreshModels(force = false) {
       const noModels = document.createElement('div');
       noModels.className = 'models-empty-state';
       if (window._isAdmin) {
-        noModels.innerHTML = '<span class="muted">No models found</span><br>'
-          + '<a href="#" onclick="document.getElementById(\'user-bar-admin\')?.click();return false;" class="accent-link">Open Admin to add endpoints</a>'
-          + '<br><span class="muted-sm">Type /setup for Local models or API setup.</span>';
+        noModels.innerHTML = '<span class="muted">' + uiModule.esc(tr('models.noModelsFound')) + '</span><br>'
+          + '<a href="#" onclick="document.getElementById(\'user-bar-admin\')?.click();return false;" class="accent-link">' + uiModule.esc(tr('models.openAdmin')) + '</a>'
+          + '<br><span class="muted-sm">' + uiModule.esc(tr('models.setupHint')) + '</span>';
       } else {
-        noModels.innerHTML = '<span class="muted">No models available</span><br>'
-          + '<span class="muted-sm">Ask an admin to configure model endpoints</span>';
+        noModels.innerHTML = '<span class="muted">' + uiModule.esc(tr('models.noModelsAvailable')) + '</span><br>'
+          + '<span class="muted-sm">' + uiModule.esc(tr('models.askAdmin')) + '</span>';
       }
       box.appendChild(noModels);
       // No endpoints yet: keep the welcome screen focused on first setup.
       const welcomeSub = document.getElementById('welcome-sub');
-      if (welcomeSub) welcomeSub.innerHTML = 'Type <span class="setup-trigger-link" style="color:var(--accent,var(--red));font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to launch setup">/setup</span> to get started.';
+      if (welcomeSub) {
+        const setupLink = '<span class="setup-trigger-link" style="color:var(--accent,var(--red));font-weight:600;cursor:pointer;text-decoration:underline;" title="' + uiModule.esc(tr('models.launchSetup')) + '">/setup</span>';
+        welcomeSub.innerHTML = tr('models.setupStart', { command: setupLink });
+      }
       const welcomeTip = document.getElementById('welcome-tip');
-      if (welcomeTip) welcomeTip.textContent = 'Type /setup, then choose Local models or API.';
+      if (welcomeTip) welcomeTip.textContent = tr('chat.setupChoiceHint');
     } else {
       // Configured installs should feel ready, not stuck in onboarding.
       const welcomeSub = document.getElementById('welcome-sub');
-      if (welcomeSub) welcomeSub.textContent = 'Yours for the voyage.';
+      if (welcomeSub) welcomeSub.textContent = tr('models.readyMessage');
       const welcomeTip = document.getElementById('welcome-tip');
       if (welcomeTip) {
         const tips = window.innerWidth <= 768
           ? [
-              'Tip: Long-press a session for rename, delete, and memory options.',
-              'Tip: Tap the eye icon for Nobody mode - no history saved.',
-              'Tip: Switch to Agent mode when you want tools.',
-              'Tip: Attach images or files using the + button next to the input.',
+              tr('models.tips.mobile.longPress'),
+              tr('models.tips.mobile.nobody'),
+              tr('models.tips.mobile.agent'),
+              tr('models.tips.mobile.attach'),
             ]
           : [
-              'Tip: Press Ctrl+K to search across all your conversations.',
-              'Tip: Press Ctrl+B to quickly toggle the sidebar.',
-              'Tip: Shift-click the sidebar toggle to swap it to the other side.',
-              'Tip: Drag and drop files onto the chat to attach them.',
-              'Tip: Right-click a session for rename, delete, and memory options.',
+              tr('models.tips.desktop.search'),
+              tr('models.tips.desktop.sidebar'),
+              tr('models.tips.desktop.swapSidebar'),
+              tr('models.tips.desktop.dragDrop'),
+              tr('models.tips.desktop.sessionMenu'),
             ];
         welcomeTip.textContent = tips[Math.floor(Math.random() * tips.length)];
       }
@@ -593,7 +600,7 @@ export async function refreshProviders() {
   const sel = document.getElementById('openai-model');
   if (!sel) return; // Exit if element doesn't exist
 
-  sel.innerHTML = '<option disabled>Loading providers…</option>';
+  sel.innerHTML = '<option disabled>' + uiModule.esc(tr('models.loadingProviders')) + '</option>';
 
   try {
     const res = await fetch(`${API_BASE}/api/providers`);
@@ -613,7 +620,7 @@ export async function refreshProviders() {
     } else {
       const opt = document.createElement('option');
       opt.value = '';
-      opt.textContent = '(OPENAI_API_KEY not set on server)';
+      opt.textContent = tr('models.openAiKeyMissing');
       sel.appendChild(opt);
     }
   } catch (e) {
