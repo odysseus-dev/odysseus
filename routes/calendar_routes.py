@@ -598,12 +598,12 @@ def setup_calendar_routes() -> APIRouter:
         cfg["username"] = (body.get("username") or "").strip()
         # Preserve the stored password when the client sends an empty
         # one (edit form re-submitted without re-typing the password).
+        # cfg already holds the existing (already-encrypted) password from
+        # prefs, so we only touch it when a new password is supplied —
+        # re-encrypting the stored value would double-encrypt it.
         if body.get("password"):
             from src.secret_storage import encrypt
             cfg["password"] = encrypt(body["password"])
-        elif cfg.get("password"):
-            from src.secret_storage import encrypt
-            cfg["password"] = encrypt(cfg["password"])
         prefs["caldav"] = cfg
         _save_for_user(owner, prefs)
         return {"ok": True}
