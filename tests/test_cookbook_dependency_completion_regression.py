@@ -10,9 +10,12 @@ def _read(rel_path: str) -> str:
 def test_backend_status_treats_download_exit_zero_as_completed():
     source = _read("routes/cookbook_routes.py")
 
-    assert "exit_match = re.search(r\"=== process exited with code\\s+(-?\\d+)\"" in source
-    assert "elif has_exit and task_type == \"download\":" in source
-    assert "status = \"completed\" if exit_code == 0 else \"error\"" in source
+    # ruff format may wrap the re.search(...) call across lines, so assert the
+    # regex literal and the search call independently of layout.
+    assert "exit_match = re.search(" in source
+    assert 'r"=== process exited with code\\s+(-?\\d+)"' in source
+    assert 'elif has_exit and task_type == "download":' in source
+    assert 'status = "completed" if exit_code == 0 else "error"' in source
 
 
 def test_background_status_poll_reconciles_into_local_tasks():
@@ -37,4 +40,7 @@ def test_local_dependency_probe_refreshes_user_site_visibility():
 
     assert "importlib.invalidate_caches()" in source
     assert "user_site = site.getusersitepackages()" in source
-    assert "if user_site and os.path.isdir(user_site) and user_site not in sys.path:" in source
+    assert (
+        "if user_site and os.path.isdir(user_site) and user_site not in sys.path:"
+        in source
+    )
