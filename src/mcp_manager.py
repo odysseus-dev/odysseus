@@ -12,6 +12,24 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+def _format_mcp_connection_error(name: str, command: str = "", args: Optional[List[str]] = None, error: Exception = None) -> str:
+    """Return a user-actionable MCP connection error message."""
+    args = args or []
+    raw_error = str(error) if error else "Unknown error"
+    command_line = " ".join([command or "", *args]).strip()
+    lower_command = command_line.lower()
+
+    if "@playwright/mcp" in lower_command:
+        return (
+            f"{raw_error}\n\n"
+            "Browser MCP could not start. On fresh installs, cache the Playwright MCP package once before connecting:\n\n"
+            "npx -y @playwright/mcp@latest --version\n\n"
+            "Then restart Odysseus and reconnect the Browser MCP server."
+        )
+
+    return raw_error
+
+
 
 class McpManager:
     """Manages MCP server connections and tool routing."""
@@ -25,6 +43,8 @@ class McpManager:
         self._sessions: Dict[str, Any] = {}
         # server_id -> exit stack (for cleanup)
         self._stacks: Dict[str, Any] = {}
+        # Tracking updates to tools/connections for RAG indexing
+        self._generation = 0
 
     async def connect_server(
         self,
@@ -39,15 +59,20 @@ class McpManager:
         """Connect to an MCP server via stdio or SSE transport."""
         try:
             if transport == "stdio":
-                return await self._connect_stdio(server_id, name, command, args or [], env or {})
+                res = await self._connect_stdio(server_id, name, command, args or [], env or {})
             elif transport == "sse":
-                return await self._connect_sse(server_id, name, url)
+                res = await self._connect_sse(server_id, name, url)
             else:
                 logger.error(f"Unknown MCP transport: {transport}")
-                return False
+                res = False
+            if res:
+                self._generation += 1
+            return res
         except Exception as e:
             logger.error(f"Failed to connect MCP server {name} ({server_id}): {e}")
-            self._connections[server_id] = {"status": "error", "error": str(e), "name": name}
+            error_message = _format_mcp_connection_error(name, command or "", args or [], e)
+            self._connections[server_id] = {"status": "error", "error": error_message, "name": name}
+            self._generation += 1
             return False
 
     async def _connect_stdio(self, server_id: str, name: str, command: str, args: List[str], env: Dict[str, str]) -> bool:
@@ -64,14 +89,18 @@ class McpManager:
             )
 
             stack = AsyncExitStack()
-            transport = await stack.enter_async_context(stdio_client(server_params))
-            read_stream, write_stream = transport
-            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+            try:
+                transport = await stack.enter_async_context(stdio_client(server_params))
+                read_stream, write_stream = transport
+                session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
 
-            await session.initialize()
+                await session.initialize()
 
-            # Discover tools
-            tools_result = await session.list_tools()
+                # Discover tools
+                tools_result = await session.list_tools()
+            except Exception:
+                await stack.aclose()
+                raise
             tools = []
             for tool in tools_result.tools:
                 tools.append({
@@ -117,14 +146,18 @@ class McpManager:
             from contextlib import AsyncExitStack
 
             stack = AsyncExitStack()
-            transport = await stack.enter_async_context(sse_client(url))
-            read_stream, write_stream = transport
-            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+            try:
+                transport = await stack.enter_async_context(sse_client(url))
+                read_stream, write_stream = transport
+                session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
 
-            await session.initialize()
+                await session.initialize()
 
-            # Discover tools
-            tools_result = await session.list_tools()
+                # Discover tools
+                tools_result = await session.list_tools()
+            except Exception:
+                await stack.aclose()
+                raise
             tools = []
             for tool in tools_result.tools:
                 tools.append({
@@ -163,6 +196,7 @@ class McpManager:
         self._sessions.pop(server_id, None)
         self._tools.pop(server_id, None)
         self._connections.pop(server_id, None)
+        self._generation += 1
         logger.info(f"MCP server disconnected: {server_id}")
 
     async def disconnect_all(self):
@@ -368,7 +402,11 @@ class McpManager:
 
     def get_tool_descriptions_for_prompt(self, disabled_map: Optional[Dict[str, set]] = None) -> str:
         """Generate text describing MCP tools for the agent system prompt. Cached."""
-        cache_key = (frozenset((k, frozenset(v)) for k, v in (disabled_map or {}).items()), len(self._tools))
+        cache_key = (
+            frozenset((k, frozenset(v)) for k, v in (disabled_map or {}).items()),
+            len(self._tools),
+            self._generation,
+        )
         if self._cached_prompt_desc is not None and self._cached_prompt_desc_key == cache_key:
             return self._cached_prompt_desc
         tools = self.get_all_tools(disabled_map)

@@ -23,22 +23,41 @@ def analyze_topics(session_manager, owner: str = None) -> Dict[str, Any]:
     Scan non-archived sessions and return topic frequency data.
     If owner is set, only include sessions belonging to that user.
 
+    When `owner` is None or empty the helper returns an empty result. The
+    unauthenticated-loopback path in `app.py` produces a None owner, and
+    silently aggregating topic frequencies in that case is a cross-tenant
+    data leak. Callers that want a system-wide aggregate must pass an
+    explicit `owner` string (e.g. a documented "admin" pseudo-owner) or
+    the route must reject the request with 401.
+
     Returns dict with "topics" list and "total_topics" count.
     """
+    if not owner:
+        return {"topics": [], "total_topics": 0}
+
     topic_counts: Dict[str, int] = {t: 0 for t in TOPIC_KEYWORDS}
     topic_matches: Dict[str, list] = {t: [] for t in TOPIC_KEYWORDS}
 
     for session_id, session_data in session_manager.sessions.items():
         if session_data.get("archived", False):
             continue
-        # SECURITY: strict ownership — the previous predicate let any
-        # null-owner session feed into another user's topic analysis.
-        if owner:
-            sess_owner = session_data.get("owner") or getattr(session_data, "owner", None)
-            if sess_owner != owner:
-                continue
+        # Strict ownership: any session whose owner does not match the
+        # caller is excluded. Ownerless sessions are never included
+        # unless the caller is itself ownerless (which the early return
+        # above already prevents).
+        sess_owner = session_data.get("owner") or getattr(session_data, "owner", None)
+        if sess_owner != owner:
+            continue
 
-        for msg in session_data.get("history", []):
+        # Hydrate session to load history from DB if needed
+        if hasattr(session_manager, "get_session"):
+            hydrated_session = session_manager.get_session(session_id)
+            history = hydrated_session.history
+        else:
+            hydrated_session = session_data
+            history = session_data.get("history", [])
+
+        for msg in history:
             content_raw = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
             if not content_raw:
                 continue
@@ -49,11 +68,11 @@ def analyze_topics(session_manager, owner: str = None) -> Dict[str, Any]:
 
             for topic, keywords in TOPIC_KEYWORDS.items():
                 for kw in keywords:
-                    if kw in content:
+                    if re.search(rf"\b{re.escape(kw)}\b", content):
                         topic_counts[topic] += 1
                         sentences = re.split(r'[.!?]', str(content_raw))
                         for sentence in sentences:
-                            if kw in sentence.lower():
+                            if re.search(rf"\b{re.escape(kw)}\b", sentence.lower()):
                                 topic_matches[topic].append({
                                     "session_id": session_id,
                                     "session_name": session_name,

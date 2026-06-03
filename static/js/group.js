@@ -8,6 +8,7 @@ import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { PROMPT_TEMPLATES, getAllPresets } from './presets.js';
 import { sortModelObjects } from './modelSort.js';
+import Storage from './storage.js';
 
 let API_BASE = '';
 let _active = false;
@@ -57,7 +58,7 @@ function _initGroupTab() {
       });
     });
     _modelsCache = sortModelObjects(result);
-    return result;
+    return _modelsCache;
   }
 
   function _render() {
@@ -298,13 +299,16 @@ async function _getCharacterList() {
       });
     }
   } catch (e) {}
-  // Load user templates and wait for them before returning
+  // Load user templates and wait for them before returning.
+  // The endpoint returns a JSON array directly (not {templates:[...]}).
+  // All user templates are personas by definition — no isCharacter filter needed.
   try {
     const r = await fetch(API_BASE + '/api/presets/templates', { credentials: 'same-origin' });
     const data = await r.json();
-    (data.templates || []).forEach(t => {
-      if (t.isCharacter && !chars.find(c => c.id === t.id)) {
-        chars.push({ id: t.id, name: t.name, prompt: t.prompt || '' });
+    const templates = Array.isArray(data) ? data : (data.templates || []);
+    templates.forEach(t => {
+      if (t.id && t.name && !chars.find(c => c.id === t.id)) {
+        chars.push({ id: t.id, name: t.name, prompt: t.system_prompt || t.prompt || '' });
       }
     });
   } catch (e) {}
@@ -409,7 +413,7 @@ export async function showModelPicker() {
         });
       });
       _cachedModels = sortModelObjects(result);
-      return result;
+      return _cachedModels;
     }
 
     async function render(filter) {
@@ -546,7 +550,8 @@ export async function startGroup(models, parentSessionId) {
     _parentSessionId = pdata.id;
     // Register as group session for sidebar icon
     try {
-      const gids = JSON.parse(localStorage.getItem('odysseus-group-sessions') || '[]');
+      const storedGroupSessions = Storage.getJSON('odysseus-group-sessions', []);
+      const gids = Array.isArray(storedGroupSessions) ? storedGroupSessions : [];
       if (!gids.includes(_parentSessionId)) { gids.push(_parentSessionId); localStorage.setItem('odysseus-group-sessions', JSON.stringify(gids)); }
     } catch (e) {}
   } catch (e) {

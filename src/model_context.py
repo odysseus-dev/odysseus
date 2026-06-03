@@ -14,7 +14,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"}
 _PRIVATE_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.",
                      "172.20.", "172.21.", "172.22.", "172.23.", "172.24.",
                      "172.25.", "172.26.", "172.27.", "172.28.", "172.29.",
@@ -83,6 +83,7 @@ KNOWN_CONTEXT_WINDOWS = {
     'gemini-2.0-flash': 1048576,
     'gemini-1.5-pro': 1048576,
     'gemini-1.5-flash': 1048576,
+    'gemma-4': 262144,
     'gemma-3': 128000,
     'gemma-2': 8192,
 
@@ -169,26 +170,37 @@ def get_context_length(endpoint_url: str, model: str) -> int:
     or context_window fields. Caches result per model ID.
     Falls back to DEFAULT_CONTEXT if unavailable.
     """
-    if model in _context_cache:
+    is_local = _is_local_endpoint(endpoint_url)
+    if not is_local and model in _context_cache:
         return _context_cache[model]
 
     ctx = _query_context_length(endpoint_url, model)
-    # Only cache non-default values to allow retry on next request
-    if ctx != DEFAULT_CONTEXT:
+    # Only cache non-default values to allow retry on next request.
+    # Local endpoints can restart with a different --max-model-len while keeping
+    # the same model id, so always re-query them instead of serving stale cache.
+    if not is_local and ctx != DEFAULT_CONTEXT:
         _context_cache[model] = ctx
     logger.info(f"Context length for {model}: {ctx}")
     return ctx
 
 
 def _lookup_known(model: str) -> Optional[int]:
-    """Check known context windows by substring match."""
+    """Check known context windows by substring match.
+
+    Picks the LONGEST matching key so a short key never shadows a more specific
+    one. Without this, 'o1' (200k) precedes 'o1-mini' (128k) in the table and a
+    first-match return would report o1-mini's window as 200k.
+    """
     name = model.lower()
     basename = name.split("/")[-1] if "/" in name else name
     basename = basename.split(":")[0]  # strip :free, :extended etc.
+    best_key: Optional[str] = None
+    best_ctx: Optional[int] = None
     for key, ctx in KNOWN_CONTEXT_WINDOWS.items():
         if key in basename or key in name:
-            return ctx
-    return None
+            if best_key is None or len(key) > len(best_key):
+                best_key, best_ctx = key, ctx
+    return best_ctx
 
 
 def _query_context_length(endpoint_url: str, model: str) -> int:

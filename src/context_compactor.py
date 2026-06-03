@@ -15,6 +15,26 @@ from core.models import ChatMessage
 
 logger = logging.getLogger(__name__)
 
+
+def _content_as_text(content: Any) -> str:
+    """Flatten a message's content to plain text.
+
+    Handles the three shapes that flow through history: a plain string, a
+    multimodal list of content blocks (vision/image attachments), and None
+    (assistant turns that carried only native tool_calls persist content as
+    None). Returns "" for anything without text so callers can safely slice
+    the result.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            b.get("text", "") for b in content
+            if isinstance(b, dict) and b.get("text")
+        )
+    return ""
+
+
 COMPACT_THRESHOLD = 0.85  # Trigger compaction at 85% of context window
 SUMMARY_MAX_TOKENS = 1024
 SMALL_CONTEXT_LIMIT = 8192  # Models with context <= this get aggressive trimming
@@ -96,6 +116,8 @@ def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
 
 
 def _message_text_token_estimate(text: str) -> int:
+    if not isinstance(text, str):
+        return 4
     return int(len(text) * 0.3) + 4
 
 
@@ -104,6 +126,11 @@ def _truncate_text_to_token_budget(text: str, token_budget: int) -> str:
     if token_budget <= 32:
         return "[Current user message omitted: it exceeded the model context window.]"
 
+    if not isinstance(text, str):
+        # This helper is typed/used as text downstream, so return an empty
+        # string rather than the raw non-string (which would move the crash
+        # into the caller that concatenates/measures the result).
+        return ""
     # Match src.model_context.estimate_tokens' rough chars * 0.3 estimate.
     max_chars = max(200, int((token_budget - 16) / 0.3))
     if len(text) <= max_chars:
@@ -274,7 +301,7 @@ async def maybe_compact(
 
     # Build the text to summarize
     convo_text = "\n".join(
-        f"{msg['role'].upper()}: {msg.get('content', '')[:2000]}"
+        f"{msg.get('role', 'user').upper()}: {_content_as_text(msg.get('content'))[:2000]}"
         for msg in older
     )
 
@@ -321,8 +348,12 @@ async def maybe_compact(
 
     compacted = system_msgs + [summary_msg] + recent
 
-    # Update session history to match
-    _update_session_history(session, split_point, summary)
+    # Update session history to match. Pass len(system_msgs) so the
+    # recent_history slice in _update_session_history uses the correct
+    # offset — session.history INCLUDES the system messages, but
+    # split_point is indexed against convo_msgs which does NOT. Without
+    # this, the slice drops the leading system message(s).
+    _update_session_history(session, split_point, summary, system_msg_count=len(system_msgs))
 
     new_used = estimate_tokens(compacted)
     logger.info(
@@ -333,22 +364,34 @@ async def maybe_compact(
     return compacted, context_length, True
 
 
-def _update_session_history(session, split_point: int, summary: str):
-    """Update the in-memory session history after compaction."""
+def _update_session_history(session, split_point: int, summary: str,
+                            system_msg_count: int = 0):
+    """Update the in-memory session history after compaction.
+
+    `split_point` is the index in `convo_msgs` (system-stripped). The
+    in-memory `session.history` includes leading system messages, so the
+    actual recent-history slice starts at `system_msg_count + split_point`.
+    Prepending `session.history[:system_msg_count]` to the new history
+    preserves persona, preset, and RAG system messages that would
+    otherwise be dropped.
+    """
     if not session or not hasattr(session, "history"):
         return
 
-    if split_point >= len(session.history):
+    effective_split = system_msg_count + split_point
+    if effective_split >= len(session.history):
         return
 
-    # Keep the recent messages, prepend summary
-    recent_history = session.history[split_point:]
+    # Keep the recent messages, prepend summary AND the leading system
+    # messages so the system prompt survives compaction.
+    system_prefix = list(session.history[:system_msg_count])
+    recent_history = session.history[effective_split:]
     summary_msg = ChatMessage(
         role="system",
         content=f"[Conversation summary]\n{summary}",
         metadata={"compacted": True, "summarized_count": split_point},
     )
-    new_history = [summary_msg] + recent_history
+    new_history = system_prefix + [summary_msg] + recent_history
     try:
         from core import models as _core_models
         manager = getattr(_core_models, "_session_manager", None)

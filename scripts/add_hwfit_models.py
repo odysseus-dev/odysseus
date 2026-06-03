@@ -9,7 +9,9 @@ Adds:
 
 Metadata is taken from the HF Hub `list_models(full=True)` response plus the
 repo name (which encodes the param size, e.g. "Qwen3.6-35B-A3B"). Param-less
-names fall back to a single per-repo model_info() call to read safetensors.
+names fall back, in order, to the parent `base_model:` tag, the repo's
+`config.json` (computed from `hidden_size` / `num_hidden_layers` / MoE
+fields), and finally a per-repo `model_info()` call to read safetensors.
 
 Re-runnable: merges by `name`, leaving existing entries untouched unless
 --overwrite is passed. Writes a .bak first.
@@ -23,7 +25,8 @@ import re
 import sys
 from datetime import datetime
 
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub.utils import EntryNotFoundError, RepositoryNotFoundError
 
 DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "services", "hwfit", "data", "hf_models.json")
 DATA_PATH = os.path.abspath(DATA_PATH)
@@ -43,7 +46,8 @@ _GENERIC_TAGS = {
     "transformers", "safetensors", "conversational", "text-generation",
     "image-text-to-text", "text-generation-inference", "endpoints_compatible",
     "autotrain_compatible", "compressed-tensors", "gguf", "mlx", "vllm", "4-bit",
-    "8-bit", "awq", "gptq", "fp8", "quantized", "chat",
+    "8-bit", "awq", "gptq", "fp8", "fp4", "nvfp4", "mxfp4", "nf4",
+    "quantized", "chat",
 }
 
 api = HfApi()
@@ -69,6 +73,128 @@ def _parse_params(name):
     return total, active
 
 
+def _params_from_config(cfg):
+    """Estimate (total, active) parameter counts from a HF config.json dict.
+
+    Returns (None, None) when the architecture fields aren't usable. Covers:
+      * explicit ``num_parameters`` / ``n_params`` (rare but authoritative)
+      * dense transformers (LLaMA / Qwen / Mistral / GLM-dense / etc.) via
+        embeddings + per-layer attention + MLP
+      * MoE (Qwen3-MoE, GLM-4-MoE, DeepSeek-style) using ``num_experts`` or
+        ``n_routed_experts`` (+ ``n_shared_experts``). Active count assumes
+        ``num_experts_per_tok`` routed experts plus any shared experts.
+
+    The estimate is intentionally coarse — within ~5-10% of the true count for
+    standard decoder-only architectures — which is fine for the downstream
+    ``min_vram_gb`` heuristic (it already buckets via ``parameter_count`` to
+    one decimal place of "B").
+    """
+    if not isinstance(cfg, dict):
+        return None, None
+
+    # Authoritative fields first. Some custom configs embed the trained
+    # parameter count directly.
+    for key in ("num_parameters", "n_params", "total_params"):
+        v = cfg.get(key)
+        if isinstance(v, (int, float)) and v > 0:
+            return int(v), None
+
+    def _i(key, default=None):
+        v = cfg.get(key, default)
+        try:
+            return int(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    h = _i("hidden_size")
+    L = _i("num_hidden_layers")
+    if not h or not L:
+        return None, None
+
+    vocab = _i("vocab_size") or 0
+    ffn = _i("intermediate_size") or (4 * h)
+    n_heads = _i("num_attention_heads") or 0
+    n_kv = _i("num_key_value_heads") or n_heads
+    head_dim = _i("head_dim") or (h // n_heads if n_heads else h)
+
+    # Attention: Q is hidden_size wide, KV is grouped (GQA / MQA).
+    q_proj = h * (n_heads * head_dim if n_heads else h)
+    kv_proj = 2 * h * (n_kv * head_dim if n_kv else h)
+    o_proj = (n_heads * head_dim if n_heads else h) * h
+    per_layer_attn = q_proj + kv_proj + o_proj
+
+    # Dense MLP: gate + up + down (SwiGLU / GeGLU). Configs without a gate
+    # (plain GELU) are within the noise floor of this estimate.
+    per_layer_dense_mlp = 3 * h * ffn
+
+    # MoE routing. Both naming conventions are seen in the wild.
+    n_experts = _i("num_experts") or _i("n_routed_experts") or 0
+    n_shared = _i("n_shared_experts") or 0
+    n_active = _i("num_experts_per_tok") or 0
+    moe_ffn = _i("moe_intermediate_size") or ffn
+    # Some configs (GLM-4-MoE, DeepSeek-V3) keep the first K layers dense.
+    first_dense = _i("first_k_dense_replace") or 0
+
+    if n_experts > 0 and n_active > 0:
+        moe_layers = max(0, L - first_dense)
+        dense_layers = L - moe_layers
+        per_expert = 3 * h * moe_ffn
+        total_mlp = (
+            dense_layers * per_layer_dense_mlp
+            + moe_layers * (n_experts + n_shared) * per_expert
+        )
+        active_mlp = (
+            dense_layers * per_layer_dense_mlp
+            + moe_layers * (n_active + n_shared) * per_expert
+        )
+    else:
+        total_mlp = L * per_layer_dense_mlp
+        active_mlp = total_mlp
+
+    embed = vocab * h
+    # Untied output head doubles the embedding contribution.
+    head = 0 if cfg.get("tie_word_embeddings", True) else vocab * h
+
+    total = embed + head + L * per_layer_attn + total_mlp
+    active = embed + head + L * per_layer_attn + active_mlp
+    if total <= 0:
+        return None, None
+    if active == total or n_experts == 0:
+        return int(total), None
+    return int(total), int(active)
+
+
+_CONFIG_CACHE = {}
+
+
+def _fetch_config_json(repo_id):
+    """Download and cache a repo's config.json. Returns a dict or None.
+
+    Network / 404 / private-repo failures are swallowed — the caller already
+    has a safetensors fallback below this. We rely on huggingface_hub's own
+    on-disk cache so repeated script runs don't re-hit the Hub.
+    """
+    if repo_id in _CONFIG_CACHE:
+        return _CONFIG_CACHE[repo_id]
+    try:
+        path = hf_hub_download(repo_id=repo_id, filename="config.json")
+    except (EntryNotFoundError, RepositoryNotFoundError):
+        _CONFIG_CACHE[repo_id] = None
+        return None
+    except Exception:
+        # Network hiccup, gated repo, etc. — don't crash the bulk run.
+        _CONFIG_CACHE[repo_id] = None
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        _CONFIG_CACHE[repo_id] = None
+        return None
+    _CONFIG_CACHE[repo_id] = cfg
+    return cfg
+
+
 def _base_model_tag(tags):
     """Return the `base_model:...` repo id from tags, if any."""
     for t in (tags or []):
@@ -79,6 +205,20 @@ def _base_model_tag(tags):
 
 def _quant_from_name(name):
     n = name.lower()
+    if "nvfp4" in n:
+        return "NVFP4"
+    if "mxfp4" in n:
+        return "MXFP4"
+    if re.search(r"(^|[-_/])nf4($|[-_/])", n):
+        return "NF4"
+    if re.search(r"(^|[-_/])fp4($|[-_/])", n):
+        return "FP4"
+    if re.search(r"(^|[-_/])w4a16($|[-_/])", n):
+        return "W4A16"
+    if re.search(r"(^|[-_/])w8a8($|[-_/])", n):
+        return "W8A8"
+    if re.search(r"(^|[-_/])w8a16($|[-_/])", n):
+        return "W8A16"
     is8 = "8bit" in n or "8-bit" in n or "int8" in n
     if "awq" in n:
         return "AWQ-8bit" if is8 else "AWQ-4bit"
@@ -88,10 +228,14 @@ def _quant_from_name(name):
         if "6bit" in n:
             return "mlx-6bit"
         return "mlx-8bit" if is8 else "mlx-4bit"
+    if "nvfp4" in n:
+        return "NVFP4"
     if "fp8" in n:
         return "FP8"
     if "int4" in n or "4bit" in n or "4-bit" in n:
-        return "AWQ-4bit"
+        return "INT4"
+    if "int8" in n or "8bit" in n or "8-bit" in n:
+        return "INT8"
     return "Q4_K_M"
 
 
@@ -122,6 +266,27 @@ def _entry_from_modelinfo(mi, overrides):
                     active = ba
     # Determine quant first — we need it to unpack the safetensors fallback.
     quant = _quant_from_name(name)
+    # Next-to-last resort: parse config.json. This is robust against
+    # parameter-less repo names (e.g. "GLM-4.5" with no "9B" suffix) where
+    # both the regex and the base_model tag come up empty. We try this
+    # before safetensors so non-standard names still resolve without a
+    # per-repo manual override in EXTRA_REPOS. Source repo first (works for
+    # unquantized models) then the quantized parent via base_model:.
+    if total is None:
+        config_targets = [name]
+        bm = _base_model_tag(getattr(mi, "tags", None))
+        if bm and bm != name:
+            config_targets.append(bm)
+        for target in config_targets:
+            cfg = _fetch_config_json(target)
+            if not cfg:
+                continue
+            ct, ca = _params_from_config(cfg)
+            if ct:
+                total = ct
+                if ca and active is None:
+                    active = ca
+                break
     # Last resort: read safetensors element counts. For pre-quantized repos
     # (AWQ/GPTQ/MLX-Int4 etc.) the weights are packed: 8× 4-bit weights per
     # I32 element, 4× 8-bit weights per I32. The bare safetensors total
@@ -136,7 +301,7 @@ def _entry_from_modelinfo(mi, overrides):
                 params_by_dtype = getattr(st, "parameters", None) or {}
                 if quant.endswith("4bit") or quant.endswith("Int4"):
                     pack_factor = 8
-                elif quant.endswith("8bit") or quant.endswith("Int8") or quant == "FP8":
+                elif quant.endswith("8bit") or quant.endswith("Int8") or quant in ("FP8", "NVFP4"):
                     pack_factor = 4
                 else:
                     pack_factor = 1
@@ -158,7 +323,10 @@ def _entry_from_modelinfo(mi, overrides):
     rel = created.strftime("%Y-%m-%d") if created else datetime.utcnow().strftime("%Y-%m-%d")
     # Rough RAM/VRAM hints (fit.py recomputes the real requirement from params+quant).
     _BPP = {"AWQ-4bit": 0.58, "GPTQ-Int4": 0.58, "mlx-4bit": 0.55, "mlx-6bit": 0.85,
-            "AWQ-8bit": 1.1, "GPTQ-Int8": 1.1, "mlx-8bit": 1.1, "FP8": 1.1, "Q4_K_M": 0.6}
+            "AWQ-8bit": 1.1, "GPTQ-Int8": 1.1, "mlx-8bit": 1.1, "FP8": 1.1,
+            "FP4": 0.58, "NVFP4": 0.58, "MXFP4": 0.58, "NF4": 0.58,
+            "INT4": 0.58, "INT8": 1.1, "W4A16": 0.58, "W8A8": 1.1, "W8A16": 1.1,
+            "Q4_K_M": 0.6}
     bpp = _BPP.get(quant, 0.6)
     vram = round(pb * bpp + 0.5, 1)
     entry = {

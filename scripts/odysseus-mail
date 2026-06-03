@@ -107,6 +107,19 @@ def _q(name: str) -> str:
     return '"' + (name or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def _split_recipients(value: str) -> list[str]:
+    return [r.strip() for r in (value or "").split(",") if r.strip()]
+
+
+def _recipient_list(to: str, cc: str = "", bcc: str = "") -> list[str]:
+    recipients = _split_recipients(to)
+    recipients.extend(_split_recipients(cc))
+    recipients.extend(_split_recipients(bcc))
+    if not recipients:
+        fail("at least one recipient is required")
+    return recipients
+
+
 # ─── list ────────────────────────────────────────────────────────────
 
 def cmd_list(args) -> None:
@@ -177,7 +190,7 @@ def cmd_read(args) -> None:
         if st != "OK":
             fail(f"select {args.folder!r} failed: {st}")
         st, msg_data = conn.fetch(args.uid.encode(), "(BODY.PEEK[])")
-        if st != "OK":
+        if st != "OK" or not msg_data or not msg_data[0]:
             fail(f"fetch UID {args.uid} failed: {st}")
         raw = msg_data[0][1]
         msg = email_mod.message_from_bytes(raw)
@@ -302,11 +315,7 @@ def cmd_send(args) -> None:
     outer["Date"] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
     outer.attach(MIMEText(body, "plain", "utf-8"))
 
-    recipients = [r.strip() for r in args.to.split(",") if r.strip()]
-    if args.cc:
-        recipients.extend([r.strip() for r in args.cc.split(",") if r.strip()])
-    if args.bcc:
-        recipients.extend([r.strip() for r in args.bcc.split(",") if r.strip()])
+    recipients = _recipient_list(args.to, args.cc, args.bcc)
 
     if args.dry_run:
         emit({

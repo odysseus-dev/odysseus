@@ -1160,10 +1160,6 @@ async function handleImportFile(file) {
   if (!file) return;
 
   const sessionId = sessionModule?.getCurrentSessionId?.();
-  if (!sessionId) {
-    showError('Open a session first — import needs an AI model');
-    return;
-  }
 
   const importBtn = document.getElementById('memory-import-btn');
   const _origImportHtml = importBtn ? importBtn.innerHTML : '';
@@ -1180,7 +1176,9 @@ async function handleImportFile(file) {
   try {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('session', sessionId);
+    if (sessionId) {
+        formData.append('session', sessionId);
+    }
 
     const res = await fetch(`${window.location.origin}/api/memory/import`, {
       method: 'POST',

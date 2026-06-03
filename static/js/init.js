@@ -165,6 +165,39 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
   window.addEventListener('resize', _sync);
 }
 
+/* Keep minimized tool chips above the composer. Both the current modalManager
+   dock and the legacy fallback dock consume this root-level clearance. */
+{
+  const root = document.documentElement;
+  const chatBar = document.querySelector('.chat-input-bar');
+  const attachStrip = document.getElementById('attach-strip');
+  const chatContainer = document.getElementById('chat-container');
+  const _syncComposerClearance = () => {
+    let top = window.innerHeight;
+    for (const el of [attachStrip, chatBar]) {
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.height > 0) top = Math.min(top, rect.top);
+    }
+    const clearance = Math.max(12, Math.ceil(window.innerHeight - top + 8));
+    root.style.setProperty('--composer-clearance', clearance + 'px');
+  };
+  requestAnimationFrame(_syncComposerClearance);
+  if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(_syncComposerClearance);
+    if (chatBar) ro.observe(chatBar);
+    if (attachStrip) ro.observe(attachStrip);
+  }
+  if (chatContainer && typeof MutationObserver !== 'undefined') {
+    new MutationObserver(_syncComposerClearance).observe(chatContainer, {
+      attributes: true,
+      attributeFilter: ['class'],
+    });
+  }
+  if (chatBar) chatBar.addEventListener('transitionend', _syncComposerClearance);
+  window.addEventListener('resize', _syncComposerClearance);
+}
+
 /* ---- Resizable sidebar — drag edge to resize, collapse if small, drag rail edge to expand ---- */
 {
   const sidebar = document.getElementById('sidebar');

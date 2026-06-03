@@ -3,6 +3,7 @@ Extracted from cookbook_routes.py; the routes module imports the symbols it need
 
 import logging
 import os
+import posixpath
 import re
 import shlex
 
@@ -15,6 +16,15 @@ logger = logging.getLogger(__name__)
 # HuggingFace repo IDs are <org>/<name>, both alphanumerics plus ._-
 # Rejecting anything else up front closes off shell-interpolation vectors.
 _REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+# Cached models scanned from a custom/local model dir are keyed by their leaf
+# folder name (no slash), e.g. `DeepSeek-R1-UD-IQ4_XS`. The serve command uses
+# the real on-disk path separately; this identifier is only for UI/task
+# bookkeeping, so serving should accept the same safe glyph set as repo IDs.
+_LOCAL_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# Ollama model names include tags, e.g. `qwen2.5:0.5b` or `llama3.2:latest`.
+# Some registries also use a namespace path. Keep this shell-safe: no spaces,
+# quotes, `$`, `;`, `&`, pipes, or redirects.
+_OLLAMA_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,200}$")
 # Include pattern is a glob: allow typical safe glyphs only.
 _INCLUDE_RE = re.compile(r"^[A-Za-z0-9._\-*?/\[\]]+$")
 # Remote host: user@host (optionally with :port-free hostname parts).
@@ -37,6 +47,14 @@ def _validate_repo_id(v: str | None) -> str:
     if not v or not _REPO_ID_RE.match(v):
         raise HTTPException(400, "Invalid repo_id — must be <org>/<name> using [A-Za-z0-9._-]")
     return v
+
+
+def _validate_serve_model_id(v: str | None) -> str:
+    if not v:
+        raise HTTPException(400, "repo_id is required")
+    if _REPO_ID_RE.match(v) or _LOCAL_MODEL_ID_RE.match(v) or _OLLAMA_MODEL_ID_RE.match(v):
+        return v
+    raise HTTPException(400, "Invalid repo_id — must be <org>/<name>, an Ollama name:tag, or a cached local model id")
 
 
 def _validate_include(v: str | None) -> str | None:
@@ -112,7 +130,13 @@ def _local_tooling_path_export(executable: str) -> str:
     macOS, where the `pip --user` self-heal also misses (`pip` isn't a command,
     only `pip3`/`python3 -m pip`). Local runs only; meaningless over SSH.
     """
-    bin_dir = os.path.dirname(os.path.abspath(executable))
+    # This builds a bash snippet, so an explicit POSIX absolute path should keep
+    # POSIX semantics even when the app/tests run on Windows. Otherwise
+    # os.path.abspath("/opt/...") would incorrectly turn it into "D:\\opt\\...".
+    if executable.startswith("/"):
+        bin_dir = posixpath.dirname(executable)
+    else:
+        bin_dir = os.path.dirname(os.path.abspath(executable))
     # Escape for a double-quoted context: $PATH must still expand, but spaces
     # and shell metacharacters in the path must be preserved literally.
     esc = (
@@ -122,6 +146,253 @@ def _local_tooling_path_export(executable: str) -> str:
         .replace("`", "\\`")
     )
     return f'export PATH="{esc}:$PATH"'
+
+
+def _pip_install_no_cache(cmd: str) -> str:
+    """Add ``--no-cache-dir`` to a pip install command.
+
+    Cookbook dependency installs (vLLM, llama-cpp-python, …) build large wheels;
+    pip's default cache lives under ``$HOME/.cache/pip`` and these builds can fill
+    a small home filesystem with ``[Errno 28] No space left on device`` mid-build
+    (issue #1219), leaving the dependency "installed" but unusable (#1459).
+    Disabling the cache for these one-off installs keeps them off the home disk
+    (the maintainer's suggested ``PIP_CACHE_DIR=`` workaround, made the default).
+    Idempotent; leaves non-pip-install commands untouched."""
+    if not cmd or "pip install" not in cmd or "--no-cache-dir" in cmd:
+        return cmd
+    return cmd.replace("pip install", "pip install --no-cache-dir", 1)
+
+
+def _pip_install_attempt(pip_cmd: str) -> str:
+    """Wrap a single pip install command so its exit status survives the
+    fallback chain and its stderr is visible in the tmux log on failure.
+
+    Without this wrapper, `pip … 2>&1 | tail -5` returns ``tail``'s exit
+    code (0), masking pip's real failure and preventing the next fallback
+    from running.  The generated snippet captures all output to a temp
+    file, prints the last 5 lines on failure (so the Cookbook log panel
+    shows useful diagnostics), cleans up, and exits with pip's original
+    status.
+    """
+    return (
+        "bash -c '"
+        f'_out=$(mktemp) && {pip_cmd} >"$_out" 2>&1; _rc=$?; '
+        'tail -5 "$_out"; rm -f "$_out"; exit $_rc'
+        "'"
+    )
+
+
+def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m pip", upgrade: bool = False) -> str:
+    """Build a bash pip install fallback chain that surfaces errors.
+
+    Try the active interpreter/environment first. ``--user`` is invalid
+    inside many venvs, so only attempt the ``--user`` fallback when NOT
+    inside a venv.
+
+    Each attempt is wrapped via :func:`_pip_install_attempt` so pip's real
+    exit code is preserved (no ``| tail`` masking) and the last 5 lines of
+    pip output appear in the Cookbook log on failure.
+    """
+    upgrade_flag = " -U" if upgrade else ""
+    # Shell-quote the package spec: an extras spec like ``llama-cpp-python[server]``
+    # contains brackets that bash would treat as a glob, so it must be quoted
+    # before being embedded in the install command. Plain names (e.g.
+    # ``huggingface_hub``) are returned unchanged by ``shlex.quote``.
+    pkg = shlex.quote(package)
+    base = _pip_install_attempt(f"{python_cmd} install -q{upgrade_flag} {pkg}")
+    user = _pip_install_attempt(f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {pkg}")
+    # Derive the python executable for the venv detection check.
+    # Must use the same interpreter that pip belongs to; hardcoding
+    # python3 breaks when pip lives in a venv that only has "python".
+    if " -m pip" in python_cmd:
+        python_exe = python_cmd.replace(" -m pip", "")
+    elif python_cmd.strip() == "pip":
+        python_exe = "python"
+    elif python_cmd.strip() == "pip3":
+        python_exe = "python3"
+    else:
+        python_exe = "python3"
+    venv_check = f'{python_exe} -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"'
+    # Negated: `! venv_check` succeeds (exit 0) when NOT in a venv → `&&` tries
+    # --user.  When IN a venv `! venv_check` fails → `&&` skips --user and the
+    # group exits non-zero, propagating the base-install failure instead of
+    # masking it as success (the `|| { venv_check || … }` shape from #903
+    # swallowed the exit code because venv_check's exit-0 became the group's
+    # result).
+    return f"{base} || {{ ! {venv_check} && {user}; }}"
+
+
+def _venv_safe_local_pip_install_cmd(cmd: str, *, local: bool, in_venv: bool) -> str:
+    """Drop pip user-install flags that are invalid for local venv installs.
+
+    Cookbook dependency installs run through the model-serve task path so users
+    can watch progress in the same log UI. For local POSIX runs, that task
+    prepends Odysseus' own interpreter directory to PATH. If Odysseus itself is
+    running from a venv, `python3` resolves to the venv Python and pip rejects
+    `--user` with "User site-packages are not visible in this virtualenv".
+
+    Keep remote and non-venv installs unchanged: remotes may intentionally use
+    system Python, and Docker/non-venv installs still need user-site fallback.
+    """
+    if not local or not in_venv:
+        return cmd
+    if "pip install" not in (cmd or ""):
+        return cmd
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        return cmd
+    stripped = [
+        part
+        for part in parts
+        if part not in {"--user", "--break-system-packages"}
+    ]
+    return shlex.join(stripped)
+
+
+def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
+    """Build the standalone Python scanner used by /api/model/cached."""
+    lines = [
+        "import json, os, re, shutil, subprocess, urllib.request",
+        "models = []",
+        "seen = set()",
+        "BLOCKED_ROOTS = ('/sys', '/proc', '/dev', '/run', '/var/run')",
+        "def safe_path(p):",
+        "    try:",
+        "        rp = os.path.realpath(os.path.expanduser(p))",
+        "        return not any(rp == b or rp.startswith(b + os.sep) for b in BLOCKED_ROOTS)",
+        "    except Exception:",
+        "        return False",
+        "def safe_walk(top):",
+        "    if not safe_path(top): return",
+        "    for root, dirs, fns in os.walk(top, followlinks=False):",
+        "        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d)) and safe_path(os.path.join(root, d))]",
+        "        yield root, dirs, fns",
+        "def gguf_role(name):",
+        "    n = name.lower()",
+        "    if n.startswith('mmproj') or 'mmproj' in n: return 'projector'",
+        "    return 'model'",
+        "def gguf_quant(name):",
+        "    m = re.search(r'(?i)(UD-)?(IQ[0-9]_[A-Z0-9_]+|Q[0-9](?:_[A-Z0-9]+)+|BF16|F16|FP16|F32|Q8_0)', name)",
+        "    return m.group(0).upper() if m else ''",
+        "def collect_ggufs(base):",
+        "    files = []",
+        "    split_groups = {}",
+        "    if not os.path.isdir(base) or not safe_path(base): return files",
+        "    for root, dirs, fns in safe_walk(base):",
+        "        for fn in sorted(fns):",
+        "            if not fn.lower().endswith('.gguf'): continue",
+        "            fp = os.path.join(root, fn)",
+        "            try: size = os.path.getsize(fp)",
+        "            except Exception: size = 0",
+        "            try: rel = os.path.relpath(fp, base).replace(os.sep, '/')",
+        "            except Exception: rel = fn",
+        "            sm = re.match(r'(?i)^(.+)-(\\d+)-of-(\\d+)\\.gguf$', fn)",
+        "            if sm:",
+        "                prefix, part_s, total_s = sm.group(1), sm.group(2), sm.group(3)",
+        "                key = (root, prefix, total_s)",
+        "                g = split_groups.setdefault(key, {'name':fn,'rel_path':rel,'size_bytes':0,'role':gguf_role(fn),'quant':gguf_quant(fn),'parts':int(total_s),'split':True})",
+        "                g['size_bytes'] += size",
+        "                if int(part_s) == 1:",
+        "                    g.update({'name':fn,'rel_path':rel,'role':gguf_role(fn),'quant':gguf_quant(fn)})",
+        "                continue",
+        "            files.append({'name':fn,'rel_path':rel,'size_bytes':size,'role':gguf_role(fn),'quant':gguf_quant(fn)})",
+        "    files.extend(split_groups.values())",
+        "    files.sort(key=lambda f: (f.get('role') != 'model', f.get('rel_path', '')))",
+        "    return files",
+        "def scan_hf(cache):",
+        "    if not os.path.isdir(cache): return",
+        "    for d in sorted(os.listdir(cache)):",
+        "        if not d.startswith('models--'): continue",
+        "        rid = d.replace('models--','').replace('--','/')",
+        "        if rid in seen: continue",
+        "        seen.add(rid)",
+        "        blobs = os.path.join(cache, d, 'blobs')",
+        "        sz, nf, ic = 0, 0, False",
+        "        if os.path.isdir(blobs):",
+        "            for f in os.scandir(blobs):",
+        "                if f.is_file(): nf += 1; sz += f.stat().st_size",
+        "                if f.name.endswith('.incomplete'): ic = True",
+        "        snap = os.path.join(cache, d, 'snapshots')",
+        "        is_diffusion = False; gguf_files = []",
+        "        if os.path.isdir(snap):",
+        "            for sd in os.listdir(snap):",
+        "                sf = os.path.join(snap, sd)",
+        "                if not os.path.isdir(sf): continue",
+        "                if os.path.exists(os.path.join(sf, 'model_index.json')): is_diffusion = True",
+        "                for f in collect_ggufs(sf): f['rel_path'] = sd + '/' + f['rel_path']; gguf_files.append(f)",
+        "        models.append({'repo_id':rid,'size_bytes':sz,'nb_files':nf,'has_incomplete':ic,'path':cache,'is_diffusion':is_diffusion,'is_gguf':bool(gguf_files),'gguf_files':gguf_files})",
+        "def scan_dir(p):",
+        "    if not os.path.isdir(p) or not safe_path(p): return",
+        "    for d in sorted(os.listdir(p)):",
+        "        if d.startswith('.'): continue",
+        "        if d.startswith('models--'): continue",
+        "        fp = os.path.join(p, d)",
+        "        if not os.path.isdir(fp) or os.path.islink(fp) or not safe_path(fp): continue",
+        "        if d in seen: continue",
+        "        is_model = False; gguf_files = []",
+        "        for root, dirs, fns in safe_walk(fp):",
+        "            for fn in fns:",
+        "                if fn.lower().endswith('.gguf'): is_model = True",
+        "                elif fn == 'config.json' or fn.endswith('.safetensors') or fn.endswith('.bin'): is_model = True",
+        "            if is_model: break",
+        "        if not is_model: continue",
+        "        gguf_files = collect_ggufs(fp)",
+        "        seen.add(d)",
+        "        sz, nf = 0, 0",
+        "        for dp, _, fns in safe_walk(fp):",
+        "            for fn in fns:",
+        "                try: nf += 1; sz += os.path.getsize(os.path.join(dp, fn))",
+        "                except Exception: pass",
+        "        is_diff = os.path.exists(os.path.join(fp, 'model_index.json'))",
+        "        models.append({'repo_id':d,'size_bytes':sz,'nb_files':nf,'has_incomplete':False,'path':p,'is_local_dir':True,'is_diffusion':is_diff,'is_gguf':bool(gguf_files),'gguf_files':gguf_files})",
+        "def parse_size(num, unit):",
+        "    try: n = float(num)",
+        "    except Exception: return 0",
+        "    u = (unit or '').upper()",
+        "    if u.startswith('TB'): return int(n * 1024 ** 4)",
+        "    if u.startswith('GB'): return int(n * 1024 ** 3)",
+        "    if u.startswith('MB'): return int(n * 1024 ** 2)",
+        "    if u.startswith('KB'): return int(n * 1024)",
+        "    return int(n)",
+        "def scan_ollama():",
+        "    if not shutil.which('ollama'): return",
+        "    try:",
+        "        p = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=6)",
+        "    except Exception:",
+        "        return",
+        "    if p.returncode != 0: return",
+        "    for line in (p.stdout or '').splitlines()[1:]:",
+        "        parts = line.split()",
+        "        if len(parts) < 4: continue",
+        "        name = parts[0]",
+        "        if not name or name in seen: continue",
+        "        size_bytes = parse_size(parts[2], parts[3])",
+        "        seen.add(name)",
+        "        models.append({'repo_id':name,'size_bytes':size_bytes,'nb_files':1,'has_incomplete':False,'path':'ollama','backend':'ollama','is_ollama':True})",
+        "def scan_ollama_api():",
+        "    urls = ['http://127.0.0.1:11434/api/tags', 'http://localhost:11434/api/tags', 'http://host.docker.internal:11434/api/tags']",
+        "    for url in urls:",
+        "        try:",
+        "            with urllib.request.urlopen(url, timeout=2) as r:",
+        "                data = json.loads(r.read().decode('utf-8', 'replace'))",
+        "        except Exception:",
+        "            continue",
+        "        for item in data.get('models', []):",
+        "            name = item.get('name') or item.get('model')",
+        "            if not name or name in seen: continue",
+        "            size_bytes = int(item.get('size') or item.get('size_bytes') or 0)",
+        "            seen.add(name)",
+        "            models.append({'repo_id':name,'size_bytes':size_bytes,'nb_files':1,'has_incomplete':False,'path':'ollama','backend':'ollama','is_ollama':True})",
+        "        return",
+        "scan_hf(os.path.expanduser('~/.cache/huggingface/hub'))",
+        "scan_ollama()",
+        "scan_ollama_api()",
+    ]
+    for model_dir in model_dirs or []:
+        lines.append(f"scan_dir(os.path.expanduser({model_dir!r}))")
+    lines.append("print(json.dumps(models))")
+    return "\n".join(lines) + "\n"
 
 
 def _ps_squote(v: str) -> str:
@@ -155,6 +426,38 @@ _SERVE_CMD_ALLOWLIST = {
 _GGUF_PRELUDE_RE = re.compile(
     r'^MODEL_FILE=\$\([^\n]*?\)\s*&&\s*\{[^{}]*\}\s*\|\|\s*\{[^{}]*\}\s*&&\s*'
 )
+_OLLAMA_HOST_ASSIGNMENT_RE = re.compile(r"(?:^|\s)OLLAMA_HOST=([^\s]+)")
+_OLLAMA_BIND_RE = re.compile(r"^\[([^\]]+)\]:(\d+)$|^([^:]+):(\d+)$")
+_OLLAMA_BIND_HOST_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
+
+
+def _ollama_bind_from_cmd(cmd: str | None, *, default_host: str = "127.0.0.1") -> tuple[str, str]:
+    """Return the Ollama bind host/port requested by a serve command.
+
+    Plain local `ollama serve` defaults to loopback. Remote callers can pass a
+    wider default host so the resulting API is reachable by Odysseus.
+    """
+    if not cmd:
+        return default_host, "11434"
+    match = _OLLAMA_HOST_ASSIGNMENT_RE.search(cmd)
+    if not match:
+        return default_host, "11434"
+    value = match.group(1).strip("'\"")
+    bind_match = _OLLAMA_BIND_RE.match(value)
+    if not bind_match:
+        return "127.0.0.1", "11434"
+    bracketed_host = bind_match.group(1)
+    host = bracketed_host or bind_match.group(3) or "127.0.0.1"
+    port = bind_match.group(2) or bind_match.group(4) or "11434"
+    if not _OLLAMA_BIND_HOST_RE.match(host):
+        return "127.0.0.1", "11434"
+    try:
+        port_num = int(port, 10)
+    except ValueError:
+        return "127.0.0.1", "11434"
+    if port_num < 1 or port_num > 65535:
+        return "127.0.0.1", "11434"
+    return f"[{host}]" if bracketed_host else host, port
 
 
 def _check_serve_binary(seg: str) -> None:
@@ -212,6 +515,103 @@ def _validate_serve_cmd(v: str | None) -> str | None:
         raise HTTPException(400, "Invalid characters in cmd")
     _check_serve_binary(v)
     return v
+
+
+def _append_serve_preflight_exit_lines(runner_lines: list[str], *, keep_shell_open: bool) -> None:
+    """Append serve-runner lines that surface preflight failures before exit."""
+    runner_lines.append('if [ -n "$ODYSSEUS_PREFLIGHT_EXIT" ]; then')
+    runner_lines.append('  echo ""; echo "=== Process exited with code $ODYSSEUS_PREFLIGHT_EXIT ==="')
+    if keep_shell_open:
+        runner_lines.append('  exec "${SHELL:-/bin/bash}"')
+    else:
+        runner_lines.append('  exit "$ODYSSEUS_PREFLIGHT_EXIT"')
+    runner_lines.append('fi')
+
+
+def _append_serve_exit_code_lines(runner_lines: list[str], *, keep_shell_open: bool) -> None:
+    """Append serve-runner lines that preserve and report the command exit code."""
+    runner_lines.append('ODYSSEUS_CMD_EXIT=$?')
+    if keep_shell_open:
+        runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="; exec "${SHELL:-/bin/bash}"')
+    else:
+        runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="')
+        runner_lines.append('exit "$ODYSSEUS_CMD_EXIT"')
+
+
+def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
+    """Append Linux llama.cpp build lines that prefer ROCm/HIP when available.
+
+    Cookbook already detects AMD GPUs elsewhere, but the llama.cpp bootstrap used
+    to hard-wire CUDA on Linux. That made ROCm hosts attempt a CUDA configure and
+    fail with "CUDA Toolkit not found" instead of building with HIP.
+    """
+    # Detect pip-installed nvcc (from vLLM/nvidia CUDA wheels) and put it on PATH
+    # so cmake's CUDA configure can find it. We keep this after the ROCm/HIP
+    # check — a machine with both stacks should honor the native HIP toolchain on
+    # AMD hosts instead of accidentally preferring a stray nvcc wheel.
+    runner_lines.append('    for _cudir in ~/.local/lib/python*/site-packages/nvidia/cu13 ~/.local/lib/python*/site-packages/nvidia/cu12 ~/.local/lib/python*/site-packages/nvidia/cuda_nvcc; do')
+    runner_lines.append('      [ -x "$_cudir/bin/nvcc" ] && export CUDA_HOME="$_cudir" && export PATH="$_cudir/bin:$PATH" && break')
+    runner_lines.append('    done')
+    # rm -rf build so a prior poisoned CMakeCache.txt (e.g. from a failed CUDA
+    # or HIP attempt) doesn't cause the next configure to reuse stale settings.
+    runner_lines.append('    cd ~/llama.cpp && rm -rf build')
+    runner_lines.append('    if command -v hipconfig &>/dev/null || [ -d /opt/rocm ] || [ -n "$ROCM_PATH" ] || [ -n "$HIP_PATH" ]; then')
+    runner_lines.append('      if command -v hipconfig &>/dev/null; then')
+    runner_lines.append('        export HIPCXX="${HIPCXX:-$(hipconfig -l)/clang}"')
+    runner_lines.append('        export HIP_PATH="${HIP_PATH:-$(hipconfig -R)}"')
+    runner_lines.append('      fi')
+    runner_lines.append('      echo "[odysseus] ROCm/HIP detected — building llama-server with HIP support..."')
+    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('    elif command -v nvcc &>/dev/null; then')
+    # nvcc alone is not sufficient — pip-installed CUDA wheels or incomplete
+    # tooling can expose nvcc without shipping libcudart, causing cmake to fail
+    # mid-build with "CUDA runtime library not found". Check cudart explicitly
+    # via a small helper so the guard stays readable.
+    runner_lines.append('      _odysseus_has_cudart() {')
+    runner_lines.append('        ldconfig -p 2>/dev/null | grep -q \'libcudart\\.so\' && return 0')
+    runner_lines.append('        local _cuh="${CUDA_HOME:-/usr/local/cuda}"')
+    runner_lines.append('        ls "$_cuh/lib64/libcudart.so"* &>/dev/null && return 0')
+    runner_lines.append('        ls "$_cuh/lib/libcudart.so"* &>/dev/null && return 0')
+    runner_lines.append('        ls /usr/local/cuda/lib64/libcudart.so* &>/dev/null && return 0')
+    runner_lines.append('        ls /usr/local/cuda/lib/libcudart.so* &>/dev/null && return 0')
+    runner_lines.append('        ls "${_cuh%/cuda_nvcc}/cuda_runtime/lib/libcudart.so"* &>/dev/null && return 0')
+    runner_lines.append('        return 1')
+    runner_lines.append('      }')
+    runner_lines.append('      if _odysseus_has_cudart; then')
+    runner_lines.append('        echo "[odysseus] CUDA nvcc + cudart found — building llama-server with CUDA (GPU) support..."')
+    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('      else')
+    runner_lines.append('        echo "[odysseus] WARNING: nvcc found but CUDA runtime (libcudart.so) is not visible — building llama-server for CPU only."')
+    runner_lines.append('        echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
+    runner_lines.append('        echo "[odysseus]   Ensure libcudart is installed (e.g. cuda-runtime package) and visible via ldconfig or CUDA_HOME."')
+    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('      fi')
+    runner_lines.append('    else')
+    runner_lines.append('      echo "[odysseus] WARNING: no HIP/CUDA toolchain found — building llama-server for CPU only."')
+    runner_lines.append('      echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
+    runner_lines.append('      echo "[odysseus]   Install ROCm for AMD GPUs or vLLM/CUDA tooling for NVIDIA, then re-launch this serve task."')
+    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('    fi')
+
+
+def _llama_cpp_rebuild_cmd() -> str:
+    """Shell command that clears the Cookbook-managed llama.cpp build.
+
+    Removes the cached ``llama-server`` symlink and the ``~/llama.cpp/build``
+    directory so the next llama.cpp serve recompiles from source, picking up a
+    CUDA or HIP toolchain if one is now available. The serve bootstrap only
+    builds when ``llama-server`` is missing from PATH, so without this an
+    existing CPU-only build is reused forever. It deliberately installs and
+    downloads nothing; the rebuild itself happens on the next serve.
+    """
+    return (
+        'mkdir -p "$HOME/bin" && '
+        'rm -f "$HOME/bin/llama-server" && '
+        'rm -rf "$HOME/llama.cpp/build" && '
+        'echo "[odysseus] Cleared the cached llama.cpp build. '
+        'Re-launch the serve task to rebuild llama-server from source '
+        '(CUDA or HIP will be used if a toolchain is now available)."'
+    )
 
 
 class ModelDownloadRequest(BaseModel):
@@ -275,6 +675,8 @@ def _parse_serve_phase(snapshot: str, task_type: str = "serve") -> dict:
             "reqs": reqs,
         }
     if "Application startup complete" in flat:
+        return {"phase": "ready", "status": "ready"}
+    if re.search(r'Ollama API ready on port\s+\d+', flat, re.I):
         return {"phase": "ready", "status": "ready"}
     # HTTP access logs (e.g. GET /v1/models 200 OK) mean the server is up and serving
     if re.search(r'(?:GET|POST)\s+/[^\s]*\s+HTTP/[\d.]+"\s*\d{3}', flat):

