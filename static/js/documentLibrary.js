@@ -711,6 +711,13 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         // Drop it from the current view (it no longer belongs here) and refresh.
         _libraryDocs = _libraryDocs.filter(d => d.id !== doc.id);
         _libraryTotal = Math.max(0, _libraryTotal - 1);
+        if (doc.language && _libraryLanguages[doc.language] !== undefined) {
+          const n = Math.max(0, _libraryLanguages[doc.language] - 1);
+          if (n === 0) delete _libraryLanguages[doc.language];
+          else _libraryLanguages[doc.language] = n;
+        }
+        libraryRenderStats();
+        libraryRenderLangChips();
         libraryRenderGrid();
         if (uiModule) uiModule.showToast(toArchived ? 'Archived' : 'Restored');
       } catch { if (uiModule) uiModule.showError('Failed to ' + (toArchived ? 'archive' : 'restore')); }
@@ -804,6 +811,13 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         if (!res.ok) throw new Error('failed');
         _libraryDocs = _libraryDocs.filter(d => d.id !== doc.id);
         _libraryTotal = Math.max(0, _libraryTotal - 1);
+        if (doc.language && _libraryLanguages[doc.language] !== undefined) {
+          const n = Math.max(0, _libraryLanguages[doc.language] - 1);
+          if (n === 0) delete _libraryLanguages[doc.language];
+          else _libraryLanguages[doc.language] = n;
+        }
+        libraryRenderStats();
+        libraryRenderLangChips();
         libraryRenderGrid();
         if (uiModule) uiModule.showToast(toArchived ? 'Archived' : 'Restored');
       } catch { if (uiModule) uiModule.showError('Failed to ' + (toArchived ? 'archive' : 'restore')); }
@@ -1170,9 +1184,16 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         card.addEventListener('transitionend', () => card.remove(), { once: true });
         setTimeout(() => { if (card.parentElement) card.remove(); }, 400);
       }
+      const deletedDoc = _libraryDocs.find(d => d.id === docId);
       _libraryDocs = _libraryDocs.filter(d => d.id !== docId);
       _libraryTotal = Math.max(0, _libraryTotal - 1);
+      if (deletedDoc?.language && _libraryLanguages[deletedDoc.language] !== undefined) {
+        const n = Math.max(0, _libraryLanguages[deletedDoc.language] - 1);
+        if (n === 0) delete _libraryLanguages[deletedDoc.language];
+        else _libraryLanguages[deletedDoc.language] = n;
+      }
       libraryRenderStats();
+      libraryRenderLangChips();
       if (uiModule) uiModule.showToast('Document deleted');
     } catch (e) {
       if (uiModule) uiModule.showError(`Failed to delete document: ${e.message || e}`);
