@@ -1129,14 +1129,19 @@ async function initSearchSettings() {
     if (_settings.google_pse_cx) cxInput.value = _settings.google_pse_cx;
   } catch (e) { console.warn('Failed to load search settings', e); }
 
-  countSel.addEventListener('change', function() {
+    countSel.addEventListener('change', function () {
     if (this.value === 'custom') {
       countCustomInput.style.display = 'block';
       countCustomInput.focus();
-    } else {
-      countCustomInput.style.display = 'none';
+      return;
     }
+
+    countCustomInput.style.display = 'none';
+    saveSearch();
   });
+
+  countCustomInput.addEventListener('change', saveSearch);
+  countCustomInput.addEventListener('blur', saveSearch);
 
   updateVisibility();
 
@@ -1201,13 +1206,9 @@ async function initSearchSettings() {
   }
 
   provSel.addEventListener('change', function() { updateVisibility(); saveSearch(); _syncSearchPicker(); });
-  countSel.addEventListener('change', saveSearch);
   urlInput.addEventListener('change', saveSearch);
   keyInput.addEventListener('change', saveSearch);
   cxInput.addEventListener('change', saveSearch);
-
-  countCustomInput.addEventListener('change', saveSearch);
-  countCustomInput.addEventListener('blur', saveSearch);
 
   // ── Provider picker with logos (mirrors the hidden <select>) ──
   var picker = el('search-provider-picker');
