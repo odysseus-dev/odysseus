@@ -1,0 +1,16 @@
+# Dev / CI tool pins (intent). Compiled to requirements-dev.lock via
+# `uv pip compile --generate-hashes` inside python:3.12-slim.
+#
+# These are development/CI-only tools and MUST stay OUT of requirements.lock —
+# the runtime install surface is unchanged for behavior-preservation. Versions
+# are pinned (Pitfall 9) so a tool bump cannot silently break a CI gate.
+
+ruff==0.15.15
+mypy==2.1.0
+bandit==1.9.4
+pip-audit==2.10.0
+# Test runner trio (moved out of requirements.txt — they are dev-only).
+# pytest-cov adds coverage instrumentation for the scorecard metric.
+pytest
+pytest-asyncio
+pytest-cov
