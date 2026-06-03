@@ -176,6 +176,7 @@ let selectedProviderId = 'openai';
 let selectedTheme = getSavedThemeName();
 let selectedDensity = getSavedDensity();
 let modelCatalog = emptyCatalog();
+let selectedExistingModel = null;
 let previousFocus = null;
 let existingModelsLoaded = false;
 let scaleListenersAttached = false;
@@ -667,12 +668,34 @@ function renderExistingModels() {
     return;
   }
 
-  list.innerHTML = modelCatalog.models.slice(0, 10).map((entry) => `
-    <div class="onboarding-model-chip">
+  list.innerHTML = modelCatalog.models.slice(0, 10).map((entry) => {
+    const selected = selectedExistingModel
+      && selectedExistingModel.endpointId === entry.endpointId
+      && selectedExistingModel.model === entry.model;
+    return `
+    <div class="onboarding-model-chip${selected ? ' is-selected' : ''}" role="button" tabindex="0"
+      data-model-pick data-endpoint-id="${html(entry.endpointId)}" data-model="${html(entry.model)}"
+      data-display="${html(entry.displayName || entry.model)}" aria-pressed="${selected ? 'true' : 'false'}">
       <strong>${html(entry.displayName || entry.model)}</strong>
       <span>${html(entry.endpointName || 'Endpoint')}</span>
-    </div>
-  `).join('') + (modelCount > 10 ? `<div class="onboarding-model-chip is-more">+${modelCount - 10} more</div>` : '');
+    </div>`;
+  }).join('') + (modelCount > 10 ? `<div class="onboarding-model-chip is-more">+${modelCount - 10} more</div>` : '');
+}
+
+async function selectExistingModel(endpointId, model, displayName) {
+  if (!endpointId || !model) return;
+  const statusId = 'onboarding-existing-status';
+  selectedExistingModel = { endpointId, model };
+  renderExistingModels();
+  setStatus(statusId, '', 'Setting default...');
+  try {
+    await saveDefaultModel(endpointId, model);
+    setStatus(statusId, 'success', `Default model: ${displayName || model}`);
+  } catch (err) {
+    selectedExistingModel = null;
+    renderExistingModels();
+    setStatus(statusId, 'error', String(err?.message || err || 'Could not set default model.'));
+  }
 }
 
 async function refreshExistingModels(force = false) {
@@ -848,6 +871,8 @@ async function useFirstAvailableModel() {
 
   try {
     await saveDefaultModel(entry.endpointId, entry.model);
+    selectedExistingModel = { endpointId: entry.endpointId, model: entry.model };
+    renderExistingModels();
     setStatus(statusId, 'success', `Default model: ${entry.displayName || entry.model}`);
   } catch (err) {
     setStatus(statusId, 'error', String(err?.message || err || 'Could not set default model.'));
@@ -1023,6 +1048,19 @@ function wireOverlay() {
   overlay.querySelector('#onboarding-local-save')?.addEventListener('click', saveLocalEndpoint);
   overlay.querySelector('#onboarding-refresh-models')?.addEventListener('click', () => refreshExistingModels(true));
   overlay.querySelector('#onboarding-use-first-model')?.addEventListener('click', useFirstAvailableModel);
+  const modelList = overlay.querySelector('#onboarding-existing-models');
+  modelList?.addEventListener('click', (event) => {
+    const chip = event.target.closest('[data-model-pick]');
+    if (!chip) return;
+    selectExistingModel(chip.dataset.endpointId, chip.dataset.model, chip.dataset.display);
+  });
+  modelList?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
+    const chip = event.target.closest('[data-model-pick]');
+    if (!chip) return;
+    event.preventDefault();
+    selectExistingModel(chip.dataset.endpointId, chip.dataset.model, chip.dataset.display);
+  });
   overlay.querySelectorAll('[data-theme-id]').forEach((button) => {
     button.addEventListener('click', () => applySelectedTheme(button.dataset.themeId));
   });
@@ -1059,6 +1097,7 @@ async function showOnboarding() {
 
   previousFocus = document.activeElement;
   existingModelsLoaded = false;
+  selectedExistingModel = null;
   modelCatalog = await fetchModelCatalog(false).catch(() => emptyCatalog());
   selectedTheme = getSavedThemeName();
   selectedDensity = getSavedDensity();

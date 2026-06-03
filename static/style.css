@@ -36280,6 +36280,32 @@ body.onboarding-open {
   padding: 10px 12px;
 }
 
+.onboarding-model-chip[data-model-pick] {
+  cursor: pointer;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.onboarding-model-chip[data-model-pick]:hover,
+.onboarding-model-chip[data-model-pick].is-selected {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 44%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+}
+
+.onboarding-model-chip[data-model-pick]:hover {
+  transform: translateY(-1px);
+}
+
+.onboarding-model-chip[data-model-pick]:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, var(--red)) 72%, transparent);
+  outline-offset: 2px;
+}
+
 .onboarding-model-chip strong,
 .onboarding-model-chip span {
   display: block;
