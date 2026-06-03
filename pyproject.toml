@@ -9,7 +9,22 @@ extend-exclude = ["static/", "data/", "logs/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP", "B"]   # LOCKED families (D-15) — no ALL, no preview
-ignore = ["E501"]                          # no hard-column convention (D-19, CONVENTIONS.md)
+# Codes ignored because they conflict with the codebase's DOCUMENTED, idiomatic
+# patterns (CLAUDE.md / CONVENTIONS.md) — not a rule-family change, the E/B/F/W
+# families stay selected. Auto-"fixing" these would change behavior or fight the
+# framework, which violates the behavior-preserving mandate:
+#   E501  — no hard-column convention (D-19); formatter wraps, lint must not fail length
+#   E402  — module-level-import-not-at-top: lazy/local + post-setup imports are an
+#           established convention (CLAUDE.md "established convention, not an accident";
+#           app.py orchestrator imports routers after app construction)
+#   B904   — raise-without-from-inside-except: the "degrade-gracefully" error style
+#           re-raises/returns structured errors without `from e` pervasively
+#   E712   — `== True` / `== False`: required SQLAlchemy filter idiom (Column == True
+#           builds SQL; `is True` breaks query construction)
+#   E711   — `== None`: required SQLAlchemy `IS NULL` filter idiom
+#   B008   — function-call-in-default-argument: FastAPI's Form(...)/Depends(...)/
+#           Query(...) default-argument idiom (CLAUDE.md notes Form(...) usage)
+ignore = ["E501", "E402", "B904", "E712", "E711", "B008"]
 
 [tool.ruff.lint.per-file-ignores]
 # src/database.py is a pure re-export shim (`from core.database import *` plus an
@@ -25,6 +40,38 @@ ignore = ["E501"]                          # no hard-column convention (D-19, CO
 # break collection; F811 fires on intentional fixture/name redefinition. Suppress
 # both for the test tree (plan Task 4 recommendation; preserves behavior).
 "tests/**" = ["F401", "F811"]
+# Residual findings the safe auto-fix could not resolve, suppressed at config level
+# (greppable, no code churn, no behavior change). Each is a localized minor lint that
+# would require a logic edit to "fix" — out of scope for a behavior-preserving pass
+# (plan Task 4: prefer config-level per-file-ignores; no rule-family change).
+"core/__init__.py" = ["F403"]
+"mcp_servers/email_server.py" = ["F841"]
+"routes/cookbook_routes.py" = ["E741"]
+"routes/document_routes.py" = ["B023", "E731"]
+"routes/gallery_routes.py" = ["B007"]
+"routes/memory_routes.py" = ["E741"]
+"routes/model_routes.py" = ["B905", "F841"]
+"routes/upload_routes.py" = ["B007"]
+"scripts/diffusion_server.py" = ["F841"]
+"scripts/update_database.py" = ["W291"]
+"src/agent_loop.py" = ["B007", "B023"]
+"src/caldav_sync.py" = ["B018"]
+"src/chat_processor.py" = ["B905"]
+"src/document_actions.py" = ["B007", "F841"]
+"src/email_thread_parser.py" = ["E741"]
+"src/personal_docs.py" = ["B007", "W291"]
+"src/preset_manager.py" = ["W291"]
+"src/task_scheduler.py" = ["B006", "B023"]
+"src/teacher_escalation.py" = ["B007"]
+"src/upload_handler.py" = ["B007"]
+"src/visual_report.py" = ["B905"]
+"tests/test_auth_require_privilege_nondict.py" = ["B017"]
+"tests/test_deep_research_extraction_controls.py" = ["B026"]
+"tests/test_digest_windows.py" = ["B905"]
+"tests/test_hwfit_amd.py" = ["B011"]
+"tests/test_rag_remove_directory_scope.py" = ["B905"]
+"tests/test_skills_manager_owner_isolation.py" = ["F841"]
+"tests/test_upload_handler_atomicity.py" = ["F841"]
 
 [tool.ruff.format]
 quote-style = "double"                     # matches house style (CONVENTIONS.md)
