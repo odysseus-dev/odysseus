@@ -107,13 +107,35 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
                     continue
                 if skill["title"].strip().lower() in existing_titles:
                     continue
-                if user and not skill.get("owner"):
-                    skill["owner"] = user
-                existing.append(skill)
+                
+                # Use skills_manager.add_skill to correctly save each skill to disk
+                skills_manager.add_skill(
+                    title=skill.get("title", ""),
+                    problem=skill.get("problem", ""),
+                    solution=skill.get("solution", ""),
+                    steps=skill.get("steps"),
+                    tags=skill.get("tags"),
+                    source=skill.get("source", "imported"),
+                    teacher_model=skill.get("teacher_model"),
+                    confidence=skill.get("confidence", 0.8),
+                    owner=skill.get("owner") or user,
+                    name=skill.get("name"),
+                    description=skill.get("description"),
+                    category=skill.get("category", "general"),
+                    when_to_use=skill.get("when_to_use"),
+                    procedure=skill.get("procedure"),
+                    pitfalls=skill.get("pitfalls"),
+                    verification=skill.get("verification"),
+                    platforms=skill.get("platforms"),
+                    requires_toolsets=skill.get("requires_toolsets"),
+                    fallback_for_toolsets=skill.get("fallback_for_toolsets"),
+                    status=skill.get("status", "draft"),
+                    version=skill.get("version", "1.0.0"),
+                )
+                
                 existing_ids.add(skill.get("id"))
                 existing_titles.add(skill["title"].strip().lower())
                 added += 1
-            skills_manager.save(existing)
             imported.append(f"{added} skills")
 
         # ── Presets ──
