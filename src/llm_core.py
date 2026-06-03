@@ -1409,7 +1409,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                     or _delta0.get("tool_calls")
                                 )
                                 if "usage" in j and not _delta_has_output:
-                                    u = j["usage"]
+                                    u = j["usage"] or {}
                                     _usage_data = {"input_tokens": u.get("prompt_tokens", 0), "output_tokens": u.get("completion_tokens", 0)}
                                     # llama.cpp puts a `timings` block alongside `usage` with the
                                     # TRUE generation speed (predicted_per_second) — pure decode,
@@ -1443,6 +1443,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             yield f'data: {json.dumps({"delta": content})}\n\n'
                                         # Native tool calls — accumulate across chunks
                                         for tc in delta.get("tool_calls") or []:
+                                            if tc is None: continue
                                             func = tc.get("function") or {}
                                             raw_idx = tc.get("index")
                                             if raw_idx is None:

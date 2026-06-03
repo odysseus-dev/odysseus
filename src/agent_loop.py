@@ -17,7 +17,7 @@ from typing import AsyncGenerator, List, Dict, Optional, Set
 from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
 from src.model_context import estimate_tokens
 from src.settings import get_setting
-from src.prompt_security import untrusted_context_message, skill_context_message
+from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner
 from src.agent_tools import (
     parse_tool_blocks,
@@ -915,7 +915,7 @@ def _build_system_prompt(
                 _skills_text = "\n".join(lines)
                 if _skill_index_block:
                     _skills_text = _skill_index_block + "\n\n" + _skills_text
-                _skills_message = skill_context_message(_skills_text)
+                _skills_message = untrusted_context_message("skills", _skills_text)
             else:
                 _skills_message = None
     except Exception as _sk_err:
