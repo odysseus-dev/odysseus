@@ -59,8 +59,12 @@ class MemoryManager:
                     line = line.strip()
                     # Look for bullet points or numbered lists that might contain memories
                     if re.match(r'^[-*•]|\d+\.', line):
-                        # Extract the text after the bullet/number
-                        text_match = re.match(r'^[-*•]|\d+\.\s*(.*)', line)
+                        # Extract the text after the bullet/number. Group both
+                        # markers so the capture applies to either. The previous
+                        # `^[-*•]|\d+\.\s*(.*)` put the group on the numbered
+                        # branch only, so a bullet line matched with group(1)=None
+                        # and crashed on .strip().
+                        text_match = re.match(r'^(?:[-*•]|\d+\.)\s*(.*)', line)
                         if text_match:
                             text = text_match.group(1).strip()
                             if text:
