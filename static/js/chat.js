@@ -1314,7 +1314,7 @@ import createResearchSynapse from './researchSynapse.js';
                   accumulated = accumulated.replace(/<think>/i, '<think time="' + _elapsedDone + '">');
                   roundText = roundText.replace(/<think>/i, '<think time="' + _elapsedDone + '">');
                 }
-                if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
+                if (_liveThinkHeader) _liveThinkHeader.textContent = 'View reasoning';
                 if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
                 if (_liveThinkTimerEl && _elapsedDone) {
                   _liveThinkTimerEl.textContent = _elapsedDone + 's';
@@ -1491,12 +1491,12 @@ import createResearchSynapse from './researchSynapse.js';
                   thinkContent.innerHTML = `
                     <div class="thinking-section">
                       <div class="thinking-header" data-thinking-id="${_liveThinkDomId}">
-                        <div class="thinking-header-left"><span class="live-think-header-text">Thinking\u2026</span></div>
+                        <div class="thinking-header-left"><span class="live-think-header-text" data-label="reasoning">Thinking\u2026</span></div>
                         <span class="live-think-spinner-slot" style="flex-shrink:0;margin-left:auto;"></span>
                         <span class="live-think-timer" style="font-size:11px;opacity:0.4;font-variant-numeric:tabular-nums;margin-left:6px;margin-right:5px;"></span>
                         <span class="thinking-toggle live-think-toggle" id="${_liveThinkDomId}-toggle"></span>
                       </div>
-                      <div class="thinking-content" id="${_liveThinkDomId}">
+                      <div class="thinking-content expanded" id="${_liveThinkDomId}">
                         <div class="thinking-content-inner live-think-inner"></div>
                       </div>
                     </div>`;
@@ -1507,6 +1507,9 @@ import createResearchSynapse from './researchSynapse.js';
                   _liveThinkSpinnerSlot = thinkContent.querySelector('.live-think-spinner-slot');
                   _liveThinkTimerEl = thinkContent.querySelector('.live-think-timer');
                   _liveThinkToggle = thinkContent.querySelector('.live-think-toggle');
+                  // Keep the toggle chevron in sync with the expanded live box so
+                  // it points "open" while reasoning streams.
+                  if (_liveThinkToggle) _liveThinkToggle.classList.add('expanded');
                   // Live timer
                   var _thinkTimerStart = Date.now();
                   var _thinkTimerRAF = 0;
@@ -1570,7 +1573,7 @@ import createResearchSynapse from './researchSynapse.js';
                     accumulated = accumulated.replace(/<think>/i, '<think time="' + elapsed + '">');
                     roundText = roundText.replace(/<think>/i, '<think time="' + elapsed + '">');
                   }
-                  if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
+                  if (_liveThinkHeader) _liveThinkHeader.textContent = 'View reasoning';
                   if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
                   // Move timer to right side of header
                   if (_liveThinkTimerEl && elapsed) {
@@ -1593,6 +1596,13 @@ import createResearchSynapse from './researchSynapse.js';
                   if (_liveHdr) _liveHdr.dataset.thinkingId = _thinkId;
                   if (_liveThinkContent) _liveThinkContent.id = _thinkId;
                   if (_liveThinkToggle) _liveThinkToggle.id = _thinkId + '-toggle';
+
+                  // Collapse the reasoning now that it's complete — it streamed
+                  // live (expanded) while generating, but at rest it should be
+                  // collapsed by default so the answer leads. User clicks the
+                  // header to re-open it.
+                  if (_liveThinkContent) _liveThinkContent.classList.remove('expanded');
+                  if (_liveThinkToggle) _liveThinkToggle.classList.remove('expanded');
 
                   // Append a container for the reply text that follows thinking
                   var _streamEl = _liveThinkSection ? _liveThinkSection.parentElement : roundHolder.querySelector('.stream-content');

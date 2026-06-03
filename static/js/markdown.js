@@ -260,7 +260,7 @@ function createThinkingSection(thinkingContent, index = 0, thinkingTime = null) 
     <div class="thinking-section">
       <div class="thinking-header" data-thinking-id="${id}">
         <div class="thinking-header-left">
-          <span>View thinking process</span>
+          <span data-label="reasoning">View reasoning</span>
         </div>
         <div style="display:flex;align-items:center;gap:6px;">
           ${timeHtml}
