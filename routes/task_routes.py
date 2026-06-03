@@ -165,7 +165,17 @@ def _resolve_run_endpoint(db, task: ScheduledTask, run: TaskRun) -> str:
                     cached = json.loads(ep.cached_models) or []
                 except Exception:
                     cached = []
-            if model in cached:
+            # Admin-pinned model IDs (cloud deployment IDs) live in
+            # pinned_models and intentionally never appear in cached_models, so
+            # matching cached alone fails to resolve the endpoint for a task
+            # pinned to such a model. Match pinned too.
+            pinned = []
+            if getattr(ep, "pinned_models", None):
+                try:
+                    pinned = json.loads(ep.pinned_models) or []
+                except Exception:
+                    pinned = []
+            if model in cached or model in pinned:
                 return ep.base_url or ""
     except Exception:
         pass
