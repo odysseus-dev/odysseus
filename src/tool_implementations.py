@@ -2659,7 +2659,7 @@ async def _cookbook_register_task(session_id: str, model: str, host: str,
     placeholder = (
         f"Launched via agent — waiting for tmux output…\n"
         f"  session: {session_id}\n"
-        f"  target:  {target}{cmd.split()[0] if cmd else ''}\n"
+        f"  target:  {target}{(cmd.split() or [''])[0] if cmd else ''}\n"
         f"  cmd:     {cmd[:200]}{'…' if len(cmd) > 200 else ''}"
     )
     tasks.append({
