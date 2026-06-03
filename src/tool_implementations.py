@@ -2422,9 +2422,17 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             if args.get("location") is not None:
                 ev.location = args["location"]
             if args.get("dtstart") is not None:
-                ev.dtstart = _parse_dt(args["dtstart"])
+                # Anchor naive/natural-language input to the USER's timezone and
+                # refresh is_utc, exactly like create_event. Parsing with the
+                # raw server-local _parse_dt here (and never touching is_utc)
+                # silently shifted an updated event by the user's UTC offset.
+                _eff_all_day = (
+                    args["all_day"] if args.get("all_day") is not None else ev.all_day
+                )
+                ev.dtstart, _su = _parse_event_dt(args["dtstart"])
+                ev.is_utc = bool(_su and not _eff_all_day)
             if args.get("dtend") is not None:
-                ev.dtend = _parse_dt(args["dtend"])
+                ev.dtend, _eu = _parse_event_dt(args["dtend"])
             if args.get("all_day") is not None:
                 ev.all_day = args["all_day"]
             # Tag/category + importance updates (any of these aliases).
