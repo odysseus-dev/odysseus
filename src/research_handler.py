@@ -148,7 +148,7 @@ class ResearchHandler:
                 timeout=15,
                 max_retries=1,
             )
-            query = strip_thinking(response).strip().strip('"\'')
+            query = (strip_thinking(response) or "").strip().strip('"\'')
             if query and len(query) > 5:
                 return query
         except Exception as e:

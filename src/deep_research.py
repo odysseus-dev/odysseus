@@ -704,7 +704,7 @@ class DeepResearcher:
             # Reasoning models prepend a <think>...</think> block — strip it
             # before checking for YES/NO, otherwise the answer always looks
             # like it starts with "<THINK>" and the engine never stops.
-            clean = strip_thinking(response).strip()
+            clean = (strip_thinking(response) or "").strip()
             # Tolerate "**YES**", "Yes.", quotes, etc.
             answer = re.sub(r'^[\s*_`"\'>#\-]+', '', clean).upper()
             should_stop = answer.startswith("YES")
