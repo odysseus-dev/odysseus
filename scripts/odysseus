@@ -68,6 +68,10 @@ def _short_help(path: Path) -> str:
     return first
 
 
+def _is_runnable_subcommand(path: Path) -> bool:
+    return path.exists() and path.is_file() and os.access(path, os.X_OK)
+
+
 def _print_listing() -> None:
     """`odysseus` with no args (or `odysseus help`) — print the table."""
     sys.stdout.write(f"odysseus {VERSION} — every feature, on the shell.\n\n")
@@ -101,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
             _print_listing()
             return 0
         sub = SCRIPTS_DIR / f"odysseus-{argv[1]}"
-        if not sub.exists():
+        if not _is_runnable_subcommand(sub):
             sys.stderr.write(f"odysseus: unknown subcommand {argv[1]!r}\n")
             return 1
         return subprocess.call([str(sub), "--help"])
@@ -109,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     # `odysseus foo ...` → exec `odysseus-foo ...` under the project venv.
     name = argv[0]
     sub = SCRIPTS_DIR / f"odysseus-{name}"
-    if not sub.exists():
+    if not _is_runnable_subcommand(sub):
         sys.stderr.write(
             f"odysseus: unknown subcommand {name!r}. "
             f"Try `odysseus help` to see available ones.\n"

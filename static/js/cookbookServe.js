@@ -93,6 +93,67 @@ function _allGpuIds(count) {
   return Array.from({ length: Math.floor(n) }, (_, i) => String(i)).join(',');
 }
 
+function _selectedServeTarget(panel) {
+  const select = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
+  const servers = Array.isArray(_envState.servers) ? _envState.servers : [];
+  let host = _envState.remoteHost || '';
+  let server = host ? servers.find(s => s.host === host) : null;
+  if (select && select.value != null) {
+    if (select.value === 'local') {
+      host = '';
+      server = servers.find(s => !s.host || s.host === 'local') || null;
+    } else {
+      const idx = /^\d+$/.test(String(select.value)) ? parseInt(select.value, 10) : -1;
+      server = servers.find(s => s.host === select.value) || (idx >= 0 ? servers[idx] : null) || null;
+      host = server?.host || '';
+    }
+  }
+  const venv = panel?.querySelector('[data-field="venv"]')?.value?.trim() || server?.envPath || _envState.envPath || '';
+  const label = host
+    ? (server?.name ? `${server.name} (${host})` : host)
+    : (server?.name || 'local server');
+  return {
+    host,
+    port: host ? (_getPort(host) || server?.port || '') : '',
+    venv,
+    label,
+  };
+}
+
+async function _fetchServeRuntimePackage(panel, backend) {
+  const packageByBackend = {
+    vllm: 'vllm',
+    sglang: 'sglang',
+    llamacpp: 'llama_cpp',
+    diffusers: 'diffusers',
+  };
+  const packageName = packageByBackend[backend];
+  if (!packageName) return null;
+  const target = _selectedServeTarget(panel);
+  const params = new URLSearchParams();
+  if (target.host) {
+    params.set('host', target.host);
+    if (target.port) params.set('ssh_port', target.port);
+    if (target.venv) params.set('venv', target.venv);
+  }
+  const res = await fetch('/api/cookbook/packages' + (params.toString() ? '?' + params.toString() : ''), { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  const pkg = (data.packages || []).find(p => p.name === packageName);
+  return { pkg, target };
+}
+
+function _runtimeNoteText(backend, pkg, target) {
+  const labels = { vllm: 'vLLM', sglang: 'SGLang', llamacpp: 'llama.cpp', diffusers: 'Diffusers' };
+  const label = labels[backend] || backend;
+  if (!pkg) return `${label} readiness unavailable for ${target.label}.`;
+  const note = pkg.status_note || pkg.update_note || '';
+  if (pkg.installed) {
+    return note ? `${label} ready on ${target.label}: ${note}` : `${label} ready on ${target.label}.`;
+  }
+  return note ? `${label} missing on ${target.label}: ${note}` : `${label} missing on ${target.label}.`;
+}
+
 // ── Filter/sort cached model list ──
 
 function _filterCachedList() {
@@ -185,8 +246,18 @@ function _selectedGgufExpr(model, repo, relPath) {
     const base = String(model.path || '').replace(/\/+$/, '');
     return `$(printf %s ${_shellPathExpr(`${base}/${repo}/${rel}`)})`;
   }
+  if (model.path) {
+    const base = String(model.path || '').replace(/\/+$/, '');
+    return `$(printf %s ${_shellPathExpr(`${base}/models--${repo.replace(/\//g, '--')}/snapshots/${rel}`)})`;
+  }
   const cacheRepo = repo.replace(/\//g, '--');
   return `$(printf %s \${HOME}${_shellQuote(`/.cache/huggingface/hub/models--${cacheRepo}/snapshots/${rel}`)})`;
+}
+
+function _ggufSearchDirExpr(model, repo) {
+  if (model.is_local_dir && model.path) return _shellQuote(`${String(model.path || '').replace(/\/+$/, '')}/${repo}`);
+  if (model.path) return _shellQuote(`${String(model.path || '').replace(/\/+$/, '')}/models--${repo.replace(/\//g, '--')}/snapshots`);
+  return `"$HOME/.cache/huggingface/hub/models--${repo.replace(/\//g, '--')}/snapshots"`;
 }
 
 function _rerenderCachedModels() {
@@ -399,7 +470,9 @@ function _rerenderCachedModels() {
 
       // Toggle — close if already open
       if (item.classList.contains('doclib-card-expanded')) {
-        item.querySelector('.hwfit-serve-panel')?.remove();
+        const existingPanel = item.querySelector('.hwfit-serve-panel');
+        existingPanel?._cleanupRuntimeReadiness?.();
+        existingPanel?.remove();
         item.classList.remove('doclib-card-expanded');
         item.style.flexDirection = '';
         item.style.alignItems = '';
@@ -410,7 +483,9 @@ function _rerenderCachedModels() {
 
       // Collapse any other expanded
       list.querySelectorAll('.doclib-card-expanded').forEach(c => {
-        c.querySelector('.hwfit-serve-panel')?.remove();
+        const openPanel = c.querySelector('.hwfit-serve-panel');
+        openPanel?._cleanupRuntimeReadiness?.();
+        openPanel?.remove();
         c.classList.remove('doclib-card-expanded');
         c.style.flexDirection = '';
         c.style.alignItems = '';
@@ -453,6 +528,7 @@ function _rerenderCachedModels() {
           : (_es.gpus || detectedGpuIds));
       const tpOpts = [1,2,4,8].map(n => `<option${defaultTp==String(n)?' selected':''}>${n}</option>`).join('');
       const dtypeOpts = ['auto','float16','bfloat16'].map(d => `<option value="${d}"${sv('dtype','auto')===d?' selected':''}>${d}</option>`).join('');
+      const vllmKvCacheOpts = ['auto','fp8'].map(d => `<option value="${d}"${sv('vllm_kv_cache_dtype','auto')===d?' selected':''}>${d}</option>`).join('');
       const _l = (name, tip) => `<span>${name}<span class="hwfit-hint" title="${tip}">?</span></span>`;
       const _ggufChoices = _runnableGgufFiles(m);
       const _savedGguf = String(sv('gguf_file', '') || '');
@@ -508,6 +584,7 @@ function _rerenderCachedModels() {
       }
       panelHtml += `<label>${_l('GPUs','Toggle which GPUs to use')}<div class="cookbook-gpu-group">${_gpuBtnsHtml}</div><input type="hidden" class="hwfit-sf" data-field="gpus" value="${esc(defaultGpus)}" /></label>`;
       panelHtml += `</div>`;
+      panelHtml += `<div class="hwfit-serve-runtime-note" style="display:none;font-size:11px;line-height:1.35;color:var(--fg-muted);margin-top:-4px;"></div>`;
       if (_ggufChoices.length > 1) {
         panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp">`;
         panelHtml += `<label class="hwfit-backend-llamacpp">${_l('GGUF File','Choose the exact GGUF artifact to serve from this cached model folder.')}<select class="hwfit-sf hwfit-sf-wide" data-field="gguf_file">${_ggufOptions}</select></label>`;
@@ -524,6 +601,7 @@ function _rerenderCachedModels() {
       panelHtml += `<label class="hwfit-backend-vllm">${_l('Swap','CPU swap space in GB. Leave empty to omit (removed in newer vLLM)')}<input type="text" class="hwfit-sf" data-field="swap" value="${esc(sv('swap', ''))}" placeholder="off" /></label>`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('Max Seqs','Maximum concurrent requests. Lower = less memory. Default 8 — prosumer GPUs often OOM on vLLM default 256 during CUDA graph capture.')}<input type="text" class="hwfit-sf" data-field="max_seqs" value="${esc(sv('max_seqs', '8'))}" placeholder="8" /></label>`;
       panelHtml += `<label>${_l('Dtype','Data type for weights. auto picks best for GPU')}<select class="hwfit-sf" data-field="dtype">${dtypeOpts}</select></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm">${_l('KV Cache','vLLM --kv-cache-dtype. auto uses the model/runtime default; fp8 reduces KV memory for long context.')}<select class="hwfit-sf" data-field="vllm_kv_cache_dtype">${vllmKvCacheOpts}</select></label>`;
       panelHtml += `</div>`;
       // Row 2b: Diffusers settings
       const diffDtypeOpts = ['bfloat16','float16','float32'].map(d => `<option value="${d}"${sv('diff_dtype','bfloat16')===d?' selected':''}>${d}</option>`).join('');
@@ -544,11 +622,25 @@ function _rerenderCachedModels() {
       panelHtml += `</div>`;
       // Row 2c: llama.cpp fit/perf flags (set by Auto profiles, editable by hand)
       const _kvOpts = ['', 'q4_0', 'q8_0', 'f16'].map(k => `<option value="${k}"${sv('cache_type','')===k?' selected':''}>${k||'default'}</option>`).join('');
+      const llamaFitOpts = ['', 'off', 'on'].map(d => `<option value="${d}"${sv('llama_fit','')===d?' selected':''}>${d||'default'}</option>`).join('');
+      const llamaSplitModeOpts = ['', 'layer', 'tensor', 'row', 'none'].map(d => `<option value="${d}"${sv('llama_split_mode','')===d?' selected':''}>${d||'default'}</option>`).join('');
       panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp">`;
       panelHtml += `<label>${_l('CPU MoE','n-cpu-moe: number of MoE expert layers to run on CPU when the model is bigger than VRAM. 0 = all on GPU. Set automatically by the Auto profiles below.')}<input type="text" class="hwfit-sf" data-field="n_cpu_moe" value="${esc(sv('n_cpu_moe',''))}" placeholder="0" style="width:54px;" /></label>`;
       panelHtml += `<label>${_l('KV Cache','cache-type-k/v: quantize the KV cache. q4_0 = smallest (more context), q8_0 = sharp long-context, f16 = full. Blank = llama.cpp default.')}<select class="hwfit-sf" data-field="cache_type">${_kvOpts}</select></label>`;
       panelHtml += `<label class="hwfit-sf-cb" style="align-self:end;"><input type="checkbox" class="hwfit-sf" data-field="flash_attn"${sv('flash_attn',false)?' checked':''} /> Flash Attn${_h('--flash-attn on: faster attention + needed for quantized KV cache.')}</label>`;
       panelHtml += `<label class="hwfit-sf-cb" style="align-self:end;"><input type="checkbox" class="hwfit-sf" data-field="vision"${sv('vision',false)?' checked':''} /> Vision${_h('Serve with the vision encoder so the model can read images. Auto-finds an mmproj-*.gguf next to the model (download one into the model folder). Adds ~1 GB VRAM + a small per-image cost.')}</label>`;
+      panelHtml += `<label>${_l('Fit','llama.cpp --fit. Leave default unless you need explicit off/on behavior for a preset.')}<select class="hwfit-sf" data-field="llama_fit">${llamaFitOpts}</select></label>`;
+      panelHtml += `</div>`;
+      // Row 2d: native llama-server placement/runtime controls. These are
+      // explicit overrides for known-good advanced presets; blank keeps
+      // llama.cpp/profile defaults.
+      panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp">`;
+      panelHtml += `<label>${_l('Split Mode','llama.cpp GPU placement. layer is the usual default; tensor splits weights and KV across GPUs.')}<select class="hwfit-sf" data-field="llama_split_mode">${llamaSplitModeOpts}</select></label>`;
+      panelHtml += `<label>${_l('Tensor Split','GPU proportions for llama.cpp, e.g. 50,50 across two visible GPUs. Leave blank for auto.')}<input type="text" class="hwfit-sf" data-field="llama_tensor_split" value="${esc(sv('llama_tensor_split', ''))}" placeholder="50,50" /></label>`;
+      panelHtml += `<label>${_l('Main GPU','llama.cpp --main-gpu index inside the visible GPU set. Mostly useful for split mode none/row.')}<input type="text" class="hwfit-sf" data-field="llama_main_gpu" value="${esc(sv('llama_main_gpu', ''))}" placeholder="auto" /></label>`;
+      panelHtml += `<label>${_l('Parallel','llama.cpp parallel slots. Leave blank for llama.cpp default; 1 matches single-lane presets.')}<input type="text" class="hwfit-sf" data-field="llama_parallel" value="${esc(sv('llama_parallel', ''))}" placeholder="1" /></label>`;
+      panelHtml += `<label>${_l('Batch','llama.cpp prompt batch size. Leave blank for llama.cpp default.')}<input type="text" class="hwfit-sf" data-field="llama_batch_size" value="${esc(sv('llama_batch_size', ''))}" placeholder="2048" /></label>`;
+      panelHtml += `<label>${_l('UBatch','llama.cpp physical micro-batch size. Leave blank for llama.cpp default.')}<input type="text" class="hwfit-sf" data-field="llama_ubatch_size" value="${esc(sv('llama_ubatch_size', ''))}" placeholder="512" /></label>`;
       panelHtml += `</div>`;
       // Row 2d: Auto profiles — computed from detected hardware (see profiles.py).
       // Buttons are injected after the panel mounts (needs an async fetch).
@@ -566,6 +658,9 @@ function _rerenderCachedModels() {
       // Row 3a: Checkboxes (llama.cpp-only)
       panelHtml += `<div class="hwfit-serve-checks hwfit-backend-llamacpp">`;
       panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="unified_mem"${sv('unified_mem',false)?' checked':''} /> Unified Memory${_h('For AMD APUs / Strix Halo: exports GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 so llama.cpp can address the full BIOS VRAM carveout instead of the default ~28 GB cap. No-op on discrete GPUs.')}</label>`;
+      panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="llama_no_mmap"${sv('llama_no_mmap',false)?' checked':''} /> No mmap${_h('Adds --no-mmap for native llama-server. Useful for some high-context/local-storage setups, but not a universal default.')}</label>`;
+      panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="llama_no_warmup"${sv('llama_no_warmup',false)?' checked':''} /> Skip warmup${_h('Adds --no-warmup. Can reduce startup memory spikes for tight launches, but llama.cpp defaults to warming up.')}</label>`;
+      panelHtml += `<label class="hwfit-sf-cb hwfit-spec-group"><input type="checkbox" class="hwfit-sf" data-field="llama_speculative_mtp"${sv('llama_speculative_mtp',false)?' checked':''} /> MTP Spec${_h('llama.cpp native MTP speculative decoding: --spec-type draft-mtp. Requires a GGUF with MTP heads and a recent llama-server build.')} <span class="hwfit-numstep"><button type="button" class="hwfit-numstep-btn" data-step="-1" tabindex="-1" aria-label="Decrease">‹</button><input type="number" class="hwfit-sf hwfit-spec-tokens" data-field="llama_spec_tokens" value="${esc(sv('llama_spec_tokens', '3'))}" min="1" max="10" title="--spec-draft-n-max" /><button type="button" class="hwfit-numstep-btn" data-step="1" tabindex="-1" aria-label="Increase">›</button></span></label>`;
       panelHtml += `</div>`;
       // Row 3b: Checkboxes (diffusers)
       panelHtml += `<div class="hwfit-serve-checks hwfit-backend-diffusers">`;
@@ -631,9 +726,10 @@ function _rerenderCachedModels() {
       item.classList.add('doclib-card-expanded');
       item.style.flexDirection = 'column';
       item.style.alignItems = 'stretch';
-      if (list) list.scrollTop = 0;
       item.insertAdjacentHTML('beforeend', panelHtml);
       const panel = item.querySelector('.hwfit-serve-panel');
+      // Scroll the serve panel into view within its nearest scrollable ancestor
+      requestAnimationFrame(() => panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
 
       // Build command preview
       function updateCmd() {
@@ -650,13 +746,12 @@ function _rerenderCachedModels() {
           // For multi-part GGUFs, llama.cpp requires the first split
           // (-00001-of-NNNNN.gguf). Prefer it (sorted, so UD-IQ4_XS/001 comes
           // before Q4_K_M/001 etc); fall back to any single GGUF sorted.
-          // Use $HOME (not ~) so tilde survives variable interpolation inside $(...).
-          const dir = `"$HOME/.cache/huggingface/hub/models--${repo.replace(/\//g, '--')}/snapshots"`;
+          const dir = _ggufSearchDirExpr(m, repo);
           // GGUF needs the actual .gguf FILE, not the folder. For a custom-dir
           // model the file lives under "<path>/<repo>" — search there just like we
           // search the HF snapshots dir, so serving a GGUF from a custom dir works
           // instead of handing llama.cpp a directory (which fails).
-          const _ldir = `"${m.path}/${repo}"`;
+          const _ldir = m.path ? _shellQuote(`${m.path}/${repo}`) : '""';
           f._gguf_path = selectedGguf
             ? _selectedGgufExpr(m, repo, selectedGguf.rel_path)
             : m.is_local_dir && m.path
@@ -836,6 +931,38 @@ function _rerenderCachedModels() {
       }
       updateBackendVisibility();
 
+      async function updateRuntimeReadinessNote() {
+        const note = panel.querySelector('.hwfit-serve-runtime-note');
+        if (!note) return;
+        const backend = panel.querySelector('[data-field="backend"]')?.value || 'vllm';
+        if (!['vllm', 'sglang', 'llamacpp', 'diffusers'].includes(backend)) {
+          note.style.display = 'none';
+          note.textContent = '';
+          return;
+        }
+        const seq = (panel._runtimeReadinessSeq || 0) + 1;
+        panel._runtimeReadinessSeq = seq;
+        note.style.display = '';
+        note.textContent = 'Checking runtime on selected server...';
+        try {
+          const { pkg, target } = await _fetchServeRuntimePackage(panel, backend);
+          if (panel._runtimeReadinessSeq !== seq) return;
+          note.textContent = _runtimeNoteText(backend, pkg, target);
+          note.style.color = pkg?.installed ? 'var(--fg-muted)' : 'var(--red)';
+        } catch (err) {
+          if (panel._runtimeReadinessSeq !== seq) return;
+          note.textContent = `Runtime readiness unavailable: ${err?.message || err}`;
+          note.style.color = 'var(--fg-muted)';
+        }
+      }
+      updateRuntimeReadinessNote();
+      const runtimeServerSelect = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
+      if (runtimeServerSelect) {
+        const refreshRuntimeOnServerChange = () => updateRuntimeReadinessNote();
+        runtimeServerSelect.addEventListener('change', refreshRuntimeOnServerChange);
+        panel._cleanupRuntimeReadiness = () => runtimeServerSelect.removeEventListener('change', refreshRuntimeOnServerChange);
+      }
+
       // Wire save slots
       function _loadSlotIntoPanel(slotIdx) {
         const presets = _loadPresets();
@@ -865,7 +992,17 @@ function _rerenderCachedModels() {
             gpu_mem: _ex(/--gpu-memory-utilization\s+([\d.]+)/) || '0.90',
             swap: _ex(/--swap-space\s+(\d+)/) || '',
             dtype: _ex(/--dtype\s+(\w+)/) || 'auto',
+            vllm_kv_cache_dtype: _ex(/--kv-cache-dtype\s+([\w.-]+)/) || 'auto',
             max_seqs: _ex(/--max-num-seqs\s+(\d+)/) || '',
+            cache_type: _ex(/(?:--cache-type-k|-ctk)\s+(\S+)/) || '',
+            llama_fit: _ex(/(?:--fit|-fit)\s+(on|off)/) || '',
+            llama_split_mode: _ex(/(?:--split-mode|-sm)\s+(none|layer|row|tensor)/) || '',
+            llama_tensor_split: _ex(/(?:--tensor-split|-ts)\s+([0-9.,]+)/) || '',
+            llama_main_gpu: _ex(/(?:--main-gpu|-mg)\s+(\d+)/) || '',
+            llama_parallel: _ex(/(?:--parallel|-np)\s+(\d+)/) || '',
+            llama_batch_size: _ex(/(?:--batch-size|-b)\s+(\d+)/) || '',
+            llama_ubatch_size: _ex(/(?:--ubatch-size|-ub)\s+(\d+)/) || '',
+            llama_spec_tokens: _ex(/--spec-draft-n-max\s+(\d+)/) || '3',
             venv: p.envPath || '',
           };
           const checks = {
@@ -873,6 +1010,11 @@ function _rerenderCachedModels() {
             trust_remote: cmd.includes('--trust-remote-code'),
             prefix_cache: cmd.includes('--enable-prefix-caching'),
             auto_tool: cmd.includes('--enable-auto-tool-choice'),
+            flash_attn: /--flash-attn\s+on\b/.test(cmd),
+            unified_mem: /GGML_CUDA_ENABLE_UNIFIED_MEMORY=1/.test(cmd),
+            llama_no_mmap: /--no-mmap\b/.test(cmd),
+            llama_no_warmup: /--no-warmup\b/.test(cmd),
+            llama_speculative_mtp: /--spec-type\s+\S*draft-mtp/.test(cmd),
             speculative: cmd.includes('--speculative-config'),
           };
           const _specMatch = cmd.match(/--speculative-config\s+'?\{[^}]*"method"\s*:\s*"([^"]+)"[^}]*"num_speculative_tokens"\s*:\s*(\d+)/);
@@ -904,6 +1046,7 @@ function _rerenderCachedModels() {
         const _gf = panel.querySelector('[data-field="gpus"]');
         if (_gf) _gf.value = activeGpus.join(',');
         updateBackendVisibility();
+        updateRuntimeReadinessNote();
         updateCmd();
         panel.querySelectorAll('.cookbook-slot-btn').forEach(b => b.classList.remove('active'));
         panel.querySelector(`.cookbook-slot-btn[data-slot="${slotIdx}"]`)?.classList.add('active');
@@ -1443,6 +1586,10 @@ function _rerenderCachedModels() {
             const extraEl = panel.querySelector('[data-field="extra"]');
             if (extraEl) extraEl.value = '';
             updateBackendVisibility();
+            updateRuntimeReadinessNote();
+          }
+          if (e.target.dataset.field === 'venv') {
+            updateRuntimeReadinessNote();
           }
           updateCmd();
         });
@@ -1474,6 +1621,7 @@ function _rerenderCachedModels() {
       // "back out" affordance next to Launch.
       panel.querySelector('.hwfit-serve-cancel')?.addEventListener('click', (ev) => {
         ev.stopPropagation();
+        panel._cleanupRuntimeReadiness?.();
         panel.remove();
         item.classList.remove('doclib-card-expanded');
         item.style.flexDirection = '';

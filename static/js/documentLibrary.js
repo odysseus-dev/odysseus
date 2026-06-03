@@ -652,9 +652,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     if (doc.session_id) {
       openItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); libraryOpenInSession(doc); });
     } else {
-      openItem.disabled = true;
-      openItem.style.opacity = '0.35';
-      openItem.title = 'Not linked to a session';
+      // Orphaned doc (closed / session detached) is still openable in the editor
+      // by id — libraryOpenDocument handles the no-session case (#1602).
+      openItem.title = 'Open in the editor';
+      openItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); libraryOpenDocument(doc); });
     }
     dropdown.appendChild(openItem);
 
@@ -772,10 +773,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       openBtn.title = 'Open in original session';
       openBtn.addEventListener('click', (e) => { e.stopPropagation(); libraryOpenInSession(doc); });
     } else {
-      openBtn.disabled = true;
-      openBtn.style.opacity = '0.35';
-      openBtn.style.cursor = 'not-allowed';
-      openBtn.title = 'This document is not linked to a session';
+      // Orphaned doc (closed / session detached) is still openable in the editor
+      // by id — libraryOpenDocument handles the no-session case (#1602).
+      openBtn.title = 'Open in the editor';
+      openBtn.addEventListener('click', (e) => { e.stopPropagation(); libraryOpenDocument(doc); });
     }
 
     const cloneBtn = document.createElement('button');
@@ -2059,6 +2060,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           { label: 'Copy', action: () => _copyChatById(s.id) },
           { label: 'Archive', action: async () => { await fetch(API_BASE + '/api/session/' + s.id + '/archive', { method: 'POST', headers: {'Content-Type':'application/json'} }); _renderLibChats(); } },
           { label: 'Delete', action: async () => {
+            if (!await window.styledConfirm('Delete this chat?', { confirmText: 'Delete', danger: true })) return;
             await fetch(API_BASE + '/api/session/' + s.id, { method: 'DELETE' });
             card.style.maxHeight = `${Math.max(card.getBoundingClientRect().height, card.scrollHeight)}px`;
             card.classList.add('memory-tidy-removing');
@@ -2412,7 +2414,11 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           { label: 'Open', action: () => { if (window.sessionModule) window.sessionModule.selectSession(s.id); } },
           { label: 'Copy', action: () => _copyChatById(s.id) },
           { label: 'Restore', action: async () => { await fetch(API_BASE + '/api/session/' + s.id + '/unarchive', { method: 'POST' }); _renderLibArchive(); } },
-          { label: 'Delete', action: async () => { await fetch(API_BASE + '/api/session/' + s.id, { method: 'DELETE' }); _renderLibArchive(); }, danger: true },
+          { label: 'Delete', action: async () => {
+            if (!await window.styledConfirm('Delete this chat permanently?', { confirmText: 'Delete', danger: true })) return;
+            await fetch(API_BASE + '/api/session/' + s.id, { method: 'DELETE' });
+            _renderLibArchive();
+          }, danger: true },
         ], { onSelect: () => {
           _arcSelectMode = true;
           _arcSelected.add('chats:' + s.id);

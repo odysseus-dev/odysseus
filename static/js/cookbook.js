@@ -262,10 +262,10 @@ export function _detectBackend(model) {
   const isRocm = sysBackend === 'rocm';
   const isAppleSilicon = ['metal', 'mps', 'apple'].includes(sysBackend);
   const _nm = `${model.repo_id || ''} ${model.path || ''} ${model.name || ''}`.toLowerCase();
-  if (!isAppleSilicon && (/\bmlx\b|mlx-|_mlx/i.test(_nm) || q.startsWith('MLX'))) {
+  if (/\bmlx\b|mlx-|_mlx/i.test(_nm) || q.startsWith('MLX')) {
     return { backend: 'unsupported', label: 'Unsupported' };
   }
-  const isAwqLike = /^AWQ|^GPTQ|^NVFP4/.test(q) || q === 'FP8' || /\b(awq|gptq|fp8|nvfp4)\b/i.test(_nm);
+  const isAwqLike = /^AWQ|^GPTQ|^NVFP4/.test(q) || ['FP8', 'FP4', 'MXFP4', 'NF4', 'INT4', 'INT8', 'W4A16', 'W8A8', 'W8A16'].includes(q) || /\b(awq|gptq|fp8|fp4|nvfp4|mxfp4|nf4|int4|int8|w4a16|w8a8|w8a16)\b/i.test(_nm);
   const isGgufLike = model.is_gguf || /^Q[2-8]/.test(q) || /^IQ/.test(q) || q === 'GGUF' || _nm.includes('gguf');
 
   // Image gen models → diffusers
@@ -291,7 +291,7 @@ export function _detectBackend(model) {
   }
 
   // Apple Silicon (Metal) → llama.cpp (GGUF). vLLM/SGLang are CUDA/ROCm-only and
-  // don't run on macOS; AWQ/GPTQ/FP8 (vLLM-only) models are already filtered out
+  // don't run on macOS; vLLM-native quantized models are already filtered out
   // of metal Cookbook results, so llama.cpp is always the right engine here.
   if (['metal', 'mps', 'apple'].includes(sysBackend)) {
     return { backend: 'llamacpp', label: 'llama.cpp' };
@@ -366,6 +366,8 @@ export function _buildServeCmd(f, modelName, backend) {
     cmd += ` --gpu-memory-utilization ${f.gpu_mem || '0.90'}`;
     if (f.swap && f.swap !== '0') cmd += ` --swap-space ${f.swap}`;
     cmd += ` --dtype ${f.dtype || 'auto'}`;
+    const _kv = (f.vllm_kv_cache_dtype ?? '').toString().trim();
+    if (_kv === 'fp8') cmd += ' --kv-cache-dtype fp8';
     if (f.max_seqs && f.max_seqs.toString().trim()) cmd += ` --max-num-seqs ${f.max_seqs.toString().trim()}`;
     if (f.enforce_eager) cmd += ' --enforce-eager';
     if (f.trust_remote) cmd += ' --trust-remote-code';
@@ -399,13 +401,17 @@ export function _buildServeCmd(f, modelName, backend) {
     const ggufPath = f._gguf_path || 'model.gguf';
     const gpuId = f.gpu_id?.trim() || '';
     const py = _isWindows() ? 'python' : 'python3';
+    // CPU-only serve (-ngl 0): drop the GPU-only flags, otherwise the command
+    // mixes "zero GPU layers" with CUDA unified-memory + flash-attn and fails to
+    // start (issue #1291). Only affects the ngl=0 path; GPU serving is unchanged.
+    const _cpuOnly = String(f.ngl).trim() === '0';
     const lcPrefix = (() => {
       let p = '';
-      if (f.unified_mem && !_isWindows()) p += `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 `;
+      if (f.unified_mem && !_cpuOnly && !_isWindows()) p += `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 `;
       if (gpuId && !_isWindows()) p += `CUDA_VISIBLE_DEVICES=${gpuId} `;
       return p;
     })();
-    if (f.unified_mem && _isWindows()) cmd += `$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; `;
+    if (f.unified_mem && !_cpuOnly && _isWindows()) cmd += `$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; `;
     if (gpuId && _isWindows()) cmd += `$env:CUDA_VISIBLE_DEVICES="${gpuId}"; `;
     if (!_isWindows()) {
       // Resolve GGUF path once, fail loudly if nothing matched (prevents
@@ -423,13 +429,21 @@ export function _buildServeCmd(f, modelName, backend) {
     // speed things up. Only emitted when set, so manual/older flows are unchanged.
     const _ncm = (f.n_cpu_moe ?? '').toString().trim();
     const _kv = (f.cache_type ?? '').toString().trim();
+    const _llamaNum = (v) => {
+      const s = String(v || '').trim();
+      return /^\d+$/.test(s) ? s : '';
+    };
+    const _llamaCsv = (v) => {
+      const s = String(v || '').replace(/\s+/g, '');
+      return /^\d+(?:\.\d+)?(?:,\d+(?:\.\d+)?)*$/.test(s) ? s : '';
+    };
     let _lcExtra = '';
     let _lcpExtra = '';
     if (_ncm !== '' && Number(_ncm) > 0) {
       _lcExtra += ` --n-cpu-moe ${_ncm}`;
       _lcpExtra += ` --n_cpu_moe ${_ncm}`;   // llama-cpp-python uses underscores
     }
-    if (f.flash_attn) {
+    if (f.flash_attn && !_cpuOnly) {
       _lcExtra += ' --flash-attn on';
       _lcpExtra += ' --flash_attn true';
     }
@@ -437,6 +451,27 @@ export function _buildServeCmd(f, modelName, backend) {
       _lcExtra += ` --cache-type-k ${_kv} --cache-type-v ${_kv}`;
       // llama-cpp-python exposes these as type_k/type_v; pass through best-effort.
       _lcpExtra += ` --type_k ${_kv} --type_v ${_kv}`;
+    }
+    const _llamaFit = String(f.llama_fit || '').trim();
+    if (['on', 'off'].includes(_llamaFit)) _lcExtra += ` --fit ${_llamaFit}`;
+    if (f.llama_no_mmap) _lcExtra += ' --no-mmap';
+    if (f.llama_no_warmup) _lcExtra += ' --no-warmup';
+    const _llamaSplitMode = String(f.llama_split_mode || '').trim();
+    if (['none', 'layer', 'row', 'tensor'].includes(_llamaSplitMode)) _lcExtra += ` --split-mode ${_llamaSplitMode}`;
+    const _llamaTensorSplit = _llamaCsv(f.llama_tensor_split);
+    if (_llamaTensorSplit) _lcExtra += ` --tensor-split ${_llamaTensorSplit}`;
+    const _llamaMainGpu = _llamaNum(f.llama_main_gpu);
+    if (_llamaMainGpu) _lcExtra += ` --main-gpu ${_llamaMainGpu}`;
+    const _llamaParallel = _llamaNum(f.llama_parallel);
+    if (_llamaParallel) _lcExtra += ` --parallel ${_llamaParallel}`;
+    const _llamaBatch = _llamaNum(f.llama_batch_size);
+    if (_llamaBatch) _lcExtra += ` --batch-size ${_llamaBatch}`;
+    const _llamaUBatch = _llamaNum(f.llama_ubatch_size);
+    if (_llamaUBatch) _lcExtra += ` --ubatch-size ${_llamaUBatch}`;
+    if (f.llama_speculative_mtp) {
+      const specTokens = parseInt(f.llama_spec_tokens, 10);
+      const specN = Number.isFinite(specTokens) && specTokens > 0 ? specTokens : 3;
+      _lcExtra += ` --spec-type draft-mtp --spec-draft-n-max ${specN}`;
     }
     // Vision: serve the multimodal projector so the model can read images. The
     // mmproj path is resolved at runtime (find mmproj-*.gguf next to the model);
@@ -587,6 +622,10 @@ async function _fetchDependencies() {
     const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
       if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
+      if (pkg.installed && pkg.pip_update_available === false) {
+        const tip = esc(pkg.update_note || pkg.status_note || 'Found externally; update outside Odysseus.');
+        return `<span class="cookbook-dep-tag cookbook-dep-installed" title="${tip}">Installed</span>`;
+      }
       if (pkg.installed) return `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn" title="Installed — click for actions"><span class="cookbook-dep-installed-label">Installed</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
       if (isSystemDep) {
         const depTip = esc(pkg.install_hint || 'Install this OS package on the selected server.');
@@ -601,11 +640,13 @@ async function _fetchDependencies() {
       const isSystemDep = pkg.kind === 'system';
       const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
       const note = pkg.status_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.65;margin-top:3px;">${esc(pkg.status_note)}</div>` : '';
+      const updateNote = pkg.installed && pkg.pip_update_available === false && pkg.update_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.55;margin-top:3px;">${esc(pkg.update_note)}</div>` : '';
       return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
         + `<div class="cookbook-dep-info">`
         + `<div class="memory-item-title">${esc(pkg.name)}</div>`
         + `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`
         + note
+        + updateNote
         + `</div>`
         + `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`
         + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
@@ -687,7 +728,7 @@ async function _fetchDependencies() {
         }
         // _dep flags this as a pip dependency/driver install (not a servable
         // model) so the running-task card doesn't offer a "Serve →" button.
-        const payload = { repo_id: pipName, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true };
+        const payload = { repo_id: pipName, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true, env_path: _envState.envPath || '' };
         _addTask(data.session_id, 'pip ' + pkgName, 'download', payload);
         if (statusEl) { statusEl.textContent = upgrade ? 'Updating...' : 'Installing...'; statusEl.disabled = true; }
         uiModule.showToast(`${upgrade ? 'Updating' : 'Installing'} ${pkgName} on ${targetHost}...`);
@@ -974,6 +1015,51 @@ function _wireTabEvents(body) {
       // Re-fetch the package list for the newly selected server — the installed
       // status is per-server, so the list must refresh on a server switch.
       _fetchDependencies();
+    });
+  }
+
+  // "Rebuild llama.cpp" clears the cached build so the next serve recompiles.
+  // The serve bootstrap only builds llama-server when it is missing from PATH,
+  // so a host that first built CPU-only (no nvcc at build time) keeps reusing
+  // that binary forever; this is the lever to force a fresh GPU build after a
+  // CUDA/ROCm toolkit is installed.
+  const rebuildBtn = document.getElementById('cookbook-rebuild-engine');
+  if (rebuildBtn && !rebuildBtn._wired) {
+    rebuildBtn._wired = true;
+    rebuildBtn.addEventListener('click', async () => {
+      // Match _installDep: honor the Dependencies server selector so the clear
+      // runs on the same host the build runs on.
+      const sel = document.getElementById('hwfit-deps-server');
+      if (sel) _applyServerSelection(sel.value);
+      const host = _envState.remoteHost || '';
+      const where = host || 'this server';
+      if (!confirm(`Rebuild the llama.cpp engine on ${where}?\n\nThis clears the cached llama-server build so the next serve recompiles from source (with CUDA/HIP if a toolchain is present). It does not download or install anything.`)) return;
+      const _label = rebuildBtn.textContent;
+      rebuildBtn.disabled = true;
+      rebuildBtn.textContent = 'Clearing...';
+      try {
+        const res = await fetch('/api/cookbook/rebuild-engine', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            engine: 'llamacpp',
+            remote_host: host || undefined,
+            ssh_port: _getPort(host) || undefined,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          const reason = data.detail || data.error || `HTTP ${res.status}`;
+          uiModule.showToast('Rebuild failed: ' + String(reason).slice(0, 200));
+        } else {
+          uiModule.showToast(`Cleared llama.cpp build on ${where}. Re-launch the serve task to rebuild with GPU support.`);
+        }
+      } catch (err) {
+        uiModule.showToast('Rebuild failed: ' + err.message);
+      } finally {
+        rebuildBtn.disabled = false;
+        rebuildBtn.textContent = _label;
+      }
     });
   }
 
@@ -1487,7 +1573,7 @@ function _renderRecipes() {
   html += '<option value="Q4_K_M">Q4</option><option value="Q8_0">Q8</option>';
   html += '<option value="Q6_K">Q6</option><option value="Q5_K_M">Q5</option>';
   html += '<option value="Q3_K_M">Q3</option><option value="Q2_K">Q2</option>';
-  html += '<option value="AWQ-4bit">AWQ</option><option value="FP8">FP8</option>';
+  html += '<option value="AWQ-4bit">AWQ</option><option value="FP8">FP8</option><option value="FP4">FP4</option><option value="NVFP4">NVFP4</option>';
   html += '<option value="">Native</option></select>';
   // Engine filter: show only models whose serve engine matches. "llama.cpp"
   // (GGUF) runs everywhere incl. consumer AMD/Apple; vLLM/SGLang are CUDA /
@@ -1499,6 +1585,10 @@ function _renderRecipes() {
   html += '<option value="vllm">vLLM</option>';
   html += '<option value="sglang">SGLang</option>';
   html += '</select>';
+  html += '<span class="hwfit-help-chip" title="Higher numbers usually mean better quality, but they need more memory. Lower numbers fit on more hardware.">?</span>';
+  html += '<label class="hwfit-ctx-control" title="Context length for fit estimates. Lower it to find more models that could fit your hardware.">';
+  html += '<span>Ctx</span><span class="hwfit-help-chip hwfit-help-chip-inline" title="Context length. Lower it to find more models that could fit your hardware; raise it when you need longer chats or documents.">?</span><input type="range" id="hwfit-context" min="0" max="5" step="1" value="3" />';
+  html += '<output id="hwfit-context-label">50k</output></label>';
   html += '</div>';
   html += '<div class="hwfit-toolbar" style="margin-top:7px;">';
   html += '<select class="cookbook-field-input hwfit-server-select" id="hwfit-server-select" style="height:28px;min-width:88px;position:relative;top:0px;">';
@@ -1571,6 +1661,7 @@ function _renderRecipes() {
   html += '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">';
   html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">';
   html += '<h2 style="margin:0;padding:0;line-height:1;">Dependencies</h2>';
+  html += '<button class="cookbook-field-input" id="cookbook-rebuild-engine" title="Clear the cached llama.cpp build so the next serve recompiles from source (use after installing a CUDA/ROCm toolkit to turn a CPU-only build into a GPU build)." style="height:24px;font-size:10px;padding:0 8px;cursor:pointer;width:auto;">Rebuild llama.cpp</button>';
   html += '<span style="font-size:10px;opacity:0.5;margin-left:auto;">Server</span>';
   html += '<select class="cookbook-field-input" id="hwfit-deps-server" style="height:28px;min-width:70px;">';
   html += _buildServerOpts(false);

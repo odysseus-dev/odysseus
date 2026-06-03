@@ -111,7 +111,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "create_document",
-            "description": "Create a new document in the editor panel. ALWAYS use this when the user asks to write, create, build, or generate code, scripts, programs, games, apps, or any substantial content (>15 lines). NEVER put large code blocks directly in chat — use this tool instead.",
+            "description": "Create a new document in the editor panel. Use this when the user asks to write, create, build, or generate code, scripts, programs, games, apps, or any substantial content (>15 lines) AND there is no already-open document/email draft that the request refers to. If an email compose draft is open, edit that draft instead of creating another document. NEVER put large code blocks directly in chat — use this tool instead.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -442,7 +442,8 @@ FUNCTION_TOOL_SCHEMAS = [
                     "end": {"type": "string", "description": "list_events range end (ISO datetime); defaults to +14 days"},
                     "event_type": {"type": "string", "description": "Tag / category for the event. Common values: work, personal, health, travel, meal, social, admin, other. Aliases accepted: tag, category, type."},
                     "importance": {"type": "string", "enum": ["low", "normal", "high", "critical"], "description": "Priority level (defaults to 'normal')"},
-                    "reminder_minutes": {"type": "integer", "description": "For create_event: create an Odysseus reminder this many minutes before the event, e.g. 5 for 'reminder 5 min before'."}
+                    "reminder_minutes": {"type": "integer", "description": "For create_event: create an Odysseus reminder this many minutes before the event, e.g. 5 for 'reminder 5 min before'."},
+                    "rrule": {"type": "string", "description": "Recurrence rule in iCalendar RRULE format, e.g. 'FREQ=WEEKLY;BYDAY=MO' for weekly on Monday. Use with create_event or update_event."}
                 },
                 "required": ["action"]
             }
@@ -1074,6 +1075,7 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         return None
 
     tool_type = _TOOL_NAME_MAP.get(name, name)
+
     # Allow MCP tools through (namespaced as mcp__serverid__toolname)
     if tool_type.startswith("mcp__"):
         content = json.dumps(args) if args else "{}"
@@ -1093,7 +1095,13 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
     elif tool_type == "python":
         content = args.get("code", "")
     elif tool_type == "web_search":
-        content = args.get("query", "")
+        queries = args.get("queries")
+        if isinstance(queries, list) and queries:
+            content = str(queries[0])
+        elif queries:
+            content = str(queries)
+        else:
+            content = args.get("query", "")
     elif tool_type == "read_file":
         content = args.get("path", "")
     elif tool_type == "write_file":

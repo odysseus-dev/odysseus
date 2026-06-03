@@ -36,10 +36,18 @@ def _load(rp_id: str) -> dict | None:
         return None
 
 
+def _preview_text(value, limit: int = 200) -> str:
+    """Truncated preview tolerant of non-string values. A stored research
+    record whose ``query`` is a non-string (legacy/corrupt JSON) would crash
+    ``(value or "")[:200]`` with a TypeError; coerce non-strings to ""."""
+    text = value if isinstance(value, str) else ""
+    return text[:limit]
+
+
 def _summarize(rp_id: str, data: dict) -> dict:
     return {
         "id": rp_id,
-        "query": (data.get("query") or "")[:200],
+        "query": _preview_text(data.get("query")),
         "category": data.get("category") or "",
         "status": data.get("status") or "",
         "started_at": data.get("started_at") or "",

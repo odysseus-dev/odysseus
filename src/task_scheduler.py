@@ -115,7 +115,7 @@ def compute_next_run(schedule: str, scheduled_time: str,
             return None
 
     if schedule == "once":
-        if scheduled_date and scheduled_date > (now.replace(tzinfo=None) if tz is not None else now):
+        if scheduled_date and scheduled_date > (_to_utc_naive(now) if tz is not None else now):
             return scheduled_date
         return None
 
@@ -192,7 +192,7 @@ HOUSEKEEPING_DEFAULTS = {
     "draft_email_replies":  {"name": "Email AI Auto Reply",      "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Tidy Email (Replies)", "AI Auto Reply"]},
     "extract_email_events": {"name": "Email Calendar Events",    "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */1 * * *", "ship_paused": True, "legacy_names": ["Email → Calendar Events"]},
     "classify_events":      {"name": "Calendar Classify Events", "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 6,18 * * *", "ship_paused": True, "legacy_names": ["Classify Calendar Events"]},
-    "mark_email_boundaries": {"name": "Email Mark Boundaries",   "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "legacy_names": ["Mark Email Boundaries"]},
+    "mark_email_boundaries": {"name": "Email Mark Boundaries",   "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Mark Email Boundaries"]},
     "check_email_urgency":   {"name": "Email Tags",               "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 * * * *", "ship_paused": True, "old_cron_expressions": ["*/15 * * * *"], "legacy_names": ["Email Triage", "Urgent Email"]},
     "audit_skills":          {"name": "Skills Audit",             "trigger_type": "event", "trigger_event": "skill_added", "trigger_count": 5, "schedule": None, "scheduled_time": None, "cron_expression": None, "legacy_names": ["Audit Skills"]},
 }
@@ -201,6 +201,20 @@ RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
     "tidy_calendar",
     "tidy_email_inbox",
 })
+
+
+def _digest_windows(now):
+    """(label, start, end) buckets for the calendar check-in digest.
+
+    The windows are contiguous so no event is dropped between buckets — an
+    earlier version started the 30-day window at now+8d while the week window
+    ended at now+7d, so events ~7-8 days out fell into no bucket.
+    """
+    return [
+        ("today_tomorrow", now, now + timedelta(days=2)),
+        ("this_week", now + timedelta(days=2), now + timedelta(days=7)),
+        ("next_30_days", now + timedelta(days=7), now + timedelta(days=30)),
+    ]
 
 
 class TaskScheduler:
@@ -240,6 +254,35 @@ class TaskScheduler:
                 db.close()
         except Exception:
             logger.debug("Task progress update failed", exc_info=True)
+
+    def _mark_run_aborted(self, task_id: str, run_id: str | None = None, message: str = "Stopped by user") -> bool:
+        """Mark an active run as aborted. Used by stop/cancel paths."""
+        try:
+            from core.database import SessionLocal, TaskRun
+            db = SessionLocal()
+            try:
+                q = db.query(TaskRun)
+                if run_id:
+                    q = q.filter(TaskRun.id == run_id)
+                else:
+                    q = q.filter(
+                        TaskRun.task_id == task_id,
+                        TaskRun.status.in_(("queued", "running")),
+                    ).order_by(TaskRun.started_at.desc())
+                run = q.first()
+                if not run or run.status not in ("queued", "running"):
+                    return False
+                run.status = "aborted"
+                run.error = message
+                run.result = run.result or message
+                run.finished_at = datetime.utcnow()
+                db.commit()
+                return True
+            finally:
+                db.close()
+        except Exception:
+            logger.debug("Task abort marker failed for %s", task_id, exc_info=True)
+            return False
 
     def add_notification(self, task_name: str, status: str, task_id: str = None, owner: str = None, body: str = None):
         """Store a notification about a completed task run. Tagged with the
@@ -581,12 +624,25 @@ class TaskScheduler:
         finally:
             _q_db.close()
 
-        if bypass_model_slot or not self._task_needs_model_slot(task_id):
-            await self._execute_task_locked(task_id, run_id, release_executing=release_executing)
-            return
+        try:
+            if bypass_model_slot or not self._task_needs_model_slot(task_id):
+                await self._execute_task_locked(task_id, run_id, release_executing=release_executing)
+                return
 
-        async with self._run_semaphore:
-            await self._execute_task_locked(task_id, run_id, release_executing=release_executing)
+            async with self._run_semaphore:
+                await self._execute_task_locked(task_id, run_id, release_executing=release_executing)
+        except asyncio.CancelledError:
+            # If cancellation happens while queued behind the semaphore,
+            # _execute_task_locked never runs and cannot update the Activity row.
+            self._mark_run_aborted(task_id, run_id)
+            raise
+        finally:
+            handle = self._task_handles.get(task_id)
+            if handle is current:
+                self._task_handles.pop(task_id, None)
+            if release_executing:
+                async with self._executing_lock:
+                    self._executing.discard(task_id)
 
     async def _execute_task_locked(self, task_id: str, run_id: str, *, release_executing: bool = True):
         from core.database import SessionLocal, ScheduledTask, TaskRun
@@ -1040,11 +1096,7 @@ class TaskScheduler:
             from core.database import SessionLocal as _SL, CalendarEvent as _CE
             _db = _SL()
             try:
-                for label, start, end in [
-                    ("today_tomorrow", now, now + timedelta(days=2)),
-                    ("this_week",      now + timedelta(days=2), now + timedelta(days=7)),
-                    ("next_30_days",   now + timedelta(days=8), now + timedelta(days=30)),
-                ]:
+                for label, start, end in _digest_windows(now):
                     # Strip timezone for naive DB comparison
                     _s = start.replace(tzinfo=None) if start.tzinfo else start
                     _e = end.replace(tzinfo=None) if end.tzinfo else end
@@ -1839,24 +1891,7 @@ class TaskScheduler:
                 self._executing.discard(task_id)
                 stopped = True
 
-        from core.database import SessionLocal, TaskRun
-        db = SessionLocal()
-        try:
-            run = (
-                db.query(TaskRun)
-                .filter(TaskRun.task_id == task_id, TaskRun.status.in_(("queued", "running")))
-                .order_by(TaskRun.started_at.desc())
-                .first()
-            )
-            if run:
-                run.status = "aborted"
-                run.error = "Stopped by user"
-                run.result = run.result or "Stopped by user"
-                run.finished_at = datetime.utcnow()
-                db.commit()
-                stopped = True
-        finally:
-            db.close()
+        stopped = self._mark_run_aborted(task_id) or stopped
         return stopped
 
     async def ensure_defaults(self, owner: str):

@@ -14,7 +14,7 @@ import time
 import logging
 from typing import AsyncGenerator, List, Dict, Optional, Set
 
-from src.llm_core import stream_llm, stream_llm_with_fallback
+from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
 from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
@@ -115,6 +115,7 @@ _API_AGENT_RULES = """\
 - Keep answers concise unless the user asks for depth.
 - For long code or content, use document tools instead of pasting large blocks into chat.
 - Editing an existing document: ALWAYS use `edit_document` with find/replace. Only use `update_document` for genuine full rewrites (>50% changed) — do NOT echo the entire file back for small edits.
+- If the active editor document is an email draft/compose window, treat that open email as the target for "write this", "write the email", "reply with...", "make it say...", "draft this", and similar requests. Do NOT create another document, search/list/manage documents, or open a different reply unless the user explicitly asks. Edit the open email draft with `edit_document` or `update_document`; preserve To/Cc/Bcc/Subject/In-Reply-To/References/X-* header lines unless the user asks to change them.
 - "Give suggestions / feedback / review / how can I improve this / what would make it better" about the OPEN document → call `suggest_document`, do NOT write a prose list of ideas in chat. It creates inline accept/reject bubbles on the doc. Give concrete `find`/`replace`/`reason` items. To suggest an ADDITION (e.g. "add a bow to the SVG", a new section), set `find` to a short existing anchor snippet and `replace` to that same snippet PLUS the new content. Only answer in prose when no document is open, or the request is purely conceptual with no concrete change to propose.
 - BIAS TOWARD ACTION on edit requests. If the user says "edit out X", "remove the Y paragraph", "change Z" — call the edit tool with your best interpretation. Don't ask for clarification on minor ambiguity. The user can undo.
 - AFTER A TOOL SUCCEEDS, do not second-guess. A success response means it worked. Reply in ONE short sentence confirming what was done. No verification thinking, no re-analyzing — move on.
@@ -275,7 +276,7 @@ Generate an image. Line 1 = description, line 2 = model name, line 3 = WxH (e.g.
     "manage_webhooks": "- ```manage_webhooks``` — Configure outgoing webhooks (HTTP notifications on events like chat completion). Args (JSON): {\"action\": \"list|add|delete|enable|disable\", ...}",
     "manage_tokens": "- ```manage_tokens``` — Generate or revoke API access tokens for external integrations. Args (JSON): {\"action\": \"list|create|delete\", ...}",
     "manage_documents": "- ```manage_documents``` — List, read/open, delete, or tidy documents in the editor panel. Args (JSON): {\"action\": \"list|read|delete|tidy\", ...}. `list` returns rows like `[Title](#document-<id>) — lang, size, updated 5m ago` sorted MOST-RECENT FIRST; the user clicks the anchor to open. `read` (aliases: view/open/get) takes `document_id` and returns the content. When the user asks \"open/show/read my notes\" or \"what documents do I have\", use this — do NOT shell out, do NOT curl.",
-    "manage_research": "- ```manage_research``` — List, read/open, or delete saved DEEP RESEARCH results from the Library. Args (JSON): {\"action\": \"list|read|delete\", \"id\": \"<id>\", \"search\": \"...\"}. `list` returns rows like `[query](#research-<id>) — N sources` MOST-RECENT FIRST; the user clicks to open. `read` (aliases: open/view/get) takes `id` and returns the report + sources. Use when the user says \"open/read/find/delete my research\" or \"that report\". To START new research, use trigger_research instead.",
+    "manage_research": "- ```manage_research``` — List, read/open, or delete saved DEEP RESEARCH results from the Library. Args (JSON): {\"action\": \"list|read|delete\", \"id\": \"<id>\", \"search\": \"...\"}. `list` returns rows like `[query](#research-<id>) — N sources` MOST-RECENT FIRST; the user clicks to open. `read` (aliases: open/view/get) takes `id` and returns the report text + sources. Use when the user says \"open/read/find/delete my research\" or \"that report\". This IS how you read a finished report: when the user refers to a just-completed deep-research job (\"check it out\", \"read that report\", \"summarize the research\") WITHOUT giving an id, call `manage_research` with `action:list` to get the most-recent id, then `action:read` with that id, and answer from the returned text. Do NOT `web_fetch`/`app_api` the `/api/research/report/{id}` URL — that endpoint renders HTML for the browser, not clean text — and do NOT start a fresh `web_search`/`trigger_research` just to read an existing report. To START new research, use trigger_research instead.",
     "manage_settings": "- ```manage_settings``` — View/change the REAL app settings (same ones the Settings panel writes) AND turn tools on/off. Change a setting: `{\"action\":\"set\",\"key\":\"...\",\"value\":\"...\"}` — keys accept friendly aliases, e.g. voice→tts_voice, \"search engine\"→search_provider, \"default model\"→default_model, \"teacher model\"→teacher_model, \"task/background model\"→task_model, \"image quality\"→image_quality, \"reminder channel\"→reminder_channel (browser|email|ntfy), \"agent timeout\"/\"max tool calls\"/\"token budget\". Read: `{\"action\":\"get\",\"key\":\"...\"}`; see all: `{\"action\":\"list\"}`; reset one: `{\"action\":\"reset\",\"key\":\"...\"}`. Use this when the user asks to change ANY preference instead of making them open Settings. Secrets/API keys are read-only (tell them to set those in the panel). Tool toggles: `{\"action\":\"disable_tool|enable_tool\",\"tool\":\"shell\"}` (aliases: shell/search/browser/documents/memory/skills/images/tasks/notes/calendar/email), list disabled: `{\"action\":\"list_tools\"}`.",
     "manage_notes": """\
 ```manage_notes
@@ -314,9 +315,10 @@ Bulk delete/archive/mark emails. Use this for "delete all those" after listing e
 {"action": "create_event", "summary": "<event title>", "dtstart": "<natural language or ISO datetime>"}
 ```
 Calendar event management (CalDAV). Actions: `list_events`, `create_event`, `update_event`, `delete_event`, `list_calendars`. \
-For `create_event`: {summary, dtstart, dtend?, duration?, calendar?, location?, description?, reminder_minutes?}. \
+For `create_event`: {summary, dtstart, dtend?, duration?, calendar?, location?, description?, reminder_minutes?, rrule?}. \
 `dtstart` accepts natural language ("tomorrow at 1pm", "in 2 hours", "next monday 9am") or ISO ("2026-05-12T13:00:00"). \
 If `dtend` omitted, defaults to dtstart+1h (or +1d when `all_day: true`). \
+For a RECURRING event pass `rrule` as an iCalendar RRULE string, e.g. `"FREQ=WEEKLY;BYDAY=MO"` (every Monday), `"FREQ=DAILY;COUNT=10"`, or `"FREQ=MONTHLY;BYMONTHDAY=1"` — create ONE event with the rrule, do not loop creating many events. \
 If the user asks for a reminder/alarm before the event, pass `reminder_minutes` as an integer; do not write reminder text into the event description and do NOT also call `manage_notes` for the same reminder because calendar reminders are routed through Notes automatically. \
 `calendar` accepts a name ("Main") or short-id prefix.""",
     "create_session": "- ```create_session``` — Create a new chat. Line 1 = chat name, line 2 = model name. Use for background/parallel work.",
@@ -352,7 +354,7 @@ GENERIC LOOPBACK to ANY Odysseus internal endpoint. Use this whenever the user w
 - Sessions: `/api/sessions`, `/api/session/{id}`, `/api/session/{id}/truncate`
 - Themes: `/api/prefs/themes`, `/api/prefs/custom-themes`
 - Settings: `/api/settings`, `/api/prefs/{key}`
-- Research: `/api/research/start`, `/api/research/tasks`, `/api/research/report/{id}`
+- Research: `/api/research/start`, `/api/research/tasks` (note: `/api/research/report/{id}` renders HTML — to READ a report's text use the `manage_research` tool with `action:read`, not this endpoint)
 - Compare: `/api/compare/sessions`, `/api/compare/start`
 - Email: use named email tools (`list_email_accounts`, `list_emails`, `read_email`, `send_email`, `reply_to_email`). Do NOT use `/api/email/accounts`; it is owner-filtered in tool context and may falsely return empty.
 - Endpoints (model providers): `/api/endpoints`, `/api/endpoints/{id}`
@@ -456,7 +458,7 @@ _API_HOSTS = frozenset([
     "api.deepseek.com", "deepseek.com",
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
-    "ollama.com",
+    "ollama.com", "api.venice.ai",
     # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
     # Without these, `_is_api_model` falls back to keyword sniffing on the
     # model name, so well-behaved local servers don't get native tool
@@ -642,6 +644,7 @@ def _build_system_prompt(
                 f'ACTIVE EMAIL DRAFT (open in editor — the user is looking at this right now)\n'
                 f'Title: "{active_document.title}"\n'
                 f'```\n{_doc_raw}\n```\n\n'
+                f'This is the current email compose window, not a normal document library item. If the user says "write", "draft", "reply", "make it say", or "write the email" without naming another target, edit THIS email draft.\n\n'
                 f'When the user asks you to write, reply to, or improve this email:\n'
                 f'1. Use `update_document` to replace the ENTIRE content — keep all the header lines (To, Subject, In-Reply-To, References, X-Source-UID, X-Source-Folder, X-Attachments) and the `---` separator EXACTLY as they are.\n'
                 f'2. Replace ONLY the body text (the part after `---`). If there is a quoted original email (lines starting with `>`), keep that quoted block unchanged BELOW your new reply.\n'
@@ -792,7 +795,7 @@ def _build_system_prompt(
     # When creating email documents, instruct the AI on the format
     if relevant_tools and (_EMAIL_TOOL_HINTS & set(relevant_tools)):
         agent_prompt += (
-            '\n\n📧 EMAIL DOCUMENT FORMAT: When drafting email replies, use create_document with language="email". '
+            '\n\n📧 EMAIL DOCUMENT FORMAT: If no email draft is already open and you need to create an email draft, use create_document with language="email". '
             'The content format is:\n'
             'To: recipient@example.com\n'
             'Subject: Re: Original subject\n'
@@ -800,8 +803,8 @@ def _build_system_prompt(
             'References: <original-message-id>\n'
             '---\n'
             'Body text here...\n\n'
-            'The user can then edit and click Send or Draft in the editor. For an already-open email draft, '
-            'edit the current document instead of creating another one.'
+            'The user can then edit and click Send or Draft in the editor. If an email draft is already open, '
+            'that open draft is the target: use update_document/edit_document on it instead of creating another document.'
         )
 
     # Inject relevant skills based on the user's last message. The
@@ -860,7 +863,7 @@ def _build_system_prompt(
                 # matter how often it's been matched and applied.
                 for _sk in relevant_skills:
                     try:
-                        sm.record_use(_sk.get('name', ''))
+                        sm.record_use(_sk.get('name', ''), owner=owner)
                     except Exception:
                         pass
                 lines.append("## Relevant skills for this request")
@@ -1176,6 +1179,8 @@ def _compute_final_metrics(
     model: str = "",
     last_round_input_tokens: int = 0,
     prep_timings: Optional[Dict[str, float]] = None,
+    backend_gen_tps: float = 0,
+    backend_prefill_tps: float = 0,
 ) -> dict:
     """Compute token counts, TPS, and build the final metrics dict."""
     if has_real_usage:
@@ -1188,7 +1193,15 @@ def _compute_final_metrics(
                 input_content += msg["content"] + "\n"
         input_tokens = len(input_content) // 4
         output_tokens = len(full_response) // 4
-    tps = output_tokens / total_duration if total_duration > 0 else 0
+    # Prefer the backend's true generation speed (llama.cpp
+    # timings.predicted_per_second) — pure decode, no prefill/tool/network time.
+    # Fall back to tokens/wall-clock only when the backend didn't report it
+    # (e.g. cloud APIs without timings); that figure reads low because
+    # total_duration includes prefill + agent overhead.
+    if backend_gen_tps and backend_gen_tps > 0:
+        tps = backend_gen_tps
+    else:
+        tps = output_tokens / total_duration if total_duration > 0 else 0
     # Use last round's input tokens for context % (peak usage) when available
     ctx_tokens = last_round_input_tokens if last_round_input_tokens > 0 else input_tokens
     ctx_pct = min(round((ctx_tokens / context_length) * 100, 1), 100.0) if context_length else 0
@@ -1199,12 +1212,17 @@ def _compute_final_metrics(
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "tokens_per_second": round(tps, 2),
+        # True decode speed when the backend reported it; "computed" = the
+        # tokens/wall-clock fallback (reads low — includes prefill/overhead).
+        "tps_source": "backend" if (backend_gen_tps and backend_gen_tps > 0) else "computed",
         "total_tokens": input_tokens + output_tokens,
         "context_length": context_length,
         "context_percent": ctx_pct,
         "usage_source": "real" if has_real_usage else "estimated",
         "model": model,
     }
+    if backend_prefill_tps and backend_prefill_tps > 0:
+        metrics["prefill_tps"] = round(backend_prefill_tps, 2)
     if prep_timings:
         prep_total = round(sum(prep_timings.values()), 3)
         metrics["agent_prep_time"] = prep_total
@@ -1295,6 +1313,30 @@ async def _run_verifier_subagent(
         return []
     reasons = last_v.split("VERIFICATION: FAIL:", 1)[1].strip()
     return [r.strip() for r in reasons.split(";") if r.strip()]
+
+
+def _empty_response_fallback(
+    full_response: str,
+    round_reasoning: str,
+    tool_events: list,
+) -> tuple:
+    """Return (final_response, sse_chunk_or_none) for the end-of-loop empty-response guard.
+
+    When a thinking model routes all tokens to reasoning_content (leaving
+    content=""), full_response is empty but round_reasoning has content.
+    The reasoning was already streamed as {thinking:true} chunks — do not
+    re-emit it as a normal delta.  Just persist it and yield nothing.
+
+    Returns:
+        (final_response: str, chunk: str | None)
+            chunk is the SSE string to yield, or None if nothing should be emitted.
+    """
+    if full_response.strip() or tool_events:
+        return full_response, None
+    if round_reasoning.strip():
+        return round_reasoning, None
+    _error_msg = "The model returned an empty response. Please try again or switch to a different model."
+    return _error_msg, f'data: {json.dumps({"delta": _error_msg})}\n\n'
 
 
 async def stream_agent_loop(
@@ -1433,7 +1475,7 @@ async def stream_agent_loop(
     except Exception as _e:
         logger.debug(f"endpoint supports_tools lookup failed: {_e}")
     _model_supports_tools = any(kw in _model_lc for kw in (
-        "deepseek", "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
+        "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
         "qwen3", "qwen2.5", "mixtral", "mistral", "llama-3.1", "llama-3.2",
         "llama-3.3", "llama-4",
         # Local-served models that follow OpenAI-style function calling
@@ -1441,10 +1483,29 @@ async def stream_agent_loop(
         # with the per-endpoint flag above.
         "minimax", "kimi", "yi-", "phi-3", "phi-4", "command-r",
         "glm-4", "internlm", "hermes",
+        # deepseek-v2/v3/chat support tools via the cloud API; deepseek-r1
+        # (reasoning model) does not — handled by the blocklist below.
+        "deepseek-v", "deepseek-chat",
     ))
+    # Models known to reject tool schemas at the Ollama/local level even when
+    # the endpoint URL would otherwise enable native function calling.
+    # The per-endpoint supports_tools flag (True/False) always takes priority
+    # and can override this list for users who know their setup.
+    _model_no_tools = any(kw in _model_lc for kw in (
+        "deepseek-r1",
+    ))
+    # Native Ollama endpoints (/api/chat) handle tool schemas differently from
+    # the OpenAI-compat path. Models like gemma4, qwen3.5, ministral respond to
+    # tool schemas by emitting a single native tool_call token then stopping,
+    # rather than writing a fenced block — the agent loop sees 1 token and no
+    # recognised tool, so the round terminates immediately (issue #1567).
+    # Unless the endpoint is explicitly marked supports_tools=True by the user
+    # (via the endpoint settings toggle), treat Ollama-native as text-only so
+    # the fenced-block path is used instead of native function calling.
+    _is_ollama_native = _is_ollama_native_url(endpoint_url or "")
     if _endpoint_supports is True:
         _is_api_model = True
-    elif _endpoint_supports is False:
+    elif _endpoint_supports is False or _model_no_tools or _is_ollama_native:
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
@@ -1460,12 +1521,32 @@ async def stream_agent_loop(
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
+        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX
+        from src.settings import is_setting_overridden
 
         soft_budget = int(get_setting("agent_input_token_budget", 6000) or 0)
         if soft_budget > 0:
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
-            effective_budget = min(context_length or soft_budget, soft_budget)
+            # Honour the configurable ceiling for the auto-derived budget path.
+            # No-op when the user has an explicit `agent_input_token_budget`
+            # (that branch ignores hard_max). Falls back to DEFAULT_HARD_MAX
+            # on missing/malformed values so misconfig can't zero the budget.
+            try:
+                hard_max = int(get_setting("agent_input_token_hard_max", DEFAULT_HARD_MAX) or DEFAULT_HARD_MAX)
+            except (TypeError, ValueError):
+                hard_max = DEFAULT_HARD_MAX
+            if hard_max <= 0:
+                hard_max = DEFAULT_HARD_MAX
+            # Scale the default budget to the model's context window so long-context
+            # models aren't silently capped at 6000; an explicit user setting is
+            # still honoured (clamped to the window). (#1170)
+            effective_budget = compute_input_token_budget(
+                soft_budget,
+                context_length,
+                is_setting_overridden("agent_input_token_budget"),
+                hard_max=hard_max,
+            )
             trimmed_messages = trim_for_context(
                 messages,
                 effective_budget,
@@ -1506,6 +1587,8 @@ async def stream_agent_loop(
     real_output_tokens = 0
     last_round_input_tokens = 0  # Last round's input tokens (for context % peak)
     has_real_usage = False
+    backend_gen_tps = 0      # backend-reported true gen speed (llama.cpp timings)
+    backend_prefill_tps = 0  # backend-reported prefill speed
     total_tool_calls = 0  # for budget enforcement
 
     # Loop-breaker state. Small models (e.g. deepseek-v4-flash) can get
@@ -1655,6 +1738,14 @@ async def stream_agent_loop(
                         real_output_tokens += u.get("output_tokens", 0)
                         last_round_input_tokens = round_input
                         has_real_usage = True
+                        # Backend-reported TRUE generation speed (llama.cpp
+                        # timings.predicted_per_second) — pure decode, excludes
+                        # prefill/network. Preferred over tokens/wall-clock, which
+                        # reads low. Keep the last round's value (the gen phase).
+                        if u.get("gen_tps"):
+                            backend_gen_tps = u["gen_tps"]
+                        if u.get("prefill_tps"):
+                            backend_prefill_tps = u["prefill_tps"]
                     elif data.get("type") == "fallback":
                         # The selected model failed and another answered; surface
                         # the notice so a misconfigured provider isn't masked.
@@ -2001,8 +2092,11 @@ async def stream_agent_loop(
                 )
             desc, result = await _tool_task
 
-            # Extract structured web sources from web_search tool output
-            _src_text = result.get("results") or result.get("stdout") or ""
+            # Extract structured web sources from web_search tool output.
+            # web_search returns {"output": ..., "exit_code": 0}; check "output"
+            # first so the <!-- SOURCES:…--> marker is found and stripped even
+            # when the result doesn't carry a "results" or "stdout" key.
+            _src_text = result.get("output") or result.get("results") or result.get("stdout") or ""
             if block.tool_type == "web_search" and _src_text:
                 _src_marker = "<!-- SOURCES:"
                 _src_idx = _src_text.find(_src_marker)
@@ -2014,7 +2108,9 @@ async def stream_agent_loop(
                             yield f'data: {json.dumps({"type": "web_sources", "data": _extracted_sources})}\n\n'
                             # Strip the marker from the result so it doesn't show in chat
                             _clean = _src_text[:_src_idx].rstrip()
-                            if "results" in result:
+                            if "output" in result:
+                                result["output"] = _clean
+                            elif "results" in result:
                                 result["results"] = _clean
                             elif "stdout" in result:
                                 result["stdout"] = _clean
@@ -2161,6 +2257,14 @@ async def stream_agent_loop(
         # Separator in accumulated response
         full_response += "\n\n"
 
+    # If the response is completely empty and no tools were executed,
+    # yield a fallback message so the user is not left hanging.
+    full_response, _fallback_chunk = _empty_response_fallback(
+        full_response, round_reasoning, tool_events
+    )
+    if _fallback_chunk:
+        yield _fallback_chunk
+
     # --- Final metrics ---
     total_duration = time.time() - total_start
     metrics = _compute_final_metrics(
@@ -2169,6 +2273,8 @@ async def stream_agent_loop(
         has_real_usage, tool_events, round_texts, model=model,
         last_round_input_tokens=last_round_input_tokens,
         prep_timings=prep_timings,
+        backend_gen_tps=backend_gen_tps,
+        backend_prefill_tps=backend_prefill_tps,
     )
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 

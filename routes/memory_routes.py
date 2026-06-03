@@ -27,7 +27,7 @@ from src.request_models import MemoryAddRequest
 from core.database import SessionLocal
 from src.llm_core import llm_call_async
 from services.memory.memory_extractor import audit_memories
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, require_user
 from src.endpoint_resolver import resolve_endpoint
 
 logger = logging.getLogger(__name__)
@@ -191,8 +191,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     @router.post("/extract")
     async def extract_memory(request: Request, session: str = Form(...)) -> Dict[str, List[str]]:
         """Analyze a session's chat history and return memory suggestions."""
-        if not get_current_user(request):
-            raise HTTPException(401, "Not authenticated")
+        require_user(request)
         try:
             sess = session_manager.get_session(session)
         except KeyError:

@@ -107,6 +107,8 @@ def require_privilege(request: Request, key: str) -> str:
         privs = auth_mgr.get_privileges(user) or {}
     except Exception:
         return user
+    if not isinstance(privs, dict):
+        privs = {}
     # True = permitted; missing key defaults to permitted (unknown privileges
     # fail open — the UI gates display-side).
     if not privs.get(key, True):

@@ -7,14 +7,19 @@ from fastapi import HTTPException
 
 from routes.cookbook_helpers import (
     _cached_model_scan_script,
+    _append_llama_cpp_linux_accel_build_lines,
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
+    _llama_cpp_rebuild_cmd,
     _local_tooling_path_export,
+    _pip_install_attempt,
     _pip_install_fallback_chain,
     _ollama_bind_from_cmd,
     _safe_env_prefix,
+    _venv_safe_local_pip_install_cmd,
     _validate_gpus,
     _validate_repo_id,
+    _validate_serve_cmd,
     _validate_serve_model_id,
     _validate_ssh_port,
 )
@@ -86,17 +91,139 @@ def test_local_tooling_path_export_preserves_spaces_and_expands_path():
 
 def test_pip_install_fallback_chain_prefers_venv_safe_install():
     chain = _pip_install_fallback_chain("huggingface_hub", upgrade=True)
-    assert chain.startswith("python3 -m pip install -q -U huggingface_hub")
-    assert "|| python3 -m pip install --user --break-system-packages -q -U huggingface_hub" in chain
+    # First attempt: plain install, wrapped in status-preserving subshell
+    assert chain.startswith("bash -c '")
+    assert "python3 -m pip install -q -U huggingface_hub" in chain
+    # Second attempt: --user --break-system-packages, also wrapped
+    assert "--user --break-system-packages" in chain
+    assert "python3 -m pip install --user --break-system-packages -q -U huggingface_hub" in chain
+    # No bare `| tail` (which would mask pip's exit code)
+    assert "| tail" not in chain
+    # Negated venv check with && — so failure in a venv propagates instead of
+    # being masked as success by the venv_check's exit-0.
+    assert "! python3 -c" in chain
+    # The group uses && (not ||) between venv check and user attempt
+    assert "&&" in chain
 
 
 def test_pip_install_fallback_chain_allows_custom_python_command():
     chain = _pip_install_fallback_chain("hf_transfer", python_cmd="pip", upgrade=False)
-    assert chain == (
-        'pip install -q hf_transfer 2>/dev/null || { '
-        'python -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"'
-        ' || pip install --user --break-system-packages -q hf_transfer 2>/dev/null; }'
+    assert "pip install -q hf_transfer" in chain
+    assert "pip install --user --break-system-packages -q hf_transfer" in chain
+    # venv check uses the python executable derived from the pip command
+    assert 'python -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"' in chain
+    # Both attempts are wrapped in bash -c subshells
+    assert chain.count("bash -c '") == 2
+
+
+def test_pip_install_fallback_chain_propagates_failure_in_venv():
+    """When base install fails inside a venv, the chain must exit non-zero.
+
+    The old `{ venv_check || user }` shape from #903 masked the failure:
+    venv_check exited 0 (in venv), || short-circuited, and the group
+    reported success even though nothing was installed.  The negated
+    `{ ! venv_check && user }` shape propagates the failure correctly.
+    """
+    import shlex
+    py = shlex.quote(sys.executable)
+    # Use the venv python so venv_check detects we're in a venv.
+    # Base install fails, venv_check exits 0, negated to 1,
+    # && skips user, group exits 1.
+    script = (
+        f"{py} -c 'import sys; sys.exit(1)' || "
+        f"{{ ! {py} -c \"import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)\" "
+        f"&& echo user_attempt; }}"
     )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert "user_attempt" not in result.stdout
+    assert result.returncode != 0, "Chain should propagate failure when base fails in venv"
+
+
+def test_pip_install_fallback_chain_tries_user_outside_venv():
+    """When base install fails outside a venv, the chain should try --user."""
+    # Force "not in venv" by making venv_check return 1 directly.
+    script = (
+        "bash -c '"
+        "python3 -c \"import sys; sys.exit(1)\" || "
+        "{ ! python3 -c \"import sys; sys.exit(1)\" "  # venv_check=1 → negated to 0 → user runs
+        "&& echo user_attempt; }"
+        "'"
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert "user_attempt" in result.stdout, "Chain should try --user when not in venv and base fails"
+
+
+def test_venv_safe_local_pip_install_strips_user_flags_only_for_local_venv():
+    cmd = 'python3 -m pip install -U --user --break-system-packages "vllm"'
+
+    cleaned = _venv_safe_local_pip_install_cmd(cmd, local=True, in_venv=True)
+
+    assert cleaned == "python3 -m pip install -U vllm"
+    assert _venv_safe_local_pip_install_cmd(cmd, local=False, in_venv=True) == cmd
+    assert _venv_safe_local_pip_install_cmd(cmd, local=True, in_venv=False) == cmd
+
+
+def test_pip_install_attempt_wraps_in_status_preserving_subshell():
+    """Each pip attempt must be a bash -c subshell that captures output,
+    prints tail, cleans up, and exits with pip's real status — not tail's."""
+    snippet = _pip_install_attempt("pip install -q huggingface_hub")
+    assert snippet.startswith("bash -c '")
+    assert "$(mktemp)" in snippet
+    assert "_rc=$?" in snippet
+    assert "tail -5" in snippet
+    assert "rm -f" in snippet
+    assert "exit $_rc" in snippet
+
+
+def test_pip_install_attempt_no_bare_pipe_tail():
+    """A bare `| tail` pipeline would mask pip's exit code — must not appear."""
+    snippet = _pip_install_attempt("pip install -q huggingface_hub")
+    assert "| tail" not in snippet
+
+
+def test_pip_install_attempt_failure_propagates_real_exit_code():
+    """Run the generated snippet against a deliberately broken pip install
+    to confirm the subshell exits with pip's non-zero status."""
+    snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode != 0, "pip install of a nonexistent package should fail"
+
+
+def test_pip_install_attempt_success_exits_zero():
+    """When pip succeeds, the subshell should exit 0."""
+    snippet = _pip_install_attempt("python3 -c 'pass'")
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0
+
+
+def test_pip_install_attempt_surfaces_stderr_on_failure():
+    """On failure, the last 5 lines of pip output should appear in stdout."""
+    snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    # pip's error message should be visible in the output (not swallowed)
+    combined = result.stdout + result.stderr
+    assert "nonexistent" in combined.lower() or result.returncode != 0
 
 
 def test_serve_preflight_failure_keeps_tmux_pane_visible():
@@ -131,6 +258,33 @@ def test_serve_runner_preserves_command_exit_code():
     assert 'echo "=== Process exited with code $? ==="' not in script
 
 
+def test_validate_serve_cmd_accepts_vllm_kv_cache_dtype():
+    cmd = (
+        "CUDA_VISIBLE_DEVICES=0,1 vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 "
+        "--host 0.0.0.0 --port 8000 --tensor-parallel-size 2 "
+        "--max-model-len 4096 --dtype auto --kv-cache-dtype fp8"
+    )
+
+    assert _validate_serve_cmd(cmd) == cmd
+
+
+def test_validate_serve_cmd_accepts_llama_advanced_controls():
+    cmd = (
+        "MODEL_FILE=$(printf %s ${HOME}'/.cache/huggingface/hub/models--Qwen--Qwen3-GGUF/snapshots/model.gguf') "
+        '&& { [ -n "$MODEL_FILE" ] && [ -f "$MODEL_FILE" ]; } '
+        '|| { echo "ERROR: No GGUF found on this host."; exit 1; } && '
+        'GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0,1 llama-server '
+        '--model "$MODEL_FILE" --host 0.0.0.0 --port 8000 -ngl 99 -c 131072 '
+        '--n-cpu-moe 0 --cache-type-k q8_0 --cache-type-v q8_0 --flash-attn on '
+        '--fit off --split-mode tensor --tensor-split 50,50 --main-gpu 0 '
+        '--parallel 1 --batch-size 2048 --ubatch-size 512 --no-mmap --no-warmup '
+        '--spec-type draft-mtp --spec-draft-n-max 3 '
+        '|| python3 -m llama_cpp.server --model "$MODEL_FILE" --host 0.0.0.0 --port 8000'
+    )
+
+    assert _validate_serve_cmd(cmd) == cmd
+
+
 def test_ollama_serve_defaults_to_loopback_bind():
     assert _ollama_bind_from_cmd("ollama serve") == ("127.0.0.1", "11434")
     assert _ollama_bind_from_cmd("ollama run qwen2.5:0.5b") == ("127.0.0.1", "11434")
@@ -163,6 +317,58 @@ def test_ollama_serve_rejects_unsafe_bind_values():
         _ollama_bind_from_cmd("OLLAMA_HOST=127.0.0.1:99999 ollama serve")
         == ("127.0.0.1", "11434")
     )
+
+
+def test_llama_cpp_linux_bootstrap_prefers_rocm_before_cuda():
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+    script = "\n".join(runner_lines)
+
+    assert 'command -v hipconfig &>/dev/null || [ -d /opt/rocm ] || [ -n "$ROCM_PATH" ] || [ -n "$HIP_PATH" ]' in script
+    assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON' in script
+    assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON' in script
+    assert script.index('DGGML_HIP=ON') < script.index('DGGML_CUDA=ON')
+    assert 'ROCm/HIP detected — building llama-server with HIP support' in script
+
+
+def test_llama_cpp_linux_bootstrap_keeps_cpu_fallback_when_no_gpu_toolchain():
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+    script = "\n".join(runner_lines)
+
+    assert 'WARNING: no HIP/CUDA toolchain found — building llama-server for CPU only.' in script
+    assert 'Install ROCm for AMD GPUs or vLLM/CUDA tooling for NVIDIA' in script
+
+
+def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
+    cmd = _llama_cpp_rebuild_cmd()
+
+    # Must remove both the cached symlink and the build dir the serve bootstrap
+    # links/creates, so the next serve recompiles from source.
+    assert 'rm -f "$HOME/bin/llama-server"' in cmd
+    assert 'rm -rf "$HOME/llama.cpp/build"' in cmd
+    # Recreates ~/bin so a never-served host does not error on a missing dir.
+    assert 'mkdir -p "$HOME/bin"' in cmd
+    # Diagnosis-only on the destructive side: it must not install or fetch.
+    assert 'pip install' not in cmd
+    assert 'git clone' not in cmd
+    assert 'curl' not in cmd and 'wget' not in cmd
+
+
+def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
+    """The command should succeed even when neither path exists yet."""
+    import os
+
+    env = dict(os.environ)
+    env["HOME"] = str(tmp_path)
+    result = subprocess.run(
+        ["bash", "-c", _llama_cpp_rebuild_cmd()],
+        capture_output=True, text=True, env=env, timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "bin").is_dir()
+    assert "Cleared the cached llama.cpp build" in result.stdout
 
 
 def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):

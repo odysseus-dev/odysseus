@@ -772,6 +772,17 @@ async def get_version():
 async def health_check() -> Dict[str, str]:
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
+@app.get("/api/ready")
+async def readiness_check() -> JSONResponse:
+    """Readiness / integrity self-check — DB, data dir, local-first storage.
+
+    Unlike /api/health (liveness), this returns 503 unless every critical
+    subsystem is whole, so an orchestrator can gate traffic on real readiness.
+    """
+    from src.readiness import check_readiness
+    result = check_readiness()
+    return JSONResponse(status_code=200 if result.get("ready") else 503, content=result)
+
 @app.get("/api/runtime")
 async def runtime_info() -> Dict[str, object]:
     in_docker = os.path.exists("/.dockerenv")

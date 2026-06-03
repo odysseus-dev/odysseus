@@ -4375,7 +4375,14 @@
   "hf_downloads": 51135,
   "hf_likes": 2,
   "release_date": "2025-09-23",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "typhoon-ai/typhoon2.5-qwen3-4b-gguf",
+    "file": "typhoon2.5-qwen3-4b-q4_k_m.gguf",
+    "quant": "Q4_K_M"
+   }
+  ]
  },
  {
   "name": "JunHowie/Qwen3-4B-Instruct-2507-GPTQ-Int4",
@@ -8994,7 +9001,14 @@
   "num_experts": 128,
   "active_experts": 8,
   "active_parameters": 3339450907,
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "typhoon-ai/typhoon2.5-qwen3-30b-a3b-gguf",
+    "file": "typhoon2.5-qwen3-30b-a3b-q4_k_m.gguf",
+    "quant": "Q4_K_M"
+   }
+  ]
  },
  {
   "name": "QuantTrio/Qwen3-Coder-30B-A3B-Instruct-AWQ",

@@ -6,8 +6,8 @@ YAML frontmatter and a structured markdown body (When to Use / Procedure /
 Pitfalls / Verification). See `skill_format.py` for the format.
 
 Usage counters (`uses`, `last_used`) live in a sidecar
-`data/skills/_usage.json` keyed by skill name so the SKILL.md content
-doesn't churn on every retrieval.
+`data/skills/_usage.json` keyed by owner plus skill name so the SKILL.md
+content doesn't churn on every retrieval.
 
 Ownership: skills declare `owner: <username>` in frontmatter. Single-user
 deployments can leave that blank.
@@ -105,14 +105,29 @@ class SkillsManager:
                 json.dump(usage, f, indent=2)
             os.replace(tmp, self.usage_file)
 
+    @staticmethod
+    def _usage_key(name: str, owner: Optional[str] = None) -> str:
+        # Skill names are not globally unique once multiple owners are present.
+        # Keep the usage sidecar keyed the same way the skill file is scoped.
+        return f"{owner}::{name}" if owner else name
+
+    def _usage_entry(self, usage: Dict[str, Dict], name: str, owner: Optional[str] = None) -> Dict:
+        key = self._usage_key(name, owner)
+        entry = usage.get(key)
+        if isinstance(entry, dict):
+            return entry
+        return {}
+
     def set_audit(self, name: str, verdict: str, by_teacher: bool = False,
-                  worker_model: str = "", teacher_model: str = "") -> None:
+                  worker_model: str = "", teacher_model: str = "",
+                  owner: Optional[str] = None) -> None:
         """Record the last test/audit result for a skill in the usage sidecar
         (so it surfaces in load() without touching SKILL.md). Drives the
         'verified' check + teacher mark on the card."""
         import time as _t
         usage = self._load_usage()
-        e = usage.setdefault(name, {"uses": 0, "last_used": None})
+        key = self._usage_key(name, owner)
+        e = usage.setdefault(key, {"uses": 0, "last_used": None})
         e["audit_verdict"] = verdict
         e["audit_by_teacher"] = bool(by_teacher)
         if worker_model:
@@ -123,11 +138,13 @@ class SkillsManager:
         self._save_usage(usage)
 
     def set_necessity(self, name: str, necessary: bool,
-                      redundant_with=None, reason: str = "") -> None:
+                      redundant_with=None, reason: str = "",
+                      owner: Optional[str] = None) -> None:
         """Record the advisory 'is this skill necessary?' judgment in the usage
         sidecar. Surfaced on the card as a flag; never acts on the skill."""
         usage = self._load_usage()
-        e = usage.setdefault(name, {"uses": 0, "last_used": None})
+        key = self._usage_key(name, owner)
+        e = usage.setdefault(key, {"uses": 0, "last_used": None})
         e["necessity"] = {
             "necessary": bool(necessary),
             "redundant_with": list(redundant_with or []),
@@ -207,7 +224,7 @@ class SkillsManager:
             if not sk:
                 continue
             d = sk.to_dict()
-            u = usage.get(sk.name) or {}
+            u = self._usage_entry(usage, sk.name, sk.owner)
             d["uses"] = int(u.get("uses", 0))
             d["last_used"] = u.get("last_used")
             d["audit_verdict"] = u.get("audit_verdict")
@@ -308,6 +325,7 @@ class SkillsManager:
         # never auto-skipped — a human asked for it. The every-X AI audit
         # handles the fuzzier near-duplicates this cheap check won't catch.
         _all = self.load_all()
+        _dedup_pool = _all if owner is None else [s for s in _all if s.get("owner") == owner]
         if source != "user":
             cand = _tokenize(" ".join([
                 nm, (description or title or ""),
@@ -315,7 +333,7 @@ class SkillsManager:
                 " ".join(procedure if procedure is not None else (steps or [])),
             ]))
             if cand:
-                for s in _all:
+                for s in _dedup_pool:
                     ex = _tokenize(" ".join([
                         s.get("name", ""), s.get("description", ""),
                         s.get("when_to_use", ""),
@@ -326,7 +344,7 @@ class SkillsManager:
                         # existing skill's usage and return it so the caller
                         # knows it already exists.
                         try:
-                            self.record_use(s["name"])
+                            self.record_use(s["name"], owner=s.get("owner"))
                         except Exception:
                             pass
                         return {**s, "_deduped": True, "_duplicate_of": s.get("name")}
@@ -428,8 +446,9 @@ class SkillsManager:
                 os.rename(old_dir, new_dir)
                 # Also rename usage key
                 usage = self._load_usage()
-                if skill_id in usage:
-                    usage[sk.name] = usage.pop(skill_id)
+                old_usage_key = self._usage_key(skill_id, sk.owner)
+                if old_usage_key in usage:
+                    usage[self._usage_key(sk.name, sk.owner)] = usage.pop(old_usage_key)
                     self._save_usage(usage)
             self._write_skill(sk)
             return True
@@ -455,15 +474,17 @@ class SkillsManager:
                 logger.warning(f"Failed to remove skill dir {skill_dir}: {e}")
                 return False
             usage = self._load_usage()
-            if skill_id in usage:
-                del usage[skill_id]
+            usage_key = self._usage_key(skill_id, sk.owner)
+            if usage_key in usage:
+                del usage[usage_key]
                 self._save_usage(usage)
             return True
         return False
 
-    def record_use(self, skill_id: str) -> None:
+    def record_use(self, skill_id: str, owner: Optional[str] = None) -> None:
         usage = self._load_usage()
-        entry = usage.setdefault(skill_id, {"uses": 0, "last_used": None})
+        key = self._usage_key(skill_id, owner)
+        entry = usage.setdefault(key, {"uses": 0, "last_used": None})
         entry["uses"] = int(entry.get("uses", 0)) + 1
         entry["last_used"] = int(time.time())
         self._save_usage(usage)

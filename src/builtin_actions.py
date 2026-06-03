@@ -478,7 +478,7 @@ def _result_has_work(result: str | None) -> bool:
     'No new emails to summarize', 'Tagged 0 / Moved 0', etc. when nothing
     was done. Used to decide whether to record the run or noop it.
     """
-    if not result:
+    if not isinstance(result, str) or not result:
         return False
     low = result.lower()
     if "processed 0" in low or "no new" in low or "nothing to" in low:
@@ -554,7 +554,7 @@ _HEURISTIC_CRITICAL = ["surgery", "court", "wedding day", "funeral", "delivery d
 
 def _classify_event_heuristic(summary: str) -> tuple:
     """Quick heuristic classification — returns (event_type, importance) or (None, None) if unclear."""
-    s = (summary or "").lower()
+    s = (summary if isinstance(summary, str) else "").lower()
     etype = None
     for t, kws in _HEURISTIC_TYPES.items():
         if any(k in s for k in kws):
@@ -956,6 +956,17 @@ async def action_mark_email_boundaries(owner: str, **kwargs) -> Tuple[str, bool]
         return str(e), False
 
 
+# Sender local-parts (matched exactly or by prefix) whose mail never carries a
+# personal signature worth learning. These compare against the local-part
+# (before "@"), so role names must NOT include a trailing "@" — "support@" etc.
+# could never match a local-part of "support" and were silently dead.
+_SIG_SKIP_PREFIXES = (
+    "noreply", "no-reply", "donotreply", "do-not-reply",
+    "mailer-daemon", "notifications", "notification", "bounce",
+    "newsletter", "support", "info", "admin",
+)
+
+
 async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, bool]:
     """For each sender with ≥3 recent inbox emails, ask the LLM to extract
     the common signature block across their messages. The cached sig is
@@ -1013,16 +1024,11 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
             return "No emails to scan", True
 
         # 2. Group by sender; drop addresses that don't carry useful sigs.
-        SKIP_PREFIXES = (
-            "noreply", "no-reply", "donotreply", "do-not-reply",
-            "mailer-daemon", "notifications", "notification", "bounce",
-            "newsletter", "support@", "info@", "admin@",
-        )
         by_sender: dict[str, list[dict]] = {}
         for m in mails:
             addr = m["from_address"]
             local = addr.split("@", 1)[0]
-            if any(local == p or local.startswith(p) for p in SKIP_PREFIXES):
+            if any(local == p or local.startswith(p) for p in _SIG_SKIP_PREFIXES):
                 continue
             # Skip plus-aliases / list-style addresses too.
             if "+" in local or "-noreply" in addr or "-bounces" in addr:
@@ -1313,7 +1319,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         if not names:
             raise TaskNoop("no skills to test")
 
-        url, model, headers = resolve_endpoint("default")
+        url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return "No Default/Utility model configured — set one in Settings.", False
 
@@ -1374,7 +1380,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
                 # user-set value (e.g. 1.0 → 0.95) is destructive.
                 if v in ("pass", "needs_work", "fail", "inconclusive"):
                     try:
-                        sm.set_audit(name, v, by_teacher=False, worker_model=model)
+                        sm.set_audit(name, v, by_teacher=False, worker_model=model, owner=owner)
                     except Exception as _e:
                         logger.warning(f"test_skills set_audit({name}) failed: {_e}")
                 if v == "unknown":
