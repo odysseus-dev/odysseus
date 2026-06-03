@@ -278,6 +278,11 @@ def _checkin_calendar_events(db, owner, start, end):
     The digest query had no owner scope, so it pulled EVERY user's events into
     one user's check-in (a cross-tenant leak of summaries/locations). Scope it
     by joining CalendarCal, mirroring routes/calendar_routes.list_events.
+
+    The upper bound is EXCLUSIVE ([start, end)): digest windows are contiguous
+    and share endpoints, so an inclusive bound put an event falling exactly on
+    a boundary (e.g. dtstart == now+2d) into TWO adjacent buckets and the
+    digest listed it twice.
     """
     from core.database import CalendarEvent as _CE, CalendarCal as _CC
     return (
@@ -286,7 +291,7 @@ def _checkin_calendar_events(db, owner, start, end):
         .filter(
             _CC.owner == owner,
             _CE.dtstart >= start,
-            _CE.dtstart <= end,
+            _CE.dtstart < end,
             _CE.status != "cancelled",
         )
         .order_by(_CE.dtstart)
