@@ -142,10 +142,21 @@ class ModelDiscovery:
             return ts_hosts
 
         hosts = [self.default_host]
-        # Docker desktop/Linux compose maps this to the host machine. That is
-        # the common "I started Ollama normally on this computer" case.
-        _append_host(hosts, "host.docker.internal")
-        _append_env_hosts(hosts)
+        for docker_host in ["host.docker.internal", "172.17.0.1"]:
+            try:
+                _socket.getaddrinfo(docker_host, 80)
+                hosts.append(docker_host)
+            except _socket.gaierror:
+                pass
+        for env_name in ("OLLAMA_BASE_URL", "OLLAMA_URL"):
+            raw = os.getenv(env_name, "").strip()
+            if not raw:
+                continue
+            try:
+                parsed = urlparse(raw if "://" in raw else "http://" + raw)
+                _append_host(hosts, parsed.hostname or "")
+            except Exception:
+                pass
         return hosts
 
     def _fingerprint_provider(self, host: str, port: int) -> Optional[str]:
@@ -191,11 +202,8 @@ class ModelDiscovery:
 
         logger.info(f"Scanning {len(hosts)} hosts for models: {hosts}")
 
-        # Well-known ports: 8000-8020 (vLLM, llama.cpp, SGLang, Cookbook),
-        # 1234 (LM Studio), 11434 (Ollama)
-        ports = list(range(8000, 8021)) + [1234, 11434]
-        ports += [p for p in sorted(self._extra_ports) if p not in ports]
-        targets = [(h, p) for h in hosts for p in ports]
+        common_ports = [*range(8000, 8021), 11434, 1234, 8080, 8081]
+        targets = [(h, p) for h in hosts for p in common_ports]
 
         seen_models = set()  # dedupe by (port, model_ids) to avoid same machine via different IPs
 

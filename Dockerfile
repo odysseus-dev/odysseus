@@ -32,6 +32,17 @@ COPY . .
 # Create data directory (mount a volume here for persistence)
 RUN mkdir -p data logs services/cache/search
 
+# Create transparent wrappers for common host commands so the agent
+# can run pacman, systemctl, etc. without knowing about host-exec.
+# Each wrapper proxies through the Docker socket to an Arch container.
+RUN set -e; \
+    for cmd in pacman systemctl journalctl makepkg paru yay timedatectl hostnamectl lsblk lspci dmidecode dmesg ip ss iwctl; do \
+        wrapper="/usr/local/bin/$cmd"; \
+        echo '#!/bin/sh' > "$wrapper"; \
+        echo "exec /app/scripts/host-exec $cmd \"\$@\"" >> "$wrapper"; \
+        chmod +x "$wrapper"; \
+    done
+
 # Entrypoint that drops to PUID/PGID (default 1000:1000) and repairs
 # ownership on the bind-mounted /app/data and /app/logs. Without this,
 # the container runs as root and writes root-owned files into host

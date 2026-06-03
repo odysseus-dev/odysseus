@@ -1,9 +1,9 @@
 services:
   odysseus:
     build: .
-    ports:
-      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
+    network_mode: host
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/app/data:z
       - ./logs:/app/logs:z
       # Cookbook remote-server SSH identity. Odysseus can generate a key here;
@@ -28,9 +28,9 @@ services:
       - RESEARCH_LLM_ENDPOINT=${RESEARCH_LLM_ENDPOINT:-}
       - HF_TOKEN=${HF_TOKEN:-}
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
-      - SEARXNG_INSTANCE=http://searxng:8080
-      - CHROMADB_HOST=chromadb
-      - CHROMADB_PORT=8000
+      - SEARXNG_INSTANCE=http://localhost:8080
+      - CHROMADB_HOST=localhost
+      - CHROMADB_PORT=8100
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
       - LOCALHOST_BYPASS=${LOCALHOST_BYPASS:-false}
@@ -58,7 +58,7 @@ services:
       # host user has a different id, override here or via .env, e.g.:
       #   PUID=1001
       #   PGID=1001
-      # Find yours with:  id -u  /  id -g
+      #   Find yours with:  id -u  /  id -g
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
     depends_on:
