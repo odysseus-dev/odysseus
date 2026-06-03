@@ -148,6 +148,21 @@ def _local_tooling_path_export(executable: str) -> str:
     return f'export PATH="{esc}:$PATH"'
 
 
+def _pip_install_no_cache(cmd: str) -> str:
+    """Add ``--no-cache-dir`` to a pip install command.
+
+    Cookbook dependency installs (vLLM, llama-cpp-python, …) build large wheels;
+    pip's default cache lives under ``$HOME/.cache/pip`` and these builds can fill
+    a small home filesystem with ``[Errno 28] No space left on device`` mid-build
+    (issue #1219), leaving the dependency "installed" but unusable (#1459).
+    Disabling the cache for these one-off installs keeps them off the home disk
+    (the maintainer's suggested ``PIP_CACHE_DIR=`` workaround, made the default).
+    Idempotent; leaves non-pip-install commands untouched."""
+    if not cmd or "pip install" not in cmd or "--no-cache-dir" in cmd:
+        return cmd
+    return cmd.replace("pip install", "pip install --no-cache-dir", 1)
+
+
 def _pip_install_attempt(pip_cmd: str) -> str:
     """Wrap a single pip install command so its exit status survives the
     fallback chain and its stderr is visible in the tmux log on failure.
@@ -179,8 +194,13 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     pip output appear in the Cookbook log on failure.
     """
     upgrade_flag = " -U" if upgrade else ""
-    base = _pip_install_attempt(f"{python_cmd} install -q{upgrade_flag} {package}")
-    user = _pip_install_attempt(f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {package}")
+    # Shell-quote the package spec: an extras spec like ``llama-cpp-python[server]``
+    # contains brackets that bash would treat as a glob, so it must be quoted
+    # before being embedded in the install command. Plain names (e.g.
+    # ``huggingface_hub``) are returned unchanged by ``shlex.quote``.
+    pkg = shlex.quote(package)
+    base = _pip_install_attempt(f"{python_cmd} install -q{upgrade_flag} {pkg}")
+    user = _pip_install_attempt(f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {pkg}")
     # Derive the python executable for the venv detection check.
     # Must use the same interpreter that pip belongs to; hardcoding
     # python3 breaks when pip lives in a venv that only has "python".
@@ -543,14 +563,56 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('      echo "[odysseus] ROCm/HIP detected — building llama-server with HIP support..."')
     runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
     runner_lines.append('    elif command -v nvcc &>/dev/null; then')
-    runner_lines.append('      echo "[odysseus] CUDA nvcc found — building llama-server with CUDA (GPU) support..."')
-    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    # nvcc alone is not sufficient — pip-installed CUDA wheels or incomplete
+    # tooling can expose nvcc without shipping libcudart, causing cmake to fail
+    # mid-build with "CUDA runtime library not found". Check cudart explicitly
+    # via a small helper so the guard stays readable.
+    runner_lines.append('      _odysseus_has_cudart() {')
+    runner_lines.append('        ldconfig -p 2>/dev/null | grep -q \'libcudart\\.so\' && return 0')
+    runner_lines.append('        local _cuh="${CUDA_HOME:-/usr/local/cuda}"')
+    runner_lines.append('        ls "$_cuh/lib64/libcudart.so"* &>/dev/null && return 0')
+    runner_lines.append('        ls "$_cuh/lib/libcudart.so"* &>/dev/null && return 0')
+    runner_lines.append('        ls /usr/local/cuda/lib64/libcudart.so* &>/dev/null && return 0')
+    runner_lines.append('        ls /usr/local/cuda/lib/libcudart.so* &>/dev/null && return 0')
+    runner_lines.append('        ls "${_cuh%/cuda_nvcc}/cuda_runtime/lib/libcudart.so"* &>/dev/null && return 0')
+    runner_lines.append('        return 1')
+    runner_lines.append('      }')
+    runner_lines.append('      if _odysseus_has_cudart; then')
+    runner_lines.append('        echo "[odysseus] CUDA nvcc + cudart found — building llama-server with CUDA (GPU) support..."')
+    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('      else')
+    runner_lines.append('        echo "[odysseus] WARNING: nvcc found but CUDA runtime (libcudart.so) is not visible — building llama-server for CPU only."')
+    runner_lines.append('        echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
+    runner_lines.append('        echo "[odysseus]   Ensure libcudart is installed (e.g. cuda-runtime package) and visible via ldconfig or CUDA_HOME."')
+    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('      fi')
     runner_lines.append('    else')
     runner_lines.append('      echo "[odysseus] WARNING: no HIP/CUDA toolchain found — building llama-server for CPU only."')
     runner_lines.append('      echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
     runner_lines.append('      echo "[odysseus]   Install ROCm for AMD GPUs or vLLM/CUDA tooling for NVIDIA, then re-launch this serve task."')
     runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
     runner_lines.append('    fi')
+
+
+def _llama_cpp_rebuild_cmd() -> str:
+    """Shell command that clears the Cookbook-managed llama.cpp build.
+
+    Removes the cached ``llama-server`` symlink and the ``~/llama.cpp/build``
+    directory so the next llama.cpp serve recompiles from source, picking up a
+    CUDA or HIP toolchain if one is now available. The serve bootstrap only
+    builds when ``llama-server`` is missing from PATH, so without this an
+    existing CPU-only build is reused forever. It deliberately installs and
+    downloads nothing; the rebuild itself happens on the next serve.
+    """
+    return (
+        'mkdir -p "$HOME/bin" && '
+        'rm -f "$HOME/bin/llama-server" && '
+        'rm -rf "$HOME/llama.cpp/build" && '
+        'echo "[odysseus] Cleared the cached llama.cpp build. '
+        'Re-launch the serve task to rebuild llama-server from source '
+        '(CUDA or HIP will be used if a toolchain is now available)."'
+    )
+
 
 class ModelDownloadRequest(BaseModel):
     repo_id: str

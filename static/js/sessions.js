@@ -678,10 +678,11 @@ function createSessionItem(s) {
     } else {
       _forceSidebarOpen();
     }
-    // Fire API and reload in background
-    fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' })
-      .then(() => loadSessions())
-      .catch(() => loadSessions());
+    // Await API deletion, then reload the authoritative list from the server
+    try {
+      await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
+    } catch (e) { /* network error — session may still exist server-side */ }
+    await loadSessions();
   });
 
   archiveItem.addEventListener('click', async () => {

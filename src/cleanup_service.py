@@ -1,9 +1,19 @@
 # src/cleanup_service.py
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Tuple, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow() -> datetime:
+    """Naive UTC for this module's DB-bound timestamps.
+
+    Mirrors the naive DateTime columns these values are compared against,
+    without the deprecated stdlib UTC-now call (removed in Python 3.14).
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 class CleanupConfig:
     """Configuration constants for cleanup operations."""
@@ -38,7 +48,7 @@ async def archive_inactive_sessions(session_manager, owner: Optional[str] = None
     Returns:
         Number of sessions archived
     """
-    cutoff_date = datetime.utcnow() - timedelta(days=CleanupConfig.ARCHIVE_AFTER_DAYS)
+    cutoff_date = _utcnow() - timedelta(days=CleanupConfig.ARCHIVE_AFTER_DAYS)
     archived_count = 0
 
     from src.database import SessionLocal, Session as DbSession
@@ -53,7 +63,7 @@ async def archive_inactive_sessions(session_manager, owner: Optional[str] = None
 
         for session in sessions_to_archive:
             session.archived = True
-            session.updated_at = datetime.utcnow()
+            session.updated_at = _utcnow()
             archived_count += 1
 
         if archived_count > 0:
@@ -79,7 +89,7 @@ async def cleanup_old_sessions(session_manager, owner: Optional[str] = None) -> 
     Returns:
         Tuple of (number of sessions deleted, space freed in MB)
     """
-    cutoff_date = datetime.utcnow() - timedelta(days=CleanupConfig.DELETE_AFTER_DAYS)
+    cutoff_date = _utcnow() - timedelta(days=CleanupConfig.DELETE_AFTER_DAYS)
     deleted_count = 0
     space_freed = 0
 
@@ -158,8 +168,8 @@ async def get_cleanup_preview(owner: Optional[str] = None) -> Dict[str, Any]:
     Returns:
         Dictionary containing preview information
     """
-    cutoff_archive = datetime.utcnow() - timedelta(days=CleanupConfig.ARCHIVE_AFTER_DAYS)
-    cutoff_delete = datetime.utcnow() - timedelta(days=CleanupConfig.DELETE_AFTER_DAYS)
+    cutoff_archive = _utcnow() - timedelta(days=CleanupConfig.ARCHIVE_AFTER_DAYS)
+    cutoff_delete = _utcnow() - timedelta(days=CleanupConfig.DELETE_AFTER_DAYS)
 
     sessions_to_archive = []
     sessions_to_delete = []

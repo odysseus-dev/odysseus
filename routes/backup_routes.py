@@ -77,7 +77,12 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
         # ── Memories ──
         if "memories" in body and isinstance(body["memories"], list):
             existing = memory_manager.load_all()
-            existing_texts = {e.get("text", "").strip().lower() for e in existing}
+            # Dedup against THIS user's own memories only. Using every tenant's
+            # rows (load_all) meant a memory whose text matched any other
+            # user's was silently skipped, so the importing user lost their own
+            # data. The full store is still saved back below.
+            existing_texts = {e.get("text", "").strip().lower()
+                              for e in existing if e.get("owner") == user}
             added = 0
             for mem in body["memories"]:
                 if not isinstance(mem, dict) or not mem.get("text"):

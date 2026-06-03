@@ -344,6 +344,16 @@ class DeepResearcher:
         self._emit(phase="writing", total_sources=len(self.urls_fetched),
                    total_findings=len(findings))
         if not report:
+            # Synthesis can fail (e.g. the LLM timed out) even though the search
+            # rounds did gather findings. Don't throw that work away — return the
+            # gathered findings as a basic compiled report instead of claiming
+            # nothing was found (#1551).
+            if findings:
+                logger.warning(
+                    "Synthesis produced no report; returning %d gathered "
+                    "finding(s) as a fallback", len(findings)
+                )
+                return self._fallback_report(question, findings)
             return "No information could be gathered for this question."
 
         self.evolving_report = report  # preserve pre-synthesis report
@@ -662,7 +672,11 @@ class DeepResearcher:
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=self.max_report_tokens,
-                timeout=60,
+                # Synthesis is a heavy generation call like the final report
+                # (which gets 180s); a slow local model (e.g. a 20B served from
+                # LM Studio) routinely needs >60s for it. The old 60s cap timed
+                # out mid-stream and discarded the round's findings (#1551).
+                timeout=180,
             )
         except Exception as e:
             logger.error(f"Synthesis failed: {e}")
@@ -786,6 +800,17 @@ class DeepResearcher:
         except json.JSONDecodeError:
             pass
 
+        # Handle truncated arrays — e.g. '["query one", "query two", "query thr'
+        # Repair from the LAST array start so an echoed example array earlier
+        # in the reply is not harvested into the real query set.
+        last_start = text.rfind('[')
+        truncated = last_start != -1 and ']' not in text[last_start:]
+        if truncated:
+            complete_items = re.findall(r'"([^"]*)"', text[last_start:])
+            if complete_items:
+                logger.info(f"Repaired truncated JSON array: recovered {len(complete_items)} items")
+                return complete_items
+
         # Greedy match to capture the full outermost array
         match = re.search(r'\[[\s\S]*\]', text)
         if match:
@@ -796,8 +821,22 @@ class DeepResearcher:
             except json.JSONDecodeError:
                 pass
 
-        # Handle truncated arrays — e.g. '["query one", "query two", "query thr'
-        # Try to find the start of an array and repair it
+        # Multiple complete arrays in one reply (e.g. the model echoes the
+        # prompt's Example: [...] before the real array). The greedy match
+        # above spans them all and fails to parse, so scan non-greedily and
+        # keep the LAST parseable array, which is the model's actual answer.
+        last_parsed = None
+        for m in re.finditer(r'\[[\s\S]*?\]', text):
+            try:
+                parsed = json.loads(m.group())
+                if isinstance(parsed, list):
+                    last_parsed = parsed
+            except json.JSONDecodeError:
+                continue
+        if last_parsed is not None:
+            return [str(item) for item in last_parsed]
+
+        # Last resort: harvest quoted strings from the first array start
         arr_start = text.find('[')
         if arr_start != -1:
             fragment = text[arr_start:]
@@ -840,6 +879,21 @@ class DeepResearcher:
             content = summary if summary else (evidence[:1000] if evidence else "(no content)")
             parts.append(f"**Finding {i}** — [{title}]({url})\n{content}")
         return "\n\n".join(parts)
+
+    def _fallback_report(self, question: str, findings: List[Dict]) -> str:
+        """Compile gathered findings into a basic report.
+
+        Used when the LLM synthesis step produced no report (e.g. it timed out)
+        but the search rounds did collect findings — so the user still gets the
+        material that was gathered instead of "No information could be gathered"
+        (#1551).
+        """
+        return (
+            f"# {question}\n\n"
+            "_Automatic synthesis did not complete, so this report lists the "
+            f"{len(findings)} finding(s) gathered during research._\n\n"
+            f"{self._format_findings(findings)}"
+        )
 
     def get_stats(self) -> Dict:
         """Return research statistics."""

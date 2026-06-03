@@ -15,6 +15,21 @@ from src.auth_helpers import get_current_user
 logger = logging.getLogger(__name__)
 
 
+def _aggregate_language_facets(lang_rows):
+    """Sum document counts per display language for the library facet.
+
+    NULL-language and explicit "text" rows share the "text" bucket (the
+    language filter treats them as one), so they must be ADDED. The old dict
+    comprehension keyed both to "text", silently overwriting one group and
+    undercounting the facet versus what the filter actually returns.
+    """
+    out = {}
+    for lang, cnt in lang_rows:
+        key = lang or "text"
+        out[key] = out.get(key, 0) + cnt
+    return out
+
+
 
 from routes.document_helpers import (
     DocumentCreate, DocumentUpdate, DocumentPatch,
@@ -258,7 +273,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             )
             lang_q = _owner_session_filter(lang_q, user)
             lang_rows = lang_q.group_by(Document.language).all()
-            languages = {lang or "text": cnt for lang, cnt in lang_rows}
+            languages = _aggregate_language_facets(lang_rows)
 
             # Session count (owner-filtered)
             sc_q = (
@@ -901,7 +916,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             for i, doc in enumerate(batch):
                 if i >= len(verdicts):
                     break
-                verdict = verdicts[i].lower().strip()
+                verdict = str(verdicts[i] or "").lower().strip()
                 if verdict == "junk":
                     doc.tidy_verdict = "junk"
                     db.delete(doc)
