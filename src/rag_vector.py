@@ -27,8 +27,14 @@ KEYWORD_WEIGHT = 0.3
 COLLECTION_NAME = "odysseus_rag"
 
 
-def _generate_doc_id(text: str) -> str:
-    return f"doc_{hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]}"
+def _generate_doc_id(text: str, owner: Optional[str] = None) -> str:
+    # Namespace the id by owner so two owners indexing byte-identical text get
+    # distinct rows (#1662). Otherwise the second owner's chunk collides with the
+    # first's id, is skipped on add, and never appears in their owner-scoped
+    # search. owner=None keeps the legacy content-only id, so existing rows and
+    # shared/legacy chunks are unchanged and need no re-index.
+    key = text if owner is None else f"{owner}\x00{text}"
+    return f"doc_{hashlib.sha256(key.encode('utf-8')).hexdigest()[:16]}"
 
 
 class VectorRAG:
@@ -104,8 +110,8 @@ class VectorRAG:
             return False
 
         try:
-            doc_id = _generate_doc_id(text)
-            # Check if already exists
+            doc_id = _generate_doc_id(text, metadata.get("owner"))
+            # Check if already exists (same owner + same text)
             existing = self._collection.get(ids=[doc_id])
             if existing["ids"]:
                 return True  # already exists
@@ -140,7 +146,7 @@ class VectorRAG:
             new_metas = []
             new_ids = []
             for t, m in valid:
-                doc_id = _generate_doc_id(t)
+                doc_id = _generate_doc_id(t, m.get("owner"))
                 existing = self._collection.get(ids=[doc_id])
                 if not existing["ids"]:
                     new_texts.append(t)
