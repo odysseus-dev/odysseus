@@ -51,6 +51,7 @@ from routes.email_helpers import (
     attachment_extract_dir,
 )
 from routes.email_pollers import _start_poller
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
