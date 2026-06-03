@@ -45,7 +45,7 @@ _STORE = _DATA_DIR / "bg_jobs.json"
 # still gets a "timed out" follow-up so nothing hangs forever).
 DEFAULT_MAX_RUNTIME_S = 3600  # 1 hour
 # Cap how much captured output we keep / feed back to the model.
-_MAX_OUTPUT_CHARS = 16000
+_MAX_OUTPUT_CHARS = int(os.environ.get("ODYSSEUS_BG_MAX_OUTPUT_CHARS", 16000))
 # How long a finished-and-followed-up job (record + its .sh/.cmd.sh/.log/.exit
 # files) is kept before pruning, so neither the store nor data/bg_jobs/ grows
 # without bound. The agent has already consumed the result by then.

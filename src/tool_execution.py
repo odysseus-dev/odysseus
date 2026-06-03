@@ -18,8 +18,8 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
 
-MAX_OUTPUT_CHARS = 10_000
-MAX_READ_CHARS = 20_000
+MAX_OUTPUT_CHARS = int(os.environ.get("ODYSSEUS_MAX_OUTPUT_CHARS", 10000))
+MAX_READ_CHARS = int(os.environ.get("ODYSSEUS_MAX_READ_CHARS", 20000))
 
 # ---------------------------------------------------------------------------
 # Path confinement for read_file / write_file
@@ -97,6 +97,14 @@ def _tool_path_roots() -> list[str]:
     tmpdir = os.environ.get("TMPDIR")
     if tmpdir:
         roots.append(tmpdir)
+
+    # Opt-in extra roots from env var (ODYSSEUS_EXTRA_ALLOWED_ROOTS).
+    env_extra = os.environ.get("ODYSSEUS_EXTRA_ALLOWED_ROOTS")
+    if env_extra:
+        for p in env_extra.split(","):
+            p = p.strip()
+            if p:
+                roots.append(p)
 
     # Opt-in extra roots from settings.
     try:

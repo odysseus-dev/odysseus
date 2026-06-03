@@ -11,8 +11,8 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-MAX_OUTPUT_CHARS = 10_000
-MAX_READ_CHARS = 20_000
+MAX_OUTPUT_CHARS = int(os.environ.get("ODYSSEUS_MAX_OUTPUT_CHARS", 10000))
+MAX_READ_CHARS = int(os.environ.get("ODYSSEUS_MAX_READ_CHARS", 20000))
 
 
 def get_mcp_manager():

@@ -12,6 +12,7 @@ Sub-modules:
 """
 
 import logging
+import os
 from collections import namedtuple
 
 logger = logging.getLogger(__name__)
@@ -19,11 +20,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants (kept here — sub-modules import from here)
 # ---------------------------------------------------------------------------
-MAX_AGENT_ROUNDS = 20
-SHELL_TIMEOUT = 60
-PYTHON_TIMEOUT = 30
-MAX_OUTPUT_CHARS = 10_000
-MAX_READ_CHARS = 20_000
+MAX_AGENT_ROUNDS = int(os.environ.get("ODYSSEUS_MAX_AGENT_ROUNDS", 20))
+SHELL_TIMEOUT = int(os.environ.get("ODYSSEUS_SHELL_TIMEOUT", 60))
+PYTHON_TIMEOUT = int(os.environ.get("ODYSSEUS_PYTHON_TIMEOUT", 30))
+MAX_OUTPUT_CHARS = int(os.environ.get("ODYSSEUS_MAX_OUTPUT_CHARS", 10000))
+MAX_READ_CHARS = int(os.environ.get("ODYSSEUS_MAX_READ_CHARS", 20000))
 
 # Tool types that trigger execution
 TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file",
