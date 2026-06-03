@@ -2,8 +2,8 @@
 """odysseus-webhook — shell wrapper for scheduled-task webhook tokens.
 
 Tasks in the scheduled-task system can carry a `webhook_token`. Any
-HTTP POST to `/api/webhook/<token>` fires the task. This CLI lists,
-rotates, and revokes those tokens.
+HTTP POST to `/api/tasks/<task_id>/webhook/<token>` fires the task. This
+CLI lists, rotates, and revokes those tokens.
 
     odysseus-webhook list                       # tasks that have a token
     odysseus-webhook show TASK_ID
@@ -110,7 +110,7 @@ def cmd_url(args):
         if not t.webhook_token:
             fail(f"task {args.id!r} has no webhook token (rotate one first)")
         base = (args.base or "http://localhost:7000").rstrip("/")
-        url = f"{base}/api/webhook/{t.webhook_token}"
+        url = f"{base}/api/tasks/{t.id}/webhook/{t.webhook_token}"
         emit({
             "task_id": t.id,
             "name": t.name,
