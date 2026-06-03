@@ -1636,6 +1636,13 @@ body.bg-pattern-sparkles {
       cursor: pointer;
       touch-action: pan-y;
     }
+    /* Decorative SVG icons in tool / new-chat / search buttons should not
+       intercept pointer events — let them pass through to the parent
+       .list-item so the padding area is fully clickable. Session item
+       SVGs are nested inside <span> elements so they aren't affected. */
+    .list-item > svg {
+      pointer-events: none;
+    }
     .list-item button {
       margin: 0;
       height: 24px;

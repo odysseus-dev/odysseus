@@ -102,10 +102,13 @@ export function initSectionCollapse(Storage) {
       });
     }
 
-    // Click anywhere on collapsed section to expand
+    // Click on section header to toggle collapse/expand.
+    // Only fires when the click lands on the header itself — not on child
+    // elements like .list-item (whose own click handlers would otherwise
+    // be shadowed by the section's capture/bubbling in some browsers).
     section.addEventListener('click', (e) => {
-      if (!section.classList.contains('collapsed')) return;
-      if (e.target.closest('button, select, .dropdown')) return;
+      if (!e.target.closest('.section-header-flex')) return;
+      if (e.target.closest('button, select, .dropdown, .section-title')) return;
       e.stopPropagation();
       toggleCollapse();
     });
