@@ -1608,6 +1608,7 @@ def _build_base_prompt(
 def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num: int, is_api_model: bool = False):
     """Choose native function calls or fenced code block parsing. Returns (tool_blocks, used_native)."""
     used_native = False
+    converted_calls = []  # native calls that converted, ALIGNED with tool_blocks
     if native_tool_calls:
         tool_blocks = []
         for tc in native_tool_calls:
@@ -1616,6 +1617,7 @@ def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num
             block = function_call_to_tool_block(tc_name, tc_args)
             if block:
                 tool_blocks.append(block)
+                converted_calls.append(tc)
                 logger.info(f"  -> converted: {tc_name} -> {block.tool_type}")
             else:
                 logger.warning(f"  -> FAILED to convert native call: {tc_name} args={tc_args[:200]}")
@@ -1645,7 +1647,7 @@ def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num
                 f"{len(native_tool_calls)} native calls, "
                 f"{len(tool_blocks)} tool blocks. Preview: {resp_preview}")
 
-    return tool_blocks, used_native
+    return tool_blocks, used_native, converted_calls
 
 
 def _append_tool_results(
@@ -2813,7 +2815,7 @@ async def stream_agent_loop(
             _round_first_event_logged,
             _round_first_token_logged,
         )
-        tool_blocks, used_native = _resolve_tool_blocks(
+        tool_blocks, used_native, converted_calls = _resolve_tool_blocks(
             round_response,
             native_tool_calls,
             round_num,
@@ -3445,7 +3447,12 @@ async def stream_agent_loop(
             break
 
         # Feed results back to LLM for next round
-        _append_tool_results(messages, round_response, native_tool_calls,
+        # Pass the CONVERTED calls (aligned 1:1 with tool_result_texts), not the
+        # raw native_tool_calls: a call that failed to convert is dropped from
+        # tool_blocks but stayed in native_tool_calls, so indexing results by
+        # native position mis-attached each result to the wrong tool_call_id
+        # (and left the real call answered empty).
+        _append_tool_results(messages, round_response, converted_calls,
                              tool_results, tool_result_texts, used_native, round_num,
                              round_reasoning=round_reasoning)
 
