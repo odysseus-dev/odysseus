@@ -13,7 +13,7 @@ import csv
 import io
 import httpx
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Query, Depends, Response
 from typing import List, Dict, Optional
 
@@ -21,6 +21,17 @@ from src.auth_helpers import require_user
 from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow_naive() -> datetime:
+    """Naive UTC ``now``, replacing the deprecated ``datetime.utcnow()`` (#1116).
+
+    The contact cache subtracts ``fetched_at`` from "now" to age it out; both
+    sides must stay naive or the subtraction raises ``TypeError`` (can't subtract
+    offset-naive and offset-aware). ``datetime.utcnow()`` is removed in 3.14, so
+    route the cache timestamps through this helper to keep the same naive shape.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 SETTINGS_FILE = DATA_DIR / "settings.json"
@@ -92,7 +103,7 @@ def _save_local_contacts(contacts: List[Dict]) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     atomic_write_json(str(LOCAL_CONTACTS_FILE), {"contacts": [_normalize_contact(c) for c in contacts]}, indent=2)
     _contact_cache["contacts"] = [_normalize_contact(c) for c in contacts]
-    _contact_cache["fetched_at"] = datetime.utcnow()
+    _contact_cache["fetched_at"] = _utcnow_naive()
 
 
 # ── vCard parsing ──
@@ -285,7 +296,7 @@ def _fetch_via_report(cfg, auth):
 def _fetch_contacts(force=False):
     """Fetch all contacts. Uses CardDAV when configured, otherwise local JSON."""
     if not force and _contact_cache["fetched_at"]:
-        age = (datetime.utcnow() - _contact_cache["fetched_at"]).total_seconds()
+        age = (_utcnow_naive() - _contact_cache["fetched_at"]).total_seconds()
         if age < 60:
             return _contact_cache["contacts"]
 
@@ -293,7 +304,7 @@ def _fetch_contacts(force=False):
     if not _carddav_configured(cfg):
         contacts = _load_local_contacts()
         _contact_cache["contacts"] = contacts
-        _contact_cache["fetched_at"] = datetime.utcnow()
+        _contact_cache["fetched_at"] = _utcnow_naive()
         return contacts
 
     try:
@@ -310,7 +321,7 @@ def _fetch_contacts(force=False):
                 return _contact_cache["contacts"]
             contacts = _parse_vcards(r.text)
         _contact_cache["contacts"] = contacts
-        _contact_cache["fetched_at"] = datetime.utcnow()
+        _contact_cache["fetched_at"] = _utcnow_naive()
         return contacts
     except Exception as e:
         logger.error(f"Failed to fetch contacts: {e}")
