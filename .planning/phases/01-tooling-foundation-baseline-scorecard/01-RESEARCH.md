@@ -518,9 +518,9 @@ Open a throwaway PR that introduces a *deliberate* violation (an unused import f
 | Security findings list | `bandit ... -f json` results (post-suppression) + `pip-audit -r requirements.lock -f json` results, merged into a list with severity | `bandit`, `pip-audit` |
 | Per-file test-coverage map | `pytest --cov=. --cov-report=json` → `coverage.json` `files{}` map of per-file percent + missing lines | `pytest-cov` / `coverage json` |
 | Startup / key-path perf benchmark | Measure cold-import + app-construction time without serving traffic: `python -c "import time;t=time.perf_counter();import app;print(time.perf_counter()-t)"` averaged over N runs; optionally TestClient one cheap GET (e.g. `/api/health` if present) for a key-path latency sample. Record machine/python/run-count metadata. Behavior-preserving: only times existing code, changes nothing. | stdlib `time`, `fastapi.testclient` |
-| Authenticated-endpoint enumeration | Import `app`, walk `app.routes` for `APIRoute`s; for each, record `path`, sorted `methods`, and a best-effort auth classification (auth is enforced by middleware `core/middleware.py` with a small public allow-list, NOT per-route `Depends`, so classification = "all routes except the middleware's public/bypass allow-list"). Emit the list; this is the input for Phase 2 COV-03 / Phase 5 SEC-01. | FastAPI route table + `core/middleware.py` allow-list constants |
+| Authenticated-endpoint enumeration | Import `app`, walk `app.routes` for `APIRoute`s; for each, record `path`, sorted `methods`, and a best-effort auth classification (auth is enforced by an inline `AuthMiddleware` in `app.py` with a small public allow-list, NOT per-route `Depends`, so classification = "all routes except the allow-list"). Emit the list; this is the input for Phase 2 COV-03 / Phase 5 SEC-01. | FastAPI route table + the inline allow-list constants in `app.py:162-194` |
 
-> Auth-model note (verified this session): protection is centralized in `core/middleware.py` (bypass for `AUTH_ENABLED` off, localhost bypass, and specific tool-loopback path prefixes like `/api/tools/.../render`, `/api/research/report/`). The enumeration script should encode that public/bypass allow-list explicitly and mark everything else as authenticated, rather than scanning for `Depends`.
+> Auth-model note (CORRECTED by pattern-mapper + plan-checker): the allow-list is **inline in `app.py:162-194`** (`AUTH_EXEMPT_EXACT` / `AUTH_EXEMPT_PREFIXES` / `AUTH_EXEMPT_PATTERNS` / `_is_auth_exempt`), gated behind `if AUTH_ENABLED:` — NOT in `core/middleware.py` (which only holds `require_admin` + `SecurityHeadersMiddleware` and has no allow-list). The enumeration script must encode the allow-list VALUES from `app.py:162-194` verbatim (not import the AUTH_ENABLED-gated symbols) and mark everything else authenticated, rather than scanning for `Depends`.
 
 ### JSON schema shape (default — finalize in planning)
 ```json
@@ -682,16 +682,16 @@ The two file-touching tools (`ruff --fix`, `ruff format`) will modify many of th
 | A5 | bandit will fire heavily on intentional admin subprocess/file features and need curated skips | bandit suppression | LOW — expected per THREAT_MODEL.md; the audit pass classifies them |
 | A6 | mypy version is 2.1.0 (mypy went 2.0 in May 2026) | Standard Stack | LOW — verified against PyPI + changelog this session |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Unified vs split ML lock** — Will `chromadb-client + fastembed + onnxruntime + (optional) markitdown/magika` resolve together in `python:3.12-slim`?
    - Known: it is the documented conflict hotspot (Pitfall 10).
    - Unclear: actual resolution outcome — only determinable by running the compile.
-   - Recommendation: first plan task is the Docker compile; branch to the D-06 fallback (split `requirements-ml.in`) only if it fails. Capture the stderr either way for the scorecard/audit record.
+   - **RESOLVED (adopted in Plan 01-01 Task 2):** first plan task is the Docker compile; branch to the D-06 fallback (split `requirements-ml.in`) only if it fails. Capture the stderr either way for the scorecard/audit record.
 2. **mypy scope of `tests/`** — Include or exclude tests from mypy day 1?
-   - Recommendation: exclude `tests/` initially (heavily stubbed via `conftest.py` `MagicMock` injection — typing them yields noise). Revisit in a later phase via the ratchet.
+   - **RESOLVED (adopted in Plan 01-03):** exclude `tests/` initially (heavily stubbed via `conftest.py` `MagicMock` injection — typing them yields noise). Revisit in a later phase via the ratchet.
 3. **Exact `typed_pct` definition** — `mypy --linecount-report` vs AST-based annotated-def ratio.
-   - Recommendation: AST-based (tool-version-independent, fully reproducible, no dependence on mypy's report format which can change across versions). Document the exact rule in `scripts/scorecard.py`.
+   - **RESOLVED (adopted in Plan 01-04 Task 1):** AST-based (tool-version-independent, fully reproducible, no dependence on mypy's report format which can change across versions). Document the exact rule in `scripts/scorecard.py`.
 
 ## Environment Availability
 
