@@ -8,13 +8,13 @@ def test_search_skips_non_dict_results(monkeypatch):
     # comprehensive_web_search aggregates external provider + cache results;
     # a malformed row (string/None) made the old loop call r.get and crash,
     # losing the whole search.
-    async def fake_search(query, max_results=10, fetch_content=False):
-        return [
+    def fake_search(query, **kwargs):
+        return ("context", [
             {"url": "https://a.com", "title": "A", "snippet": "x"},
             "junk-row",
             None,
             {"url": "https://b.com", "title": "B", "snippet": "y"},
-        ]
+        ])
 
     monkeypatch.setattr(svc_mod, "comprehensive_web_search", fake_search)
     svc = SearchService()

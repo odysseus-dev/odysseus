@@ -516,7 +516,7 @@ def build_user_content(
                     except Exception as e:
                         logger.warning(f"PDF auto-doc creation failed for {path}: {e}")
                 if extracted_text is None:
-                    extracted_text = _process_pdf(path)
+                    extracted_text = strip_pdf_content_marker(_process_pdf(path))
             elif mime.startswith("text/") or _is_text_file(path):
                 extracted_text = _process_text_file(path)
             else:
