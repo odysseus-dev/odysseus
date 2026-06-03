@@ -78,32 +78,46 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         manager = MemoryManager(DATA_DIR)
         all_memories = manager.load_all()
 
-        # Empty owner means "all owners" for built-in housekeeping, but never
-        # mix owners in the same AI prompt/apply step. A specific owner is
-        # scoped strictly to that owner; unowned rows are their own group.
         _owner_clean = (owner or "").strip()
-        if _owner_clean:
-            def _belongs_to_owner(mem: dict) -> bool:
-                mem_owner = (mem.get("owner") or "").strip()
-                return mem_owner == _owner_clean
-        else:
-            def _belongs_to_owner(mem: dict) -> bool:
-                return True
+        text_limit = 2000
 
-        owner_memories = [m for m in all_memories if _belongs_to_owner(m)]
-        if not owner_memories:
+        def _memory_owner(mem: dict) -> str:
+            return (mem.get("owner") or "").strip()
+
+        # Built-in housekeeping can run without an owner. In that case scan all
+        # memories, but keep every AI prompt/apply step owner-local.
+        if _owner_clean:
+            memory_groups = {
+                _owner_clean: [m for m in all_memories if _memory_owner(m) == _owner_clean]
+            }
+        else:
+            memory_groups = {}
+            for mem in all_memories:
+                memory_groups.setdefault(_memory_owner(mem), []).append(mem)
+
+        memory_groups = {group_owner: group for group_owner, group in memory_groups.items() if group}
+        if not memory_groups:
             raise TaskNoop("no memories to consolidate")
 
-        memory_owners = {(m.get("owner") or "").strip() for m in owner_memories}
-        allow_ai_tidy = len(memory_owners) <= 1
+        total_removed = 0
+        total_cleaned = 0
+        total_scanned = 0
+        removed_examples = []
+        ai_reasons = []
+        ai_used = False
 
-        url, model, headers = resolve_endpoint("utility", owner=owner)
-        if not url or not model:
-            url, model, headers = resolve_endpoint("default", owner=owner)
+        async def _try_ai_tidy_group(group_owner: str, group_memories: list) -> bool:
+            nonlocal all_memories, total_removed, total_cleaned, total_scanned, ai_used
+            if len(group_memories) < 2:
+                return False
 
-        if url and model and allow_ai_tidy and len(owner_memories) >= 2:
+            url, model, headers = resolve_endpoint("utility", owner=group_owner or None)
+            if not url or not model:
+                url, model, headers = resolve_endpoint("default", owner=group_owner or None)
+            if not url or not model:
+                return False
+
             try:
-                text_limit = 2000
                 items = [
                     {
                         "id": m.get("id"),
@@ -111,9 +125,11 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                         "text": (m.get("text") or "").strip()[:text_limit],
                         "truncated": len((m.get("text") or "").strip()) > text_limit,
                     }
-                    for m in owner_memories
+                    for m in group_memories
                     if m.get("id") and (m.get("text") or "").strip()
                 ]
+                if len(items) < 2:
+                    return False
                 truncated_ids = {item["id"] for item in items if item.get("truncated")}
                 prompt = (
                     "You are tidying a user's saved personal memories. Return ONLY raw JSON, no markdown.\n"
@@ -146,7 +162,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                     keep_items = decision.get("keep") if isinstance(decision, dict) else None
                     drop_items = decision.get("drop") if isinstance(decision, dict) else None
                     if isinstance(keep_items, list) and isinstance(drop_items, list):
-                        by_id = {m.get("id"): m for m in owner_memories}
+                        by_id = {m.get("id"): m for m in group_memories if m.get("id")}
                         keep_ids = set()
                         cleaned_by_id = {}
                         for item in keep_items:
@@ -159,19 +175,24 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                             if not text:
                                 continue
                             keep_ids.add(mid)
-                            cleaned_by_id[mid] = {
-                                "text": text,
+                            cleaned = {
                                 "category": (item.get("category") or by_id[mid].get("category") or "fact").strip(),
                             }
+                            original_text = (by_id[mid].get("text") or "").strip()
+                            if len(original_text) <= text_limit:
+                                cleaned["text"] = text
+                            cleaned_by_id[mid] = cleaned
+
                         # If the model only saw a truncated memory, do not let
                         # that partial view delete or rewrite the full memory.
                         keep_ids.update(mid for mid in truncated_ids if mid in by_id)
 
                         if keep_ids:
                             changed_text = 0
+                            group_ref_ids = {id(m) for m in group_memories}
                             kept_all = []
                             for mem in all_memories:
-                                if not _belongs_to_owner(mem):
+                                if id(mem) not in group_ref_ids:
                                     kept_all.append(mem)
                                     continue
                                 mid = mem.get("id")
@@ -185,65 +206,72 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                                     changed_text += 1
                                 if cleaned.get("category"):
                                     mem["category"] = cleaned["category"]
-                                if owner and not mem.get("owner"):
-                                    mem["owner"] = owner
                                 kept_all.append(mem)
 
-                            removed = len(owner_memories) - len(keep_ids)
+                            removed = len(group_memories) - len(keep_ids)
+                            total_scanned += len(group_memories)
                             if removed or changed_text:
-                                manager.save(kept_all)
-                                reasons = [
+                                all_memories = kept_all
+                                total_removed += removed
+                                total_cleaned += changed_text
+                                ai_used = True
+                                ai_reasons.extend([
                                     (d.get("reason") or "").strip()
                                     for d in drop_items
                                     if isinstance(d, dict) and (d.get("reason") or "").strip()
-                                ][:3]
-                                reason_text = f": {'; '.join(reasons)}" if reasons else ""
-                                return (
-                                    f"AI tidied {len(owner_memories)} memories: "
-                                    f"removed {removed}, cleaned {changed_text}{reason_text}",
-                                    True,
-                                )
-
-                            raise TaskNoop(f"AI scanned {len(owner_memories)} memories, no changes")
-            except TaskNoop:
-                raise
+                                ])
+                            return True
             except Exception as ai_err:
                 logger.warning("AI memory tidy failed; falling back to duplicate cleanup: %s", ai_err)
+            return False
 
-        seen = {}
-        keep_ids = set()
-        removed_examples = []
-        for mem in owner_memories:
-            text = (mem.get("text") or "").strip()
-            normalized = " ".join(text.lower().split())
-            if not normalized:
-                removed_examples.append("(empty)")
+        for group_owner, group_memories in memory_groups.items():
+            if await _try_ai_tidy_group(group_owner, group_memories):
                 continue
-            mem_owner = (mem.get("owner") or "").strip()
-            key = (mem_owner, normalized)
-            if key in seen:
-                if len(removed_examples) < 3:
-                    removed_examples.append(text[:60] + ("..." if len(text) > 60 else ""))
+
+            seen = {}
+            keep_refs = set()
+            total_scanned += len(group_memories)
+            for mem in group_memories:
+                text = (mem.get("text") or "").strip()
+                key = " ".join(text.lower().split())
+                if not key:
+                    if len(removed_examples) < 3:
+                        removed_examples.append("(empty)")
+                    continue
+                if key in seen:
+                    if len(removed_examples) < 3:
+                        removed_examples.append(text[:60] + ("..." if len(text) > 60 else ""))
+                    continue
+                seen[key] = mem
+                keep_refs.add(id(mem))
+
+            group_removed = len(group_memories) - len(keep_refs)
+            if group_removed == 0:
                 continue
-            seen[key] = mem
-            keep_ids.add(mem.get("id"))
 
-        removed = len(owner_memories) - len(keep_ids)
-        if removed == 0:
-            raise TaskNoop(f"scanned {len(owner_memories)} memories, no duplicates")
+            group_ref_ids = {id(m) for m in group_memories}
+            all_memories = [
+                m for m in all_memories
+                if id(m) not in group_ref_ids or id(m) in keep_refs
+            ]
+            total_removed += group_removed
 
-        kept_all = [
-            m for m in all_memories
-            if not _belongs_to_owner(m) or m.get("id") in keep_ids
-        ]
-        if owner:
-            for mem in kept_all:
-                if mem.get("id") in keep_ids and not mem.get("owner"):
-                    mem["owner"] = owner
-        manager.save(kept_all)
-        preview = "; ".join(removed_examples)
-        extra = f" (+{removed - len(removed_examples)} more)" if removed > len(removed_examples) else ""
-        return f"Removed {removed} duplicate(s) of {len(owner_memories)}: {preview}{extra}", True
+        if total_removed or total_cleaned:
+            manager.save(all_memories)
+            if ai_used:
+                reasons = ai_reasons[:3]
+                reason_text = f": {'; '.join(reasons)}" if reasons else ""
+                return (
+                    f"AI tidied {total_scanned} memories: "
+                    f"removed {total_removed}, cleaned {total_cleaned}{reason_text}",
+                    True,
+                )
+            preview = "; ".join(removed_examples)
+            extra = f" (+{total_removed - len(removed_examples)} more)" if total_removed > len(removed_examples) else ""
+            return f"Removed {total_removed} duplicate(s) of {total_scanned}: {preview}{extra}", True
+
+        raise TaskNoop(f"scanned {total_scanned} memories, no duplicates")
     except Exception as e:
         logger.error(f"consolidate_memory action failed: {e}")
         return str(e), False
@@ -359,7 +387,7 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
         last_watermark = None
         try:
             if STATE_FILE.exists():
-                saved = json.loads(STATE_FILE.read_text())
+                saved = json.loads(STATE_FILE.read_text(encoding="utf-8"))
                 if saved.get("last_created_at"):
                     last_watermark = datetime.fromisoformat(saved["last_created_at"])
         except Exception:
@@ -420,7 +448,7 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
                         "last_run_at": datetime.utcnow().isoformat(),
                         "scanned": len(events),
                         "removed": len(removed),
-                    }, indent=2))
+                    }, indent=2), encoding="utf-8")
             except Exception as se:
                 logger.warning(f"tidy_calendar watermark save failed: {se}")
 
@@ -1285,7 +1313,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         if not names:
             raise TaskNoop("no skills to test")
 
-        url, model, headers = resolve_endpoint("default")
+        url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return "No Default/Utility model configured — set one in Settings.", False
 
@@ -1318,7 +1346,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
             name = skill.get("name")
             if not name:
                 continue
-            md = sm.read_skill_md(name) or ""
+            md = sm.read_skill_md(name, owner=owner) or ""
             if not md:
                 tally["skipped"] += 1
                 per_skill_log.append(f"{name}: skipped (no SKILL.md)")
@@ -1346,7 +1374,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
                 # user-set value (e.g. 1.0 → 0.95) is destructive.
                 if v in ("pass", "needs_work", "fail", "inconclusive"):
                     try:
-                        sm.set_audit(name, v, by_teacher=False, worker_model=model)
+                        sm.set_audit(name, v, by_teacher=False, worker_model=model, owner=owner)
                     except Exception as _e:
                         logger.warning(f"test_skills set_audit({name}) failed: {_e}")
                 if v == "unknown":
@@ -1469,7 +1497,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
         _legacy = _P("data/note_pings.json")
         if _legacy.exists() and not STATE.exists():
             try:
-                STATE.write_text(_legacy.read_text())
+                STATE.write_text(_legacy.read_text(encoding="utf-8"), encoding="utf-8")
             except Exception:
                 pass
         # Scanner ticks every 60s in _note_pings_loop. 90s window guarantees
@@ -1494,7 +1522,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                 return None
 
         try:
-            cache = _json.loads(STATE.read_text()) if STATE.exists() else {}
+            cache = _json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {}
         except Exception:
             cache = {}
 
@@ -1571,7 +1599,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                 cache.pop(stale, None)
 
             try:
-                STATE.write_text(_json.dumps(cache))
+                STATE.write_text(_json.dumps(cache), encoding="utf-8")
             except Exception as e:
                 logger.warning(f"ping_notes: cache write failed: {e}")
 
@@ -1676,7 +1704,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         for acc in accounts:
             cache_file = CACHE_DIR / f"{acc.id}.json"
             try:
-                cache = _json.loads(cache_file.read_text()) if cache_file.exists() else {"uids": {}}
+                cache = _json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {"uids": {}}
             except Exception:
                 cache = {"uids": {}}
 
@@ -1918,7 +1946,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 cache_uids.pop(stale, None)
 
             try:
-                cache_file.write_text(_json.dumps(cache))
+                cache_file.write_text(_json.dumps(cache), encoding="utf-8")
             except Exception as e:
                 logger.warning(f"urgency: cache write failed for {acc.id}: {e}")
 
@@ -2003,7 +2031,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
 
         # Load prior state to know which urgent UIDs we've already notified.
         try:
-            prior = _json.loads(STATE_PATH.read_text()) if STATE_PATH.exists() else {}
+            prior = _json.loads(STATE_PATH.read_text(encoding="utf-8")) if STATE_PATH.exists() else {}
         except Exception:
             prior = {}
         notified_uids = set(prior.get("notified_uids", []))
@@ -2087,7 +2115,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             "notified_uids": sorted(notified_uids),
         }
         try:
-            STATE_PATH.write_text(_json.dumps(state))
+            STATE_PATH.write_text(_json.dumps(state), encoding="utf-8")
         except Exception as e:
             logger.warning(f"urgency: state write failed: {e}")
 

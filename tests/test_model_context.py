@@ -109,6 +109,19 @@ class TestLookupKnown:
         result = _lookup_known("deepseek-r1:free")
         assert result == 64000
 
+    def test_o1_mini_not_shadowed_by_o1(self):
+        """'o1' (200k) precedes 'o1-mini' (128k) in the table; longest match wins."""
+        assert _lookup_known("o1-mini") == 128000
+
+    def test_o1_full(self):
+        assert _lookup_known("o1") == 200000
+
+    def test_gpt4o_mini_not_shadowed_by_gpt4(self):
+        assert _lookup_known("gpt-4o-mini") == 128000
+
+    def test_gpt4_base(self):
+        assert _lookup_known("gpt-4") == 8192
+
 
 class TestGetContextLength:
     def setup_method(self):

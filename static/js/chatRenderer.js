@@ -659,6 +659,12 @@ export function isLocalEndpoint(url) {
   if (!host) return true;
   if (host === 'localhost' || host === '0.0.0.0' || host === 'host.docker.internal' || host.endsWith('.local')) return true;
   if (typeof window !== 'undefined' && window.location && host === window.location.hostname) return true;
+  // A single-label hostname (no dot) is an internal/Docker service name
+  // (e.g. "nim-nano", "llamaswap", "nemotron-super-49b") or a LAN shortname —
+  // never a public API, which always needs an FQDN. Treat as local → free.
+  // (Without this, container-name endpoints get billed at cloud rates because
+  // the pricing table matches on a name substring, e.g. "nemotron".)
+  if (!host.includes('.')) return true;
   if (/^127\./.test(host)) return true;
   if (/^10\./.test(host)) return true;
   if (/^192\.168\./.test(host)) return true;
@@ -1211,6 +1217,17 @@ export function showWelcomeScreen() {
   const cc = document.getElementById('chat-container');
   if (ws) ws.classList.remove('hidden');
   if (cc) cc.classList.add('welcome-active');
+  // Entering the New Chat / welcome state: discard any stale draft left in the
+  // composer from the previous session so the input starts empty (issue #1343).
+  // Switching between existing sessions loads them directly and does NOT call
+  // this, so genuine drafts are not erased. Reset the autosized height and fire
+  // an `input` event so the send button + autosize listeners update.
+  const _msg = document.getElementById('message');
+  if (_msg) {
+    _msg.value = '';
+    _msg.style.height = '';
+    _msg.dispatchEvent(new Event('input', { bubbles: true }));
+  }
   // Re-trigger the L→R clip-wipe reveal on the welcome name each time the
   // welcome screen is shown (new session, deleted last session, etc.) — without
   // this, the CSS animation only fires on initial DOM insertion.

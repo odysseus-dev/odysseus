@@ -40,6 +40,7 @@ NON_ADMIN_BLOCKED_TOOLS = {
     "vault_unlock",
     "download_model",
     "serve_model",
+    "serve_preset",
     "stop_served_model",
     "cancel_download",
     "adopt_served_model",

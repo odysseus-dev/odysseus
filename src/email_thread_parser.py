@@ -57,7 +57,8 @@ _CCBCC = r"(?:Cc|Bcc|Kopie|Skrytá kopie|Копия)"
 _HDR_KEYS = rf"(?:{_FROM}|{_SENT}|{_SUBJ}|{_TO}|{_CCBCC}|Importance|Priority)"
 
 _ORIG_RE = re.compile(
-    r"(?:^|\n)[\s>]*[-_=]{3,}\s*(?:Original\s+Message|Ursprüngliche\s+Nachricht|"
+    r"(?:^|\n)[\s>]*[-_=]{3,}\s*(?:Original\s+Message|Forwarded\s+message|"
+    r"Ursprüngliche\s+Nachricht|"
     r"Mensaje\s+original|Messaggio\s+originale|Message\s+d['’]origine|"
     r"Oorspronkelijk\s+bericht|Original\s+meddelande|原文|原始邮件|転送)"
     r"\s*[-_=]{3,}",

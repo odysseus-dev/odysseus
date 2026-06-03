@@ -242,7 +242,7 @@
   </script>
   <!-- Memory Management Modal -->
   <div id="memory-modal" class="modal hidden">
-    <div class="modal-content memory-modal-content" style="background:var(--bg)">
+    <div class="modal-content memory-modal-content" role="dialog" aria-label="Brain" style="background:var(--bg)">
       <div class="modal-header">
         <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg>Brain</h4>
         <button class="close-btn" id="close-memory-modal" aria-label="Close memory modal">✖</button>
@@ -265,7 +265,7 @@
             <p class="memory-desc doclib-desc" style="margin-top:6px;">Long-term facts the AI remembers across chats — recall, edit, or curate.</p>
             <div class="memory-toolbar">
               <div class="memory-toolbar-row">
-                <select id="memory-sort" class="memory-sort-select">
+                <select id="memory-sort" class="memory-sort-select" aria-label="Sort memories">
                   <option value="newest">Newest</option>
                   <option value="oldest">Oldest</option>
                   <option value="alpha">A-Z</option>
@@ -274,7 +274,7 @@
                 <button id="memory-select-btn" class="memory-toolbar-btn" title="Select multiple memories">Select</button>
                 <button id="memory-tidy-btn" class="memory-toolbar-btn" title="AI tidy: deduplicate and clean up memories"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy</button>
               </div>
-              <input type="text" id="memory-search" placeholder="Search memories…" class="memory-search-input" />
+              <input type="text" id="memory-search" placeholder="Search memories…" class="memory-search-input" aria-label="Search memories" />
               <div id="memory-category-filters" class="memory-category-filters">
                 <button class="memory-cat-chip active" data-cat="all">all</button>
               </div>
@@ -304,7 +304,7 @@
             </p>
             <div class="memory-add-row" style="margin-top:8px;">
               <div class="skill-ph-wrap" style="flex:1;min-width:0;">
-                <input type="text" id="new-memory-input" placeholder=" " class="memory-add-input skill-hint-input" />
+                <input type="text" id="new-memory-input" placeholder=" " class="memory-add-input skill-hint-input" aria-label="New memory text" />
                 <span class="skill-rich-ph"><span class="k">Add a memory</span> &mdash; e.g. 'I prefer concise replies' <svg class="k" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-left:4px;" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg></span>
               </div>
             </div>
@@ -315,19 +315,19 @@
             </div>
             <p class="memory-desc doclib-desc" style="margin-top:6px;">Create a skill by hand — title, what it solves, and an approach.</p>
             <div class="skill-ph-wrap" style="margin-top:4px;margin-bottom:6px;">
-              <input type="text" id="new-skill-title" placeholder=" " class="memory-add-input skill-hint-input" />
+              <input type="text" id="new-skill-title" placeholder=" " class="memory-add-input skill-hint-input" aria-label="Skill title" />
               <span class="skill-rich-ph"><span class="k">Title</span> — short name, e.g. “build-vllm-wheel”</span>
             </div>
             <div class="skill-ph-wrap" style="margin-bottom:6px;">
-              <input type="text" id="new-skill-problem" placeholder=" " class="memory-add-input skill-hint-input" />
+              <input type="text" id="new-skill-problem" placeholder=" " class="memory-add-input skill-hint-input" aria-label="When to use this skill" />
               <span class="skill-rich-ph"><span class="k">When to use</span> — what problem does this skill solve?</span>
             </div>
             <div class="skill-ph-wrap" style="margin-bottom:6px;">
-              <textarea id="new-skill-solution" placeholder=" " class="memory-add-input skill-hint-input" rows="2" style="resize:vertical;"></textarea>
+              <textarea id="new-skill-solution" placeholder=" " class="memory-add-input skill-hint-input" rows="2" style="resize:vertical;" aria-label="How — the approach or steps"></textarea>
               <span class="skill-rich-ph skill-rich-ph-top"><span class="k">How</span> — the approach, steps, commands, or rules to follow</span>
             </div>
             <div class="skill-ph-wrap" style="margin-bottom:8px;">
-              <input type="text" id="new-skill-tags" placeholder=" " class="memory-add-input skill-hint-input" />
+              <input type="text" id="new-skill-tags" placeholder=" " class="memory-add-input skill-hint-input" aria-label="Tags" />
               <span class="skill-rich-ph"><span class="k">Tags</span> — comma-separated, e.g. python, build, vllm</span>
             </div>
             <div style="display:flex;justify-content:flex-end;">
@@ -368,7 +368,7 @@
                 <button id="skills-select-btn" class="memory-toolbar-btn" title="Select multiple skills">Select</button>
                 <button id="skills-audit-btn" class="memory-toolbar-btn" title="Test every skill, auto-fix the weak ones, flag what still fails"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Audit all</button>
               </div>
-              <input type="text" id="skills-search" placeholder="Search skills…" class="memory-search-input" />
+              <input type="text" id="skills-search" placeholder="Search skills…" class="memory-search-input" aria-label="Search skills" />
             </div>
             <div id="skills-audit-panel" class="skills-audit-panel hidden"></div>
             <div id="skills-bulk-bar" class="memory-bulk-bar hidden">
@@ -407,7 +407,7 @@
             <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.6">Controls how many relevant published or approved skills are added to each agent request.</span>
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px">
               <span class="admin-toggle-sub" style="margin:0">Max skills per request</span>
-              <input type="number" id="skill-max-input" min="0" max="12" step="1" value="3" style="flex-shrink:0;width:72px;background:var(--input-bg,var(--panel));color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px;text-align:right;font-variant-numeric:tabular-nums" />
+              <input type="number" id="skill-max-input" min="0" max="12" step="1" value="3" aria-label="Max skills to inject" style="flex-shrink:0;width:72px;background:var(--input-bg,var(--panel));color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px;text-align:right;font-variant-numeric:tabular-nums" />
             </div>
             <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.5">Set to 0 to disable skill injection.</span>
           </div>
@@ -432,14 +432,14 @@
 
   <!-- Theme Popup (floating panel) -->
   <div id="theme-modal" class="modal hidden">
-  <div id="theme-popup" class="modal-content admin-modal-content" style="background:var(--bg)">
+  <div id="theme-popup" class="modal-content admin-modal-content" role="dialog" aria-label="Theme" style="background:var(--bg)">
     <div class="modal-header theme-popup-header" id="theme-popup-header">
       <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 0 0 0 20 4 4 0 0 1 0-8 4 4 0 0 0 0-8"/><circle cx="8" cy="9" r="1.5" fill="currentColor"/><circle cx="15" cy="14" r="1.5" fill="currentColor"/><circle cx="9" cy="15" r="1.5" fill="currentColor"/></svg>Theme</h4>
       <button type="button" class="theme-opacity-wrap theme-opacity-toggle hidden" id="theme-opacity-wrap" title="Fade this window to preview the page behind it" aria-pressed="false">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
         <span class="theme-opacity-label">Peek</span>
       </button>
-      <button class="close-btn" id="close-theme-popup">&#x2716;</button>
+      <button class="close-btn" id="close-theme-popup" aria-label="Close theme">&#x2716;</button>
     </div>
     <!-- Theme tabs -->
     <div class="admin-tabs" id="theme-tabs">
@@ -464,12 +464,12 @@
       <div class="admin-card">
         <h2>Colors</h2>
         <div class="theme-custom" id="themeCustom">
-          <div class="color-row"><label>Background</label><input type="color" id="clr-bg"><button class="color-reset-btn" data-reset="bg" title="Reset this color">&#x21BA;</button></div>
-          <div class="color-row"><label>Text</label><input type="color" id="clr-fg"><button class="color-reset-btn" data-reset="fg" title="Reset this color">&#x21BA;</button></div>
-          <div class="color-row"><label>Panel</label><input type="color" id="clr-panel"><button class="color-reset-btn" data-reset="panel" title="Reset this color">&#x21BA;</button></div>
-          <div class="color-row"><label>Sidebar</label><input type="color" id="adv-sidebarBg"><button class="color-reset-btn" data-reset-adv="sidebarBg" title="Reset this color">&#x21BA;</button></div>
-          <div class="color-row"><label>Border</label><input type="color" id="clr-border"><button class="color-reset-btn" data-reset="border" title="Reset this color">&#x21BA;</button></div>
-          <div class="color-row"><label>Accent</label><input type="color" id="clr-red"><button class="color-reset-btn" data-reset="red" title="Reset this color">&#x21BA;</button></div>
+          <div class="color-row"><label>Background</label><input type="color" id="clr-bg"><button class="color-reset-btn" data-reset="bg" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+          <div class="color-row"><label>Text</label><input type="color" id="clr-fg"><button class="color-reset-btn" data-reset="fg" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+          <div class="color-row"><label>Panel</label><input type="color" id="clr-panel"><button class="color-reset-btn" data-reset="panel" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+          <div class="color-row"><label>Sidebar</label><input type="color" id="adv-sidebarBg"><button class="color-reset-btn" data-reset-adv="sidebarBg" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+          <div class="color-row"><label>Border</label><input type="color" id="clr-border"><button class="color-reset-btn" data-reset="border" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+          <div class="color-row"><label>Accent</label><input type="color" id="clr-red"><button class="color-reset-btn" data-reset="red" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
         </div>
       </div>
       <div class="theme-adv-toggle" id="theme-adv-toggle">
@@ -479,38 +479,38 @@
         <div class="theme-adv-group">
           <div class="theme-adv-group-label">Chat Bubbles</div>
           <div class="theme-custom">
-            <div class="color-row"><label>User Chat Bubble</label><input type="color" id="adv-userBubbleBg"><button class="color-reset-btn" data-reset-adv="userBubbleBg" title="Reset this color">&#x21BA;</button></div>
-            <div class="color-row"><label>AI Chat Bubble</label><input type="color" id="adv-aiBubbleBg"><button class="color-reset-btn" data-reset-adv="aiBubbleBg" title="Reset this color">&#x21BA;</button></div>
-            <div class="color-row"><label>Border Chat Bubble</label><input type="color" id="adv-bubbleBorder"><button class="color-reset-btn" data-reset-adv="bubbleBorder" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label>User Chat Bubble</label><input type="color" id="adv-userBubbleBg"><button class="color-reset-btn" data-reset-adv="userBubbleBg" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>AI Chat Bubble</label><input type="color" id="adv-aiBubbleBg"><button class="color-reset-btn" data-reset-adv="aiBubbleBg" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Border Chat Bubble</label><input type="color" id="adv-bubbleBorder"><button class="color-reset-btn" data-reset-adv="bubbleBorder" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
           </div>
         </div>
         <div class="theme-adv-group">
           <div class="theme-adv-group-label">Sidebar</div>
           <div class="theme-custom">
-            <div class="color-row"><label>Odysseus Logo</label><input type="color" id="adv-brandColor"><button class="color-reset-btn" data-reset-adv="brandColor" title="Reset this color">&#x21BA;</button></div>
-            <div class="color-row"><label title="Hamburger menu"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></label><input type="color" id="adv-hamburgerColor"><button class="color-reset-btn" data-reset-adv="hamburgerColor" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label>Odysseus Logo</label><input type="color" id="adv-brandColor"><button class="color-reset-btn" data-reset-adv="brandColor" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label title="Hamburger menu"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></label><input type="color" id="adv-hamburgerColor"><button class="color-reset-btn" data-reset-adv="hamburgerColor" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
           </div>
         </div>
         <div class="theme-adv-group">
           <div class="theme-adv-group-label">Chat Input / Prompt Area</div>
           <div class="theme-custom">
-            <div class="color-row"><label>Input Bg</label><input type="color" id="adv-inputBg"><button class="color-reset-btn" data-reset-adv="inputBg" title="Reset this color">&#x21BA;</button></div>
-            <div class="color-row"><label>Input Border</label><input type="color" id="adv-inputBorder"><button class="color-reset-btn" data-reset-adv="inputBorder" title="Reset this color">&#x21BA;</button></div>
-            <div class="color-row"><label>Send Btn</label><input type="color" id="adv-sendBtnBg"><button class="color-reset-btn" data-reset-adv="sendBtnBg" title="Reset this color">&#x21BA;</button></div>
-            <div class="color-row"><label>Send Hover</label><input type="color" id="adv-sendBtnHover"><button class="color-reset-btn" data-reset-adv="sendBtnHover" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label>Input Bg</label><input type="color" id="adv-inputBg"><button class="color-reset-btn" data-reset-adv="inputBg" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Input Border</label><input type="color" id="adv-inputBorder"><button class="color-reset-btn" data-reset-adv="inputBorder" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Send Btn</label><input type="color" id="adv-sendBtnBg"><button class="color-reset-btn" data-reset-adv="sendBtnBg" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Send Hover</label><input type="color" id="adv-sendBtnHover"><button class="color-reset-btn" data-reset-adv="sendBtnHover" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
           </div>
         </div>
         <div class="theme-adv-group">
           <div class="theme-adv-group-label">Code Blocks</div>
           <div class="theme-custom">
-            <div class="color-row"><label>Code Bg</label><input type="color" id="adv-codeBg"><button class="color-reset-btn" data-reset-adv="codeBg" title="Reset this color">&#x21BA;</button></div>
-            <div class="color-row"><label>Code Text</label><input type="color" id="adv-codeFg"><button class="color-reset-btn" data-reset-adv="codeFg" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label>Code Bg</label><input type="color" id="adv-codeBg"><button class="color-reset-btn" data-reset-adv="codeBg" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Code Text</label><input type="color" id="adv-codeFg"><button class="color-reset-btn" data-reset-adv="codeFg" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
           </div>
         </div>
         <div class="theme-adv-group">
           <div class="theme-adv-group-label">Controls</div>
           <div class="theme-custom">
-            <div class="color-row"><label>Toggle On</label><input type="color" id="adv-toggleActive"><button class="color-reset-btn" data-reset-adv="toggleActive" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label>Toggle On</label><input type="color" id="adv-toggleActive"><button class="color-reset-btn" data-reset-adv="toggleActive" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
           </div>
         </div>
         <div class="theme-adv-group">
@@ -559,7 +559,7 @@
         <div class="theme-fd-row">
           <div class="theme-fd-group">
             <label class="theme-fd-label">Font</label>
-            <select id="theme-font-select" class="theme-fd-select">
+            <select id="theme-font-select" class="theme-fd-select" aria-label="Font">
               <option value="mono">Monospace</option>
               <option value="sans">Sans-serif</option>
               <option value="serif">Serif</option>
@@ -567,7 +567,7 @@
           </div>
           <div class="theme-fd-group">
             <label class="theme-fd-label">Density</label>
-            <select id="theme-density-select" class="theme-fd-select">
+            <select id="theme-density-select" class="theme-fd-select" aria-label="Density">
               <option value="compact">Compact</option>
               <option value="comfortable">Comfortable</option>
               <option value="spacious">Spacious</option>
@@ -981,7 +981,7 @@
     <input type="checkbox" id="research-toggle" style="display:none;">
     <input type="checkbox" id="rag-toggle" style="display:none;">
     <input type="checkbox" id="incognito-toggle" style="display:none;">
-    <input type="file" id="file-input" class="hidden" multiple accept="image/*,application/pdf,video/*,.txt,.py,.html,.htm,.md,.json,.csv,.log,audio/*" />
+    <input type="file" id="file-input" class="hidden" multiple />
 
     <!-- Unified chat input bar -->
     <div class="chat-input-bar">
@@ -993,7 +993,7 @@
           <button type="button" class="model-picker-btn" id="model-picker-btn" title="Switch model"><span id="model-picker-label">Select model</span> <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg></button>
           <div class="model-picker-menu hidden" id="model-picker-menu">
             <div class="model-picker-search-row">
-              <input type="text" id="model-picker-search" placeholder="Search models..." autocomplete="off">
+              <input type="text" id="model-picker-search" placeholder="Search models..." autocomplete="off" aria-label="Search models">
               <button type="button" class="model-picker-action-btn primary" id="model-picker-add-models-btn" title="Add model endpoints" aria-label="Add model endpoints">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
               </button>
@@ -1007,7 +1007,7 @@
         <div class="chat-input-left">
           <!-- Overflow menu (+) — always first/left -->
           <div class="overflow-wrapper">
-            <button type="button" class="input-icon-btn overflow-plus-btn" id="overflow-plus-btn" title="More tools">
+            <button type="button" class="input-icon-btn overflow-plus-btn" id="overflow-plus-btn" title="More tools" aria-label="More tools" aria-haspopup="true">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="6 15 12 9 18 15"/>
               </svg>
@@ -1051,13 +1051,13 @@
             </div>
           </div>
           <!-- Web search (magnifying glass) -->
-          <button type="button" class="input-icon-btn" title="Web search" id="web-toggle-btn" data-mode-tool="true">
+          <button type="button" class="input-icon-btn" title="Web search" id="web-toggle-btn" data-mode-tool="true" aria-label="Web search" aria-pressed="false">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
           </button>
           <!-- Shell commands (terminal) -->
-          <button type="button" class="input-icon-btn" title="Shell Access" id="bash-toggle-btn" data-mode-tool="true">
+          <button type="button" class="input-icon-btn" title="Shell Access" id="bash-toggle-btn" data-mode-tool="true" aria-label="Shell access" aria-pressed="false">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
             </svg>
@@ -1084,7 +1084,7 @@
           </button>
           <input type="checkbox" id="group-toggle" style="display:none;">
           <!-- Character indicator (hidden until active) -->
-          <button type="button" class="input-icon-btn tool-indicator" title="Character active — click to deactivate" id="character-indicator-btn" style="display:none;">
+          <button type="button" class="input-icon-btn tool-indicator" title="Persona active — click to deactivate" id="character-indicator-btn" style="display:none;">
             <svg id="char-indicator-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             <span id="character-indicator-name" style="font-size:11px;margin-left:2px;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
             <svg class="tool-indicator-x" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
@@ -1099,8 +1099,8 @@
         <div class="chat-input-right">
           <!-- Agent / Chat mode toggle -->
           <div class="mode-toggle">
-            <button type="button" class="mode-toggle-btn active" id="mode-agent-btn">Agent</button>
-            <button type="button" class="mode-toggle-btn" id="mode-chat-btn">Chat</button>
+            <button type="button" class="mode-toggle-btn active" id="mode-agent-btn" aria-pressed="true">Agent</button>
+            <button type="button" class="mode-toggle-btn" id="mode-chat-btn" aria-pressed="false">Chat</button>
           </div>
           <button type="submit" form="chat-form" class="send-btn newchat-mode" data-mode="newchat" aria-label="New chat">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="send-btn-label">+ New</span>
@@ -1115,16 +1115,16 @@
 
     <!-- Character (custom preset) modal -->
     <div id="custom-preset-modal" class="modal hidden">
-      <div class="modal-content preset-modal-content" style="background:var(--bg)">
+      <div class="modal-content preset-modal-content" role="dialog" aria-label="Prompt" style="background:var(--bg)">
         <div class="modal-header">
           <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="m18 2 4 4"/><path d="m17 7 3-3"/><path d="M19 9 8.7 19.3c-1 1-2.5 1-3.4 0l-.6-.6c-1-1-1-2.5 0-3.4L15 5"/><path d="m9 11 4 4"/><path d="m5 19-3 3"/><path d="m14 4 6 6"/></svg>Prompt</h4>
-          <button class="close-btn" id="close-custom-preset">✖</button>
+          <button class="close-btn" id="close-custom-preset" aria-label="Close prompt">✖</button>
         </div>
         <div class="modal-body preset-modal-body">
           <div id="char-fields-wrap">
             <div class="preset-tabs">
               <button class="preset-tab active" data-chartab="inject"><svg class="preset-tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 2 4 4"/><path d="m17 7 3-3"/><path d="M19 9 8.7 19.3c-1 1-2.5 1-3.4 0l-.6-.6c-1-1-1-2.5 0-3.4L15 5"/><path d="m9 11 4 4"/><path d="m5 19-3 3"/><path d="m14 4 6 6"/></svg><span>Inject</span></button>
-              <button class="preset-tab" data-chartab="character"><svg class="preset-tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span>Character</span></button>
+              <button class="preset-tab" data-chartab="character"><svg class="preset-tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span>Persona</span></button>
               <button class="preset-tab" data-chartab="group"><svg class="preset-tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>Group</span></button>
             </div>
             <!-- Inject tab (also holds model tuning: temperature + max tokens) -->
@@ -1151,25 +1151,25 @@
             </div>
             <!-- Prompt (character/persona) tab -->
             <div class="preset-chartab" data-chartab-panel="character" style="display:none">
-              <label>Character</label>
+              <label>Persona</label>
               <div class="char-name-combo">
                 <select id="char-template-select" class="char-template-select">
-                  <option value="">Select character...</option>
+                  <option value="">Select persona...</option>
                 </select>
-                <button type="button" id="char-new-btn" class="char-action-btn" title="Create a new character">+ New</button>
+                <button type="button" id="char-new-btn" class="char-action-btn" title="Create a new persona">+ New</button>
               </div>
               <div id="char-name-row">
                 <label for="custom-character-name">Name</label>
                 <div class="char-name-combo">
-                  <input type="text" id="custom-character-name" maxlength="50" placeholder="Give your character a name..." autocomplete="off" style="flex:1">
-                  <button type="button" id="char-delete-template-btn" class="char-action-btn" title="Delete this character and its memories" style="display:none;margin-top:-6px !important"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>Delete</button>
+                  <input type="text" id="custom-character-name" maxlength="50" placeholder="Give your persona a name..." autocomplete="off" style="flex:1">
+                  <button type="button" id="char-delete-template-btn" class="char-action-btn" title="Delete this persona and its memories" style="display:none;margin-top:-6px !important"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>Delete</button>
                   <button type="button" id="reset-character-btn" class="char-action-btn" title="Reset to default" style="margin-top:-6px !important">&#x21BA; Reset</button>
                 </div>
               </div>
-              <label for="custom-system-prompt">Style of response</label>
+              <label for="custom-system-prompt">System prompt</label>
               <div class="char-prompt-wrap">
                 <textarea id="custom-system-prompt" rows="4" placeholder="Write rough notes and click Expand, or leave empty"></textarea>
-                <button type="button" id="char-expand-btn" class="char-expand-btn" title="AI expand — turn your notes into a full character prompt">
+                <button type="button" id="char-expand-btn" class="char-expand-btn" title="AI expand — turn your notes into a full system prompt">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>
                   Expand
                 </button>
@@ -1262,7 +1262,7 @@
 
   <!-- Rename Session Modal -->
   <div id="rename-session-modal" class="modal hidden">
-    <div class="modal-content" style="width: 400px;">
+    <div class="modal-content" role="dialog" aria-label="Rename session" style="width: 400px;">
       <div class="modal-header">
         <h4>Rename Session</h4>
         <button class="close-btn" id="close-rename-session" aria-label="Close rename session modal">✖</button>
@@ -1288,10 +1288,10 @@
 
   <!-- Cookbook Modal -->
   <div id="cookbook-modal" class="modal hidden">
-    <div class="modal-content" style="width: min(780px, 92vw); height: 94vh; max-height: 94vh; background: var(--bg);">
+    <div class="modal-content" role="dialog" aria-label="Cookbook" style="width: min(780px, 92vw); height: 94vh; max-height: 94vh; background: var(--bg);">
       <div class="modal-header">
         <h4 style="margin:0;margin-right:auto"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>Cookbook</h4>
-        <button class="close-btn" id="close-cookbook-modal">✖</button>
+        <button class="close-btn" id="close-cookbook-modal" aria-label="Close cookbook">✖</button>
       </div>
       <div class="modal-body cookbook-body"></div>
     </div>
@@ -1299,14 +1299,14 @@
 
   <!-- Settings Modal (all users) -->
   <div id="settings-modal" class="modal hidden">
-    <div class="modal-content settings-modal-content">
+    <div class="modal-content settings-modal-content" role="dialog" aria-label="Settings">
       <div class="modal-header">
         <h4><span style="vertical-align:-1px;margin-right:6px;font-size:15px">&#x2699;</span>Settings</h4>
         <button type="button" class="theme-opacity-wrap theme-opacity-toggle hidden" id="settings-opacity-wrap" title="Fade this window to preview the page behind it" aria-pressed="false">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
           <span class="theme-opacity-label">Peek</span>
         </button>
-        <button class="close-btn">✖</button>
+        <button class="close-btn" aria-label="Close settings">✖</button>
       </div>
       <div class="admin-toggle-sub" style="padding:0 12px 8px;opacity:0.6;font-size:11px;">Toggle on/off visibility of tools and modules across the interface.</div>
       <div class="settings-layout">
@@ -1463,6 +1463,10 @@
                 <label class="settings-label">Extract Parallel</label>
                 <input id="set-researchExtractConcurrency" type="text" inputmode="numeric" placeholder="3" class="settings-select" style="width:120px;">
               </div>
+              <div class="settings-row">
+                <label class="settings-label">Max Time</label>
+                <input id="set-researchRunTimeout" type="text" inputmode="numeric" placeholder="1800 sec (0 = no limit)" class="settings-select" style="width:120px;">
+              </div>
               <div id="set-researchMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
@@ -1602,12 +1606,16 @@
               </div>
               <div class="settings-row">
                 <label class="settings-label">Results</label>
-                <select id="set-searchResultCount" class="settings-select">
-                  <option value="3">3</option>
-                  <option value="5" selected>5</option>
-                  <option value="10">10</option>
-                  <option value="20">20</option>
-                </select>
+                <div style="display:flex;gap:8px;flex:1;">
+                  <select id="set-searchResultCount" class="settings-select" style="flex:1;">
+                    <option value="3">3</option>
+                    <option value="5" selected>5</option>
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                  <input id="set-searchResultCountCustom" type="number" class="settings-select" placeholder="Enter custom value" style="flex:1;display:none;min-width:120px;" min="1" max="100">
+                </div>
               </div>
               <div id="set-searchUrlRow" class="settings-row">
                 <label class="settings-label">URL</label>
@@ -1808,7 +1816,7 @@
               </label>
               <label class="vis-row">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
-                <span class="vis-label">Characters <span class="vis-hint">Persona picker &amp; system prompt</span></span>
+                <span class="vis-label">Personas <span class="vis-hint">Persona picker &amp; system prompt</span></span>
                 <input type="checkbox" checked data-ui-key="preset-mini-btn"><span class="vis-switch"></span>
               </label>
             </div>
@@ -2011,6 +2019,9 @@
                   </select>
                 </div>
                 <div class="admin-model-form-row">
+                  <input id="adm-epLocalApiKey" type="password" placeholder="API key (optional — for protected local endpoints)" autocomplete="off" style="flex:1">
+                </div>
+                <div class="admin-model-form-row">
                   <span style="flex:1"></span>
                   <button class="admin-btn-sm" id="adm-epLocalTestBtn" style="width:55px;text-align:center;">Test</button>
                   <button class="admin-btn-add" id="adm-epLocalAddBtn" style="width:55px;text-align:center;">Add</button>
@@ -2064,6 +2075,7 @@
                   <option value="https://generativelanguage.googleapis.com/v1beta/openai" data-logo="gemini">Google Gemini</option>
                   <option value="https://api.x.ai/v1" data-logo="grok">xAI Grok</option>
                   <option value="https://api.z.ai/api/paas/v4" data-logo="zhipu">Z.AI (Zhipu)</option>
+                  <option value="https://api.z.ai/api/coding/paas/v4" data-logo="zhipu">Z.AI Coding Plan</option>
                 </select>
                 <div class="admin-model-form-row">
                   <input id="adm-epApiKey" type="password" placeholder="API key">

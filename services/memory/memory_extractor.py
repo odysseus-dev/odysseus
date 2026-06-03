@@ -235,6 +235,10 @@ async def extract_and_store(
     Designed to run as a background task (asyncio.create_task).
     Errors are logged, never raised.
     """
+    if not endpoint_url or not model:
+        logger.debug("[memory-extract] No model or URL provided, skipping")
+        return
+
     try:
         from src.llm_core import llm_call_async
 
@@ -245,11 +249,30 @@ async def extract_and_store(
         if len(recent) < 2:
             return  # Need at least a user message and assistant response
 
-        fallback_facts = _fallback_memory_candidates(recent)
+        # Strip media (images/audio) from messages — background memory extraction
+        # only needs the text. The VL-generated descriptions are already in the
+        # text content of the messages. This avoids sending image tokens to
+        # non-vision models and prevents accidental "vision grounding" triggers.
+        stripped_recent = []
+        for msg in recent:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                # Filter out multimodal blocks that aren't text
+                text_only = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                if not text_only and content:
+                    continue
+                content = text_only
+            stripped_recent.append({"role": role, "content": content})
+
+        if not stripped_recent:
+            return
+
+        fallback_facts = _fallback_memory_candidates(stripped_recent)
 
         extraction_messages = [
             {"role": "system", "content": EXTRACT_SYSTEM_PROMPT},
-        ] + recent
+        ] + stripped_recent
 
         facts = []
         try:
@@ -303,9 +326,18 @@ async def extract_and_store(
             if not fact_text or len(fact_text) < 5:
                 continue
 
-            # Dedup: check vector similarity first (fast), then exact text match
+            # Dedup: check vector similarity first (fast), then exact text match.
+            # A runtime embedding/ChromaDB failure (backend OOM, model evicted,
+            # remote endpoint down) must not abort the whole batch — fall through
+            # to the text/fuzzy dedup below instead of losing every validated
+            # fact extracted this session. (`.healthy` is only set at init, so
+            # it does not catch failures that develop later.)
             if memory_vector and memory_vector.healthy:
-                existing_id = memory_vector.find_similar(fact_text, threshold=0.72)
+                try:
+                    existing_id = memory_vector.find_similar(fact_text, threshold=0.72)
+                except Exception as e:
+                    logger.warning(f"Memory dedup (vector) unavailable, using text fallback: {e}")
+                    existing_id = None
                 if existing_id:
                     logger.debug(f"Memory dedup (vector): '{fact_text[:50]}' matches {existing_id}")
                     continue
@@ -330,9 +362,14 @@ async def extract_and_store(
 
             existing.append(entry)
 
-            # Add to vector index
+            # Add to vector index. The JSON store (saved below) is the source of
+            # truth and the keyword path can still retrieve this entry, so a vector
+            # write failure must not drop the fact or abort the remaining batch.
             if memory_vector and memory_vector.healthy:
-                memory_vector.add(entry["id"], fact_text)
+                try:
+                    memory_vector.add(entry["id"], fact_text)
+                except Exception as e:
+                    logger.warning(f"Memory vector add failed for {entry['id']}: {e}")
 
             added += 1
 

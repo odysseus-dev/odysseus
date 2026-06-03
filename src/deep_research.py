@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import time
+from datetime import datetime
 from typing import Callable, Dict, List, Optional, Set
 
 from src.research_utils import strip_thinking, is_low_quality
@@ -18,6 +19,20 @@ from src.research_utils import strip_thinking, is_low_quality
 from src.goal_based_extractor import EXTRACTOR_PROMPT
 
 logger = logging.getLogger(__name__)
+
+
+def current_date_context() -> str:
+    """Preamble that grounds query-generation/planning LLMs in the real current
+    date. Without it the model falls back to its training-cutoff year and emits
+    queries like "best Python tutorials 2025" when the year is actually 2026.
+    System TZ-local so it matches what the user sees. Portable strftime only."""
+    now = datetime.now().astimezone()
+    return (
+        f"Today's date is {now.strftime('%B %d, %Y')} ({now.strftime('%Y-%m-%d')}). "
+        f"When a search query needs a year or refers to 'latest'/'current'/"
+        f"'this year', use {now.strftime('%Y')} or relative wording — never a "
+        f"year inferred from training data.\n\n"
+    )
 
 # ---------------------------------------------------------------------------
 # Prompts
@@ -199,7 +214,7 @@ class DeepResearcher:
         self.max_urls_per_round = max_urls_per_round
         self.max_content_chars = max_content_chars
         self.max_report_tokens = max_report_tokens
-        self.extraction_timeout = min(600, max(15, int(extraction_timeout or 90)))
+        self.extraction_timeout = min(3600, max(15, int(extraction_timeout or 90)))
         self.extraction_concurrency = min(12, max(1, int(extraction_concurrency or 3)))
         self.min_rounds = min_rounds
         self.max_empty_rounds = max_empty_rounds
@@ -364,7 +379,7 @@ class DeepResearcher:
     # ------------------------------------------------------------------
     async def _create_plan(self, question: str) -> str:
         """LLM analyzes the question and creates a research plan."""
-        prompt = RESEARCH_PLAN_PROMPT.format(question=question)
+        prompt = current_date_context() + RESEARCH_PLAN_PROMPT.format(question=question)
         try:
             response = await self._llm(
                 [{"role": "user", "content": prompt}],
@@ -439,7 +454,7 @@ class DeepResearcher:
                 "that the report doesn't yet cover well."
             )
 
-        prompt = QUERY_GEN_PROMPT.format(
+        prompt = current_date_context() + QUERY_GEN_PROMPT.format(
             question=question,
             research_plan=self.research_plan or "(No plan — search broadly.)",
             report=report or "(No findings yet.)",
@@ -535,7 +550,9 @@ class DeepResearcher:
                 return []
 
             # Try primary provider, then fallbacks
-            for prov in _build_provider_chain(provider):
+            chain = _build_provider_chain(provider)
+            raised = False
+            for prov in chain:
                 try:
                     results = await asyncio.to_thread(_call_provider, prov, query, 10)
                     if results:
@@ -544,8 +561,20 @@ class DeepResearcher:
                             self.providers_used.append(prov)
                         return results
                 except Exception as e:
+                    raised = True
                     logger.warning(f"Research search: {prov} failed: {e}")
                     self._last_search_error = f"{prov}: {e}"
+            # Every provider ran but none returned results. If none of them
+            # raised, record an actionable reason here — otherwise this empty
+            # path leaves `_last_search_error` unset and the caller surfaces a
+            # bare "unknown error" (issue #344). This is exactly the SearXNG
+            # case where the service is reachable but all its engines fail, so
+            # each provider returns [] without throwing.
+            if not raised:
+                self._last_search_error = (
+                    f"no results from search provider(s): "
+                    f"{', '.join(chain) if chain else provider}"
+                )
             return []
         except Exception as e:
             logger.error(f"Search failed for '{query}': {e}")
