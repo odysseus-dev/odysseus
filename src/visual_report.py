@@ -202,6 +202,7 @@ _TEMPLATE = """\
 <meta name="theme-color" content="#b8543a" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#131214" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>O</text></svg>">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css">
 <style>
 *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
@@ -1082,6 +1083,50 @@ body::after {{
     }});
   }}
 }})();
+
+// Render math expressions with KaTeX
+(function() {
+  var s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js';
+  s.onload = function() {
+    var content = document.querySelector('.content');
+    if (!content || typeof katex === 'undefined') return;
+    var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
+    var nodes = [];
+    while (walker.nextNode()) {
+      var p = walker.currentNode.parentElement;
+      if (p && (p.tagName === 'CODE' || p.tagName === 'PRE')) continue;
+      if (/\[([\s\S]*?)\]|\(([\s\S]*?)\)|$$([\s\S]*?)$$|$([^
+$]+?)$/.test(walker.currentNode.textContent)) {
+        nodes.push(walker.currentNode);
+      }
+    }
+    nodes.forEach(function(node) {
+      var text = node.textContent;
+      var frag = document.createDocumentFragment();
+      var lastIdx = 0;
+      var re = /\[([\s\S]*?)\]|\(([\s\S]*?)\)|$$([\s\S]*?)$$|$([^
+$]+?)$/g;
+      var m;
+      while ((m = re.exec(text)) !== null) {
+        if (m.index > lastIdx) frag.appendChild(document.createTextNode(text.slice(lastIdx, m.index)));
+        var math = (m[1] || m[2] || m[3] || m[4] || '').trim();
+        var display = !!(m[1] || m[3]);
+        var span = document.createElement(display ? 'div' : 'span');
+        try {
+          katex.render(math, span, { displayMode: display, throwOnError: false });
+        } catch(e) {
+          span.textContent = m[0];
+        }
+        frag.appendChild(span);
+        lastIdx = re.lastIndex;
+      }
+      if (lastIdx < text.length) frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+      if (frag.childNodes.length) node.parentNode.replaceChild(frag, node);
+    });
+  };
+  document.head.appendChild(s);
+})();
 
 // Colorize comparison table cells
 if (document.body.classList.contains('category-comparison')) {{
