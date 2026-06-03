@@ -538,15 +538,21 @@ def setup_gallery_routes() -> APIRouter:
             )
             q = _owner_filter(q, user)
 
-            # Search filter (prompt + tags + ai_tags)
+            # Search filter (prompt + tags + ai_tags). Split on whitespace and
+            # require EACH term to match (like the document library): a single
+            # "%red car%" LIKE only matched the exact adjacent phrase, so a
+            # multi-word query missed "a car that is red". Escape LIKE
+            # wildcards so a literal "%"/"_" in the query isn't a wildcard.
             if search:
-                term = f"%{search}%"
                 from sqlalchemy import or_
-                q = q.filter(or_(
-                    GalleryImage.prompt.ilike(term),
-                    GalleryImage.tags.ilike(term),
-                    GalleryImage.ai_tags.ilike(term),
-                ))
+                for tok in search.split():
+                    safe = tok.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    term = f"%{safe}%"
+                    q = q.filter(or_(
+                        GalleryImage.prompt.ilike(term, escape="\\"),
+                        GalleryImage.tags.ilike(term, escape="\\"),
+                        GalleryImage.ai_tags.ilike(term, escape="\\"),
+                    ))
 
             # Tag filter. The UI stacks multiple tag pills by passing them
             # comma-separated — each tag adds a separate AND-filter so the
