@@ -1,3 +1,30 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+extend-exclude = ["static/", "data/", "logs/"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]   # LOCKED families (D-15) — no ALL, no preview
+ignore = ["E501"]                          # no hard-column convention (D-19, CONVENTIONS.md)
+
+[tool.ruff.lint.per-file-ignores]
+# src/database.py is a pure re-export shim (`from core.database import *` plus an
+# explicit name list "for IDE/type-checker visibility"). It has no `__all__`, so
+# F401 would delete the explicit re-exports and break `from src.database import X`
+# used across the codebase (circular-import-sensitive tool chain). Suppress F401/F403
+# here to preserve the documented re-export pattern (CONVENTIONS.md barrel convention).
+"src/database.py" = ["F401", "F403"]
+# Tests deliberately import modules for their import-time side effects (e.g.
+# `import src.agent_tools` to prime the module cache and break a runtime circular
+# import before `from src.tool_parsing import ...`), and import private helpers /
+# re-use fixture names. F401 would strip those side-effect imports and silently
+# break collection; F811 fires on intentional fixture/name redefinition. Suppress
+# both for the test tree (plan Task 4 recommendation; preserves behavior).
+"tests/**" = ["F401", "F811"]
+
+[tool.ruff.format]
+quote-style = "double"                     # matches house style (CONVENTIONS.md)
