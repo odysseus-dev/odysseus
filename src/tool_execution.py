@@ -296,11 +296,20 @@ def _split_bg_marker(content: str):
 
 def _preferred_python_executable() -> str:
     """Pick a Python interpreter that has the bundled workspace deps when available."""
+    home_runtime = os.path.join(
+        os.path.expanduser("~"),
+        ".cache",
+        "codex-runtimes",
+        "codex-primary-runtime",
+        "dependencies",
+        "python",
+        "bin",
+    )
     candidates = [
         os.environ.get("ODYSSEUS_WORKSPACE_PYTHON"),
         os.environ.get("CODEX_WORKSPACE_PYTHON"),
-        "/Users/maksim/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
-        "/Users/maksim/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python",
+        os.path.join(home_runtime, "python3"),
+        os.path.join(home_runtime, "python"),
         sys.executable,
         "python3",
         "python",

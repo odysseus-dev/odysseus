@@ -15,7 +15,7 @@ ARTIFACTS_DIR = os.path.join(DATA_DIR, "artifacts")
 
 _DOWNLOADABLE_EXTS = {
     ".csv", ".doc", ".docx", ".html", ".json", ".md", ".ods", ".pdf",
-    ".ppt", ".pptx", ".txt", ".xls", ".xlsm", ".xlsx", ".xml", ".zip",
+    ".ppt", ".pptx", ".tsv", ".txt", ".xls", ".xlsm", ".xlsx", ".xml", ".zip",
 }
 _SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 

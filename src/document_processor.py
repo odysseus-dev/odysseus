@@ -41,7 +41,7 @@ def _is_text_file(path: str) -> bool:
     """Check if file has text extension."""
     return any(
         path.lower().endswith(ext)
-        for ext in (".txt", ".py", ".html", ".htm", ".md", ".json", ".csv", ".log", ".js")
+        for ext in (".txt", ".py", ".html", ".htm", ".md", ".json", ".csv", ".tsv", ".log", ".js")
     )
 
 
@@ -50,6 +50,7 @@ def _process_text_file(path: str) -> str:
     language_map = {
         ".py": "python", ".js": "javascript", ".html": "html", ".css": "css",
         ".json": "json", ".md": "markdown", ".txt": "text", ".csv": "csv",
+        ".tsv": "tsv",
         ".log": "log", ".sh": "bash", ".yml": "yaml", ".yaml": "yaml",
         ".xml": "xml", ".sql": "sql", ".cpp": "cpp", ".c": "c",
         ".java": "java", ".go": "go", ".rs": "rust", ".php": "php",
