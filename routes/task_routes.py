@@ -971,6 +971,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             {"value": "session", "label": "Session", "description": "Save result to a chat session"},
             {"value": "notification", "label": "Notification", "description": "Push a browser notification with the result (also saved to the session for history)"},
             {"value": "email", "label": "Email me", "description": "Send result through your configured SMTP account"},
+            {"value": "webhook", "label": "Webhook", "description": "Post the result to your configured task webhook"},
         ]
         # Only include tools whose NAME clearly indicates an outbound delivery
         # action — match by verb in the tool name, not by any mention of "email"
@@ -1098,7 +1099,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             '  "scheduled_day": 0,               // weekly: 0=Mon..6=Sun; monthly: 1..31\n'
             '  "scheduled_date": "YYYY-MM-DDTHH:MM",  // only for "once"\n'
             '  "cron_expression": "m h dom mon dow",  // only if schedule is "cron"\n'
-            '  "output_target": "session" | "email" | "notification"  // use email when the user asks to email the result\n'
+            '  "output_target": "session" | "email" | "notification" | "webhook"  // use webhook when the user asks to post the result to a webhook\n'
             "}\n\n"
             "Rules: default schedule to 'daily' if a time is given without a frequency. "
             "Default scheduled_time to '09:00' if none is stated. For 'every weekday' "
@@ -1144,7 +1145,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 out["scheduled_time"] = st.strip()
             if isinstance(draft.get("scheduled_day"), int):
                 out["scheduled_day"] = draft["scheduled_day"]
-            if draft.get("output_target") in ("session", "email", "notification"):
+            if draft.get("output_target") in ("session", "email", "notification", "webhook"):
                 out["output_target"] = draft["output_target"]
             out["trigger_type"] = "schedule"
             if not out.get("prompt"):

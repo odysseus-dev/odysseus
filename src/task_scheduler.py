@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -1433,6 +1434,10 @@ class TaskScheduler:
             await self._deliver_via_email(output, task, result)
             return
 
+        if self._is_webhook_output_target(output):
+            await self._deliver_via_webhook(output, task, result)
+            return
+
         if output != "session":
             return
 
@@ -1521,6 +1526,53 @@ class TaskScheduler:
         if target.startswith("email:"):
             return True
         return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", target))
+
+    @staticmethod
+    def _is_webhook_output_target(output: str) -> bool:
+        target = (output or "").strip().lower()
+        return target == "webhook" or target.startswith("webhook:")
+
+    @staticmethod
+    def _resolve_task_webhook(output: str) -> str:
+        target = (output or "").strip()
+        if target.lower().startswith("webhook:"):
+            suffix = re.sub(r"[^A-Za-z0-9]+", "_", target.split(":", 1)[1]).strip("_").upper()
+            if suffix:
+                env_name = f"ODYSSEUS_TASK_WEBHOOK_{suffix}"
+                return os.getenv(env_name, "").strip()
+            return os.getenv("ODYSSEUS_TASK_WEBHOOK_URL", "").strip()
+        return os.getenv("ODYSSEUS_TASK_WEBHOOK_URL", "").strip()
+
+    @staticmethod
+    def _validate_task_webhook_url(url: str) -> None:
+        from src.url_safety import check_outbound_url
+
+        ok, reason = check_outbound_url(url)
+        if not ok:
+            raise RuntimeError(f"Task webhook URL is not allowed: {reason}")
+
+    async def _deliver_via_webhook(self, output: str, task, result: str):
+        """Send task output to a configured generic webhook."""
+        webhook_url = self._resolve_task_webhook(output)
+        if not webhook_url:
+            raise RuntimeError("Webhook output target is configured, but no task webhook URL is set")
+        self._validate_task_webhook_url(webhook_url)
+
+        import httpx
+
+        payload = {
+            "event": "task.completed",
+            "source": "odysseus",
+            "task_id": getattr(task, "id", ""),
+            "task_name": getattr(task, "name", "") or "Scheduled Task",
+            "result": result or "",
+        }
+
+        async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+            resp = await client.post(webhook_url, json=payload)
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Task webhook delivery failed with HTTP {resp.status_code}")
+        logger.info("Task %s posted result to webhook (%sb)", task.id, len(result or ""))
 
     async def _deliver_via_email(self, output: str, task, result: str):
         """Send task output through the app's configured SMTP account.
