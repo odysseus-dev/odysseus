@@ -48,3 +48,10 @@ def test_recipient_list_rejects_empty_envelope(monkeypatch):
         assert exc.code == 1
     else:
         raise AssertionError("expected empty recipient list to exit")
+
+
+def test_split_recipients_ignores_non_string_values(monkeypatch):
+    cli = _load_mail_cli(monkeypatch)
+
+    assert cli._split_recipients(None) == []
+    assert cli._split_recipients(["a@example.test"]) == []
