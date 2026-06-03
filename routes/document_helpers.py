@@ -203,6 +203,8 @@ def _assert_pdf_marker_upload_owned(
 def _derive_title(content: str) -> str:
     """Derive a title from document content."""
     import re
+    if not isinstance(content, str):
+        return "Untitled"
     text = content.strip()
     if not text:
         return "Untitled"
