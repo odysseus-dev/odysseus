@@ -286,7 +286,7 @@ def rank_image_models(system, search=None, sort="fit"):
 
     for model in IMAGE_MODEL_REGISTRY:
         # Filter by search
-        if search:
+        if isinstance(search, str) and search:
             s = search.lower()
             if s not in model["name"].lower() and s not in model["id"].lower() and s not in model.get("description", "").lower():
                 continue
