@@ -1,5 +1,6 @@
 # AMD ROCm GPU overlay. Enable by setting COMPOSE_FILE in .env:
 #   COMPOSE_FILE=docker-compose.yml:docker/gpu.amd.yml
+#   RENDER_GID=<numeric output of: getent group render | cut -d: -f3>
 #
 # Requires ROCm drivers on the host (kfd + DRI devices). The host user
 # running Docker must be in the `video` and `render` groups.

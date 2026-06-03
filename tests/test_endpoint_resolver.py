@@ -1,4 +1,5 @@
 """Tests for endpoint_resolver — pure functions tested directly to avoid import pollution."""
+import json
 import re
 import sys
 import types
@@ -8,6 +9,45 @@ from urllib.parse import urlparse
 
 # Copy the pure functions to test them without importing the full module.
 # This avoids module cache conflicts with other test files that mock dependencies.
+
+_NON_CHAT_MODEL = (
+    "text-embedding", "embedding", "tts-", "whisper", "dall-e",
+    "moderation", "rerank", "reranker", "clip", "stable-diffusion",
+)
+
+
+def _first_chat_model(models):
+    for m in (models or []):
+        if not any(p in str(m).lower() for p in _NON_CHAT_MODEL):
+            return m
+    return (models[0] if models else None)
+
+
+def _endpoint_cached_models(ep) -> list:
+    raw = getattr(ep, "cached_models", None) or getattr(ep, "models", None)
+    if not raw:
+        return []
+    try:
+        models = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return []
+    return models if isinstance(models, list) else []
+
+
+def _endpoint_hidden_models(ep) -> set:
+    raw = getattr(ep, "hidden_models", None)
+    if not raw:
+        return set()
+    try:
+        hidden = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return set()
+    return set(hidden) if isinstance(hidden, list) else set()
+
+
+def _endpoint_enabled_models(ep) -> list:
+    hidden = _endpoint_hidden_models(ep)
+    return [m for m in _endpoint_cached_models(ep) if m not in hidden]
 
 def normalize_base(url: str) -> str:
     url = (url or "").strip().rstrip("/")

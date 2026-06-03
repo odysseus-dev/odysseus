@@ -1,7 +1,10 @@
 import os
 import json
+import logging
 from typing import Dict
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
+
+logger = logging.getLogger(__name__)
 
 class APIKeyManager:
     def __init__(self, data_dir: str):
@@ -45,10 +48,24 @@ class APIKeyManager:
         """Load and decrypt API keys"""
         if not os.path.exists(self.api_keys_file):
             return {}
-        with open(self.api_keys_file, 'r', encoding="utf-8") as f:
-            encrypted_keys = json.load(f)
-        return {
-            provider: self.decrypt_api_key(key)
-            for provider, key in encrypted_keys.items()
-        }
+        try:
+            with open(self.api_keys_file, 'r', encoding="utf-8") as f:
+                encrypted_keys = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            # A corrupt/truncated api_keys.json must not crash load() (called on
+            # startup via app_initializer) — treat it as no stored keys.
+            logger.warning("Failed to read API keys file: %s", e)
+            return {}
+        if not isinstance(encrypted_keys, dict):
+            # Legacy/wrong shape (e.g. a list) — .items() would raise. Ignore it.
+            logger.warning("API keys file has unexpected shape (%s); ignoring", type(encrypted_keys).__name__)
+            return {}
+
+        decrypted = {}
+        for provider, key in encrypted_keys.items():
+            try:
+                decrypted[provider] = self.decrypt_api_key(key)
+            except (InvalidToken, ValueError) as e:
+                logger.warning("Failed to decrypt API key for %s: %s", provider, e)
+        return decrypted
 

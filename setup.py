@@ -43,6 +43,33 @@ def init_database():
     print("  [ok] Database initialized")
 
 
+def _prompt_admin_credentials():
+    """Interactively ask for admin username and password when running in a terminal."""
+    import getpass
+
+    print()
+    print("  Set up your admin account:")
+    print("  (Press Enter to accept defaults)")
+    print()
+
+    username = input("  Username [admin]: ").strip().lower()
+    if not username:
+        username = "admin"
+
+    while True:
+        password = getpass.getpass("  Password: ")
+        if not password:
+            print("  Password cannot be empty.")
+            continue
+        confirm = getpass.getpass("  Confirm password: ")
+        if password != confirm:
+            print("  Passwords don't match. Try again.")
+            continue
+        break
+
+    return username, password
+
+
 def create_default_admin():
     """Create an initial admin user if none exists."""
     auth_path = os.path.join(DATA_DIR, "auth.json")
@@ -54,8 +81,22 @@ def create_default_admin():
         import bcrypt
         import json
 
-        username = os.getenv("ODYSSEUS_ADMIN_USER", "admin").strip().lower() or "admin"
-        password = os.getenv("ODYSSEUS_ADMIN_PASSWORD") or __import__("secrets").token_urlsafe(18)
+        # Priority: env vars > interactive prompt > random password
+        username = os.getenv("ODYSSEUS_ADMIN_USER", "").strip().lower()
+        password = os.getenv("ODYSSEUS_ADMIN_PASSWORD", "").strip()
+
+        if username and password:
+            # Both provided via env — use them directly
+            pass
+        elif sys.stdin.isatty() and not os.getenv("ODYSSEUS_SKIP_ADMIN_PROMPT"):
+            # Interactive terminal — ask the user
+            username, password = _prompt_admin_credentials()
+        else:
+            # Non-interactive (Docker, CI) — fall back to generated password
+            username = username or "admin"
+            password = password or __import__("secrets").token_urlsafe(18)
+
+        username = username or "admin"
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         auth_data = {
             "users": {
@@ -67,9 +108,14 @@ def create_default_admin():
         }
         with open(auth_path, "w", encoding="utf-8") as f:
             json.dump(auth_data, f, indent=2)
-        print(f"  [ok] Initial admin user created ({username})")
-        print(f"        Temporary password: {password}")
-        print(f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
+
+        if sys.stdin.isatty() and not os.getenv("ODYSSEUS_ADMIN_PASSWORD"):
+            print(f"  [ok] Admin account created ({username})")
+        else:
+            print(f"  [ok] Initial admin user created ({username})")
+            if not os.getenv("ODYSSEUS_ADMIN_PASSWORD"):
+                print(f"        Temporary password: {password}")
+                print(f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
         return "created"
     except ImportError:
         print("  [warn] bcrypt not installed — skipping admin user creation")
@@ -160,7 +206,7 @@ def main():
 
     # Cleaned, action-focused final instruction strings
     if admin_status == "created":
-        print("Login with the admin username and temporary password printed above.\n")
+        print("Login with your admin credentials.\n")
     elif admin_status == "exists":
         print("Login with your existing admin credentials.\n")
     elif admin_status == "skipped":

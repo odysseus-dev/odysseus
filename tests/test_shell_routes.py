@@ -3,6 +3,7 @@
 import builtins
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,7 +15,10 @@ from routes.shell_routes import (
     _running_in_container,
     _docker_row_status,
     _package_installed_from_probe,
+    _package_pip_update_status,
+    _package_probe_script,
     _package_status_note,
+    _prepend_user_install_bins_to_path,
     _reject_cross_site,
     _ssh_base_argv,
     _venv_activate_prefix,
@@ -221,6 +225,21 @@ class TestPackageProbeStatus:
         }
 
         assert _package_installed_from_probe("vllm", probe) is True
+        assert "python package: vllm 0.8.5" in _package_status_note("vllm", probe)
+        assert _package_pip_update_status({"name": "vllm", "pip": "vllm"}, probe).available is True
+
+    def test_vllm_cli_without_dist_is_external_for_update(self):
+        probe = {
+            "modules": {"vllm": {"found": False, "real_module": False}},
+            "dists": {},
+            "binaries": {"vllm": "/opt/vllm/bin/vllm"},
+        }
+
+        status = _package_pip_update_status({"name": "vllm", "pip": "vllm"}, probe)
+
+        assert _package_installed_from_probe("vllm", probe) is True
+        assert status.available is False
+        assert "outside Odysseus" in status.note
 
     def test_llama_cpp_is_installed_when_native_llama_server_exists(self):
         probe = {
@@ -231,6 +250,9 @@ class TestPackageProbeStatus:
 
         assert _package_installed_from_probe("llama_cpp", probe) is True
         assert "native llama-server" in _package_status_note("llama_cpp", probe)
+        status = _package_pip_update_status({"name": "llama_cpp", "pip": "llama-cpp-python[server]"}, probe)
+        assert status.available is False
+        assert "package manager or source checkout" in status.note
 
     def test_diffusers_requires_torch_too(self):
         missing_torch = {
@@ -246,6 +268,26 @@ class TestPackageProbeStatus:
 
         assert _package_installed_from_probe("diffusers", missing_torch) is False
         assert _package_installed_from_probe("diffusers", ready) is True
+
+    def test_local_user_install_bin_is_added_to_path(self, monkeypatch, tmp_path):
+        user_base = tmp_path / "user-base"
+        monkeypatch.setattr("site.USER_BASE", str(user_base))
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("PATH", "/usr/bin")
+
+        _prepend_user_install_bins_to_path()
+
+        parts = os.environ["PATH"].split(os.pathsep)
+        assert str(user_base / "bin") in parts
+        assert str(tmp_path / "home" / ".local" / "bin") in parts
+
+    def test_remote_package_probe_checks_user_install_bin(self):
+        script = _package_probe_script(["vllm"])
+
+        assert "site.USER_BASE" in script
+        assert "os.path.expanduser('~/.local/bin')" in script
+        assert "add_user_install_bins_to_path()" in script
+        assert "shutil.which(b)" in script
 
 
 class TestSshBaseArgv:

@@ -111,7 +111,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "create_document",
-            "description": "Create a new document in the editor panel. ALWAYS use this when the user asks to write, create, build, or generate code, scripts, programs, games, apps, or any substantial content (>15 lines). NEVER put large code blocks directly in chat — use this tool instead.",
+            "description": "Create a new document in the editor panel. Use this when the user asks to write, create, build, or generate code, scripts, programs, games, apps, or any substantial content (>15 lines) AND there is no already-open document/email draft that the request refers to. If an email compose draft is open, edit that draft instead of creating another document. NEVER put large code blocks directly in chat — use this tool instead.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -442,7 +442,43 @@ FUNCTION_TOOL_SCHEMAS = [
                     "end": {"type": "string", "description": "list_events range end (ISO datetime); defaults to +14 days"},
                     "event_type": {"type": "string", "description": "Tag / category for the event. Common values: work, personal, health, travel, meal, social, admin, other. Aliases accepted: tag, category, type."},
                     "importance": {"type": "string", "enum": ["low", "normal", "high", "critical"], "description": "Priority level (defaults to 'normal')"},
-                    "reminder_minutes": {"type": "integer", "description": "For create_event: create an Odysseus reminder this many minutes before the event, e.g. 5 for 'reminder 5 min before'."}
+                    "reminder_minutes": {"type": "integer", "description": "For create_event: create an Odysseus reminder this many minutes before the event, e.g. 5 for 'reminder 5 min before'."},
+                    "rrule": {"type": "string", "description": "Recurrence rule in iCalendar RRULE format, e.g. 'FREQ=WEEKLY;BYDAY=MO' for weekly on Monday. Use with create_event or update_event."}
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_notes",
+            "description": "Manage notes and checklists (Google Keep-style): list, add, update, delete, toggle_item. IMPORTANT: For to-do lists / checklists, set note_type='checklist' and pass the items as the `checklist_items` array — do NOT serialize them into `content` as plain text. For freeform notes, use note_type='note' and put the body in `content`. `due_date` accepts natural language like 'tomorrow at 9am' (parsed in the user's timezone) and fires a notification — do not also create a calendar event for the same reminder.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string",
+                               "enum": ["list", "add", "update", "delete", "toggle_item"],
+                               "description": "The action to perform"},
+                    "id": {"type": "string", "description": "Note id (for update/delete/toggle_item); 8-char prefix is fine"},
+                    "title": {"type": "string", "description": "Note title (for add/update)"},
+                    "content": {"type": "string", "description": "Freeform body text. Use this for note_type='note'. Do NOT use this for checklists — pass `checklist_items` instead."},
+                    "note_type": {"type": "string", "enum": ["note", "checklist"],
+                                  "description": "'note' = freeform text in `content`. 'checklist' = structured to-do items in `checklist_items`. Defaults to 'checklist' if checklist_items is supplied, else 'note'."},
+                    "checklist_items": {"type": "array",
+                                        "items": {"type": "object",
+                                                  "properties": {
+                                                      "text": {"type": "string", "description": "The to-do item text"},
+                                                      "done": {"type": "boolean", "description": "Whether the item is checked off"}
+                                                  },
+                                                  "required": ["text"]},
+                                        "description": "Checklist items for note_type='checklist'. Each item is {text, done}. REQUIRED for checklists — leaving this empty produces a blank note."},
+                    "color": {"type": "string", "description": "Optional color label (e.g. 'yellow', 'blue', 'green')"},
+                    "label": {"type": "string", "description": "Optional category label (also used as a list filter)"},
+                    "pinned": {"type": "boolean", "description": "Pin the note to the top"},
+                    "archived": {"type": "boolean", "description": "For update: archive/unarchive. For list: show archived notes when true."},
+                    "due_date": {"type": "string", "description": "Reminder time. Accepts natural language ('tomorrow at 9am', '11pm today') or ISO 8601. Fires a notification at that time."},
+                    "index": {"type": "integer", "description": "Checklist item index (for toggle_item, 0-based)"}
                 },
                 "required": ["action"]
             }
@@ -1038,7 +1074,16 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         logger.error(f"Failed to parse function call arguments for {name}: {arguments}")
         return None
 
+    # Some models emit valid JSON that isn't an object (e.g. a bare array
+    # ["ls -la"], string, or number) as the function arguments. Every branch
+    # below assumes a dict and calls args.get(...), so a non-dict would raise
+    # AttributeError and abort the whole agent stream. Coerce to {} instead.
+    if not isinstance(args, dict):
+        logger.warning(f"Non-object function call arguments for {name}: {args!r}; treating as empty")
+        args = {}
+
     tool_type = _TOOL_NAME_MAP.get(name, name)
+
     # Allow MCP tools through (namespaced as mcp__serverid__toolname)
     if tool_type.startswith("mcp__"):
         content = json.dumps(args) if args else "{}"
@@ -1058,7 +1103,13 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
     elif tool_type == "python":
         content = args.get("code", "")
     elif tool_type == "web_search":
-        content = args.get("query", "")
+        queries = args.get("queries")
+        if isinstance(queries, list) and queries:
+            content = str(queries[0])
+        elif queries:
+            content = str(queries)
+        else:
+            content = args.get("query", "")
     elif tool_type == "read_file":
         content = args.get("path", "")
     elif tool_type == "write_file":

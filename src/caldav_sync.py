@@ -24,9 +24,12 @@ Design notes:
 
 import asyncio
 import hashlib
+import ipaddress
 import logging
+import os
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,52 @@ logger = logging.getLogger(__name__)
 # events still come through via RRULE expansion on the frontend.
 _LOOKBACK_DAYS = 90
 _LOOKAHEAD_DAYS = 365
+_BLOCKED_HOSTS = {
+    "localhost",
+    "localhost.",
+    "ip6-localhost",
+    "metadata.google.internal",
+}
+
+
+def _private_caldav_allowed() -> bool:
+    return os.environ.get("ODYSSEUS_ALLOW_PRIVATE_CALDAV", "0").lower() in {"1", "true", "yes"}
+
+
+def _validate_caldav_ip(host: str) -> None:
+    try:
+        ip = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return
+    if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+        raise ValueError("CalDAV URL host is not allowed")
+    if ip.is_private and not _private_caldav_allowed():
+        raise ValueError("Private CalDAV IPs require ODYSSEUS_ALLOW_PRIVATE_CALDAV=1")
+
+
+def validate_caldav_url(raw_url: str) -> str:
+    """Validate and normalize a user-provided CalDAV URL before server-side use."""
+    url = (raw_url if isinstance(raw_url, str) else "").strip()
+    if not url:
+        raise ValueError("CalDAV URL is required")
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("CalDAV URL must start with http:// or https://")
+    if not parsed.hostname:
+        raise ValueError("CalDAV URL must include a host")
+    if parsed.username or parsed.password:
+        raise ValueError("Put CalDAV credentials in the username/password fields, not the URL")
+    if parsed.fragment:
+        raise ValueError("CalDAV URL fragments are not allowed")
+    try:
+        parsed.port
+    except ValueError:
+        raise ValueError("CalDAV URL has an invalid port")
+    host = (parsed.hostname or "").lower()
+    if host in _BLOCKED_HOSTS or host.endswith(".localhost"):
+        raise ValueError("CalDAV URL host is not allowed")
+    _validate_caldav_ip(host)
+    return urlunparse(parsed._replace(fragment="")).rstrip("/")
 
 
 def _stable_cal_id(remote_url: str) -> str:
@@ -250,13 +299,21 @@ async def sync_caldav(owner: str) -> dict:
     url = (cfg.get("url") or "").strip()
     user = (cfg.get("username") or "").strip()
     pw = cfg.get("password") or ""
+    try:
+        from src.secret_storage import decrypt
+        pw = decrypt(pw)
+    except Exception:
+        pass
     if not (url and user and pw):
         return {
             "calendars": 0, "events": 0, "deleted": 0,
             "errors": ["CalDAV is not configured"],
         }
     try:
+        url = validate_caldav_url(url)
         return await asyncio.to_thread(_sync_blocking, owner, url, user, pw)
+    except ValueError as e:
+        return {"calendars": 0, "events": 0, "deleted": 0, "errors": [str(e)]}
     except Exception as e:
         logger.exception("CalDAV sync raised")
         return {"calendars": 0, "events": 0, "deleted": 0, "errors": [str(e)[:200]]}

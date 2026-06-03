@@ -118,6 +118,7 @@ def _running_in_container(dockerenv_path="/.dockerenv", cgroup_path="/proc/1/cgr
 
 
 DockerRowStatus = namedtuple("DockerRowStatus", ["applicable", "install_hint"])
+PackageUpdateStatus = namedtuple("PackageUpdateStatus", ["available", "note"])
 
 
 def _docker_row_status(*, on_remote, in_container, installed, default_hint):
@@ -125,6 +126,24 @@ def _docker_row_status(*, on_remote, in_container, installed, default_hint):
     if local_docker_unavailable:
         return DockerRowStatus(applicable=False, install_hint=DOCKER_IN_CONTAINER_HINT)
     return DockerRowStatus(applicable=True, install_hint=default_hint)
+
+
+def _pip_dist_name(pkg: dict) -> str:
+    """Distribution name for importlib.metadata lookups.
+
+    The Cookbook package catalog carries both the import name (``name``, e.g.
+    ``llama_cpp``) and the pip spec (``pip``, e.g. ``llama-cpp-python[server]``).
+    The distribution is NOT always the import name with underscores swapped for
+    dashes — ``llama_cpp`` ships in the ``llama-cpp-python`` distribution — so
+    derive it from the pip spec (stripping any ``[extras]`` and version markers)
+    and fall back to the munged import name only when no pip spec is declared.
+    """
+    pip = (pkg.get("pip") or "").strip()
+    if pip:
+        base = re.split(r"[\[<>=!~;\s]", pip, maxsplit=1)[0].strip()
+        if base:
+            return base
+    return (pkg.get("name") or "").replace("_", "-")
 
 
 def _package_installed_from_probe(name: str, probe: dict) -> bool:
@@ -162,7 +181,10 @@ def _package_status_note(name: str, probe: dict) -> str:
     locations = module.get("locations") or []
     if name == "vllm":
         if binaries.get("vllm"):
-            return f"vLLM CLI: {binaries['vllm']}"
+            parts = [f"vLLM CLI: {binaries['vllm']}"]
+            if dists.get("vllm"):
+                parts.append(f"python package: vllm {dists['vllm']}")
+            return "; ".join(parts)
         if module.get("found") and not dists.get("vllm"):
             loc = locations[0] if locations else module.get("origin") or "unknown path"
             return f"Python sees a vllm namespace at {loc}, but no vLLM CLI is on PATH."
@@ -183,13 +205,70 @@ def _package_status_note(name: str, probe: dict) -> str:
     return ""
 
 
+def _package_pip_update_status(pkg: dict, probe: dict | None = None) -> PackageUpdateStatus:
+    """Return whether the Dependencies UI should offer a generic pip update.
+
+    "Installed" means Cookbook can use the dependency. It does not always mean
+    the dependency is a Python package that Cookbook should update with pip:
+    native llama-server can come from a package manager/source build, and a CLI
+    may be on PATH without matching Python package metadata.
+    """
+    if pkg.get("kind") == "system" or not pkg.get("pip"):
+        return PackageUpdateStatus(False, "Update this system dependency outside Odysseus.")
+
+    name = pkg.get("name")
+    binaries = probe.get("binaries") if isinstance(probe, dict) and isinstance(probe.get("binaries"), dict) else {}
+    dists = probe.get("dists") if isinstance(probe, dict) and isinstance(probe.get("dists"), dict) else {}
+
+    if name == "llama_cpp" and binaries.get("llama-server"):
+        return PackageUpdateStatus(
+            False,
+            "Using native llama-server on PATH; update it with its package manager or source checkout.",
+        )
+    if name == "vllm" and binaries.get("vllm") and not dists.get("vllm"):
+        return PackageUpdateStatus(
+            False,
+            "Using a vLLM CLI on PATH without Python package metadata; update it outside Odysseus.",
+        )
+
+    return PackageUpdateStatus(True, "Update uses pip in the selected Python environment.")
+
+
+def _prepend_user_install_bins_to_path() -> None:
+    """Make pip --user console scripts visible to dependency probes.
+
+    Docker Cookbook installs vLLM with `python -m pip install --user`, which
+    drops the `vllm` CLI in /app/.local/bin. The running app process does not
+    inherit that PATH update, so `shutil.which("vllm")` can report missing even
+    after a successful install.
+    """
+    try:
+        import site
+
+        candidates = [os.path.join(site.USER_BASE, "bin")]
+    except Exception:
+        candidates = []
+    candidates.append(os.path.expanduser("~/.local/bin"))
+
+    parts = os.environ.get("PATH", "").split(os.pathsep) if os.environ.get("PATH") else []
+    changed = False
+    for path in reversed([p for p in candidates if p]):
+        if path not in parts:
+            parts.insert(0, path)
+            changed = True
+    if changed:
+        os.environ["PATH"] = os.pathsep.join(parts)
+
+
 def _package_probe_script(names: list[str]) -> str:
     names_lit = ",".join(repr(n) for n in names)
     return f"""
 import importlib.util
 import importlib.metadata as md
 import json
+import os
 import shutil
+import site
 
 names=[{names_lit}]
 dist_names={{
@@ -203,6 +282,24 @@ bin_names={{
     'vllm':['vllm'],
     'llama_cpp':['llama-server'],
 }}
+
+def add_user_install_bins_to_path():
+    candidates = []
+    try:
+        candidates.append(os.path.join(site.USER_BASE, 'bin'))
+    except Exception:
+        pass
+    candidates.append(os.path.expanduser('~/.local/bin'))
+    parts = os.environ.get('PATH', '').split(os.pathsep) if os.environ.get('PATH') else []
+    changed = False
+    for path in reversed([p for p in candidates if p]):
+        if path not in parts:
+            parts.insert(0, path)
+            changed = True
+    if changed:
+        os.environ['PATH'] = os.pathsep.join(parts)
+
+add_user_install_bins_to_path()
 
 def mod_status(n):
     spec = importlib.util.find_spec(n)
@@ -317,7 +414,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
         yield f"data: {json.dumps({'exit_code': -1, 'error': PTY_UNSUPPORTED_ERROR})}\n\n"
         return
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     master_fd, slave_fd = pty.openpty()
 
     # Set master to non-blocking
@@ -469,7 +566,8 @@ async def _generate_tmux(cmd: str, request: Request):
         f"EC=${{PIPESTATUS[0]}}\n"
         f"echo ':::EXIT_CODE:::'$EC >> '{log_path}'\n"
         f"rm -f '{script_path}'\n"
-        f"exit $EC\n"
+        f"exit $EC\n",
+        encoding="utf-8",
     )
     script_path.chmod(0o755)
     logger.info("tmux wrapper script created: session=%s path=%s", session_id, script_path)
@@ -504,7 +602,7 @@ async def _generate_tmux(cmd: str, request: Request):
         # Read new lines from log
         try:
             if log_path.exists():
-                lines = log_path.read_text(errors="replace").splitlines()
+                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
                 new_lines = lines[lines_sent:]
                 for line in new_lines:
                     if line.startswith(":::EXIT_CODE:::"):
@@ -532,7 +630,7 @@ async def _generate_tmux(cmd: str, request: Request):
             # Session ended — do one final read
             await asyncio.sleep(0.5)
             if log_path.exists():
-                lines = log_path.read_text(errors="replace").splitlines()
+                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
                 for line in lines[lines_sent:]:
                     if line.startswith(":::EXIT_CODE:::"):
                         try:
@@ -735,10 +833,11 @@ def setup_shell_routes() -> APIRouter:
                 ]
 
                 finished = 0
-                deadline = (asyncio.get_event_loop().time() + timeout) if timeout else None
+                loop = asyncio.get_running_loop()
+                deadline = (loop.time() + timeout) if timeout else None
                 while finished < 2:
                     if deadline:
-                        remaining = deadline - asyncio.get_event_loop().time()
+                        remaining = deadline - loop.time()
                         if remaining <= 0:
                             raise asyncio.TimeoutError()
                         wait = min(remaining, 2.0)
@@ -791,7 +890,15 @@ def setup_shell_routes() -> APIRouter:
         """
         _require_admin(request)
         _reject_cross_site(request)
-        import importlib, importlib.metadata as importlib_metadata, shlex, json as _json
+        import importlib, importlib.metadata as importlib_metadata, shlex, json as _json, site, sys
+        _prepend_user_install_bins_to_path()
+        importlib.invalidate_caches()
+        try:
+            user_site = site.getusersitepackages()
+            if user_site and os.path.isdir(user_site) and user_site not in sys.path:
+                sys.path.append(user_site)
+        except Exception:
+            pass
         if ssh_port and str(ssh_port).strip() not in ("", "22"):
             _port = str(ssh_port).strip()
             if not _SSH_PORT_RE.match(_port) or not (1 <= int(_port) <= 65535):
@@ -870,6 +977,7 @@ def setup_shell_routes() -> APIRouter:
 
         for pkg in packages:
             on_remote = bool(host and pkg.get("target") == "remote")
+            probe = None
             if on_remote:
                 pkg["installed"] = bool(remote_status.get(pkg["name"], False))
                 probe = remote_details.get(pkg["name"])
@@ -883,18 +991,35 @@ def setup_shell_routes() -> APIRouter:
             elif pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
                 pkg["installed"] = True
                 pkg["status_note"] = f"native llama-server: {shutil.which('llama-server')}"
+                probe = {"binaries": {"llama-server": shutil.which("llama-server")}, "dists": {}}
+            elif pkg["name"] == "vllm":
+                _vllm_cli = shutil.which("vllm")
+                pkg["installed"] = _vllm_cli is not None
+                if pkg["installed"]:
+                    try:
+                        _vllm_version = importlib_metadata.version(_pip_dist_name(pkg))
+                    except importlib_metadata.PackageNotFoundError:
+                        _vllm_version = None
+                    probe = {
+                        "binaries": {"vllm": _vllm_cli},
+                        "dists": {"vllm": _vllm_version} if _vllm_version else {},
+                    }
+                    pkg["status_note"] = _package_status_note("vllm", probe)
             else:
                 try:
                     importlib.import_module(pkg["name"])
-                    if pkg["name"] == "vllm":
-                        pkg["installed"] = shutil.which("vllm") is not None
-                    else:
-                        importlib_metadata.version(pkg["name"].replace("_", "-"))
-                        pkg["installed"] = True
+                    importlib_metadata.version(_pip_dist_name(pkg))
+                    pkg["installed"] = True
                 except ImportError:
                     pkg["installed"] = False
                 except importlib_metadata.PackageNotFoundError:
                     pkg["installed"] = False
+
+            if pkg.get("installed"):
+                update_status = _package_pip_update_status(pkg, probe)
+                pkg["pip_update_available"] = update_status.available
+                if update_status.note:
+                    pkg["update_note"] = update_status.note
 
             if pkg["name"] == "docker":
                 status = _docker_row_status(
@@ -932,5 +1057,40 @@ def setup_shell_routes() -> APIRouter:
         if proc.returncode == 0:
             return {"ok": True, "output": stdout.decode()[-200:]}
         return {"ok": False, "error": stderr.decode()[-300:]}
+
+    @router.post("/api/cookbook/rebuild-engine")
+    async def rebuild_engine(request: Request):
+        """Clear the cached llama.cpp build so the next serve recompiles.
+
+        Admin only — this removes the Cookbook-managed ``~/bin/llama-server``
+        symlink and ``~/llama.cpp/build`` directory, locally or on the selected
+        remote server. It installs and downloads nothing; the next llama.cpp
+        serve rebuilds from source and picks up CUDA/HIP if a toolchain is now
+        present. This is the missing "force a fresh GPU build" lever for hosts
+        stuck on a CPU-only llama-server.
+        """
+        _require_admin(request)
+        from routes.cookbook_helpers import _llama_cpp_rebuild_cmd
+        body = await request.json()
+        engine = str(body.get("engine") or "llamacpp").strip()
+        if engine != "llamacpp":
+            return {"ok": False, "error": f"Unsupported engine: {engine}"}
+        host = str(body.get("remote_host") or "").strip()
+        ssh_port = body.get("ssh_port")
+        cmd = _llama_cpp_rebuild_cmd()
+        try:
+            argv = (_ssh_base_argv(host, ssh_port) + [cmd]) if host else ["bash", "-lc", cmd]
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=30)
+        except asyncio.TimeoutError:
+            return {"ok": False, "error": "Rebuild-engine command timed out."}
+        if proc.returncode == 0:
+            return {"ok": True, "output": out.decode("utf-8", errors="replace")[-400:]}
+        return {"ok": False, "error": err.decode("utf-8", errors="replace")[-400:]}
 
     return router

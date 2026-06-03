@@ -26,6 +26,39 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("migrate")
 
 
+def _load_json(path, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _memory_map(rows):
+    memories = {}
+    if not isinstance(rows, list):
+        return memories
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        memory_id = row.get("id", "")
+        if memory_id:
+            memories[memory_id] = row
+    return memories
+
+
+def _rag_docstore(data):
+    if not isinstance(data, dict):
+        return [], [], []
+    ids = data.get("ids", [])
+    documents = data.get("documents", [])
+    metadatas = data.get("metadatas", [])
+    if not isinstance(ids, list) or not isinstance(documents, list) or not isinstance(metadatas, list):
+        return [], [], []
+    count = min(len(ids), len(documents), len(metadatas))
+    return ids[:count], documents[:count], metadatas[:count]
+
+
 def migrate_memories():
     """Migrate memory vectors from FAISS to ChromaDB."""
     from src.chroma_client import get_chroma_client
@@ -39,7 +72,9 @@ def migrate_memories():
         logger.info("No memory FAISS index found, skipping memory migration")
         return
 
-    ids = json.loads(open(ids_path, encoding="utf-8").read())
+    ids = _load_json(ids_path, [])
+    if not isinstance(ids, list):
+        ids = []
     if not ids:
         logger.info("Memory FAISS index is empty, skipping")
         return
@@ -47,8 +82,7 @@ def migrate_memories():
     # Load memory texts
     memories = {}
     if os.path.exists(memory_path):
-        for mem in json.loads(open(memory_path, encoding="utf-8").read()):
-            memories[mem.get("id", "")] = mem
+        memories = _memory_map(_load_json(memory_path, []))
 
     embed = get_embedding_client()
     if not embed:
@@ -97,10 +131,7 @@ def migrate_rag():
         logger.info("No RAG DocStore found, skipping RAG migration")
         return
 
-    data = json.loads(open(docs_path, encoding="utf-8").read())
-    ids = data.get("ids", [])
-    documents = data.get("documents", [])
-    metadatas = data.get("metadatas", [])
+    ids, documents, metadatas = _rag_docstore(_load_json(docs_path, {}))
 
     if not ids:
         logger.info("RAG DocStore is empty, skipping")

@@ -86,6 +86,9 @@ function _ggufIncludePattern(model, source) {
 
 function _missingGgufMessage(model) {
   const name = model?.name || 'this model';
+  if (/\bnvfp4\b/i.test(name)) {
+    return `${name} is an NVIDIA NVFP4 checkpoint, not a GGUF download. Pick the base model row with an Unsloth GGUF source, or paste the GGUF repo directly.`;
+  }
   return `No GGUF source is configured for ${name}. Pick a model with a GGUF source, or paste the GGUF repo in Download.`;
 }
 
@@ -492,6 +495,10 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
 
   const payload = { repo_id: repo };
   if (include) payload.include = include;
+  // Large downloads are where hf_transfer most often dies near the end. Use the
+  // plain HuggingFace downloader up front for big model files; it is slower, but
+  // resumes cached partials more reliably.
+  if ((model.required_gb || 0) >= 10 || backend === 'llamacpp') payload.disable_hf_transfer = true;
   if (_envState.hfToken) payload.hf_token = _envState.hfToken;
   if (host) { payload.remote_host = host; const _sp = _getPort(host); if (_sp) payload.ssh_port = _sp; }
   if (platform) payload.platform = platform;
@@ -516,6 +523,54 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   const targetHost = host || 'local';
 
   const tasks = _loadTasks();
+  const sameDownload = (t) => {
+    if (!t || t.type !== 'download') return false;
+    const tRepo = t?.payload?.repo_id || t?.repo_id || t?.repo || t?.name || '';
+    const tHost = t?.remoteHost || t?.payload?.remote_host || 'local';
+    return String(tRepo) === String(payload.repo_id) && String(tHost || 'local') === String(targetHost);
+  };
+  const duplicate = tasks.find(t => sameDownload(t) && (t.status === 'running' || t.status === 'queued'));
+  if (duplicate) {
+    _renderRunningTab();
+    uiModule.showToast(`${shortName} is already ${duplicate.status === 'queued' ? 'queued' : 'downloading'}`);
+    return;
+  }
+  // Also catch zombie "done" tasks — the cookbook may have lost track of a
+  // download (server restart, stale state) while its tmux session is still
+  // alive on the host. Probe it; if alive, flip back to running + treat as
+  // duplicate so we don't kick off a second concurrent download writing to
+  // the same target dir.
+  const zombieCandidate = tasks.find(t => sameDownload(t)
+    && ['done', 'error', 'crashed', 'stopped'].includes(t.status)
+    && t.sessionId && !String(t.sessionId).startsWith('queue-'));
+  if (zombieCandidate) {
+    try {
+      const _zh = zombieCandidate.remoteHost || '';
+      const _zPort = (_envState.servers || []).find(s => s.host === _zh)?.port;
+      const _sshPf = _zh ? `ssh ${_zPort && _zPort !== '22' ? `-p ${_zPort} ` : ''}${_zh} '` : '';
+      const _sshSf = _zh ? `'` : '';
+      const _probeCmd = `${_sshPf}tmux has-session -t ${zombieCandidate.sessionId} 2>/dev/null${_sshSf}`;
+      const _r = await fetch('/api/shell/exec', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: _probeCmd, timeout: 5 }),
+      });
+      const _d = await _r.json();
+      if (_d.exit_code === 0) {
+        // tmux still alive → not actually done. Revive + tell the user.
+        const _fresh = _loadTasks();
+        const _ft = _fresh.find(t => t.sessionId === zombieCandidate.sessionId);
+        if (_ft) {
+          _ft.status = 'running';
+          _ft._selfHealed = true;
+          _saveTasks(_fresh);
+        }
+        _renderRunningTab();
+        uiModule.showToast(`${shortName} is still downloading (was marked finished after a restart — revived)`);
+        return;
+      }
+    } catch { /* probe failed — fall through and let the user launch */ }
+  }
   const activeOnHost = tasks.find(t => t.type === 'download' && (t.status === 'running' || t.status === 'queued') && (t.remoteHost || 'local') === targetHost);
 
   if (activeOnHost) {
@@ -536,18 +591,20 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      uiModule.showToast('Download failed: HTTP ' + res.status);
+      // Errors carry actionable text (e.g. "tmux is required …"); keep them up
+      // long enough to read, matching the serve path's duration (issue #1355).
+      uiModule.showToast('Download failed: HTTP ' + res.status, 9000);
       return;
     }
     const data = await res.json();
     if (!data.ok) {
-      uiModule.showToast('Download failed: ' + (data.error || ''));
+      uiModule.showToast('Download failed: ' + (data.error || ''), 9000);
       return;
     }
     _addTask(data.session_id, shortName, 'download', payload);
     uiModule.showToast(`Downloading ${shortName}...`);
   } catch (e) {
-    uiModule.showToast('Download failed: ' + e.message);
+    uiModule.showToast('Download failed: ' + e.message, 9000);
   }
 }
 
