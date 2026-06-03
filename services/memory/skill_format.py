@@ -50,7 +50,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -440,5 +440,10 @@ class Skill:
         return f"---\n{fm}\n---\n\n{body}"
 
 
+def _utcnow_naive() -> datetime:
+    """Return current UTC time as a naive datetime (Python 3.12+ compatible)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def _now_iso() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    return _utcnow_naive().strftime("%Y-%m-%dT%H:%M:%SZ")
