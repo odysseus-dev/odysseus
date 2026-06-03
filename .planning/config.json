@@ -1,0 +1,97 @@
+{
+  "model_profile": "adaptive",
+  "commit_docs": true,
+  "parallelization": true,
+  "search_gitignored": false,
+  "brave_search": false,
+  "firecrawl": false,
+  "exa_search": false,
+  "git": {
+    "branching_strategy": "none",
+    "create_tag": true,
+    "phase_branch_template": "gsd/phase-{phase}-{slug}",
+    "milestone_branch_template": "gsd/{milestone}-{slug}",
+    "quick_branch_template": null
+  },
+  "workflow": {
+    "research": true,
+    "plan_check": true,
+    "verifier": true,
+    "nyquist_validation": true,
+    "auto_advance": true,
+    "node_repair": true,
+    "node_repair_budget": 2,
+    "ui_phase": true,
+    "ui_safety_gate": true,
+    "ai_integration_phase": true,
+    "tdd_mode": false,
+    "human_verify_mode": "end-of-phase",
+    "text_mode": false,
+    "research_before_questions": false,
+    "discuss_mode": "discuss",
+    "skip_discuss": false,
+    "code_review": true,
+    "code_review_depth": "deep",
+    "code_review_command": null,
+    "pattern_mapper": true,
+    "plan_bounce": false,
+    "plan_bounce_script": null,
+    "plan_bounce_passes": 2,
+    "auto_prune_state": false,
+    "post_planning_gaps": true,
+    "security_enforcement": true,
+    "security_asvs_level": 1,
+    "security_block_on": "high",
+    "ui_review": true,
+    "use_worktrees": true
+  },
+  "ship": {
+    "pr_body_sections": [
+      {
+        "heading": "User Stories & Acceptance Criteria",
+        "enabled": true,
+        "source": "REQUIREMENTS.md ## User Stories || REQUIREMENTS.md ## Acceptance Criteria",
+        "fallback": "- Acceptance criteria are covered by the linked requirements and verification evidence."
+      },
+      {
+        "heading": "Risks & Dependencies",
+        "enabled": true,
+        "source": "PLAN.md ## Risks || PLAN.md ## Dependencies",
+        "fallback": "- No known high-risk rollout dependencies."
+      },
+      {
+        "heading": "Success Metrics & Release Criteria",
+        "enabled": true,
+        "source": "REQUIREMENTS.md ## Definition of Done || VERIFICATION.md ## Release Criteria",
+        "fallback": "- Release when automated verification and required manual checks pass."
+      },
+      {
+        "heading": "Stakeholder Review & Approval",
+        "enabled": true,
+        "template": "- Product owner approval pending for {phase_name}."
+      }
+    ]
+  },
+  "hooks": {
+    "context_warnings": true
+  },
+  "project_code": null,
+  "phase_naming": "sequential",
+  "agent_skills": {},
+  "claude_md_path": "./CLAUDE.md",
+  "plan_review": {
+    "source_grounding": true,
+    "source_grounding_authority": "grep"
+  },
+  "mode": "yolo",
+  "granularity": "standard",
+  "quick_branch_template": null,
+  "intel": {
+    "enabled": true
+  },
+  "graphify": {
+    "enabled": true,
+    "auto_update": true
+  },
+  "resolve_model_ids": "omit"
+}
