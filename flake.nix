@@ -31,6 +31,19 @@
           ncurses
           readline
         ];
+      # Tools the app shells out to / probes with shutil.which at runtime
+      # (Cookbook background jobs, the Browser MCP via npx, remote server probes).
+      # Both the NixOS service PATH and the Darwin launchd daemon PATH use these,
+      # so Cookbook dependency detection behaves the same on both platforms.
+      mkServiceTools =
+        pkgs: with pkgs; [
+          bash
+          nodejs # npx for the optional Browser MCP server / playwright
+          tmux # Cookbook background downloads & serves
+          openssh # Cookbook remote server probes
+          curl
+          git
+        ];
     in
     flake-utils.lib.eachDefaultSystem (
       system:
@@ -371,18 +384,8 @@
               wants = [ "odysseus-chroma.service" ];
               wantedBy = [ "multi-user.target" ];
 
-              # Tools the app shells out to at runtime
-              path =
-                with pkgs;
-                [
-                  bash
-                  nodejs # npx for optional Browser MCP server
-                  tmux # Cookbook background downloads/serves
-                  openssh # Cookbook remote server probes
-                  curl
-                  git
-                ]
-                ++ runtimeLibs;
+              # Tools the app shells out to at runtime (see mkServiceTools)
+              path = mkServiceTools pkgs ++ runtimeLibs;
 
               environment = {
                 PYTHONUNBUFFERED = "1";
@@ -613,6 +616,10 @@
                   PYTHONUNBUFFERED = "1";
                   ODYSSEUS_DATA_DIR = "${cfg.dataDir}/data";
                   LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
+                  # launchd daemons get a bare PATH, so the app's shutil.which
+                  # probes (tmux, npx, git, …) would all read as missing. Put the
+                  # service tools up front, then the standard system paths.
+                  PATH = "${pkgs.lib.makeBinPath (mkServiceTools pkgs)}:/usr/bin:/bin:/usr/sbin:/sbin";
                   # Connect to the bundled ChromaDB server (odysseus-chroma daemon).
                   CHROMADB_HOST = "127.0.0.1";
                   CHROMADB_PORT = toString cfg.chromaPort;
@@ -620,17 +627,7 @@
               };
             };
 
-            environment.systemPackages =
-              with pkgs;
-              [
-                bash
-                nodejs_22
-                tmux
-                openssh
-                curl
-                git
-              ]
-              ++ runtimeLibs;
+            environment.systemPackages = mkServiceTools pkgs ++ runtimeLibs;
           };
         };
 
