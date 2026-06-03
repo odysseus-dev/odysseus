@@ -16,7 +16,28 @@ set -e
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
-PORT="${ODYSSEUS_PORT:-7860}"   # 7860, not 7000 — macOS AirPlay Receiver holds 7000.
+# Load .env so APP_PORT and APP_BIND are available without re-typing them on
+# the command line every run — consistent with how app.py reads them via
+# python-dotenv. Variables already set in the shell take priority over .env.
+if [ -f .env ]; then
+  while IFS='=' read -r key value; do
+    [[ "$key" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "${key// }" ]] && continue
+    value="${value%%#*}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    [ -n "$key" ] && [ -z "${!key+x}" ] && export "$key=$value"
+  done < .env
+fi
+
+# Shell overrides (ODYSSEUS_PORT / ODYSSEUS_HOST) take top priority, then .env
+# values (APP_PORT / APP_BIND), then built-in defaults.
+PORT="${ODYSSEUS_PORT:-${APP_PORT:-7860}}"   # 7860, not 7000 — macOS AirPlay Receiver holds 7000.
+HOST="${ODYSSEUS_HOST:-${APP_BIND:-127.0.0.1}}" # Set APP_BIND=0.0.0.0 in .env for LAN/Tailscale access.
+PROBE_HOST="$HOST"
+if [ "$PROBE_HOST" = "0.0.0.0" ] || [ "$PROBE_HOST" = "::" ]; then
+  PROBE_HOST="127.0.0.1"
+fi
 
 # Friendly message on any failure — re-running is safe (every step is idempotent).
 trap 'echo; echo "✗ Setup failed above. It is safe to re-run ./start-macos.sh."; exit 1' ERR
@@ -24,8 +45,8 @@ trap 'echo; echo "✗ Setup failed above. It is safe to re-run ./start-macos.sh.
 echo "▶ Odysseus quick start for macOS"
 
 # Fail fast if the port is already taken (e.g. a previous run still running).
-if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
-  echo "✗ Port $PORT is already in use. Stop what's using it, or pick another port:"
+if (exec 3<>"/dev/tcp/$PROBE_HOST/$PORT") 2>/dev/null; then
+  echo "✗ Port $PORT is already in use on $PROBE_HOST. Stop what's using it, or pick another port:"
   echo "    ODYSSEUS_PORT=7900 ./start-macos.sh"
   exit 1
 fi
@@ -62,19 +83,42 @@ for cand in $cands; do
   fi
 done
 
-# System dependencies:
+# System dependencies (each installed only if missing, so re-runs stay fast and
+# don't re-hit Homebrew over the network):
 #    - tmux      : Cookbook runs model downloads/serves in the background
 #    - llama.cpp : a prebuilt, Metal-enabled llama-server so Cookbook can serve
 #                  GGUF models on the GPU with no compile step
 #    - python@3.11 : installed only if no suitable (arm64) Python was found above
-echo "▶ Installing dependencies (Homebrew)…"
+#
+# tmux and llama.cpp are needed only by Cookbook (local model serving), not to
+# boot the core app. So if Homebrew can't install one right now we warn and keep
+# going instead of aborting the whole launch. Python is required to build the
+# venv, so that one stays fatal (handled by the PY check just below).
+
+# Install a Homebrew formula only if its command isn't already present. A failed
+# install warns but does not abort — Cookbook can be set up later.
+brew_ensure() {
+  if command -v "$1" >/dev/null 2>&1; then
+    echo "  ✓ $2 already installed"
+    return 0
+  fi
+  echo "  installing $2…"
+  if ! brew install "$2"; then
+    echo "  ⚠ Couldn't install $2 right now — Cookbook (local model serving) may be limited."
+    echo "    You can install it later with:  brew install $2"
+  fi
+}
+
+echo "▶ Checking dependencies (Homebrew)…"
 if [ -n "$PY" ]; then
   echo "  (using $("$PY" --version 2>&1) at $PY)"
-  brew install tmux llama.cpp
 else
-  brew install python@3.11 tmux llama.cpp
+  echo "  installing python@3.11…"
+  brew install python@3.11 || true
   PY="$(command -v /opt/homebrew/bin/python3.11 || command -v python3.11 || true)"
 fi
+brew_ensure tmux tmux
+brew_ensure llama-server llama.cpp
 
 if [ -z "$PY" ] || [ ! -x "$PY" ]; then
   echo "✗ Couldn't find a Python 3.11+ to build the environment with."
@@ -89,10 +133,20 @@ if [ ! -d venv ]; then
   echo "▶ Creating Python environment…"
   "$PY" -m venv venv
 fi
+VENV_PY="./venv/bin/python3"
 echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
-"$PY" -m pip install --quiet --upgrade pip
+"$VENV_PY" -m pip install --quiet --upgrade pip
 # Not --quiet: this is the slow step, so show progress (and any real errors).
-"$PY" -m pip install -r requirements.txt
+"$VENV_PY" -m pip install -r requirements.txt
+
+# chromadb-client (HTTP-only) conflicts with the full chromadb package. If
+# it got installed (e.g., from an older requirements-optional.txt), remove
+# it to prevent ChromaDB from silently failing in HTTP-only mode.
+if "$VENV_PY" -m pip show chromadb-client >/dev/null 2>&1; then
+  echo "▶ Cleaning up conflicting chromadb-client package…"
+  "$VENV_PY" -m pip uninstall -y chromadb-client
+  "$VENV_PY" -m pip install --force-reinstall chromadb
+fi
 
 # 4. First-run setup: creates data dirs and prints an initial admin password
 #    the first time (idempotent — does nothing if already set up). Suppress its
@@ -100,8 +154,20 @@ echo "▶ Installing Python packages (first run downloads a few — can take a f
 echo "▶ Preparing Odysseus…"
 ODYSSEUS_SKIP_RUN_HINT=1 ./venv/bin/python setup.py
 
-# 5. Launch. Bind to loopback only (safe default).
-URL="http://127.0.0.1:$PORT"
+# 5. Launch. Bind to loopback by default; opt into LAN/Tailscale with
+#    ODYSSEUS_HOST=0.0.0.0.
+URL_HOST="$HOST"
+if [ "$URL_HOST" = "0.0.0.0" ] || [ "$URL_HOST" = "::" ]; then
+  URL_HOST="127.0.0.1"
+fi
+URL="http://$URL_HOST:$PORT"
+TAILSCALE_URL=""
+if [ "$HOST" = "0.0.0.0" ] && command -v tailscale >/dev/null 2>&1; then
+  TS_IP="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
+  if [ -n "$TS_IP" ]; then
+    TAILSCALE_URL="http://$TS_IP:$PORT"
+  fi
+fi
 
 # Open the browser automatically once the server is accepting connections — so
 # the URL isn't lost in the startup logs that keep scrolling. Runs in the
@@ -111,7 +177,7 @@ POLLER_PID=""
 if [ -z "$ODYSSEUS_NO_OPEN" ] && command -v open >/dev/null 2>&1; then
   (
     for _ in $(seq 1 90); do
-      if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
+      if (exec 3<>"/dev/tcp/$PROBE_HOST/$PORT") 2>/dev/null; then
         printf '\n'
         printf '  ┌────────────────────────────────────────────┐\n'
         printf '  │  ✓ Odysseus is ready — opening your browser  │\n'
@@ -134,6 +200,9 @@ trap '[ -n "$POLLER_PID" ] && kill "$POLLER_PID" 2>/dev/null' EXIT INT TERM
 
 echo
 echo "▶ Starting Odysseus — it will open in your browser at $URL"
+if [ -n "$TAILSCALE_URL" ]; then
+  echo "  Tailscale/LAN URL: $TAILSCALE_URL"
+fi
 echo "  (this takes a few seconds; press Ctrl+C here to stop)"
 echo
-"$PY" -m uvicorn app:app --host 127.0.0.1 --port "$PORT"
+"$VENV_PY" -m uvicorn app:app --host "$HOST" --port "$PORT"

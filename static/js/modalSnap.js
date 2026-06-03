@@ -426,11 +426,16 @@ function _applyDockInternal(modal, side, dockClass) {
   // its padding-right.
   if (!modal._dockCloseWatcher && typeof MutationObserver !== 'undefined') {
     const onGone = () => _onDockedModalGone(modal, dockClass);
-    // Watch the modal itself for hidden-class flips and parent removal.
-    const obs = new MutationObserver(() => {
-      if (!modal.isConnected || modal.classList.contains('hidden')) onGone();
-    });
-    obs.observe(modal, { attributes: true, attributeFilter: ['class'] });
+    // Watch the modal for: the `.hidden` class flip, an inline
+    // `display:none` (how the draggable modals — calendar, plan, workspace,
+    // etc. — actually close), and parent removal. Without the `style` filter
+    // a display:none close left the body's dock padding on, so the chat
+    // stayed shifted after the docked modal was closed.
+    const _isGone = () => !modal.isConnected
+      || modal.classList.contains('hidden')
+      || modal.style.display === 'none';
+    const obs = new MutationObserver(() => { if (_isGone()) onGone(); });
+    obs.observe(modal, { attributes: true, attributeFilter: ['class', 'style'] });
     // A second observer catches DOM removal — childList on the parent
     // is the reliable signal for `.remove()` / `.removeChild()` calls.
     if (modal.parentNode) {
@@ -475,6 +480,25 @@ function _onDockedModalGone(modal, dockClass) {
   }
   modal.classList.remove('modal-right-docked');
   modal.classList.remove('modal-left-docked');
+  // Clear the content's docked inline geometry. Singleton modals (plan,
+  // workspace, calendar, …) reuse the same element across open/close, so if we
+  // only drop the body push the element stays positioned (position:fixed;
+  // right:0; fixed width) on the next open — floating over the chat with no
+  // push. We deliberately do NOT restore the pre-dock snapshot here: that
+  // snapshot is the drag position from when the user pulled the window to the
+  // edge (near the side), so restoring it would reopen the modal off to the
+  // side, still overlapping. Clearing the inline styles lets the modal reopen
+  // at its CSS default (centered). Drag-to-undock still uses clearRightDock,
+  // which DOES restore the snapshot for the peel-off feel.
+  if (_c) {
+    for (const prop of ['position', 'inset', 'left', 'top', 'right', 'bottom',
+                        'width', 'maxWidth', 'height', 'maxHeight',
+                        'borderRadius', 'transform', 'margin']) {
+      _c.style[prop] = '';
+    }
+    delete _c._preDockSnapshot;
+    delete _c._dockSide;
+  }
 }
 
 function _expandSidebarFromRail() {
@@ -498,6 +522,9 @@ export function clearRightDock(modal, cx, cy, dockClass) {
   if (!modal.classList.contains(dockClass)) return;
   modal.classList.remove(dockClass);
   clearDockSide(side, modal);
+  if (side === 'left' && !_hasOtherDockedWindow('left', modal)) {
+    _clearEmailDocSplitGeometry();
+  }
   delete content._dockSide;
   _disconnectLeftDockObservers(content);
   const snap = content._preDockSnapshot;
@@ -555,8 +582,10 @@ export function suspendDock(modal) {
   const nodes = _resolveDockNodes(modal);
   if (!nodes || !nodes.content) return null;
   const content = nodes.content;
+  const hadEmailSnapLeft = modal.classList.contains('email-snap-left');
   const side = content._dockSide
     || (modal.classList.contains('modal-left-docked') ? 'left'
+        : modal.classList.contains('email-snap-left') ? 'left'
         : modal.classList.contains('modal-right-docked') ? 'right' : null);
   if (!side) return null;
   // Stop the close-watcher from tearing the dock fully down when `.hidden`
@@ -568,6 +597,19 @@ export function suspendDock(modal) {
   }
   // Release the body push + restore the sidebar so the chat fills the width.
   clearDockSide(side, modal);
+  if (side === 'left') {
+    _disconnectLeftDockObservers(content);
+  }
+  if (hadEmailSnapLeft) {
+    modal.classList.remove('email-snap-left');
+    _clearEmailDocSplitGeometry();
+    delete content._dockSide;
+    delete content._dockSuspended;
+    return null;
+  }
+  if (side === 'left' && !_hasOtherDockedWindow('left', modal)) {
+    _clearEmailDocSplitGeometry();
+  }
   if (content._preDockSnapshot?.collapsedSidebar && !_hasAnyOtherDockedWindow(modal)) {
     _expandSidebarFromRail();
   }

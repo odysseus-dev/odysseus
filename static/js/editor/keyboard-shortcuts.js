@@ -50,6 +50,7 @@
  * }} deps
  */
 import { state } from './state.js';
+import { isAltGrEvent } from '../platform.js';
 
 export function wireKeyboardShortcuts(deps) {
   const {
@@ -79,7 +80,11 @@ export function wireKeyboardShortcuts(deps) {
       return;
     }
     if (e.key === 'Escape') return;
-    if (e.ctrlKey || e.metaKey) {
+    // Skip the Ctrl+Alt editor chords for an AltGr keystroke (see platform.js);
+    // only the chord block is skipped, so the layout-character handlers below
+    // still act — AltGr+5 / AltGr+8 stay as the [ ] brush-size shortcut on
+    // AZERTY / QWERTZ.
+    if ((e.ctrlKey || e.metaKey) && !isAltGrEvent(e)) {
       if (e.key === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
       // Ctrl+Shift+D = Deselect: clears the wand selection (and
       // lasso if active) without affecting layers.

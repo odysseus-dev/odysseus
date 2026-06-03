@@ -197,6 +197,10 @@ def load_integrations() -> List[Dict[str, Any]]:
         if not isinstance(integrations, list):
             log.error("Invalid integrations file shape: expected a list")
             return []
+        valid_integrations = [item for item in integrations if isinstance(item, dict)]
+        if len(valid_integrations) != len(integrations):
+            log.error("Invalid integrations file rows: ignored non-object entries")
+        integrations = valid_integrations
         if _has_plaintext_api_key(integrations):
             save_integrations(_decrypt_integration_secrets(integrations))
         return _decrypt_integration_secrets(integrations)

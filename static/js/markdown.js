@@ -5,6 +5,7 @@
  */
 
 import uiModule from './ui.js';
+import { splitTableRow } from './markdown/tableRow.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -32,6 +33,83 @@ function linkHtml(text, url) {
     return `<a href="${safeUrl}" class="chat-link">${safeText}</a>`;
   }
   return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
+}
+
+/**
+ * Sanitize the raw-HTML fragments that mdToHtml deliberately preserves from
+ * the source text — <details> blocks (collapsible agent output) and <a> tags
+ * (emitted by the markdown link pass). Those fragments are later restored
+ * verbatim into innerHTML, so without scrubbing them a model — or any content
+ * routed through here — could smuggle in an `<img onerror=...>`, an
+ * `<a href="javascript:...">`, an `onmouseover=` handler, etc. and execute
+ * script in the authenticated page (DOM XSS).
+ *
+ * Parsing into a <template> is inert: assigning to template.innerHTML neither
+ * fetches resources nor runs scripts, so we can walk the resulting tree,
+ * drop script-capable elements, and strip event-handler attributes and
+ * dangerous URL schemes before the (now safe) fragment is handed back.
+ */
+const _ALLOWED_HTML_BAD_TAGS = new Set([
+  'SCRIPT', 'IFRAME', 'OBJECT', 'EMBED', 'LINK', 'META',
+  'STYLE', 'BASE', 'FORM', 'NOSCRIPT', 'TEMPLATE',
+  // Foreign-content roots. SVG/MathML have their own parser rules and are a
+  // classic mutation-XSS vehicle — e.g. an SVG-namespaced <script>, whose
+  // `tagName` is the lower-case 'script' and would slip a name check that
+  // assumed HTML's upper-casing. They aren't needed in the <details>/<a>
+  // fragments we preserve, so drop the whole subtree.
+  'SVG', 'MATH',
+]);
+const _ALLOWED_HTML_URL_ATTRS = new Set([
+  'href', 'src', 'xlink:href', 'action', 'formaction', 'background', 'poster',
+]);
+
+function _cleanAllowedHtmlOnce(htmlString) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = htmlString;
+  for (const el of Array.from(tpl.content.querySelectorAll('*'))) {
+    // Upper-case the tag for comparison: HTML tagNames are upper-case, but
+    // SVG/MathML elements preserve their original (lower/camel) case, so a
+    // raw `Set.has(el.tagName)` would miss e.g. a namespaced <script>.
+    if (_ALLOWED_HTML_BAD_TAGS.has(el.tagName.toUpperCase())) {
+      el.remove();
+      continue;
+    }
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase();
+      // Drop every inline event handler (onerror, onclick, onmouseover, ...)
+      // and srcdoc (a frame-less script vector).
+      if (name.startsWith('on') || name === 'srcdoc') {
+        el.removeAttribute(attr.name);
+        continue;
+      }
+      // Neutralize javascript:/vbscript:/data: in URL-bearing attributes.
+      // Strip control/space chars first so e.g. "java\tscript:" can't slip by.
+      if (_ALLOWED_HTML_URL_ATTRS.has(name)) {
+        const value = (attr.value || '').replace(/[\x00-\x20]+/g, '').toLowerCase();
+        if (/^(javascript|vbscript|data):/.test(value)) {
+          el.removeAttribute(attr.name);
+        }
+      }
+    }
+  }
+  return tpl.innerHTML;
+}
+
+function sanitizeAllowedHtml(html) {
+  const raw = String(html == null ? '' : html);
+  // Non-browser context (e.g. a future SSR/Node import): fail closed by
+  // escaping rather than trusting the markup.
+  if (typeof document === 'undefined') return escapeHtml(raw);
+
+  // Sanitize to a fixpoint. Re-parsing the serialized output can mutate the
+  // tree (the basis of mutation-XSS), so re-clean until it stops changing.
+  let out = raw;
+  for (let i = 0; i < 4; i++) {
+    const next = _cleanAllowedHtmlOnce(out);
+    if (next === out) break;
+    out = next;
+  }
+  return out;
 }
 
 /**
@@ -294,9 +372,45 @@ export function processWithThinking(text) {
  * Convert markdown to HTML
  */
 export function mdToHtml(src) {
-  // CRITICAL: Extract allowed HTML blocks first (details/summary)
   const allowedHtmlBlocks = [];
+  const codeBlocks = [];
+  const mermaidBlocks = [];
   let s = (src ?? '');
+
+  // Extract fenced code blocks before any markdown/HTML preservation passes.
+  // Otherwise placeholders from the allowed-HTML sanitizer (e.g.
+  // ___ALLOWED_HTML_0___) can leak into quoted HTML/JS samples, because the
+  // placeholder gets captured as literal code content and never restored inside
+  // the final <pre><code> block.
+  s = s.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
+    const cleaned = code
+      .replace(/\r\n/g, '\n')
+      .replace(/[ \t]+$/gm, '')
+      .replace(/^\s*\n+/, '')
+      .replace(/\n+\s*$/g, '');
+
+    // Mermaid diagrams: render as diagram instead of code block
+    if (lang && lang.toLowerCase() === 'mermaid') {
+      const mermaidId = 'mermaid-' + Date.now() + '-' + mermaidBlocks.length;
+      const raw = cleaned.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+      const placeholder = `___MERMAID_BLOCK_${mermaidBlocks.length}___`;
+      mermaidBlocks.push(`<div class="mermaid-container"><pre class="mermaid" id="${mermaidId}">${escapeHtml(raw)}</pre></div>`);
+      return placeholder;
+    }
+
+    const escaped = cleaned.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    const placeholder = `___CODE_BLOCK_${codeBlocks.length}___`;
+
+    const langClass = lang ? ` class="language-${lang}"` : '';
+    const runnableLangs = ['python','py','javascript','js','html','bash','sh','shell','zsh'];
+    const runBtn = (lang && runnableLangs.includes(lang.toLowerCase()))
+      ? `<button type="button" class="run-code" data-code="${escapeHtml(escaped)}" data-lang="${lang}" title="Run code"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>`
+      : '';
+    const editBtn = `<button type="button" class="edit-code" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>`;
+    codeBlocks.push(`<pre><code${langClass} data-lang="${lang || ''}">${escapeHtml(escaped)}</code>${runBtn}${editBtn}<button type="button" class="copy-code" data-code="${escapeHtml(escaped)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></pre>`);
+
+    return placeholder;
+  });
 
   // Repair common ways the agent mangles the entity-anchor convention
   // (`[Name](#kind-<id>)`). Models reliably get the single-link case
@@ -356,14 +470,14 @@ export function mdToHtml(src) {
   // Default to open so agent output is visible
   s = s.replace(/<details>([\s\S]*?)<\/details>/gi, (match) => {
     const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
-    allowedHtmlBlocks.push(match.replace(/<details>/i, '<details open>'));
+    allowedHtmlBlocks.push(sanitizeAllowedHtml(match.replace(/<details>/i, '<details open>')));
     return placeholder;
   });
 
   // ALSO preserve <a> tags the same way (they're now in the HTML from markdown conversion)
   s = s.replace(/<a\s+[^>]*>.*?<\/a>/gi, (match) => {
     const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
-    allowedHtmlBlocks.push(match);
+    allowedHtmlBlocks.push(sanitizeAllowedHtml(match));
     return placeholder;
   });
 
@@ -371,39 +485,6 @@ export function mdToHtml(src) {
   s = s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   s = s.replace(/\n{3,}/g, '\n\n');
-
-  // CRITICAL: Extract code blocks and replace with placeholders
-  const codeBlocks = [];
-  const mermaidBlocks = [];
-  s = s.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
-    const cleaned = code
-      .replace(/\r\n/g, '\n')
-      .replace(/[ \t]+$/gm, '')
-      .replace(/^\s*\n+/, '')
-      .replace(/\n+\s*$/g, '');
-
-    // Mermaid diagrams: render as diagram instead of code block
-    if (lang && lang.toLowerCase() === 'mermaid') {
-      const mermaidId = 'mermaid-' + Date.now() + '-' + mermaidBlocks.length;
-      const raw = cleaned.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-      const placeholder = `___MERMAID_BLOCK_${mermaidBlocks.length}___`;
-      mermaidBlocks.push(`<div class="mermaid-container"><pre class="mermaid" id="${mermaidId}">${escapeHtml(raw)}</pre></div>`);
-      return placeholder;
-    }
-
-    const escaped = cleaned.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-    const placeholder = `___CODE_BLOCK_${codeBlocks.length}___`;
-
-    const langClass = lang ? ` class="language-${lang}"` : '';
-    const runnableLangs = ['python','py','javascript','js','html','bash','sh','shell','zsh'];
-    const runBtn = (lang && runnableLangs.includes(lang.toLowerCase()))
-      ? `<button type="button" class="run-code" data-code="${escapeHtml(escaped)}" data-lang="${lang}" title="Run code"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>`
-      : '';
-    const editBtn = `<button type="button" class="edit-code" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>`;
-    codeBlocks.push(`<pre><code${langClass} data-lang="${lang || ''}">${escapeHtml(escaped)}</code>${runBtn}${editBtn}<button type="button" class="copy-code" data-code="${escapeHtml(escaped)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></pre>`);
-
-    return placeholder;
-  });
 
   // KaTeX math rendering (after code blocks are extracted, so math in code is safe)
   const mathBlocks = [];
@@ -458,16 +539,18 @@ export function mdToHtml(src) {
     let html = '<table style="border-collapse: collapse; width: 100%; margin: 10px 0;">';
 
     rows.forEach((row, idx) => {
-      const cells = row.split('|').filter(cell => cell.trim() !== '');
+      if (idx === 1 && /^[\s|:\-]+$/.test(row)) {
+        html += '<tbody>';
+        return;
+      }
+      const cells = splitTableRow(row);
       if (cells.length === 0) return;
 
-      html += idx === 1 ? '<tbody>' : '';
       html += '<tr>';
 
       cells.forEach(cell => {
         const tag = idx === 0 ? 'th' : 'td';
-        const style = idx === 1 ? 'style="border-top: 2px solid var(--red);"' : '';
-        html += `<${tag} ${style} style="padding: 8px; text-align: left; border-bottom: 1px solid var(--border);">${cell.trim()}</${tag}>`;
+        html += `<${tag} style="padding: 8px; text-align: left; border-bottom: 1px solid var(--border);">${cell.trim()}</${tag}>`;
       });
 
       html += '</tr>';
@@ -503,8 +586,9 @@ export function mdToHtml(src) {
   s = s.replace(/(?:^|\n)(<oli>[\s\S]*?)(?=\n(?!<oli>)|$)/g, m => `<ol>${m.trim().replace(/<\/?oli>/g, (t) => t === '<oli>' ? '<li>' : '</li>')}</ol>`);
 
   // Unordered lists
-  s = s.replace(/^(?:- |\* )(.*)$/gm, '<li>$1</li>');
-  s = s.replace(/(?:^|\n)(<li>[\s\S]*?)(?=\n(?!<li>)|$)/g, m => `<ul>${m.trim()}</ul>`);
+  s = s.replace(/^(?:- |\* )(.*)$/gm, '<uli>$1</uli>');
+  s = s.replace(/(^|\n)((?:<uli>[^\n]*<\/uli>(?:\n|$))+)/g, (_, prefix, block) =>
+    `${prefix}<ul>${block.trim().replace(/<\/?uli>/g, (t) => t === '<uli>' ? '<li>' : '</li>')}</ul>`);
 
   // Blockquotes
   s = s.replace(/^&gt; (.*)$/gm, '<bq>$1</bq>');

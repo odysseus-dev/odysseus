@@ -51,6 +51,8 @@ class MemoryManager:
         memories = []
         
         for msg in chat_history:
+            if not isinstance(msg, dict):
+                continue
             if msg.get("role") == "assistant":
                 content = str(msg.get("content", ""))
                 lines = content.split('\n')
@@ -59,8 +61,12 @@ class MemoryManager:
                     line = line.strip()
                     # Look for bullet points or numbered lists that might contain memories
                     if re.match(r'^[-*•]|\d+\.', line):
-                        # Extract the text after the bullet/number
-                        text_match = re.match(r'^[-*•]|\d+\.\s*(.*)', line)
+                        # Extract the text after the bullet/number. Group both
+                        # markers so the capture applies to either — the previous
+                        # `^[-*•]|\d+\.\s*(.*)` put the group on the numbered branch
+                        # only, so a bullet line matched with group(1)=None and
+                        # crashed on .strip().
+                        text_match = re.match(r'^(?:[-*•]|\d+\.)\s*(.*)', line)
                         if text_match:
                             text = text_match.group(1).strip()
                             if text:
@@ -131,6 +137,8 @@ class MemoryManager:
         """Ensure all entries have required fields."""
         validated = []
         for entry in entries:
+            if not isinstance(entry, dict):
+                continue
             if "id" not in entry:
                 entry["id"] = str(uuid.uuid4())
             if "timestamp" not in entry:

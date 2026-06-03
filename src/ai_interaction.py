@@ -517,7 +517,7 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
         return {"error": str(e)}
 
 
-async def do_send_to_session(content: str, session_id: Optional[str] = None) -> Dict:
+async def do_send_to_session(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """Send a message to an existing session and get a response.
 
     Content format:
@@ -539,6 +539,10 @@ async def do_send_to_session(content: str, session_id: Optional[str] = None) -> 
 
     sess = _session_manager.get_session(target_sid)
     if not sess:
+        return {"error": f"Session '{target_sid}' not found"}
+
+    # Owner-scope: reject access to another user's session
+    if owner and getattr(sess, "owner", None) and sess.owner != owner:
         return {"error": f"Session '{target_sid}' not found"}
 
     if not message:
@@ -1228,9 +1232,11 @@ async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
 
         try:
             if hasattr(_personal_docs_manager, 'remove_directory'):
+                # Performs a targeted per-directory delete (#1660). The previous
+                # unconditional _rag_manager.rebuild_index() here wiped the whole
+                # collection on every remove (even for untracked dirs) and has
+                # been removed.
                 _personal_docs_manager.remove_directory(directory)
-            if _rag_manager and hasattr(_rag_manager, 'rebuild_index'):
-                _rag_manager.rebuild_index()
             return {"action": "remove_directory", "directory": directory,
                     "results": f"Directory '{directory}' removed from RAG index"}
         except Exception as e:
@@ -1288,7 +1294,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None) -> Dict:
             "private": "incognito",
         }
         toggle_name = _toggle_aliases.get(toggle_name, toggle_name)
-        valid_toggles = {"web", "bash", "research", "incognito", "document_editor"}
+        valid_toggles = {"web", "bash", "rag", "research", "incognito", "document_editor"}
         if toggle_name not in valid_toggles:
             return {"error": f"Unknown toggle '{toggle_name}'. Valid: {', '.join(sorted(valid_toggles))}"}
         return {
@@ -1769,7 +1775,7 @@ async def dispatch_ai_tool(
     elif tool == "send_to_session":
         sid = content.split("\n")[0].strip()[:20]
         desc = f"send_to_session: {sid}"
-        result = await do_send_to_session(content, session_id)
+        result = await do_send_to_session(content, session_id, owner=owner)
 
     elif tool == "pipeline":
         desc = "pipeline: running steps"

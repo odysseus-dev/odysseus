@@ -6,6 +6,8 @@ import logging
 from typing import List, Dict, Set, Any, Tuple
 from dataclasses import dataclass
 
+from src.markitdown_runtime import MARKITDOWN_EXTS
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,12 +26,24 @@ def extract_pdf_text(file_path: str) -> str:
         return ""
 
 
+def extract_office_text(file_path: str) -> str:
+    """Extract text from an Office/EPUB doc via the optional markitdown dep.
+
+    Returns "" when markitdown is missing or extraction fails, mirroring
+    extract_pdf_text — the indexer then simply skips the file's content.
+    """
+    from src.markitdown_runtime import convert_to_markdown
+    return convert_to_markdown(file_path) or ""
+
+
 @dataclass
 class PersonalDocsConfig:
     """Configuration for personal documents management."""
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
-    DEFAULT_EXTENSIONS: Tuple[str, ...] = (".txt", ".md", ".json", ".pdf")
+    DEFAULT_EXTENSIONS: Tuple[str, ...] = (
+        ".txt", ".md", ".json", ".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".epub",
+    )
     DEFAULT_K: int = 5
     STOP_WORDS: Set[str] = None
     
@@ -63,6 +77,11 @@ def split_chunks(text: str, size: int = config.CHUNK_SIZE, overlap: int = config
     while i < n:
         j = min(i + size, n)
         chunks.append(text[i:j])
+        if j >= n:
+            # Reached the end. Without this, the next start (j - overlap) is
+            # still > i, so the loop appended one extra chunk duplicating the
+            # last `overlap` chars of the text.
+            break
         i = j - overlap if j - overlap > i else j
     return chunks
 
@@ -86,7 +105,12 @@ def load_personal_index(
                 continue
             size = os.path.getsize(p)
             ext = os.path.splitext(name)[1].lower()
-            text = extract_pdf_text(p) if ext == ".pdf" else read_text_file(p)
+            if ext == ".pdf":
+                text = extract_pdf_text(p)
+            elif ext in MARKITDOWN_EXTS:
+                text = extract_office_text(p)
+            else:
+                text = read_text_file(p)
             chunks = split_chunks(text)
             display = os.path.relpath(p, personal_dir)
             files.append({"name": display, "path": p, "size": size, "chunks": chunks})
@@ -110,10 +134,12 @@ def retrieve_personal_keyword(personal_index: List[Dict], query: str, k: int = 5
 
     scored = []
     for f in personal_index:
-        for idx, ch in enumerate(f["chunks"]):
+        if not isinstance(f, dict):
+            continue
+        for idx, ch in enumerate(f.get("chunks") or []):
             score = len(q & tokenize(ch))
             if score > 0:
-                scored.append((score, f["name"], idx, ch))
+                scored.append((score, f.get("name", ""), idx, ch))
     scored.sort(key=lambda x: x[0], reverse=True)
 
     out = []
@@ -160,6 +186,11 @@ def retrieve_personal(personal_index: List[Dict], query: str, k: int = 5,
     # Fall back to keyword search
     return retrieve_personal_keyword(personal_index, query, k)
 
+
+def _string_list(values) -> list[str]:
+    return [value for value in values or [] if isinstance(value, str)]
+
+
 class PersonalDocsManager:
     """Manager class for personal document indexing and retrieval."""
 
@@ -180,7 +211,10 @@ class PersonalDocsManager:
         try:
             if os.path.exists(self.directories_file):
                 with open(self.directories_file, 'r', encoding="utf-8") as f:
-                    self.indexed_directories = json.load(f)
+                    directories = json.load(f)
+                if not isinstance(directories, list):
+                    raise ValueError("indexed directories must be a list")
+                self.indexed_directories = _string_list(directories)
                 logger.info(f"Loaded {len(self.indexed_directories)} indexed directories")
             else:
                 self.indexed_directories = []
@@ -192,7 +226,7 @@ class PersonalDocsManager:
         """Save the list of indexed directories to persistent storage."""
         try:
             with open(self.directories_file, 'w', encoding="utf-8") as f:
-                json.dump(self.indexed_directories, f, indent=2)
+                json.dump(_string_list(self.indexed_directories), f, indent=2)
             logger.info(f"Saved {len(self.indexed_directories)} indexed directories")
         except Exception as e:
             logger.error(f"Error saving directories: {e}")
@@ -202,7 +236,10 @@ class PersonalDocsManager:
         try:
             if os.path.exists(self._excluded_file):
                 with open(self._excluded_file, 'r', encoding="utf-8") as f:
-                    self.excluded_files = set(json.load(f))
+                    excluded = json.load(f)
+                if not isinstance(excluded, list):
+                    raise ValueError("excluded files must be a list")
+                self.excluded_files = set(_string_list(excluded))
             else:
                 self.excluded_files = set()
         except Exception as e:
@@ -212,7 +249,7 @@ class PersonalDocsManager:
     def _save_excluded(self):
         try:
             with open(self._excluded_file, 'w', encoding="utf-8") as f:
-                json.dump(list(self.excluded_files), f)
+                json.dump(_string_list(self.excluded_files), f)
         except Exception as e:
             logger.error(f"Error saving excluded files: {e}")
 
@@ -227,8 +264,15 @@ class PersonalDocsManager:
         # Normalize the path
         directory = os.path.abspath(directory)
 
-        # Clear any exclusions for files in this directory
-        self.excluded_files = {p for p in self.excluded_files if not p.startswith(directory)}
+        # Clear any exclusions for files in this directory. Match on a path
+        # boundary (the directory itself or paths under it) rather than a raw
+        # string prefix: a bare ``startswith(directory)`` also matches sibling
+        # directories that merely share a name prefix (e.g. adding ``/docs``
+        # would wrongly un-exclude files under ``/docs2``).
+        self.excluded_files = {
+            p for p in self.excluded_files
+            if not (p == directory or p.startswith(directory + os.sep))
+        }
         self._save_excluded()
 
         if directory not in self.indexed_directories:
@@ -264,18 +308,17 @@ class PersonalDocsManager:
             # Refresh the index to exclude the removed directory
             self.refresh_index()
             
-            # If RAG manager is available, we should rebuild the index
-            # This is a simple approach - in production you might want more sophisticated removal
+            # Targeted delete of just this directory's chunks. This previously
+            # called rag_manager.rebuild_index(), which delete+recreates the
+            # entire shared collection (every owner + the base index) and then
+            # re-indexed only the remaining tracked dirs — ownerless and never
+            # personal_dir — a catastrophic wipe (#1660). remove_directory now
+            # removes exactly this directory's chunks and leaves the rest intact.
             if self.rag_manager:
                 try:
-                    logger.info("Rebuilding RAG index after directory removal")
-                    self.rag_manager.rebuild_index()
-                    # Re-index remaining directories
-                    for dir_path in self.indexed_directories:
-                        if os.path.exists(dir_path):
-                            self.rag_manager.index_personal_documents(dir_path)
+                    self.rag_manager.remove_directory(directory)
                 except Exception as e:
-                    logger.error(f"Failed to rebuild RAG index: {e}")
+                    logger.error(f"Failed to remove directory from RAG index: {e}")
         else:
             logger.info(f"Directory not in index: {directory}")
 

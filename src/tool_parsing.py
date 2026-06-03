@@ -69,6 +69,8 @@ _TOOL_CODE_RE = re.compile(
 # fullwidth (U+FF5C) and ascii '|' in any count.
 _DSML_PIPES = r"[｜|]+"
 def _normalize_dsml(text: str) -> str:
+    if not isinstance(text, str):
+        return ""
     if "DSML" not in text:
         return text
     t = text
@@ -95,6 +97,9 @@ _TOOL_NAME_MAP = {
     "search": "web_search",
     "web_search": "web_search",
     "websearch": "web_search",
+    "google_search": "web_search",
+    "google_search_retrieval": "web_search",
+    "google_search_grounding": "web_search",
     "web_fetch": "web_fetch",
     "webfetch": "web_fetch",
     "fetch_url": "web_fetch",
