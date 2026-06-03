@@ -27,8 +27,9 @@ KEYWORD_WEIGHT = 0.3
 COLLECTION_NAME = "odysseus_rag"
 
 
-def _generate_doc_id(text: str) -> str:
-    return f"doc_{hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]}"
+def _generate_doc_id(text: str, owner: str = "") -> str:
+    key = f"{owner or ''}:{text}"
+    return f"doc_{hashlib.sha256(key.encode('utf-8')).hexdigest()[:16]}"
 
 
 class VectorRAG:
@@ -104,7 +105,7 @@ class VectorRAG:
             return False
 
         try:
-            doc_id = _generate_doc_id(text)
+            doc_id = _generate_doc_id(text, metadata.get("owner", ""))
             # Check if already exists
             existing = self._collection.get(ids=[doc_id])
             if existing["ids"]:
@@ -140,7 +141,7 @@ class VectorRAG:
             new_metas = []
             new_ids = []
             for t, m in valid:
-                doc_id = _generate_doc_id(t)
+                doc_id = _generate_doc_id(t, m.get("owner", ""))
                 existing = self._collection.get(ids=[doc_id])
                 if not existing["ids"]:
                     new_texts.append(t)
