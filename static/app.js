@@ -478,7 +478,7 @@ function initializeEventListeners() {
 
   // Settings dropdown removed — items are now inline in sidebar section
 
-  
+
 
 
   // Close popups one by one with Escape key (topmost first)
@@ -1381,42 +1381,42 @@ function initializeEventListeners() {
   const cancelRenameAi = el('cancel-rename-ai');
   const saveAiName = el('save-ai-name');
   const aiNameInput = el('ai-name-input');
-  
+
   if (renameAiOption) {
     renameAiOption.addEventListener('click', () => {
       const currentName = aiNameInput.value;
       renameAiModal.classList.remove('hidden');
     });
   }
-  
+
   if (closeRenameAi) {
     closeRenameAi.addEventListener('click', () => {
       renameAiModal.classList.add('hidden');
     });
   }
-  
+
   if (cancelRenameAi) {
     cancelRenameAi.addEventListener('click', () => {
       renameAiModal.classList.add('hidden');
     });
   }
-  
+
   if (saveAiName) {
     saveAiName.addEventListener('click', async () => {
       const newName = aiNameInput.value.trim();
-      
+
       if (!newName) {
         uiModule.showError('Please enter a name for the AI');
         return;
       }
-      
+
       try {
         const response = await fetch(`${API_BASE}/api/ai/name`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ name: newName })
         });
-        
+
         const result = await response.json();
         if (result.success) {
           uiModule.showToast(`AI renamed to ${newName}`);
@@ -1447,36 +1447,36 @@ function initializeEventListeners() {
   const cancelRenameSession = el('cancel-rename-session');
   const saveSessionName = el('save-session-name');
   const sessionNameInput = el('session-name-input');
-  
+
   // Close handlers for rename session modal
   if (closeRenameSession) {
     closeRenameSession.addEventListener('click', () => {
       renameSessionModal.classList.add('hidden');
     });
   }
-  
+
   if (cancelRenameSession) {
     cancelRenameSession.addEventListener('click', () => {
       renameSessionModal.classList.add('hidden');
     });
   }
-  
+
   if (saveSessionName) {
     saveSessionName.addEventListener('click', async () => {
       const newName = sessionNameInput.value.trim();
-      
+
       if (!newName) {
         uiModule.showError('Please enter a name for the session');
         return;
       }
-      
+
       try {
         const response = await fetch(`${API_BASE}/api/session/${sessionModule.getCurrentSessionId()}`, {
           method: 'PATCH',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ name: newName })
         });
-        
+
         const result = await response.json();
         if (response.ok) {
           uiModule.showToast(`Session renamed to ${newName}`);
@@ -1499,7 +1499,7 @@ function initializeEventListeners() {
       }
     });
   }
-  
+
   if (closeMemoryBtn) {
     closeMemoryBtn.addEventListener('click', () => {
       dismissModal(memoryModal);
@@ -1520,7 +1520,7 @@ function initializeEventListeners() {
   if (addMemBtn) {
     addMemBtn.addEventListener('click', memoryModule.addNewMemory);
   }
-  
+
   const memorySearchInput = el('memory-search');
   if (memorySearchInput) {
     memorySearchInput.addEventListener('input', () => {
@@ -1528,7 +1528,7 @@ function initializeEventListeners() {
       memoryModule.updateMemoryCount();
     });
   }
-  
+
   const newMemoryInput = el('new-memory-input');
   if (newMemoryInput) {
     newMemoryInput.addEventListener('keypress', (e) => {
@@ -2414,7 +2414,7 @@ function initializeEventListeners() {
   };
 
   // Keys hidden by default on first run (no localStorage yet)
-  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn']);
+  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn', 'text-emojis']);
 
   // Keys that need admin to toggle off (reserved for future use)
   const UI_VIS_ADMIN_ONLY = new Set([]);
@@ -2442,11 +2442,10 @@ function initializeEventListeners() {
     document.querySelectorAll('.section[draggable]').forEach(el => {
       el.setAttribute('draggable', dragEnabled ? 'true' : 'false');
     });
-    // Text-only emojis toggle. Default is ON (the checkbox defaults to
-    // checked because text-emojis isn't in UI_VIS_DEFAULT_OFF), so treat
-    // an absent value as enabled — otherwise the toggle looked on at
-    // startup but the effect only activated after the user flipped it.
-    applyTextEmojis(state['text-emojis'] !== false);
+    // Text-only emojis toggle. Default is OFF (the checkbox defaults to
+    // unchecked because text-emojis is in UI_VIS_DEFAULT_OFF), so treat
+    // an absent value as disabled.
+    applyTextEmojis(state['text-emojis'] === true);
     // Hide thinking sections toggle (show-thinking: checked=show, unchecked=hide)
     document.body.classList.toggle('hide-thinking', state['show-thinking'] === false);
   }
@@ -2948,7 +2947,7 @@ function initializeEventListeners() {
       ragModule.addRagDirectory(uiModule.showToast, uiModule.showError);
     });
   }
-  
+
   const directoryInput = el('rag-directory');
   if (directoryInput) {
     directoryInput.addEventListener('keypress', (e) => {
@@ -3371,7 +3370,7 @@ function initializeEventListeners() {
     adminModule, settingsModule, searchChatModule,
     _closeCompareIfActive, _deactivateIncognito, API_BASE
   });
-  
+
 }
 
 // ============================================
@@ -3431,7 +3430,7 @@ function startOdysseusApp() {
     if (_curSession && localStorage.getItem('odysseus-doc-open-' + _curSession) === '1') {
       documentModule.loadSessionDocs(_curSession);
     }
-  }  
+  }
   // Initialize search chat module
   if (searchChatModule) {
     searchChatModule.init(API_BASE);
@@ -3839,7 +3838,7 @@ function startOdysseusApp() {
     e.preventDefault();
     _hideDropHighlight();
   });
-  
+
   // Make the attachment strip also a drop target
   const attachStrip = el('attach-strip');
   attachStrip.addEventListener('dragover', (e) => {
@@ -3847,23 +3846,24 @@ function startOdysseusApp() {
     attachStrip.style.backgroundColor = 'rgba(0, 170, 255, 0.1)';
     attachStrip.style.borderRadius = '4px';
   });
-  
+
   attachStrip.addEventListener('drop', (e) => {
     e.preventDefault();
     attachStrip.style.backgroundColor = '';
-    
+
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
 
     uiModule.showToast(`Added ${files.length} file${files.length > 1 ? 's' : ''} to chat`);
 
   });
-  
+
   attachStrip.addEventListener('dragleave', (e) => {
     e.preventDefault();
     attachStrip.style.backgroundColor = '';
   });
 
+<<<<<<< HEAD
   // ── Compare-mode file drop shield ──────────────────────────────────────────
   // Compare reuses #chat-container, but each pane renders into a sandboxed
   // <iframe>. Iframes swallow drag-and-drop events: a file dropped on a pane is
@@ -3932,6 +3932,8 @@ function startOdysseusApp() {
     uiModule.showToast(`Added ${files.length} file${files.length > 1 ? 's' : ''} to attach`);
   }, true);
 
+=======
+>>>>>>> be96806 (fix: default text-emojis to off so emoji render as monochrome SVGs)
   // Load initial data
   presetsModule.loadPresets(uiModule.showError);
 
@@ -3975,12 +3977,12 @@ function startOdysseusApp() {
   modelsModule.refreshProviders();
   ragModule.loadPersonalDocs();
   memoryModule.loadMemories(); // Ensure memories are loaded on page load
-  
+
   // Ensure the memory list is rendered after loading
   setTimeout(async () => {
     await memoryModule.loadMemories();
   }, 1000);
-  
+
   // Ensure proper initial state
   voiceRecorderModule.init();
   if (censorModule) censorModule.init();
@@ -3988,7 +3990,7 @@ function startOdysseusApp() {
   // Auto-focus message input on load
   const msgEl = document.getElementById('message');
   if (msgEl) msgEl.focus();
-  
+
   // Initialize mouse-based drag for sidebar sections
   const sidebar = document.getElementById('sidebar');
   const sidebarInner = sidebar ? sidebar.querySelector('.sidebar-inner') : sidebar;
@@ -4047,31 +4049,31 @@ function startOdysseusApp() {
   // Section collapse/expand + drag reorder (extracted to js/section-management.js)
   initSectionCollapse(Storage);
   initSectionDrag(Storage, loadUIVis);
-  
+
   // Handle drag over and out for individual sections
   const sections = document.querySelectorAll('.section[draggable="true"]');
   sections.forEach(section => {
     section.addEventListener('dragover', (e) => {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
-      
+
       // Only show visual feedback if we're not dragging over the active element
       const activeId = e.dataTransfer.getData('text/plain');
       if (activeId && activeId !== section.id) {
         section.setAttribute('dnd-over', 'true');
       }
     });
-    
+
     section.addEventListener('dragleave', (e) => {
       // Check if we're actually leaving the element
       const rect = section.getBoundingClientRect();
-      if (e.clientY < rect.top || e.clientY > rect.bottom || 
+      if (e.clientY < rect.top || e.clientY > rect.bottom ||
           e.clientX < rect.left || e.clientX > rect.right) {
         section.setAttribute('dnd-over', 'false');
       }
     });
   });
-  
+
   // Restore saved order on load
   const savedOrder = Storage.get(Storage.KEYS.SECTION_ORDER);
   if (savedOrder) {
@@ -4103,7 +4105,7 @@ function startOdysseusApp() {
       console.error('Failed to restore sidebar order:', e);
     }
   }
-  
+
 
 
   if (window.hljs) {
