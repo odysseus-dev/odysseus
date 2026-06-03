@@ -75,3 +75,56 @@ ignore = ["E501", "E402", "B904", "E712", "E711", "B008"]
 
 [tool.ruff.format]
 quote-style = "double"                     # matches house style (CONVENTIONS.md)
+
+[tool.mypy]
+# Inverted (per-module) strictness (D-17): a LENIENT global baseline that passes
+# with zero errors on day 1. No global `strict = true` (SC#5). Modules are tightened
+# later (Phase 3) by adding targeted per-module overrides — the tighten-list is
+# intentionally EMPTY at baseline.
+python_version = "3.12"
+# Project root is on sys.path; modules are imported as top-level packages (`src.`,
+# `routes.`, `services.`, `core.`) per CLAUDE.md. `src/` has no `__init__.py`, so
+# without an explicit namespace base mypy maps `src/auth_helpers.py` to BOTH
+# `auth_helpers` and `src.auth_helpers` ("found twice under different module names").
+# `explicit_package_bases` + `mypy_path = "."` anchors the repo root as the single
+# namespace base, matching the runtime import convention (Rule 3 blocking fix).
+mypy_path = "."
+explicit_package_bases = true
+namespace_packages = true
+ignore_missing_imports = true              # untyped 3rd-party stubs missing — don't fail
+check_untyped_defs = false                 # lenient global, zero errors day 1 (D-17)
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+warn_return_any = false
+no_implicit_optional = false
+warn_redundant_casts = true
+# NOTE on `warn_unused_ignores`: deliberately NOT enabled at baseline. The codebase
+# uses `name = None  # type: ignore` optional-import guards pervasively (graceful
+# degradation, CLAUDE.md); with `ignore_missing_imports = true` mypy reports those as
+# "unused", which would force application-source edits on a config-only plan. Re-enable
+# in Phase 3 after the ignores are audited (RATCHET-03-A; T-03-02 mitigation deferred).
+# warn_unused_ignores = true
+#
+# Idiom-driven error categories disabled at baseline (D-17 lenient day-1 zero). These
+# fire almost entirely from two DOCUMENTED framework idioms, exactly analogous to how
+# Plan 01-02 suppressed ruff's idiom conflicts at config level (no source churn, no
+# behavior change): (1) SQLAlchemy instance attribute access typed as `Column[T]`
+# (mypy has no SQLAlchemy plugin enabled, so ORM column reads look like Column objects),
+# and (2) FastAPI `Form(...)`/`UploadFile | str` default-argument unions. Genuinely-new
+# type errors in NEW code surface via the remaining enabled codes; these are tightened
+# per-module in Phase 3 (RATCHET-03-B), not globally relaxed forever.
+disable_error_code = [
+    "assignment", "arg-type", "attr-defined", "union-attr", "var-annotated",
+    "misc", "valid-type", "index", "return-value", "operator", "call-overload",
+    "dict-item", "list-item", "type-var", "return", "no-redef", "method-assign",
+    "has-type", "truthy-function",
+]
+exclude = ["^static/", "^tests/", "^scripts/"]  # tests heavily stubbed — exclude day 1 (Open Q2)
+
+[[tool.mypy.overrides]]
+# Known untyped third parties — explicit/greppable even though `ignore_missing_imports`
+# above already covers them. Documents WHICH deps lack type stubs.
+module = ["mcp.*", "chromadb.*", "fastembed.*", "caldav.*", "icalendar.*",
+          "croniter.*", "qrcode.*", "pyotp.*", "fitz.*", "markitdown.*",
+          "duckduckgo_search.*", "faster_whisper.*", "youtube_transcript_api.*"]
+ignore_missing_imports = true
