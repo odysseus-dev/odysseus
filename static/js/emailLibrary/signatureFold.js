@@ -154,7 +154,11 @@ export function _extractQuoteMeta(html) {
   let date = sentMatch ? sentMatch[1].trim() : '';
 
   if (!from && !date) {
-    const gmail = txt.match(/On\s+([^,]+?,[^,]+?\d{4}[^,]*),?\s+(.+?)\s+wrote\s*:/i);
+    // The date may carry up to three commas before the year: the standard
+    // US Gmail attribution is "On Mon, Apr 18, 2026 at 9:31 AM, Jane wrote:"
+    // (weekday and day-of-month each add one). A single-comma pattern never
+    // reached the year there, so the fold lost its sender/date headline.
+    const gmail = txt.match(/On\s+((?:[^,]*,){0,3}?[^,]*?\d{4}[^,]*),?\s+(.+?)\s+wrote\s*:/i);
     if (gmail) { date = gmail[1].trim(); from = gmail[2].trim(); }
   }
 
