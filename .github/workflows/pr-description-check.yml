@@ -8,6 +8,7 @@ on:
 # The checkout below pins to the base branch so no fork code is executed.
 # The script only reads context.payload and calls the GitHub API.
 permissions:
+  contents: read
   issues: write
   pull-requests: write
 
