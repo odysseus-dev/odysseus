@@ -33,3 +33,25 @@ def test_api_key_manager_load_resilience(tmp_path):
     assert loaded["good_provider"] == "good_value"
     assert "bad_provider" not in loaded
     assert "garbage_provider" not in loaded
+
+
+def test_save_preserves_existing_providers_as_ciphertext(tmp_path):
+    mgr = APIKeyManager(str(tmp_path))
+
+    mgr.save("openai", "sk-openai")
+    with open(mgr.api_keys_file, "r", encoding="utf-8") as f:
+        first_write = json.load(f)
+
+    mgr.save("anthropic", "sk-anthropic")
+    with open(mgr.api_keys_file, "r", encoding="utf-8") as f:
+        second_write = json.load(f)
+
+    assert second_write["openai"] == first_write["openai"]
+    assert second_write["openai"] != "sk-openai"
+    assert second_write["anthropic"] != "sk-anthropic"
+
+    restarted = APIKeyManager(str(tmp_path))
+    assert restarted.load() == {
+        "openai": "sk-openai",
+        "anthropic": "sk-anthropic",
+    }
