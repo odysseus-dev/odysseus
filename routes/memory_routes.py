@@ -27,7 +27,7 @@ from src.request_models import MemoryAddRequest
 from core.database import SessionLocal
 from src.llm_core import llm_call_async
 from services.memory.memory_extractor import audit_memories
-from src.auth_helpers import get_current_user, require_user
+from src.auth_helpers import get_current_user, require_user, effective_user
 from src.endpoint_resolver import resolve_endpoint
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,40 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
             return  # Auth disabled
         if memory.get("owner") != user:
             raise HTTPException(404, "Memory not found")
+
+    def _verify_session_owner(request: Request, session_id: str):
+        """Raise 404 if the caller doesn't own this session.
+
+        SECURITY: session_manager.get_session() is NOT owner-scoped — it
+        returns any session by id. Without this gate an authenticated user
+        could pass another tenant's session id to /extract, /audit, /import,
+        or /by-session and read that session's data or run LLM calls with the
+        victim's session-scoped credentials/quota.
+
+        Mirrors the owner gate in session_routes._verify_session_owner
+        (DB Session.owner is authoritative, with an in-memory "ghost" session
+        fallback) but follows this module's auth-disabled convention: when no
+        user resolves (AUTH_ENABLED=false / single-user), ownership isn't
+        enforced, exactly like _verify_memory_owner above.
+        """
+        user = effective_user(request)
+        if not user:
+            return  # Auth disabled / single-user — nothing to scope against
+        from core.database import Session as DbSession
+        db = SessionLocal()
+        try:
+            row = db.query(DbSession.owner).filter(DbSession.id == session_id).first()
+        finally:
+            db.close()
+        if row is not None:
+            if row.owner != user:
+                raise HTTPException(404, "Session not found")
+            return
+        # No DB row — allow only if the caller owns the in-memory ghost session.
+        ghost = getattr(session_manager, "sessions", {}).get(session_id)
+        if ghost is not None and getattr(ghost, "owner", None) == user:
+            return
+        raise HTTPException(404, "Session not found")
 
     @router.post("/debug")
     def debug_memory_relevance(request: Request, query: str = Form(...)):
@@ -161,6 +195,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     @router.get("/by-session/{session_id}")
     def get_memory_by_session(request: Request, session_id: str):
         """Get all memories associated with a specific session."""
+        _verify_session_owner(request, session_id)
         try:
             session_manager.get_session(session_id)
         except KeyError:
@@ -192,6 +227,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     async def extract_memory(request: Request, session: str = Form(...)) -> Dict[str, List[str]]:
         """Analyze a session's chat history and return memory suggestions."""
         require_user(request)
+        _verify_session_owner(request, session)
         try:
             sess = session_manager.get_session(session)
         except KeyError:
@@ -275,6 +311,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
 
         # Fall back to session model if no default configured
         if not endpoint_url and session:
+            _verify_session_owner(request, session)
             try:
                 sess = session_manager.get_session(session)
                 endpoint_url = sess.endpoint_url
@@ -325,6 +362,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         headers = {}
 
         if session:
+            _verify_session_owner(request, session)
             try:
                 sess = session_manager.get_session(session)
                 endpoint_url = sess.endpoint_url
