@@ -173,3 +173,43 @@ class MemoryVectorStore:
                 )
 
         logger.info(f"MemoryVectorStore rebuilt with {len(ids)} entries")
+
+    def clear(self):
+        """Remove ALL vectors from the index (used by the admin memory-wipe).
+
+        Implemented as an empty rebuild — delete + recreate the collection — so a
+        memory wipe doesn't leave 'ghost' entries retrievable via semantic search.
+        Never raises: a no-op when unhealthy, and a logged warning if ChromaDB
+        became unreachable after init (rebuild -> get_chroma_client can raise), so
+        the caller isn't relied on to swallow it."""
+        if not self._healthy:
+            return
+        try:
+            self.rebuild([])
+            logger.info("MemoryVectorStore cleared")
+        except Exception as e:
+            logger.warning(f"MemoryVectorStore clear failed (vectors may remain): {e}")
+
+
+# Process-wide shared instance. Every MemoryVectorStore backs the same ChromaDB
+# collection (via get_chroma_client), so a single shared accessor is enough for
+# callers that don't already hold the app's instance — e.g. the admin memory-wipe
+# (routes/admin_wipe_routes.py) and the scheduler-driven consolidation.
+_store: Optional["MemoryVectorStore"] = None
+
+
+def get_memory_vector_store(data_dir: str = None) -> "MemoryVectorStore":
+    """Return a lazily-constructed, process-wide shared MemoryVectorStore.
+
+    Caches the instance once it is healthy; if a prior attempt was unhealthy
+    (e.g. ChromaDB wasn't reachable yet) a later call retries construction.
+    Callers must still guard on ``.healthy`` (or ``hasattr``) — this can return an
+    unhealthy store when ChromaDB/embeddings are unavailable."""
+    global _store
+    if _store is not None and _store.healthy:
+        return _store
+    if data_dir is None:
+        from src.constants import DATA_DIR
+        data_dir = DATA_DIR
+    _store = MemoryVectorStore(data_dir)
+    return _store
