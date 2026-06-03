@@ -30,7 +30,7 @@ except ModuleNotFoundError as e:
 
 
 def _decode_png_data(data_png: str) -> bytes:
-    raw = data_png or ""
+    raw = data_png if isinstance(data_png, str) else ""
     if "," in raw:
         raw = raw.split(",", 1)[1]
     try:
