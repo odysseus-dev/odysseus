@@ -15,16 +15,21 @@ def test_preview_text_ignores_non_string(monkeypatch):
     assert cli._preview_text(None) == ""
     assert cli._preview_text(123) == ""
     assert cli._preview_text("p" * 250) == "p" * 200
+    assert cli._text_field("ok") == "ok"
+    assert cli._text_field(123) == ""
 
 
 def test_serialize_image_does_not_crash_on_non_string_prompt(monkeypatch):
     make_core_db_stub(monkeypatch, models=["GalleryImage", "GalleryAlbum"])
     cli = load_script("odysseus-gallery")
     img = SimpleNamespace(
-        id="i1", filename="a.png", prompt=123, model=None, size=None, tags=None,
+        id="i1", filename=123, prompt=123, model=123, size=None, tags=["bad"],
         favorite=0, album_id=None, session_id=None, width=1, height=1, file_size=1,
-        taken_at=None, camera_make=None, camera_model=None, created_at=None,
+        taken_at=None, camera_make=123, camera_model=None, created_at=None,
     )
     out = cli._serialize_image(img)
     assert out["prompt"] == ""
+    assert out["filename"] == ""
+    assert out["model"] == ""
+    assert out["tags"] == ""
     assert out["id"] == "i1"
