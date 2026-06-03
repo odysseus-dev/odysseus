@@ -340,6 +340,14 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         ok = auth_manager.rename_user(old_username, new_username, user)
         if not ok:
             raise HTTPException(400, "Cannot rename user")
+        # The owner-rename loop above updated ApiToken.owner in the DB, but the
+        # bearer-token cache still maps each token to the OLD owner. Without
+        # refreshing it, the renamed user's API tokens resolve to the old (now
+        # non-existent) owner and stop reaching their data until the cache next
+        # goes dirty. Invalidate it now, like the token CRUD routes do.
+        invalidator = getattr(request.app.state, "invalidate_token_cache", None)
+        if callable(invalidator):
+            invalidator()
         return {"ok": True, "username": new_username, "renamed_self": old_username == user}
 
     @router.post("/signup-toggle", deprecated=True)
