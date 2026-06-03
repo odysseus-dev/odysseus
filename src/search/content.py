@@ -260,6 +260,12 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
             raise RateLimitError(f"Rate limit hit for {url} (attempt {retry_attempt})")
 
         response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        # 4xx/5xx (e.g. 403 anti-bot on academic publishers) is not a
+        # RequestError, so it would otherwise escape and crash the fetch.
+        status = e.response.status_code
+        error_logger.error(f"HTTPError fetching {url} (attempt {retry_attempt}): {status}")
+        return _empty_result(url, f"HTTPError: {status}")
     except httpx.RequestError as e:
         error_logger.error(f"NetworkError fetching {url} (attempt {retry_attempt}): {e}")
         return _empty_result(url, f"NetworkError: {e}")

@@ -435,7 +435,7 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
         )
         results = []
         for item in raw:
-            url = item.get("href", "")
+            url = _resolve_ddg_redirect(item.get("href", ""))
             if not url:
                 continue
             results.append({
