@@ -1170,9 +1170,14 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         card.addEventListener('transitionend', () => card.remove(), { once: true });
         setTimeout(() => { if (card.parentElement) card.remove(); }, 400);
       }
+      const deletedDoc = _libraryDocs.find(d => d.id === docId);
       _libraryDocs = _libraryDocs.filter(d => d.id !== docId);
       _libraryTotal = Math.max(0, _libraryTotal - 1);
+      if (deletedDoc && deletedDoc.language && _libraryLanguages[deletedDoc.language] > 0) {
+        _libraryLanguages[deletedDoc.language]--;
+      }
       libraryRenderStats();
+      libraryRenderLangChips();
       if (uiModule) uiModule.showToast('Document deleted');
     } catch (e) {
       if (uiModule) uiModule.showError(`Failed to delete document: ${e.message || e}`);
