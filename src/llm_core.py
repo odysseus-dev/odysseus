@@ -1392,7 +1392,17 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         """Build the tool_calls event string if any were accumulated."""
         if not _tc_acc:
             return None
-        calls = [_tc_acc[i] for i in sorted(_tc_acc)]
+        calls = []
+        for i in sorted(_tc_acc):
+            c = _tc_acc[i]
+            # Some OpenAI-compatible servers stream tool-call deltas with no
+            # `id`. Synthesize a stable one (mirroring the Anthropic/Ollama
+            # paths) so the assistant tool_calls turn and its tool results
+            # carry a non-empty tool_call_id; otherwise _sanitize_llm_messages
+            # drops the whole round on the next request and the call is lost.
+            if not c.get("id"):
+                c["id"] = f"call_{i}"
+            calls.append(c)
         return f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
 
     try:
