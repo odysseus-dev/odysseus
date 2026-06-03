@@ -427,6 +427,79 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         notes = task_scheduler.pop_notifications(owner=user)
         return {"notifications": notes}
 
+    @router.post("/{task_id}/clear-cache")
+    async def clear_task_cache(request: Request, task_id: str):
+        """Clear derived cache for one built-in task."""
+        user = _owner(request)
+        db = SessionLocal()
+        try:
+            task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+            if not task:
+                raise HTTPException(404, "Task not found")
+            if user and task.owner != user:
+                raise HTTPException(403, "Access denied")
+            action = task.action or ""
+        finally:
+            db.close()
+
+        cache_tables = {
+            "summarize_emails": ("email_summaries",),
+            "draft_email_replies": ("email_ai_replies",),
+            "extract_email_events": ("email_calendar_extractions",),
+            "mark_email_boundaries": ("email_boundaries",),
+            "learn_sender_signatures": ("sender_signatures",),
+            "check_email_urgency": ("email_tags", "email_urgency_alerts"),
+        }
+        tables = cache_tables.get(action)
+        if not tables:
+            raise HTTPException(400, "This task has no clearable cache")
+
+        import sqlite3
+        from pathlib import Path
+        from routes.email_helpers import SCHEDULED_DB
+
+        cleared = {}
+        conn = sqlite3.connect(SCHEDULED_DB)
+        try:
+            for table in tables:
+                try:
+                    if table == "email_tags" and user:
+                        before = conn.execute(
+                            "SELECT COUNT(*) FROM email_tags WHERE owner = ? OR owner = ''",
+                            (user,),
+                        ).fetchone()[0]
+                        conn.execute("DELETE FROM email_tags WHERE owner = ? OR owner = ''", (user,))
+                    else:
+                        before = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                        conn.execute(f"DELETE FROM {table}")
+                    cleared[table] = int(before or 0)
+                except sqlite3.OperationalError:
+                    cleared[table] = 0
+            conn.commit()
+        finally:
+            conn.close()
+
+        removed_files = 0
+        if action == "check_email_urgency":
+            cache_dir = Path("data/email_urgency_cache")
+            if cache_dir.exists():
+                for child in cache_dir.glob("*.json"):
+                    try:
+                        child.unlink()
+                        removed_files += 1
+                    except Exception:
+                        pass
+            owner_slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (user or "default"))
+            for state_path in [Path(f"data/email_urgency_state_{owner_slug}.json")]:
+                try:
+                    if state_path.exists():
+                        state_path.unlink()
+                        removed_files += 1
+                except Exception:
+                    pass
+
+        return {"ok": True, "action": action, "cleared": cleared, "files": removed_files}
+
     @router.get("/{task_id}")
     async def get_task(request: Request, task_id: str):
         user = _owner(request)
@@ -637,6 +710,23 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         if not started:
             raise HTTPException(409, "Task is already running")
         return {"ok": True, "message": "Task triggered" + (" in parallel" if force else "")}
+
+    @router.post("/{task_id}/stop")
+    async def stop_task_now(request: Request, task_id: str):
+        user = _owner(request)
+        db = SessionLocal()
+        try:
+            task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+            if not task:
+                raise HTTPException(404, "Task not found")
+            if user and task.owner != user:
+                raise HTTPException(403, "Access denied")
+        finally:
+            db.close()
+        stopped = await task_scheduler.stop_task(task_id)
+        if not stopped:
+            raise HTTPException(404, "Task is not running")
+        return {"ok": True, "message": "Task stopped"}
 
     @router.get("/runs/recent")
     async def list_recent_runs(request: Request, limit: int = 50):

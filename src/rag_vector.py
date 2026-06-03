@@ -7,6 +7,7 @@ configurable embedding endpoint via EMBEDDING_URL env var.
 """
 
 import os
+import hashlib
 import re
 import logging
 import numpy as np
@@ -24,6 +25,10 @@ VECTOR_WEIGHT = 0.7
 KEYWORD_WEIGHT = 0.3
 
 COLLECTION_NAME = "odysseus_rag"
+
+
+def _generate_doc_id(text: str) -> str:
+    return f"doc_{hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]}"
 
 
 class VectorRAG:
@@ -99,7 +104,7 @@ class VectorRAG:
             return False
 
         try:
-            doc_id = f"doc_{hash(text) % 10**16}"
+            doc_id = _generate_doc_id(text)
             # Check if already exists
             existing = self._collection.get(ids=[doc_id])
             if existing["ids"]:
@@ -135,7 +140,7 @@ class VectorRAG:
             new_metas = []
             new_ids = []
             for t, m in valid:
-                doc_id = f"doc_{hash(t) % 10**16}"
+                doc_id = _generate_doc_id(t)
                 existing = self._collection.get(ids=[doc_id])
                 if not existing["ids"]:
                     new_texts.append(t)

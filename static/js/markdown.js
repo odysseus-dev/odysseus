@@ -5,6 +5,7 @@
  */
 
 import uiModule from './ui.js';
+import { splitTableRow } from './markdown/tableRow.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -32,6 +33,83 @@ function linkHtml(text, url) {
     return `<a href="${safeUrl}" class="chat-link">${safeText}</a>`;
   }
   return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
+}
+
+/**
+ * Sanitize the raw-HTML fragments that mdToHtml deliberately preserves from
+ * the source text — <details> blocks (collapsible agent output) and <a> tags
+ * (emitted by the markdown link pass). Those fragments are later restored
+ * verbatim into innerHTML, so without scrubbing them a model — or any content
+ * routed through here — could smuggle in an `<img onerror=...>`, an
+ * `<a href="javascript:...">`, an `onmouseover=` handler, etc. and execute
+ * script in the authenticated page (DOM XSS).
+ *
+ * Parsing into a <template> is inert: assigning to template.innerHTML neither
+ * fetches resources nor runs scripts, so we can walk the resulting tree,
+ * drop script-capable elements, and strip event-handler attributes and
+ * dangerous URL schemes before the (now safe) fragment is handed back.
+ */
+const _ALLOWED_HTML_BAD_TAGS = new Set([
+  'SCRIPT', 'IFRAME', 'OBJECT', 'EMBED', 'LINK', 'META',
+  'STYLE', 'BASE', 'FORM', 'NOSCRIPT', 'TEMPLATE',
+  // Foreign-content roots. SVG/MathML have their own parser rules and are a
+  // classic mutation-XSS vehicle — e.g. an SVG-namespaced <script>, whose
+  // `tagName` is the lower-case 'script' and would slip a name check that
+  // assumed HTML's upper-casing. They aren't needed in the <details>/<a>
+  // fragments we preserve, so drop the whole subtree.
+  'SVG', 'MATH',
+]);
+const _ALLOWED_HTML_URL_ATTRS = new Set([
+  'href', 'src', 'xlink:href', 'action', 'formaction', 'background', 'poster',
+]);
+
+function _cleanAllowedHtmlOnce(htmlString) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = htmlString;
+  for (const el of Array.from(tpl.content.querySelectorAll('*'))) {
+    // Upper-case the tag for comparison: HTML tagNames are upper-case, but
+    // SVG/MathML elements preserve their original (lower/camel) case, so a
+    // raw `Set.has(el.tagName)` would miss e.g. a namespaced <script>.
+    if (_ALLOWED_HTML_BAD_TAGS.has(el.tagName.toUpperCase())) {
+      el.remove();
+      continue;
+    }
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase();
+      // Drop every inline event handler (onerror, onclick, onmouseover, ...)
+      // and srcdoc (a frame-less script vector).
+      if (name.startsWith('on') || name === 'srcdoc') {
+        el.removeAttribute(attr.name);
+        continue;
+      }
+      // Neutralize javascript:/vbscript:/data: in URL-bearing attributes.
+      // Strip control/space chars first so e.g. "java\tscript:" can't slip by.
+      if (_ALLOWED_HTML_URL_ATTRS.has(name)) {
+        const value = (attr.value || '').replace(/[\x00-\x20]+/g, '').toLowerCase();
+        if (/^(javascript|vbscript|data):/.test(value)) {
+          el.removeAttribute(attr.name);
+        }
+      }
+    }
+  }
+  return tpl.innerHTML;
+}
+
+function sanitizeAllowedHtml(html) {
+  const raw = String(html == null ? '' : html);
+  // Non-browser context (e.g. a future SSR/Node import): fail closed by
+  // escaping rather than trusting the markup.
+  if (typeof document === 'undefined') return escapeHtml(raw);
+
+  // Sanitize to a fixpoint. Re-parsing the serialized output can mutate the
+  // tree (the basis of mutation-XSS), so re-clean until it stops changing.
+  let out = raw;
+  for (let i = 0; i < 4; i++) {
+    const next = _cleanAllowedHtmlOnce(out);
+    if (next === out) break;
+    out = next;
+  }
+  return out;
 }
 
 /**
@@ -356,14 +434,14 @@ export function mdToHtml(src) {
   // Default to open so agent output is visible
   s = s.replace(/<details>([\s\S]*?)<\/details>/gi, (match) => {
     const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
-    allowedHtmlBlocks.push(match.replace(/<details>/i, '<details open>'));
+    allowedHtmlBlocks.push(sanitizeAllowedHtml(match.replace(/<details>/i, '<details open>')));
     return placeholder;
   });
 
   // ALSO preserve <a> tags the same way (they're now in the HTML from markdown conversion)
   s = s.replace(/<a\s+[^>]*>.*?<\/a>/gi, (match) => {
     const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
-    allowedHtmlBlocks.push(match);
+    allowedHtmlBlocks.push(sanitizeAllowedHtml(match));
     return placeholder;
   });
 
@@ -458,16 +536,18 @@ export function mdToHtml(src) {
     let html = '<table style="border-collapse: collapse; width: 100%; margin: 10px 0;">';
 
     rows.forEach((row, idx) => {
-      const cells = row.split('|').filter(cell => cell.trim() !== '');
+      if (idx === 1 && /^[\s|:\-]+$/.test(row)) {
+        html += '<tbody>';
+        return;
+      }
+      const cells = splitTableRow(row);
       if (cells.length === 0) return;
 
-      html += idx === 1 ? '<tbody>' : '';
       html += '<tr>';
 
       cells.forEach(cell => {
         const tag = idx === 0 ? 'th' : 'td';
-        const style = idx === 1 ? 'style="border-top: 2px solid var(--red);"' : '';
-        html += `<${tag} ${style} style="padding: 8px; text-align: left; border-bottom: 1px solid var(--border);">${cell.trim()}</${tag}>`;
+        html += `<${tag} style="padding: 8px; text-align: left; border-bottom: 1px solid var(--border);">${cell.trim()}</${tag}>`;
       });
 
       html += '</tr>';
@@ -503,8 +583,9 @@ export function mdToHtml(src) {
   s = s.replace(/(?:^|\n)(<oli>[\s\S]*?)(?=\n(?!<oli>)|$)/g, m => `<ol>${m.trim().replace(/<\/?oli>/g, (t) => t === '<oli>' ? '<li>' : '</li>')}</ol>`);
 
   // Unordered lists
-  s = s.replace(/^(?:- |\* )(.*)$/gm, '<li>$1</li>');
-  s = s.replace(/(?:^|\n)(<li>[\s\S]*?)(?=\n(?!<li>)|$)/g, m => `<ul>${m.trim()}</ul>`);
+  s = s.replace(/^(?:- |\* )(.*)$/gm, '<uli>$1</uli>');
+  s = s.replace(/(^|\n)((?:<uli>[^\n]*<\/uli>(?:\n|$))+)/g, (_, prefix, block) =>
+    `${prefix}<ul>${block.trim().replace(/<\/?uli>/g, (t) => t === '<uli>' ? '<li>' : '</li>')}</ul>`);
 
   // Blockquotes
   s = s.replace(/^&gt; (.*)$/gm, '<bq>$1</bq>');

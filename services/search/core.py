@@ -30,6 +30,7 @@ from .providers import (
     tavily_search,
     serper_search,
     _get_search_settings,
+    _get_provider_key,
     _get_result_count,
 )
 from .content import (
@@ -54,7 +55,7 @@ def get_search_config() -> Dict[str, Any]:
     settings = _get_search_settings()
     provider = settings.get("search_provider", "searxng")
     config["active_provider"] = provider
-    config["has_api_key"] = bool((settings.get("search_api_key") or "").strip())
+    config["has_api_key"] = bool(_get_provider_key(provider))
     config["result_count"] = _get_result_count()
     if provider == "searxng":
         from .providers import _get_search_instance
@@ -203,7 +204,10 @@ def invalidate_search_cache(query: Optional[str] = None) -> None:
         search_cache_index.clear()
         logger.info("All search cache entries have been cleared.")
     else:
-        cache_key = generate_cache_key(f"{query}|10|None")
+        # Match the key the write path stores: searxng_search_results replaces
+        # the caller's default count with the configured _get_result_count()
+        # (default 5), so a hardcoded "|10|None" never matched a real entry.
+        cache_key = generate_cache_key(f"{query}|{_get_result_count()}|None")
         cache_file = SEARCH_CACHE_DIR / f"{cache_key}.cache"
         if cache_file.exists():
             try:

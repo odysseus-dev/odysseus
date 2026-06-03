@@ -321,8 +321,12 @@ async def maybe_compact(
 
     compacted = system_msgs + [summary_msg] + recent
 
-    # Update session history to match
-    _update_session_history(session, split_point, summary)
+    # Update session history to match. Pass len(system_msgs) so the
+    # recent_history slice in _update_session_history uses the correct
+    # offset — session.history INCLUDES the system messages, but
+    # split_point is indexed against convo_msgs which does NOT. Without
+    # this, the slice drops the leading system message(s).
+    _update_session_history(session, split_point, summary, system_msg_count=len(system_msgs))
 
     new_used = estimate_tokens(compacted)
     logger.info(
@@ -333,22 +337,34 @@ async def maybe_compact(
     return compacted, context_length, True
 
 
-def _update_session_history(session, split_point: int, summary: str):
-    """Update the in-memory session history after compaction."""
+def _update_session_history(session, split_point: int, summary: str,
+                            system_msg_count: int = 0):
+    """Update the in-memory session history after compaction.
+
+    `split_point` is the index in `convo_msgs` (system-stripped). The
+    in-memory `session.history` includes leading system messages, so the
+    actual recent-history slice starts at `system_msg_count + split_point`.
+    Prepending `session.history[:system_msg_count]` to the new history
+    preserves persona, preset, and RAG system messages that would
+    otherwise be dropped.
+    """
     if not session or not hasattr(session, "history"):
         return
 
-    if split_point >= len(session.history):
+    effective_split = system_msg_count + split_point
+    if effective_split >= len(session.history):
         return
 
-    # Keep the recent messages, prepend summary
-    recent_history = session.history[split_point:]
+    # Keep the recent messages, prepend summary AND the leading system
+    # messages so the system prompt survives compaction.
+    system_prefix = list(session.history[:system_msg_count])
+    recent_history = session.history[effective_split:]
     summary_msg = ChatMessage(
         role="system",
         content=f"[Conversation summary]\n{summary}",
         metadata={"compacted": True, "summarized_count": split_point},
     )
-    new_history = [summary_msg] + recent_history
+    new_history = system_prefix + [summary_msg] + recent_history
     try:
         from core import models as _core_models
         manager = getattr(_core_models, "_session_manager", None)

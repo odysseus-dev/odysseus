@@ -38,7 +38,7 @@ async def _cached(key: Tuple, ttl: float, fetch: Callable[[], Awaitable[Any]]) -
             pending = fut
             owner = False
         else:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             fut = loop.create_future()
             _shared_cache_pending[key] = fut
             pending = fut
@@ -115,7 +115,7 @@ def compute_next_run(schedule: str, scheduled_time: str,
             return None
 
     if schedule == "once":
-        if scheduled_date and scheduled_date > (now.replace(tzinfo=None) if tz is not None else now):
+        if scheduled_date and scheduled_date > (_to_utc_naive(now) if tz is not None else now):
             return scheduled_date
         return None
 
@@ -192,7 +192,7 @@ HOUSEKEEPING_DEFAULTS = {
     "draft_email_replies":  {"name": "Email AI Auto Reply",      "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Tidy Email (Replies)", "AI Auto Reply"]},
     "extract_email_events": {"name": "Email Calendar Events",    "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */1 * * *", "ship_paused": True, "legacy_names": ["Email → Calendar Events"]},
     "classify_events":      {"name": "Calendar Classify Events", "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 6,18 * * *", "ship_paused": True, "legacy_names": ["Classify Calendar Events"]},
-    "mark_email_boundaries": {"name": "Email Mark Boundaries",   "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "legacy_names": ["Mark Email Boundaries"]},
+    "mark_email_boundaries": {"name": "Email Mark Boundaries",   "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Mark Email Boundaries"]},
     "check_email_urgency":   {"name": "Email Tags",               "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 * * * *", "ship_paused": True, "old_cron_expressions": ["*/15 * * * *"], "legacy_names": ["Email Triage", "Urgent Email"]},
     "audit_skills":          {"name": "Skills Audit",             "trigger_type": "event", "trigger_event": "skill_added", "trigger_count": 5, "schedule": None, "scheduled_time": None, "cron_expression": None, "legacy_names": ["Audit Skills"]},
 }
@@ -201,6 +201,20 @@ RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
     "tidy_calendar",
     "tidy_email_inbox",
 })
+
+
+def _digest_windows(now):
+    """(label, start, end) buckets for the calendar check-in digest.
+
+    The windows are contiguous so no event is dropped between buckets — an
+    earlier version started the 30-day window at now+8d while the week window
+    ended at now+7d, so events ~7-8 days out fell into no bucket.
+    """
+    return [
+        ("today_tomorrow", now, now + timedelta(days=2)),
+        ("this_week", now + timedelta(days=2), now + timedelta(days=7)),
+        ("next_30_days", now + timedelta(days=7), now + timedelta(days=30)),
+    ]
 
 
 class TaskScheduler:
@@ -222,6 +236,53 @@ class TaskScheduler:
         # This is a hard guarantee, not configurable.
         self._run_semaphore = asyncio.Semaphore(1)
         self._concurrency_cap = 1
+        self._task_handles = {}
+
+    def _set_run_progress(self, run_id: str, message: str):
+        """Persist short live progress text for Activity while a run is active."""
+        if not run_id:
+            return
+        try:
+            from core.database import SessionLocal, TaskRun
+            db = SessionLocal()
+            try:
+                run = db.query(TaskRun).filter(TaskRun.id == run_id).first()
+                if run and run.status in ("queued", "running"):
+                    run.result = (message or "")[:4000]
+                    db.commit()
+            finally:
+                db.close()
+        except Exception:
+            logger.debug("Task progress update failed", exc_info=True)
+
+    def _mark_run_aborted(self, task_id: str, run_id: str | None = None, message: str = "Stopped by user") -> bool:
+        """Mark an active run as aborted. Used by stop/cancel paths."""
+        try:
+            from core.database import SessionLocal, TaskRun
+            db = SessionLocal()
+            try:
+                q = db.query(TaskRun)
+                if run_id:
+                    q = q.filter(TaskRun.id == run_id)
+                else:
+                    q = q.filter(
+                        TaskRun.task_id == task_id,
+                        TaskRun.status.in_(("queued", "running")),
+                    ).order_by(TaskRun.started_at.desc())
+                run = q.first()
+                if not run or run.status not in ("queued", "running"):
+                    return False
+                run.status = "aborted"
+                run.error = message
+                run.result = run.result or message
+                run.finished_at = datetime.utcnow()
+                db.commit()
+                return True
+            finally:
+                db.close()
+        except Exception:
+            logger.debug("Task abort marker failed for %s", task_id, exc_info=True)
+            return False
 
     def add_notification(self, task_name: str, status: str, task_id: str = None, owner: str = None, body: str = None):
         """Store a notification about a completed task run. Tagged with the
@@ -293,6 +354,33 @@ class TaskScheduler:
                 db.close()
         except Exception as e:
             logger.warning(f"Could not clear stale task_runs on startup: {e}")
+
+        # Advance next_run for active tasks whose next_run is already in the
+        # past. Without this, a restart hits _check_due_tasks() with an empty
+        # in-process _executing set, and the same overdue task fires once per
+        # poll until it completes.
+        try:
+            from core.database import SessionLocal as _SL, ScheduledTask as _ST
+            db = _SL()
+            try:
+                now = datetime.utcnow()
+                overdue = db.query(_ST).filter(
+                    _ST.status == "active",
+                    _ST.next_run.isnot(None),
+                    _ST.next_run < now,
+                ).all()
+                if overdue:
+                    for t in overdue:
+                        t.next_run = now + timedelta(seconds=60)
+                    db.commit()
+                    logger.info(
+                        "Pushed next_run forward by 60s for %d overdue active tasks on startup",
+                        len(overdue),
+                    )
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning(f"Could not advance overdue next_run on startup: {e}")
 
         # Defense-in-depth dedupe sweep: for any owner with >1 rows where
         # is_default_assistant=True, keep the oldest and demote the rest +
@@ -516,6 +604,9 @@ class TaskScheduler:
         # line behind another. Once we acquire the slot, flip to "running"
         # and hand off to _execute_task_locked.
         from core.database import SessionLocal, TaskRun
+        current = asyncio.current_task()
+        if current:
+            self._task_handles[task_id] = current
         run_id = str(uuid.uuid4())
         _q_db = SessionLocal()
         try:
@@ -524,6 +615,7 @@ class TaskScheduler:
                 task_id=task_id,
                 started_at=datetime.utcnow(),
                 status="queued",
+                result="Queued — waiting for a free slot…",
             )
             _q_db.add(run)
             _q_db.commit()
@@ -532,12 +624,25 @@ class TaskScheduler:
         finally:
             _q_db.close()
 
-        if bypass_model_slot or not self._task_needs_model_slot(task_id):
-            await self._execute_task_locked(task_id, run_id, release_executing=release_executing)
-            return
+        try:
+            if bypass_model_slot or not self._task_needs_model_slot(task_id):
+                await self._execute_task_locked(task_id, run_id, release_executing=release_executing)
+                return
 
-        async with self._run_semaphore:
-            await self._execute_task_locked(task_id, run_id, release_executing=release_executing)
+            async with self._run_semaphore:
+                await self._execute_task_locked(task_id, run_id, release_executing=release_executing)
+        except asyncio.CancelledError:
+            # If cancellation happens while queued behind the semaphore,
+            # _execute_task_locked never runs and cannot update the Activity row.
+            self._mark_run_aborted(task_id, run_id)
+            raise
+        finally:
+            handle = self._task_handles.get(task_id)
+            if handle is current:
+                self._task_handles.pop(task_id, None)
+            if release_executing:
+                async with self._executing_lock:
+                    self._executing.discard(task_id)
 
     async def _execute_task_locked(self, task_id: str, run_id: str, *, release_executing: bool = True):
         from core.database import SessionLocal, ScheduledTask, TaskRun
@@ -563,6 +668,7 @@ class TaskScheduler:
             if run:
                 run.status = "running"
                 run.started_at = datetime.utcnow()
+                run.result = "Starting…"
                 db.commit()
             else:
                 # Defensive: row may have been wiped; recreate so the rest of
@@ -572,6 +678,7 @@ class TaskScheduler:
                     task_id=task.id,
                     started_at=datetime.utcnow(),
                     status="running",
+                    result="Starting…",
                 )
                 db.add(run)
                 db.commit()
@@ -586,7 +693,7 @@ class TaskScheduler:
             self._last_run_model = None
             try:
                 if task_type == "action":
-                    result, success = await self._execute_action(task)
+                    result, success = await self._execute_action(task, run_id=run_id)
                     run.status = "success" if success else "error"
                     run.result = result
                     if not success:
@@ -620,6 +727,27 @@ class TaskScheduler:
                 if run_obj:
                     db.delete(run_obj)
                 task.next_run = when
+                db.commit()
+                return
+            except asyncio.CancelledError:
+                logger.info("Task '%s' stopped by user", task.name)
+                run_obj = db.query(TaskRun).filter(TaskRun.id == run_id).first()
+                if run_obj:
+                    run_obj.status = "aborted"
+                    run_obj.error = "Stopped by user"
+                    run_obj.result = run_obj.result or "Stopped by user"
+                    run_obj.finished_at = datetime.utcnow()
+                task.last_run = datetime.utcnow()
+                if (task.trigger_type or "schedule") == "schedule":
+                    task.next_run = compute_next_run(
+                        task.schedule, task.scheduled_time,
+                        task.scheduled_day, task.scheduled_date,
+                        after=datetime.utcnow(),
+                        cron_expression=task.cron_expression,
+                        tz_name=_resolve_task_timezone(db, task),
+                    )
+                else:
+                    task.next_run = None
                 db.commit()
                 return
             except TaskNoop as noop:
@@ -783,6 +911,9 @@ class TaskScheduler:
                 logger.exception("Task %s error-path failed unexpectedly", task_id)
         finally:
             db.close()
+            handle = self._task_handles.get(task_id)
+            if handle is asyncio.current_task():
+                self._task_handles.pop(task_id, None)
             if release_executing:
                 async with self._executing_lock:
                     self._executing.discard(task_id)
@@ -853,7 +984,7 @@ class TaskScheduler:
             category=(task.name or "Task"),
         )
 
-    async def _execute_action(self, task) -> tuple:
+    async def _execute_action(self, task, run_id: str | None = None) -> tuple:
         """Execute a built-in action (no LLM needed)."""
         from src.builtin_actions import BUILTIN_ACTIONS
 
@@ -864,7 +995,10 @@ class TaskScheduler:
         from src.builtin_actions import TaskNoop
         try:
             # Pass task prompt as script/command for ssh_command/run_script actions.
-            kwargs = {"owner": task.owner, "task_name": task.name}
+            def _progress(message: str):
+                self._set_run_progress(run_id, message)
+
+            kwargs = {"owner": task.owner, "task_name": task.name, "progress_cb": _progress}
             if task.action in ("run_script", "run_local", "ssh_command") and task.prompt:
                 kwargs["script" if task.action in ("run_script", "run_local") else "command"] = task.prompt
             result, success = await action_fn(**kwargs)
@@ -962,11 +1096,7 @@ class TaskScheduler:
             from core.database import SessionLocal as _SL, CalendarEvent as _CE
             _db = _SL()
             try:
-                for label, start, end in [
-                    ("today_tomorrow", now, now + timedelta(days=2)),
-                    ("this_week",      now + timedelta(days=2), now + timedelta(days=7)),
-                    ("next_30_days",   now + timedelta(days=8), now + timedelta(days=30)),
-                ]:
+                for label, start, end in _digest_windows(now):
                     # Strip timezone for naive DB comparison
                     _s = start.replace(tzinfo=None) if start.tzinfo else start
                     _e = end.replace(tzinfo=None) if end.tzinfo else end
@@ -1007,56 +1137,53 @@ class TaskScheduler:
         except Exception as e:
             raw["notes_tasks"] = f"Error: {e}"
 
-        # Auto-discover API integrations (Miniflux RSS, etc.) from integrations.json
+        # Auto-discover API integrations (Miniflux RSS, etc.).
         try:
             import httpx
-            from pathlib import Path as _P
-            integrations_file = _P("data/integrations.json")
-            if integrations_file.exists():
-                integrations = json.loads(integrations_file.read_text(encoding="utf-8"))
-                for integ in integrations:
-                    if not integ.get("enabled"):
-                        continue
-                    preset = integ.get("preset", "")
-                    base_url = integ.get("base_url", "").rstrip("/")
-                    api_key = integ.get("api_key", "")
-                    if not base_url:
-                        continue
+            from src.integrations import load_integrations
+            for integ in load_integrations():
+                if not integ.get("enabled"):
+                    continue
+                preset = integ.get("preset", "")
+                base_url = integ.get("base_url", "").rstrip("/")
+                api_key = integ.get("api_key", "")
+                if not base_url:
+                    continue
 
-                    # Build auth headers
-                    headers = {}
-                    if integ.get("auth_type") == "header" and api_key:
-                        headers[integ.get("auth_header", "X-Auth-Token")] = api_key
-                    elif integ.get("auth_type") == "bearer" and api_key:
-                        headers["Authorization"] = f"Bearer {api_key}"
+                # Build auth headers
+                headers = {}
+                if integ.get("auth_type") == "header" and api_key:
+                    headers[integ.get("auth_header", "X-Auth-Token")] = api_key
+                elif integ.get("auth_type") == "bearer" and api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
 
-                    # Miniflux: fetch unread entries (cached 3 min across tasks)
-                    if preset == "miniflux":
-                        async def _fetch_miniflux(_base=base_url, _headers=dict(headers)):
-                            async with httpx.AsyncClient(timeout=10) as client:
-                                resp = await client.get(
-                                    f"{_base}/v1/entries",
-                                    params={"status": "unread", "limit": 15, "order": "published_at", "direction": "desc"},
-                                    headers=_headers,
-                                )
-                                if resp.status_code != 200:
-                                    return None
-                                entries = resp.json().get("entries", []) or []
-                                if not entries:
-                                    return None
-                                lines = []
-                                for e in entries[:15]:
-                                    title = e.get("title", "?")
-                                    feed = (e.get("feed") or {}).get("title", "?")
-                                    url = e.get("url", "")
-                                    lines.append(f"- [{feed}] {title} — {url}")
-                                return "\n".join(lines)
-                        try:
-                            val = await _cached(("miniflux_unread", base_url), 180, _fetch_miniflux)
-                            if val:
-                                raw["rss_miniflux_unread"] = val
-                        except Exception as e:
-                            logger.warning(f"Miniflux fetch failed: {e}")
+                # Miniflux: fetch unread entries (cached 3 min across tasks)
+                if preset == "miniflux":
+                    async def _fetch_miniflux(_base=base_url, _headers=dict(headers)):
+                        async with httpx.AsyncClient(timeout=10) as client:
+                            resp = await client.get(
+                                f"{_base}/v1/entries",
+                                params={"status": "unread", "limit": 15, "order": "published_at", "direction": "desc"},
+                                headers=_headers,
+                            )
+                            if resp.status_code != 200:
+                                return None
+                            entries = resp.json().get("entries", []) or []
+                            if not entries:
+                                return None
+                            lines = []
+                            for e in entries[:15]:
+                                title = e.get("title", "?")
+                                feed = (e.get("feed") or {}).get("title", "?")
+                                url = e.get("url", "")
+                                lines.append(f"- [{feed}] {title} — {url}")
+                            return "\n".join(lines)
+                    try:
+                        val = await _cached(("miniflux_unread", base_url), 180, _fetch_miniflux)
+                        if val:
+                            raw["rss_miniflux_unread"] = val
+                    except Exception as e:
+                        logger.warning(f"Miniflux fetch failed: {e}")
         except Exception as e:
             logger.warning(f"Integrations discovery failed: {e}")
 
@@ -1300,8 +1427,8 @@ class TaskScheduler:
             sess = DbSession(
                 id=session_id,
                 name=f"[Task] {task.name}",
-                endpoint_url=endpoint_url,
-                model=model_name,
+                endpoint_url=endpoint_url or "",
+                model=model_name or "",
                 owner=task.owner,
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow(),
@@ -1751,6 +1878,21 @@ class TaskScheduler:
             self._executing.add(task_id)
         asyncio.create_task(self._execute_task(task_id))
         return True
+
+    async def stop_task(self, task_id: str) -> bool:
+        """Request cancellation of a running/queued task and mark its run aborted."""
+        handle = self._task_handles.get(task_id)
+        stopped = False
+        if handle and not handle.done():
+            handle.cancel()
+            stopped = True
+        async with self._executing_lock:
+            if task_id in self._executing:
+                self._executing.discard(task_id)
+                stopped = True
+
+        stopped = self._mark_run_aborted(task_id) or stopped
+        return stopped
 
     async def ensure_defaults(self, owner: str):
         """Create default housekeeping tasks for this owner (idempotent per action)."""

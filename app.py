@@ -1,5 +1,22 @@
 # app.py — slim orchestrator
+import mimetypes
 import os
+
+
+def register_static_mime_types() -> None:
+    """Force stable JS module MIME types across platforms.
+
+    Some native Windows setups inherit stale/incorrect registry mappings for
+    ``.js``/``.mjs``, which can make Starlette serve ES modules with a non-JS
+    ``Content-Type`` and cause the UI to load but fail on click. Re-register the
+    standard MIME types at startup so static assets are served consistently.
+    """
+
+    mimetypes.add_type("text/javascript", ".js")
+    mimetypes.add_type("application/javascript", ".mjs")
+
+
+register_static_mime_types()
 
 # Windows: force HuggingFace/fastembed to COPY model files instead of symlinking.
 # On a network-share/UNC data dir Windows can't follow HF's symlinks ([WinError
@@ -21,6 +38,7 @@ import uuid
 
 import asyncio
 import logging
+import secrets
 from datetime import datetime
 from typing import Dict
 
@@ -133,6 +151,8 @@ auth_manager = AuthManager()
 app.state.auth_manager = auth_manager
 AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
 LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
+if LOCALHOST_BYPASS:
+    logger.warning("LOCALHOST_BYPASS is enabled, loopback requests bypass authentication. Do not expose this instance to a network.")
 
 if AUTH_ENABLED:
     AUTH_EXEMPT_EXACT = {
@@ -149,9 +169,25 @@ if AUTH_ENABLED:
         "/login",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
+    # Dynamic paths whose own handler proves identity via a path-embedded
+    # secret instead of the session/bearer auth. The route handler at
+    # routes/task_routes.py validates the per-task `webhook_token` itself
+    # and returns 404 on mismatch, so the path is the credential — the
+    # UI labels these URLs "no auth needed" precisely because external
+    # callers (Zapier, n8n, curl) can't supply a session cookie. Without
+    # this exemption AuthMiddleware rejects every POST with 401 before
+    # the token is ever checked.
+    import re as _re
+    AUTH_EXEMPT_PATTERNS = [
+        _re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$"),
+    ]
 
     def _is_auth_exempt(path: str) -> bool:
-        return path in AUTH_EXEMPT_EXACT or any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES)
+        if path in AUTH_EXEMPT_EXACT:
+            return True
+        if any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES):
+            return True
+        return any(p.match(path) for p in AUTH_EXEMPT_PATTERNS)
 
     # In-memory token cache: prefix → list[(token_id, token_hash, owner, scopes)]. The DB
     # query was running on every API-bearer request and scanning bcrypt
@@ -222,7 +258,7 @@ if AUTH_ENABLED:
             try:
                 from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN as _ITT
                 _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
-                if _hdr and _hdr == _ITT and _is_trusted_loopback(request):
+                if _hdr and secrets.compare_digest(_hdr, _ITT) and _is_trusted_loopback(request):
                     # Impersonation: when the agent's loopback call sets
                     # X-Odysseus-Owner, attribute the request to that user only
                     # if they exist. Authorization checks remain separate; this
@@ -671,6 +707,9 @@ app.include_router(setup_swarm_routes())
 from routes.fanout_routes import setup_fanout_routes
 app.include_router(setup_fanout_routes())
 
+from companion import setup_companion_routes
+app.include_router(setup_companion_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
@@ -789,6 +828,17 @@ async def health_check() -> Dict[str, object]:
         "checks": checks,
     }
 
+@app.get("/api/ready")
+async def readiness_check() -> JSONResponse:
+    """Readiness / integrity self-check — DB, data dir, local-first storage.
+
+    Unlike /api/health (liveness), this returns 503 unless every critical
+    subsystem is whole, so an orchestrator can gate traffic on real readiness.
+    """
+    from src.readiness import check_readiness
+    result = check_readiness()
+    return JSONResponse(status_code=200 if result.get("ready") else 503, content=result)
+
 @app.get("/api/runtime")
 async def runtime_info() -> Dict[str, object]:
     in_docker = os.path.exists("/.dockerenv")
@@ -873,7 +923,6 @@ async def startup_event():
             from src.tool_index import get_tool_index
             idx = await asyncio.to_thread(get_tool_index)
             if idx:
-                await asyncio.to_thread(idx.index_builtin_tools)
                 await asyncio.to_thread(idx.get_tools_for_query, "warmup", 8)
                 logger.info("[startup] Tool index pre-warmed")
         except Exception as e:

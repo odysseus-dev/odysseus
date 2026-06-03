@@ -112,7 +112,7 @@ function _createChip(f, idx) {
     chip.classList.add('thumb-image');  // lets CSS overlay the remove-X on the corner (mobile)
     const img = document.createElement('img');
     img.className = 'thumb-img';
-    img.src = URL.createObjectURL(f);
+    img.src = _getPreviewUrl(f);
     img.alt = f.name || 'image';
     chip.appendChild(img);
   } else {

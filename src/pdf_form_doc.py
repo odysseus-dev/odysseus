@@ -167,9 +167,18 @@ def find_source_upload_id(content: str) -> Optional[str]:
 
     Matches both the form-source marker (`pdf_form_source`) used for fillable
     PDFs and the plain marker (`pdf_source`) used for any imported PDF.
+    Rejects malformed ids (path traversal, wrong shape) before any lookup.
     """
+    from src.upload_handler import is_valid_upload_id
+
     m = _FRONT_MATTER_RE.search(content or "") or _PLAIN_FRONT_MATTER_RE.search(content or "")
-    return m.group("upload_id") if m else None
+    if not m:
+        return None
+    upload_id = m.group("upload_id")
+    if not is_valid_upload_id(upload_id):
+        logger.warning("Ignoring invalid pdf_source upload_id in document content: %r", upload_id)
+        return None
+    return upload_id
 
 
 def render_plain_pdf_markdown(upload_id: str, title: str, body_text: Optional[str] = None) -> str:
