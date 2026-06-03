@@ -249,7 +249,7 @@ async function _buildCompareUI() {
   }
 
   // 4. Save toolbar indicator display states before hiding
-  const indicatorIds = ['overflow-tts-btn', 'overflow-attach-btn', 'overflow-rag-btn', 'overflow-research-btn', 'overflow-doc-btn', 'rag-indicator-btn', 'research-toggle-btn'];
+  const indicatorIds = ['overflow-tts-btn', 'overflow-attach-btn', 'direct-attach-btn', 'overflow-rag-btn', 'overflow-research-btn', 'overflow-doc-btn', 'rag-indicator-btn', 'research-toggle-btn'];
   state._savedIndicatorDisplay = {};
   indicatorIds.forEach(id => {
     const el = document.getElementById(id);
@@ -483,7 +483,7 @@ async function _buildCompareUI() {
   _setupEvalPicker();
 
   // 12. Hide tool buttons that don't apply during compare
-  ['overflow-tts-btn', 'overflow-attach-btn', 'overflow-rag-btn', 'overflow-research-btn', 'overflow-doc-btn', 'rag-indicator-btn', 'web-toggle-btn', 'bash-toggle-btn', 'overflow-plus-btn'].forEach(id => {
+  ['overflow-tts-btn', 'overflow-attach-btn', 'direct-attach-btn', 'overflow-rag-btn', 'overflow-research-btn', 'overflow-doc-btn', 'rag-indicator-btn', 'web-toggle-btn', 'bash-toggle-btn', 'overflow-plus-btn'].forEach(id => {
     const el = document.getElementById(id);
     if (el) { el.style.display = 'none'; el.style.pointerEvents = 'none'; }
   });

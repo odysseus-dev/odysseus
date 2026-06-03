@@ -128,6 +128,8 @@ function initializeEventListeners() {
   // File attachments (inside overflow menu)
   const _overflowAttach = el('overflow-attach-btn');
   if (_overflowAttach) _overflowAttach.addEventListener('click', fileHandlerModule.openPicker);
+  const _directAttach = el('direct-attach-btn');
+  if (_directAttach) _directAttach.addEventListener('click', fileHandlerModule.openPicker);
   el('file-input').addEventListener('change', (e)=>{
     for (const f of e.target.files) fileHandlerModule.addFiles([f]);
     fileHandlerModule.renderAttachStrip();
@@ -1762,7 +1764,7 @@ function initializeEventListeners() {
     function _flagRefocus(e) {
       if (e.target.closest('textarea, input')) return;
       // Don't refocus for attach — file picker needs full focus control
-      if (e.target.closest('#overflow-attach-btn')) return;
+      if (e.target.closest('#overflow-attach-btn, #direct-attach-btn')) return;
       // Don't refocus for model picker button — focus should go to picker search input
       if (e.target.closest('.model-picker-btn')) return;
       // Don't refocus when tapping the +/chevron tools button — the user
@@ -1956,7 +1958,7 @@ function initializeEventListeners() {
     if (!inputLeft || !overflowMenu || !overflowWrapper) return;
 
     // Buttons that can be collapsed (in reverse priority — last collapsed first)
-    const collapsibleIds = ['bash-toggle-btn', 'web-toggle-btn'];
+    const collapsibleIds = ['direct-attach-btn', 'bash-toggle-btn', 'web-toggle-btn'];
     const collapsibleBtns = collapsibleIds.map(id => el(id)).filter(Boolean);
     // Map of toolbar btn id → overflow mirror element (created dynamically)
     const overflowMirrors = new Map();
@@ -2028,7 +2030,13 @@ function initializeEventListeners() {
         collapsibleBtns.forEach(btn => {
           btn.classList.add('toolbar-collapsed');
           const mirror = overflowMirrors.get(btn.id);
-          if (mirror) mirror.style.display = '';
+          if (mirror) {
+            if (btn.style.display !== 'none') {
+              mirror.style.display = '';
+            } else {
+              mirror.style.display = 'none';
+            }
+          }
         });
         inputLeft.style.overflow = prevOverflow;
         inputLeft.style.flexWrap = '';
@@ -2041,7 +2049,13 @@ function initializeEventListeners() {
         for (let i = 0; i < collapsibleBtns.length; i++) {
           collapsibleBtns[i].classList.add('toolbar-collapsed');
           const mirror = overflowMirrors.get(collapsibleBtns[i].id);
-          if (mirror) mirror.style.display = '';
+          if (mirror) {
+            if (collapsibleBtns[i].style.display !== 'none') {
+              mirror.style.display = '';
+            } else {
+              mirror.style.display = 'none';
+            }
+          }
           totalWidth -= btnWidths[i];
           if (totalWidth <= available) break;
         }
@@ -2080,6 +2094,7 @@ function initializeEventListeners() {
     if (inputBottom) {
       new ResizeObserver(() => requestAnimationFrame(checkToolbarOverflow)).observe(inputBottom);
     }
+    window.checkToolbarOverflow = checkToolbarOverflow;
   })();
 
   // ── Auto-hide model picker when textarea area is too narrow ──
@@ -2399,7 +2414,7 @@ function initializeEventListeners() {
     'overflow-plus-btn':   '.overflow-wrapper',
     'mode-toggle':         '.mode-toggle',
     'preset-mini-btn':     '#overflow-preset-btn',
-    'attach-btn':          '#overflow-attach-btn',
+    'attach-btn':          '#overflow-attach-btn, #direct-attach-btn',
     'research-btn':        '#overflow-research-btn',
     'rail-new-chat':       '#rail-new-session',
   };
@@ -2427,6 +2442,9 @@ function initializeEventListeners() {
         el.style.display = visible ? '' : 'none';
       });
     });
+    if (typeof window.checkToolbarOverflow === 'function') {
+      window.checkToolbarOverflow();
+    }
     // Drag reorder: use body class so dynamically created handles are covered
     const dragEnabled = state['section-drag-reorder'] === true;
     document.body.classList.toggle('rearrange-mode', dragEnabled);
@@ -3849,8 +3867,9 @@ function startOdysseusApp() {
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
 
+    fileHandlerModule.addFiles(files);
+    fileHandlerModule.renderAttachStrip();
     uiModule.showToast(`Added ${files.length} file${files.length > 1 ? 's' : ''} to chat`);
-
   });
   
   attachStrip.addEventListener('dragleave', (e) => {
