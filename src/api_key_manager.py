@@ -37,9 +37,20 @@ class APIKeyManager:
         f = Fernet(self.get_or_create_key())
         return f.decrypt(encrypted_key.encode()).decode()
     
+    def _load_raw(self) -> Dict[str, str]:
+        """Load raw (encrypted) API keys from disk without decrypting."""
+        if not os.path.exists(self.api_keys_file):
+            return {}
+        try:
+            with open(self.api_keys_file, 'r', encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
     def save(self, provider: str, api_key: str):
         """Save encrypted API key to file"""
-        keys = self.load()
+        keys = self._load_raw()
         keys[provider] = self.encrypt_api_key(api_key)
         with open(self.api_keys_file, 'w', encoding="utf-8") as f:
             json.dump(keys, f)
