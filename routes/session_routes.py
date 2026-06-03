@@ -16,7 +16,7 @@ from src.auth_helpers import get_current_user, effective_user
 
 def _sanitize_export_filename(name: str) -> str:
     """Return a conservative filename safe for Content-Disposition."""
-    name = name or ""
+    name = name if isinstance(name, str) else ""
     name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
     return name[:128]
 

@@ -26,6 +26,8 @@ MARKITDOWN_EXTS = frozenset({".docx", ".pptx", ".xlsx", ".xls", ".epub"})
 
 def is_markitdown_format(path: str) -> bool:
     """True if the file extension is one we route through markitdown."""
+    if not isinstance(path, str):
+        return False
     return os.path.splitext(path)[1].lower() in MARKITDOWN_EXTS
 
 

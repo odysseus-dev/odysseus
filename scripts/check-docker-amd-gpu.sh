@@ -39,19 +39,19 @@ Environment:
 USAGE
 }
 
-case "${1:-}" in
-    --help|-h)
-        _usage
-        exit 0
-        ;;
-    "")
-        ;;
-    *)
-        printf 'Unknown option: %s\n\n' "$1" >&2
-        _usage >&2
-        exit 1
-        ;;
-esac
+for _arg in "$@"; do
+    case "${_arg}" in
+        --help|-h)
+            _usage
+            exit 0
+            ;;
+        *)
+            printf 'Unknown option: %s\n\n' "${_arg}" >&2
+            _usage >&2
+            exit 1
+            ;;
+    esac
+done
 
 _find_cmd() {
     if command -v "$1" >/dev/null 2>&1; then

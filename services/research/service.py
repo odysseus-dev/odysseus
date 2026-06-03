@@ -92,6 +92,7 @@ class ResearchService:
                     relevance=s.get("relevance", 0.0),
                 )
                 for s in result.get("sources", [])
+                if isinstance(s, dict)
             ]
             return ResearchResult(
                 query=topic,

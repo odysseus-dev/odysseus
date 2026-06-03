@@ -478,7 +478,7 @@ def _result_has_work(result: str | None) -> bool:
     'No new emails to summarize', 'Tagged 0 / Moved 0', etc. when nothing
     was done. Used to decide whether to record the run or noop it.
     """
-    if not result:
+    if not isinstance(result, str) or not result:
         return False
     low = result.lower()
     if "processed 0" in low or "no new" in low or "nothing to" in low:
@@ -554,7 +554,7 @@ _HEURISTIC_CRITICAL = ["surgery", "court", "wedding day", "funeral", "delivery d
 
 def _classify_event_heuristic(summary: str) -> tuple:
     """Quick heuristic classification — returns (event_type, importance) or (None, None) if unclear."""
-    s = (summary or "").lower()
+    s = (summary if isinstance(summary, str) else "").lower()
     etype = None
     for t, kws in _HEURISTIC_TYPES.items():
         if any(k in s for k in kws):
