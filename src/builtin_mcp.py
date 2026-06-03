@@ -208,6 +208,20 @@ async def _is_npx_package_cached(npx_path, package_spec, timeout_s=5):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+    except NotImplementedError:
+        # Windows + Python 3.14: SelectorEventLoop (used in uvicorn --reload
+        # worker processes) does not support async subprocesses. Fall back to
+        # a blocking subprocess.run with the same timeout so startup continues.
+        import subprocess
+        try:
+            result = subprocess.run(
+                [npx_path, "--no-install", package_spec, "--version"],
+                capture_output=True,
+                timeout=timeout_s,
+            )
+            return result.returncode == 0 and bool(result.stdout.strip())
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            return False
     except (OSError, ValueError):
         return False
     try:
