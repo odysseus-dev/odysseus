@@ -31,7 +31,7 @@ except ModuleNotFoundError as e:
 
 
 def _mask_token(token: str, reveal: bool = False) -> str:
-    token = token or ""
+    token = token if isinstance(token, str) else ""
     if reveal:
         return token
     if not token:
