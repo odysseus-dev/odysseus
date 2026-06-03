@@ -25,6 +25,23 @@ def _get_session_or_404(db, session_id: str, user: Optional[str]):
     return session
 
 
+def _export_zip_name(base, ext, used):
+    """Pick a unique zip entry name, appending the language extension.
+
+    The old `base if "." in base else base + ext` test treated ANY dot in the
+    title as an existing extension, so a Python doc titled "config.local" was
+    written as "config.local" instead of "config.local.py" — losing the
+    language/type. Only skip appending when the title already ends with that
+    exact extension.
+    """
+    name = base if base.lower().endswith(ext) else base + ext
+    i = 1
+    while name in used:
+        name = f"{base}-{i}" + ("" if base.lower().endswith(ext) else ext)
+        i += 1
+    return name
+
+
 def _aggregate_language_facets(lang_rows):
     """Sum document counts per display language for the library facet.
 
@@ -534,11 +551,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     ext = _ext.get(doc.language or "text", ".txt")
                     base = (doc.title or "document").strip() or "document"
                     base = re.sub(r"[^\w\-. ]+", "", base)[:60].strip() or doc.id
-                    name = base if "." in base else base + ext
-                    i = 1
-                    while name in used:
-                        name = f"{base}-{i}" + ("" if "." in base else ext)
-                        i += 1
+                    name = _export_zip_name(base, ext, used)
                     used.add(name)
                     zf.writestr(name, doc.current_content or "")
                     wrote += 1
