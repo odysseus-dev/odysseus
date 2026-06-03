@@ -49,7 +49,7 @@ class STTService:
             return True  # handled client-side
         if provider == "local":
             return self._get_whisper() is not None
-        if provider.startswith("endpoint:"):
+        if isinstance(provider, str) and provider.startswith("endpoint:"):
             return True  # assume reachable
         return False
 
