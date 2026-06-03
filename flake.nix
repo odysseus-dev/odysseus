@@ -300,6 +300,22 @@
               '';
             };
 
+            llamaCpp = {
+              enable = mkEnableOption "bundling llama.cpp (llama-server) for Cookbook GGUF serving";
+              package = mkOption {
+                type = types.package;
+                default = pkgs.llama-cpp;
+                example = lib.literalExpression "pkgs.llama-cpp-rocm";
+                description = ''
+                  llama.cpp build providing `llama-server`, put on the service
+                  PATH so the Cookbook detects llama.cpp and the serve fallback
+                  has a real binary (no runtime cmake build). Override for a GPU
+                  backend, e.g. pkgs.llama-cpp-rocm, pkgs.llama-cpp-vulkan, or
+                  pkgs.llama-cpp.override { cudaSupport = true; }.
+                '';
+              };
+            };
+
             dataDir = mkOption {
               type = types.path;
               default = "/var/lib/odysseus";
@@ -384,8 +400,9 @@
               wants = [ "odysseus-chroma.service" ];
               wantedBy = [ "multi-user.target" ];
 
-              # Tools the app shells out to at runtime (see mkServiceTools)
-              path = mkServiceTools pkgs ++ runtimeLibs;
+              # Tools the app shells out to at runtime (see mkServiceTools).
+              # llama-server is added only when services.odysseus.llamaCpp is on.
+              path = mkServiceTools pkgs ++ lib.optional cfg.llamaCpp.enable cfg.llamaCpp.package ++ runtimeLibs;
 
               environment = {
                 PYTHONUNBUFFERED = "1";
@@ -504,6 +521,22 @@
               '';
             };
 
+            llamaCpp = {
+              enable = mkEnableOption "bundling llama.cpp (llama-server) for Cookbook GGUF serving";
+              package = mkOption {
+                type = types.package;
+                default = pkgs.llama-cpp;
+                example = lib.literalExpression "pkgs.llama-cpp-rocm";
+                description = ''
+                  llama.cpp build providing `llama-server`, put on the service
+                  PATH so the Cookbook detects llama.cpp and the serve fallback
+                  has a real binary (no runtime cmake build). Override for a GPU
+                  backend, e.g. pkgs.llama-cpp-rocm, pkgs.llama-cpp-vulkan, or
+                  pkgs.llama-cpp.override { cudaSupport = true; }.
+                '';
+              };
+            };
+
             dataDir = mkOption {
               type = types.path;
               default = "/var/lib/odysseus";
@@ -619,7 +652,10 @@
                   # launchd daemons get a bare PATH, so the app's shutil.which
                   # probes (tmux, npx, git, …) would all read as missing. Put the
                   # service tools up front, then the standard system paths.
-                  PATH = "${pkgs.lib.makeBinPath (mkServiceTools pkgs)}:/usr/bin:/bin:/usr/sbin:/sbin";
+                  # llama-server is included only when llamaCpp is enabled.
+                  PATH = "${
+                    pkgs.lib.makeBinPath (mkServiceTools pkgs ++ lib.optional cfg.llamaCpp.enable cfg.llamaCpp.package)
+                  }:/usr/bin:/bin:/usr/sbin:/sbin";
                   # Connect to the bundled ChromaDB server (odysseus-chroma daemon).
                   CHROMADB_HOST = "127.0.0.1";
                   CHROMADB_PORT = toString cfg.chromaPort;
