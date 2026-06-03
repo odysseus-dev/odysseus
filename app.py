@@ -730,11 +730,22 @@ async def startup_event():
     # (showing up as a big `tool_selection` time). Doing it here makes the
     # first turn as fast as subsequent ones (warm embed ≈ a few ms).
     async def _warmup_tool_index():
+        # FAST-FAIL if remote embeddings are down. Local FastEmbed is known to
+        # hang/spin on Python 3.14 during bulk indexing at startup (M22).
+        try:
+            from src.embeddings import _http_embed_down as _hed
+            if _hed:
+                logger.info("[startup] Skipping tool-index warmup (remote embeddings unavailable)")
+                return
+        except Exception:
+            pass
+
         try:
             from src.tool_index import get_tool_index
             idx = await asyncio.to_thread(get_tool_index)
             if idx:
-                await asyncio.to_thread(idx.index_builtin_tools)
+                # get_tool_index already calls index_builtin_tools during init;
+                # don't double-call it here to save startup time / CPU.
                 await asyncio.to_thread(idx.get_tools_for_query, "warmup", 8)
                 logger.info("[startup] Tool index pre-warmed")
         except Exception as e:

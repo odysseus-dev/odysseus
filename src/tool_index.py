@@ -466,7 +466,15 @@ def get_tool_index() -> Optional[ToolIndex]:
 
     try:
         _tool_index = ToolIndex()
-        _tool_index.index_builtin_tools()
+        # Skip re-indexing on warm starts if the built-in tool registry
+        # hasn't changed. Saves a costly embed batch on every restart.
+        new_fp = hashlib.sha256(
+            ",".join(sorted(BUILTIN_TOOL_DESCRIPTIONS.keys())).encode()
+        ).hexdigest()
+        if getattr(_tool_index, "_fingerprint", "") != new_fp:
+            _tool_index.index_builtin_tools()
+        else:
+            logger.debug("ToolIndex registry unchanged; skipping re-index")
         return _tool_index
     except Exception as e:
         logger.warning(f"ToolIndex init failed (will retry in {_RETRY_INTERVAL}s): {e}")
