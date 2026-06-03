@@ -122,7 +122,7 @@ unless you opt in.
 
 **Cookbook storage in Docker.** Downloads live in `./data/huggingface`
 (`~/.cache/huggingface` in the container). Cookbook-installed Python CLIs and
-server engines live in `./data/local` (`~/.local` in the container), so they
+serve engines live in `./data/local` (`~/.local` in the container), so they
 survive container recreation.
 
 **Remote servers.** In **Cookbook -> Settings -> Servers**, generate the
@@ -215,7 +215,7 @@ docker compose exec odysseus sh -lc 'test -e /dev/kfd && test -d /dev/dri && ls 
 > the CUDA Toolkit at runtime. If Cookbook logs show `Unable to find cudart
 > library`, `Could NOT find CUDAToolkit`, `CUDA Toolkit not found`, or
 > tensors/layers assigned to CPU, that is a Cookbook/llama.cpp build issue —
-> not a Docker passthrough failure. Reinstall the server engine via
+> not a Docker passthrough failure. Reinstall the serve engine via
 > **Cookbook → Dependencies** to get a CUDA-enabled build.
 >
 > The same split applies to AMD/ROCm: seeing `/dev/kfd` and `/dev/dri` inside
