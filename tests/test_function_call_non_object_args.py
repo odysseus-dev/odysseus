@@ -35,3 +35,30 @@ def test_non_object_arguments_do_not_crash(arguments):
     assert block is not None
     assert block.tool_type == "bash"
     assert block.content == ""
+
+
+@pytest.mark.parametrize("name,key", [
+    ("edit_document", "edits"),
+    ("suggest_document", "suggestions"),
+])
+def test_non_dict_list_items_do_not_crash(name, key):
+    """edit_document/suggest_document iterate a list and call item.get(...) on
+    each entry. A model that emits a list of non-objects (e.g. ["bad", 42, null])
+    used to raise AttributeError ('str'/'int'/'NoneType' has no attribute 'get'),
+    aborting the agent stream. Non-dict items must be skipped instead."""
+    import json
+    block = function_call_to_tool_block(name, json.dumps({key: ["bad", 42, None]}))
+    assert block is not None
+    # Every item was non-dict and skipped -> no blocks emitted.
+    assert block.content == ""
+
+
+def test_edit_document_keeps_valid_items_and_skips_bad():
+    """A mix of malformed and valid edits keeps the valid ones."""
+    import json
+    block = function_call_to_tool_block(
+        "edit_document",
+        json.dumps({"edits": ["bad", {"find": "a", "replace": "b"}, None]}),
+    )
+    assert block is not None
+    assert block.content == "<<<FIND>>>\na\n<<<REPLACE>>>\nb\n<<<END>>>"
