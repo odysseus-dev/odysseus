@@ -166,6 +166,8 @@ def format_transcript_for_context(
     if segments:
         ctx += "Timestamped Transcript:\n"
         for seg in segments:
+            if not isinstance(seg, dict):
+                continue
             ctx += f"[{seg['timestamp']}] {seg['text']}\n"
         # Check length — fall back to plain text if too long
         if len(ctx) > 12000:
