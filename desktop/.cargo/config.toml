@@ -1,0 +1,5 @@
+# Cross-compilation: use LLD linker for x86_64-pc-windows-gnu target
+# (relevant when building on ARM64 Windows under x86_64 emulation)
+[target.x86_64-pc-windows-gnu]
+linker = "rust-lld"
+rustflags = ["-C", "link-self-contained=yes"]

@@ -1,0 +1,28 @@
+{
+  "productName": "Odysseus",
+  "version": "0.1.0",
+  "identifier": "com.odysseus.desktop",
+  "build": {
+    "frontendDist": "./frontend"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Odysseus",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "decorations": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:*; style-src 'self' 'unsafe-inline'; img-src 'self' data: http://127.0.0.1:*; font-src 'self' data:; media-src 'self' http://127.0.0.1:*;"
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}
