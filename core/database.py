@@ -318,6 +318,16 @@ class EmailAccount(TimestampMixin, Base):
 
     from_address   = Column(String, default="")
 
+    # OAuth2 (XOAUTH2) — alternative to imap_password / smtp_password. The
+    # client_secret and tokens are Fernet-encrypted via src/secret_storage.py.
+    auth_type           = Column(String, default="password")  # "password" | "oauth2"
+    oauth_provider      = Column(String, default="")          # "gmail" | "outlook"
+    oauth_client_id     = Column(String, default="")
+    oauth_client_secret = Column(String, default="")          # encrypted
+    oauth_refresh_token = Column(String, default="")          # encrypted
+    oauth_access_token  = Column(String, default="")          # encrypted
+    oauth_token_expiry  = Column(Integer, default=0)          # epoch seconds
+
     __table_args__ = (
         Index('ix_email_accounts_owner_default', 'owner', 'is_default'),
     )
@@ -1502,6 +1512,31 @@ def _migrate_seed_email_account():
 # Any future migrations or schema changes that temporarily violate foreign-key
 # constraints will fail. To perform such operations, foreign_keys must be
 # temporarily disabled around the migration workflow.
+def _migrate_add_email_oauth_columns():
+    """Add OAuth2 columns to email_accounts for existing databases."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(email_accounts)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "auth_type" not in columns:
+            conn.execute("ALTER TABLE email_accounts ADD COLUMN auth_type TEXT DEFAULT 'password'")
+            conn.execute("ALTER TABLE email_accounts ADD COLUMN oauth_provider TEXT DEFAULT ''")
+            conn.execute("ALTER TABLE email_accounts ADD COLUMN oauth_client_id TEXT DEFAULT ''")
+            conn.execute("ALTER TABLE email_accounts ADD COLUMN oauth_client_secret TEXT DEFAULT ''")
+            conn.execute("ALTER TABLE email_accounts ADD COLUMN oauth_refresh_token TEXT DEFAULT ''")
+            conn.execute("ALTER TABLE email_accounts ADD COLUMN oauth_access_token TEXT DEFAULT ''")
+            conn.execute("ALTER TABLE email_accounts ADD COLUMN oauth_token_expiry INTEGER DEFAULT 0")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added OAuth2 columns to email_accounts")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Migration check for email oauth columns failed: {e}")
+
+
 def init_db():
     """
     Initialize the database by creating all tables.
@@ -1521,6 +1556,7 @@ def init_db():
     _migrate_add_last_message_at_column()
     _migrate_add_folder_column()
     _migrate_add_token_columns()
+    _migrate_add_email_oauth_columns()
     _migrate_add_mode_column()
     _migrate_add_multiuser_owner_columns()
     _migrate_add_api_token_scopes_column()

@@ -89,3 +89,7 @@ docs/windows-port/
 compound.config.json
 *.error.log
 _scratch/
+
+# OAuth integration backups
+*.bak.pre-oauth-*
+data/

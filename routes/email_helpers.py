@@ -48,26 +48,75 @@ def _smtp_security_mode(cfg: dict) -> str:
     return "ssl"
 
 
+def _oauth_access_token(cfg: dict) -> str:
+    """Return a valid OAuth2 access token for cfg, refreshing + persisting near expiry."""
+    from src import email_oauth
+    token = cfg.get("oauth_access_token") or ""
+    if token and not email_oauth.is_expired(cfg.get("oauth_token_expiry")):
+        return token
+    fresh = email_oauth.refresh_access_token(
+        cfg.get("oauth_provider") or "",
+        cfg.get("oauth_client_id") or "",
+        cfg.get("oauth_client_secret") or "",
+        cfg.get("oauth_refresh_token") or "",
+    )
+    _persist_oauth_tokens(cfg.get("account_id"), fresh)
+    cfg["oauth_access_token"] = fresh["access_token"]
+    cfg["oauth_token_expiry"] = fresh["expires_at"]
+    return fresh["access_token"]
+
+
+def _persist_oauth_tokens(account_id, tokens) -> None:
+    """Write refreshed (encrypted) OAuth tokens back to the account row."""
+    if not account_id:
+        return
+    from core.database import SessionLocal as _SL, EmailAccount as _EA
+    from src.secret_storage import encrypt as _enc
+    db = _SL()
+    try:
+        row = db.query(_EA).filter(_EA.id == account_id).first()
+        if row is None:
+            return
+        row.oauth_access_token = _enc(tokens["access_token"])
+        row.oauth_token_expiry = int(tokens["expires_at"])
+        if tokens.get("refresh_token"):
+            row.oauth_refresh_token = _enc(tokens["refresh_token"])
+        db.commit()
+    except Exception as e:
+        logger.warning(f"failed to persist refreshed oauth tokens: {e}")
+    finally:
+        db.close()
+
+
+def _smtp_authenticate(smtp, cfg: dict) -> None:
+    """Authenticate an SMTP session via XOAUTH2 (oauth2) or password login."""
+    user = cfg.get("smtp_user") or ""
+    if (cfg.get("auth_type") or "password") == "oauth2" and user:
+        from src import email_oauth
+        access = _oauth_access_token(cfg)
+        smtp.auth("XOAUTH2", lambda: email_oauth.xoauth2_sasl(user, access))
+        return
+    password = cfg.get("smtp_password") or ""
+    if user and password:
+        smtp.login(user, password)
+
+
 def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message: str | bytes, timeout: int = 30) -> None:
     """Send through SMTP using the configured transport security mode."""
     host = cfg["smtp_host"]
     port = int(cfg.get("smtp_port") or 465)
-    user = cfg.get("smtp_user") or ""
-    password = cfg.get("smtp_password") or ""
     security = _smtp_security_mode(cfg)
 
     if security == "ssl":
         with smtplib.SMTP_SSL(host, port, timeout=timeout) as smtp:
-            if user and password:
-                smtp.login(user, password)
+            _smtp_authenticate(smtp, cfg)
             smtp.sendmail(from_addr, recipients, message)
         return
 
     with smtplib.SMTP(host, port, timeout=timeout) as smtp:
         if security == "starttls":
             smtp.starttls()
-        if user and password:
-            smtp.login(user, password)
+        _smtp_authenticate(smtp, cfg)
         smtp.sendmail(from_addr, recipients, message)
 
 
@@ -577,6 +626,13 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
                     "imap_password": _decrypt(row.imap_password or ""),
                     "imap_starttls": bool(row.imap_starttls),
                     "from_address": row.from_address or row.imap_user or "",
+                    "auth_type": getattr(row, "auth_type", "") or "password",
+                    "oauth_provider": getattr(row, "oauth_provider", "") or "",
+                    "oauth_client_id": getattr(row, "oauth_client_id", "") or "",
+                    "oauth_client_secret": _decrypt(getattr(row, "oauth_client_secret", "") or ""),
+                    "oauth_refresh_token": _decrypt(getattr(row, "oauth_refresh_token", "") or ""),
+                    "oauth_access_token": _decrypt(getattr(row, "oauth_access_token", "") or ""),
+                    "oauth_token_expiry": int(getattr(row, "oauth_token_expiry", 0) or 0),
                 }
                 if not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
                     logger.warning(f"SMTP not configured for account {row.name!r}")
@@ -607,6 +663,9 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
         "imap_password": settings.get("imap_password", os.environ.get("IMAP_PASSWORD", "")),
         "imap_starttls": settings.get("imap_starttls", True),
         "from_address": settings.get("email_from", os.environ.get("EMAIL_FROM", "")),
+        "auth_type": "password",
+        "oauth_provider": "", "oauth_client_id": "", "oauth_client_secret": "",
+        "oauth_refresh_token": "", "oauth_access_token": "", "oauth_token_expiry": 0,
     }
     if not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
         logger.warning("SMTP not configured — add an Email Account in Settings or set env vars")
@@ -683,7 +742,12 @@ def _imap_connect(account_id: str | None = None, owner: str = ""):
         starttls=bool(cfg.get("imap_starttls")),
         timeout=_IMAP_TIMEOUT_SECONDS,
     )
-    conn.login(cfg["imap_user"], cfg["imap_password"])
+    if (cfg.get("auth_type") or "password") == "oauth2":
+        from src import email_oauth
+        _access = _oauth_access_token(cfg)
+        conn.authenticate("XOAUTH2", lambda _c: email_oauth.xoauth2_sasl(cfg["imap_user"], _access).encode())
+    else:
+        conn.login(cfg["imap_user"], cfg["imap_password"])
     return conn
 
 
