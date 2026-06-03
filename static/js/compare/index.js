@@ -210,7 +210,7 @@ async function _buildCompareUI() {
     for (let i = 0; i < n; i++) {
       const m = state._selectedModels[i];
       const fd = new FormData();
-      fd.append('name', '[CMP] ' + modelShorts[i]);
+      fd.append('name', state._blindMode ? '[CMP] Model ' + _slotChar(i) : '[CMP] ' + modelShorts[i]);
       fd.append('endpoint_url', m.endpoint || '');
       fd.append('model', m.model || '');
       if (m.endpointId) {
