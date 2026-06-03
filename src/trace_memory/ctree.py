@@ -262,13 +262,8 @@ class CTree:
         # API key resolution
         if api_key:
             self.api_key = api_key
-        elif os.getenv("OPENAI_API_KEY"):
-            self.api_key = os.getenv("OPENAI_API_KEY")
         else:
-            raise ValueError(
-                "API key must be provided via api_key= or the "
-                "OPENAI_API_KEY environment variable."
-            )
+            self.api_key = os.getenv("OPENAI_API_KEY", "lm-studio")
 
         self.root: TopicNode = TopicNode(
             topic_name="ROOT",

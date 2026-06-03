@@ -8,7 +8,7 @@ Configure the LLM endpoint via environment variables:
     OPENAI_API_KEY   — defaults to "lm-studio"
 """
 
-import openai
+import httpx
 import time
 import os
 import json
@@ -45,8 +45,6 @@ def ChatGPT_API(
     base_url = os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1")
     api_key_to_use = api_key or os.getenv("OPENAI_API_KEY") or "lm-studio"
 
-    client = openai.OpenAI(api_key=api_key_to_use, base_url=base_url)
-
     for i in range(max_retries):
         try:
             if chat_history is not None:
@@ -55,13 +53,19 @@ def ChatGPT_API(
             else:
                 messages = [{"role": "user", "content": prompt}]
 
-            api_kwargs = {"model": model, "messages": messages, "temperature": temperature}
+            payload = {"model": model, "messages": messages, "temperature": temperature}
             if max_tokens is not None:
-                api_kwargs["max_tokens"] = max_tokens
+                payload["max_tokens"] = max_tokens
+                
+            headers = {"Authorization": f"Bearer {api_key_to_use}", "Content-Type": "application/json"}
+            url = base_url.rstrip("/") + "/chat/completions"
 
-            response = client.chat.completions.create(**api_kwargs)
-            content = response.choices[0].message.content
-            return content if content is not None else ""
+            with httpx.Client(timeout=60.0) as client:
+                response = client.post(url, json=payload, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+                content = data["choices"][0]["message"]["content"]
+                return content if content is not None else ""
         except Exception:
             if i < max_retries - 1:
                 time.sleep(1)
