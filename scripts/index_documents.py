@@ -11,13 +11,16 @@ Features:
 2. Scans personal_docs directory for .txt, .md, .json files
 3. Reads each file, chunks it (1000 chars with 200 overlap), and adds to vector database
 4. Shows progress during processing and final statistics
+5. Incremental Indexing: Tracks file state via MD5 hashes to skip unmodified files
 """
 
 import os
 import logging
 import sys
+import hashlib
+import json
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 # Configure logging for the script
 logging.basicConfig(
@@ -29,11 +32,136 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Fallback path configuration to ensure rag_manager can be imported
+sys.path.append(str(Path(__file__).parent))
+
+def get_file_hash(file_path: Path) -> str:
+    """Calculate MD5 hash of a file to detect changes."""
+    hasher = hashlib.md5()
+    try:
+        with open(file_path, 'rb') as f:
+            buf = f.read()
+            hasher.update(buf)
+        return hasher.hexdigest()
+    except Exception as e:
+        logger.error(f"Error calculating hash for {file_path}: {e}")
+        return ""
+
+def load_state_cache(cache_path: Path) -> Dict[str, str]:
+    """Load the previously indexed files cache."""
+    if cache_path.exists():
+        try:
+            with open(cache_path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Could not load state cache: {e}. Re-indexing all files.")
+    return {}
+
+def save_state_cache(cache_path: Path, cache: Dict[str, str]):
+    """Save the updated indexed files cache."""
+    try:
+        with open(cache_path, 'w') as f:
+            json.dump(cache, f, indent=4)
+    except Exception as e:
+        logger.error(f"Failed to save state cache: {e}")
+
+def chunk_text(text: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[str]:
+    """Split text into overlapping chunks."""
+    if not text:
+        return []
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end])
+        start += chunk_size - chunk_overlap
+    return chunks
+
 def main():
     """Main function to index documents from personal_docs directory."""
     
     # Import RAGManager
     try:
+        from rag_manager import RAGManager
+    except ImportError as e:
+        logger.error(f"Failed to import RAGManager. Ensure rag_manager.py is in the search path: {e}")
+        sys.exit(1)
+
+    # Configuration
+    docs_dir = Path("personal_docs")
+    cache_file = Path(".index_cache.json")
+    supported_extensions = {".txt", ".md", ".json"}
+    
+    if not docs_dir.exists():
+        logger.info(f"Directory '{docs_dir}' not found. Creating it now.")
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("Please place your documents in 'personal_docs' and rerun the script.")
+        return
+
+    # Initialize RAG Manager and Cache
+    rag = RAGManager()
+    state_cache = load_state_cache(cache_file)
+    new_cache = {}
+
+    # Scan for files
+    all_files = [p for p in docs_dir.rglob("*") if p.is_file() and p.suffix.lower() in supported_extensions]
+    
+    if not all_files:
+        logger.info("No supported documents found to index.")
+        return
+
+    logger.info(f"Found {len(all_files)} total files in '{docs_dir}'. Processing updates...")
+
+    stats = {"processed": 0, "skipped": 0, "chunks_added": 0, "errors": 0}
+
+    for idx, file_path in enumerate(all_files, 1):
+        current_hash = get_file_hash(file_path)
+        rel_path = str(file_path.relative_to(docs_dir))
+
+        # Check if file changed
+        if state_cache.get(rel_path) == current_hash:
+            stats["skipped"] += 1
+            new_cache[rel_path] = current_hash
+            continue
+
+        logger.info(f"[{idx}/{len(all_files)}] Indexing: {rel_path}")
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+
+            chunks = chunk_text(content)
+            
+            if chunks:
+                # Assuming RAGManager has an add_documents or add_chunks capability
+                # Adjust method signature based on your actual RAGManager implementation
+                metadata = {"source": rel_path}
+                rag.add_documents(chunks, metadatas=[metadata] * len(chunks))
+                stats["chunks_added"] += len(chunks)
+            
+            stats["processed"] += 1
+            new_cache[rel_path] = current_hash
+
+        except Exception as e:
+            logger.error(f"Error processing {rel_path}: {e}")
+            stats["errors"] += 1
+            # Retain old hash if it failed so it tries again next time
+            if rel_path in state_cache:
+                new_cache[rel_path] = state_cache[rel_path]
+
+    # Save progress state
+    save_state_cache(cache_file, new_cache)
+
+    # Final Summary Statistics
+    logger.info("\n" + "="*40 + "\n--- INDEXING REPORT ---\n" + "="*40)
+    logger.info(f"Files Skipped (Unchanged): {stats['skipped']}")
+    logger.info(f"Files Newly Indexed:      {stats['processed']}")
+    logger.info(f"Total Vector Chunks Added: {stats['chunks_added']}")
+    logger.info(f"Failed Files:              {stats['errors']}")
+    logger.info("="*40)
+
+if __name__ == "__main__":
+    main()
         from src.rag_manager import RAGManager
         logger.info("Successfully imported RAGManager")
     except ImportError as e:
