@@ -11,7 +11,7 @@ import subprocess
 from typing import Optional, Tuple, Dict
 from urllib.parse import urlparse, urlunparse
 
-from src.database import SessionLocal, ModelEndpoint
+from core.database import SessionLocal, ModelEndpoint
 from src.llm_core import _detect_provider, _host_match
 
 logger = logging.getLogger(__name__)
@@ -285,6 +285,8 @@ def resolve_endpoint(
         # If no (usable) model specified, pick the first enabled chat model.
         if not model:
             model = _first_chat_model(_endpoint_enabled_models(ep)) or ""
+        if not model and not fallback_model:
+            logger.warning('[resolve_endpoint] no usable model (all models hidden or list empty)')
 
         return chat_url, model or fallback_model, headers
     except Exception as e:

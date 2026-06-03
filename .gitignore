@@ -8,6 +8,7 @@ build/
 !static/js/editor/build/
 venv/
 .venv/
+uv.lock
 *.egg
 
 # Environment

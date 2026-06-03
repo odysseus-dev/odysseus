@@ -770,8 +770,8 @@ def setup_model_routes(model_discovery):
                 finally:
                     db.close()
                 _invalidate_models_cache()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning('Background endpoint refresh failed: %s', e)
             finally:
                 _refresh_inflight["v"] = False
         threading.Thread(target=_do, daemon=True).start()
@@ -877,8 +877,9 @@ def setup_model_routes(model_discovery):
                 raise HTTPException(401, "Not authenticated")
         except HTTPException:
             raise
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error('Auth gate error in GET /api/models, failing closed: %s', e)
+            raise HTTPException(status_code=500, detail='Internal error')
         # Admins see every endpoint (they manage the global pool); regular
         # users get the owner-scoped view.
         _is_admin = False
@@ -1492,10 +1493,12 @@ def setup_model_routes(model_discovery):
             if "pinned_models" in body or "pinned" in body:
                 pinned = _normalize_model_ids(body.get("pinned_models", body.get("pinned")))
                 ep.pinned_models = json.dumps(pinned) if pinned else None
+            _hidden_json = ep.hidden_models
+            _pinned_json = ep.pinned_models
             db.commit()
             _invalidate_models_cache()
-            hidden_count = len(json.loads(ep.hidden_models)) if ep.hidden_models else 0
-            pinned_count = len(json.loads(ep.pinned_models)) if ep.pinned_models else 0
+            hidden_count = len(json.loads(_hidden_json)) if _hidden_json else 0
+            pinned_count = len(json.loads(_pinned_json)) if _pinned_json else 0
             return {"id": ep_id, "hidden_count": hidden_count, "pinned_count": pinned_count}
         finally:
             db.close()
@@ -1625,9 +1628,10 @@ def setup_model_routes(model_discovery):
             if body:
                 if "supports_tools" in body:
                     v = body["supports_tools"]
-                    ep.supports_tools = bool(v) if v in (True, False, "true", "false", 1, 0) else None
+                    ep.supports_tools = {True: True, False: False, 'true': True, 'false': False, 1: True, 0: False}.get(v)
                 if "is_enabled" in body:
-                    ep.is_enabled = bool(body["is_enabled"])
+                    v_ie = body['is_enabled']
+                    ep.is_enabled = v_ie.lower() in ('true', '1', 'yes') if isinstance(v_ie, str) else bool(v_ie)
                 if "name" in body and isinstance(body["name"], str):
                     ep.name = body["name"].strip() or ep.name
                 if "model_type" in body and isinstance(body["model_type"], str):

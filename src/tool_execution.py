@@ -50,6 +50,10 @@ _SENSITIVE_BASENAMES: set[str] = {
 _SENSITIVE_FILE_PATTERNS: tuple[str, ...] = (
     "authorized_keys", "id_rsa", "id_ed25519", "id_ecdsa",
     "known_hosts",
+    # Odysseus secrets — always block even though they live inside DATA_DIR.
+    # auth.json: bcrypt hashes + usernames. .app_key: Fernet master key.
+    # sessions.json: live session tokens. These three together = full compromise.
+    "auth.json", "sessions.json", ".app_key",
 )
 
 
@@ -139,7 +143,11 @@ def _resolve_tool_path(raw_path: str) -> str:
     expanded = os.path.expanduser(str(raw_path).strip())
     resolved = os.path.realpath(expanded)
 
-    if _is_sensitive_path(resolved):
+    # Check both the pre-symlink path and the resolved path. On NixOS,
+    # home-manager symlinks (e.g. ~/.ssh/config → /nix/store/…) resolve to
+    # a store path that strips .ssh from the components, so checking only
+    # the resolved path would miss the deny-list entry.
+    if _is_sensitive_path(expanded) or _is_sensitive_path(resolved):
         raise ValueError(
             f"path '{raw_path}' is inside a sensitive directory "
             f"(e.g. .ssh, .gnupg) or matches a sensitive filename"
