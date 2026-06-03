@@ -71,7 +71,13 @@ jobs:
           uv venv --python 3.12
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - run: uv pip install --require-hashes -r requirements.lock # T-05-02
-      - run: uv pip install pytest-cov
+      # pytest + asyncio plugin (asyncio_mode=auto REQUIRES pytest-asyncio) + cov,
+      # pinned to the versions resolved in requirements-dev.lock.
+      - run: uv pip install pytest==9.0.3 pytest-asyncio==1.4.0 pytest-cov==7.1.0
+      # The suite imports core.database, which opens sqlite:///./data/app.db against
+      # a real (non-stubbed) SQLAlchemy. A clean CI checkout has no data/ dir (it is
+      # gitignored), so create it — mirrors setup.py's first-run provisioning.
+      - run: mkdir -p data
       - run: pytest # asyncio_mode=auto already configured in pyproject.toml
 
   bandit:
@@ -111,5 +117,6 @@ jobs:
           uv venv --python 3.12
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - run: uv pip install --require-hashes -r requirements.lock # T-05-02
-      - run: uv pip install ruff==0.15.15 mypy==2.1.0 bandit==1.9.4 pytest-cov
+      - run: uv pip install ruff==0.15.15 mypy==2.1.0 bandit==1.9.4 pytest==9.0.3 pytest-asyncio==1.4.0 pytest-cov==7.1.0
+      - run: mkdir -p data # scorecard.py shells `pytest --cov`, which imports core.database (see pytest job)
       - run: python scripts/scorecard.py --check # ratchet: nonzero exit on any regression (D-11)
