@@ -552,6 +552,10 @@ export function autoResize(textarea) {
   clone.style.width = textarea.offsetWidth + 'px';
   clone.value = textarea.value;
   clone.style.height = '0';
+  // Reset the manual-drag floor when the field is empty (e.g. after
+  // sending a message) so the textarea shrinks back to its default
+  // height instead of staying stuck at the size of the last message.
+  if (!textarea.value) textarea._manualResizeHeight = 0;
   const manualHeight = textarea._manualResizeHeight || 0;
   const maxHeight = Math.max(autoMaxHeight, manualHeight);
   const newHeight = Math.min(Math.max(clone.scrollHeight, lineHeight, manualHeight), maxHeight);
