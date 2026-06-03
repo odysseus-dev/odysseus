@@ -517,7 +517,7 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
         return {"error": str(e)}
 
 
-async def do_send_to_session(content: str, session_id: Optional[str] = None) -> Dict:
+async def do_send_to_session(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """Send a message to an existing session and get a response.
 
     Content format:
@@ -539,6 +539,10 @@ async def do_send_to_session(content: str, session_id: Optional[str] = None) -> 
 
     sess = _session_manager.get_session(target_sid)
     if not sess:
+        return {"error": f"Session '{target_sid}' not found"}
+
+    # Owner-scope: reject access to another user's session
+    if owner and getattr(sess, "owner", None) and sess.owner != owner:
         return {"error": f"Session '{target_sid}' not found"}
 
     if not message:
@@ -1769,7 +1773,7 @@ async def dispatch_ai_tool(
     elif tool == "send_to_session":
         sid = content.split("\n")[0].strip()[:20]
         desc = f"send_to_session: {sid}"
-        result = await do_send_to_session(content, session_id)
+        result = await do_send_to_session(content, session_id, owner=owner)
 
     elif tool == "pipeline":
         desc = "pipeline: running steps"
