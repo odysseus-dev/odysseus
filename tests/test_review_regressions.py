@@ -257,6 +257,54 @@ def test_preset_manager_persists_inject_fields(tmp_path):
     assert reloaded.presets["custom"]["inject_suffix"] == "SUFFIX"
 
 
+def test_preset_manager_save_preserves_existing_file_if_replace_fails(tmp_path, monkeypatch):
+    manager = PresetManager(str(tmp_path))
+    presets_file = tmp_path / "presets.json"
+    before = presets_file.read_text(encoding="utf-8")
+
+    import src.preset_manager as preset_manager
+
+    def fail_replace(src, dst):
+        assert str(dst) == str(presets_file)
+        raise OSError("simulated crash before replace")
+
+    monkeypatch.setattr(preset_manager._atomic_io.os, "replace", fail_replace)
+
+    ok = manager.save({
+        **manager.presets,
+        "custom": {
+            **manager.presets["custom"],
+            "enabled": True,
+            "system_prompt": "unsaved",
+        },
+    })
+
+    assert ok is False
+    assert presets_file.read_text(encoding="utf-8") == before
+    assert json.loads(presets_file.read_text(encoding="utf-8")) == json.loads(before)
+    assert manager.presets["custom"]["enabled"] is False
+    assert manager.presets["custom"]["system_prompt"] == ""
+
+
+def test_preset_manager_update_custom_keeps_memory_state_on_save_failure(tmp_path, monkeypatch):
+    manager = PresetManager(str(tmp_path))
+    before = json.loads((tmp_path / "presets.json").read_text(encoding="utf-8"))
+
+    monkeypatch.setattr("src.preset_manager.atomic_write_json", MagicMock(side_effect=OSError("disk full")))
+
+    ok = manager.update_custom(
+        temperature=0.7,
+        max_tokens=2048,
+        system_prompt="not saved",
+        name="Custom",
+        enabled=True,
+    )
+
+    assert ok is False
+    assert manager.presets == before
+    assert json.loads((tmp_path / "presets.json").read_text(encoding="utf-8")) == before
+
+
 def test_preset_manager_default_custom_preset_starts_disabled(tmp_path):
     manager = PresetManager(str(tmp_path))
 

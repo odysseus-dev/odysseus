@@ -1,9 +1,18 @@
 import os
 import json
 import logging
+import importlib.util
+from pathlib import Path
 from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
+
+_ATOMIC_IO_PATH = Path(__file__).resolve().parents[1] / "core" / "atomic_io.py"
+_atomic_io_spec = importlib.util.spec_from_file_location("_odysseus_atomic_io", _ATOMIC_IO_PATH)
+_atomic_io = importlib.util.module_from_spec(_atomic_io_spec)
+_atomic_io_spec.loader.exec_module(_atomic_io)
+atomic_write_json = _atomic_io.atomic_write_json
+
 
 class PresetManager:
     DEFAULT_PRESETS = {
@@ -113,11 +122,9 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
             return self.DEFAULT_PRESETS.copy()
     
     def save(self, presets: Dict[str, Any]) -> bool:
-        """Save presets to file"""
+        """Save presets to file atomically."""
         try:
-            os.makedirs(os.path.dirname(self.presets_file), exist_ok=True)
-            with open(self.presets_file, 'w', encoding="utf-8") as f:
-                json.dump(presets, f, indent=2)
+            atomic_write_json(self.presets_file, presets, indent=2)
             self.presets = presets
             return True
         except Exception as e:
@@ -139,17 +146,20 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
         inject_suffix: str = "",
     ) -> bool:
         """Update the custom preset"""
-        self.presets["custom"] = {
-            "name": name or "Custom",
-            "character_name": name,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "system_prompt": system_prompt,
-            "inject_prefix": inject_prefix,
-            "inject_suffix": inject_suffix,
-            "enabled": enabled,
+        presets = {
+            **self.presets,
+            "custom": {
+                "name": name or "Custom",
+                "character_name": name,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "system_prompt": system_prompt,
+                "inject_prefix": inject_prefix,
+                "inject_suffix": inject_suffix,
+                "enabled": enabled,
+            },
         }
-        return self.save(self.presets)
+        return self.save(presets)
     
     def get_all(self) -> Dict[str, Any]:
         """Get all presets"""
@@ -161,21 +171,20 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
 
     def save_user_template(self, template: dict) -> bool:
         """Save a new user template or update existing by id."""
-        templates = self.presets.get("user_templates", [])
+        templates = list(self.presets.get("user_templates", []))
         # Update existing if same id
         existing = next((i for i, t in enumerate(templates) if t.get("id") == template.get("id")), None)
         if existing is not None:
             templates[existing] = template
         else:
             templates.append(template)
-        self.presets["user_templates"] = templates
-        return self.save(self.presets)
+        return self.save({**self.presets, "user_templates": templates})
 
     def delete_user_template(self, template_id: str) -> bool:
         """Delete a user template by id."""
         templates = self.presets.get("user_templates", [])
-        self.presets["user_templates"] = [t for t in templates if t.get("id") != template_id]
-        return self.save(self.presets)
+        updated_templates = [t for t in templates if t.get("id") != template_id]
+        return self.save({**self.presets, "user_templates": updated_templates})
 
     def get_group_presets(self) -> list:
         """Get saved group chat presets."""
@@ -183,5 +192,4 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
 
     def save_group_presets(self, groups: list) -> bool:
         """Save group chat presets."""
-        self.presets["group_presets"] = groups
-        return self.save(self.presets)
+        return self.save({**self.presets, "group_presets": groups})
