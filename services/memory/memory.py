@@ -60,7 +60,7 @@ class MemoryManager:
                     # Look for bullet points or numbered lists that might contain memories
                     if re.match(r'^[-*•]|\d+\.', line):
                         # Extract the text after the bullet/number
-                        text_match = re.match(r'^[-*•]|\d+\.\s*(.*)', line)
+                        text_match = re.match(r'^(?:[-*•]|\d+\.)\s*(.*)', line)
                         if text_match:
                             text = text_match.group(1).strip()
                             if text:
