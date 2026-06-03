@@ -208,6 +208,18 @@ async def _is_npx_package_cached(npx_path, package_spec, timeout_s=5):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+    except NotImplementedError:
+        # Windows + Python 3.14: ProactorEventLoop required for subprocesses but
+        # uvicorn --reload spawns workers that may use SelectorEventLoop.
+        import subprocess as _sp
+        try:
+            r = _sp.run(
+                [npx_path, "--no-install", package_spec, "--version"],
+                stdout=_sp.PIPE, stderr=_sp.PIPE, timeout=timeout_s,
+            )
+            return r.returncode == 0 and bool(r.stdout.strip())
+        except Exception:
+            return False
     except (OSError, ValueError):
         return False
     try:
