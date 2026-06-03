@@ -61,7 +61,7 @@ CONTEXT_TARGET = {
 
 
 def _lookup_bandwidth(gpu_name):
-    if not gpu_name:
+    if not isinstance(gpu_name, str) or not gpu_name:
         return None
     gn = gpu_name.lower()
     for key in _BW_KEYS_SORTED:
