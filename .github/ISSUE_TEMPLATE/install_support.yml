@@ -1,0 +1,55 @@
+name: Installation / Setup help
+description: I can't get it running (fresh install, Docker, Windows, macOS, etc.)
+labels: ["support", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Most issues right now are fresh install problems.** Please use this template.
+
+        Before posting, try these:
+        - Check the [README](https://github.com/pewdiepie-archdaemon/odysseus#readme) Quick Start
+        - Look at existing open issues (many common problems are already reported)
+        - Try the Docker route first if possible
+
+  - type: dropdown
+    id: method
+    attributes:
+      label: How are you trying to run it?
+      options:
+        - Docker Compose (recommended)
+        - Manual install (Linux)
+        - Manual install (macOS)
+        - Manual install (Windows)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-failed
+    attributes:
+      label: What exactly went wrong?
+      description: Paste the actual error message or describe where it got stuck.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-tried
+    attributes:
+      label: What have you already tried?
+      placeholder: "I tried X, Y, and Z..."
+
+  - type: input
+    id: os
+    attributes:
+      label: Your OS + version
+      placeholder: "macOS 15.4, Windows 11, Ubuntu 24.04, etc."
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before opening
+      options:
+        - label: I read the README quick start section
+        - label: I checked if this error is already reported in open issues
+        - label: I am okay with this being treated as lower priority than code bugs (this is a support request)

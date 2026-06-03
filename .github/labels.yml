@@ -1,0 +1,54 @@
+# Suggested labels for Odysseus
+# You can import these with a tool like `github-label-sync` or create them manually.
+
+- name: bug
+  color: d73a4a
+  description: Something isn't working
+
+- name: support
+  color: 0e8a16
+  description: Installation, setup, or usage help request
+
+- name: enhancement
+  color: a2eeef
+  description: New feature or request
+
+- name: documentation
+  color: 0075ca
+  description: Improvements or additions to documentation
+
+- name: windows
+  color: 5319e7
+  description: Windows-specific issue
+
+- name: macos
+  color: 5319e7
+  description: macOS-specific issue
+
+- name: docker
+  color: 1d76db
+  description: Docker / compose related
+
+- name: good first issue
+  color: 7057ff
+  description: Good for newcomers
+
+- name: needs-triage
+  color: fef2c0
+  description: Needs maintainer to categorize
+
+- name: duplicate
+  color: cfd3d7
+  description: This issue or pull request already exists
+
+- name: wontfix
+  color: ffffff
+  description: This will not be worked on
+
+- name: help wanted
+  color: 008672
+  description: Extra attention is needed
+
+- name: security
+  color: b60205
+  description: Security-related issue or PR
