@@ -45,7 +45,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-03-PLAN.md — mypy lenient inverted-strictness config to zero errors + coverage/bandit config skeletons (TOOL-02)
+- [x] 01-03-PLAN.md — mypy lenient inverted-strictness config to zero errors + coverage/bandit config skeletons (TOOL-02)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 

@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-02-PLAN.md
-last_updated: "2026-06-03T17:55:30.000Z"
-last_activity: 2026-06-03 -- Completed Plan 01-02 (ruff lint+format zero baseline)
+stopped_at: Completed 01-03-PLAN.md
+last_updated: "2026-06-03T18:05:00.000Z"
+last_activity: 2026-06-03 -- Completed Plan 01-03 (mypy lenient zero baseline + coverage/bandit skeletons)
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 5
-  completed_plans: 2
-  percent: 40
+  completed_plans: 3
+  percent: 60
 ---
 
 # Project State
@@ -26,29 +26,29 @@ See: .planning/PROJECT.md (updated 2026-06-03)
 ## Current Position
 
 Phase: 01 (tooling-foundation-baseline-scorecard) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Executing Phase 01
-Last activity: 2026-06-03 -- Completed Plan 01-02 (ruff lint+format zero baseline)
+Last activity: 2026-06-03 -- Completed Plan 01-03 (mypy lenient zero baseline + coverage/bandit skeletons)
 
-Progress: [████░░░░░░] 40%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 2
-- Average duration: 12 min
-- Total execution time: 0.4 hours
+- Total plans completed: 3
+- Average duration: 10 min
+- Total execution time: 0.5 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01 | 2 | 24 min | 12 min |
+| 01 | 3 | 29 min | 10 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 01-01 (5 min), 01-02 (19 min)
+- Last 5 plans: 01-01 (5 min), 01-02 (19 min), 01-03 (5 min)
 - Trend: -
 
 *Updated after each plan completion*
@@ -70,6 +70,9 @@ Recent decisions affecting current work:
 - Plan 01-02: ruff zero baseline reached via top-level `ignore` for documented-idiom conflicts (E402 lazy imports, B904 degrade-gracefully, E712/E711 SQLAlchemy ==/IS NULL, B008 FastAPI Form/Depends) + per-file-ignores for ~27 files — NOT a select-family change; no `--unsafe-fixes`
 - Plan 01-02: ruff F401 deletes load-bearing re-exports (`src/database.py` shim, no `__all__`) and side-effect imports (`import src.agent_tools` priming a circular-import in tests) — both suppressed via per-file-ignores to preserve behavior
 - Plan 01-02: Behavior contract MUST run in `python:3.12-slim` + locked deps; local Py3.14 env lacks runtime deps (58 collection errors). Purge `__pycache__` before each container pytest on a bind mount (stale .pyc poisons import-order bisection)
+- Plan 01-03: mypy 2.1.0 reaches a zero-error day-1 baseline via `disable_error_code` for SQLAlchemy `Column[T]` + FastAPI `Form`/`UploadFile|str` idiom categories (config-level idiom suppression, mirrors the Plan 01-02 ruff approach) — NOT global `strict`, NOT source edits
+- Plan 01-03: mypy needs `explicit_package_bases=true` + `mypy_path="."` + `namespace_packages=true` because `src/` has no `__init__.py` — otherwise mypy maps `src/*.py` to both bare and `src.`-prefixed module names ("found twice") and aborts
+- Plan 01-03: `warn_unused_ignores` NOT enabled at baseline — conflicts with the pervasive `name = None  # type: ignore` optional-import guard idiom; deferred to Phase 3 (RATCHET-03-A). Per-module strictness tightening also Phase 3 (RATCHET-03-B)
 
 ### Pending Todos
 
@@ -92,6 +95,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-03T17:55:30.000Z
-Stopped at: Completed 01-02-PLAN.md (ruff lint+format zero baseline)
+Last session: 2026-06-03T18:05:00.000Z
+Stopped at: Completed 01-03-PLAN.md (mypy lenient zero baseline + coverage/bandit skeletons)
 Resume file: None

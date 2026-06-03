@@ -98,7 +98,7 @@
 | BASE-01 | Phase 1 | Pending |
 | BASE-02 | Phase 1 | Pending |
 | TOOL-01 | Phase 1 | Complete (01-02) |
-| TOOL-02 | Phase 1 | Pending |
+| TOOL-02 | Phase 1 | Complete (01-03) |
 | TOOL-03 | Phase 1 | Complete (01-01) |
 | TOOL-04 | Phase 1 | Pending |
 | TOOL-05 | Phase 3 | Pending |
