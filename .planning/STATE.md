@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-06-03T17:32:00.000Z"
-last_activity: 2026-06-03 -- Completed Plan 01-01 (dependency lockfiles)
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-06-03T17:55:30.000Z"
+last_activity: 2026-06-03 -- Completed Plan 01-02 (ruff lint+format zero baseline)
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 5
-  completed_plans: 1
-  percent: 20
+  completed_plans: 2
+  percent: 40
 ---
 
 # Project State
@@ -26,29 +26,29 @@ See: .planning/PROJECT.md (updated 2026-06-03)
 ## Current Position
 
 Phase: 01 (tooling-foundation-baseline-scorecard) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Executing Phase 01
-Last activity: 2026-06-03 -- Completed Plan 01-01 (dependency lockfiles)
+Last activity: 2026-06-03 -- Completed Plan 01-02 (ruff lint+format zero baseline)
 
-Progress: [██░░░░░░░░] 20%
+Progress: [████░░░░░░] 40%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 1
-- Average duration: 5 min
-- Total execution time: 0.1 hours
+- Total plans completed: 2
+- Average duration: 12 min
+- Total execution time: 0.4 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01 | 1 | 5 min | 5 min |
+| 01 | 2 | 24 min | 12 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 01-01 (5 min)
+- Last 5 plans: 01-01 (5 min), 01-02 (19 min)
 - Trend: -
 
 *Updated after each plan completion*
@@ -67,6 +67,9 @@ Recent decisions affecting current work:
 - Plan 01-01: Unified core lock — D-06 ML-fallback NOT needed; chromadb-client/fastembed/onnxruntime/numpy resolved together via `uv pip compile --generate-hashes` in python:3.12-slim
 - Plan 01-01: No `[tool.coverage.run] concurrency` needed for Plan 04 — coverage suite stable, no async-cov flakiness (Pitfall 11 cleared)
 - Plan 01-01: Local re-compile on SELinux-enforcing podman hosts requires the `:z` volume relabel flag on the Docker bind mount
+- Plan 01-02: ruff zero baseline reached via top-level `ignore` for documented-idiom conflicts (E402 lazy imports, B904 degrade-gracefully, E712/E711 SQLAlchemy ==/IS NULL, B008 FastAPI Form/Depends) + per-file-ignores for ~27 files — NOT a select-family change; no `--unsafe-fixes`
+- Plan 01-02: ruff F401 deletes load-bearing re-exports (`src/database.py` shim, no `__all__`) and side-effect imports (`import src.agent_tools` priming a circular-import in tests) — both suppressed via per-file-ignores to preserve behavior
+- Plan 01-02: Behavior contract MUST run in `python:3.12-slim` + locked deps; local Py3.14 env lacks runtime deps (58 collection errors). Purge `__pycache__` before each container pytest on a bind mount (stale .pyc poisons import-order bisection)
 
 ### Pending Todos
 
@@ -89,6 +92,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-03T16:48:42.888Z
-Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-tooling-foundation-baseline-scorecard/01-CONTEXT.md
+Last session: 2026-06-03T17:55:30.000Z
+Stopped at: Completed 01-02-PLAN.md (ruff lint+format zero baseline)
+Resume file: None

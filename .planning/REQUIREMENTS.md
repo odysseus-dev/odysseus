@@ -19,7 +19,7 @@
 
 ### Tooling & CI Gates (TOOL)
 
-- [ ] **TOOL-01**: `ruff` lint + `ruff format` adopted with config in `pyproject.toml`; repo reaches a clean baseline (auto-fixes applied as standalone commits)
+- [x] **TOOL-01**: `ruff` lint + `ruff format` adopted with config in `pyproject.toml`; repo reaches a clean baseline (auto-fixes applied as standalone commits)
 - [ ] **TOOL-02**: `mypy` adopted with gradual/inverted strictness (passes in CI from day 1; god-files relaxed via `[[tool.mypy.overrides]]`; `mcp.*` etc. set `ignore_missing_imports`)
 - [x] **TOOL-03**: Dependencies pinned via a committed lockfile (`uv pip compile` or `pip-tools` from a `requirements.in`); CI installs from the lockfile
 - [ ] **TOOL-04**: CI pipeline gates every PR on ruff lint, ruff format check, mypy (no regressions), pytest, `bandit`, and `pip-audit`
@@ -97,7 +97,7 @@
 |--------|-------|--------|
 | BASE-01 | Phase 1 | Pending |
 | BASE-02 | Phase 1 | Pending |
-| TOOL-01 | Phase 1 | Pending |
+| TOOL-01 | Phase 1 | Complete (01-02) |
 | TOOL-02 | Phase 1 | Pending |
 | TOOL-03 | Phase 1 | Complete (01-01) |
 | TOOL-04 | Phase 1 | Pending |

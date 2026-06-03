@@ -41,7 +41,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-02-PLAN.md — ruff adoption to a zero-finding baseline via the D-18 atomic config→fix→format sequence + .git-blame-ignore-revs (TOOL-01)
+- [x] 01-02-PLAN.md — ruff adoption to a zero-finding baseline via the D-18 atomic config→fix→format sequence + .git-blame-ignore-revs (TOOL-01)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -120,7 +120,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Tooling Foundation & Baseline Scorecard | 0/5 | Not started | - |
+| 1. Tooling Foundation & Baseline Scorecard | 2/5 | In progress | - |
 | 2. Safety Baseline — Coverage & SQLite Hardening | 0/TBD | Not started | - |
 | 3. Backend God-File Decomposition | 0/TBD | Not started | - |
 | 4. Frontend Splits, DI Hardening & Data Layer | 0/TBD | Not started | - |
