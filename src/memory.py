@@ -135,6 +135,8 @@ class MemoryManager:
         """Ensure all entries have required fields."""
         validated = []
         for entry in entries:
+            if not isinstance(entry, dict):
+                continue
             if "id" not in entry:
                 entry["id"] = str(uuid.uuid4())
             if "timestamp" not in entry:
