@@ -91,6 +91,7 @@
     "noModelsMatch": "No models match \"{{query}}\"",
     "noModelsFound": "No models found",
     "noModelsAvailable": "No models available",
+    "noModelsConnected": "No models connected",
     "openAdmin": "Open Admin to add endpoints",
     "setupHint": "Type /setup for Local models or API setup.",
     "askAdmin": "Ask an admin to configure model endpoints",

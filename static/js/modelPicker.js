@@ -19,6 +19,10 @@ const RECENT_MAX = 5;
 // behind search would be a regression — keep listing them in browse mode.
 const BROWSE_ALL_LIMIT = 12;
 
+function tr(key, params) {
+  return window.i18n ? window.i18n.t(key, params) : key;
+}
+
 function _loadList(key) {
   try {
     const a = JSON.parse(localStorage.getItem(key) || '[]');
@@ -265,7 +269,7 @@ function _initModelPickerDropdown() {
     listEl.classList.toggle('is-empty', !hasAnyModel);
     menu.classList.toggle('no-models', !hasAnyModel);
     if (search) {
-      search.placeholder = hasAnyModel ? 'Search models…' : 'No models connected';
+      search.placeholder = hasAnyModel ? tr('chat.searchModels') : tr('models.noModelsConnected');
     }
     if (searchRow) {
       searchRow.classList.toggle('searching', !!q);
@@ -685,7 +689,7 @@ export function updateModelPicker() {
     }
   }
 
-  const displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  const displayName = modelId ? modelId.split('/').pop() : (window.i18n ? window.i18n.t('chat.selectModel') : 'Select model');
   const logo = modelId ? providerLogo(modelId) : null;
   if (logo) {
     label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ' + displayName;

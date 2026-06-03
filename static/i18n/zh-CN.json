@@ -91,6 +91,7 @@
     "noModelsMatch": "没有匹配 \"{{query}}\" 的模型",
     "noModelsFound": "未找到模型",
     "noModelsAvailable": "暂无可用模型",
+    "noModelsConnected": "未连接模型",
     "openAdmin": "打开管理员面板添加端点",
     "setupHint": "输入 /setup 配置本地模型或 API。",
     "askAdmin": "请管理员配置模型端点",

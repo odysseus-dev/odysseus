@@ -47,6 +47,8 @@ def test_settings_navigation_and_dynamic_shell_writers_are_localized():
     html = _read("static/index.html")
     models_js = _read("static/js/models.js")
     sessions_js = _read("static/js/sessions.js")
+    app_js = _read("static/app.js")
+    model_picker_js = _read("static/js/modelPicker.js")
 
     assert 'data-i18n="settings.tabs.addModels"' in html
     assert 'data-i18n="settings.tabs.appearance"' in html
@@ -57,3 +59,6 @@ def test_settings_navigation_and_dynamic_shell_writers_are_localized():
     assert "function tr(key, params)" in sessions_js
     assert "tr('chat.subtitle')" in sessions_js
     assert "tr('chat.newChat')" in sessions_js
+    assert "window.i18n.t('chat.placeholder')" in app_js
+    assert "window.i18n.t('chat.endpointHint')" in app_js
+    assert "window.i18n.t('chat.selectModel')" in model_picker_js
