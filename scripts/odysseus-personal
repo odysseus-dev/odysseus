@@ -43,7 +43,9 @@ def _manager() -> PersonalDocsManager:
 
 
 def _file_rows(files):
-    return [f for f in files or [] if isinstance(f, dict)]
+    if not isinstance(files, (list, tuple)):
+        files = []
+    return [f for f in files if isinstance(f, dict)]
 
 
 def cmd_list(args):
