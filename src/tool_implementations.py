@@ -2671,10 +2671,10 @@ async def _cookbook_register_task(session_id: str, model: str, host: str,
 # when the agent is admin-context — accidental "delete account"
 # style mistakes have permanent blast radius.
 _APP_API_BLOCKLIST_PREFIXES = (
-    "/api/auth/",          # login/logout/password
-    "/api/users/",         # user CRUD
-    "/api/tokens/",        # api token mgmt
-    "/api/admin/",         # admin one-shots (wipe etc.)
+    "/api/auth",           # login/logout/password
+    "/api/users",          # user CRUD (bare /api/users list+create+delete must also block)
+    "/api/tokens",         # api token mgmt (bare /api/tokens list+create must also block)
+    "/api/admin",          # admin one-shots (wipe etc.)
     "/api/backup/restore", # destructive restore
 )
 
