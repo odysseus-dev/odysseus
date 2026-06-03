@@ -134,10 +134,12 @@ def retrieve_personal_keyword(personal_index: List[Dict], query: str, k: int = 5
 
     scored = []
     for f in personal_index:
-        for idx, ch in enumerate(f["chunks"]):
+        if not isinstance(f, dict):
+            continue
+        for idx, ch in enumerate(f.get("chunks") or []):
             score = len(q & tokenize(ch))
             if score > 0:
-                scored.append((score, f["name"], idx, ch))
+                scored.append((score, f.get("name", ""), idx, ch))
     scored.sort(key=lambda x: x[0], reverse=True)
 
     out = []
