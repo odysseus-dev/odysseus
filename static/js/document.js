@@ -9196,6 +9196,23 @@ import * as Modals from './modalManager.js';
     return oldId;
   }
 
+  function _isMarkdownPreviewVisible() {
+    const preview = document.getElementById('doc-md-preview');
+    return !!(preview && preview.style.display !== 'none');
+  }
+
+  function _refreshMarkdownPreviewIfVisible(docId, content) {
+    if (!_isMarkdownPreviewVisible()) return false;
+    const doc = docs.get(docId);
+    const lang = ((doc && doc.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
+    if (lang !== 'markdown') return false;
+    const textarea = document.getElementById('doc-editor-textarea');
+    if (textarea) textarea.value = content;
+    syncHighlighting();
+    _setMarkdownPreviewActive(true, { remember: false });
+    return true;
+  }
+
   /** Handle SSE doc_update event from AI */
   export function handleDocUpdate(data) {
     const streamingId = streamDocFinalize();
@@ -9305,6 +9322,7 @@ import * as Modals from './modalManager.js';
     if (docLang && langSelect) langSelect.value = docLang;
     if (!docLang) attemptAutoDetect();
     const isEmailUpdate = (docLang || '').toLowerCase() === 'email';
+    const markdownPreviewWasVisible = _isMarkdownPreviewVisible();
 
     // Animate content update for edits; apply directly for creates/streaming
     const isEdit = !isEmailUpdate && isExistingDoc && oldContent && oldContent !== newContent && !streamingId;
@@ -9318,7 +9336,10 @@ import * as Modals from './modalManager.js';
         if (oldLines[li] !== newLines[li]) changedLines++;
       }
       if (changedLines >= DIFF_MODE_THRESHOLD) {
+        if (markdownPreviewWasVisible) _setMarkdownPreviewActive(false, { remember: false });
         enterDiffMode(oldContent, newContent);
+      } else if (markdownPreviewWasVisible && _refreshMarkdownPreviewIfVisible(docId, newContent)) {
+        // Preview is the visible surface, so refresh it instead of animating a hidden editor.
       } else {
         _animateDocEdit(textarea, newContent);
       }
@@ -9332,6 +9353,7 @@ import * as Modals from './modalManager.js';
       } else {
         if (textarea) textarea.value = newContent;
         syncHighlighting();
+        _refreshMarkdownPreviewIfVisible(docId, newContent);
       }
     }
 
