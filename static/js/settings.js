@@ -1560,7 +1560,9 @@ async function initAgentSettings() {
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
-    if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
+    if (settings.agent_max_tool_calls !== undefined && settings.agent_max_tool_calls !== null) {
+      toolsInput.value = settings.agent_max_tool_calls;
+    }
   } catch (e) {}
 
   async function save() {

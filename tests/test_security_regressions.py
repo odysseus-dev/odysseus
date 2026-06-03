@@ -39,6 +39,39 @@ def test_untrusted_context_policy_marks_sources_as_data():
     assert "overrides" in UNTRUSTED_CONTEXT_POLICY
 
 
+def test_agent_endpoint_base_normalizes_chat_completion_routes():
+    from src.agent_loop import _canonical_endpoint_base
+
+    assert _canonical_endpoint_base("https://api.pinchpoint.cloud/v1") == "https://api.pinchpoint.cloud/v1"
+    assert (
+        _canonical_endpoint_base("https://api.pinchpoint.cloud/v1/chat/completions")
+        == "https://api.pinchpoint.cloud/v1"
+    )
+    assert (
+        _canonical_endpoint_base("https://API.PINCHPOINT.CLOUD/v1/models")
+        == "https://api.pinchpoint.cloud/v1"
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (True, True),
+        (False, False),
+        ("true", True),
+        ("false", False),
+        ("1", True),
+        ("0", False),
+        ("", None),
+        ("unknown", None),
+    ],
+)
+def test_model_endpoint_optional_bool_parser(raw, expected):
+    from routes.model_routes import _coerce_optional_bool
+
+    assert _coerce_optional_bool(raw) is expected
+
+
 # ── secret_storage ─────────────────────────────────────────────
 
 def _import_secret_storage(tmp_path, monkeypatch):
@@ -847,6 +880,25 @@ def test_web_fetch_guard_fails_closed_on_empty_resolution(monkeypatch):
     from src.search import content
     monkeypatch.setattr(content, "_resolve_hostname_ips", lambda host: [])
     assert content._public_http_url("https://innocent.example/") is False
+
+
+def test_webpage_fetcher_treats_http_status_as_fetch_miss(monkeypatch, tmp_path):
+    import httpx
+    from src.search import content
+
+    url = "https://example.test/protected"
+    request = httpx.Request("GET", url)
+    response = httpx.Response(401, request=request)
+
+    monkeypatch.setattr(content, "CONTENT_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(content, "generate_cache_key", lambda _: "status-error")
+    monkeypatch.setattr(content, "_get_public_url", lambda *a, **k: response)
+
+    result = content.fetch_webpage_content(url)
+
+    assert result["success"] is False
+    assert result["content"] == ""
+    assert "401" in result["error"]
 
 
 def test_web_fetch_guard_blocks_redirect_into_private(monkeypatch):

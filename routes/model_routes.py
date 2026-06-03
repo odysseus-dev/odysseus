@@ -40,6 +40,23 @@ _ENDPOINT_SETTING_FIELDS = {
     "task_endpoint_id":     ("task_model",       "Background Tasks"),
 }
 
+
+def _coerce_optional_bool(value: Any) -> Optional[bool]:
+    """Parse UI/API boolean values; return None for unknown/blank."""
+    if value is True or value is False:
+        return value
+    if value in (1, 0):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "1", "yes", "on"):
+            return True
+        if normalized in ("false", "0", "no", "off"):
+            return False
+        if normalized == "":
+            return None
+    return None
+
 _ENDPOINT_FALLBACK_FIELDS = {
     "default_model_fallbacks": "Default Model Fallbacks",
     "utility_model_fallbacks": "Utility Model Fallbacks",
@@ -1223,8 +1240,7 @@ def setup_model_routes(model_discovery):
         ep_id = str(uuid.uuid4())[:8]
         db = SessionLocal()
         try:
-            _st_raw = (supports_tools or "").strip().lower()
-            _st = True if _st_raw in ("true", "1", "yes") else (False if _st_raw in ("false", "0", "no") else None)
+            _st = _coerce_optional_bool(supports_tools)
             # Stamp owner so the picker only shows this endpoint to the admin
             # who added it. Pass `shared=true` to mark it null-owner (visible
             # to all users), preserving the pre-fix "everyone sees everything"
@@ -1524,10 +1540,11 @@ def setup_model_routes(model_discovery):
                 raise HTTPException(404, "Endpoint not found")
             if body:
                 if "supports_tools" in body:
-                    v = body["supports_tools"]
-                    ep.supports_tools = bool(v) if v in (True, False, "true", "false", 1, 0) else None
+                    ep.supports_tools = _coerce_optional_bool(body["supports_tools"])
                 if "is_enabled" in body:
-                    ep.is_enabled = bool(body["is_enabled"])
+                    _enabled = _coerce_optional_bool(body["is_enabled"])
+                    if _enabled is not None:
+                        ep.is_enabled = _enabled
                 if "name" in body and isinstance(body["name"], str):
                     ep.name = body["name"].strip() or ep.name
                 if "model_type" in body and isinstance(body["model_type"], str):

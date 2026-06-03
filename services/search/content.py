@@ -249,12 +249,16 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
             raise RateLimitError(f"Rate limit hit for {url} (attempt {retry_attempt})")
 
         response.raise_for_status()
-    except httpx.RequestError as e:
-        error_logger.error(f"NetworkError fetching {url} (attempt {retry_attempt}): {e}")
-        return _empty_result(url, f"NetworkError: {e}")
     except RateLimitError as e:
         error_logger.error(str(e))
         return _empty_result(url, str(e))
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code if e.response is not None else "unknown"
+        error_logger.error(f"HTTPStatusError fetching {url} (status {status}, attempt {retry_attempt}): {e}")
+        return _empty_result(url, f"HTTPStatusError {status}: {e}")
+    except httpx.RequestError as e:
+        error_logger.error(f"NetworkError fetching {url} (attempt {retry_attempt}): {e}")
+        return _empty_result(url, f"NetworkError: {e}")
 
     # PDF handling
     content_type = response.headers.get("Content-Type", "").lower()

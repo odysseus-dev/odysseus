@@ -929,9 +929,11 @@ import createResearchSynapse from './researchSynapse.js';
       
       if (!res.ok) {
         if (res.status === 404) {
-          // Session was deleted (e.g. by AI) — reload and go to welcome
-          holder.remove();
+          // Session was deleted/stale (often after a local restart). Do not
+          // silently remove the assistant bubble; that makes the send look dead.
           if (sessionModule) await sessionModule.loadSessions();
+          typewriterInto(holder.querySelector('.body'), 'That chat session expired after the restart. I reloaded sessions; send again in the selected chat.');
+          enableResearchBtn();
           return;
         }
         let errText = `Error ${res.status}`;

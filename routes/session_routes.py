@@ -465,6 +465,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         for sid in ids:
             try:
                 _verify_session_owner(request, sid, session_manager)
+                from src import agent_runs
+                if agent_runs.is_active(sid):
+                    continue
                 session_manager.delete_session(sid)
                 db = SessionLocal()
                 try:
@@ -484,6 +487,15 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         """Permanently delete a session and all its messages."""
         _verify_session_owner(request, sid, session_manager)
         try:
+            from src import agent_runs
+            if agent_runs.is_active(sid):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "SESSION_ACTIVE",
+                        "message": "Stop the active response before deleting this chat",
+                    },
+                )
             # Block deletion of starred/favorited sessions
             db = SessionLocal()
             try:
@@ -933,6 +945,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             for row in rows:
                 # Never delete important sessions
                 if getattr(row, 'is_important', False):
+                    continue
+                from src.session_actions import session_cleanup_protected
+                if session_cleanup_protected(row):
                     continue
                 # Always delete incognito sessions during cleanup
                 if (row.name or "").strip() == "Incognito":

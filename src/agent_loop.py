@@ -13,6 +13,7 @@ import re
 import time
 import logging
 from typing import AsyncGenerator, List, Dict, Optional, Set
+from urllib.parse import urlsplit, urlunsplit
 
 from src.llm_core import stream_llm, stream_llm_with_fallback
 from src.model_context import estimate_tokens
@@ -474,6 +475,51 @@ _ADMIN_SCHEMA_NAMES = frozenset([
     "ask_teacher", "list_models", "search_chats",
 ])
 _TOOL_SELECTION_TIMEOUT_SECONDS = 1.5
+
+
+def _canonical_endpoint_base(url: str) -> str:
+    """Normalize model endpoint URLs so stored bases match request URLs."""
+    raw = (url or "").strip().rstrip("/")
+    if not raw:
+        return ""
+    try:
+        parts = urlsplit(raw)
+    except Exception:
+        return raw
+    if not parts.scheme or not parts.netloc:
+        return raw
+
+    path = (parts.path or "").rstrip("/")
+    for suffix in ("/chat/completions", "/responses", "/models"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)].rstrip("/")
+            break
+
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, "", ""))
+
+
+def _find_endpoint_by_url(db, endpoint_model, endpoint_url: str):
+    """Find a configured endpoint even when the active session stores a full route."""
+    if not endpoint_url:
+        return None
+
+    raw = endpoint_url.strip()
+    stripped = raw.rstrip("/")
+    for candidate in dict.fromkeys([raw, stripped, stripped + "/"]):
+        if not candidate:
+            continue
+        ep = db.query(endpoint_model).filter(endpoint_model.base_url == candidate).first()
+        if ep is not None:
+            return ep
+
+    wanted = _canonical_endpoint_base(endpoint_url)
+    if not wanted:
+        return None
+    for ep in db.query(endpoint_model).all():
+        if _canonical_endpoint_base(ep.base_url) == wanted:
+            return ep
+    return None
+
 
 # Admin tool keywords — if the last user message contains any of these, include admin tools
 _ADMIN_KEYWORDS = [
@@ -1463,11 +1509,7 @@ async def stream_agent_loop(
         from core.database import SessionLocal as _SL, ModelEndpoint as _ME
         _db = _SL()
         try:
-            _ep = _db.query(_ME).filter(_ME.base_url == endpoint_url).first()
-            if not _ep and endpoint_url:
-                _u = endpoint_url.rstrip("/")
-                _ep = _db.query(_ME).filter(_ME.base_url == _u).first() or \
-                      _db.query(_ME).filter(_ME.base_url == _u + "/").first()
+            _ep = _find_endpoint_by_url(_db, _ME, endpoint_url)
             if _ep is not None:
                 _endpoint_supports = _ep.supports_tools
         finally:
@@ -1606,6 +1648,7 @@ async def stream_agent_loop(
         _doc_opened = False
         _doc_last_len = 0
         _doc_fence_offset = 0  # offset into round_response for text-fence content
+        _pre_output_stream_error = ""
         # Cursor for the multi-block scanner — when a `create_document`
         # fenced block closes we advance this so the next iteration can
         # detect a SUBSEQUENT block in the same round.
@@ -1676,6 +1719,10 @@ async def stream_agent_loop(
                 break
             # Forward error events from stream_llm to the frontend
             if chunk.startswith("event: error"):
+                if not round_response and not native_tool_calls and not first_token_received:
+                    _pre_output_stream_error = chunk
+                    logger.warning("[agent] round %s failed before output; will try no-tool fallback", round_num)
+                    continue
                 yield chunk
                 continue
             if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
@@ -1811,6 +1858,36 @@ async def stream_agent_loop(
                 # Forward error events to frontend as visible text
                 yield chunk
             # Intercept [DONE] — don't forward until all rounds finish
+
+        if _pre_output_stream_error and not round_response and not native_tool_calls:
+            try:
+                from src.llm_core import llm_call_async
+                fallback_text = await llm_call_async(
+                    endpoint_url,
+                    model,
+                    messages,
+                    headers=headers,
+                    temperature=temperature,
+                    max_tokens=max_tokens or 2048,
+                    timeout=max(45, agent_stream_timeout),
+                )
+                fallback_text = _THINK_RE.sub("", strip_tool_blocks(fallback_text or "")).strip()
+            except Exception as e:
+                logger.warning("[agent] no-tool fallback failed after pre-output stream error: %s", e)
+                fallback_text = ""
+
+            if fallback_text:
+                if not first_token_received:
+                    time_to_first_token = time.time() - total_start
+                    first_token_received = True
+                round_response += fallback_text
+                full_response += fallback_text
+                yield f'data: {json.dumps({"delta": fallback_text})}\n\n'
+            else:
+                msg = "The upstream model stream accepted the request but did not produce tokens. I stopped the empty run; try again or switch models."
+                round_response += msg
+                full_response += msg
+                yield f'data: {json.dumps({"delta": msg})}\n\n'
 
         tool_blocks, used_native = _resolve_tool_blocks(round_response, native_tool_calls, round_num)
 

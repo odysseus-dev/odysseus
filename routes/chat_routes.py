@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 import logging
+import uuid
 from datetime import datetime
 from typing import Dict, Any, AsyncGenerator, List
 
@@ -18,10 +19,10 @@ from src.agent_loop import stream_agent_loop
 from src import agent_runs
 from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
-from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
+from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url, build_headers
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, owner_filter
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
 from core.database import SessionLocal, get_session_mode, set_session_mode
@@ -229,6 +230,93 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
         db.close()
 
 
+def _first_chat_model_from_cached(models_json: str | None) -> str:
+    """Pick a conversational model from an endpoint cache."""
+    if not models_json:
+        return ""
+    try:
+        models = json.loads(models_json) if isinstance(models_json, str) else models_json
+    except Exception:
+        return ""
+    if not isinstance(models, list):
+        return ""
+    non_chat = ("text-embedding", "embedding", "tts-", "whisper", "dall-e", "rerank")
+    for model in models:
+        mid = str(model or "").strip()
+        if mid and not any(part in mid.lower() for part in non_chat):
+            return mid
+    return str(models[0]).strip() if models else ""
+
+
+def _recover_chat_session(request: Request, session_manager, requested_session: str | None) -> str | None:
+    """Recover from a stale/deleted browser-selected session id."""
+    if requested_session:
+        logger.warning(
+            "Refusing to recover explicit missing chat session %s into another chat",
+            requested_session[:8],
+        )
+        return None
+
+    user = get_current_user(request)
+    db = SessionLocal()
+    try:
+        q = db.query(DBSession).filter(
+            DBSession.archived == False,
+            DBSession.endpoint_url != "",
+            DBSession.model != "",
+        )
+        if user:
+            q = q.filter(DBSession.owner == user)
+        rows = q.order_by(
+            DBSession.last_message_at.desc(),
+            DBSession.updated_at.desc(),
+            DBSession.created_at.desc(),
+        ).limit(20).all()
+        for row in rows:
+            name = (row.name or "").strip()
+            if name in {"Assistant", "Nobody", "Incognito"} or name.startswith("[Task]"):
+                continue
+            try:
+                session_manager.get_session(row.id)
+                logger.warning(
+                    "Recovered stale chat session %s -> %s",
+                    (requested_session or "")[:8],
+                    row.id[:8],
+                )
+                return row.id
+            except Exception:
+                continue
+
+        ep_q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if user:
+            ep_q = owner_filter(ep_q, ModelEndpoint, user)
+        ep = ep_q.first()
+        if not ep:
+            return None
+
+        model = _first_chat_model_from_cached(getattr(ep, "cached_models", None)) or "pinchpoint-router"
+        sid = str(uuid.uuid4())
+        session = session_manager.create_session(
+            session_id=sid,
+            name=f"{model.split('/')[-1]} {datetime.now().strftime('%I:%M:%S %p')}",
+            endpoint_url=build_chat_url(_normalize_base(ep.base_url)),
+            model=model,
+            owner=user,
+        )
+        session.headers = build_headers(ep.api_key, ep.base_url)
+        logger.warning(
+            "Recovered stale chat session %s by creating %s",
+            (requested_session or "")[:8],
+            sid[:8],
+        )
+        return sid
+    except Exception as e:
+        logger.warning("Failed to recover stale chat session %s: %s", requested_session, e)
+        return None
+    finally:
+        db.close()
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -407,12 +495,33 @@ def setup_chat_routes(
                 bool(body and isinstance(body.get("attachments"), list) and body["attachments"])
                 or bool(form_data.get("attachments"))
             )
-            message, session = coerce_message_and_session(
-                body, message, session, session_manager, allow_empty=_has_atts,
-            )
+            try:
+                message, session = coerce_message_and_session(
+                    body, message, session, session_manager, allow_empty=_has_atts,
+                )
+            except HTTPException as e:
+                if e.status_code != 404:
+                    raise
+                recovered = _recover_chat_session(request, session_manager, session)
+                if not recovered:
+                    raise
+                message, session = coerce_message_and_session(
+                    body, message, recovered, session_manager, allow_empty=_has_atts,
+                )
             # Verify ownership AFTER coerce (which may resolve a default session)
             # but BEFORE loading. Prevents cross-user session hijack.
-            _verify_session_owner(request, session)
+            try:
+                _verify_session_owner(request, session)
+            except HTTPException as e:
+                if e.status_code != 404:
+                    raise
+                recovered = _recover_chat_session(request, session_manager, session)
+                if not recovered:
+                    raise
+                message, session = coerce_message_and_session(
+                    body, message, recovered, session_manager, allow_empty=_has_atts,
+                )
+                _verify_session_owner(request, session)
             sess = session_manager.get_session(session)
             owner = get_current_user(request)
             if _clear_orphaned_session_endpoint(sess, owner=owner):

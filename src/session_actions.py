@@ -8,7 +8,7 @@ and the task scheduler / builtin actions system.
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,25 @@ _THROWAWAY_NAMES = {
     "ok", "lol", "bruh", "hmm", "hm", "meh",
 }
 _THROWAWAY_MAX_MESSAGES = 4
+_CLEANUP_GRACE = timedelta(minutes=15)
+
+
+def session_cleanup_protected(row) -> bool:
+    """Return True when cleanup should not delete a chat yet."""
+    try:
+        from src import agent_runs
+        if agent_runs.is_active(row.id):
+            logger.info("Auto-sort: skipping active session %s", row.id)
+            return True
+    except Exception:
+        pass
+
+    now = datetime.utcnow()
+    for attr in ("last_message_at", "updated_at", "created_at"):
+        ts = getattr(row, attr, None)
+        if ts and now - ts < _CLEANUP_GRACE:
+            return True
+    return False
 
 
 async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
@@ -52,6 +71,8 @@ async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
 
         for row in rows:
             if getattr(row, 'is_important', False):
+                continue
+            if session_cleanup_protected(row):
                 continue
             if (row.name or "").strip() == "Incognito":
                 deleted_throwaway += 1
