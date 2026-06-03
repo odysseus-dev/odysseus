@@ -75,7 +75,7 @@ def cmd_list(args):
         if args.status and (data.get("status") or "") != args.status:
             continue
         out.append(_summarize(rp_id, data))
-    out.sort(key=lambda r: r.get("started_at") or "", reverse=True)
+    out.sort(key=lambda r: r.get("started_at") or 0, reverse=True)
     emit(out[: args.limit], args)
 
 
@@ -122,7 +122,7 @@ def cmd_search(args):
         ])
         if q in haystack:
             out.append(_summarize(rp_id, data))
-    out.sort(key=lambda r: r.get("started_at") or "", reverse=True)
+    out.sort(key=lambda r: r.get("started_at") or 0, reverse=True)
     emit(out[: args.limit], args)
 
 
