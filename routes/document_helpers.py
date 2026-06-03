@@ -152,7 +152,7 @@ def _resolve_user_upload_path(
         owner=owner,
         auth_manager=auth_manager,
     )
-    if not resolved:
+    if not isinstance(resolved, dict) or not resolved:
         return None
     path = resolved.get("path")
     upload_dir = getattr(upload_handler, "upload_dir", None)
