@@ -30,7 +30,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. A lockfile (`requirements.txt` / `requirements.lock`) generated via `uv pip compile` or `pip-compile` on a clean Docker image is committed; `pip install -r requirements.lock` on a second clean Linux environment succeeds without `ResolutionImpossible`
   4. `git grep` for dead code from reverts `67b63e9` and `1f6c5ac` returns no dangling imports, unreachable config, or stub code; `ruff check` finds no `F401` or `F811` for the removed symbols
   5. `mypy` runs in CI with zero errors using an inverted-strictness config (lenient global baseline, per-module overrides via `[[tool.mypy.overrides]]`); ruff version is pinned to an explicit version with a stable, explicit rule set — no `select = ["ALL"]` and no `preview = true`
-**Plans**: TBD
+**Plans**: 5 plans
+Plans:
+- [ ] 01-01-PLAN.md — Dependency lockfiles (core/optional/dev .in + Docker-compiled hashed locks) + SC#3 second-env validation + coverage-stability prereq (TOOL-03)
+- [ ] 01-02-PLAN.md — ruff adoption to a zero-finding baseline via the D-18 atomic config→fix→format sequence + .git-blame-ignore-revs (TOOL-01)
+- [ ] 01-03-PLAN.md — mypy lenient inverted-strictness config to zero errors + coverage/bandit config skeletons (TOOL-02)
+- [ ] 01-04-PLAN.md — scripts/scorecard.py (7-metric JSON-first generator with --write/--check ratchet) + baseline.json + SCORECARD.md (BASE-01)
+- [ ] 01-05-PLAN.md — parallel quality-gate CI workflow + bandit suppression audit + BASE-02 revert audit + SC#1 deliberate-violation demonstration (TOOL-04, BASE-02)
 
 **Phase note (pre-planning code-read):** Before planning this phase, verify the lockfile generation environment matches CI (Docker `python:3.12-slim`). The chromadb/fastembed/onnxruntime group is the highest risk for transitive dep conflicts (Pitfall 10) — consider a separate `requirements-ml.txt` group.
 
@@ -89,7 +95,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Tooling Foundation & Baseline Scorecard | 0/TBD | Not started | - |
+| 1. Tooling Foundation & Baseline Scorecard | 0/5 | Not started | - |
 | 2. Safety Baseline — Coverage & SQLite Hardening | 0/TBD | Not started | - |
 | 3. Backend God-File Decomposition | 0/TBD | Not started | - |
 | 4. Frontend Splits, DI Hardening & Data Layer | 0/TBD | Not started | - |
