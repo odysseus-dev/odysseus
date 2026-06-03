@@ -125,9 +125,7 @@ function initializeEventListeners() {
   // Chat form submission
 //  document.getElementById('chat-form').addEventListener('submit', chatModule.handleChatSubmit);
 
-  // File attachments (inside overflow menu)
-  const _overflowAttach = el('overflow-attach-btn');
-  if (_overflowAttach) _overflowAttach.addEventListener('click', fileHandlerModule.openPicker);
+  // File attachments
   const _directAttach = el('direct-attach-btn');
   if (_directAttach) _directAttach.addEventListener('click', fileHandlerModule.openPicker);
   el('file-input').addEventListener('change', (e)=>{
@@ -1782,7 +1780,7 @@ function initializeEventListeners() {
     function _flagRefocus(e) {
       if (e.target.closest('textarea, input')) return;
       // Don't refocus for attach — file picker needs full focus control
-      if (e.target.closest('#overflow-attach-btn') || e.target.closest('#direct-attach-btn')) return;
+      if (e.target.closest('#direct-attach-btn')) return;
       // Don't refocus for model picker button — focus should go to picker search input
       if (e.target.closest('.model-picker-btn')) return;
       // Don't refocus when tapping the +/chevron tools button — the user
@@ -2425,7 +2423,7 @@ function initializeEventListeners() {
     'overflow-plus-btn':   '.overflow-wrapper',
     'mode-toggle':         '.mode-toggle',
     'preset-mini-btn':     '#overflow-preset-btn',
-    'attach-btn':          '#overflow-attach-btn, #direct-attach-btn',
+    'attach-btn':          '#direct-attach-btn',
     'research-btn':        '#overflow-research-btn',
     'rail-new-chat':       '#rail-new-session',
   };
