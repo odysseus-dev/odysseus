@@ -266,7 +266,7 @@ server; safe to re-run):
 ```powershell
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
-powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
+powershell -ExecutionPolicy Bypass -File ./launch-windows.ps1
 ```
 
 Or do it by hand:
@@ -274,8 +274,8 @@ Or do it by hand:
 ```powershell
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
-py -3.11 -m venv venv
-venv\Scripts\Activate.ps1
+py -m venv venv
+venv/Scripts/Activate.ps1
 pip install -r requirements.txt
 python setup.py
 python -m uvicorn app:app --host 127.0.0.1 --port 7000
