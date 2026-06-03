@@ -394,9 +394,7 @@ def build_user_content(
                         # Pull the PDF prose once — used as either intro_text
                         # (form path) or the doc body (plain path).
                         try:
-                            pdf_body_text = _process_pdf(path).lstrip(
-                                "\n[PDF content]:"
-                            ).strip()
+                            pdf_body_text = strip_pdf_content_marker(_process_pdf(path))
                         except Exception:
                             pdf_body_text = None
 
