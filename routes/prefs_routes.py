@@ -12,7 +12,8 @@ def _load():
     """Load the raw prefs file (internal use only)."""
     try:
         with open(PREFS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 

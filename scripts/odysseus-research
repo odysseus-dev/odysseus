@@ -26,14 +26,19 @@ from pathlib import Path
 _DATA_DIR = _REPO_ROOT / "data" / "deep_research"
 
 
+def _load_path(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _load(rp_id: str) -> dict | None:
     path = _DATA_DIR / f"{rp_id}.json"
     if not path.exists():
         return None
-    try:
-        return json.loads(path.read_text())
-    except json.JSONDecodeError:
-        return None
+    return _load_path(path)
 
 
 def _preview_text(value, limit: int = 200) -> str:
@@ -64,9 +69,8 @@ def cmd_list(args):
     out = []
     for path in sorted(_DATA_DIR.glob("*.json")):
         rp_id = path.stem
-        try:
-            data = json.loads(path.read_text())
-        except Exception:
+        data = _load_path(path)
+        if data is None:
             continue
         if args.status and (data.get("status") or "") != args.status:
             continue
@@ -108,9 +112,8 @@ def cmd_search(args):
     out = []
     for path in _DATA_DIR.glob("*.json"):
         rp_id = path.stem
-        try:
-            data = json.loads(path.read_text())
-        except Exception:
+        data = _load_path(path)
+        if data is None:
             continue
         haystack = " ".join([
             (data.get("query") or "").lower(),

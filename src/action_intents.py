@@ -63,7 +63,12 @@ _TOOL_INTENT_PATTERNS: tuple[Pattern[str], ...] = tuple(
         r"\bssh\s+\w+",
         r"\b(run|execute)\s+.{1,40}\bon\s+\w+",
         r"\b(can|could|please|would)\s+you\s+(run|execute|exec)\b",
-        r"\b(deploy|build|install|restart|reboot|kill|tail|grep|cat|ls|cd|cp|mv|rm)\b\s+\S+",
+        # Shell verbs only count in imperative position (start of message,
+        # optionally after "please") or as a "can you ..." request. A bare
+        # word match promoted informational questions ("What does the grep
+        # command do?") and incidental uses ("My cat ate my homework").
+        rf"{_PLEASE}(deploy|build|install|restart|reboot|kill|tail|grep|cat|ls|cd|cp|mv|rm)\b\s+\S+",
+        rf"{_ACTION_QUESTION}(deploy|build|install|restart|reboot|kill|tail|grep|cat|ls|cd|cp|mv|rm)\b\s+\S+",
         r"\b(check|see)\s+(if|whether|what)\s+.{1,40}\b(running|process|service|port|file|exists?)\b",
     )
 )

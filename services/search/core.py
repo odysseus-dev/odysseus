@@ -356,6 +356,12 @@ def comprehensive_web_search(
         for r in search_results if r.get("url")
     ]
 
+    # Map each URL to its [i] number in the sources list so fetched content
+    # blocks can be labeled with the SAME index the model cites.
+    _url_index = {
+        r["url"]: i for i, r in enumerate(search_results, 1) if r.get("url")
+    }
+
     # Fetch content in parallel
     fetched_content = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -368,6 +374,10 @@ def comprehensive_web_search(
             try:
                 result = future.result()
                 if result["success"] and result["content"] and len(result["content"]) >= min_content_length:
+                    # Remember which source this fetch belongs to: redirects
+                    # can change result["url"] and completion order is
+                    # arbitrary, so the block label cannot be recomputed later.
+                    result["source_index"] = _url_index.get(url)
                     fetched_content.append(result)
             except Exception as e:
                 logger.error(f"Exception while fetching {url}: {str(e)}")
@@ -408,8 +418,15 @@ def comprehensive_web_search(
         output_parts.append("FETCHED PAGE CONTENT:")
         output_parts.append("-" * 50)
 
-        for i, content in enumerate(fetched_content, 1):
-            output_parts.append(f"\n[CONTENT {i}] From: {content['url']}")
+        # Emit blocks in source order, numbered with the same [i] as the
+        # sources list, so [CONTENT 2] really is content from source [2].
+        # Before this, blocks were numbered 1..N in fetch COMPLETION order,
+        # which matched neither the sources list nor each other run to run.
+        fetched_content.sort(key=lambda c: c.get("source_index") or len(search_results) + 1)
+        for content in fetched_content:
+            _idx = content.get("source_index")
+            _label = f"[CONTENT {_idx}]" if _idx else "[CONTENT]"
+            output_parts.append(f"\n{_label} From: {content['url']}")
             output_parts.append(f"Title: {content['title']}")
             output_parts.append("-" * 30)
 

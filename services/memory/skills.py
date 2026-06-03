@@ -650,7 +650,10 @@ class SkillsManager:
             ])
             score = _jaccard(query_tokens, _tokenize(text))
             for tag in sk.get("tags", []) or []:
-                if tag and tag in query.lower():
+                # Match tags as whole tokens, not substrings: `tag in query`
+                # boosted e.g. a "ai" tag for any query containing "email".
+                tag_tokens = _tokenize(tag)
+                if tag_tokens and tag_tokens <= query_tokens:
                     score = max(score, 0.3) * 1.3
             if query.lower() in (sk.get("description") or "").lower():
                 score = max(score, 0.6)

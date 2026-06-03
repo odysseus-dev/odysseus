@@ -159,6 +159,38 @@ def test_pip_install_fallback_chain_tries_user_outside_venv():
     assert "user_attempt" in result.stdout, "Chain should try --user when not in venv and base fails"
 
 
+def test_pip_install_fallback_chain_quotes_extras_spec():
+    """An extras spec like ``llama-cpp-python[server]`` must be shell-quoted so
+    bash does not treat the brackets as a glob, and the ``[server]`` extra
+    (which pulls in starlette_context for ``python -m llama_cpp.server``) is
+    actually installed instead of a bare ``llama-cpp-python`` (issue #730)."""
+    chain = _pip_install_fallback_chain("llama-cpp-python[server]", python_cmd="pip")
+    # Quoted in both the plain and the --user attempt.
+    assert chain.count("'llama-cpp-python[server]'") == 2
+    # Never the unquoted form (bracket-glob risk).
+    assert "install -q llama-cpp-python[server]" not in chain
+    # A plain package name is still passed through unquoted (no regression).
+    plain = _pip_install_fallback_chain("hf_transfer", python_cmd="pip")
+    assert "install -q hf_transfer" in plain
+
+
+def test_serve_runner_installs_llama_cpp_server_extra():
+    """The llama.cpp serve auto-install must request the ``[server]`` extra in
+    every path (issue #730): a bare ``llama-cpp-python`` passes the
+    ``import llama_cpp`` guard, so ``python -m llama_cpp.server`` then crashes
+    with ``ModuleNotFoundError: No module named 'starlette_context'`` and the
+    extra is never reinstalled."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+    # No serve path may install a bare (extra-less) llama-cpp-python.
+    assert "pip install llama-cpp-python " not in src
+    assert "_pip_install_fallback_chain('llama-cpp-python'" not in src
+    # The [server] extra is requested in the build/fallback paths.
+    assert "'llama-cpp-python[server]'" in src
+    assert "_pip_install_fallback_chain('llama-cpp-python[server]'" in src
+
+
 def test_venv_safe_local_pip_install_strips_user_flags_only_for_local_venv():
     cmd = 'python3 -m pip install -U --user --break-system-packages "vllm"'
 
@@ -331,6 +363,53 @@ def test_llama_cpp_linux_bootstrap_prefers_rocm_before_cuda():
     assert 'ROCm/HIP detected — building llama-server with HIP support' in script
 
 
+def test_llama_cpp_linux_bootstrap_checks_cudart_before_cuda_build():
+    """cudart helper and all required paths must appear before the CUDA cmake command."""
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+    script = "\n".join(runner_lines)
+
+    assert '_odysseus_has_cudart' in script
+    assert "grep -q 'libcudart\\.so'" in script
+    # lib64 and lib variants for CUDA_HOME and /usr/local/cuda
+    assert '$_cuh/lib64/libcudart.so' in script
+    assert '$_cuh/lib/libcudart.so' in script
+    assert '/usr/local/cuda/lib64/libcudart.so' in script
+    assert '/usr/local/cuda/lib/libcudart.so' in script
+    # pip-installed nvidia runtime wheel sibling path
+    assert 'cuda_runtime/lib/libcudart.so' in script
+    # entire helper definition precedes the CUDA cmake invocation
+    assert script.index('_odysseus_has_cudart') < script.index('DGGML_CUDA=ON')
+
+
+def test_llama_cpp_linux_bootstrap_cuda_cmake_present_when_cudart_found():
+    """The CUDA cmake command must still be present (inside the cudart-present branch)."""
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+    script = "\n".join(runner_lines)
+
+    assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON' in script
+    assert 'CUDA nvcc + cudart found' in script
+
+
+def test_llama_cpp_linux_bootstrap_nvcc_without_cudart_warns_and_falls_back():
+    """When nvcc exists but cudart is absent, the script must warn and use CPU-only cmake."""
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+    script = "\n".join(runner_lines)
+
+    assert 'WARNING: nvcc found but CUDA runtime (libcudart.so) is not visible — building llama-server for CPU only.' in script
+    assert 'GPU inference will not be available for this llama.cpp build.' in script
+    assert 'libcudart is installed' in script
+    # The CPU-only cmake fallback must appear inside the nvcc branch (before the
+    # outer else that handles no-GPU-toolchain). Verify it appears at least once
+    # before the outer "no HIP/CUDA toolchain" warning.
+    cpu_cmake = 'cmake -B build -DCMAKE_BUILD_TYPE=Release &&'
+    no_toolchain_warn = 'WARNING: no HIP/CUDA toolchain found'
+    assert cpu_cmake in script
+    assert script.index(cpu_cmake) < script.index(no_toolchain_warn)
+
+
 def test_llama_cpp_linux_bootstrap_keeps_cpu_fallback_when_no_gpu_toolchain():
     runner_lines = []
     _append_llama_cpp_linux_accel_build_lines(runner_lines)
@@ -415,3 +494,23 @@ def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):
     assert ggufs[1]["size_bytes"] == len(b"part1part2part3")
     assert ggufs[2]["quant"] == "Q6_K_XL"
     assert ggufs[3]["quant"] == "BF16"
+
+
+# ── #1219 / #1459: keep big dependency wheel builds off the home pip cache ──
+
+def test_pip_install_no_cache_injects_flag():
+    from routes.cookbook_helpers import _pip_install_no_cache
+    assert _pip_install_no_cache("python -m pip install vllm") == \
+        "python -m pip install --no-cache-dir vllm"
+    assert _pip_install_no_cache("pip install -q huggingface-hub") == \
+        "pip install --no-cache-dir -q huggingface-hub"
+
+
+def test_pip_install_no_cache_is_idempotent_and_scoped():
+    from routes.cookbook_helpers import _pip_install_no_cache
+    # already present -> unchanged
+    already = "pip install --no-cache-dir vllm"
+    assert _pip_install_no_cache(already) == already
+    # not a pip install -> unchanged
+    assert _pip_install_no_cache("vllm serve --model x") == "vllm serve --model x"
+    assert _pip_install_no_cache("") == ""

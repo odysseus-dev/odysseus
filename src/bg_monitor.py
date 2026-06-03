@@ -53,7 +53,9 @@ async def _drain_agent(sess, messages):
         if not isinstance(d, dict):
             continue
         if "delta" in d:
-            full += d["delta"]
+            delta = d.get("delta")
+            if isinstance(delta, str):
+                full += delta
         elif d.get("type") == "agent_step":
             round_num = d.get("round", round_num)
         elif d.get("type") == "tool_output":

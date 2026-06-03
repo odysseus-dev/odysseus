@@ -26,7 +26,8 @@ def _load_signature_cli(monkeypatch):
 def test_decode_png_data_accepts_data_url(monkeypatch):
     cli = _load_signature_cli(monkeypatch)
 
-    assert cli._decode_png_data("data:image/png;base64,aGVsbG8=") == b"hello"
+    png = b"\x89PNG\r\n\x1a\nrest"
+    assert cli._decode_png_data("data:image/png;base64,iVBORw0KGgpyZXN0") == png
 
 
 def test_decode_png_data_rejects_invalid_base64(monkeypatch):
@@ -38,3 +39,14 @@ def test_decode_png_data_rejects_invalid_base64(monkeypatch):
         assert exc.code == 1
     else:
         raise AssertionError("expected invalid base64 to exit")
+
+
+def test_decode_png_data_rejects_non_png_bytes(monkeypatch):
+    cli = _load_signature_cli(monkeypatch)
+
+    try:
+        cli._decode_png_data("aGVsbG8=")
+    except SystemExit as exc:
+        assert exc.code == 1
+    else:
+        raise AssertionError("expected non-PNG bytes to exit")

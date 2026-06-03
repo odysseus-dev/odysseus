@@ -10,7 +10,8 @@
 // cells too, so "| a |  | c |" collapsed to 2 columns and misaligned with the
 // header.
 export function splitTableRow(row) {
-  return (row || '')
+  const text = typeof row === 'string' ? row : '';
+  return text
     .replace(/^\s*\|/, '')
     .replace(/\|\s*$/, '')
     .split('|')

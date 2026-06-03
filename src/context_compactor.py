@@ -116,6 +116,8 @@ def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
 
 
 def _message_text_token_estimate(text: str) -> int:
+    if not isinstance(text, str):
+        return 4
     return int(len(text) * 0.3) + 4
 
 
@@ -124,6 +126,11 @@ def _truncate_text_to_token_budget(text: str, token_budget: int) -> str:
     if token_budget <= 32:
         return "[Current user message omitted: it exceeded the model context window.]"
 
+    if not isinstance(text, str):
+        # This helper is typed/used as text downstream, so return an empty
+        # string rather than the raw non-string (which would move the crash
+        # into the caller that concatenates/measures the result).
+        return ""
     # Match src.model_context.estimate_tokens' rough chars * 0.3 estimate.
     max_chars = max(200, int((token_budget - 16) / 0.3))
     if len(text) <= max_chars:

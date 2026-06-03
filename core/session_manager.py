@@ -202,6 +202,15 @@ class SessionManager:
         """Persist a single message to the database."""
         db = SessionLocal()
         try:
+            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+            if db_session is None:
+                # A stream/tool callback can outlive a session delete. Do not
+                # create a chat_messages row with no parent session; also drop
+                # any stale cached session so later writes fail closed too.
+                self.sessions.pop(session_id, None)
+                logger.warning("Dropping message for deleted session %s", session_id)
+                return
+
             msg_id = str(uuid.uuid4())
             msg_time = datetime.utcnow()
             if message.metadata is None:
@@ -223,15 +232,13 @@ class SessionManager:
             )
             db.add(db_message)
 
-            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
-            if db_session:
-                db_session.message_count = len(self.sessions.get(session_id, {}).history) if session_id in self.sessions else 0
-                _now = datetime.now(timezone.utc)
-                db_session.last_accessed = _now
-                # Clean "last conversation" timestamp — only bumped here on a
-                # real message persist, so it powers an accurate "Last active"
-                # sort that ignores renames / model swaps / mere opens.
-                db_session.last_message_at = _now
+            db_session.message_count = len(self.sessions.get(session_id, {}).history) if session_id in self.sessions else 0
+            _now = datetime.now(timezone.utc)
+            db_session.last_accessed = _now
+            # Clean "last conversation" timestamp — only bumped here on a
+            # real message persist, so it powers an accurate "Last active"
+            # sort that ignores renames / model swaps / mere opens.
+            db_session.last_message_at = _now
 
             db.commit()
 
