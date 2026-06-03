@@ -1,0 +1,3923 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-03T18:15:12Z",
+  "git_sha": "f90dff84ae4157f571d63aa4d06cc65ba8bbee10",
+  "tool_versions": {
+    "ruff": "ruff 0.15.15",
+    "mypy": "mypy 2.1.0 (compiled: yes)",
+    "bandit": "bandit 1.9.4",
+    "pip_audit": "pip-audit 2.10.0",
+    "coverage": "Coverage.py, version 7.14.1 with C extension",
+    "python": "3.12.13"
+  },
+  "metrics": {
+    "module_line_counts": {
+      "src/action_intents.py": 80,
+      "src/agent_loop.py": 2778,
+      "src/agent_runs.py": 205,
+      "src/agent_tools.py": 180,
+      "src/ai_interaction.py": 2141,
+      "src/api_key_manager.py": 74,
+      "src/app_helpers.py": 36,
+      "src/app_initializer.py": 132,
+      "src/assistant_log.py": 46,
+      "src/auth_helpers.py": 129,
+      "src/bg_jobs.py": 294,
+      "src/bg_monitor.py": 180,
+      "src/builtin_actions.py": 2717,
+      "src/builtin_mcp.py": 236,
+      "src/caldav_sync.py": 344,
+      "src/caldav_writeback.py": 193,
+      "src/chat_handler.py": 335,
+      "src/chat_helpers.py": 351,
+      "src/chat_processor.py": 377,
+      "src/chroma_client.py": 75,
+      "src/cleanup_service.py": 349,
+      "src/config.py": 341,
+      "src/constants.py": 41,
+      "src/context_budget.py": 55,
+      "src/context_compactor.py": 424,
+      "src/database.py": 37,
+      "src/deep_research.py": 974,
+      "src/document_actions.py": 217,
+      "src/document_processor.py": 675,
+      "src/email_thread_parser.py": 660,
+      "src/embeddings.py": 264,
+      "src/endpoint_resolver.py": 412,
+      "src/event_bus.py": 130,
+      "src/exceptions.py": 37,
+      "src/goal_based_extractor.py": 27,
+      "src/integrations.py": 519,
+      "src/llm_core.py": 1810,
+      "src/markitdown_runtime.py": 62,
+      "src/mcp_manager.py": 521,
+      "src/memory.py": 493,
+      "src/memory_vector.py": 177,
+      "src/model_context.py": 312,
+      "src/model_discovery.py": 253,
+      "src/pdf_form_doc.py": 457,
+      "src/pdf_forms.py": 411,
+      "src/pdf_runtime.py": 15,
+      "src/personal_docs.py": 473,
+      "src/preset_manager.py": 193,
+      "src/prompt_security.py": 38,
+      "src/rag_manager.py": 60,
+      "src/rag_singleton.py": 62,
+      "src/rag_vector.py": 568,
+      "src/rate_limiter.py": 48,
+      "src/readiness.py": 61,
+      "src/request_models.py": 147,
+      "src/research_handler.py": 998,
+      "src/research_utils.py": 65,
+      "src/search/__init__.py": 35,
+      "src/search/analytics.py": 143,
+      "src/search/cache.py": 58,
+      "src/search/content.py": 448,
+      "src/search/core.py": 12,
+      "src/search/providers.py": 12,
+      "src/search/query.py": 149,
+      "src/search/ranking.py": 13,
+      "src/secret_storage.py": 87,
+      "src/session_actions.py": 288,
+      "src/settings.py": 299,
+      "src/settings_scrub.py": 66,
+      "src/task_endpoint.py": 17,
+      "src/task_scheduler.py": 2751,
+      "src/teacher_escalation.py": 744,
+      "src/text_helpers.py": 127,
+      "src/tool_execution.py": 1185,
+      "src/tool_implementations.py": 5174,
+      "src/tool_index.py": 805,
+      "src/tool_parsing.py": 467,
+      "src/tool_schemas.py": 2009,
+      "src/tool_security.py": 82,
+      "src/topic_analyzer.py": 186,
+      "src/upload_handler.py": 755,
+      "src/url_safety.py": 90,
+      "src/url_security.py": 93,
+      "src/visual_report.py": 1908,
+      "src/webhook_manager.py": 267,
+      "src/youtube_handler.py": 300,
+      "routes/__init__.py": 0,
+      "routes/admin_wipe_routes.py": 182,
+      "routes/api_token_routes.py": 99,
+      "routes/assistant_routes.py": 383,
+      "routes/auth_routes.py": 641,
+      "routes/backup_routes.py": 172,
+      "routes/calendar_routes.py": 1487,
+      "routes/chat_helpers.py": 1088,
+      "routes/chat_routes.py": 1631,
+      "routes/cleanup_routes.py": 66,
+      "routes/compare_routes.py": 259,
+      "routes/contacts_routes.py": 866,
+      "routes/cookbook_helpers.py": 847,
+      "routes/cookbook_routes.py": 2821,
+      "routes/diagnostics_routes.py": 86,
+      "routes/document_helpers.py": 240,
+      "routes/document_routes.py": 1940,
+      "routes/editor_draft_routes.py": 194,
+      "routes/email_helpers.py": 1509,
+      "routes/email_pollers.py": 1609,
+      "routes/email_routes.py": 3943,
+      "routes/embedding_routes.py": 347,
+      "routes/emoji_routes.py": 72,
+      "routes/font_routes.py": 61,
+      "routes/gallery_helpers.py": 159,
+      "routes/gallery_routes.py": 2100,
+      "routes/history_routes.py": 721,
+      "routes/hwfit_routes.py": 395,
+      "routes/mcp_routes.py": 619,
+      "routes/memory_routes.py": 614,
+      "routes/model_routes.py": 2133,
+      "routes/note_routes.py": 831,
+      "routes/personal_routes.py": 343,
+      "routes/prefs_routes.py": 88,
+      "routes/preset_routes.py": 136,
+      "routes/research_routes.py": 703,
+      "routes/search_routes.py": 119,
+      "routes/session_routes.py": 1402,
+      "routes/shell_routes.py": 1265,
+      "routes/signature_routes.py": 125,
+      "routes/skills_routes.py": 2005,
+      "routes/stt_routes.py": 58,
+      "routes/task_routes.py": 1181,
+      "routes/tts_routes.py": 92,
+      "routes/upload_routes.py": 271,
+      "routes/vault_routes.py": 255,
+      "routes/webhook_routes.py": 419,
+      "core/__init__.py": 54,
+      "core/atomic_io.py": 43,
+      "core/auth.py": 542,
+      "core/constants.py": 41,
+      "core/database.py": 2317,
+      "core/exceptions.py": 37,
+      "core/middleware.py": 100,
+      "core/models.py": 86,
+      "core/platform_compat.py": 230,
+      "core/session_manager.py": 689,
+      "services/__init__.py": 37,
+      "services/docs/__init__.py": 19,
+      "services/docs/service.py": 92,
+      "services/faces/__init__.py": 1,
+      "services/hwfit/__init__.py": 0,
+      "services/hwfit/fit.py": 841,
+      "services/hwfit/hardware.py": 727,
+      "services/hwfit/image_models.py": 384,
+      "services/hwfit/models.py": 366,
+      "services/hwfit/profiles.py": 278,
+      "services/memory/__init__.py": 14,
+      "services/memory/memory.py": 487,
+      "services/memory/memory_extractor.py": 630,
+      "services/memory/memory_vector.py": 177,
+      "services/memory/service.py": 144,
+      "services/memory/skill_extractor.py": 259,
+      "services/memory/skill_format.py": 482,
+      "services/memory/skills.py": 730,
+      "services/research/__init__.py": 12,
+      "services/research/research_handler.py": 487,
+      "services/research/service.py": 170,
+      "services/search/__init__.py": 41,
+      "services/search/analytics.py": 142,
+      "services/search/cache.py": 58,
+      "services/search/content.py": 448,
+      "services/search/core.py": 523,
+      "services/search/providers.py": 699,
+      "services/search/query.py": 151,
+      "services/search/ranking.py": 187,
+      "services/search/service.py": 107,
+      "services/shell/__init__.py": 6,
+      "services/shell/service.py": 166,
+      "services/stt/__init__.py": 3,
+      "services/stt/stt_service.py": 220,
+      "services/tts/__init__.py": 9,
+      "services/tts/tts_service.py": 318,
+      "services/youtube/__init__.py": 22,
+      "services/youtube/youtube_handler.py": 295,
+      "mcp_servers/__init__.py": 0,
+      "mcp_servers/_common.py": 22,
+      "mcp_servers/email_server.py": 1898,
+      "mcp_servers/image_gen_server.py": 217,
+      "mcp_servers/memory_server.py": 249,
+      "mcp_servers/rag_server.py": 212,
+      "companion/__init__.py": 11,
+      "companion/pairing.py": 128,
+      "companion/routes.py": 252,
+      "app.py": 1279
+    },
+    "max_module_loc": 5174,
+    "typed_pct": {
+      "overall": 0.4962,
+      "total_defs": 2215,
+      "typed_defs": 1099,
+      "by_module": {
+        "src/action_intents.py": 1.0,
+        "src/agent_loop.py": 0.5556,
+        "src/agent_runs.py": 1.0,
+        "src/agent_tools.py": 0.3333,
+        "src/ai_interaction.py": 0.6957,
+        "src/api_key_manager.py": 0.6667,
+        "src/app_helpers.py": 1.0,
+        "src/app_initializer.py": 0.0,
+        "src/assistant_log.py": 0.0,
+        "src/auth_helpers.py": 0.6667,
+        "src/bg_jobs.py": 1.0,
+        "src/bg_monitor.py": 0.25,
+        "src/builtin_actions.py": 0.1212,
+        "src/builtin_mcp.py": 0.1667,
+        "src/caldav_sync.py": 0.8571,
+        "src/caldav_writeback.py": 0.4286,
+        "src/chat_handler.py": 0.2857,
+        "src/chat_helpers.py": 0.8889,
+        "src/chat_processor.py": 0.6,
+        "src/chroma_client.py": 0.3333,
+        "src/cleanup_service.py": 0.3333,
+        "src/config.py": 0.0,
+        "src/context_budget.py": 1.0,
+        "src/context_compactor.py": 0.75,
+        "src/deep_research.py": 0.8696,
+        "src/document_actions.py": 0.8,
+        "src/document_processor.py": 0.9167,
+        "src/email_thread_parser.py": 0.6471,
+        "src/embeddings.py": 0.5556,
+        "src/endpoint_resolver.py": 0.7895,
+        "src/event_bus.py": 0.2,
+        "src/exceptions.py": 0.0,
+        "src/integrations.py": 1.0,
+        "src/llm_core.py": 0.7442,
+        "src/markitdown_runtime.py": 0.6667,
+        "src/mcp_manager.py": 0.7059,
+        "src/memory.py": 0.6875,
+        "src/memory_vector.py": 0.5,
+        "src/model_context.py": 1.0,
+        "src/model_discovery.py": 0.9091,
+        "src/pdf_form_doc.py": 1.0,
+        "src/pdf_forms.py": 0.7,
+        "src/pdf_runtime.py": 0.0,
+        "src/personal_docs.py": 0.4167,
+        "src/preset_manager.py": 0.9091,
+        "src/prompt_security.py": 1.0,
+        "src/rag_manager.py": 0.875,
+        "src/rag_singleton.py": 0.0,
+        "src/rag_vector.py": 0.8889,
+        "src/rate_limiter.py": 0.6667,
+        "src/readiness.py": 1.0,
+        "src/request_models.py": 0.0,
+        "src/research_handler.py": 0.6667,
+        "src/research_utils.py": 0.5,
+        "src/search/analytics.py": 1.0,
+        "src/search/cache.py": 0.5,
+        "src/search/content.py": 0.9412,
+        "src/search/query.py": 1.0,
+        "src/secret_storage.py": 1.0,
+        "src/session_actions.py": 1.0,
+        "src/settings.py": 0.625,
+        "src/settings_scrub.py": 0.6667,
+        "src/task_endpoint.py": 0.0,
+        "src/task_scheduler.py": 0.2558,
+        "src/teacher_escalation.py": 0.875,
+        "src/text_helpers.py": 1.0,
+        "src/tool_execution.py": 0.7,
+        "src/tool_implementations.py": 0.7436,
+        "src/tool_index.py": 0.5,
+        "src/tool_parsing.py": 0.8333,
+        "src/tool_schemas.py": 1.0,
+        "src/tool_security.py": 1.0,
+        "src/topic_analyzer.py": 0.0,
+        "src/upload_handler.py": 0.7083,
+        "src/url_safety.py": 1.0,
+        "src/url_security.py": 1.0,
+        "src/visual_report.py": 0.8462,
+        "src/webhook_manager.py": 0.5333,
+        "src/youtube_handler.py": 0.875,
+        "routes/admin_wipe_routes.py": 0.0,
+        "routes/api_token_routes.py": 0.2,
+        "routes/assistant_routes.py": 0.3636,
+        "routes/auth_routes.py": 0.069,
+        "routes/backup_routes.py": 0.0,
+        "routes/calendar_routes.py": 0.2424,
+        "routes/chat_helpers.py": 0.2632,
+        "routes/chat_routes.py": 0.6316,
+        "routes/cleanup_routes.py": 0.0,
+        "routes/compare_routes.py": 0.0,
+        "routes/contacts_routes.py": 0.5143,
+        "routes/cookbook_helpers.py": 0.9286,
+        "routes/cookbook_routes.py": 0.5714,
+        "routes/diagnostics_routes.py": 0.8,
+        "routes/document_helpers.py": 0.6,
+        "routes/document_routes.py": 0.6,
+        "routes/editor_draft_routes.py": 1.0,
+        "routes/email_helpers.py": 0.4571,
+        "routes/email_pollers.py": 0.2308,
+        "routes/email_routes.py": 0.1505,
+        "routes/embedding_routes.py": 0.4,
+        "routes/emoji_routes.py": 0.6667,
+        "routes/font_routes.py": 0.0,
+        "routes/gallery_helpers.py": 0.4,
+        "routes/gallery_routes.py": 0.2973,
+        "routes/history_routes.py": 0.1538,
+        "routes/hwfit_routes.py": 0.0,
+        "routes/mcp_routes.py": 0.125,
+        "routes/memory_routes.py": 0.1765,
+        "routes/model_routes.py": 0.4286,
+        "routes/note_routes.py": 0.2,
+        "routes/personal_routes.py": 0.2727,
+        "routes/prefs_routes.py": 0.125,
+        "routes/preset_routes.py": 0.6667,
+        "routes/research_routes.py": 0.1667,
+        "routes/search_routes.py": 0.6667,
+        "routes/session_routes.py": 0.1481,
+        "routes/shell_routes.py": 0.4138,
+        "routes/signature_routes.py": 1.0,
+        "routes/skills_routes.py": 0.2941,
+        "routes/stt_routes.py": 0.0,
+        "routes/task_routes.py": 0.2258,
+        "routes/tts_routes.py": 0.0,
+        "routes/upload_routes.py": 0.1,
+        "routes/vault_routes.py": 0.3333,
+        "routes/webhook_routes.py": 0.1,
+        "core/atomic_io.py": 1.0,
+        "core/auth.py": 0.7429,
+        "core/database.py": 0.0351,
+        "core/exceptions.py": 0.0,
+        "core/middleware.py": 0.0,
+        "core/models.py": 0.2857,
+        "core/platform_compat.py": 0.7778,
+        "core/session_manager.py": 0.4545,
+        "services/docs/service.py": 0.8333,
+        "services/hwfit/fit.py": 0.0,
+        "services/hwfit/hardware.py": 0.0,
+        "services/hwfit/image_models.py": 0.0,
+        "services/hwfit/models.py": 0.0,
+        "services/hwfit/profiles.py": 0.0,
+        "services/memory/memory.py": 0.625,
+        "services/memory/memory_extractor.py": 0.1429,
+        "services/memory/memory_vector.py": 0.5,
+        "services/memory/service.py": 0.8,
+        "services/memory/skill_extractor.py": 0.0,
+        "services/memory/skill_format.py": 1.0,
+        "services/memory/skills.py": 0.8519,
+        "services/research/research_handler.py": 0.6111,
+        "services/research/service.py": 0.8333,
+        "services/search/analytics.py": 1.0,
+        "services/search/cache.py": 0.5,
+        "services/search/content.py": 0.9412,
+        "services/search/core.py": 0.7778,
+        "services/search/providers.py": 0.8421,
+        "services/search/query.py": 1.0,
+        "services/search/ranking.py": 1.0,
+        "services/search/service.py": 0.75,
+        "services/shell/service.py": 0.5,
+        "services/stt/stt_service.py": 0.7778,
+        "services/tts/tts_service.py": 0.5556,
+        "services/youtube/youtube_handler.py": 0.875,
+        "mcp_servers/_common.py": 1.0,
+        "mcp_servers/email_server.py": 0.225,
+        "mcp_servers/image_gen_server.py": 0.6667,
+        "mcp_servers/memory_server.py": 0.5,
+        "mcp_servers/rag_server.py": 0.5,
+        "companion/pairing.py": 0.8571,
+        "companion/routes.py": 0.2222,
+        "app.py": 0.1707
+      }
+    },
+    "ruff_findings": {
+      "total": 0,
+      "by_code": {}
+    },
+    "security_findings": [],
+    "coverage": {
+      "overall_pct": 45.36,
+      "by_file": {
+        "app.py": 0.48,
+        "companion/__init__.py": 100.0,
+        "companion/pairing.py": 59.42,
+        "companion/routes.py": 92.77,
+        "core/__init__.py": 100.0,
+        "core/atomic_io.py": 100.0,
+        "core/auth.py": 54.35,
+        "core/constants.py": 100.0,
+        "core/database.py": 72.1,
+        "core/exceptions.py": 42.11,
+        "core/middleware.py": 58.54,
+        "core/models.py": 72.73,
+        "core/platform_compat.py": 51.75,
+        "core/session_manager.py": 42.66,
+        "mcp_servers/__init__.py": 100.0,
+        "mcp_servers/_common.py": 100.0,
+        "mcp_servers/email_server.py": 8.0,
+        "mcp_servers/image_gen_server.py": 0.0,
+        "mcp_servers/memory_server.py": 0.0,
+        "mcp_servers/rag_server.py": 31.73,
+        "routes/__init__.py": 100.0,
+        "routes/admin_wipe_routes.py": 33.33,
+        "routes/api_token_routes.py": 93.75,
+        "routes/assistant_routes.py": 0.0,
+        "routes/auth_routes.py": 34.02,
+        "routes/backup_routes.py": 43.0,
+        "routes/calendar_routes.py": 38.63,
+        "routes/chat_helpers.py": 26.7,
+        "routes/chat_routes.py": 9.77,
+        "routes/cleanup_routes.py": 76.92,
+        "routes/compare_routes.py": 0.0,
+        "routes/contacts_routes.py": 20.98,
+        "routes/cookbook_helpers.py": 69.35,
+        "routes/cookbook_routes.py": 0.0,
+        "routes/diagnostics_routes.py": 0.0,
+        "routes/document_helpers.py": 63.39,
+        "routes/document_routes.py": 9.63,
+        "routes/editor_draft_routes.py": 26.27,
+        "routes/email_helpers.py": 21.01,
+        "routes/email_pollers.py": 23.01,
+        "routes/email_routes.py": 11.08,
+        "routes/embedding_routes.py": 12.76,
+        "routes/emoji_routes.py": 0.0,
+        "routes/font_routes.py": 54.55,
+        "routes/gallery_helpers.py": 55.71,
+        "routes/gallery_routes.py": 1.63,
+        "routes/history_routes.py": 9.55,
+        "routes/hwfit_routes.py": 27.22,
+        "routes/mcp_routes.py": 6.23,
+        "routes/memory_routes.py": 0.0,
+        "routes/model_routes.py": 54.4,
+        "routes/note_routes.py": 0.0,
+        "routes/personal_routes.py": 18.13,
+        "routes/prefs_routes.py": 62.71,
+        "routes/preset_routes.py": 0.0,
+        "routes/research_routes.py": 33.72,
+        "routes/search_routes.py": 0.0,
+        "routes/session_routes.py": 12.93,
+        "routes/shell_routes.py": 25.53,
+        "routes/signature_routes.py": 0.0,
+        "routes/skills_routes.py": 17.66,
+        "routes/stt_routes.py": 0.0,
+        "routes/task_routes.py": 8.53,
+        "routes/tts_routes.py": 0.0,
+        "routes/upload_routes.py": 63.64,
+        "routes/vault_routes.py": 27.89,
+        "routes/webhook_routes.py": 51.44,
+        "scripts/_lib/cli.py": 54.17,
+        "scripts/claim_ownerless.py": 25.0,
+        "scripts/migrate_faiss_to_chroma.py": 29.25,
+        "scripts/odysseus": 18.99,
+        "scripts/odysseus-backup": 42.67,
+        "scripts/odysseus-calendar": 29.55,
+        "scripts/odysseus-contacts": 40.51,
+        "scripts/odysseus-cookbook": 15.59,
+        "scripts/odysseus-docs": 18.64,
+        "scripts/odysseus-gallery": 27.88,
+        "scripts/odysseus-logs": 23.86,
+        "scripts/odysseus-mail": 28.29,
+        "scripts/odysseus-mcp": 29.46,
+        "scripts/odysseus-memory": 24.74,
+        "scripts/odysseus-notes": 26.67,
+        "scripts/odysseus-personal": 31.17,
+        "scripts/odysseus-preset": 45.26,
+        "scripts/odysseus-research": 37.14,
+        "scripts/odysseus-sessions": 27.37,
+        "scripts/odysseus-signature": 39.73,
+        "scripts/odysseus-skills": 29.17,
+        "scripts/odysseus-tasks": 25.53,
+        "scripts/odysseus-theme": 23.93,
+        "scripts/odysseus-webhook": 28.57,
+        "services/__init__.py": 100.0,
+        "services/docs/__init__.py": 100.0,
+        "services/docs/service.py": 79.31,
+        "services/faces/__init__.py": 100.0,
+        "services/hwfit/__init__.py": 100.0,
+        "services/hwfit/fit.py": 77.78,
+        "services/hwfit/hardware.py": 47.76,
+        "services/hwfit/image_models.py": 0.0,
+        "services/hwfit/models.py": 74.15,
+        "services/hwfit/profiles.py": 86.67,
+        "services/memory/__init__.py": 100.0,
+        "services/memory/memory.py": 20.75,
+        "services/memory/memory_extractor.py": 44.3,
+        "services/memory/memory_vector.py": 15.46,
+        "services/memory/service.py": 65.91,
+        "services/memory/skill_extractor.py": 16.67,
+        "services/memory/skill_format.py": 76.83,
+        "services/memory/skills.py": 69.32,
+        "services/research/__init__.py": 100.0,
+        "services/research/research_handler.py": 34.65,
+        "services/research/service.py": 95.16,
+        "services/search/__init__.py": 100.0,
+        "services/search/analytics.py": 72.46,
+        "services/search/cache.py": 66.67,
+        "services/search/content.py": 62.29,
+        "services/search/core.py": 51.71,
+        "services/search/providers.py": 51.9,
+        "services/search/query.py": 83.16,
+        "services/search/ranking.py": 93.62,
+        "services/search/service.py": 90.91,
+        "services/shell/__init__.py": 100.0,
+        "services/shell/service.py": 58.02,
+        "services/stt/__init__.py": 100.0,
+        "services/stt/stt_service.py": 29.93,
+        "services/tts/__init__.py": 100.0,
+        "services/tts/tts_service.py": 36.92,
+        "services/youtube/__init__.py": 100.0,
+        "services/youtube/youtube_handler.py": 31.08,
+        "setup.py": 23.02,
+        "src/action_intents.py": 92.86,
+        "src/agent_loop.py": 26.06,
+        "src/agent_runs.py": 14.52,
+        "src/agent_tools.py": 76.0,
+        "src/ai_interaction.py": 6.15,
+        "src/api_key_manager.py": 96.15,
+        "src/app_helpers.py": 52.17,
+        "src/auth_helpers.py": 86.27,
+        "src/bg_jobs.py": 26.28,
+        "src/bg_monitor.py": 43.59,
+        "src/builtin_actions.py": 12.27,
+        "src/caldav_sync.py": 33.33,
+        "src/caldav_writeback.py": 62.26,
+        "src/chat_handler.py": 30.54,
+        "src/chat_helpers.py": 55.56,
+        "src/chroma_client.py": 73.33,
+        "src/cleanup_service.py": 14.58,
+        "src/constants.py": 100.0,
+        "src/context_budget.py": 100.0,
+        "src/context_compactor.py": 65.08,
+        "src/database.py": 100.0,
+        "src/deep_research.py": 54.07,
+        "src/document_actions.py": 80.65,
+        "src/document_processor.py": 35.06,
+        "src/email_thread_parser.py": 52.48,
+        "src/endpoint_resolver.py": 70.69,
+        "src/event_bus.py": 40.0,
+        "src/exceptions.py": 42.11,
+        "src/goal_based_extractor.py": 100.0,
+        "src/integrations.py": 32.61,
+        "src/llm_core.py": 65.31,
+        "src/markitdown_runtime.py": 83.33,
+        "src/mcp_manager.py": 30.47,
+        "src/memory.py": 39.55,
+        "src/model_context.py": 55.77,
+        "src/model_discovery.py": 82.5,
+        "src/pdf_form_doc.py": 47.26,
+        "src/pdf_forms.py": 7.56,
+        "src/pdf_runtime.py": 85.71,
+        "src/personal_docs.py": 59.62,
+        "src/preset_manager.py": 71.62,
+        "src/prompt_security.py": 100.0,
+        "src/rag_manager.py": 60.71,
+        "src/rag_singleton.py": 29.03,
+        "src/rag_vector.py": 21.6,
+        "src/rate_limiter.py": 100.0,
+        "src/readiness.py": 85.19,
+        "src/request_models.py": 90.67,
+        "src/research_handler.py": 26.37,
+        "src/research_utils.py": 85.71,
+        "src/search/__init__.py": 100.0,
+        "src/search/analytics.py": 72.46,
+        "src/search/cache.py": 66.67,
+        "src/search/content.py": 64.47,
+        "src/search/core.py": 100.0,
+        "src/search/providers.py": 100.0,
+        "src/search/query.py": 66.67,
+        "src/search/ranking.py": 100.0,
+        "src/secret_storage.py": 90.7,
+        "src/settings.py": 72.86,
+        "src/settings_scrub.py": 100.0,
+        "src/task_scheduler.py": 20.85,
+        "src/teacher_escalation.py": 19.18,
+        "src/text_helpers.py": 95.65,
+        "src/tool_execution.py": 22.56,
+        "src/tool_implementations.py": 15.13,
+        "src/tool_index.py": 23.81,
+        "src/tool_parsing.py": 37.5,
+        "src/tool_schemas.py": 23.57,
+        "src/tool_security.py": 79.17,
+        "src/topic_analyzer.py": 93.88,
+        "src/upload_handler.py": 57.71,
+        "src/url_safety.py": 91.11,
+        "src/url_security.py": 80.0,
+        "src/visual_report.py": 69.19,
+        "src/webhook_manager.py": 50.0,
+        "src/youtube_handler.py": 37.75,
+        "tests/conftest.py": 84.21,
+        "tests/test_action_intents.py": 100.0,
+        "tests/test_action_intents_shell_verbs.py": 100.0,
+        "tests/test_active_document_clear.py": 100.0,
+        "tests/test_admin_wipe_gallery.py": 100.0,
+        "tests/test_agent_loop.py": 100.0,
+        "tests/test_agent_tools_truncate_nonstring.py": 66.67,
+        "tests/test_amd_gpu_check_args.py": 100.0,
+        "tests/test_anthropic_response_parse.py": 100.0,
+        "tests/test_api_chat_security.py": 98.62,
+        "tests/test_api_key_manager_corrupt_load.py": 100.0,
+        "tests/test_api_key_manager_resilience.py": 100.0,
+        "tests/test_api_token_routes.py": 98.66,
+        "tests/test_app.py": 98.08,
+        "tests/test_app_static_mime.py": 92.59,
+        "tests/test_archived_sessions_model_filter.py": 82.61,
+        "tests/test_atomic_io.py": 100.0,
+        "tests/test_auth_event_loop.py": 81.67,
+        "tests/test_auth_regressions.py": 92.92,
+        "tests/test_auth_require_privilege_nondict.py": 100.0,
+        "tests/test_auth_session_revocation.py": 96.67,
+        "tests/test_backup_cli_security.py": 100.0,
+        "tests/test_backup_import_cross_user_dedup.py": 100.0,
+        "tests/test_bg_jobs_store.py": 100.0,
+        "tests/test_bg_monitor_stream.py": 100.0,
+        "tests/test_build_user_content_pdf_marker.py": 100.0,
+        "tests/test_builtin_actions_nonstring.py": 100.0,
+        "tests/test_builtin_memory_consolidation.py": 94.92,
+        "tests/test_caldav_url_hardening.py": 100.0,
+        "tests/test_caldav_url_nonstring.py": 100.0,
+        "tests/test_caldav_writeback.py": 100.0,
+        "tests/test_caldav_writeback_route.py": 98.46,
+        "tests/test_calendar_cli_name.py": 100.0,
+        "tests/test_calendar_event_contrast.py": 48.28,
+        "tests/test_calendar_owner_scope.py": 96.81,
+        "tests/test_calendar_parse_dt_tonight.py": 100.0,
+        "tests/test_calendar_recurrence.py": 100.0,
+        "tests/test_calendar_rrule.py": 100.0,
+        "tests/test_calendar_rrule_until_utc.py": 100.0,
+        "tests/test_calendar_update_event_tz.py": 100.0,
+        "tests/test_calendar_utils_dates_js.py": 52.63,
+        "tests/test_censor_pref_js.py": 62.5,
+        "tests/test_chat_attachment_picker.py": 100.0,
+        "tests/test_chat_cached_model_normalization.py": 100.0,
+        "tests/test_chat_helpers.py": 100.0,
+        "tests/test_chat_image_routing.py": 97.56,
+        "tests/test_chat_metrics.py": 95.83,
+        "tests/test_chat_stream_scope.py": 100.0,
+        "tests/test_check_outbound_url_nonstring.py": 100.0,
+        "tests/test_chroma_client.py": 100.0,
+        "tests/test_claim_ownerless_json.py": 100.0,
+        "tests/test_cleanup_owner_scope.py": 95.06,
+        "tests/test_cleanup_service_utcnow.py": 100.0,
+        "tests/test_companion_pairing.py": 96.39,
+        "tests/test_companion_readonly.py": 95.54,
+        "tests/test_compare_js.py": 40.91,
+        "tests/test_compute_next_run_monthly_clamp.py": 100.0,
+        "tests/test_contacts_add_null_name.py": 95.83,
+        "tests/test_contacts_cli_rows.py": 100.0,
+        "tests/test_contacts_vcard_parse.py": 100.0,
+        "tests/test_context_budget.py": 98.28,
+        "tests/test_context_compactor.py": 98.92,
+        "tests/test_context_compactor_nonstring.py": 100.0,
+        "tests/test_cookbook_cli_state.py": 100.0,
+        "tests/test_cookbook_cpu_only_serve.py": 100.0,
+        "tests/test_cookbook_dependency_completion_regression.py": 100.0,
+        "tests/test_cookbook_download_toast_duration.py": 100.0,
+        "tests/test_cookbook_endpoint_registration.py": 100.0,
+        "tests/test_cookbook_helpers.py": 99.58,
+        "tests/test_cookbook_package_detection.py": 100.0,
+        "tests/test_cookbook_progress_signal_js.py": 48.39,
+        "tests/test_ddg_redirect_resolution.py": 100.0,
+        "tests/test_deep_research_date_context.py": 100.0,
+        "tests/test_deep_research_extraction_controls.py": 100.0,
+        "tests/test_deep_research_parse_json_array_echo.py": 100.0,
+        "tests/test_deep_research_search_error.py": 100.0,
+        "tests/test_deep_research_synthesis_resilience.py": 100.0,
+        "tests/test_delete_message_no_session.py": 100.0,
+        "tests/test_deleted_session_sidebar_regression.py": 100.0,
+        "tests/test_derive_title_nonstring.py": 100.0,
+        "tests/test_dialog_aria.py": 100.0,
+        "tests/test_digest_windows.py": 100.0,
+        "tests/test_doc_library_open_orphaned.py": 100.0,
+        "tests/test_docs_cli_content_length.py": 100.0,
+        "tests/test_docs_no_orphan_images.py": 46.88,
+        "tests/test_docs_query_nondict_rows.py": 100.0,
+        "tests/test_document_actions_nonstring.py": 100.0,
+        "tests/test_document_close_clears_active_route.py": 98.18,
+        "tests/test_document_deeplink.py": 100.0,
+        "tests/test_document_editor_scroll.py": 100.0,
+        "tests/test_document_library_language_facet.py": 100.0,
+        "tests/test_document_pdf_marker.py": 100.0,
+        "tests/test_document_processor_attachment_budget.py": 100.0,
+        "tests/test_document_tidy_null_timestamp.py": 100.0,
+        "tests/test_document_tool_owner_scope.py": 98.99,
+        "tests/test_editor_draft_payload.py": 100.0,
+        "tests/test_email_decode_header.py": 100.0,
+        "tests/test_email_envelope_recipients.py": 100.0,
+        "tests/test_email_fallback_reconnect.py": 97.78,
+        "tests/test_email_imap_timeout.py": 97.3,
+        "tests/test_email_library_bulk_actions.py": 100.0,
+        "tests/test_email_owner_scope.py": 98.78,
+        "tests/test_email_polly_imap_leak.py": 94.12,
+        "tests/test_email_smtp_security.py": 100.0,
+        "tests/test_email_split_border_css.py": 100.0,
+        "tests/test_email_thread_parser_nonstring.py": 100.0,
+        "tests/test_embedding_endpoint_config.py": 100.0,
+        "tests/test_endpoint_probing.py": 96.67,
+        "tests/test_endpoint_resolver.py": 96.25,
+        "tests/test_esc_menu_stack_js.py": 51.16,
+        "tests/test_extract_quotes.py": 100.0,
+        "tests/test_extract_skill_json_nonstring.py": 100.0,
+        "tests/test_extract_statistics.py": 100.0,
+        "tests/test_font_routes.py": 100.0,
+        "tests/test_form_markdown_roundtrip.py": 100.0,
+        "tests/test_forwarded_message_divider.py": 100.0,
+        "tests/test_function_call_non_object_args.py": 93.75,
+        "tests/test_gallery_cli_album_count.py": 100.0,
+        "tests/test_gallery_cli_preview.py": 100.0,
+        "tests/test_gallery_endpoint_matching.py": 100.0,
+        "tests/test_gallery_endpoint_ssrf.py": 94.44,
+        "tests/test_gallery_exif_orientation.py": 100.0,
+        "tests/test_gallery_image_privileges.py": 100.0,
+        "tests/test_gallery_owner_filter_single_user.py": 100.0,
+        "tests/test_gmail_quote_attribution_js.py": 53.57,
+        "tests/test_gpu_compose_standalone.py": 98.63,
+        "tests/test_group_chat_storage.py": 100.0,
+        "tests/test_hex_to_rgb_js.py": 62.5,
+        "tests/test_history_db_fallback_hidden.py": 93.33,
+        "tests/test_history_order_by_timestamp_regression.py": 100.0,
+        "tests/test_history_topics_owner_scope.py": 100.0,
+        "tests/test_hwfit_amd.py": 95.56,
+        "tests/test_hwfit_bandwidth_nonstring.py": 100.0,
+        "tests/test_hwfit_macos.py": 98.57,
+        "tests/test_hwfit_manual_backend.py": 100.0,
+        "tests/test_hwfit_native_quant_labels.py": 100.0,
+        "tests/test_hwfit_params_b_malformed.py": 100.0,
+        "tests/test_hwfit_quant_formats.py": 96.67,
+        "tests/test_hwfit_unified_nvidia.py": 100.0,
+        "tests/test_ics_escape.py": 100.0,
+        "tests/test_ics_export_escaping.py": 96.43,
+        "tests/test_ics_import_dedup_tz.py": 100.0,
+        "tests/test_inside_base_dir_nonstring.py": 100.0,
+        "tests/test_integrations_store_shape.py": 100.0,
+        "tests/test_is_youtube_url_nonstring.py": 100.0,
+        "tests/test_is_youtube_url_nonstring_svc.py": 100.0,
+        "tests/test_keybind_altgr_js.py": 48.21,
+        "tests/test_lang_icon_null_opts_js.py": 61.9,
+        "tests/test_llm_core_anthropic_cache.py": 100.0,
+        "tests/test_llm_core_anthropic_temp_clamp.py": 100.0,
+        "tests/test_llm_core_concurrency.py": 100.0,
+        "tests/test_llm_core_fallback.py": 100.0,
+        "tests/test_llm_core_ollama.py": 100.0,
+        "tests/test_llm_core_reasoning.py": 94.12,
+        "tests/test_llm_core_reasoning_content_fallback.py": 97.73,
+        "tests/test_llm_core_sanitize_tool_calls.py": 97.87,
+        "tests/test_llm_core_sse_no_space.py": 95.0,
+        "tests/test_llm_core_streaming.py": 95.83,
+        "tests/test_llm_core_temperature.py": 100.0,
+        "tests/test_llm_core_usage_finish_delta.py": 94.74,
+        "tests/test_lmstudio_discovery.py": 100.0,
+        "tests/test_lmstudio_vision.py": 96.43,
+        "tests/test_local_endpoint_api_key_js.py": 41.54,
+        "tests/test_local_endpoint_js.py": 61.54,
+        "tests/test_logs_cli_resolve_nonstring.py": 100.0,
+        "tests/test_mail_cli_read_empty_fetch.py": 100.0,
+        "tests/test_mail_cli_recipients.py": 97.5,
+        "tests/test_manage_settings_token_budget.py": 100.0,
+        "tests/test_markdown_rendering_js.py": 41.67,
+        "tests/test_markdown_table_row_js.py": 60.71,
+        "tests/test_markitdown_format_nonstring.py": 100.0,
+        "tests/test_markitdown_runtime.py": 77.78,
+        "tests/test_mcp_cache_invalidation.py": 100.0,
+        "tests/test_mcp_cli_env_serialize.py": 100.0,
+        "tests/test_mcp_cli_json.py": 100.0,
+        "tests/test_mcp_common_truncate.py": 100.0,
+        "tests/test_mcp_email_decode_header_spaces.py": 100.0,
+        "tests/test_mcp_manager.py": 100.0,
+        "tests/test_mcp_reconnect_args.py": 100.0,
+        "tests/test_memory_bullet_extraction.py": 100.0,
+        "tests/test_memory_cli_rows.py": 100.0,
+        "tests/test_memory_extract_chat_nondict.py": 100.0,
+        "tests/test_memory_extractor_rows.py": 100.0,
+        "tests/test_memory_extractor_vector_degraded.py": 100.0,
+        "tests/test_memory_recall_nondict_rows.py": 100.0,
+        "tests/test_memory_validate_entries_nondict.py": 100.0,
+        "tests/test_migrate_faiss_to_chroma.py": 100.0,
+        "tests/test_modal_dock_composer_clearance.py": 100.0,
+        "tests/test_model_context.py": 100.0,
+        "tests/test_model_discovery_status.py": 100.0,
+        "tests/test_model_routes.py": 96.58,
+        "tests/test_model_sort_js.py": 62.5,
+        "tests/test_new_chat_clears_input.py": 100.0,
+        "tests/test_new_chat_model_preference.py": 100.0,
+        "tests/test_notes_cli_items.py": 100.0,
+        "tests/test_notes_update_due_date.py": 98.18,
+        "tests/test_null_owner_gates.py": 92.53,
+        "tests/test_odysseus_dispatcher.py": 100.0,
+        "tests/test_og_image_extraction.py": 100.0,
+        "tests/test_ollama_port_detection.py": 100.0,
+        "tests/test_ordinal_suffix_js.py": 64.71,
+        "tests/test_owned_document_query.py": 100.0,
+        "tests/test_pdf_runtime.py": 93.75,
+        "tests/test_personal_cli_rows.py": 100.0,
+        "tests/test_personal_dir_symlink_escape.py": 95.83,
+        "tests/test_personal_docs_exclusions.py": 100.0,
+        "tests/test_personal_docs_keyword_nondict.py": 100.0,
+        "tests/test_personal_docs_lists.py": 100.0,
+        "tests/test_personal_docs_office_index.py": 100.0,
+        "tests/test_personal_docs_pdf_index.py": 100.0,
+        "tests/test_personal_docs_state_store.py": 100.0,
+        "tests/test_personal_upload_isolation.py": 100.0,
+        "tests/test_platform_compat.py": 100.0,
+        "tests/test_prefs_routes.py": 100.0,
+        "tests/test_prefs_single_user_no_clobber.py": 100.0,
+        "tests/test_preset_cli_invalid_entries.py": 95.0,
+        "tests/test_preset_cli_set_corrupt_entry.py": 100.0,
+        "tests/test_preset_cli_store.py": 100.0,
+        "tests/test_preset_fill_missing_defaults.py": 100.0,
+        "tests/test_preset_local_storage_js.py": 68.75,
+        "tests/test_preset_store_shape.py": 100.0,
+        "tests/test_provider_classification.py": 100.0,
+        "tests/test_provider_detection.py": 100.0,
+        "tests/test_provider_endpoints.py": 100.0,
+        "tests/test_providers_mixtral_logo_js.py": 57.89,
+        "tests/test_public_blocked_tool_nonstring.py": 100.0,
+        "tests/test_question_type_detection.py": 100.0,
+        "tests/test_rag_keyword_fallback_owner.py": 100.0,
+        "tests/test_rag_remove_directory_scope.py": 92.5,
+        "tests/test_rag_server_directory_nonstring.py": 100.0,
+        "tests/test_rag_vector_id_stability.py": 42.11,
+        "tests/test_rate_limiter.py": 100.0,
+        "tests/test_readiness.py": 100.0,
+        "tests/test_readme_ascii_fenced.py": 100.0,
+        "tests/test_rename_user_case_insensitive.py": 94.44,
+        "tests/test_replace_messages_multimodal.py": 72.73,
+        "tests/test_reply_all_cc_nonstring_js.py": 61.9,
+        "tests/test_reply_recipients_js.py": 50.0,
+        "tests/test_research_chat_stream_owner.py": 100.0,
+        "tests/test_research_cli_preview.py": 100.0,
+        "tests/test_research_cli_store.py": 100.0,
+        "tests/test_research_handler_raw_nondict.py": 100.0,
+        "tests/test_research_handler_sources_nondict.py": 100.0,
+        "tests/test_research_owner_scope_routes.py": 98.75,
+        "tests/test_research_probe_errors.py": 100.0,
+        "tests/test_research_query_fallback.py": 100.0,
+        "tests/test_research_report_read.py": 100.0,
+        "tests/test_research_service.py": 100.0,
+        "tests/test_research_session_id_validation.py": 96.88,
+        "tests/test_research_utils.py": 100.0,
+        "tests/test_research_utils_low_quality_nonstring.py": 100.0,
+        "tests/test_reserved_username_admin_escalation.py": 100.0,
+        "tests/test_resolve_endpoint_fallbacks.py": 100.0,
+        "tests/test_resolve_upload_path_nondict.py": 100.0,
+        "tests/test_review_regressions.py": 98.77,
+        "tests/test_rewrite_persist_column.py": 69.23,
+        "tests/test_sanitize_multimodal_merge.py": 100.0,
+        "tests/test_schedule_email_offset_normalization.py": 98.28,
+        "tests/test_scheduler_restart_doublefire.py": 98.32,
+        "tests/test_scheduler_scheduled_time_validation.py": 100.0,
+        "tests/test_search_analytics_defaults.py": 100.0,
+        "tests/test_search_cache_invalidation.py": 100.0,
+        "tests/test_search_config_no_key_leak.py": 100.0,
+        "tests/test_search_config_provider_key.py": 100.0,
+        "tests/test_search_content_block_source_index.py": 100.0,
+        "tests/test_search_content_extraction_parity.py": 100.0,
+        "tests/test_search_module_consolidation.py": 100.0,
+        "tests/test_search_provider_json.py": 100.0,
+        "tests/test_search_query.py": 100.0,
+        "tests/test_search_query_entities_nonstring.py": 100.0,
+        "tests/test_search_query_nonstring.py": 100.0,
+        "tests/test_search_ranking.py": 100.0,
+        "tests/test_search_ranking_recency.py": 100.0,
+        "tests/test_search_ranking_sports_substring.py": 100.0,
+        "tests/test_search_service_nondict_rows.py": 72.73,
+        "tests/test_searchservice_search_call.py": 100.0,
+        "tests/test_searxng_image_pinned.py": 100.0,
+        "tests/test_security_regressions.py": 100.0,
+        "tests/test_select_dropdown_theme_css.py": 100.0,
+        "tests/test_sender_signature_skip_roles.py": 100.0,
+        "tests/test_serve_profiles.py": 100.0,
+        "tests/test_service_search_provider_guards.py": 100.0,
+        "tests/test_services_research_low_quality_sources.py": 100.0,
+        "tests/test_services_search_analytics_defaults.py": 100.0,
+        "tests/test_session_endpoint_owner_scope.py": 100.0,
+        "tests/test_session_export_filename.py": 100.0,
+        "tests/test_session_ghost_delete.py": 97.18,
+        "tests/test_session_manager_persist_guard.py": 100.0,
+        "tests/test_session_mode_helpers.py": 100.0,
+        "tests/test_session_owner_attribution.py": 92.86,
+        "tests/test_sessions_cli.py": 100.0,
+        "tests/test_settings_error_paths.py": 98.08,
+        "tests/test_settings_scrub.py": 100.0,
+        "tests/test_settings_store_shape.py": 100.0,
+        "tests/test_setup_admin_user.py": 100.0,
+        "tests/test_shell_routes.py": 100.0,
+        "tests/test_shell_service.py": 94.44,
+        "tests/test_signature_cli_export.py": 94.74,
+        "tests/test_signature_fold_js.py": 62.5,
+        "tests/test_signature_fold_self_closing_br_js.py": 66.67,
+        "tests/test_skill_extractor_rows.py": 100.0,
+        "tests/test_skill_index_prompt_injection.py": 98.08,
+        "tests/test_skill_save_no_rename.py": 100.0,
+        "tests/test_skills_cli_preview.py": 100.0,
+        "tests/test_skills_cli_rows.py": 100.0,
+        "tests/test_skills_delete_owner.py": 100.0,
+        "tests/test_skills_manager_owner_isolation.py": 93.52,
+        "tests/test_skills_routes_nondict.py": 100.0,
+        "tests/test_skills_routes_owner_update.py": 98.31,
+        "tests/test_skills_tag_token_match.py": 80.95,
+        "tests/test_snap_other_layers_nonarray_js.py": 59.09,
+        "tests/test_speech_service_toggles.py": 75.0,
+        "tests/test_split_chunks_no_duplicate_tail.py": 100.0,
+        "tests/test_sqlite_foreign_keys.py": 100.0,
+        "tests/test_src_search_query_nonstring.py": 100.0,
+        "tests/test_strip_reasoning_prose_dataloss.py": 100.0,
+        "tests/test_strip_think.py": 100.0,
+        "tests/test_stt_leak.py": 100.0,
+        "tests/test_task_scheduler_cancel.py": 98.68,
+        "tests/test_task_scheduler_session_delivery.py": 92.86,
+        "tests/test_tasks_cli_preview.py": 100.0,
+        "tests/test_teacher_eval_nonstring_reply.py": 100.0,
+        "tests/test_theme_cli_store.py": 100.0,
+        "tests/test_tool_index_keyword_boundaries.py": 100.0,
+        "tests/test_tool_parsing_nonstring.py": 100.0,
+        "tests/test_tool_path_confinement.py": 93.37,
+        "tests/test_tool_rag_keyword_hints.py": 100.0,
+        "tests/test_tool_support_heuristic.py": 100.0,
+        "tests/test_topic_analyzer.py": 100.0,
+        "tests/test_totp_failclosed.py": 100.0,
+        "tests/test_tts_cache_stats.py": 100.0,
+        "tests/test_tts_speed_malformed.py": 100.0,
+        "tests/test_ui_control_rag_toggle.py": 100.0,
+        "tests/test_unknown_tool_calls.py": 97.22,
+        "tests/test_update_database_script.py": 100.0,
+        "tests/test_upload_error_surfaced.py": 100.0,
+        "tests/test_upload_handler_atomicity.py": 99.36,
+        "tests/test_upload_id_extension.py": 100.0,
+        "tests/test_upload_id_validation.py": 100.0,
+        "tests/test_upload_multifile.py": 96.39,
+        "tests/test_upload_routes_owner_scope.py": 98.18,
+        "tests/test_url_safety.py": 100.0,
+        "tests/test_vault_password_not_in_argv.py": 82.61,
+        "tests/test_venice_hosts.py": 100.0,
+        "tests/test_vision_model_detection.py": 100.0,
+        "tests/test_visual_report.py": 100.0,
+        "tests/test_visual_report_icon_url.py": 100.0,
+        "tests/test_visual_report_nonstring.py": 100.0,
+        "tests/test_webhook_cli_mask.py": 100.0,
+        "tests/test_webhook_ssrf_resilience.py": 90.16,
+        "tests/test_webhook_trigger_auth_exempt.py": 100.0,
+        "tests/test_windows_update_script.py": 100.0,
+        "tests/test_youtube_comments_timeout.py": 95.45,
+        "tests/test_youtube_extract_id_nonstring.py": 100.0,
+        "tests/test_youtube_svc_comments_nondict.py": 100.0,
+        "tests/test_youtube_transcript_seg_nondict.py": 100.0
+      }
+    },
+    "perf": {
+      "import_app_seconds_mean": 1.461,
+      "runs": 5,
+      "python": "3.12.13",
+      "key_path_ms": 4.03
+    },
+    "auth_endpoints": [
+      {
+        "path": "/",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/admin/wipe/{kind}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/assistant/available-timezones",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/assistant/run-status/{task_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/assistant/run/{task_id}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/assistant/session",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/assistant/settings",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/assistant/settings",
+        "methods": [
+          "PATCH"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/2fa/confirm",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/2fa/disable",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/2fa/setup",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/2fa/status",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/change-password",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/features",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": false
+      },
+      {
+        "path": "/api/auth/features",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": false
+      },
+      {
+        "path": "/api/auth/integrations",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/integrations",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/integrations/presets",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": false
+      },
+      {
+        "path": "/api/auth/integrations/{integration_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/integrations/{integration_id}",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/integrations/{integration_id}/test",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/login",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": false
+      },
+      {
+        "path": "/api/auth/logout",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": false
+      },
+      {
+        "path": "/api/auth/open-signup",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/settings",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": false
+      },
+      {
+        "path": "/api/auth/settings",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": false
+      },
+      {
+        "path": "/api/auth/setup",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": false
+      },
+      {
+        "path": "/api/auth/signup",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": false
+      },
+      {
+        "path": "/api/auth/signup-toggle",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/status",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": false
+      },
+      {
+        "path": "/api/auth/users",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/users",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/users",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/users/{username}/privileges",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/auth/users/{username}/rename",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/calendar/calendars",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/calendar/calendars",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/calendar/calendars/{cal_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/calendar/calendars/{cal_id}",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/calendar/config",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/calendar/config",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/calendar/events",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/calendar/events",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/calendar/events/{uid}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/calendar/events/{uid}",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/calendar/export/{cal_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/calendar/import",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/calendar/quick-parse",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/calendar/sync",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/calendar/test",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/chat",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/chat/resume/{session_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/chat/stop/{session_id}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/chat/stream_status/{session_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/chat_stream",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/cleanup",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/cleanup/preview",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/companion/info",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/companion/models",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/companion/pair",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/companion/pair",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/companion/ping",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/compare/history",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/compare/record",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/compare/start",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/compare/{comp_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/compare/{comp_id}/vote",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/contacts/add",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/contacts/clear",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/contacts/config",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/contacts/config",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/contacts/export",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/contacts/import",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/contacts/list",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/contacts/search",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/contacts/{uid}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/contacts/{uid}",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/conversations/topics",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/cookbook/gpus",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/cookbook/hf-latest",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/cookbook/kill-pid",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/cookbook/packages",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/cookbook/packages/install",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/cookbook/rebuild-engine",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/cookbook/setup",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/cookbook/ssh-key",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/cookbook/ssh-key",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/cookbook/state",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/cookbook/state",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/cookbook/tasks/status",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/db/stats",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/default-chat",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/discover",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}",
+        "methods": [
+          "PATCH"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}/ai-fill-annotations",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}/archive",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}/export-pdf",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}/export-pdf/preview",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}/extract-pdf-text",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}/page/{page_no}.png",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}/prepare-signed-reply",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}/render-pages",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}/render-pdf",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}/restore/{num}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}/version/{num}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/document/{doc_id}/versions",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/documents/ai-tidy",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/documents/export-zip",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/documents/import-pdf",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/documents/library",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/documents/tidy",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/documents/{session_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/editor-drafts",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/editor-drafts",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/editor-drafts/{draft_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/editor-drafts/{draft_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/editor-drafts/{draft_id}",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/accounts",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/accounts",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/accounts/test",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/accounts/{account_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/accounts/{account_id}",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/accounts/{account_id}/set-default",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/ai-reply",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/archive/{uid}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/attachment-as-doc/{uid}/{index}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/attachment-path/{uid}/{index}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/attachment/{uid}/{index}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/attachments/{uid}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/clear-answered/{uid}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/compose-upload",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/compose-upload/{token}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/config",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/config",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/contacts",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/delete-permanent/{uid}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/delete/{uid}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/draft",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/extract-style",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/folders",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/list",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/mark-answered/{uid}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/mark-read/{uid}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/mark-unread/{uid}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/move/{uid}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/odysseus/reminders",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/read/{uid}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/resolve-contact",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/schedule",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/scheduled",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/scheduled/{sid}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/search",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/send",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/style",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/style",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/summarize",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/urgency-state",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/email/{uid}/unflag-spam",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/embeddings/endpoint",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/embeddings/endpoint",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/embeddings/endpoint",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/embeddings/models",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/embeddings/models/{model_name:path}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/embeddings/models/{model_name:path}/download",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/embeddings/models/{model_name:path}/status",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/emoji/{code}.svg",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/export",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/fonts/custom",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/ai-tag-batch",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/ai-upscale",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/albums",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/albums",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/albums/{album_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/albums/{album_id}",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/albums/{album_id}/add",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/albums/{album_id}/remove",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/clear-ai-tags",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/clear-user-tags",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/dedupe-tags",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/download-zip",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/library",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/stats",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/style-transfer",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/tags",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/upload",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/{image_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/{image_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/{image_id}",
+        "methods": [
+          "PATCH"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/{image_id}/ai-tag",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/{image_id}/favorite",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/{image_id}/rename",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/{image_id}/replace",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/gallery/{image_id}/rotate",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/generated-image/{filename}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/health",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": false
+      },
+      {
+        "path": "/api/history/{session_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/history/{sid}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/hwfit/image-models",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/hwfit/models",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/hwfit/profiles",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/hwfit/system",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/image/denoise",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/image/enhance-face",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/image/harmonize",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/image/inpaint",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/image/remove-bg",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/image/sharpen",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/image/upscale-local",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/import",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/inject_context/{session_id}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/mcp/oauth/authorize/{server_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/mcp/oauth/callback",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/mcp/oauth/exchange/{server_id}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/mcp/servers",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/mcp/servers",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/mcp/servers/{server_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/mcp/servers/{server_id}",
+        "methods": [
+          "PATCH"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/mcp/servers/{server_id}/reconnect",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/mcp/servers/{server_id}/tools",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/mcp/servers/{server_id}/tools",
+        "methods": [
+          "PATCH"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/mcp/tools",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/memory",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/memory/add",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/memory/audit",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/memory/by-session/{session_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/memory/debug",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/memory/extract",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/memory/import",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/memory/search",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/memory/timeline",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/memory/{memory_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/memory/{memory_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/memory/{memory_id}",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/memory/{memory_id}/pin",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/model-endpoints",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/model-endpoints",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/model-endpoints/probe-local",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/model-endpoints/test",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/model-endpoints/{ep_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/model-endpoints/{ep_id}",
+        "methods": [
+          "PATCH"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/model-endpoints/{ep_id}/dependents",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/model-endpoints/{ep_id}/models",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/model-endpoints/{ep_id}/models",
+        "methods": [
+          "PATCH"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/model-endpoints/{ep_id}/probe",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/model/cached",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/model/download",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/model/serve",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/models",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/notes",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/notes",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/notes/fire-reminder",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/notes/reorder",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/notes/{note_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/notes/{note_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/notes/{note_id}",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/notes/{note_id}/archive",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/notes/{note_id}/items/{index}/toggle",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/notes/{note_id}/pin",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/personal",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/personal/add_directory",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/personal/file",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/personal/reload",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/personal/remove_directory",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/personal/upload",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/ping",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/prefs",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/prefs/{key}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/prefs/{key}",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/presets",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/presets/custom",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/presets/expand",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/presets/groups",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/presets/groups",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/presets/templates",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/presets/templates",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/presets/templates/{template_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/probe",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/probe-selected",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/providers",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/rag/stats",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/ready",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/research/active",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/research/cancel/{session_id}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/research/detail/{session_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/research/library",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/research/report/{session_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/research/result-peek/{session_id}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/research/result/{session_id}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/research/spinoff/{session_id}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/research/start",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/research/status/{session_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/research/stream/{session_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/research/{session_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/research/{session_id}/archive",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/research/{session_id}/hide-image",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/research/{session_id}/unhide-images",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/rewrite",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/runtime",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/search",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/search",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/search/config",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/search/providers",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/search/query",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/openai",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{session_id}/compact",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{session_id}/compact",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{session_id}/context_info",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{session_id}/delete-messages",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{session_id}/edit-message",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{session_id}/fork",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{session_id}/important",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{session_id}/mark-stopped",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{session_id}/merge-last-assistant",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{session_id}/message",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{session_id}/truncate",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{session_id}/update-last-meta",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{sid}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{sid}",
+        "methods": [
+          "PATCH"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{sid}/archive",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{sid}/delete",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{sid}/export",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{sid}/inject_messages",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/session/{sid}/unarchive",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/sessions",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/sessions/all",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/sessions/archived",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/sessions/auto-sort",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/sessions/bulk-delete",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/sessions/save",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/shell/exec",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/shell/stream",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/signatures",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/signatures",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/signatures/{sig_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/add",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/audit-all",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/audit-all/cancel",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/audit-all/status",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/builtin",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/builtin/{name}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/builtin/{name}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/builtin/{name}",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/index",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/search",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/{skill_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/{skill_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/{skill_id}",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/{skill_id}/markdown",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/{skill_id}/markdown",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/{skill_id}/test",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/skills/{skill_id}/test-status",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/stt/stats",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/stt/transcribe",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/meta/actions",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/meta/events",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/meta/output-targets",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/notifications",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/onboarding",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/onboarding",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/parse",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/runs/recent",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/{task_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/{task_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/{task_id}",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/{task_id}/clear-cache",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/{task_id}/pause",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/{task_id}/resume",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/{task_id}/revert",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/{task_id}/run",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/{task_id}/runs",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/{task_id}/stop",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/{task_id}/webhook-regenerate",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tasks/{task_id}/webhook/{token}",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": false
+      },
+      {
+        "path": "/api/test-research",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/test/youtube",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tokens",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tokens",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tokens/{token_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tools",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tools",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tts/clear-cache",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tts/stats",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/tts/synthesize",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/upload",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/upload/cleanup",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/upload/stats",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/upload/{file_id}",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/upload/{file_id}/vision",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/upload/{file_id}/vision",
+        "methods": [
+          "PUT"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/v1/chat",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/vault/config",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/vault/config",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/vault/lock",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/vault/login",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/vault/logout",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/vault/unlock",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/version",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": false
+      },
+      {
+        "path": "/api/webhooks",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/webhooks",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/webhooks/{webhook_id}",
+        "methods": [
+          "DELETE"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/webhooks/{webhook_id}",
+        "methods": [
+          "PATCH"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/api/webhooks/{webhook_id}/test",
+        "methods": [
+          "POST"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/backgrounds",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/calendar",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/cookbook",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/email",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/gallery",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/library",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/login",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": false
+      },
+      {
+        "path": "/memory",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/notes",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      },
+      {
+        "path": "/tasks",
+        "methods": [
+          "GET"
+        ],
+        "authenticated": true
+      }
+    ]
+  },
+  "thresholds": {
+    "mode": "ratchet",
+    "ruff_findings_total": {
+      "max": 0
+    },
+    "typed_pct_overall": {
+      "min": 0.4962
+    },
+    "max_module_loc": {
+      "max": 5174
+    },
+    "coverage_overall_pct": {
+      "min": 45.36
+    },
+    "security_high_critical": {
+      "max": 0
+    }
+  }
+}
