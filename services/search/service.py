@@ -73,6 +73,8 @@ class SearchService:
 
         results = []
         for r in raw_results:
+            if not isinstance(r, dict):
+                continue
             results.append(SearchResult(
                 url=r.get("url", ""),
                 title=r.get("title", ""),
