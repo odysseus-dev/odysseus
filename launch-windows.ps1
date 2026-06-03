@@ -2,32 +2,66 @@
 <#
   Odysseus - native Windows launcher (no Docker).
 
-  One command to: create a virtualenv, install dependencies, run first-time
-  setup (prints an admin password on first run), and start the server.
+  One command to: install uv locally, install a uv-managed Python locally,
+  create a virtualenv, install dependencies, run first-time setup
+  (prints an admin password on first run), and start the server.
+
   Safe to re-run - it skips whatever already exists.
 
   Usage:
     powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
     powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1 -Port 7000 -BindHost 127.0.0.1
 
+  If you already created venv using system Python and want to rebuild it using uv:
+    powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1 -RecreateVenv
+
   Tip: bind 127.0.0.1 (default) for local-only use. Use 0.0.0.0 only when you
   intentionally want other devices on your LAN to reach it.
 #>
+
 param(
     [int]$Port = 7000,
-    [string]$BindHost = "127.0.0.1"
+    [string]$BindHost = "127.0.0.1",
+
+    # Use a stable Python by default. You can override, e.g. -PythonVersion 3.11 or 3.13
+    [string]$PythonVersion = "3.12",
+
+    # Deletes and recreates venv. Useful when switching from system Python to uv-managed Python.
+    [switch]$RecreateVenv
 )
 
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 
-function Write-Step($msg) { Write-Host ""; Write-Host ("==> " + $msg) -ForegroundColor Cyan }
+function Write-Step($msg) {
+    Write-Host ""
+    Write-Host ("==> " + $msg) -ForegroundColor Cyan
+}
+
 function Fail($msg) {
     Write-Host ""
     Write-Host ("ERROR: " + $msg) -ForegroundColor Red
     Write-Host ""
     Read-Host "Press Enter to exit"
     exit 1
+}
+
+function Run-Checked {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+
+        [Parameter(Mandatory = $true)]
+        [string]$FailureMessage
+    )
+
+    & $FilePath @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        Fail $FailureMessage
+    }
 }
 
 function Find-GitBash {
@@ -39,6 +73,7 @@ function Find-GitBash {
         $base = [Environment]::GetEnvironmentVariable($name)
         if ($base) { $roots += (Join-Path $base "Git") }
     }
+
     $roots += @("C:\Program Files\Git", "C:\Program Files (x86)\Git")
 
     foreach ($root in ($roots | Select-Object -Unique)) {
@@ -47,80 +82,170 @@ function Find-GitBash {
             if (Test-Path $candidate) { return $candidate }
         }
     }
+
     return $null
 }
 
-# 1. Locate a Python interpreter (3.11+ required)
-Write-Step "Checking for Python"
-function Get-PythonVersionText($launcher, $launcherArgs) {
+function Get-UvWindowsTriple {
+    $arch = $env:PROCESSOR_ARCHITECTURE
+
+    if ($env:PROCESSOR_ARCHITEW6432) {
+        $arch = $env:PROCESSOR_ARCHITEW6432
+    }
+
+    switch ($arch) {
+        "AMD64" { return "x86_64-pc-windows-msvc" }
+        "ARM64" { return "aarch64-pc-windows-msvc" }
+        "x86"   { return "i686-pc-windows-msvc" }
+        default {
+            Fail "Unsupported Windows CPU architecture: $arch"
+        }
+    }
+}
+
+function Ensure-LocalUv {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$UvExe
+    )
+
+    if (Test-Path $UvExe) {
+        return $UvExe
+    }
+
+    Write-Step "Installing uv locally"
+
+    $uvBinDir = Split-Path -Parent $UvExe
+    $uvRootDir = Split-Path -Parent $uvBinDir
+    $extractDir = Join-Path $uvRootDir "extract"
+    $zipPath = Join-Path $uvRootDir "uv.zip"
+
+    New-Item -ItemType Directory -Force -Path $uvBinDir | Out-Null
+
+    $triple = Get-UvWindowsTriple
+    $url = "https://github.com/astral-sh/uv/releases/latest/download/uv-$triple.zip"
+
     try {
-        return (& $launcher @launcherArgs -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>$null).Trim()
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     } catch {
-        return $null
+        # Continue; older Windows/PowerShell installations may already have a usable default.
     }
-}
 
-$pyExe = $null
-$pyArgs = @()
-$pyVersion = $null
+    try {
+        if (Test-Path $extractDir) {
+            Remove-Item $extractDir -Recurse -Force
+        }
 
-$pyLauncher = Get-Command py -ErrorAction SilentlyContinue
-if ($pyLauncher) {
-    foreach ($v in @("-3.13", "-3.12", "-3.11")) {
-        $ver = Get-PythonVersionText $pyLauncher.Source @($v)
-        if ($ver) {
-            $pyExe = $pyLauncher.Source
-            $pyArgs = @($v)
-            $pyVersion = $ver
-            break
+        New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+
+        Write-Host "Downloading uv..."
+        Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+
+        Write-Host "Extracting uv..."
+        Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+
+        $uvCandidate = Get-ChildItem -Path $extractDir -Recurse -Filter "uv.exe" |
+            Select-Object -First 1
+
+        if (-not $uvCandidate) {
+            Fail "Downloaded uv archive did not contain uv.exe."
+        }
+
+        Copy-Item -Path $uvCandidate.FullName -Destination $UvExe -Force
+
+        if (-not (Test-Path $UvExe)) {
+            Fail "Failed to install uv locally."
+        }
+    } catch {
+        Fail "Failed to download/install uv locally. Details: $($_.Exception.Message)"
+    } finally {
+        if (Test-Path $zipPath) {
+            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+        }
+
+        if (Test-Path $extractDir) {
+            Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+
+    return $UvExe
 }
 
-if (-not $pyExe) {
-    $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
-    if ($pythonCmd) {
-        $ver = Get-PythonVersionText $pythonCmd.Source @()
-        if ($ver) {
-            $versionParts = $ver.Split('.')
-            $major = [int]$versionParts[0]
-            $minor = [int]$versionParts[1]
-            if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 11)) {
-                $pyExe = $pythonCmd.Source
-                $pyVersion = $ver
-            }
-        }
-    }
+# Project-local uv and Python locations.
+$uvRoot = Join-Path $PSScriptRoot ".uv"
+$uvBin = Join-Path $uvRoot "bin"
+$uvExe = Join-Path $uvBin "uv.exe"
+
+# Keep uv-managed Python and uv cache local to this project instead of system-wide.
+$env:UV_PYTHON_INSTALL_DIR = Join-Path $uvRoot "python"
+$env:UV_CACHE_DIR = Join-Path $uvRoot "cache"
+
+$venvDir = Join-Path $PSScriptRoot "venv"
+$venvPy = Join-Path $venvDir "Scripts\python.exe"
+
+# 1. Ensure uv exists locally.
+$uvExe = Ensure-LocalUv -UvExe $uvExe
+Write-Host "Using uv: $uvExe"
+
+# 2. Install a uv-managed Python locally.
+Write-Step "Installing uv-managed Python $PythonVersion locally"
+Run-Checked `
+    -FilePath $uvExe `
+    -Arguments @("python", "install", $PythonVersion) `
+    -FailureMessage "Failed to install uv-managed Python $PythonVersion."
+
+# 3. Create or recreate the virtual environment using uv-managed Python only.
+if ($RecreateVenv -and (Test-Path $venvDir)) {
+    Write-Step "Removing existing virtual environment"
+    Remove-Item $venvDir -Recurse -Force
 }
 
-if (-not $pyExe) {
-    Fail "Couldn't find Python 3.11+ for Windows setup. Install Python 3.11+ (or open the Python launcher with 'py -3.11') from https://www.python.org/downloads/, then re-run this script."
-}
-$pythonLabel = ("Using Python {0}: {1} {2}" -f $pyVersion, $pyExe, ($pyArgs -join ' ')).TrimEnd()
-Write-Host $pythonLabel
-
-# 2. Create the virtualenv if missing
-$venvPy = Join-Path $PSScriptRoot "venv\Scripts\python.exe"
 if (-not (Test-Path $venvPy)) {
-    Write-Step "Creating virtual environment (venv)"
-    & $pyExe @pyArgs -m venv venv
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPy)) { Fail "Failed to create the virtual environment." }
+    Write-Step "Creating virtual environment with uv-managed Python"
+    Run-Checked `
+        -FilePath $uvExe `
+        -Arguments @(
+            "venv",
+            $venvDir,
+            "--python",
+            $PythonVersion,
+            "--python-preference",
+            "only-managed"
+        ) `
+        -FailureMessage "Failed to create the virtual environment."
+
+    if (-not (Test-Path $venvPy)) {
+        Fail "Virtual environment was created, but venv\Scripts\python.exe was not found."
+    }
 } else {
     Write-Host "venv already exists - skipping creation."
+    Write-Host "Tip: use -RecreateVenv if this venv was previously created with system Python."
 }
 
-# 3. Install / update dependencies
-Write-Step "Installing dependencies (first run can take a few minutes)"
-& $venvPy -m pip install --upgrade pip --quiet
-& $venvPy -m pip install -r requirements.txt
-if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the pip error." }
+# 4. Install / update dependencies with uv.
+Write-Step "Installing dependencies with uv"
 
-# 4. First-time setup (creates data dirs, DB, .env, admin user)
+Run-Checked `
+    -FilePath $uvExe `
+    -Arguments @(
+        "pip",
+        "install",
+        "--python",
+        $venvPy,
+        "-r",
+        "requirements.txt"
+    ) `
+    -FailureMessage "Dependency install failed. Scroll up for the uv/pip error."
+
+# 5. First-time setup creates data dirs, DB, .env, admin user.
 Write-Step "Running first-time setup"
-& $venvPy setup.py
-if ($LASTEXITCODE -ne 0) { Fail "setup.py failed." }
 
-# 5. Friendly note about Git Bash (full Cookbook / agent-shell parity)
+Run-Checked `
+    -FilePath $venvPy `
+    -Arguments @("setup.py") `
+    -FailureMessage "setup.py failed."
+
+# 6. Friendly note about Git Bash.
 if (-not (Find-GitBash)) {
     Write-Host ""
     Write-Host "NOTE: Git Bash (bash.exe) was not found on PATH." -ForegroundColor Yellow
@@ -129,8 +254,20 @@ if (-not (Find-GitBash)) {
     Write-Host "      https://git-scm.com/download/win" -ForegroundColor Yellow
 }
 
-# 6. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
+# 7. Start the server.
 Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
-& $venvPy -m uvicorn app:app --host $BindHost --port $Port
+
+Run-Checked `
+    -FilePath $venvPy `
+    -Arguments @(
+        "-m",
+        "uvicorn",
+        "app:app",
+        "--host",
+        $BindHost,
+        "--port",
+        "$Port"
+    ) `
+    -FailureMessage "uvicorn exited with an error."
