@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save runner time.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python deps & syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Matches the python:3.12-slim base image in the Dockerfile.
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile-check all sources
+        # Catches syntax errors across the tree without importing modules
+        # (which would require optional services/network).
+        run: python -m compileall -q app.py core routes services src mcp_servers
+
+      - name: Run tests
+        # Don't fail the build when there are no collectable tests in a given
+        # environment; exit code 5 = "no tests ran".
+        run: |
+          pytest -q || ([ $? -eq 5 ] && echo "No tests collected, skipping.")
+
+  node:
+    name: Node deps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        # package-lock.json is committed, so a reproducible install is expected.
+        run: npm ci
