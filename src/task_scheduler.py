@@ -146,7 +146,13 @@ def compute_next_run(schedule: str, scheduled_time: str,
         try:
             candidate = now.replace(day=day, hour=hour, minute=minute, second=0, microsecond=0)
         except ValueError:
-            candidate = now
+            # Short month: clamp to its last day (mirrors the next-month
+            # clamp below) instead of silently skipping the whole month.
+            if now.month == 12:
+                last = now.replace(year=now.year + 1, month=1, day=1) - timedelta(days=1)
+            else:
+                last = now.replace(month=now.month + 1, day=1) - timedelta(days=1)
+            candidate = last.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if candidate <= now:
             if now.month == 12:
                 next_month = now.replace(year=now.year + 1, month=1, day=1)
