@@ -101,10 +101,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text=f"Error: {e}")]
 
     elif action == "add_directory":
-        directory = arguments.get("directory", "").strip()
+        _dir = arguments.get("directory")
+        directory = _dir.strip() if isinstance(_dir, str) else ""
         if not directory:
             return [TextContent(type="text", text="Error: add_directory needs a directory path")]
-        directory = os.path.expanduser(directory)
+        # Store an absolute path so indexed `source` metadata is absolute and
+        # remove_directory (which abspath-normalizes) can match it later (#1660).
+        directory = os.path.abspath(os.path.expanduser(directory))
         if not os.path.isdir(directory):
             return [TextContent(type="text", text=f"Error: Directory not found: {directory}")]
         if not _rag_manager:
@@ -112,12 +115,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         try:
             result = _rag_manager.index_personal_documents(directory)
             indexed = result.get("indexed_count", 0) if isinstance(result, dict) else 0
+            # Record the directory so `list` and `remove_directory` can see it.
+            # Indexing was just done above, so pass index=False to avoid a second
+            # (ownerless) pass. Without this the directory was indexed but never
+            # tracked in indexed_directories, so it was invisible/unremovable.
+            if _personal_docs_manager and hasattr(_personal_docs_manager, "add_directory"):
+                try:
+                    _personal_docs_manager.add_directory(directory, index=False)
+                except Exception:
+                    pass
             return [TextContent(type="text", text=f"Directory '{directory}' added to RAG index ({indexed} chunks indexed)")]
         except Exception as e:
             return [TextContent(type="text", text=f"Error: Failed to index directory: {e}")]
 
     elif action == "remove_directory":
-        directory = arguments.get("directory", "").strip()
+        _dir = arguments.get("directory")
+        directory = _dir.strip() if isinstance(_dir, str) else ""
         if not directory:
             return [TextContent(type="text", text="Error: remove_directory needs a directory path")]
         # Expand ~ to match add_directory, which indexes the expanded path.

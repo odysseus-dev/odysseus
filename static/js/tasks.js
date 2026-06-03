@@ -7,6 +7,7 @@ import markdownModule from './markdown.js';
 import * as spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { sortModelIds } from './modelSort.js';
+import { ordinalSuffix } from './util/ordinal.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -244,7 +245,7 @@ function _scheduleLabel(task) {
   }
   if (task.schedule === 'monthly') {
     const d = task.scheduled_day ?? 1;
-    const suffix = d === 1 ? 'st' : d === 2 ? 'nd' : d === 3 ? 'rd' : 'th';
+    const suffix = ordinalSuffix(d);
     return `Monthly on ${d}${suffix} at ${localTime}`;
   }
   return task.schedule || '—';

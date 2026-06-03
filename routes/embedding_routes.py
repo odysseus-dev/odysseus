@@ -86,7 +86,8 @@ def _load_custom_endpoint() -> dict:
     """Load the saved custom embedding endpoint, if any."""
     try:
         if os.path.exists(_ENDPOINT_FILE):
-            return json.loads(Path(_ENDPOINT_FILE).read_text(encoding="utf-8"))
+            data = json.loads(Path(_ENDPOINT_FILE).read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
     except Exception:
         pass
     return {}

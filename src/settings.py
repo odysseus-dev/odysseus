@@ -184,8 +184,10 @@ def load_settings() -> dict:
     try:
         with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
             saved = json.load(f)
+        if not isinstance(saved, dict):
+            raise ValueError("settings must be an object")
         merged = {**DEFAULT_SETTINGS, **saved}
-    except (FileNotFoundError, json.JSONDecodeError):
+    except (FileNotFoundError, PermissionError, json.JSONDecodeError, ValueError):
         merged = dict(DEFAULT_SETTINGS)
     _settings_cache = (now, merged)
     return merged
@@ -213,7 +215,8 @@ def is_setting_overridden(key: str) -> bool:
     """
     try:
         with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-            return key in json.load(f)
+            saved = json.load(f)
+        return isinstance(saved, dict) and key in saved
     except (FileNotFoundError, json.JSONDecodeError):
         return False
 
@@ -264,8 +267,10 @@ def load_features() -> dict:
     try:
         with open(FEATURES_FILE, "r", encoding="utf-8") as f:
             saved = json.load(f)
+        if not isinstance(saved, dict):
+            raise ValueError("features must be an object")
         merged = {**DEFAULT_FEATURES, **saved}
-    except (FileNotFoundError, json.JSONDecodeError):
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
         merged = dict(DEFAULT_FEATURES)
     _features_cache = (now, merged)
     return merged

@@ -58,7 +58,7 @@ def setup_history_routes(session_manager) -> APIRouter:
                     .all()
                 )
                 import json as _json
-                history_dict = []
+                db_history = []
                 for m in db_messages:
                     entry = {"role": m.role, "content": m.content}
                     meta = {}
@@ -71,12 +71,19 @@ def setup_history_routes(session_manager) -> APIRouter:
                         meta["timestamp"] = m.timestamp.isoformat() + "Z"
                     if meta:
                         entry["metadata"] = meta
-                    history_dict.append(entry)
-                if history_dict:
+                    db_history.append(entry)
+                if db_history:
+                    # Rebuild in-memory history from the full set so hidden
+                    # messages (e.g. compaction summaries) are kept for AI context.
                     session.history = [
                         ChatMessage(role=m["role"], content=m["content"], metadata=m.get("metadata"))
-                        for m in history_dict
+                        for m in db_history
                     ]
+                # Response excludes hidden messages, matching the in-memory path.
+                history_dict = [
+                    m for m in db_history
+                    if not (m.get("metadata") or {}).get("hidden")
+                ]
             except Exception as e:
                 logger.error(f"DB fallback failed for {session_id}: {e}")
             finally:
@@ -265,7 +272,7 @@ def setup_history_routes(session_manager) -> APIRouter:
                 db_messages = (
                     db.query(DbChatMessage)
                     .filter(DbChatMessage.session_id == session_id, DbChatMessage.role == 'assistant')
-                    .order_by(DbChatMessage.created_at.desc())
+                    .order_by(DbChatMessage.timestamp.desc())
                     .first()
                 )
                 if db_messages:
@@ -320,7 +327,7 @@ def setup_history_routes(session_manager) -> APIRouter:
                 db_msg = (
                     db.query(DbChatMessage)
                     .filter(DbChatMessage.session_id == session_id, DbChatMessage.role == 'assistant')
-                    .order_by(DbChatMessage.created_at.desc())
+                    .order_by(DbChatMessage.timestamp.desc())
                     .first()
                 )
                 if db_msg:
@@ -401,7 +408,7 @@ def setup_history_routes(session_manager) -> APIRouter:
                 db_messages = (
                     db.query(DbChatMessage)
                     .filter(DbChatMessage.session_id == session_id)
-                    .order_by(DbChatMessage.created_at)
+                    .order_by(DbChatMessage.timestamp)
                     .all()
                 )
                 # Find last two assistant messages in DB

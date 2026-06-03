@@ -28,9 +28,12 @@ def _load() -> dict:
     if not _PATH.exists():
         return {}
     try:
-        return json.loads(_PATH.read_text())
+        data = json.loads(_PATH.read_text())
     except json.JSONDecodeError as e:
         fail(f"presets.json corrupt: {e}")
+    if not isinstance(data, dict):
+        fail("presets.json corrupt: expected an object")
+    return data
 
 
 def _save(data: dict) -> None:
@@ -44,6 +47,15 @@ def _save(data: dict) -> None:
     tmp = _PATH.with_suffix(_PATH.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
     tmp.replace(_PATH)
+
+
+def _entry_or_fail(presets: dict, name: str) -> dict:
+    if name not in presets:
+        fail(f"no preset named {name!r}")
+    entry = presets[name]
+    if not isinstance(entry, dict):
+        fail(f"preset {name!r} is corrupt: expected an object")
+    return entry
 
 
 def cmd_list(args):
@@ -63,9 +75,7 @@ def cmd_list(args):
 
 def cmd_get(args):
     presets = _load()
-    if args.name not in presets:
-        fail(f"no preset named {args.name!r}")
-    emit({"id": args.name, **presets[args.name]}, args)
+    emit({"id": args.name, **_entry_or_fail(presets, args.name)}, args)
 
 
 def cmd_set(args):
@@ -75,7 +85,8 @@ def cmd_set(args):
     if prompt is None and args.temperature is None:
         fail("nothing to set — pass --prompt, --prompt-file, or --temperature")
     presets = _load()
-    entry = dict(presets.get(args.name) or {})
+    current = presets.get(args.name)
+    entry = dict(current) if isinstance(current, dict) else {}
     entry.setdefault("name", args.name)
     if prompt is not None:
         entry["system_prompt"] = prompt
@@ -90,9 +101,8 @@ def cmd_set(args):
 
 def cmd_delete(args):
     presets = _load()
-    if args.name not in presets:
-        fail(f"no preset named {args.name!r}")
-    snap = presets.pop(args.name)
+    snap = _entry_or_fail(presets, args.name)
+    presets.pop(args.name)
     _save(presets)
     emit({"ok": True, "deleted": {"id": args.name, **snap}}, args)
 

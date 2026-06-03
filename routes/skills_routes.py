@@ -79,6 +79,8 @@ def _skill_test_task(skill: dict) -> str:
     an email); if we just hand over the 'when to use' text the agent has nothing
     to work on and stalls asking for input. So we tell it to create its own
     realistic fixture first, then apply the skill end-to-end."""
+    if not isinstance(skill, dict):
+        skill = {}
     ctx = (skill.get("when_to_use") or skill.get("description") or skill.get("name") or "").strip()
     return (
         "Test this skill end-to-end. FIRST, set up a small realistic scenario it "
@@ -310,6 +312,8 @@ def _should_check_retrieval_precision(skill: dict) -> bool:
         "installation", "install", "system", "ssh", "document", "documents",
         "search", "email", "calendar", "gpu", "server", "python",
     }
+    if not isinstance(skill, dict):
+        return False
     tags = {str(t or "").strip().lower() for t in (skill.get("tags") or [])}
     if tags & broad:
         return True
@@ -1442,7 +1446,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     @router.post("/{skill_id}/markdown")
     async def save_skill_markdown(request: Request, skill_id: str):
         """Replace SKILL.md with new raw content. Parses + validates first."""
-        from services.memory.skill_format import Skill, slugify
+        from services.memory.skill_format import Skill
         user = _owner(request)
         body = await request.json()
         new_content = body.get("markdown")
@@ -1457,7 +1461,10 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             sk = Skill.from_markdown(new_content)
         except Exception as e:
             raise HTTPException(400, f"Could not parse SKILL.md: {e}")
-        sk.name = slugify(sk.name or match.get("name"))
+        # Never rename on save: a changed `name` in the markdown would move
+        # the skill dir (update_skill) and orphan the original id, so a later
+        # delete 404s (#1333). Pin to the stored name, like _apply_skill_md.
+        sk.name = match.get("name")
         if not sk.owner:
             sk.owner = match.get("owner") or user
         ok = skills_manager.update_skill(match.get("name"), {

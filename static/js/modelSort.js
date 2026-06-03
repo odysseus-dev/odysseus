@@ -14,8 +14,12 @@ function _compareText(a, b) {
   });
 }
 
+function _arrayOrEmpty(models) {
+  return Array.isArray(models) ? models : [];
+}
+
 export function sortModelIds(models) {
-  return (models || []).slice().sort(_compareText);
+  return _arrayOrEmpty(models).slice().sort(_compareText);
 }
 
 export function compareModelObjects(a, b) {
@@ -25,5 +29,5 @@ export function compareModelObjects(a, b) {
 }
 
 export function sortModelObjects(models) {
-  return (models || []).slice().sort(compareModelObjects);
+  return _arrayOrEmpty(models).slice().sort(compareModelObjects);
 }

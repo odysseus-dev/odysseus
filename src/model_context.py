@@ -83,6 +83,7 @@ KNOWN_CONTEXT_WINDOWS = {
     'gemini-2.0-flash': 1048576,
     'gemini-1.5-pro': 1048576,
     'gemini-1.5-flash': 1048576,
+    'gemma-4': 262144,
     'gemma-3': 128000,
     'gemma-2': 8192,
 

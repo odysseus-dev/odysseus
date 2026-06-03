@@ -16,7 +16,7 @@ from src.auth_helpers import get_current_user, effective_user
 
 def _sanitize_export_filename(name: str) -> str:
     """Return a conservative filename safe for Content-Disposition."""
-    name = name or ""
+    name = name if isinstance(name, str) else ""
     name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
     return name[:128]
 
@@ -618,7 +618,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 safe_search = search.replace('%', r'\%').replace('_', r'\_')
                 q = q.filter(DbSession.name.ilike(f"%{safe_search}%", escape='\\'))
             if model:
-                q = q.filter(DbSession.model.ilike(f"%{model}"))
+                # Contains match (mirrors the name filter above). The old
+                # f"%{model}" was a SUFFIX-only match, so filtering by "gpt-4"
+                # dropped "gpt-4o" and over-matched on shared suffixes; it also
+                # left LIKE wildcards in the user value unescaped.
+                safe_model = model.replace('%', r'\%').replace('_', r'\_')
+                q = q.filter(DbSession.model.ilike(f"%{safe_model}%", escape='\\'))
             total = q.count()
             sort_map = {
                 "recent": DbSession.updated_at.desc(),
