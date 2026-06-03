@@ -1979,6 +1979,15 @@ def setup_email_routes():
             # minute doesn't trip the past-time guard.
             if parsed_at < now_utc:
                 return {"success": False, "error": "send_at must be in the future"}
+            # Normalize to naive UTC before storing: the poller selects due
+            # rows with a lexicographic string compare against a naive
+            # datetime.utcnow().isoformat(), so storing the raw client string
+            # makes "+02:00" schedules fire hours late, negative offsets fire
+            # hours early, and a "Z" suffix compares after the fractional
+            # seconds of the poller timestamp.
+            if parsed_at.tzinfo:
+                parsed_at = parsed_at.astimezone(_tz.utc).replace(tzinfo=None)
+            send_at = parsed_at.isoformat()
 
             sid = _uuid.uuid4().hex[:16]
             conn = sqlite3.connect(SCHEDULED_DB)
