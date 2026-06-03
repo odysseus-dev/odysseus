@@ -66,7 +66,26 @@ $pyVersion = $null
 
 $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
 if ($pyLauncher) {
-    foreach ($v in @("-3.13", "-3.12", "-3.11")) {
+    $minPyMinor = 11 # min required python version 3.11
+    $maxPyMinor = 16 # fallback value
+    try{
+        Write-Host "Checking Online For Latest Stable Python 3 Version" -ForegroundColor Green
+        $pyEolApi = Invoke-RestMethod -Uri "https://endoflife.date/api/python.json" -TimeoutSec 3
+        
+        $latestStable = $pyEolApi | 
+            Where-Object { $_.cycle -match "^3\."  } | 
+            Select-Object -First 1
+
+        if ($latestStable) {  
+            $maxPyMinor = [int]$latestStable.cycle.Split('.')[1]
+            Write-Host "Latest Version Found: 3.$maxPyMinor" -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "failed to reach, using fallback" -ForegroundColor Green
+    }
+
+    for ($minor = $maxPyMinor; $minor -ge $minPyMinor; $minor--) {
+        $v = "-3.$minor"
         $ver = Get-PythonVersionText $pyLauncher.Source @($v)
         if ($ver) {
             $pyExe = $pyLauncher.Source
