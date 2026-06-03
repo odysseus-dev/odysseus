@@ -923,6 +923,16 @@ def setup_gallery_routes() -> APIRouter:
         body = await request.json()
         # Use endpoint from request body (editor dropdown) or fall back to DB lookup
         base = (body.pop("_endpoint", "") or "").rstrip("/")
+        # SSRF hardening: validate a client-supplied endpoint before any
+        # outbound request (mirrors routes/embedding_routes.py).
+        if base:
+            from src.url_safety import check_outbound_url
+            ok, reason = check_outbound_url(
+                base,
+                block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+            )
+            if not ok:
+                raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         chosen_model = (body.pop("_model", "") or "").strip()
         api_key = None
         if not base:
@@ -1115,6 +1125,18 @@ def setup_gallery_routes() -> APIRouter:
             raise HTTPException(400, "No image provided")
 
         endpoint = (body.get("_endpoint") or "").rstrip("/")
+        # SSRF hardening: a client-supplied endpoint is fetched server-side
+        # below, so validate it first (mirrors routes/embedding_routes.py).
+        # Local-first means loopback/LAN is allowed by default; the cloud
+        # metadata range and non-HTTP(S) schemes are always rejected.
+        if endpoint:
+            from src.url_safety import check_outbound_url
+            ok, reason = check_outbound_url(
+                endpoint,
+                block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+            )
+            if not ok:
+                raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         model = (body.get("_model") or "").strip()
 
         base = endpoint
