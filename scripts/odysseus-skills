@@ -72,7 +72,12 @@ def cmd_list(args):
     out = _skill_entries(_manager().load_all())
     if args.category:
         out = [s for s in out if (s.get("category") or "general") == args.category]
-    out.sort(key=lambda s: (-int(s.get("uses") or 0), s.get("name", "")))
+    def _uses(s):
+        try:
+            return int(s.get("uses") or 0)
+        except (TypeError, ValueError):
+            return 0
+    out.sort(key=lambda s: (-_uses(s), s.get("name", "")))
     emit([_summary(s) for s in out[: args.limit]], args)
 
 
