@@ -601,9 +601,6 @@ def setup_calendar_routes() -> APIRouter:
         if body.get("password"):
             from src.secret_storage import encrypt
             cfg["password"] = encrypt(body["password"])
-        elif cfg.get("password"):
-            from src.secret_storage import encrypt
-            cfg["password"] = encrypt(cfg["password"])
         prefs["caldav"] = cfg
         _save_for_user(owner, prefs)
         return {"ok": True}
