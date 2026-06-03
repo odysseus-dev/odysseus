@@ -85,6 +85,8 @@ heavy part and depends on the model, runtime, GPU, and VRAM, so small hosts can
 connect to API or remote model servers instead. Use `--host 0.0.0.0` only when
 you intentionally want LAN/reverse-proxy access.
 
+Video instructions: [How to run Odysseus locally on Mac](https://youtu.be/5hvrJfS1FSE?si=aBqDOHVE6Dg_gEI5)
+
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
 M-series Mac, run Odysseus natively:
@@ -280,6 +282,8 @@ Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Window
 
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
+
+Video instructions: [Install Odysseus on Windows manually (no Docker needed)](https://youtu.be/EtE007G_uPU?si=1JmTniX_ABXnGKna)
 
 ## Troubleshooting & Advanced Setup
 
