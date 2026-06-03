@@ -12,6 +12,11 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# Sessions younger than this are never deleted, even if empty.
+# Prevents a race where auto-sort runs between session creation and the
+# first message arriving, causing the session to vanish mid-flight.
+_NEW_SESSION_GRACE_SECONDS = 300  # 5 minutes
+
 # Names that indicate a throwaway/test session
 _THROWAWAY_NAMES = {
     "test", "testing", "asdf", "asd", "hello", "hi", "hey",
@@ -52,6 +57,10 @@ async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
 
         for row in rows:
             if getattr(row, 'is_important', False):
+                continue
+            # Skip sessions that were just created — they may be mid-flight
+            # (auto-sort can fire before the first message arrives).
+            if row.created_at and (datetime.utcnow() - row.created_at).total_seconds() < _NEW_SESSION_GRACE_SECONDS:
                 continue
             if (row.name or "").strip() == "Incognito":
                 deleted_throwaway += 1
