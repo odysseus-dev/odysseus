@@ -526,6 +526,13 @@ export function autoResize(textarea) {
   // updates the manual floor.
   if (!textarea._manualResizeObserver && typeof ResizeObserver !== 'undefined') {
     textarea._manualResizeObserver = new ResizeObserver(() => {
+      // Ignore size changes we triggered ourselves. The textarea has a CSS
+      // height transition, so after a programmatic change offsetHeight
+      // animates toward the target over several frames; those in-between
+      // frames look like a manual drag and would get locked in as a floor,
+      // so the box never shrinks again (e.g. after sending a long message).
+      // Only a genuine resize-handle drag should set the manual floor.
+      if (textarea._programmaticResize) return;
       const height = textarea.offsetHeight;
       if (Math.abs(height - (textarea._autoResizeHeight || height)) > 1) {
         textarea._manualResizeHeight = height;
@@ -556,6 +563,16 @@ export function autoResize(textarea) {
   const maxHeight = Math.max(autoMaxHeight, manualHeight);
   const newHeight = Math.min(Math.max(clone.scrollHeight, lineHeight, manualHeight), maxHeight);
   textarea._autoResizeHeight = newHeight;
+  // Suppress the manual-resize observer until this change (and its 0.12s CSS
+  // height transition) settles. Set synchronously before mutating the height
+  // so it is in place before any observer callback the change triggers, and
+  // re-armed on every call so continuous typing stays suppressed while a lone
+  // resize-handle drag — which never calls autoResize — is still detected.
+  textarea._programmaticResize = true;
+  clearTimeout(textarea._programmaticResizeTimer);
+  textarea._programmaticResizeTimer = setTimeout(() => {
+    textarea._programmaticResize = false;
+  }, 200);
   textarea.style.height = newHeight + 'px';
   textarea.style.overflow = newHeight >= autoMaxHeight ? 'auto' : 'hidden';
 }
