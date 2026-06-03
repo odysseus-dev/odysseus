@@ -49,8 +49,18 @@ SEARCH_CONFIG: Dict[str, Any] = {
 }
 
 
+def _is_secret_key(name: str) -> bool:
+    """True for config keys that hold a credential (e.g. ``brave_api_key``)."""
+    return name.endswith(("_api_key", "_key", "_token", "_secret"))
+
+
 def get_search_config() -> Dict[str, Any]:
-    """Get current search configuration including active provider info."""
+    """Get current search configuration including active provider info.
+
+    Never returns stored API keys: callers — including the unauthenticated
+    ``GET /api/search/config`` route — only need key *presence* via
+    ``has_api_key``, not the secret itself (#1661).
+    """
     config = SEARCH_CONFIG.copy()
     settings = _get_search_settings()
     provider = settings.get("search_provider", "searxng")
@@ -60,13 +70,27 @@ def get_search_config() -> Dict[str, Any]:
     if provider == "searxng":
         from .providers import _get_search_instance
         config["search_url"] = _get_search_instance()
-    return config
+    # Strip any string-valued credential so secrets never reach the response;
+    # the boolean has_api_key flag (presence only) is preserved.
+    return {
+        k: v for k, v in config.items()
+        if not (isinstance(v, str) and _is_secret_key(k))
+    }
 
 
 def update_search_config(api_key: str = None, **kwargs):
-    """Update search configuration (e.g. Brave API key)."""
-    if api_key:
-        SEARCH_CONFIG["brave_api_key"] = api_key
+    """Merge non-secret search config into SEARCH_CONFIG.
+
+    Provider API keys are intentionally NOT cached here. They are read on demand
+    from settings/env via ``_get_provider_key`` (e.g. ``brave_search``), so the
+    previous ``SEARCH_CONFIG["brave_api_key"] = api_key`` cache was never used
+    for search and only leaked the decrypted key through ``get_search_config`` /
+    ``GET /api/search/config`` (#1661). ``api_key`` is accepted for backward
+    compatibility but no longer stored.
+    """
+    for k, v in kwargs.items():
+        if not _is_secret_key(k):
+            SEARCH_CONFIG[k] = v
 
 
 def _call_provider(provider_name: str, query: str, count: int, time_filter: str = None) -> List[dict]:

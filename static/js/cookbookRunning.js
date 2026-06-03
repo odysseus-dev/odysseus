@@ -7,6 +7,7 @@
 import uiModule from './ui.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
 import { registerMenuDismiss } from './escMenuStack.js';
+import { computeProgressSignal } from './cookbookProgressSignal.js';
 
 // Human-friendly badge label for a task's internal status. Avoids surfacing
 // the word "error" in the sidebar — a server the user stopped or one that
@@ -1705,6 +1706,9 @@ export function _renderRunningTab() {
       const running = _loadTasks().filter(t => (t.remoteHost || '') === host && t.status === 'running');
       if (!running.length) { uiModule.showToast(`Nothing running on ${_serverName(host)}`); return; }
       if (!await window.styledConfirm(`Stop ${running.length} running task${running.length > 1 ? 's' : ''} on ${_serverName(host)}?`, { confirmText: 'Stop all' })) return;
+      // Mark every task as user-stopped BEFORE firing the kills so that the
+      // download auto-retry logic never restarts a task the user just stopped.
+      running.forEach(t => _updateTask(t.sessionId, { _userStopped: true }));
       // Reuse each task's own Stop action so it does the full teardown
       // (send C-c, drop the endpoint, mark stopped) consistently.
       running.forEach(t => {
@@ -2166,6 +2170,7 @@ export function _renderRunningTab() {
       const badge = el.querySelector('.cookbook-task-status');
       if (badge) { badge.textContent = 'stopping...'; badge.className = 'cookbook-task-status cookbook-task-stopping'; }
       el.dataset.status = 'stopped';
+      _updateTask(task.sessionId, { _userStopped: true });
       const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
       // Drop the model endpoint so the picker stops listing it.
       if (task.type === 'serve' && task.payload) {
@@ -2439,7 +2444,11 @@ async function _reconnectTask(el, task) {
             // back to %/aggregate only when no byte counter is present.
             const _byteMatches = [...snapshot.matchAll(/([\d.]+\s?[KMGT])B?\s*\/\s*[\d.]+\s?[KMGT]B?/gi)];
             const _bytes = _byteMatches.length ? _byteMatches[_byteMatches.length - 1][1].replace(/\s/g, '') : null;
-            const curProgress = _bytes || (_dlAgg != null ? String(_dlAgg) : (lastPct || '0'));
+            // When there's no byte counter (pip resolve / native build phase of a
+            // dependency install), key off the output tail so new build lines count
+            // as progress — otherwise a long quiet build is falsely declared stale
+            // and restarted mid-build, looping forever (#1568).
+            const curProgress = computeProgressSignal(_bytes, _dlAgg, lastPct, snapshot);
             const _fetchPctMatches = [...snapshot.matchAll(/Fetching\s+\d+\s+files:\s*(\d+)%/g)];
             const _fetchPct = _fetchPctMatches.length ? parseInt(_fetchPctMatches[_fetchPctMatches.length - 1][1]) : null;
             const _startupStalled = !_bytes && ((_dlAgg === 0) || (_fetchPct === 0)) && curProgress === '0';
@@ -2549,7 +2558,7 @@ async function _reconnectTask(el, task) {
               const _accessDenied = /Access to model.*is restricted|gated repo|GatedRepoError|401 Unauthorized|403 Forbidden|not in the authorized list|awaiting a review|must (?:be authenticated|have access)/i.test(snapshot);
               const _dlKey = task.payload?.repo_id || task.name;
               const _dlN = _dlRetryCount.get(_dlKey) || 0;
-              if (!_accessDenied && task.type === 'download' && task.payload && _dlN < _DL_MAX_AUTO_RETRY) {
+              if (!_accessDenied && !task._userStopped && task.type === 'download' && task.payload && _dlN < _DL_MAX_AUTO_RETRY) {
                 // Auto-retry: kill the dead session and re-launch (resumes from
                 // the cached .incomplete files) after a short delay.
                 _dlRetryCount.set(_dlKey, _dlN + 1);

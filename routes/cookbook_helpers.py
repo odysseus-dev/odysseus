@@ -552,6 +552,27 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
     runner_lines.append('    fi')
 
+
+def _llama_cpp_rebuild_cmd() -> str:
+    """Shell command that clears the Cookbook-managed llama.cpp build.
+
+    Removes the cached ``llama-server`` symlink and the ``~/llama.cpp/build``
+    directory so the next llama.cpp serve recompiles from source, picking up a
+    CUDA or HIP toolchain if one is now available. The serve bootstrap only
+    builds when ``llama-server`` is missing from PATH, so without this an
+    existing CPU-only build is reused forever. It deliberately installs and
+    downloads nothing; the rebuild itself happens on the next serve.
+    """
+    return (
+        'mkdir -p "$HOME/bin" && '
+        'rm -f "$HOME/bin/llama-server" && '
+        'rm -rf "$HOME/llama.cpp/build" && '
+        'echo "[odysseus] Cleared the cached llama.cpp build. '
+        'Re-launch the serve task to rebuild llama-server from source '
+        '(CUDA or HIP will be used if a toolchain is now available)."'
+    )
+
+
 class ModelDownloadRequest(BaseModel):
     repo_id: str
     include: str | None = None  # glob pattern e.g. "*Q4_K_M*"

@@ -629,6 +629,18 @@ def setup_calendar_routes() -> APIRouter:
                     headers={"Depth": "0", "Content-Type": "application/xml"},
                     content=propfind_body,
                 )
+                # If the server demands Digest (Baïkal default, SabreDAV-based
+                # servers, Radicale with htdigest), the Basic attempt above
+                # 401s. Retry once with httpx.DigestAuth so this test matches
+                # what the real sync does via caldav.DAVClient in
+                # src/caldav_sync.py (which negotiates the scheme).
+                if r.status_code == 401 and "digest" in r.headers.get("www-authenticate", "").lower():
+                    r = await cx.request(
+                        "PROPFIND", url,
+                        auth=httpx.DigestAuth(user, pw),
+                        headers={"Depth": "0", "Content-Type": "application/xml"},
+                        content=propfind_body,
+                    )
             # 207 = Multi-Status — standard CalDAV success. 200 also
             # acceptable. Anything else (401/403/404/5xx) means trouble.
             if r.status_code in (200, 207):

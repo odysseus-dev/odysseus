@@ -297,7 +297,15 @@ class SessionManager:
                     id=msg_id,
                     session_id=session_id,
                     role=message.role,
-                    content=message.content,
+                    # Multimodal content (image/audio attachments) is a list;
+                    # serialize to JSON so the Text column round-trips via
+                    # _parse_msg_content. Storing the raw list let SQLAlchemy
+                    # bind its single-quoted repr, which _parse_msg_content
+                    # cannot parse (it looks for double-quoted "type"), so the
+                    # attachment was destroyed on reload. Mirrors _persist_message.
+                    content=(json.dumps(message.content)
+                             if isinstance(message.content, list)
+                             else message.content),
                     meta_data=json.dumps(message.metadata) if message.metadata else None,
                     timestamp=now + timedelta(microseconds=i),
                 )

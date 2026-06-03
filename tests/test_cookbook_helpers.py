@@ -10,6 +10,7 @@ from routes.cookbook_helpers import (
     _append_llama_cpp_linux_accel_build_lines,
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
+    _llama_cpp_rebuild_cmd,
     _local_tooling_path_export,
     _pip_install_attempt,
     _pip_install_fallback_chain,
@@ -337,6 +338,38 @@ def test_llama_cpp_linux_bootstrap_keeps_cpu_fallback_when_no_gpu_toolchain():
 
     assert 'WARNING: no HIP/CUDA toolchain found — building llama-server for CPU only.' in script
     assert 'Install ROCm for AMD GPUs or vLLM/CUDA tooling for NVIDIA' in script
+
+
+def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
+    cmd = _llama_cpp_rebuild_cmd()
+
+    # Must remove both the cached symlink and the build dir the serve bootstrap
+    # links/creates, so the next serve recompiles from source.
+    assert 'rm -f "$HOME/bin/llama-server"' in cmd
+    assert 'rm -rf "$HOME/llama.cpp/build"' in cmd
+    # Recreates ~/bin so a never-served host does not error on a missing dir.
+    assert 'mkdir -p "$HOME/bin"' in cmd
+    # Diagnosis-only on the destructive side: it must not install or fetch.
+    assert 'pip install' not in cmd
+    assert 'git clone' not in cmd
+    assert 'curl' not in cmd and 'wget' not in cmd
+
+
+def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
+    """The command should succeed even when neither path exists yet."""
+    import os
+
+    env = dict(os.environ)
+    env["HOME"] = str(tmp_path)
+    result = subprocess.run(
+        ["bash", "-c", _llama_cpp_rebuild_cmd()],
+        capture_output=True, text=True, env=env, timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "bin").is_dir()
+    assert "Cleared the cached llama.cpp build" in result.stdout
+
 
 def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):
     """Custom download dirs may sit inside the HF hub cache and contain plain

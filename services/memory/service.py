@@ -103,6 +103,7 @@ class MemoryService:
                     metadata=r.get("metadata", {}),
                 )
                 for r in results
+                if isinstance(r, dict)
             ]
             return MemorySearchResult(memories=memories, query=query, total=len(memories))
 

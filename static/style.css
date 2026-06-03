@@ -1804,6 +1804,15 @@ body.bg-pattern-sparkles {
       max-height: 60px;
       overflow: hidden;
     }
+    /* The tip is a full sentence that wraps to 4-5 lines on narrow phones,
+       where the welcome block shrink-wraps small; the shared 60px ceiling
+       (sized for the one-line sub/version) clipped its last line. Give the tip
+       a taller ceiling so it isn't truncated. Kept above the max-height:650px
+       block below so that rule's max-height:0 still collapses it on short
+       viewports. */
+    #welcome-screen .welcome-tip {
+      max-height: 120px;
+    }
     @media (max-height: 650px) {
       #welcome-screen { top: 28%; }
       #welcome-screen .welcome-tip { opacity: 0; max-height: 0; margin: 0; }
@@ -12066,9 +12075,46 @@ textarea.memory-add-input {
   background: var(--bg);
   overflow: hidden;
   white-space: pre;
+  tab-size: 4;
+  font-variant-ligatures: none !important;
+  font-feature-settings: "kern" 0, "liga" 0, "calt" 0, "dlig" 0 !important;
+  font-kerning: none !important;
+  text-rendering: geometricPrecision !important;
   z-index: 2;
   pointer-events: none;
   user-select: none;
+}
+.doc-line-number-content {
+  display: block;
+  will-change: transform;
+}
+.doc-line-number-row {
+  position: relative;
+  box-sizing: border-box;
+}
+.doc-line-number-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 36px;
+  text-align: right;
+}
+.doc-line-number-measure {
+  position: absolute !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  left: -9999px !important;
+  top: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  border: 0 !important;
+  resize: none !important;
+  box-sizing: content-box !important;
+  color: transparent !important;
+  background: transparent !important;
 }
 /* Find marks live in the syntax-highlight overlay, which sits at
    z-index:0 under a transparent textarea — so they're always visible
@@ -12200,11 +12246,11 @@ mark.doc-find-mark.current {
      area — caret stays right, but typed text appears on a different row
      than the caret. */
   scrollbar-gutter: stable;
-  /* The highlight overlay hides its scrollbar, so the textarea must too —
-     otherwise the scrollbar shrinks the textarea's text-area width and
-     wraps lines earlier than the overlay, putting the caret on the wrong
-     line entirely. */
-  scrollbar-width: none;
+  /* Show a real scrollbar for long documents. scrollbar-gutter above keeps
+     the text column stable so the gutter, textarea, and find overlay stay
+     metrically aligned while the scrollbar is present. */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--fg) 28%, transparent) transparent;
   -webkit-overflow-scrolling: touch;
   tab-size: 4;
   white-space: pre-wrap;
@@ -12222,7 +12268,15 @@ mark.doc-find-mark.current {
   font-kerning: none !important;
   text-rendering: geometricPrecision !important;
 }
-.doc-editor-textarea::-webkit-scrollbar { display: none; }
+.doc-editor-textarea::-webkit-scrollbar { width: 8px; }
+.doc-editor-textarea::-webkit-scrollbar-track { background: transparent; }
+.doc-editor-textarea::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 24%, transparent);
+  border-radius: 999px;
+}
+.doc-editor-textarea::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg) 36%, transparent);
+}
 .doc-editor-textarea:hover,
 .doc-editor-textarea:focus,
 .doc-editor-textarea:active {

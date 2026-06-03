@@ -1018,6 +1018,51 @@ function _wireTabEvents(body) {
     });
   }
 
+  // "Rebuild llama.cpp" clears the cached build so the next serve recompiles.
+  // The serve bootstrap only builds llama-server when it is missing from PATH,
+  // so a host that first built CPU-only (no nvcc at build time) keeps reusing
+  // that binary forever; this is the lever to force a fresh GPU build after a
+  // CUDA/ROCm toolkit is installed.
+  const rebuildBtn = document.getElementById('cookbook-rebuild-engine');
+  if (rebuildBtn && !rebuildBtn._wired) {
+    rebuildBtn._wired = true;
+    rebuildBtn.addEventListener('click', async () => {
+      // Match _installDep: honor the Dependencies server selector so the clear
+      // runs on the same host the build runs on.
+      const sel = document.getElementById('hwfit-deps-server');
+      if (sel) _applyServerSelection(sel.value);
+      const host = _envState.remoteHost || '';
+      const where = host || 'this server';
+      if (!confirm(`Rebuild the llama.cpp engine on ${where}?\n\nThis clears the cached llama-server build so the next serve recompiles from source (with CUDA/HIP if a toolchain is present). It does not download or install anything.`)) return;
+      const _label = rebuildBtn.textContent;
+      rebuildBtn.disabled = true;
+      rebuildBtn.textContent = 'Clearing...';
+      try {
+        const res = await fetch('/api/cookbook/rebuild-engine', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            engine: 'llamacpp',
+            remote_host: host || undefined,
+            ssh_port: _getPort(host) || undefined,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          const reason = data.detail || data.error || `HTTP ${res.status}`;
+          uiModule.showToast('Rebuild failed: ' + String(reason).slice(0, 200));
+        } else {
+          uiModule.showToast(`Cleared llama.cpp build on ${where}. Re-launch the serve task to rebuild with GPU support.`);
+        }
+      } catch (err) {
+        uiModule.showToast('Rebuild failed: ' + err.message);
+      } finally {
+        rebuildBtn.disabled = false;
+        rebuildBtn.textContent = _label;
+      }
+    });
+  }
+
   // Serve sort
   const serveSort = document.getElementById('serve-sort');
   if (serveSort) {
@@ -1616,6 +1661,7 @@ function _renderRecipes() {
   html += '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">';
   html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">';
   html += '<h2 style="margin:0;padding:0;line-height:1;">Dependencies</h2>';
+  html += '<button class="cookbook-field-input" id="cookbook-rebuild-engine" title="Clear the cached llama.cpp build so the next serve recompiles from source (use after installing a CUDA/ROCm toolkit to turn a CPU-only build into a GPU build)." style="height:24px;font-size:10px;padding:0 8px;cursor:pointer;width:auto;">Rebuild llama.cpp</button>';
   html += '<span style="font-size:10px;opacity:0.5;margin-left:auto;">Server</span>';
   html += '<select class="cookbook-field-input" id="hwfit-deps-server" style="height:28px;min-width:70px;">';
   html += _buildServerOpts(false);
