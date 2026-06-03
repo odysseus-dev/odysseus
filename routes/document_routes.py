@@ -298,9 +298,14 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # match docs containing both words regardless of position/order.
             if search:
                 for tok in search.split():
-                    term = f"%{tok}%"
+                    # Escape LIKE wildcards so a literal "%" or "_" in the query
+                    # is matched literally instead of acting as a wildcard
+                    # (e.g. searching "100%" or "a_b" otherwise over-matches).
+                    safe = tok.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    term = f"%{safe}%"
                     q = q.filter(
-                        Document.title.ilike(term) | Document.current_content.ilike(term)
+                        Document.title.ilike(term, escape="\\")
+                        | Document.current_content.ilike(term, escape="\\")
                     )
 
             # Language filter
