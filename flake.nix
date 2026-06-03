@@ -45,6 +45,13 @@
               niquests = pysuper.niquests.overridePythonAttrs (old: {
                 doCheck = !pkgs.stdenv.isDarwin;
               });
+              # caldav's test suite fails on Darwin (notably under nixos-unstable,
+              # which consumers pull in via inputs.nixpkgs.follows). Skip its
+              # checks there; they pass on Linux / the pinned nixpkgs.
+              caldav = pysuper.caldav.overridePythonAttrs (old: {
+                doCheck = !pkgs.stdenv.isDarwin;
+                doInstallCheck = !pkgs.stdenv.isDarwin;
+              });
             };
           }).withPackages
             (
