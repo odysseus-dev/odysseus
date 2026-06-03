@@ -14,6 +14,7 @@ These are pure-function tests — no FastAPI app boot, no DB.
 import sys
 import types
 import json
+import importlib
 from pathlib import Path
 
 import pytest
@@ -941,6 +942,79 @@ def test_mcp_oauth_page_escapes_reflected_values():
     body = text.split("def _oauth_authorize_page(", 1)[1].split("return f", 1)[0]
     for var in ("auth_url", "server_id", "host"):
         assert f"{var} = html.escape({var}" in body, var
+
+
+def _import_mcp_routes():
+    sys.modules.pop("routes.mcp_routes", None)
+    return importlib.import_module("routes.mcp_routes")
+
+
+def test_mcp_oauth_paths_resolve_under_data_dir(tmp_path, monkeypatch):
+    mcp_routes = _import_mcp_routes()
+    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+
+    resolved = Path(mcp_routes._resolve_mcp_oauth_path("gmail/credentials.json", "token_file"))
+
+    base = (tmp_path / "data" / "mcp_oauth").resolve()
+    assert resolved == base / "gmail" / "credentials.json"
+
+
+@pytest.mark.parametrize("raw_path", [
+    "../../etc/passwd",
+    "/tmp/evil.keys",
+    "~/.gmail-mcp/credentials.json",
+])
+def test_mcp_oauth_paths_reject_escapes(tmp_path, monkeypatch, raw_path):
+    from fastapi import HTTPException
+
+    mcp_routes = _import_mcp_routes()
+    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+
+    with pytest.raises(HTTPException) as exc:
+        mcp_routes._resolve_mcp_oauth_path(raw_path, "token_file")
+    assert exc.value.status_code == 400
+
+
+def test_mcp_oauth_filename_join_cannot_escape_base(tmp_path, monkeypatch):
+    from fastapi import HTTPException
+
+    mcp_routes = _import_mcp_routes()
+    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+
+    safe_dir = mcp_routes._resolve_mcp_oauth_path("gmail", "dir")
+    with pytest.raises(HTTPException):
+        mcp_routes._resolve_mcp_oauth_path(Path(safe_dir) / "../../escape.json", "filename")
+
+
+def test_mcp_oauth_config_sanitizes_paths_and_env(tmp_path, monkeypatch):
+    mcp_routes = _import_mcp_routes()
+    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+
+    cfg = mcp_routes._sanitize_mcp_oauth_config({
+        "provider": "google",
+        "keys_file": "gmail/gcp-oauth.keys.json",
+        "token_file": "gmail/credentials.json",
+        "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
+    })
+    env = {}
+    mcp_routes._apply_mcp_oauth_env(env, cfg)
+
+    base = (tmp_path / "data" / "mcp_oauth" / "gmail").resolve()
+    assert cfg["keys_file"] == str(base / "gcp-oauth.keys.json")
+    assert cfg["token_file"] == str(base / "credentials.json")
+    assert env["GMAIL_OAUTH_PATH"] == cfg["keys_file"]
+    assert env["GMAIL_CREDENTIALS_PATH"] == cfg["token_file"]
+
+
+def test_gmail_mcp_preset_uses_contained_oauth_paths():
+    src = Path(__file__).resolve().parents[1] / "static" / "js" / "admin.js"
+    text = src.read_text()
+    preset = text.split('{ name: "Gmail"', 1)[1].split('{ name: "Email (IMAP/SMTP)"', 1)[0]
+
+    assert "~/.gmail-mcp" not in preset
+    assert 'oauthFile: { dir: "gmail"' in preset
+    assert 'keys_file: "gmail/gcp-oauth.keys.json"' in preset
+    assert 'token_file: "gmail/credentials.json"' in preset
 
 
 

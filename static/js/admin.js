@@ -1078,11 +1078,11 @@ const _GOOGLE_OAUTH_HELP = `To get Google OAuth credentials:
 
 const MCP_PRESETS = [
   { name: "Gmail",           command: "npx", args: ["-y", "@gongrzhe/server-gmail-autoauth-mcp"],      env: { GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "" },
-    oauthFile: { dir: "~/.gmail-mcp", filename: "gcp-oauth.keys.json" },
+    oauthFile: { dir: "gmail", filename: "gcp-oauth.keys.json" },
     oauth: {
       provider: "google",
-      keys_file: "~/.gmail-mcp/gcp-oauth.keys.json",
-      token_file: "~/.gmail-mcp/credentials.json",
+      keys_file: "gmail/gcp-oauth.keys.json",
+      token_file: "gmail/credentials.json",
       scopes: ["https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/gmail.settings.basic"],
     },
     help: `Setup:
