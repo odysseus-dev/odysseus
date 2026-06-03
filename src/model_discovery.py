@@ -190,6 +190,8 @@ class ModelDiscovery:
             data = r.json()
             # Some OpenAI-compatible servers return a bare list, not {"data": [...]}.
             items = data if isinstance(data, list) else ((data or {}).get("data") or [])
+            if not isinstance(items, list):
+                items = []  # e.g. {"data": "error"} from a misbehaving server
             ids = [m.get("id") for m in items if isinstance(m, dict) and m.get("id")]
             if ids:
                 return {
