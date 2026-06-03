@@ -813,14 +813,21 @@ def setup_gallery_routes() -> APIRouter:
                 raise HTTPException(404, "Image not found")
 
             img_filename = img.filename
-            # Remove the file from disk
-            img_path = os.path.join("data", "generated_images", img_filename)
-            if os.path.exists(img_path):
-                os.remove(img_path)
-
-            # Soft-delete the record
+            # Soft-delete the record first; the DB is the source of truth.
             img.is_active = False
             db.commit()
+
+            # Only after the soft-delete commit succeeds do we remove the file.
+            # If the file were deleted first and the commit then failed/rolled
+            # back, the still-active record would point at a missing file.
+            # Best-effort so a missing or locked file can't 500 a delete that
+            # already succeeded logically.
+            img_path = os.path.join("data", "generated_images", img_filename)
+            try:
+                if os.path.exists(img_path):
+                    os.remove(img_path)
+            except OSError as e:
+                logger.warning(f"Could not remove gallery image file {img_path}: {e}")
 
             # Strip stale chat-history references so the image bubble
             # (and its prompt caption) doesn't come back after a server
