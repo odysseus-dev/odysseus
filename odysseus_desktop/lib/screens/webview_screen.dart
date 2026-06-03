@@ -7,7 +7,6 @@ import 'package:odysseus_desktop/core/app_config.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_win_floating/webview_win_floating.dart';
 import 'package:provider/provider.dart';
-import 'package:odysseus_desktop/screens/settings_screen.dart';
 
 class WebViewScreen extends StatefulWidget {
   const WebViewScreen({super.key});
