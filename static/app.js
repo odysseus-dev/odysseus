@@ -2447,6 +2447,8 @@ function initializeEventListeners() {
     // an absent value as enabled — otherwise the toggle looked on at
     // startup but the effect only activated after the user flipped it.
     applyTextEmojis(state['text-emojis'] !== false);
+    // Emoji Killer toggle: completely removes emoji characters from rendered output.
+    document.body.classList.toggle('emoji-killer', state['emoji-killer'] === true);
     // Hide thinking sections toggle (show-thinking: checked=show, unchecked=hide)
     document.body.classList.toggle('hide-thinking', state['show-thinking'] === false);
   }
@@ -2640,13 +2642,20 @@ function initializeEventListeners() {
     }
   }
 
-  // Observe chat history for new/changed messages — de-emojify on the fly
+  // Observe chat history for new/changed messages — de-emojify or strip on the fly
   let _deEmojifyTimer = null;
   const _chatObs = new MutationObserver(() => {
-    if (!document.body.classList.contains('text-emojis')) return;
+    const needsDeEmojify = document.body.classList.contains('text-emojis');
+    const needsStrip = document.body.classList.contains('emoji-killer');
+    if (!needsDeEmojify && !needsStrip) return;
     clearTimeout(_deEmojifyTimer);
     _deEmojifyTimer = setTimeout(() => {
-      document.querySelectorAll('.msg .body').forEach(deEmojify);
+      document.querySelectorAll('.msg .body').forEach(el => {
+        if (needsDeEmojify) deEmojify(el);
+        if (needsStrip && markdownModule.stripAllEmoji) {
+          el.innerHTML = markdownModule.stripAllEmoji(el.innerHTML);
+        }
+      });
     }, 150);
   });
   const _chatBox = document.getElementById('chat-history');
