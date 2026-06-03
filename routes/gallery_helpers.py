@@ -32,10 +32,21 @@ def _extract_exif(content: bytes) -> dict:
         from PIL import Image
         from io import BytesIO
         img = Image.open(BytesIO(content))
+        # Read the raw EXIF before any transpose: exif_transpose strips the
+        # orientation tag and with it the parsed EXIF view.
+        exif = img._getexif() if hasattr(img, '_getexif') else None
+
+        # Record DISPLAY dimensions (EXIF-rotated), matching upload_handler.
+        # A phone photo with Orientation 6/8 is stored landscape but shown
+        # portrait, so the raw width/height swap the aspect ratio.
+        try:
+            from PIL import ImageOps
+            img = ImageOps.exif_transpose(img) or img
+        except Exception:
+            pass
         result["width"] = img.width
         result["height"] = img.height
 
-        exif = img._getexif() if hasattr(img, '_getexif') else None
         if not exif:
             return result
 
