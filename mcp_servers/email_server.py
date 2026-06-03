@@ -1150,19 +1150,13 @@ def _draft_reply_to_email(uid, body, folder="INBOX", reply_all=False, account=No
 
     cc = None
     if reply_all:
-        cc_addrs = []
         cfg = _load_config(account)
-        own_addrs = {
-            (cfg.get("imap_user") or "").strip().lower(),
-            (cfg.get("from_address") or "").strip().lower(),
-        }
-        for header_name in ("To", "Cc"):
-            for _, addr in email.utils.getaddresses([orig.get(header_name, "")]):
-                addr_l = (addr or "").strip().lower()
-                if addr and addr != sender_addr and addr_l not in own_addrs:
-                    cc_addrs.append(addr)
+        cc_addrs = _reply_all_cc(
+            orig.get("To", ""), orig.get("Cc", ""), sender_addr,
+            [cfg.get("imap_user", ""), cfg.get("from_address", "")],
+        )
         if cc_addrs:
-            cc = ", ".join(dict.fromkeys(cc_addrs))
+            cc = ", ".join(cc_addrs)
 
     return _create_email_draft_document(
         to=to_addrs,
@@ -1283,6 +1277,27 @@ async def _ai_draft_reply_to_email(uid, folder="INBOX", reply_all=False, account
         title=title or reply_subject,
     )
 
+def _reply_all_cc(to_header, cc_header, sender_addr, own_addrs):
+    """Build the reply-all Cc list: every original To/Cc recipient except the
+    original sender and the mailbox owner's own address(es), de-duplicated
+    case-insensitively. The old builder only dropped the sender (and did so
+    case-sensitively), so reply-all CC'd the user themselves and emitted
+    duplicate / case-variant addresses.
+    """
+    own = {(sender_addr or "").lower()}
+    own |= {(a or "").lower() for a in own_addrs if a}
+    own.discard("")
+    seen = set()
+    out = []
+    for header in (to_header, cc_header):
+        for _name, addr in email.utils.getaddresses([header or ""]):
+            a = (addr or "").strip()
+            la = a.lower()
+            if a and la not in own and la not in seen:
+                seen.add(la)
+                out.append(a)
+    return out
+
 
 def _reply_to_email(uid, body, folder="INBOX", reply_all=False, account=None):
     """Reply to an existing email by UID. Threads via In-Reply-To/References."""
@@ -1312,11 +1327,11 @@ def _reply_to_email(uid, body, folder="INBOX", reply_all=False, account=None):
 
     cc = None
     if reply_all:
-        cc_addrs = []
-        for header_name in ("To", "Cc"):
-            for _, addr in email.utils.getaddresses([orig.get(header_name, "")]):
-                if addr and addr != sender_addr:
-                    cc_addrs.append(addr)
+        _cfg = _load_config(account)
+        cc_addrs = _reply_all_cc(
+            orig.get("To", ""), orig.get("Cc", ""), sender_addr,
+            [_cfg.get("from_address", ""), _cfg.get("imap_user", "")],
+        )
         if cc_addrs:
             cc = ", ".join(cc_addrs)
 
