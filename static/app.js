@@ -2414,7 +2414,7 @@ function initializeEventListeners() {
   };
 
   // Keys hidden by default on first run (no localStorage yet)
-  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn']);
+  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn', 'emoji-killer']);
 
   // Keys that need admin to toggle off (reserved for future use)
   const UI_VIS_ADMIN_ONLY = new Set([]);
@@ -2448,6 +2448,12 @@ function initializeEventListeners() {
     // startup but the effect only activated after the user flipped it.
     applyTextEmojis(state['text-emojis'] !== false);
     // Emoji Killer toggle: completely removes emoji characters from rendered output.
+    // Also retroactively strip existing messages when toggled on.
+    if (state["emoji-killer"] === true && markdownModule.stripAllEmoji) {
+      document.querySelectorAll(".msg .body").forEach(el => {
+        el.innerHTML = markdownModule.stripAllEmoji(el.innerHTML);
+      });
+    }
     document.body.classList.toggle('emoji-killer', state['emoji-killer'] === true);
     // Hide thinking sections toggle (show-thinking: checked=show, unchecked=hide)
     document.body.classList.toggle('hide-thinking', state['show-thinking'] === false);
