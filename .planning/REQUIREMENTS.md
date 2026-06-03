@@ -91,35 +91,35 @@
 
 ## Traceability
 
-<!-- Phase mapping filled in by the roadmapper. -->
+<!-- Phase mapping filled in by the roadmapper — 2026-06-03. -->
 
 | REQ-ID | Phase | Status |
 |--------|-------|--------|
-| BASE-01 | TBD | Pending |
-| BASE-02 | TBD | Pending |
-| TOOL-01 | TBD | Pending |
-| TOOL-02 | TBD | Pending |
-| TOOL-03 | TBD | Pending |
-| TOOL-04 | TBD | Pending |
-| TOOL-05 | TBD | Pending |
-| COV-01 | TBD | Pending |
-| COV-02 | TBD | Pending |
-| COV-03 | TBD | Pending |
-| REFAC-01 | TBD | Pending |
-| REFAC-02 | TBD | Pending |
-| REFAC-03 | TBD | Pending |
-| REFAC-04 | TBD | Pending |
-| TYPE-01 | TBD | Pending |
-| DI-01 | TBD | Pending |
-| DATA-01 | TBD | Pending |
-| DATA-02 | TBD | Pending |
-| DATA-03 | TBD | Pending |
-| FE-01 | TBD | Pending |
-| SEC-01 | TBD | Pending |
-| SEC-02 | TBD | Pending |
-| SEC-03 | TBD | Pending |
-| SEC-04 | TBD | Pending |
-| SEC-05 | TBD | Pending |
+| BASE-01 | Phase 1 | Pending |
+| BASE-02 | Phase 1 | Pending |
+| TOOL-01 | Phase 1 | Pending |
+| TOOL-02 | Phase 1 | Pending |
+| TOOL-03 | Phase 1 | Pending |
+| TOOL-04 | Phase 1 | Pending |
+| TOOL-05 | Phase 3 | Pending |
+| COV-01 | Phase 2 | Pending |
+| COV-02 | Phase 2 | Pending |
+| COV-03 | Phase 2 | Pending |
+| REFAC-01 | Phase 3 | Pending |
+| REFAC-02 | Phase 3 | Pending |
+| REFAC-03 | Phase 3 | Pending |
+| REFAC-04 | Phase 3 | Pending |
+| TYPE-01 | Phase 3 | Pending |
+| DI-01 | Phase 4 | Pending |
+| DATA-01 | Phase 2 | Pending |
+| DATA-02 | Phase 4 | Pending |
+| DATA-03 | Phase 4 | Pending |
+| FE-01 | Phase 4 | Pending |
+| SEC-01 | Phase 5 | Pending |
+| SEC-02 | Phase 5 | Pending |
+| SEC-03 | Phase 5 | Pending |
+| SEC-04 | Phase 5 | Pending |
+| SEC-05 | Phase 5 | Pending |
 
 ---
 
