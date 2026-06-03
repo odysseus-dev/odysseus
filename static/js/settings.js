@@ -1176,6 +1176,9 @@ async function initSearchSettings() {
       } else {
         resultCount = parseInt(countSel.value, 10);
       }
+
+      _settings.search_result_count = resultCount;
+
       var payload = {
         search_provider: prov,
         search_result_count: resultCount,
@@ -1202,6 +1205,9 @@ async function initSearchSettings() {
   urlInput.addEventListener('change', saveSearch);
   keyInput.addEventListener('change', saveSearch);
   cxInput.addEventListener('change', saveSearch);
+
+  countCustomInput.addEventListener('change', saveSearch);
+  countCustomInput.addEventListener('blur', saveSearch);
 
   // ── Provider picker with logos (mirrors the hidden <select>) ──
   var picker = el('search-provider-picker');
