@@ -95,22 +95,31 @@ def _is_auth_exempt(path: str) -> bool:
 
 
 def _run(cmd: list[str], *, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
-    """Run a command capturing text output; never raises on nonzero exit."""
+    """Run a command capturing text output; never raises.
+
+    A missing binary (FileNotFoundError) is normalized to a synthetic
+    CompletedProcess with returncode 127 so every caller can treat "tool
+    absent" the same as "tool exited nonzero" without a try/except."""
     logger.debug(f"running: {' '.join(cmd)}")
-    return subprocess.run(
-        cmd,
-        cwd=cwd or REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        return subprocess.run(
+            cmd,
+            cwd=cwd or REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        logger.warning(f"binary not found: {cmd[0]}")
+        return subprocess.CompletedProcess(
+            cmd, 127, stdout="", stderr=f"{cmd[0]}: not found"
+        )
 
 
 def _tool_version(cmd: list[str]) -> str:
     """Best-effort tool version string; 'unavailable' if the tool is missing."""
-    try:
-        proc = _run(cmd)
-    except FileNotFoundError:
+    proc = _run(cmd)
+    if proc.returncode == 127:
         return "unavailable"
     out = (proc.stdout or proc.stderr or "").strip().splitlines()
     return out[0] if out else "unknown"
@@ -437,6 +446,12 @@ def metric_auth_endpoints() -> list[dict[str, Any]]:
 
 
 def _git_sha() -> str:
+    """HEAD SHA. Prefers SCORECARD_GIT_SHA (set by the host when git is absent in
+    the runtime container, e.g. python:3.12-slim has no git), then `git`, then
+    'unknown' — never raises (Rule 3: container had no git binary)."""
+    env_sha = os.environ.get("SCORECARD_GIT_SHA", "").strip()
+    if env_sha:
+        return env_sha
     proc = _run(["git", "rev-parse", "HEAD"])
     return proc.stdout.strip() if proc.returncode == 0 else "unknown"
 
