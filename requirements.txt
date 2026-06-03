@@ -7,6 +7,8 @@ pydantic>=2.0
 pydantic-settings>=2.0
 SQLAlchemy
 pypdf
+python-docx
+openpyxl
 beautifulsoup4
 charset-normalizer
 numpy

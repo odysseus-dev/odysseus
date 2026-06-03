@@ -52,6 +52,38 @@ function _formatSize(bytes) {
   return (bytes / 1048576).toFixed(1) + ' MB';
 }
 
+function _artifactCardsHtml(artifacts) {
+  if (!Array.isArray(artifacts) || !artifacts.length) return '';
+  return '<div class="artifact-cards">' + artifacts.map(a => {
+    const name = uiModule.esc(a.name || 'download');
+    const url = uiModule.esc(a.url || '#');
+    const size = a.size ? ` <span class="artifact-card-size">${uiModule.esc(_formatSize(a.size))}</span>` : '';
+    return `<a class="artifact-card" href="${url}" download><svg class="artifact-card-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg><span class="artifact-card-name">${name}</span>${size}</a>`;
+  }).join('') + '</div>';
+}
+
+function _appendAttachStatus(card, att) {
+  const badges = [];
+  if (att.extract_error) {
+    badges.push({ text: 'Unreadable', cls: 'attach-status-error', title: att.extract_error });
+  } else if (att.extracted) {
+    badges.push({ text: 'Readable', cls: 'attach-status-ok' });
+    if (att.truncated) badges.push({ text: 'Truncated', cls: 'attach-status-warn' });
+    if (att.sheet_count) badges.push({ text: `${att.sheet_count} sheet${att.sheet_count === 1 ? '' : 's'}`, cls: 'attach-status-info' });
+  }
+  if (!badges.length) return;
+  const wrap = document.createElement('span');
+  wrap.className = 'attach-card-status';
+  for (const badge of badges) {
+    const el = document.createElement('span');
+    el.className = 'attach-status-badge ' + badge.cls;
+    el.textContent = badge.text;
+    if (badge.title) el.title = badge.title;
+    wrap.appendChild(el);
+  }
+  card.appendChild(wrap);
+}
+
 // Build the `.attach-cards` element for a message's attachment list. Shared by
 // addMessage and updateMessageAttachments so a live (optimistic) user bubble
 // can be re-rendered with real upload ids once the upload resolves.
@@ -186,6 +218,7 @@ function buildAttachCards(attachments) {
         sizeSpan.textContent = _formatSize(att.size);
         card.appendChild(sizeSpan);
       }
+      _appendAttachStatus(card, att);
       attachWrap.appendChild(card);
     }
   }
@@ -1959,6 +1992,7 @@ export function addMessage(role, content, modelName, metadata) {
             if (ev.screenshot) {
               outHtml += `<details class="agent-tool-output"><summary>Screenshot</summary><img src="${esc(ev.screenshot)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
             }
+            outHtml += _artifactCardsHtml(ev.artifacts);
             const node = document.createElement('div');
             node.className = 'agent-thread-node' + (ok ? '' : ' error');
             const evCmdHtml = ev.command ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : '';

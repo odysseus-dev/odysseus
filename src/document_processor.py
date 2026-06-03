@@ -6,11 +6,35 @@ import logging
 import mimetypes
 import base64
 import tempfile
+import csv
+import io
+import shutil
+import subprocess
+import zipfile
+import xml.etree.ElementTree as ET
 from typing import List, Dict, Any
 
 from src.llm_core import llm_call
 
 logger = logging.getLogger(__name__)
+
+OFFICE_INLINE_CHAR_LIMIT = 30000
+
+
+def _truncate_inline_text(text: str, limit: int = OFFICE_INLINE_CHAR_LIMIT) -> tuple[str, bool]:
+    """Trim extracted attachment text before it enters the model context."""
+    if len(text) <= limit:
+        return text, False
+    cut = text[:limit]
+    # Prefer a row/paragraph boundary near the cut point.
+    boundary = max(cut.rfind("\n\n"), cut.rfind("\n"))
+    if boundary > int(limit * 0.85):
+        cut = cut[:boundary]
+    return cut + f"\n[Truncated at {len(cut):,} of {len(text):,} characters]", True
+
+
+def _format_extract_error(filename: str, error: str) -> str:
+    return f"\n\n[Attached document file: {filename} — text extraction failed: {error}]"
 
 
 def _is_text_file(path: str) -> bool:
@@ -103,6 +127,317 @@ def _process_text_file(path: str) -> str:
         if truncated:
             result += "\n[Truncated]"
         return result
+
+
+def _table_rows_to_markdown(rows: list[list[str]]) -> str:
+    if not rows:
+        return ""
+    out = []
+    for idx, row in enumerate(rows):
+        safe = [(cell or "").replace("|", "\\|").replace("\n", " ").strip() for cell in row]
+        out.append("| " + " | ".join(safe) + " |")
+        if idx == 0:
+            out.append("| " + " | ".join(["---"] * len(safe)) + " |")
+    return "\n".join(out)
+
+
+def _process_docx_with_python_docx(path: str) -> str:
+    from docx import Document as DocxDocument
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    doc = DocxDocument(path)
+    lines: list[str] = []
+    blocks = doc.iter_inner_content() if hasattr(doc, "iter_inner_content") else list(doc.paragraphs) + list(doc.tables)
+    for block in blocks:
+        if isinstance(block, Paragraph):
+            text = (block.text or "").strip()
+            if not text:
+                lines.append("")
+                continue
+            style = ((block.style.name if block.style else "") or "").strip()
+            if style.startswith("Heading 1"):
+                lines.append(f"# {text}")
+            elif style.startswith("Heading 2"):
+                lines.append(f"## {text}")
+            elif style.startswith("Heading 3"):
+                lines.append(f"### {text}")
+            elif style.startswith("Heading "):
+                lines.append(f"#### {text}")
+            elif style.startswith("List Bullet"):
+                lines.append(f"- {text}")
+            elif style.startswith("List Number"):
+                lines.append(f"1. {text}")
+            else:
+                lines.append(text)
+        elif isinstance(block, Table):
+            rows = [[cell.text for cell in row.cells] for row in block.rows]
+            table_md = _table_rows_to_markdown(rows)
+            if table_md:
+                lines.extend(["", table_md, ""])
+    return "\n".join(lines).strip()
+
+
+def _process_docx_ooxml(path: str) -> str:
+    """Best-effort DOCX reader using only the standard library."""
+    ns = {
+        "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    }
+
+    def paragraph_text(p) -> str:
+        return "".join(t.text or "" for t in p.findall(".//w:t", ns)).strip()
+
+    def paragraph_style(p) -> str:
+        p_style = p.find("./w:pPr/w:pStyle", ns)
+        return p_style.attrib.get(f"{{{ns['w']}}}val", "") if p_style is not None else ""
+
+    lines: list[str] = []
+    with zipfile.ZipFile(path) as zf:
+        root = ET.fromstring(zf.read("word/document.xml"))
+    body = root.find("w:body", ns)
+    if body is None:
+        return ""
+    for child in list(body):
+        tag = child.tag.rsplit("}", 1)[-1]
+        if tag == "p":
+            text = paragraph_text(child)
+            if not text:
+                lines.append("")
+                continue
+            style = paragraph_style(child)
+            if style.startswith("Heading1"):
+                lines.append(f"# {text}")
+            elif style.startswith("Heading2"):
+                lines.append(f"## {text}")
+            elif style.startswith("Heading3"):
+                lines.append(f"### {text}")
+            elif style.startswith("Heading"):
+                lines.append(f"#### {text}")
+            else:
+                lines.append(text)
+        elif tag == "tbl":
+            rows: list[list[str]] = []
+            for tr in child.findall(".//w:tr", ns):
+                row = []
+                for tc in tr.findall("./w:tc", ns):
+                    row.append(" ".join(paragraph_text(p) for p in tc.findall("./w:p", ns)).strip())
+                if any(row):
+                    rows.append(row)
+            table_md = _table_rows_to_markdown(rows)
+            if table_md:
+                lines.extend(["", table_md, ""])
+    return "\n".join(lines).strip()
+
+
+def _process_docx(path: str, filename: str) -> tuple[str, Dict[str, Any]]:
+    meta: Dict[str, Any] = {"extracted": False, "extract_kind": "word"}
+    try:
+        try:
+            text = _process_docx_with_python_docx(path)
+            engine = "python-docx"
+        except Exception as primary_error:
+            logger.debug("python-docx extraction failed for %s: %s; trying OOXML fallback", filename, primary_error)
+            text = _process_docx_ooxml(path)
+            engine = "ooxml"
+        if not text:
+            text = f"_(No readable text found in {filename})_"
+        original_len = len(text)
+        text, truncated = _truncate_inline_text(text)
+        meta.update({
+            "extracted": True,
+            "extract_engine": engine,
+            "extracted_chars": original_len,
+            "inline_chars": len(text),
+            "truncated": truncated,
+        })
+        return f"\n\n[Word document content — {filename}]:\n{text}", meta
+    except Exception as e:
+        meta.update({"extract_error": str(e), "truncated": False})
+        return _format_extract_error(filename, str(e)), meta
+
+
+def _cell_to_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _rows_to_csv(rows: list[list[Any]]) -> str:
+    sio = io.StringIO()
+    writer = csv.writer(sio)
+    for row in rows:
+        writer.writerow([_cell_to_text(cell) for cell in row])
+    return sio.getvalue().strip()
+
+
+def _process_xlsx_with_openpyxl(path: str) -> tuple[str, int]:
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        parts = []
+        for ws in wb:
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                values = list(row)
+                while values and values[-1] is None:
+                    values.pop()
+                if any(v is not None and str(v) != "" for v in values):
+                    rows.append(values)
+            parts.append(f"=== Sheet: {ws.title} ===\n{_rows_to_csv(rows)}")
+        return "\n\n".join(parts).strip(), len(wb.sheetnames)
+    finally:
+        wb.close()
+
+
+def _xlsx_shared_strings(zf: zipfile.ZipFile) -> list[str]:
+    try:
+        root = ET.fromstring(zf.read("xl/sharedStrings.xml"))
+    except KeyError:
+        return []
+    ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    out = []
+    for si in root.findall("x:si", ns):
+        out.append("".join(t.text or "" for t in si.findall(".//x:t", ns)))
+    return out
+
+
+def _xlsx_sheet_paths(zf: zipfile.ZipFile) -> list[tuple[str, str]]:
+    main_ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    rel_ns = {"r": "http://schemas.openxmlformats.org/package/2006/relationships"}
+    wb = ET.fromstring(zf.read("xl/workbook.xml"))
+    rels = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+    rel_map = {
+        rel.attrib.get("Id"): rel.attrib.get("Target", "")
+        for rel in rels.findall("r:Relationship", rel_ns)
+    }
+    sheets = []
+    for sheet in wb.findall(".//x:sheet", main_ns):
+        name = sheet.attrib.get("name", "Sheet")
+        rid = sheet.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
+        target = rel_map.get(rid, "")
+        if not target:
+            continue
+        if target.startswith("/"):
+            path = target.lstrip("/")
+        elif target.startswith("xl/"):
+            path = target
+        else:
+            path = "xl/" + target
+        sheets.append((name, path))
+    return sheets
+
+
+def _process_xlsx_ooxml(path: str) -> tuple[str, int]:
+    ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    parts = []
+    with zipfile.ZipFile(path) as zf:
+        shared = _xlsx_shared_strings(zf)
+        sheet_paths = _xlsx_sheet_paths(zf)
+        for sheet_name, sheet_path in sheet_paths:
+            root = ET.fromstring(zf.read(sheet_path))
+            rows = []
+            for row in root.findall(".//x:sheetData/x:row", ns):
+                values = []
+                for cell in row.findall("x:c", ns):
+                    cell_type = cell.attrib.get("t")
+                    value = ""
+                    if cell_type == "inlineStr":
+                        value = "".join(t.text or "" for t in cell.findall(".//x:t", ns))
+                    else:
+                        v = cell.find("x:v", ns)
+                        if v is not None and v.text is not None:
+                            value = v.text
+                            if cell_type == "s":
+                                try:
+                                    value = shared[int(value)]
+                                except Exception:
+                                    pass
+                    values.append(value)
+                while values and values[-1] == "":
+                    values.pop()
+                if any(values):
+                    rows.append(values)
+            parts.append(f"=== Sheet: {sheet_name} ===\n{_rows_to_csv(rows)}")
+    return "\n\n".join(parts).strip(), len(parts)
+
+
+def _process_spreadsheet(path: str, filename: str) -> tuple[str, Dict[str, Any]]:
+    meta: Dict[str, Any] = {"extracted": False, "extract_kind": "spreadsheet"}
+    try:
+        try:
+            text, sheet_count = _process_xlsx_with_openpyxl(path)
+            engine = "openpyxl"
+        except Exception as primary_error:
+            logger.debug("openpyxl extraction failed for %s: %s; trying OOXML fallback", filename, primary_error)
+            text, sheet_count = _process_xlsx_ooxml(path)
+            engine = "ooxml"
+        if not text:
+            text = f"_(No readable cells found in {filename})_"
+        original_len = len(text)
+        text, truncated = _truncate_inline_text(text)
+        meta.update({
+            "extracted": True,
+            "extract_engine": engine,
+            "sheet_count": sheet_count,
+            "extracted_chars": original_len,
+            "inline_chars": len(text),
+            "truncated": truncated,
+        })
+        return f"\n\n[Spreadsheet content — {filename}]:\n{text}", meta
+    except Exception as e:
+        meta.update({"extract_error": str(e), "truncated": False})
+        return _format_extract_error(filename, str(e)), meta
+
+
+def _process_officecli(path: str, filename: str, kind: str) -> tuple[str, Dict[str, Any]]:
+    meta: Dict[str, Any] = {"extracted": False, "extract_kind": kind}
+    exe = shutil.which("officecli")
+    if not exe:
+        meta.update({"extract_error": "officecli not found", "truncated": False})
+        return _format_extract_error(filename, "officecli not found"), meta
+    try:
+        proc = subprocess.run(
+            [exe, path],
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+        text = (proc.stdout or "").strip()
+        if proc.returncode != 0 or not text:
+            err = (proc.stderr or f"officecli exited {proc.returncode}").strip()
+            meta.update({"extract_error": err, "truncated": False})
+            return _format_extract_error(filename, err), meta
+        original_len = len(text)
+        text, truncated = _truncate_inline_text(text)
+        meta.update({
+            "extracted": True,
+            "extract_engine": "officecli",
+            "extracted_chars": original_len,
+            "inline_chars": len(text),
+            "truncated": truncated,
+        })
+        return f"\n\n[Office document content — {filename}]:\n{text}", meta
+    except Exception as e:
+        meta.update({"extract_error": str(e), "truncated": False})
+        return _format_extract_error(filename, str(e)), meta
+
+
+def _process_office_file(path: str, display_name: str, mime: str = "") -> tuple[str, Dict[str, Any]]:
+    filename = os.path.basename(display_name or path)
+    ext = os.path.splitext(filename.lower())[1]
+    if ext == ".docx" or mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        return _process_docx(path, filename)
+    if ext in {".xlsx", ".xlsm"} or mime in {
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel.sheet.macroEnabled.12",
+    }:
+        return _process_spreadsheet(path, filename)
+    if ext in {".doc", ".xls", ".ods"}:
+        kind = "spreadsheet" if ext in {".xls", ".ods"} else "word"
+        return _process_officecli(path, filename, kind)
+    return "", {"extracted": False}
 
 
 def _process_pdf(path: str) -> str:
@@ -259,6 +594,7 @@ def build_user_content(
     auto_opened_docs: list[Dict[str, Any]] | None = None,
     owner: str | None = None,
     resolved_uploads: dict[str, Dict[str, Any]] | None = None,
+    extraction_meta: dict[str, Dict[str, Any]] | None = None,
 ) -> str | List[Dict[str, Any]]:
     """Build user content with attachments (text, images, audio, documents).
 
@@ -429,7 +765,11 @@ def build_user_content(
             elif mime.startswith("text/") or _is_text_file(path):
                 extracted_text = _process_text_file(path)
             else:
-                extracted_text = "\n\n[Attached document file]"
+                extracted_text, meta = _process_office_file(path, display_name, mime)
+                if extraction_meta is not None and meta:
+                    extraction_meta[fid] = meta
+                if not extracted_text:
+                    extracted_text = "\n\n[Attached document file]"
 
             if content and content[0]["type"] == "text":
                 content[0]["text"] += extracted_text

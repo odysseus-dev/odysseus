@@ -544,6 +544,7 @@ def _build_system_prompt(
     mcp_disabled_map: Optional[Dict[str, set]] = None,
     compact: bool = False,
     owner: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -905,6 +906,30 @@ def _build_system_prompt(
                 last_user_idx = i
                 break
         merged.insert(last_user_idx, _doc_message)
+
+    if session_id:
+        try:
+            from src.artifacts import artifact_dir_for_session, artifact_url_prefix
+            art_dir = artifact_dir_for_session(session_id)
+            art_url = artifact_url_prefix(session_id)
+            artifact_msg = {
+                "role": "system",
+                "content": (
+                    "DOWNLOADABLE FILE ARTIFACTS:\n"
+                    f"- Save any user-downloadable generated files into: {art_dir}\n"
+                    f"- Public URL prefix for those files: {art_url}/\n"
+                    "- The environment variables ODYSSEUS_ARTIFACT_DIR and "
+                    "ODYSSEUS_ARTIFACT_URL_PREFIX contain those exact values in bash/python tools.\n"
+                    "- If the user asked for an Excel/Word/PDF/ZIP/etc. file, create that real file type, not a CSV substitute, unless the user explicitly asked for CSV.\n"
+                    "- Never use /mnt/data for Odysseus downloads. Do not claim a file is downloadable "
+                    "unless it exists in ODYSSEUS_ARTIFACT_DIR or a tool returned an artifact card.\n"
+                    "- After creating a file, verify it exists. Prefer returning a Markdown link like "
+                    f"[Download filename]({art_url}/filename.ext)."
+                ),
+            }
+            merged.insert(0, artifact_msg)
+        except Exception:
+            pass
 
     return merged, mcp_schemas
 
@@ -1379,6 +1404,7 @@ async def stream_agent_loop(
         mcp_disabled_map=_mcp_disabled_map,
         compact=_is_api_model,
         owner=owner,
+        session_id=session_id,
     )
     prep_timings["prompt_build"] = time.time() - _t2
 
@@ -2013,6 +2039,8 @@ async def stream_agent_loop(
             if result.get("images"):
                 img = result["images"][0]
                 tool_output_data["screenshot"] = f"data:{img['mimeType']};base64,{img['data']}"
+            if result.get("artifacts"):
+                tool_output_data["artifacts"] = result["artifacts"]
             yield f'data: {json.dumps(tool_output_data)}\n\n'
 
             # Native document tools open in the editor + carry the REAL doc id.
@@ -2055,6 +2083,8 @@ async def stream_agent_loop(
             if result.get("doc_id"):
                 tool_event["doc_id"] = result["doc_id"]
                 tool_event["doc_title"] = result.get("title", "")
+            if result.get("artifacts"):
+                tool_event["artifacts"] = result["artifacts"]
             tool_events.append(tool_event)
             if block.tool_type in _VERIFIER_EFFECTFUL_TOOLS:
                 _effectful_used = True

@@ -236,13 +236,20 @@ class ChatHandler:
                             _m["vision"] = vl_desc
                             _m["vision_model"] = vl_model
 
+        extraction_meta: Dict[str, Dict[str, Any]] = {}
         user_content = build_user_content(
             enhanced_message, att_ids, UPLOAD_DIR, self.upload_handler,
             session_id=getattr(sess, "id", None),
             auto_opened_docs=auto_opened_docs,
             owner=owner,
             resolved_uploads=files_by_id,
+            extraction_meta=extraction_meta,
         )
+        if extraction_meta and attachment_meta:
+            for meta in attachment_meta:
+                extra = extraction_meta.get(meta.get("id"))
+                if extra:
+                    meta.update(extra)
 
         # Strip image_url entries for text-only models (VL description is already in the text)
         if not vision_enabled and isinstance(user_content, list):

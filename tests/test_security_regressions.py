@@ -14,6 +14,8 @@ These are pure-function tests — no FastAPI app boot, no DB.
 import sys
 import types
 import json
+import zipfile
+import io
 from pathlib import Path
 
 import pytest
@@ -206,6 +208,74 @@ def _make_upload_store(tmp_path):
     return upload_dir, alice_id, bob_id
 
 
+def _add_upload(upload_dir, upload_id, original_name, mime, owner, content: bytes):
+    dated = upload_dir / "2026" / "06" / "01"
+    dated.mkdir(parents=True, exist_ok=True)
+    path = dated / upload_id
+    path.write_bytes(content)
+    index_path = upload_dir / "uploads.json"
+    index = json.loads(index_path.read_text(encoding="utf-8")) if index_path.exists() else {}
+    index[f"{owner}:{upload_id}"] = {
+        "id": upload_id,
+        "path": str(path),
+        "mime": mime,
+        "size": path.stat().st_size,
+        "name": original_name,
+        "original_name": original_name,
+        "owner": owner,
+    }
+    index_path.write_text(json.dumps(index), encoding="utf-8")
+    return path
+
+
+def _minimal_docx_bytes():
+    document_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Quarterly plan</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Launch the office attachment reader.</w:t></w:r></w:p>
+    <w:tbl>
+      <w:tr><w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Status</w:t></w:r></w:p></w:tc></w:tr>
+      <w:tr><w:tc><w:p><w:r><w:t>Docs</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Readable</w:t></w:r></w:p></w:tc></w:tr>
+    </w:tbl>
+  </w:body>
+</w:document>"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("word/document.xml", document_xml)
+    return buf.getvalue()
+
+
+def _minimal_xlsx_bytes():
+    workbook_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Tasks" sheetId="1" r:id="rId1"/></sheets>
+</workbook>"""
+    rels_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>"""
+    shared_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <si><t>Task</t></si><si><t>Owner</t></si><si><t>Parse XLSX</t></si><si><t>Agent</t></si>
+</sst>"""
+    sheet_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>
+    <row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2" t="s"><v>3</v></c></row>
+  </sheetData>
+</worksheet>"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("xl/workbook.xml", workbook_xml)
+        zf.writestr("xl/_rels/workbook.xml.rels", rels_xml)
+        zf.writestr("xl/sharedStrings.xml", shared_xml)
+        zf.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    return buf.getvalue()
+
+
 def _stub_core_database_for_route_imports(monkeypatch):
     from unittest.mock import MagicMock
 
@@ -257,6 +327,90 @@ def test_build_user_content_skips_cross_owner_attachments(tmp_path):
 
     assert content == "hello"
     assert "bob private note" not in content
+
+
+def test_build_user_content_extracts_docx_attachment(tmp_path):
+    from src.document_processor import build_user_content
+    from src.upload_handler import UploadHandler
+
+    upload_dir, _alice_id, _bob_id = _make_upload_store(tmp_path)
+    docx_id = "c" * 32 + ".docx"
+    _add_upload(
+        upload_dir,
+        docx_id,
+        "plan.docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "alice",
+        _minimal_docx_bytes(),
+    )
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+    extraction_meta = {}
+
+    content = build_user_content(
+        "summarize this",
+        [docx_id],
+        str(upload_dir),
+        handler,
+        owner="alice",
+        extraction_meta=extraction_meta,
+    )
+
+    assert "Word document content" in content
+    assert "Quarterly plan" in content
+    assert "Launch the office attachment reader." in content
+    assert "| Docs | Readable |" in content
+    assert extraction_meta[docx_id]["extracted"] is True
+    assert extraction_meta[docx_id]["extract_kind"] == "word"
+
+
+def test_build_user_content_extracts_xlsx_attachment(tmp_path):
+    from src.document_processor import build_user_content
+    from src.upload_handler import UploadHandler
+
+    upload_dir, _alice_id, _bob_id = _make_upload_store(tmp_path)
+    xlsx_id = "d" * 32 + ".xlsx"
+    _add_upload(
+        upload_dir,
+        xlsx_id,
+        "tasks.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "alice",
+        _minimal_xlsx_bytes(),
+    )
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+    extraction_meta = {}
+
+    content = build_user_content(
+        "what is in this sheet?",
+        [xlsx_id],
+        str(upload_dir),
+        handler,
+        owner="alice",
+        extraction_meta=extraction_meta,
+    )
+
+    assert "Spreadsheet content" in content
+    assert "=== Sheet: Tasks ===" in content
+    assert "Parse XLSX,Agent" in content
+    assert extraction_meta[xlsx_id]["extracted"] is True
+    assert extraction_meta[xlsx_id]["extract_kind"] == "spreadsheet"
+    assert extraction_meta[xlsx_id]["sheet_count"] == 1
+
+
+def test_artifact_discovery_encodes_download_urls(tmp_path, monkeypatch):
+    from src import artifacts
+
+    monkeypatch.setattr(artifacts, "ARTIFACTS_DIR", str(tmp_path / "artifacts"))
+    sid = "session123"
+    base = Path(artifacts.artifact_dir_for_session(sid))
+    before = artifacts.snapshot_artifacts(sid)
+    (base / "Таблица тест.xlsx").write_bytes(b"xlsx")
+
+    found = artifacts.discover_new_artifacts(sid, before)
+
+    assert found[0]["name"] == "Таблица тест.xlsx"
+    assert found[0]["url"].startswith("/api/artifacts/session123/")
+    assert "%D0%A2" in found[0]["url"]
 
 
 def test_chat_preprocess_does_not_surface_cross_owner_attachment(tmp_path, monkeypatch):

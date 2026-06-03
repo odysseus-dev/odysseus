@@ -482,6 +482,10 @@ upload_router, upload_cleanup_func = setup_upload_routes(upload_handler)
 app.include_router(upload_router)
 upload_cleanup_task = None
 
+# Generated artifacts (downloadable files created by agent tools)
+from routes.artifact_routes import setup_artifact_routes
+app.include_router(setup_artifact_routes(session_manager))
+
 # Emoji SVG proxy (same-origin, lazy-cached Twemoji) — lets the chat render
 # emojis as flat SVG instead of system color glyphs.
 from routes.emoji_routes import setup_emoji_routes

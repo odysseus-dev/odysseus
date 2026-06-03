@@ -8631,6 +8631,44 @@ body.hide-thinking .thinking-section { display: none !important; }
   line-height: 1.5;
 }
 
+.artifact-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.artifact-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 10px;
+  border: 1px solid var(--bubble-border, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--fg);
+  text-decoration: none;
+  font-size: 12px;
+  transition: background 0.15s;
+}
+.artifact-card:hover {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.artifact-card-icon {
+  color: var(--accent, var(--red));
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+.artifact-card-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifact-card-size {
+  opacity: 0.55;
+  white-space: nowrap;
+}
+
 /* Mobile responsive styles */
 @media (max-width: 768px) {
   #recording-indicator {
@@ -11972,6 +12010,25 @@ mark.doc-find-mark.current {
   font-size: 11px;
   white-space: nowrap;
 }
+.attach-card-status {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.attach-status-badge {
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 999px;
+  padding: 1px 5px;
+  font-size: 10px;
+  line-height: 1.35;
+  opacity: 0.82;
+  white-space: nowrap;
+}
+.attach-status-ok { color: var(--green); }
+.attach-status-warn { color: var(--accent-warm, var(--accent, var(--red))); }
+.attach-status-info { color: var(--fg); opacity: 0.55; }
+.attach-status-error { color: var(--red); }
 /* Import prompt banner (above chatbar) */
 .import-prompt-banner {
   display: flex;

@@ -257,11 +257,12 @@ async def _call_mcp_tool(
     tool: str,
     content: str,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    session_id: Optional[str] = None,
 ) -> Dict:
     """Route a legacy tool call through the MCP manager, with direct fallbacks."""
     mcp = get_mcp_manager()
     if not mcp:
-        return await _direct_fallback(tool, content, progress_cb=progress_cb) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1}
+        return await _direct_fallback(tool, content, progress_cb=progress_cb, session_id=session_id) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1}
 
     server_id, tool_name = _MCP_TOOL_MAP[tool]
     qualified = f"mcp__{server_id}__{tool_name}"
@@ -270,7 +271,7 @@ async def _call_mcp_tool(
 
     # If MCP server not connected, try direct fallback
     if isinstance(result, dict) and result.get("exit_code") == 1 and "not connected" in result.get("error", ""):
-        fallback = await _direct_fallback(tool, content, progress_cb=progress_cb)
+        fallback = await _direct_fallback(tool, content, progress_cb=progress_cb, session_id=session_id)
         if fallback:
             return fallback
 
@@ -293,10 +294,34 @@ def _split_bg_marker(content: str):
     return False, content
 
 
+def _preferred_python_executable() -> str:
+    """Pick a Python interpreter that has the bundled workspace deps when available."""
+    candidates = [
+        os.environ.get("ODYSSEUS_WORKSPACE_PYTHON"),
+        os.environ.get("CODEX_WORKSPACE_PYTHON"),
+        "/Users/maksim/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+        "/Users/maksim/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python",
+        sys.executable,
+        "python3",
+        "python",
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            if os.path.isabs(candidate) and not os.path.exists(candidate):
+                continue
+            return candidate
+        except Exception:
+            continue
+    return sys.executable or "python3"
+
+
 async def _direct_fallback(
     tool: str,
     content: str,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    session_id: Optional[str] = None,
 ) -> Optional[Dict]:
     """In-process execution path for the eight tools that used to live as
     stdio MCP servers under mcp_servers/. Those servers were deleted in
@@ -323,6 +348,12 @@ async def _direct_fallback(
         "COLUMNS": "120",
         "LINES": "40",
     }
+    try:
+        from src.artifacts import artifact_dir_for_session, artifact_url_prefix
+        _subproc_env["ODYSSEUS_ARTIFACT_DIR"] = artifact_dir_for_session(session_id)
+        _subproc_env["ODYSSEUS_ARTIFACT_URL_PREFIX"] = artifact_url_prefix(session_id)
+    except Exception:
+        pass
 
     try:
         if tool == "bash":
@@ -351,9 +382,7 @@ async def _direct_fallback(
             # can't take the whole server down. -I = isolated mode (skip
             # user site, no PYTHONPATH inheritance) for hygiene.
             proc = await asyncio.create_subprocess_exec(
-                # Use the running interpreter — there is no `python3.exe` on
-                # Windows, which made the agent's `python` tool fail there.
-                (sys.executable or "python"), "-I", "-c", content,
+                _preferred_python_executable(), "-I", "-c", content,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
@@ -644,10 +673,18 @@ async def execute_tool_block(
     # Route MCP-extracted tools through the MCP manager. Forward
     # the progress callback so long-running subprocess tools
     # (bash, python) can stream `tool_progress` events to the UI.
+    artifact_snapshot = None
+    if tool in {"bash", "python", "write_file"} and session_id:
+        try:
+            from src.artifacts import snapshot_artifacts
+            artifact_snapshot = snapshot_artifacts(session_id)
+        except Exception:
+            artifact_snapshot = None
+
     if tool in _MCP_TOOL_MAP:
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
-        result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)
+        result = await _call_mcp_tool(tool, content, progress_cb=progress_cb, session_id=session_id)
     elif tool == "create_document":
         title = content.split("\n")[0].strip()[:60]
         desc = f"create_document: {title}"
@@ -784,6 +821,15 @@ async def execute_tool_block(
     else:
         desc = f"unknown: {tool}"
         result = {"error": f"Unknown tool type: {tool}"}
+
+    if artifact_snapshot is not None and result.get("exit_code") in (0, None):
+        try:
+            from src.artifacts import discover_new_artifacts
+            artifacts = discover_new_artifacts(session_id, artifact_snapshot)
+            if artifacts:
+                result["artifacts"] = artifacts
+        except Exception as e:
+            logger.debug("artifact discovery failed for session %s: %s", session_id, e)
 
     logger.info(f"Tool executed: {desc} -> exit_code={result.get('exit_code', 'n/a')}")
     return desc, result

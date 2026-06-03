@@ -24,6 +24,12 @@ import createResearchSynapse from './researchSynapse.js';
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
+  function _formatBytes(bytes) {
+    const n = Number(bytes) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
 
   let API_BASE = '';
   let currentAbort = null;
@@ -557,7 +563,7 @@ import createResearchSynapse from './researchSynapse.js';
       else if (_autoContinuePending) { _autoContinuePending = false; }
       const _pendingAttachInfo = fileHandlerModule.getPendingCount() ? fileHandlerModule.getPendingInfo() : null;
       // Pre-read importable file contents before upload clears pending files
-      const IMPORTABLE_EXT = /\.(txt|py|js|ts|html|htm|css|md|json|csv|yml|yaml|sh|sql|rs|go|java|c|cpp|h|rb|php|xml|jsx|tsx|log|toml|ini|conf|env|vue|svelte|scss|sass|less)$/i;
+      const IMPORTABLE_EXT = /\.(txt|py|js|ts|html|htm|css|md|json|csv|tsv|yml|yaml|sh|sql|rs|go|java|c|cpp|h|rb|php|xml|jsx|tsx|log|toml|ini|conf|env|vue|svelte|scss|sass|less)$/i;
       const _importableFiles = [];
       if (_pendingAttachInfo && documentModule) {
         const rawFiles = fileHandlerModule.getPendingRaw ? fileHandlerModule.getPendingRaw() : [];
@@ -2005,6 +2011,14 @@ import createResearchSynapse from './researchSynapse.js';
                   let outHtml = '';
                   if (json.output && json.output.trim()) {
                     outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(json.output)}</pre></details>`;
+                  }
+                  if (Array.isArray(json.artifacts) && json.artifacts.length) {
+                    outHtml += '<div class="artifact-cards">' + json.artifacts.map(a => {
+                      const name = esc(a.name || 'download');
+                      const url = esc(a.url || '#');
+                      const size = a.size ? ` <span class="artifact-card-size">${esc(_formatBytes(a.size))}</span>` : '';
+                      return `<a class="artifact-card" href="${url}" download><svg class="artifact-card-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg><span class="artifact-card-name">${name}</span>${size}</a>`;
+                    }).join('') + '</div>';
                   }
                   const cmdHtml2 = cmd ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : '';
                   // Preserve the user's .open choice across the innerHTML
@@ -4363,7 +4377,8 @@ import createResearchSynapse from './researchSynapse.js';
       jsx:'javascript', tsx:'typescript', py:'python', rb:'ruby', go:'go', rs:'rust',
       java:'java', c:'c', cpp:'cpp', h:'c', hpp:'cpp', cs:'csharp', php:'php', html:'html',
       htm:'html', css:'css', scss:'scss', json:'json', yaml:'yaml', yml:'yaml', sh:'bash',
-      bash:'bash', sql:'sql', csv:'csv', xml:'xml' };
+      bash:'bash', sql:'sql', csv:'csv', tsv:'csv', docx:'markdown', doc:'markdown',
+      xlsx:'csv', xls:'csv', xlsm:'csv', ods:'csv', xml:'xml' };
     return map[ext] || '';
   }
   async function openAttachment(att, isImage) {
@@ -4382,7 +4397,7 @@ import createResearchSynapse from './researchSynapse.js';
     }
 
     const isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
-    const TEXT_EXT = /\.(txt|md|markdown|js|ts|jsx|tsx|py|rb|go|rs|java|c|cpp|h|hpp|cs|php|html?|css|scss|sass|less|json|ya?ml|toml|ini|conf|env|sh|bash|sql|csv|tsv|xml|log|vue|svelte)$/i;
+    const TEXT_EXT = /\.(txt|md|markdown|js|ts|jsx|tsx|py|rb|go|rs|java|c|cpp|h|hpp|cs|php|html?|css|scss|sass|less|json|ya?ml|toml|ini|conf|env|sh|bash|sql|csv|tsv|docx?|xlsx?|xlsm|ods|xml|log|vue|svelte)$/i;
     const isTextDoc = TEXT_EXT.test(name) || /^text\//.test(mime);
     if (!isPdf && !isTextDoc) { window.open(url, '_blank'); return; }  // binary/unknown → raw
 
@@ -4421,7 +4436,14 @@ import createResearchSynapse from './researchSynapse.js';
         if (!res.ok) throw new Error('import-pdf ' + res.status);
         doc = await res.json();
       } else {
-        const text = await (await fetch(url)).text();
+        let text = '';
+        if (/\.(docx?|xlsx?|xlsm|ods)$/i.test(name)) {
+          text = att.extract_error
+            ? `[Could not extract ${name}: ${att.extract_error}]`
+            : `[${name} was read by the chat attachment processor. Ask the assistant about it in this chat.]`;
+        } else {
+          text = await (await fetch(url)).text();
+        }
         const res = await fetch(`${API_BASE}/api/document`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ session_id: sid || null, title: name.replace(/\.[^.]+$/, '') || 'Document', content: text, language: _attachLang(name) }),
