@@ -722,14 +722,11 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
                     "error": "That is Odysseus, not a model server. Use the Ollama URL, usually http://host.docker.internal:11434/v1 in Docker.",
                 }
             return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code} redirect"}
-        # 401/403/404/405 still prove the server responded; they should not
-        # make a cached API/proxy endpoint look dead just because /models is
-        # expensive or unavailable.
-        if r.status_code < 500:
+        if 200 <= r.status_code < 300:
             return {
                 "reachable": True,
                 "status_code": r.status_code,
-                "error": None if r.status_code < 400 else f"HTTP {r.status_code}",
+                "error": None,
             }
         return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code}"}
 
@@ -754,13 +751,11 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
     except Exception:
         pass
 
-    for method in ("head", "get"):
-        try:
-            request = httpx.head if method == "head" else httpx.get
-            r = request(base, headers=headers, timeout=timeout, follow_redirects=False)
-            return _result_from_response(r)
-        except Exception as e:
-            last_error = str(e)[:120]
+    try:
+        r = httpx.get(base, headers=headers, timeout=timeout)
+        return _result_from_response(r)
+    except Exception as e:
+        last_error = str(e)[:120]
 
     return {"reachable": False, "status_code": None, "error": last_error}
 

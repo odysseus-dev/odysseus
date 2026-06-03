@@ -342,12 +342,10 @@ class TestClassifyEndpoint:
         monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
         seen = []
 
-        def fake_head(url, headers=None, timeout=None, follow_redirects=None):
-            seen.append(("HEAD", url))
-            request = httpx.Request("HEAD", url)
-            return httpx.Response(404, request=request)
+        def fake_head(*args, **kwargs):
+            raise AssertionError("generic proxy health check should not use HEAD")
 
-        def fake_get(url, headers=None, timeout=None, follow_redirects=None):
+        def fake_get(url, headers=None, timeout=None):
             seen.append(("GET", url))
             request = httpx.Request("GET", url)
             return httpx.Response(200, request=request)
@@ -358,8 +356,9 @@ class TestClassifyEndpoint:
         result = _ping_endpoint("http://100.117.136.97:34521/v1", "fake-key", timeout=1)
 
         assert result["reachable"] is True
-        assert result["status_code"] == 404
-        assert seen == [("HEAD", "http://100.117.136.97:34521/v1")]
+        assert result["status_code"] == 200
+        assert seen == [("GET", "http://100.117.136.97:34521/v1")]
+        assert all(not url.endswith("/models") for _, url in seen)
 
 
 # ── setup probing ──
