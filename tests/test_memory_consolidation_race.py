@@ -282,3 +282,72 @@ async def test_consolidation_preserves_concurrent_edit(monkeypatch, tmp_path):
     # The concurrently-edited entry survives despite the stale drop decision.
     assert "u-drop" in saved
     assert saved["u-drop"]["text"] == "Freshly edited fact."
+
+
+@pytest.mark.asyncio
+async def test_consolidation_production_lazy_vector_path_rebuilds(monkeypatch, tmp_path):
+    """Production path: the scheduler dispatches the action with NO memory_vector,
+    so it must lazily build MemoryVectorStore(DATA_DIR). All stores share one Chroma
+    collection via get_chroma_client(), so a healthy lazily-built store rebuilds the
+    saved set. The other tests inject a fake and bypass this branch — this one
+    exercises the real no-injection path so the vector-sync fix can't ship as a
+    silent no-op."""
+    from src import constants
+    from src import endpoint_resolver
+    from src import llm_core
+    import src.memory_vector as memory_vector_mod
+
+    action_consolidate_memory = _import_consolidate_action()
+
+    data_dir = _write_memories(
+        tmp_path,
+        [
+            {"id": "u-keep", "owner": "u", "text": "User likes tea.", "category": "preference"},
+            {"id": "u-dup-a", "owner": "u", "text": "User likes coffee.", "category": "preference"},
+            {"id": "u-dup-b", "owner": "u", "text": "User likes coffee.", "category": "preference"},
+        ],
+    )
+    monkeypatch.setattr(constants, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(
+        endpoint_resolver, "resolve_endpoint", lambda *a, **k: ("http://llm", "model", {})
+    )
+
+    async def fake_llm_call_async(**kwargs):
+        return json.dumps(
+            {
+                "keep": [
+                    {"id": "u-keep", "text": "User likes tea.", "category": "preference"},
+                    {"id": "u-dup-a", "text": "User likes coffee.", "category": "preference"},
+                ],
+                "drop": [{"id": "u-dup-b", "reason": "duplicate"}],
+            }
+        )
+
+    monkeypatch.setattr(llm_core, "llm_call_async", fake_llm_call_async)
+
+    # The action does `from src.memory_vector import MemoryVectorStore` INSIDE the
+    # lazy branch (resolved at call time), so patching the class on the module is
+    # what the no-injection path will construct.
+    built = {}
+    rebuilt = []
+
+    class _LazyFakeVector:
+        def __init__(self, data_dir_arg):
+            built["dir"] = data_dir_arg
+            self.healthy = True
+
+        def rebuild(self, entries):
+            rebuilt.append([dict(e) for e in entries])
+
+    monkeypatch.setattr(memory_vector_mod, "MemoryVectorStore", _LazyFakeVector)
+
+    # No memory_vector kwarg -> exercises the production lazy-construct branch.
+    message, ok = await action_consolidate_memory("u")
+
+    assert ok is True
+    assert built.get("dir") == str(data_dir)        # lazily constructed with DATA_DIR
+    assert len(rebuilt) == 1                          # rebuild fired on the real path
+    rebuilt_ids = {e["id"] for e in rebuilt[0]}
+    saved_ids = {m["id"] for m in _read_memories(data_dir)}
+    assert rebuilt_ids == saved_ids
+    assert "u-dup-b" not in rebuilt_ids
