@@ -603,6 +603,8 @@ def _build_system_prompt(
     # matches what the user sees.
     try:
         from datetime import datetime as _dt, timezone as _tz
+        from src.tool_execution import _agent_workspace as _get_ws
+        _agent_ws = _get_ws()
         _now = _dt.now().astimezone()
         _utc = _dt.now(_tz.utc)
         _off = _now.strftime('%z')  # e.g. +0900
@@ -617,6 +619,10 @@ def _build_system_prompt(
             f"When scheduling a task (manage_tasks), scheduled_time is in UTC: "
             f"subtract the offset above from the user's local time "
             f"(local {_now.strftime('%H:%M')} = {_utc.strftime('%H:%M')} UTC right now).\n\n"
+            f"## Working directory\n"
+            f"bash and python run with cwd `{_agent_ws}`. "
+            f"write_file and read_file resolve relative paths there too. "
+            f"Always report the full path when telling the user where a file was written.\n\n"
         ) + agent_prompt
     except Exception:
         pass

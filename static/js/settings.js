@@ -1555,12 +1555,16 @@ async function initResearchSearchSettings() {
 async function initAgentSettings() {
   var toolsInput = el('set-agentMaxTools');
   var msg = el('set-agentMsg');
+  var wsInput = el('set-agentWorkspace');
+  var wsMsg = el('set-agentWorkspaceMsg');
   if (!toolsInput) return;
 
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
     if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
+    if (wsInput && Array.isArray(settings.tool_path_extra_roots) && settings.tool_path_extra_roots.length)
+      wsInput.value = settings.tool_path_extra_roots[0];
   } catch (e) {}
 
   async function save() {
@@ -1575,7 +1579,26 @@ async function initAgentSettings() {
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
+  async function saveWorkspace() {
+    if (!wsInput || !wsMsg) return;
+    var raw = wsInput.value.trim();
+    var roots = raw ? [raw] : [];
+    try {
+      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool_path_extra_roots: roots })
+      });
+      wsMsg.textContent = raw ? 'Saved — files will go to ' + raw : 'Using app data directory';
+      wsMsg.style.color = 'var(--fg)';
+      setTimeout(function() {
+        wsMsg.textContent = raw ? 'Where write_file, read_file, and bash/python commands run.' : 'Where write_file, read_file, and bash/python commands run. Leave blank to use the app data directory.';
+        wsMsg.style.color = '';
+      }, 3000);
+    } catch (e) { wsMsg.textContent = 'Failed to save'; wsMsg.style.color = 'var(--red)'; }
+  }
+
   toolsInput.addEventListener('change', save);
+  if (wsInput) wsInput.addEventListener('change', saveWorkspace);
   var cur = parseInt(toolsInput.value, 10) || 0;
   msg.textContent = cur > 0 ? 'Limit: ' + cur + ' tool calls per message' : 'Unlimited';
 }

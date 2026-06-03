@@ -122,6 +122,29 @@ def _tool_path_roots() -> list[str]:
     return out
 
 
+def _agent_workspace() -> str:
+    """Return the directory agents should treat as their working directory.
+
+    Uses the first entry of ``tool_path_extra_roots`` when configured (the
+    admin-facing "Workspace path" setting), falling back to DATA_DIR so
+    behaviour is identical to pre-setting installs.
+    """
+    try:
+        from src.settings import get_setting
+        extra = get_setting("tool_path_extra_roots")
+        if isinstance(extra, list):
+            for r in extra:
+                r = str(r).strip()
+                if r:
+                    expanded = os.path.expanduser(r)
+                    os.makedirs(expanded, exist_ok=True)
+                    return expanded
+    except Exception:
+        pass
+    from src.constants import DATA_DIR
+    return DATA_DIR
+
+
 def _resolve_tool_path(raw_path: str) -> str:
     """Resolve and confine a model-supplied path.
 
@@ -470,6 +493,7 @@ async def _direct_fallback(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
+                cwd=_agent_workspace(),
             )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
                 proc,
@@ -496,6 +520,7 @@ async def _direct_fallback(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
+                cwd=_agent_workspace(),
             )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
                 proc,
@@ -513,6 +538,8 @@ async def _direct_fallback(
 
         if tool == "read_file":
             raw_path = content.split("\n", 1)[0].strip()
+            if raw_path and not os.path.isabs(raw_path) and not raw_path.startswith("~"):
+                raw_path = os.path.join(_agent_workspace(), raw_path)
             try:
                 path = _resolve_tool_path(raw_path)
             except ValueError as e:
@@ -538,6 +565,8 @@ async def _direct_fallback(
             lines = content.split("\n", 1)
             raw_path = lines[0].strip()
             body = lines[1] if len(lines) > 1 else ""
+            if raw_path and not os.path.isabs(raw_path) and not raw_path.startswith("~"):
+                raw_path = os.path.join(_agent_workspace(), raw_path)
             try:
                 path = _resolve_tool_path(raw_path)
             except ValueError as e:
