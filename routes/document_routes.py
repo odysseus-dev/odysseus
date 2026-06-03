@@ -901,7 +901,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             for i, doc in enumerate(batch):
                 if i >= len(verdicts):
                     break
-                verdict = verdicts[i].lower().strip()
+                verdict = str(verdicts[i] or "").lower().strip()
                 if verdict == "junk":
                     doc.tidy_verdict = "junk"
                     db.delete(doc)

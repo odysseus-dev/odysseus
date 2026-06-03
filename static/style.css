@@ -1141,7 +1141,10 @@ body.bg-pattern-sparkles {
       display: flex; align-items: center; gap: 6px;
       margin: 0; padding: 0; border: none;
       font-size: 10px; font-weight: 400; font-family: inherit;
-      line-height: 1; letter-spacing: 0; text-transform: none;
+      /* 1.3 (not 1) so Fira Code's tall glyph box isn't vertically clipped in
+         Chromium/Edge — mirrors the .list-item fix. The title is flex-centred
+         in a fixed-height (29px) header, so this adds headroom without reflow. */
+      line-height: 1.3; letter-spacing: 0; text-transform: none;
       color: var(--fg);
     }
     .section-icon,
@@ -1800,6 +1803,15 @@ body.bg-pattern-sparkles {
       transition: opacity 0.25s ease, max-height 0.25s ease, margin 0.25s ease;
       max-height: 60px;
       overflow: hidden;
+    }
+    /* The tip is a full sentence that wraps to 4-5 lines on narrow phones,
+       where the welcome block shrink-wraps small; the shared 60px ceiling
+       (sized for the one-line sub/version) clipped its last line. Give the tip
+       a taller ceiling so it isn't truncated. Kept above the max-height:650px
+       block below so that rule's max-height:0 still collapses it on short
+       viewports. */
+    #welcome-screen .welcome-tip {
+      max-height: 120px;
     }
     @media (max-height: 650px) {
       #welcome-screen { top: 28%; }

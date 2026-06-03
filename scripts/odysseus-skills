@@ -41,11 +41,22 @@ def _manager() -> SkillsManager:
     return _mgr
 
 
+def _preview_text(value, limit: int = 200) -> str:
+    """Truncated preview of a text field, tolerant of non-string values.
+
+    A skill whose ``description`` is a non-string (e.g. a number from a
+    hand-edited/legacy store) would crash ``(value or "")[:200]`` with a
+    TypeError; coerce non-strings to "" instead.
+    """
+    text = value if isinstance(value, str) else ""
+    return text[:limit]
+
+
 def _summary(skill: dict) -> dict:
     return {
         "name": skill.get("name", ""),
         "category": skill.get("category", "general"),
-        "description": (skill.get("description") or "")[:200],
+        "description": _preview_text(skill.get("description")),
         "status": skill.get("status", ""),
         "uses": skill.get("uses", 0),
         "last_used": skill.get("last_used") or "",

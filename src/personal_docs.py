@@ -77,6 +77,11 @@ def split_chunks(text: str, size: int = config.CHUNK_SIZE, overlap: int = config
     while i < n:
         j = min(i + size, n)
         chunks.append(text[i:j])
+        if j >= n:
+            # Reached the end. Without this, the next start (j - overlap) is
+            # still > i, so the loop appended one extra chunk duplicating the
+            # last `overlap` chars of the text.
+            break
         i = j - overlap if j - overlap > i else j
     return chunks
 
@@ -179,6 +184,11 @@ def retrieve_personal(personal_index: List[Dict], query: str, k: int = 5,
     # Fall back to keyword search
     return retrieve_personal_keyword(personal_index, query, k)
 
+
+def _string_list(values) -> list[str]:
+    return [value for value in values or [] if isinstance(value, str)]
+
+
 class PersonalDocsManager:
     """Manager class for personal document indexing and retrieval."""
 
@@ -202,7 +212,7 @@ class PersonalDocsManager:
                     directories = json.load(f)
                 if not isinstance(directories, list):
                     raise ValueError("indexed directories must be a list")
-                self.indexed_directories = [d for d in directories if isinstance(d, str)]
+                self.indexed_directories = _string_list(directories)
                 logger.info(f"Loaded {len(self.indexed_directories)} indexed directories")
             else:
                 self.indexed_directories = []
@@ -214,7 +224,7 @@ class PersonalDocsManager:
         """Save the list of indexed directories to persistent storage."""
         try:
             with open(self.directories_file, 'w', encoding="utf-8") as f:
-                json.dump(self.indexed_directories, f, indent=2)
+                json.dump(_string_list(self.indexed_directories), f, indent=2)
             logger.info(f"Saved {len(self.indexed_directories)} indexed directories")
         except Exception as e:
             logger.error(f"Error saving directories: {e}")
@@ -227,7 +237,7 @@ class PersonalDocsManager:
                     excluded = json.load(f)
                 if not isinstance(excluded, list):
                     raise ValueError("excluded files must be a list")
-                self.excluded_files = {p for p in excluded if isinstance(p, str)}
+                self.excluded_files = set(_string_list(excluded))
             else:
                 self.excluded_files = set()
         except Exception as e:
@@ -237,7 +247,7 @@ class PersonalDocsManager:
     def _save_excluded(self):
         try:
             with open(self._excluded_file, 'w', encoding="utf-8") as f:
-                json.dump(list(self.excluded_files), f)
+                json.dump(_string_list(self.excluded_files), f)
         except Exception as e:
             logger.error(f"Error saving excluded files: {e}")
 
