@@ -1228,9 +1228,11 @@ async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
 
         try:
             if hasattr(_personal_docs_manager, 'remove_directory'):
+                # Performs a targeted per-directory delete (#1660). The previous
+                # unconditional _rag_manager.rebuild_index() here wiped the whole
+                # collection on every remove (even for untracked dirs) and has
+                # been removed.
                 _personal_docs_manager.remove_directory(directory)
-            if _rag_manager and hasattr(_rag_manager, 'rebuild_index'):
-                _rag_manager.rebuild_index()
             return {"action": "remove_directory", "directory": directory,
                     "results": f"Directory '{directory}' removed from RAG index"}
         except Exception as e:

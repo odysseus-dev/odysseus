@@ -105,7 +105,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         directory = _dir.strip() if isinstance(_dir, str) else ""
         if not directory:
             return [TextContent(type="text", text="Error: add_directory needs a directory path")]
-        directory = os.path.expanduser(directory)
+        # Store an absolute path so indexed `source` metadata is absolute and
+        # remove_directory (which abspath-normalizes) can match it later (#1660).
+        directory = os.path.abspath(os.path.expanduser(directory))
         if not os.path.isdir(directory):
             return [TextContent(type="text", text=f"Error: Directory not found: {directory}")]
         if not _rag_manager:

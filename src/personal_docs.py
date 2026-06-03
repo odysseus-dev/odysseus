@@ -306,18 +306,17 @@ class PersonalDocsManager:
             # Refresh the index to exclude the removed directory
             self.refresh_index()
             
-            # If RAG manager is available, we should rebuild the index
-            # This is a simple approach - in production you might want more sophisticated removal
+            # Targeted delete of just this directory's chunks. This previously
+            # called rag_manager.rebuild_index(), which delete+recreates the
+            # entire shared collection (every owner + the base index) and then
+            # re-indexed only the remaining tracked dirs — ownerless and never
+            # personal_dir — a catastrophic wipe (#1660). remove_directory now
+            # removes exactly this directory's chunks and leaves the rest intact.
             if self.rag_manager:
                 try:
-                    logger.info("Rebuilding RAG index after directory removal")
-                    self.rag_manager.rebuild_index()
-                    # Re-index remaining directories
-                    for dir_path in self.indexed_directories:
-                        if os.path.exists(dir_path):
-                            self.rag_manager.index_personal_documents(dir_path)
+                    self.rag_manager.remove_directory(directory)
                 except Exception as e:
-                    logger.error(f"Failed to rebuild RAG index: {e}")
+                    logger.error(f"Failed to remove directory from RAG index: {e}")
         else:
             logger.info(f"Directory not in index: {directory}")
 
